@@ -184,7 +184,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       text: widget.workspace['name'] as String? ?? '',
     );
     _cmdCtrl = TextEditingController(
-      text: widget.workspace['default_command'] as String? ?? '',
+      text: widget.workspace['service_command'] as String? ?? '',
     );
     _healthCheckCtrl = TextEditingController(
       text: widget.workspace['health_check'] as String? ?? '',
@@ -213,9 +213,9 @@ class _SettingsFormState extends State<_SettingsForm> {
       // coverage:ignore-start
       _nameCtrl.text = widget.workspace['name'] as String? ?? '';
     }
-    if (old.workspace['default_command'] !=
-        widget.workspace['default_command']) {
-      _cmdCtrl.text = widget.workspace['default_command'] as String? ?? '';
+    if (old.workspace['service_command'] !=
+        widget.workspace['service_command']) {
+      _cmdCtrl.text = widget.workspace['service_command'] as String? ?? '';
     } // coverage:ignore-end
     if (old.workspace['health_check'] != widget.workspace['health_check']) {
       // coverage:ignore-start
@@ -242,7 +242,7 @@ class _SettingsFormState extends State<_SettingsForm> {
     await widget.onSave({
       'name': _nameCtrl.text.trim(),
       'image': _selectedImage,
-      'default_command':
+      'service_command':
           _cmdCtrl.text.trim().isEmpty ? null : _cmdCtrl.text.trim(),
       'health_check': _healthCheckCtrl.text.trim().isEmpty
           ? null
@@ -392,7 +392,7 @@ class _SettingsFormState extends State<_SettingsForm> {
         TextField(
           controller: _cmdCtrl,
           decoration: InputDecoration(
-            labelText: 'Default Shell Command',
+            labelText: 'Service Shell Command',
             labelStyle: labelStyle,
             floatingLabelBehavior: FloatingLabelBehavior.always,
             border: const OutlineInputBorder(),

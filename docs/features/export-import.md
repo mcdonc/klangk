@@ -2,7 +2,7 @@
 
 Workspaces can be exported as `.tar.gz` archives and imported to create new workspaces. The archive contains:
 
-- `workspace.json` — metadata (name, image, default command, mounts, env vars, num_ports)
+- `workspace.json` — metadata (name, image, service command, mounts, env vars, num_ports)
 - `home/` — the workspace's home directory tree (files, dotfiles, virtualenvs, Pi sessions, bash history)
 
 ## Export

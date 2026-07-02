@@ -17,7 +17,7 @@ class WsDebugEntry {
   final Map<String, dynamic>? data;
 
   WsDebugEntry({required this.direction, required this.summary, this.data})
-    : timestamp = DateTime.now();
+      : timestamp = DateTime.now();
 }
 
 /// Manages WebSocket connection to the Klangk backend, sending commands
@@ -36,7 +36,7 @@ class WsClient extends ChangeNotifier {
   AuthService? _auth;
   String? _currentWorkspaceId;
   String? _currentUserId;
-  String? _defaultCommand;
+  String? _serviceCommand;
   String? _userHome;
   bool _connected = false;
   bool _connecting = false;
@@ -180,7 +180,7 @@ class WsClient extends ChangeNotifier {
   bool get connected => _connected;
   String? get currentWorkspaceId => _currentWorkspaceId;
   String? get currentUserId => _currentUserId;
-  String? get defaultCommand => _defaultCommand;
+  String? get serviceCommand => _serviceCommand;
   String? get userHome => _userHome;
 
   void updateAuth(AuthService auth) {
@@ -381,7 +381,7 @@ class WsClient extends ChangeNotifier {
         _connected = false;
         _pendingWorkspaceId ??= _currentWorkspaceId;
         _currentWorkspaceId = null;
-        _defaultCommand = null;
+        _serviceCommand = null;
         _userHome = null;
         presenceUsers = [];
         terminalWindows = [];
@@ -418,7 +418,7 @@ class WsClient extends ChangeNotifier {
   void _onContainerReady(Map<String, dynamic> json) {
     _currentWorkspaceId = json['workspaceId'] as String?;
     _currentUserId = json['userId'] as String?;
-    _defaultCommand = json['defaultCommand'] as String?;
+    _serviceCommand = json['serviceCommand'] as String?;
     _userHome = json['userHome'] as String?;
     _reconnecting = false;
     _reconnectAttempt = 0;

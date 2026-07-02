@@ -3,8 +3,8 @@ sandbox:
   setup: setup.sh
 
 workspace:
-  default-command: openclaw gateway
-  # Liveness probe for the gateway launched by default-command. Points
+  service-command: openclaw gateway
+  # Liveness probe for the gateway launched by service-command. Points
   # at an absolute-path wrapper script (NOT bare `openclaw health`)
   # because the host monitor runs it via `bash -c` -- a NON-login shell
   # that sources no startup file, so the user's nvm PATH / OPENCLAW_HOME

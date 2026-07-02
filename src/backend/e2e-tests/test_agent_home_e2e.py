@@ -310,9 +310,9 @@ class TestAgentHomeE2E:
         via podman exec, as root, so the check is independent of any
         user's read permissions.
         """
-        # auto_start triggers eager_start_workspace (run_default_command
+        # auto_start triggers eager_start_workspace (run_service_command
         # is False on the create path, but agent-home provisioning runs
-        # regardless -- it precedes the default-command block).
+        # regardless -- it precedes the service-command block).
         workspace_id, cleanup = create_workspace(
             server, auth, auto_start=True, setup_state="complete"
         )

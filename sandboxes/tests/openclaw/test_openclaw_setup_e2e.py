@@ -3,7 +3,7 @@
 Covers three invariants:
 
 - #1039 (ordering): ``setup.sh`` writes every env export the
-  default_command depends on into the AGENT's ``~/.profile`` up front,
+  service_command depends on into the AGENT's ``~/.profile`` up front,
   before the slow ``npm install``.
 - #1039 (shared mount): a second workspace reusing the populated
   ``/openclaw`` mount SKIPS the install yet still writes a complete
@@ -12,9 +12,9 @@ Covers three invariants:
   reaches the workspace, the health monitor runs it as a non-login
   bash shell (``bash -c``) so it sources nothing, and the status
   endpoint reports ``healthy`` once the gateway (launched by
-  ``default-command``) is up.
+  ``service-command``) is up.
 
-Under the agent-owns-the-service model (#1133/#1158) the default command
+Under the agent-owns-the-service model (#1133/#1158) the service command
 runs in the agent's standalone ``service`` tmux session, whose login shell
 sources the AGENT's ``~/.profile``. So ``setup.sh`` repoints ``HOME`` at
 ``$KLANGK_AGENT_HOME`` and writes its exports there (``NVM_DIR`` + nvm
@@ -29,7 +29,7 @@ POSIX file sourced by login shells. ``~/.bashrc`` has an interactivity
 guard that hides its body from non-interactive shells.
 
 Previously the exports went to the OWNER's ``~/.profile`` (pre-#1158 the
-default command ran in the owner's session); that left the autostarted
+service command ran in the owner's session); that left the autostarted
 gateway env-less under the new model -- the service session sourced the
 agent's empty ``~/.profile`` and ``openclaw gateway`` reported "Missing
 config" (#1171).
@@ -367,7 +367,7 @@ class TestOpenclawSetupProfileExports:
     def test_profile_has_openclaw_home_before_slow_install(self):
         """~/.profile contains OPENCLAW_HOME before the npm install runs.
 
-        This is the #1039 invariant: every export the default_command
+        This is the #1039 invariant: every export the service_command
         depends on is written up front, so a shell spawned at any point
         during setup (here, held by the sentinel after the export block
         but before the npm install) sources a complete ~/.profile. Under
@@ -509,7 +509,7 @@ class TestOpenclawSetupProfileExports:
         the workspace, the health monitor runs it as a non-login bash
         shell (``bash -c``) so it sources nothing, and the status
         endpoint reports ``healthy`` once the gateway (launched by
-        ``default-command``) is up.
+        ``service-command``) is up.
 
         This is the #1089 end-to-end validation. The whole chain must
         work for the status to flip to healthy:
@@ -518,7 +518,7 @@ class TestOpenclawSetupProfileExports:
            ``health_check`` from the sandbox config.
         2. setup completes -> ``setup_state == complete`` (the monitor
            skips checks until then).
-        3. ``default-command: openclaw gateway`` fires and the gateway
+        3. ``service-command: openclaw gateway`` fires and the gateway
            binds its port.
         4. the monitor runs ``bash -c /openclaw/bin/healthcheck.sh``;
            the non-login shell sources nothing, but the wrapper script

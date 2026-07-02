@@ -123,10 +123,10 @@ async def init_db() -> None:
                 container_id TEXT,
                 num_ports INTEGER NOT NULL DEFAULT 5,
                 image TEXT,  -- custom container image; NULL means use default
-                default_command TEXT,  -- auto-run in terminal on connect
+                service_command TEXT,  -- auto-run in terminal on connect
                 auto_start INTEGER NOT NULL DEFAULT 0,  -- start on server boot
                 -- setup lifecycle: pending (setup expected/running) /
-                -- complete (prereqs met, default cmd may fire) / failed.
+                -- complete (prereqs met, service cmd may fire) / failed.
                 -- Descriptive, not proscriptive: a workspace is created
                 -- in whichever state matches reality (see #1033).
                 setup_state TEXT NOT NULL DEFAULT 'complete',
@@ -145,6 +145,16 @@ async def init_db() -> None:
         # Migration: add auto_start column to existing workspaces tables
         cursor = await db.execute("PRAGMA table_info(workspaces)")
         ws_cols = {row[1] for row in await cursor.fetchall()}
+        # Migration: rename default_command -> service_command (#1203).
+        # The on-disk column is renamed in place (SQLite >= 3.25 supports
+        # ALTER TABLE ... RENAME COLUMN). Fresh installs already create the
+        # column as service_command (see CREATE TABLE above), so this only
+        # touches databases that still carry the legacy default_command column.
+        if "default_command" in ws_cols and "service_command" not in ws_cols:
+            await db.execute(
+                "ALTER TABLE workspaces"
+                " RENAME COLUMN default_command TO service_command"
+            )
         if "auto_start" not in ws_cols:
             await db.execute(
                 "ALTER TABLE workspaces"
@@ -152,7 +162,7 @@ async def init_db() -> None:
             )
         # Migration: add setup_state column (#1033). Defaults to
         # 'complete' so existing workspaces (already set up in their
-        # persisted volumes) keep firing their default command.
+        # persisted volumes) keep firing their service command.
         if "setup_state" not in ws_cols:
             await db.execute(
                 "ALTER TABLE workspaces"

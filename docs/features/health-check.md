@@ -13,7 +13,7 @@ combine two other features:
 
 - an **[Auto-start](auto-start.md)** workspace whose container boots
   on server startup (before any user connects), and
-- a **[Default Command](default-command.md)** that launches a
+- a **[Service Command](service-command.md)** that launches a
   long-running process (a dev server, AI gateway, daemon).
 
 In that combination the container is up and the process is launched
@@ -258,7 +258,7 @@ is negligible overhead.
 
 ## Related
 
-- [Default Command](default-command.md) — the command that usually
+- [Service Command](service-command.md) — the command that usually
   runs the service being health-checked.
 - [Auto-start](auto-start.md) — start service workspaces on server
   boot.

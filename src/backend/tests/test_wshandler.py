@@ -764,16 +764,16 @@ class TestHandleTerminalStart:
         container.registry.states.pop("ws", None)
 
     async def test_terminal_start_fires_service_command(self):
-        """terminal_start fires the default command in the agent's service
+        """terminal_start fires the service command in the agent's service
         session (the post-setup path, #1033/#1133) -- not in any user's
-        session. The on_default_command_started callback is gone; the
+        session. The on_service_command_started callback is gone; the
         service command is fired via _fire_service_command."""
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
         conn.workspace_id = "ws"
         conn._user_home = "/home/testuser"
-        conn._default_command = "./serve"
+        conn._service_command = "./serve"
 
         async def _perm(*a):
             return True
@@ -825,11 +825,11 @@ class TestHandleTerminalStart:
             await asyncio.sleep(0)
 
         # Fired in the service session with the agent home, not threaded
-        # into the user's TerminalSession (no default_command kwarg).
+        # into the user's TerminalSession (no service_command kwarg).
         mock_ess.assert_awaited_once_with(
             "cid", "/home/clanker", "./serve", setup_state="complete"
         )
-        assert "default_command" not in MockTS.call_args.kwargs
+        assert "service_command" not in MockTS.call_args.kwargs
 
         wshandler.state.sessions.pop("ws", None)
         wshandler.state.connections.pop(sock, None)
@@ -1243,13 +1243,13 @@ class TestHandleTerminalStart:
         assert conn._browser_id is None
         mock_attach.assert_not_awaited()
 
-    async def test_passes_default_command(self):
+    async def test_passes_service_command(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
         conn.workspace_id = "ws"
         conn._user_home = "/home/testuser"
-        conn._default_command = "pi"
+        conn._service_command = "pi"
 
         async def _perm(*a):
             return True
@@ -1288,7 +1288,7 @@ class TestHandleTerminalStart:
             )
             await asyncio.sleep(0)
 
-        # The default command is NOT threaded into the user's session --
+        # The service command is NOT threaded into the user's session --
         # it fires in the standalone service session (#1133).
         MockTS.assert_called_once_with(
             "cid",
@@ -1787,15 +1787,15 @@ class TestHandleWorkspaceConnect:
         ready = [c for c in calls if c.get("type") == "container_ready"]
         assert len(ready) == 1
         assert ready[0]["workspaceId"] == workspace["id"]
-        assert ready[0]["defaultCommand"] is None
+        assert ready[0]["serviceCommand"] is None
         assert "userHome" in ready[0]
         # Integer timeout (default 30m) should show as "30m" not "30.0m"
         assert "30m" in conn.pending_status_msg
 
-    async def test_connect_sends_default_command(self, user, agent_user):
+    async def test_connect_sends_service_command(self, user, agent_user):
         sock = _mock_sock()
         workspace = await _create_workspace_with_acl(
-            user["id"], "cmd-ws", default_command="pi"
+            user["id"], "cmd-ws", service_command="pi"
         )
         conn = _base_conn(user=user, ws=sock)
 
@@ -1820,7 +1820,7 @@ class TestHandleWorkspaceConnect:
 
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         ready = [c for c in calls if c.get("type") == "container_ready"]
-        assert ready[0]["defaultCommand"] == "pi"
+        assert ready[0]["serviceCommand"] == "pi"
 
     async def test_connect_denied_no_acl(self, user):
         """User without ACL entry gets 'Permission denied'."""
@@ -5271,7 +5271,7 @@ class TestTerminalController:
             _ssh_agent_socket=None,
             _browser_id=None,
             _viewing_shared=None,
-            _default_command=None,
+            _service_command=None,
             user=user,
             workspace=None,
             _has_perm=AsyncMock(return_value=has_perm),
@@ -5707,10 +5707,10 @@ class TestTerminalController:
             wshandler.state.connections.pop(other_sock, None)
             wshandler.state.sessions.pop("ws-1", None)
 
-    # --- #1114: default-cmd shared singleton ---
+    # --- #1114: service-cmd shared singleton ---
 
-    async def test_sync_terminal_windows_marks_default_cmd_shared(self):
-        """The default-cmd window is shared by definition, so syncing the
+    async def test_sync_terminal_windows_marks_service_cmd_shared(self):
+        """The service-cmd window is shared by definition, so syncing the
         owner's own windows marks it shared even with no prior entry (#1114)."""
         ctrl, _, _ = self._controller()
         ws_session = wshandler.state.get_or_create_session("ws-1")
@@ -5721,12 +5721,12 @@ class TestTerminalController:
                     {
                         "id": "@1",
                         "index": 1,
-                        "name": "default-cmd",
+                        "name": "service-cmd",
                     },
                 ]
             )
             wins = ws_session.terminal_windows["uid"]
-            dc = next(w for w in wins if w["name"] == "default-cmd")
+            dc = next(w for w in wins if w["name"] == "service-cmd")
             assert dc["shared"] is True
             # A plain window is not implicitly shared.
             bash = next(w for w in wins if w["name"] == "bash")
@@ -5734,8 +5734,8 @@ class TestTerminalController:
         finally:
             wshandler.state.sessions.pop("ws-1", None)
 
-    async def test_sync_service_windows_injects_default_cmd_shared(self):
-        """Discovery: connecting syncs the agent's service:default-cmd window
+    async def test_sync_service_windows_injects_service_cmd_shared(self):
+        """Discovery: connecting syncs the agent's service:service-cmd window
         into the session map (keyed by AGENT_USER_ID, marked shared, handle
         cached) even though the agent has no WS connection (#1133)."""
         from klangk_backend import model
@@ -5752,7 +5752,7 @@ class TestTerminalController:
                             {
                                 "id": "@5",
                                 "index": 1,
-                                "name": "default-cmd",
+                                "name": "service-cmd",
                                 "active": True,
                             }
                         ]
@@ -5766,7 +5766,7 @@ class TestTerminalController:
                 synced = await ctrl._sync_service_windows(ws_session)
             assert synced is True
             agent_wins = ws_session.terminal_windows[model.AGENT_USER_ID]
-            assert agent_wins[0]["name"] == "default-cmd"
+            assert agent_wins[0]["name"] == "service-cmd"
             assert agent_wins[0]["shared"] is True
             # Handle cached so the window stays attributable.
             assert ws_session.agent_handle == "clanker"
@@ -5817,7 +5817,7 @@ class TestTerminalController:
                     "list_windows",
                     new=AsyncMock(
                         return_value=[
-                            {"id": "@1", "index": 1, "name": "default-cmd"}
+                            {"id": "@1", "index": 1, "name": "service-cmd"}
                         ]
                     ),
                 ),
@@ -5841,14 +5841,14 @@ class TestTerminalController:
         ws_session = wshandler.state.get_or_create_session("ws-offline")
         try:
             ws_session.terminal_windows[model.AGENT_USER_ID] = [
-                {"id": "@1", "index": 1, "name": "default-cmd", "shared": True}
+                {"id": "@1", "index": 1, "name": "service-cmd", "shared": True}
             ]
             ws_session.agent_handle = "clanker"
             # No active connection for the agent.
             terminals = _get_shared_terminals(ws_session)
             assert len(terminals) == 1
             assert terminals[0]["handle"] == "clanker"
-            assert terminals[0]["window_name"] == "default-cmd"
+            assert terminals[0]["window_name"] == "service-cmd"
             # Agent-owned windows are flagged so the UI can present the
             # service tab distinctly (#1159).
             assert terminals[0]["is_service"] is True
@@ -5859,7 +5859,7 @@ class TestTerminalController:
         """_fire_service_command reads fresh setup_state from the DB,
         resolves the agent home, and targets the service session (#1133)."""
         ctrl, _, conn = self._controller()
-        conn._default_command = "./run.sh"
+        conn._service_command = "./run.sh"
         with (
             patch(
                 "klangk_backend.wshandler.controllers.model.get_workspace",
@@ -5880,9 +5880,9 @@ class TestTerminalController:
             "cid", "/home/clanker", "./run.sh", setup_state="complete"
         )
 
-    async def test_fire_service_command_no_default_command_noop(self):
+    async def test_fire_service_command_no_service_command_noop(self):
         ctrl, _, conn = self._controller()
-        conn._default_command = None
+        conn._service_command = None
         with patch(
             "klangk_backend.wshandler.controllers.terminal."
             "ensure_service_session",
@@ -5893,7 +5893,7 @@ class TestTerminalController:
 
     async def test_fire_service_command_no_container_noop(self):
         ctrl, _, conn = self._controller(container_id=None)
-        conn._default_command = "./run.sh"
+        conn._service_command = "./run.sh"
         with patch(
             "klangk_backend.wshandler.controllers.terminal."
             "ensure_service_session",
@@ -6402,7 +6402,7 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/joiner"
         session = wshandler.state.get_or_create_session("ws-1")
         session.terminal_windows[model.AGENT_USER_ID] = [
-            {"name": "default-cmd", "index": 0, "id": "@0", "shared": True},
+            {"name": "service-cmd", "index": 0, "id": "@0", "shared": True},
         ]
         session.agent_handle = "clanker"
         container.registry.track_activity("cid", "ws-1")

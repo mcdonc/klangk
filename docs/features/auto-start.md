@@ -2,12 +2,12 @@
 
 # Auto-Start
 
-[![A service workspace with `openclaw gateway` already running via default command](../assets/auto-start.png)](../assets/auto-start.png)
+[![A service workspace with `openclaw gateway` already running via service command](../assets/auto-start.png)](../assets/auto-start.png)
 
 Workspaces can be configured to start their containers automatically
 when the Klangk server starts. This is primarily useful for service
 workspaces — workspaces that run a long-lived process via
-[Default Command](default-command.md) and should be available
+[Service Command](service-command.md) and should be available
 immediately, without waiting for a user to connect.
 
 ## Enabling auto-start on the server
@@ -48,7 +48,7 @@ In `.klangk-sandbox.yaml`:
 
 ```yaml
 workspace:
-  default-command: openclaw gateway
+  service-command: openclaw gateway
   auto-start: true
 ```
 
@@ -57,7 +57,7 @@ workspace:
 When the Klangk server starts, after initializing the database and
 cleaning up orphaned containers, it queries all workspaces with
 auto-start enabled and starts their containers. If a workspace also
-has a [default command](default-command.md), the command is sent as
+has a [service command](service-command.md), the command is sent as
 keystrokes into tmux window 0 — so the service is already running
 by the time any user connects.
 
@@ -73,7 +73,7 @@ serving:
 
 ```yaml
 workspace:
-  default-command: openclaw gateway
+  service-command: openclaw gateway
   auto-start: true
   health-check: curl -sf http://localhost:8080/health
 ```

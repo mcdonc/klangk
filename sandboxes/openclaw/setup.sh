@@ -18,15 +18,15 @@ INSTALL_DIR="/openclaw"
 # land in the agent's ~/.profile unchanged.
 export HOME="${KLANGK_AGENT_HOME:-/home/clanker}"
 
-# Persist every env export the default_command depends on to ~/.profile
+# Persist every env export the service_command depends on to ~/.profile
 # UP FRONT, before any long-running install step.
 #
 # Why ~/.profile: it's the POSIX file sourced by login shells -- here,
-# the agent's `service` tmux session that runs the default command (HOME
+# the agent's `service` tmux session that runs the service command (HOME
 # was repointed above to the agent's home). ~/.bashrc has an
 # interactivity guard near its top (`case $- in *i*) ;; *) return`)
 # that hides anything appended below it from non-interactive shells, so
-# exports the default command needs cannot live there.
+# exports the service command needs cannot live there.
 #
 # NOTE: the workspace health check is NOT a reason to put these in
 # ~/.profile. The check runs as a NON-login shell (`bash -c`) and
@@ -65,7 +65,7 @@ fi
 # drops a sentinel file on the mount to hold setup here, spawns a terminal
 # mid-setup, and asserts the exports above are already in the spawned
 # shell's environment. This guards the #1039 invariant: every ~/.profile
-# export the default_command depends on must be written before any
+# export the service_command depends on must be written before any
 # long-running step, so a shell spawned at any point sees the full set.
 # The sentinel never exists outside that test.
 while [ -f "$INSTALL_DIR/.klangk-test-pause" ]; do
@@ -212,7 +212,7 @@ echo "node: $(node -v)"
 echo "openclaw: $(openclaw --version)"
 echo ""
 echo "Setup complete."
-echo "The gateway will start automatically via default-command."
+echo "The gateway will start automatically via service-command."
 if [ -n "$host_port" ] && [ -n "$workspace_id" ]; then
   echo ""
   echo "Open the UI at:"

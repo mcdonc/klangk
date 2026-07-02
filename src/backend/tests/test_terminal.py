@@ -1229,28 +1229,28 @@ class TestEnsureBaseSession:
         assert "HOME=/home/u" in new_cmd
         assert "SSH_AUTH_SOCK=/tmp/agent.sock" in new_cmd
 
-    async def test_default_cmd_window_exists_exception_returns_false(self):
-        """_default_cmd_window_exists returns False if list-windows raises."""
-        from klangk_backend.terminal import _default_cmd_window_exists
+    async def test_service_cmd_window_exists_exception_returns_false(self):
+        """_service_cmd_window_exists returns False if list-windows raises."""
+        from klangk_backend.terminal import _service_cmd_window_exists
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
             side_effect=OSError("boom"),
         ):
-            result = await _default_cmd_window_exists("cid", "my-session")
+            result = await _service_cmd_window_exists("cid", "my-session")
         assert result is False
 
-    async def test_default_cmd_window_exists_rc_nonzero_returns_false(self):
-        """_default_cmd_window_exists returns False if list-windows fails."""
-        from klangk_backend.terminal import _default_cmd_window_exists
+    async def test_service_cmd_window_exists_rc_nonzero_returns_false(self):
+        """_service_cmd_window_exists returns False if list-windows fails."""
+        from klangk_backend.terminal import _service_cmd_window_exists
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
             return_value=(1, "", ""),  # list-windows fails
         ):
-            result = await _default_cmd_window_exists("cid", "my-session")
+            result = await _service_cmd_window_exists("cid", "my-session")
         assert result is False
 
     async def test_has_tmux_session_exception_returns_false(self):
@@ -1268,13 +1268,13 @@ class TestEnsureBaseSession:
 
 class TestEnsureServiceSession:
     """Tests for ensure_service_session -- the standalone ``service`` tmux
-    session that runs the workspace's default command, owned by the agent
-    identity (#1133 D6). _ensure_tmux_session and _default_cmd_window_exists
+    session that runs the workspace's service command, owned by the agent
+    identity (#1133 D6). _ensure_tmux_session and _service_cmd_window_exists
     are mocked to isolate the firing logic from tmux-session internals."""
 
     async def test_creates_window_and_sends_command(self):
-        """A fresh service session fires the default command in its
-        ``default-cmd`` window -> ``service:default-cmd``."""
+        """A fresh service session fires the service command in its
+        ``service-cmd`` window -> ``service:service-cmd``."""
         from klangk_backend.terminal import ensure_service_session
 
         with (
@@ -1283,7 +1283,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._default_cmd_window_exists",
+                "klangk_backend.terminal._service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
             patch(
@@ -1295,15 +1295,15 @@ class TestEnsureServiceSession:
                 "cid", "/home/clanker", "openclaw gateway"
             )
         cmds = [c.args[1] for c in mock_exec.call_args_list]
-        # default-cmd window created in the service session.
+        # service-cmd window created in the service session.
         assert any(
-            "new-window" in c and "service" in c and "default-cmd" in c
+            "new-window" in c and "service" in c and "service-cmd" in c
             for c in cmds
         )
-        # Command sent to service:default-cmd.
+        # Command sent to service:service-cmd.
         assert any(
             "send-keys" in c
-            and "service:default-cmd" in c
+            and "service:service-cmd" in c
             and "openclaw gateway" in c
             for c in cmds
         )
@@ -1322,7 +1322,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ) as mock_ensure,
             patch(
-                "klangk_backend.terminal._default_cmd_window_exists",
+                "klangk_backend.terminal._service_cmd_window_exists",
                 new=AsyncMock(return_value=True),
             ),
         ):
@@ -1334,7 +1334,7 @@ class TestEnsureServiceSession:
         )
 
     async def test_skips_when_window_already_exists(self):
-        """Exactly-once: no new-window/send-keys if default-cmd exists."""
+        """Exactly-once: no new-window/send-keys if service-cmd exists."""
         from klangk_backend.terminal import ensure_service_session
 
         with (
@@ -1343,7 +1343,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._default_cmd_window_exists",
+                "klangk_backend.terminal._service_cmd_window_exists",
                 new=AsyncMock(return_value=True),
             ),
             patch(
@@ -1359,7 +1359,7 @@ class TestEnsureServiceSession:
         assert not any("send-keys" in c for c in cmds)
 
     async def test_blocked_when_setup_pending(self):
-        """The default command does not fire while setup is pending (#1033)."""
+        """The service command does not fire while setup is pending (#1033)."""
         from klangk_backend.terminal import ensure_service_session
 
         with (
@@ -1368,7 +1368,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._default_cmd_window_exists",
+                "klangk_backend.terminal._service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
             patch(
@@ -1396,7 +1396,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._default_cmd_window_exists",
+                "klangk_backend.terminal._service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
             patch(
@@ -1418,7 +1418,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._default_cmd_window_exists",
+                "klangk_backend.terminal._service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
             patch(
@@ -1437,28 +1437,28 @@ class TestServiceSessionHelpers:
     """Direct coverage for the firing-predicate helpers used by
     ensure_service_session."""
 
-    async def test_default_cmd_window_exists_true_when_present(self):
-        from klangk_backend.terminal import _default_cmd_window_exists
+    async def test_service_cmd_window_exists_true_when_present(self):
+        from klangk_backend.terminal import _service_cmd_window_exists
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
-            return_value=(0, "bash\ndefault-cmd\n", ""),
+            return_value=(0, "bash\nservice-cmd\n", ""),
         ):
-            assert await _default_cmd_window_exists("cid", "service") is True
+            assert await _service_cmd_window_exists("cid", "service") is True
 
-    async def test_default_cmd_window_exists_false_when_absent(self):
-        from klangk_backend.terminal import _default_cmd_window_exists
+    async def test_service_cmd_window_exists_false_when_absent(self):
+        from klangk_backend.terminal import _service_cmd_window_exists
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
             return_value=(0, "bash\n", ""),
         ):
-            assert await _default_cmd_window_exists("cid", "service") is False
+            assert await _service_cmd_window_exists("cid", "service") is False
 
-    def test_should_fire_returns_false_without_default_command(self):
-        from klangk_backend.terminal import _should_fire_default_command
+    def test_should_fire_returns_false_without_service_command(self):
+        from klangk_backend.terminal import _should_fire_service_command
 
-        assert _should_fire_default_command(None, "complete") is False
-        assert _should_fire_default_command("", "complete") is False
+        assert _should_fire_service_command(None, "complete") is False
+        assert _should_fire_service_command("", "complete") is False

@@ -71,7 +71,7 @@ same startup files (see [Startup files](#startup-files) below):
 
 - Edit `~/.profile` for **environment exports** (PATH additions,
   `OPENCLAW_HOME`, tool-manager setup like nvm/asdf) that login-shell
-  commands — interactive terminals, the default command, and `klangkc
+  commands — interactive terminals, the service command, and `klangkc
 exec` — must see. (The health check is deliberately _not_ a profile
   consumer; see [Health Check](health-check.md).)
 - Edit `~/.bashrc` for **interactive niceties** (aliases, prompt
@@ -99,11 +99,11 @@ See [Health Check](health-check.md).
 | File                                        | Purpose                                                                                                          | Sourced by                                                                            |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `/etc/profile.d/klangk-*.sh`                | system-wide defaults (klangk `PATH`, `EDITOR`)                                                                   | every login shell                                                                     |
-| `~/.profile`                                | **per-user environment exports** (PATH additions, tool homes, nvm/asdf) — anything login-shell commands must see | login shells: interactive terminals, the default command, `klangkc exec` (`bash -lc`) |
+| `~/.profile`                                | **per-user environment exports** (PATH additions, tool homes, nvm/asdf) — anything login-shell commands must see | login shells: interactive terminals, the service command, `klangkc exec` (`bash -lc`) |
 | `~/.bashrc` (below the interactivity guard) | interactive niceties (aliases, prompt)                                                                           | interactive non-login bash shells; also chained from `~/.profile` for login shells    |
 
 **Rule of thumb:** if a login-shell command (`klangkc exec`, a setup
-script, the default command) needs it, it goes in `~/.profile`. If it
+script, the service command) needs it, it goes in `~/.profile`. If it
 only matters when you're at a prompt, it goes in `~/.bashrc`. The
 health check is not a `~/.profile` consumer — see
 [Health Check](health-check.md).
@@ -113,14 +113,14 @@ health check is not a `~/.profile` consumer — see
 | In-container command                         | How Klangk runs it                            | Sources `~/.profile`?                                                                      |
 | -------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | Interactive terminal                         | `tmux new-session` (login shell) or `bash -l` | yes                                                                                        |
-| `default_command` (the `default-cmd` window) | login shell (tmux window 0)                   | yes                                                                                        |
+| `service_command` (the `service-cmd` window) | login shell (tmux window 0)                   | yes                                                                                        |
 | Workspace health check                       | `bash -c` (a **non-login** shell)             | no — the probe is deterministic; uses absolute paths (see [Health Check](health-check.md)) |
 | `klangkc exec` (default)                     | `bash -lc` (a login shell)                    | yes                                                                                        |
 | `klangkc exec --raw` / `klangkc sync`        | raw command (no shell)                        | no — programmatic transports (rsync) must not source startup files                         |
 
 This is why workspace setup scripts (`sandboxes/*/setup.sh`) persist
 their env exports to `~/.profile` rather than `~/.bashrc`: the exports
-must be visible to the default command and `klangkc exec`, both of
+must be visible to the service command and `klangkc exec`, both of
 which are login shells that source `~/.profile`. `~/.bashrc`'s
 interactivity guard (`case $- in *i*) ;; *) return`) hides its body
 from those non-interactive login shells. The health check is the

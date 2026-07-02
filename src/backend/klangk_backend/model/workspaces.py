@@ -56,7 +56,7 @@ async def _insert_workspace_row(
     user_id: str,
     name: str,
     image: str | None,
-    default_command: str | None,
+    service_command: str | None,
     auto_start: bool,
     mounts: list[str] | None,
     env: dict[str, str] | None,
@@ -74,7 +74,7 @@ async def _insert_workspace_row(
     env_json = json.dumps(env) if env else None
     await db.execute(
         "INSERT INTO workspaces"
-        " (id, user_id, name, image, default_command, auto_start,"
+        " (id, user_id, name, image, service_command, auto_start,"
         " setup_state, health_check, mounts, env, created_at)"
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
@@ -82,7 +82,7 @@ async def _insert_workspace_row(
             user_id,
             name,
             image,
-            default_command,
+            service_command,
             1 if auto_start else 0,
             setup_state,
             health_check,
@@ -96,7 +96,7 @@ async def _insert_workspace_row(
         "user_id": user_id,
         "name": name,
         "image": image,
-        "default_command": default_command,
+        "service_command": service_command,
         "auto_start": auto_start,
         "setup_state": setup_state,
         "health_check": health_check,
@@ -167,7 +167,7 @@ async def create_workspace_with_acl(
     user_id: str,
     name: str,
     image: str | None = None,
-    default_command: str | None = None,
+    service_command: str | None = None,
     auto_start: bool = False,
     mounts: list[str] | None = None,
     env: dict[str, str] | None = None,
@@ -198,7 +198,7 @@ async def create_workspace_with_acl(
             user_id,
             name,
             image=image,
-            default_command=default_command,
+            service_command=service_command,
             auto_start=auto_start,
             mounts=mounts,
             env=env,
@@ -213,7 +213,7 @@ async def create_workspace(
     user_id: str,
     name: str,
     image: str | None = None,
-    default_command: str | None = None,
+    service_command: str | None = None,
     auto_start: bool = False,
     mounts: list[str] | None = None,
     env: dict[str, str] | None = None,
@@ -235,7 +235,7 @@ async def create_workspace(
             user_id,
             name,
             image=image,
-            default_command=default_command,
+            service_command=service_command,
             auto_start=auto_start,
             mounts=mounts,
             env=env,
@@ -287,7 +287,7 @@ async def list_workspaces(
     params.extend([limit, offset])
     async with transaction() as db:
         cursor = await db.execute(
-            "SELECT id, name, container_id, image, default_command,"
+            "SELECT id, name, container_id, image, service_command,"
             " auto_start, setup_state, health_check, mounts, env,"
             " created_at"
             " FROM workspaces"
@@ -301,7 +301,7 @@ async def list_workspaces(
                 "name": row["name"],
                 "container_id": row["container_id"],
                 "image": row["image"],
-                "default_command": row["default_command"],
+                "service_command": row["service_command"],
                 "auto_start": bool(row["auto_start"]),
                 "setup_state": row["setup_state"],
                 "health_check": row["health_check"],
@@ -347,7 +347,7 @@ async def list_shared_workspaces(
         )
         cursor = await db.execute(
             "SELECT DISTINCT w.id, w.name, w.container_id, w.image,"
-            " w.default_command, w.auto_start, w.setup_state,"
+            " w.service_command, w.auto_start, w.setup_state,"
             " w.health_check, w.mounts, w.env, w.created_at,"
             " u.email AS owner_email"
             " FROM workspaces w"
@@ -377,7 +377,7 @@ async def list_shared_workspaces(
                 "name": row["name"],
                 "container_id": row["container_id"],
                 "image": row["image"],
-                "default_command": row["default_command"],
+                "service_command": row["service_command"],
                 "auto_start": bool(row["auto_start"]),
                 "setup_state": row["setup_state"],
                 "health_check": row["health_check"],
@@ -408,7 +408,7 @@ async def get_workspace(
         if user_id is not None:
             cursor = await db.execute(
                 "SELECT id, user_id, name, container_id, num_ports, image,"
-                " default_command, auto_start, setup_state, health_check,"
+                " service_command, auto_start, setup_state, health_check,"
                 " mounts, env"
                 " FROM workspaces WHERE id = ? AND user_id = ?",
                 (workspace_id, user_id),
@@ -416,7 +416,7 @@ async def get_workspace(
         else:
             cursor = await db.execute(
                 "SELECT id, user_id, name, container_id, num_ports, image,"
-                " default_command, auto_start, setup_state, health_check,"
+                " service_command, auto_start, setup_state, health_check,"
                 " mounts, env"
                 " FROM workspaces WHERE id = ?",
                 (workspace_id,),
@@ -431,7 +431,7 @@ async def get_workspace(
             "container_id": row["container_id"],
             "num_ports": row["num_ports"],
             "image": row["image"],
-            "default_command": row["default_command"],
+            "service_command": row["service_command"],
             "auto_start": bool(row["auto_start"]),
             "setup_state": row["setup_state"],
             "health_check": row["health_check"],
@@ -444,7 +444,7 @@ async def get_workspace_by_id(workspace_id: str) -> dict | None:
     """Get a workspace by ID without access control (for admin use)."""
     row = await _fetchone(
         "SELECT id, user_id, name, container_id, num_ports, image,"
-        " default_command, setup_state, health_check, mounts, env"
+        " service_command, setup_state, health_check, mounts, env"
         " FROM workspaces WHERE id = ?",
         (workspace_id,),
     )
@@ -457,7 +457,7 @@ async def get_workspace_by_id(workspace_id: str) -> dict | None:
         "container_id": row["container_id"],
         "num_ports": row["num_ports"],
         "image": row["image"],
-        "default_command": row["default_command"],
+        "service_command": row["service_command"],
         "setup_state": row["setup_state"],
         "health_check": row["health_check"],
         "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
@@ -558,7 +558,7 @@ async def update_workspace(
     allowed = {
         "name",
         "image",
-        "default_command",
+        "service_command",
         "auto_start",
         "setup_state",
         "health_check",
@@ -610,7 +610,7 @@ async def list_auto_start_workspaces() -> list[dict]:
     async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, user_id, name, container_id, num_ports, image,"
-            " default_command, auto_start, setup_state, health_check,"
+            " service_command, auto_start, setup_state, health_check,"
             " mounts, env"
             " FROM workspaces WHERE auto_start = 1",
         )
@@ -623,7 +623,7 @@ async def list_auto_start_workspaces() -> list[dict]:
                 "container_id": row["container_id"],
                 "num_ports": row["num_ports"],
                 "image": row["image"],
-                "default_command": row["default_command"],
+                "service_command": row["service_command"],
                 "auto_start": True,
                 "setup_state": row["setup_state"],
                 "health_check": row["health_check"],

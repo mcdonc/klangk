@@ -500,7 +500,7 @@ so `has_more`/`next_offset` reflect the filtered set.
     "name": "my-workspace",
     "container_id": null,
     "image": null,
-    "default_command": null,
+    "service_command": null,
     "mounts": null,
     "env": null,
     "created_at": "2025-01-01 12:00:00"
@@ -545,7 +545,7 @@ params returns the `{ items, has_more, next_offset }` envelope.
     "name": "shared-workspace",
     "container_id": null,
     "image": null,
-    "default_command": null,
+    "service_command": null,
     "mounts": null,
     "env": null,
     "created_at": "2025-01-01 12:00:00",
@@ -1150,7 +1150,7 @@ are created automatically.
 {
   "name": "my-workspace",
   "image": "klangk-workspace:latest",
-  "default_command": "/bin/bash",
+  "service_command": "/bin/bash",
   "mounts": ["my-volume:/home/user/data"],
   "env": { "MY_VAR": "value" }
 }
@@ -1164,7 +1164,7 @@ All fields except `name` are optional.
   "user_id": "uuid",
   "name": "my-workspace",
   "image": null,
-  "default_command": null,
+  "service_command": null,
   "mounts": null,
   "env": null,
   "num_ports": 5,
@@ -1188,7 +1188,7 @@ optional `name` form field.
   "user_id": "uuid",
   "name": "my-workspace",
   "image": null,
-  "default_command": null,
+  "service_command": null,
   "mounts": null,
   "env": null,
   "num_ports": 5,
@@ -1239,7 +1239,7 @@ Clone an existing workspace's configuration into a new workspace.
   "user_id": "uuid",
   "name": "my-workspace",
   "image": null,
-  "default_command": null,
+  "service_command": null,
   "mounts": null,
   "env": null,
   "num_ports": 5,
@@ -1443,7 +1443,7 @@ command, volume mounts, environment variables). All fields optional.
 {
   "name": "renamed",
   "image": "klangk-workspace:latest",
-  "default_command": "/bin/bash",
+  "service_command": "/bin/bash",
   "mounts": ["vol:/data"],
   "env": { "KEY": "VALUE" }
 }

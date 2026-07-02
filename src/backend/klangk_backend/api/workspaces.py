@@ -144,7 +144,7 @@ async def list_shared_workspaces(
 class CreateWorkspaceRequest(BaseModel):
     name: str
     image: str | None = None
-    default_command: str | None = None
+    service_command: str | None = None
     auto_start: bool = False
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
@@ -177,7 +177,7 @@ async def create_workspace(
             user["id"],
             body.name,
             image=body.image,
-            default_command=body.default_command,
+            service_command=body.service_command,
             auto_start=body.auto_start,
             mounts=body.mounts,
             env=body.env,
@@ -197,7 +197,7 @@ async def create_workspace(
     if body.auto_start:
         try:
             await workspaces.eager_start_workspace(
-                ws, run_default_command=False
+                ws, run_service_command=False
             )
         except Exception:
             logger.warning(
@@ -213,7 +213,7 @@ async def create_workspace(
 class UpdateWorkspaceRequest(BaseModel):
     name: str | None = None
     image: str | None = None
-    default_command: str | None = None
+    service_command: str | None = None
     auto_start: bool | None = None
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
@@ -294,7 +294,7 @@ async def duplicate_workspace(
             user["id"],
             body.name,
             image=source.get("image"),
-            default_command=source.get("default_command"),
+            service_command=source.get("service_command"),
             auto_start=source.get("auto_start", False),
             mounts=source.get("mounts"),
             env=source.get("env"),
@@ -593,7 +593,7 @@ def _extract_archive_metadata(archive_path: str, name: str | None) -> dict:
     return {
         "name": ws_name,
         "image": image,
-        "default_command": metadata.get("default_command"),
+        "service_command": metadata.get("service_command"),
         "auto_start": metadata.get("auto_start", False),
         "mounts": mounts,
         "env": env,
@@ -658,7 +658,7 @@ async def import_workspace(
                 user["id"],
                 meta["name"],
                 image=meta["image"],
-                default_command=meta["default_command"],
+                service_command=meta["service_command"],
                 auto_start=meta["auto_start"],
                 mounts=meta["mounts"],
                 env=meta["env"],

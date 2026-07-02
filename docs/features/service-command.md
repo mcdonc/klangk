@@ -1,8 +1,8 @@
 <!-- markdownlint-disable MD013 -->
 
-# Default Command
+# Service Command
 
-A workspace can have a **default command** — a shell command that
+A workspace can have a **service command** — a shell command that
 runs automatically in a dedicated terminal window when the workspace
 is opened. This is useful for workspaces that serve a long-running
 process like a dev server, AI gateway, or any daemon that should be
@@ -10,8 +10,8 @@ running whenever the workspace is in use.
 
 ## How it works
 
-The default command runs as a **per-workspace singleton** — like a
-global service. It starts exactly once, in a dedicated `default-cmd`
+The service command runs as a **per-workspace singleton** — like a
+global service. It starts exactly once, in a dedicated `service-cmd`
 tmux window that lives in the **workspace owner's** terminal session,
 and is **never** re-run for other users who open the workspace.
 
@@ -22,13 +22,13 @@ The command is sent as keystrokes into a bash login shell, so:
 - The terminal scrollback shows the process output
 - The experience is identical to typing the command yourself
 
-If no default command is set, no `default-cmd` window is created.
+If no service command is set, no `service-cmd` window is created.
 
 ### Who can see and control it
 
 Because the command is a shared workspace service:
 
-- The **owner** sees `default-cmd` as one of their own terminal tabs.
+- The **owner** sees `service-cmd` as one of their own terminal tabs.
 - Other users granted a workspace role (**coders** / **collaborators**)
   see it as a **shared terminal** they can open and join.
   [Read-only spectators](terminal.md#shared-terminals) can view it.
@@ -40,24 +40,25 @@ the `code-in-shared-terminals` permission) can stop or restart the
 service via Ctrl+C / up-arrow / Enter — everyone joined sees the same
 output.
 
-## Setting the default command
+## Setting the service command
 
 ### Web UI
 
-Set the default command when creating a workspace, or change it
+Set the service command when creating a workspace, or change it
 later in the workspace **Settings** tab.
 
 ### CLI
 
-```bash
-# Set during creation
-klangkc create my-workspace --default-command 'openclaw gateway'
+`klangkc create` does not expose a flag for the service command — set it
+in the Web UI when creating the workspace, or via [sandbox config](#sandbox-config)
+for `klangkc sandbox`. On an existing workspace, use `klangkc edit`:
 
-# Change later
-klangkc edit my-workspace --default-command 'npm run dev'
+```bash
+# Set or change it
+klangkc edit my-workspace --command 'npm run dev'
 
 # Clear it
-klangkc edit my-workspace --default-command ''
+klangkc edit my-workspace --command ''
 ```
 
 ### Sandbox config
@@ -66,12 +67,12 @@ In `.klangk-sandbox.yaml`:
 
 ```yaml
 workspace:
-  default-command: openclaw gateway
+  service-command: openclaw gateway
 ```
 
 ## When does the command run?
 
-The default command runs when the terminal session is created —
+The service command runs when the terminal session is created —
 typically on the first connection to the workspace after the
 container starts. It does **not** re-run on reconnect; if you
 disconnect and reconnect, you pick up the tmux session exactly
@@ -84,7 +85,7 @@ If the workspace has [auto-start](workspaces.md#auto-start) enabled,
 the container starts when the Klangk server starts and the default
 command begins running immediately — before any user connects. When
 you later run `klangkc shell`, you walk up to the service already
-running in the `default-cmd` tab. Visitors who open the workspace see
+running in the `service-cmd` tab. Visitors who open the workspace see
 it as a shared terminal without any action from the owner.
 
 ## Shell features
@@ -94,7 +95,7 @@ syntax works — pipes, redirects, `&&` chains, subshells, etc.:
 
 ```yaml
 workspace:
-  default-command: openclaw gateway 2>&1 | tee /tmp/gateway.log
+  service-command: openclaw gateway 2>&1 | tee /tmp/gateway.log
 ```
 
 ## Use cases

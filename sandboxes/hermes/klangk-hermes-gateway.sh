@@ -1,12 +1,12 @@
 #!/bin/bash
-# default-command wrapper for the hermes sandbox.
+# service-command wrapper for the hermes sandbox.
 #
 # Refreshes the workspace token into $HERMES_HOME/.env, then execs the
 # foreground gateway. Sandboxes have no on-shell-init hook, so this runs on
 # every container start -- right before the long-running gateway reads the
 # token -- keeping it fresh (the JWT rotates on every container restart).
 #
-# Runs in a login shell (the default-command pane sources ~/.profile), so
+# Runs in a login shell (the service-command pane sources ~/.profile), so
 # `hermes` resolves from ~/.local/bin and HERMES_HOME is set.
 set -euo pipefail
 

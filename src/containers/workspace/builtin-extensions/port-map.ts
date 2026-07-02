@@ -24,7 +24,7 @@ export default function (pi: any) {
     ) {
       // Delegate to the `klangk-hosted-url` shell script — the single source
       // of truth for hosted-URL construction, shared with setup.sh, the
-      // default_command, the health check, and the shell. On success it
+      // service_command, the health check, and the shell. On success it
       // prints the URL to stdout; on error it writes a message to stderr and
       // exits non-zero, which we surface to the agent.
       let text: string;

@@ -68,7 +68,7 @@ placed in `~/work`.
 ```yaml
 workspace:
   image: klangk-workspace
-  default-command: openclaw gateway
+  service-command: openclaw gateway
   auto-start: true
   health-check: /openclaw/bin/healthcheck.sh
 ```
@@ -76,7 +76,7 @@ workspace:
 | Field             | Required | Default              | Description                                                                                                                                 |
 | ----------------- | -------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `image`           | no       | server default image | Container image. Must be in the server's allowed images list.                                                                               |
-| `default-command` | no       | (none)               | Command to run automatically as the agent identity in the Service terminal tab on first connect. See [Default Command](default-command.md). |
+| `service-command` | no       | (none)               | Command to run automatically as the agent identity in the Service terminal tab on first connect. See [Service Command](service-command.md). |
 | `auto-start`      | no       | `false`              | Start the container automatically when the Klangk server starts. See [Auto-start](workspaces.md#auto-start).                                |
 | `health-check`    | no       | (none)               | Shell command polled inside the container to gauge service health (exit 0 = healthy). See [Health Check](health-check.md).                  |
 
@@ -177,7 +177,7 @@ mounts:
   - .env:~/.env:ro
 ```
 
-Then in your `~/.profile` (so the default command — running as the
+Then in your `~/.profile` (so the service command — running as the
 agent — and `klangkc exec` see the variables too; see
 [The Shell](the-shell.md#startup-files)) or setup script:
 
@@ -231,10 +231,10 @@ To forward your SSH agent into the container:
 klangkc shell myworkspace -A
 ```
 
-If the workspace has a `default-command` configured (e.g.
+If the workspace has a `service-command` configured (e.g.
 `openclaw gateway`), that command runs in the workspace's **Service**
 terminal tab — as the agent identity, not in your own shell
-(see [Where the default command runs](#where-the-default-command-runs-and-how-to-install-for-it)
+(see [Where the service command runs](#where-the-service-command-runs-and-how-to-install-for-it)
 above). To get an interactive shell alongside it, connect to a
 named terminal window:
 
@@ -243,7 +243,7 @@ klangkc shell myworkspace dev
 ```
 
 This creates a new terminal window called `dev` where you can
-work interactively while the default command continues running in
+work interactively while the service command continues running in
 the first window.
 
 The copy and setup steps only run during `klangkc sandbox`. On
@@ -272,36 +272,36 @@ install system packages with `apt`, install nix, or modify system
 files, the server administrator must set `KLANGK_ALLOW_SUDO=true`
 in the server's `.env` file.
 
-### Where the default command runs (and how to install for it)
+### Where the service command runs (and how to install for it)
 
-A `default-command` does **not** run in the workspace owner's shell.
+A `service-command` does **not** run in the workspace owner's shell.
 It runs as the workspace's **agent** identity, in a dedicated
 `service` tmux session whose `$HOME` is the agent's home
 (`/home/clanker` by default, exposed as `$KLANGK_AGENT_HOME`) — not
 the owner's. The owner interacts with it through the **Service**
 terminal tab in the web UI.
 
-This matters for setup scripts: anything the default command needs at
+This matters for setup scripts: anything the service command needs at
 runtime — env exports in `~/.profile`, binaries installed under
 `~/.local/bin`, config it reads from `$HOME` — must land in the
 **agent's** home, because that's the home whose `~/.profile` the
 service session sources. If you write to `~/.profile` while `$HOME`
 is still the owner's home (the default when the setup script starts),
-the default command will never see those exports.
+the service command will never see those exports.
 
 The simplest fix is to repoint `HOME` at the agent home at the top of
 your setup script. After that, every home-relative write in the
 script — `~/.profile` appends, `~/.local/bin` links, `~/.pi` config —
-lands in the agent's home, which is exactly where the default command
+lands in the agent's home, which is exactly where the service command
 will look:
 
 ```bash
 #!/bin/bash
 set -euo pipefail
 
-# Run the rest of setup as the agent identity: the default command
+# Run the rest of setup as the agent identity: the service command
 # runs in the agent's service session ($KLANGK_AGENT_HOME), so install
-# everything the default command depends on into THAT home.
+# everything the service command depends on into THAT home.
 export HOME="${KLANGK_AGENT_HOME:-/home/clanker}"
 
 # Now ~/.profile, ~/.local/bin, etc. resolve into the agent's home.
@@ -364,7 +364,7 @@ Klangk ships working sandbox configurations, documented in
 [Available Sandboxes](../sandboxes/index.md):
 
 - **[OpenClaw](../sandboxes/openclaw.md)** — the OpenClaw assistant,
-  pre-configured for the Klangk LLM proxy, with a `default-command` gateway
+  pre-configured for the Klangk LLM proxy, with a `service-command` gateway
   and a `health-check`.
 - **[Hermes](../sandboxes/hermes.md)** — the NousResearch Hermes Agent,
   installed per-workspace and routed through the Klangk LLM proxy. Hermes was
@@ -382,7 +382,7 @@ sandbox:
   setup: setup.sh
 
 workspace:
-  default-command: openclaw gateway
+  service-command: openclaw gateway
   health-check: /openclaw/bin/healthcheck.sh
 
 copy:
@@ -407,10 +407,10 @@ And a setup script:
 # setup.sh
 set -euo pipefail
 
-# Run the rest of setup as the agent identity: the default command
+# Run the rest of setup as the agent identity: the service command
 # runs in the agent's service session ($KLANGK_AGENT_HOME), so install
 # everything it depends on into THAT home. See
-# "Where the default command runs" in sandbox.md.
+# "Where the service command runs" in sandbox.md.
 export HOME="${KLANGK_AGENT_HOME:-/home/clanker}"
 
 # Install nix (single-user, no daemon needed in containers).
@@ -426,7 +426,7 @@ mkdir -p ~/.config/nix
 grep -q experimental-features ~/.config/nix/nix.conf 2>/dev/null \
   || echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
 
-# Source nix in every login shell of the agent -- the default command
+# Source nix in every login shell of the agent -- the service command
 # (running in the service session) sources the agent's ~/.profile.
 # Writing this to ~/.bashrc instead would hide it from non-interactive
 # login shells (its interactivity guard returns early). (The health

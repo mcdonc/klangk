@@ -34,7 +34,7 @@ HERMES_VERSION=v2026.6.19
 
 # --- Persist env exports to ~/.profile UP FRONT, before the slow install. ---
 # Why ~/.profile: it's the POSIX file sourced by login shells -- here,
-# the agent's `service` tmux session that runs the default command (HOME
+# the agent's `service` tmux session that runs the service command (HOME
 # was repointed above to the agent's home). That session needs
 # HERMES_HOME + the hermes bin on PATH to launch the gateway. ~/.bashrc
 # has an interactivity guard that hides its body from non-interactive
@@ -110,7 +110,7 @@ EOF
 
   # .env -- refresh OPENAI_BASE_URL + OPENAI_API_KEY without clobbering
   # other keys a user may add later. This is the initial value for the
-  # current container; the gateway wrapper (default-command) refreshes the
+  # current container; the gateway wrapper (service-command) refreshes the
   # token before every gateway start, since the JWT rotates on restart.
   env_file="$INSTALL_DIR/.env"
   touch "$env_file"
@@ -121,7 +121,7 @@ OPENAI_API_KEY=${token}
 EOF
 fi
 
-# --- Install the gateway wrapper (default-command) + the health-check
+# --- Install the gateway wrapper (service-command) + the health-check
 # script. Both are copied (not bind-used) so they land on the /hermes
 # mount at stable absolute paths. The health-check wrapper is invoked
 # by the host monitor via `bash -c` (NON-login), so it must not depend
@@ -139,4 +139,4 @@ echo ""
 echo "hermes: $(hermes --version 2>&1 | head -1)"
 echo ""
 echo "Setup complete."
-echo "The gateway starts automatically via default-command (klangk-hermes-gateway)."
+echo "The gateway starts automatically via service-command (klangk-hermes-gateway)."

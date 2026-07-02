@@ -47,7 +47,7 @@ Finder _dialogCmdField() => find.descendant(
       matching: find.byWidgetPredicate(
         (w) =>
             w is TextField &&
-            w.decoration?.labelText == 'Default Shell Command',
+            w.decoration?.labelText == 'Service Shell Command',
       ),
     );
 
@@ -1491,7 +1491,7 @@ void main() {
       expect(body['image'], 'klangk-custom');
     });
 
-    testWidgets('create dialog sends default_command when provided',
+    testWidgets('create dialog sends service_command when provided',
         (tester) async {
       String? postedBody;
       testAuthHttpClientOverride = withPermissions((request) async {
@@ -1530,7 +1530,7 @@ void main() {
       expect(postedBody, isNotNull);
       final body = jsonDecode(postedBody!) as Map<String, dynamic>;
       expect(body['name'], 'CmdWS');
-      expect(body['default_command'], 'klangk-pi');
+      expect(body['service_command'], 'klangk-pi');
     });
 
     testWidgets('create dialog submit via command field onSubmitted',

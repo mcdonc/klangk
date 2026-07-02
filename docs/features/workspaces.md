@@ -13,14 +13,14 @@ optionally configure:
 
 - **Image** — the container image to use (defaults to
   `klangk-workspace`)
-- **Default command** — a command to run when you open the terminal
+- **Service command** — a command to run when you open the terminal
   (e.g., `pi` to start the AI agent automatically). If unset, the
   terminal starts a tmux session with a login shell. See
-  [Default Command](default-command.md).
+  [Service Command](service-command.md).
 - **Auto-start** — start the container automatically when the
   Klangk server starts. Useful for service workspaces that should
   be running before any user connects. If the workspace also has a
-  default command, it will already be running when you connect.
+  service command, it will already be running when you connect.
 - **Health check** — a shell command Klangk polls inside the
   container to verify the service is actually healthy (exit 0 =
   healthy). See [Health Check](health-check.md).
@@ -37,7 +37,7 @@ You can change all of these later from the workspace **Settings** tab.
 Workspaces with **auto-start** enabled start their containers
 automatically when the Klangk server starts. This is useful for
 service workspaces where a long-running process (configured via
-[Default Command](default-command.md)) should be available
+[Service Command](service-command.md)) should be available
 immediately — without waiting for a user to connect.
 
 Auto-start requires the server to have `KLANGK_ALLOW_AUTOSTART`
@@ -53,7 +53,7 @@ klangkc edit my-project --no-auto-start
 ```
 
 When the server starts, it starts containers for all auto-start
-workspaces. If the workspace has a default command, the command
+workspaces. If the workspace has a service command, the command
 is already running by the time any user connects.
 
 ## What's inside a workspace

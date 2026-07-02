@@ -80,7 +80,7 @@ class TestMigration:
                     container_id TEXT,
                     num_ports INTEGER NOT NULL DEFAULT 5,
                     image TEXT,
-                    default_command TEXT,
+                    service_command TEXT,
                     mounts TEXT,
                     env TEXT,
                     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -108,6 +108,72 @@ class TestMigration:
         )
         row = await cursor.fetchone()
         assert row[0] == 0  # default value
+
+    async def test_migrate_workspaces_renames_default_command(
+        self, temp_data_dir
+    ):
+        """init_db renames the legacy default_command column to service_command
+        (#1203), preserving existing data."""
+        db = await aiosqlite.connect(str(model._core.DB_PATH))
+        model._core.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            await db.execute("""
+                CREATE TABLE users (
+                    id TEXT PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT,
+                    verified INTEGER NOT NULL DEFAULT 0,
+                    provider TEXT NOT NULL DEFAULT 'local',
+                    external_id TEXT,
+                    handle TEXT UNIQUE,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            await db.execute(
+                "INSERT INTO users (id, email, password_hash, verified)"
+                " VALUES ('u1', 'owner@example.com', 'hash', 1)"
+            )
+            # Legacy workspaces table using the old default_command column.
+            await db.execute("""
+                CREATE TABLE workspaces (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL REFERENCES users(id),
+                    name TEXT NOT NULL,
+                    container_id TEXT,
+                    num_ports INTEGER NOT NULL DEFAULT 5,
+                    image TEXT,
+                    default_command TEXT,
+                    auto_start INTEGER NOT NULL DEFAULT 0,
+                    setup_state TEXT NOT NULL DEFAULT 'complete',
+                    health_check TEXT,
+                    mounts TEXT,
+                    env TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(user_id, name)
+                )
+            """)
+            await db.execute(
+                "INSERT INTO workspaces (id, user_id, name, default_command)"
+                " VALUES ('ws1', 'u1', 'old-ws', 'echo hello')"
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        await model.init_db()
+
+        # Column was renamed (old gone, new present) and data survived.
+        db = await model.get_db()
+        cursor = await db.execute("PRAGMA table_info(workspaces)")
+        cols = {row[1] for row in await cursor.fetchall()}
+        assert "service_command" in cols
+        assert "default_command" not in cols
+
+        cursor = await db.execute(
+            "SELECT service_command FROM workspaces WHERE id = 'ws1'"
+        )
+        row = await cursor.fetchone()
+        assert row[0] == "echo hello"
 
 
 class TestUsers:
@@ -636,36 +702,36 @@ class TestPortInUse:
             assert model._port_in_use(59124) is True
 
 
-class TestDefaultCommand:
-    async def test_create_with_default_command(self, user):
+class TestServiceCommand:
+    async def test_create_with_service_command(self, user):
         ws = await model.create_workspace(
-            user["id"], "cmd-ws", default_command="pi"
+            user["id"], "cmd-ws", service_command="pi"
         )
-        assert ws["default_command"] == "pi"
+        assert ws["service_command"] == "pi"
         fetched = await model.get_workspace(ws["id"], user["id"])
-        assert fetched["default_command"] == "pi"
+        assert fetched["service_command"] == "pi"
 
-    async def test_update_default_command(self, workspace, user):
+    async def test_update_service_command(self, workspace, user):
         updated = await model.update_workspace(
-            workspace["id"], user["id"], default_command="pi"
+            workspace["id"], user["id"], service_command="pi"
         )
         assert updated is True
         ws = await model.get_workspace(workspace["id"], user["id"])
-        assert ws["default_command"] == "pi"
+        assert ws["service_command"] == "pi"
 
-    async def test_clear_default_command(self, workspace, user):
+    async def test_clear_service_command(self, workspace, user):
         await model.update_workspace(
-            workspace["id"], user["id"], default_command="pi"
+            workspace["id"], user["id"], service_command="pi"
         )
         await model.update_workspace(
-            workspace["id"], user["id"], default_command=None
+            workspace["id"], user["id"], service_command=None
         )
         ws = await model.get_workspace(workspace["id"], user["id"])
-        assert ws["default_command"] is None
+        assert ws["service_command"] is None
 
     async def test_update_nonexistent_workspace(self, user):
         updated = await model.update_workspace(
-            "nonexistent", user["id"], default_command="pi"
+            "nonexistent", user["id"], service_command="pi"
         )
         assert updated is False
 
@@ -674,11 +740,11 @@ class TestDefaultCommand:
             workspace["id"],
             user["id"],
             name="renamed",
-            default_command="pi",
+            service_command="pi",
         )
         ws = await model.get_workspace(workspace["id"], user["id"])
         assert ws["name"] == "renamed"
-        assert ws["default_command"] == "pi"
+        assert ws["service_command"] == "pi"
 
     async def test_create_with_mounts(self, user):
         mounts = ["/home/me/project:/work/project"]
@@ -714,14 +780,14 @@ class TestDefaultCommand:
         result = await model.update_workspace(workspace["id"], user["id"])
         assert result is False
 
-    async def test_list_includes_default_command(self, user):
+    async def test_list_includes_service_command(self, user):
         await model.create_workspace(
-            user["id"], "cmd-ws", default_command="pi"
+            user["id"], "cmd-ws", service_command="pi"
         )
         result = await model.list_workspaces(user["id"])
         match = [w for w in result["items"] if w["name"] == "cmd-ws"]
         assert len(match) == 1
-        assert match[0]["default_command"] == "pi"
+        assert match[0]["service_command"] == "pi"
 
 
 class TestContainerTracking:
