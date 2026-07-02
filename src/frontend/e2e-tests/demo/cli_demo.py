@@ -321,6 +321,11 @@ def scene_2(t: Term) -> None:
     # Hold between commands so the voiceover has room to breathe.
     HOLD = float(os.environ.get("KLANGK_DEMO_HOLD", "5"))
 
+    # --- opening hold: let the clean host prompt sit for 5s before typing ---
+    # Establishes the context (a quiet local terminal) before the action.
+    t.expect("host $")
+    t.pause(5)
+
     # --- login --------------------------------------------------------
     # No narration is printed — the voiceover covers it. klangkc login prompts
     # for a password (masked, no echo).
