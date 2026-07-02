@@ -35,6 +35,10 @@ const firefoxUse = {
 
 const webkitUse = {
   browserName: "webkit" as const,
+  launchOptions: {
+    executablePath:
+      process.env.WEBKIT_PATH || `${BROWSERS}/webkit-2287/pw_run.sh`,
+  },
 };
 
 // Test projects:
