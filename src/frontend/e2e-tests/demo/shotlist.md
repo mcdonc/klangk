@@ -170,41 +170,54 @@ klangkc rm openclaw        # only if you want a truly fresh sandbox/service scen
 ### Scene 3 — klangkc sandbox: one command, dev env to always-on service (~3 min)
 
 > The showcase scene. Demo the sandbox concept AND the service features
-> (service-command, auto-start, health) in one continuous flow via the
-> **openclaw** sandbox (visual: hosted app URL).
+> (service-command, auto-start, health) in one continuous, **CLI-only** flow
+> via the **openclaw** sandbox. The hosted-app payoff is deferred to the
+> browser (Scene 4); here it is a narration-only tease. No browser beats.
 
-- **On screen:** terminal in `sandboxes/openclaw`, then browser, then terminal
-  again for `monitor`.
+- **On screen:** local terminal, at the klangk repo root.
 - **Pre-roll:** openclaw **pre-warmed** (Node install done off-camera);
   `KLANGK_ALLOW_AUTOSTART=1` on; `jq` installed; LLM proxy working (so the
-  gateway comes up healthy, not red).
-- **Action:**
-  1. `cd sandboxes/openclaw && cat .klangk-sandbox.yaml` — narrate the config:
-     mounts the project at a fixed path and runs a setup script. Then
-     point at the 3 service lines: `service-command`, `auto-start: true`,
+  gateway comes up healthy, not red). Confirm `klangkc ls` shows a **Status**
+  column before recording (it must, post-#1207).
+- **Action (all CLI — no browser):**
+  1. `cat sandboxes/openclaw/.klangk-sandbox.yaml` — narrate the config: mounts
+     the project at a fixed path and runs a setup script. Then point at the 3
+     service lines under `workspace:`: `service-command`, `auto-start: true`,
      `health-check`.
-  2. `klangkc sandbox openclaw` (fast if pre-warmed; gateway auto-starts in the
-     **Service** tab — that's service-command at work)
-  3. `klangkc shell openclaw` — connect, show the project mounted inside
-  4. narrate the sandbox idea: commit the config → any teammate/clone gets the
-     same env (Dockerfile for your dev environment, lifecycle managed for you)
-  5. browser → open the **openclaw** workspace → **Service** tab → gateway process + startup log visible
-  6. narrate singleton semantics: Ctrl+C stops, up-arrow+Enter restarts, shared
-     with everyone who has access
-  7. **auto-start:** in the host terminal run `devenv processes restart backend`;
-     then browser → refresh the workspace list → openclaw's container is already
-     up; open its Service tab → the gateway is running _before anyone connects_
-  8. **health check:** browser → workspace list → hover openclaw's green status
-     dot ("healthy"); narrate "exit 0 = healthy, else unhealthy, and you see
-     _why_ (stderr tail)"
-  9. terminal: `klangkc monitor --type service_health | jq .` — show live events;
-     mention the `-- sh -c '...'` form fires a command (e.g. Slack alert) on change
-  10. browser → openclaw workspace → **Service** tab → click the "Open hosted
-      app" button → land in openclaw's own web UI
+  2. `klangkc sandbox openclaw sandboxes/openclaw` — creates the workspace,
+     mounts everything, runs setup, starts the container (fast if pre-warmed).
+     The gateway auto-starts in its service session — that is service-command at
+     work; no browser needed to prove it.
+  3. `klangkc shell openclaw` — connect, show the project mounted inside; then
+     disconnect with **Enter ~ .**
+  4. narrate the sandbox idea: commit the config → any teammate or future-you
+     runs the same command and gets the exact same env (a Dockerfile for your
+     dev environment, lifecycle managed for you).
+  5. narrate the service-command concept: a per-workspace singleton — it runs
+     once in its own session and is shared with everyone who has access.
+     (Scroll back to the three `workspace:` lines while you say this.)
+  6. `klangkc ls` — the **Status** column shows `openclaw` as **healthy**
+     (green). Narrate: the service command is running and its health check is
+     passing — everything the CLI knows about the workspace, right here.
+  7. **auto-start:** in the host terminal run `devenv processes restart backend`,
+     then `klangkc ls` again — `openclaw`'s Status goes `starting` → `healthy`
+     without anyone connecting. Narrate: with `KLANGK_ALLOW_AUTOSTART` on, the
+     container and gateway boot on their own after a server restart.
+  8. **health check:** `klangkc monitor --type service_health | jq .` — show
+     live events (a `service_health` frame arrives immediately on connect,
+     thanks to the snapshot-on-connect fix #1210, so you don't wait on a
+     transition). Narrate: exit 0 = healthy, anything else = unhealthy, and you
+     see _why_; **Ctrl+C** to stop. Mention the `-- sh -c '...'` form fires a
+     command (e.g. a Slack alert) on change.
+  9. **hosted-app tease (narration only):** the gateway is also exposed as a
+     hosted app — once we switch to the browser (Scene 4) we can click straight
+     through to openclaw's own web UI, proxied through Klangk's single port.
+     **Do NOT open the browser here.**
 - **Reset:**
-  - Cleanest re-take that avoids the slow install: **keep** the openclaw workspace
-    and `klangkc restart openclaw` (restarts container + gateway). Only
-    `klangkc rm openclaw && klangkc sandbox openclaw` if you need truly fresh.
+  - Cleanest re-take that avoids the slow install: **keep** the openclaw
+    workspace and `klangkc restart openclaw` (restarts container + gateway).
+    Only `klangkc rm openclaw && klangkc sandbox openclaw` if you need truly
+    fresh.
   - The server-restart beat (step 7) is its own clip — restart, trim in edit.
 - **Gotchas:**
   - **Never record the first-run install live** — it downloads nvm + Node + the
@@ -212,10 +225,12 @@ klangkc rm openclaw        # only if you want a truly fresh sandbox/service scen
   - openclaw's gateway binds a port ("contactable by anyone who can reach the
     server"). On `localhost` that's fine; **don't** run this take against a
     public server without auth configured.
-  - If health shows **amber/red**, the LLM proxy or config is off — fix before
-    recording (green icon is the payoff).
+  - If `klangkc ls` shows `unhealthy` / a stuck `starting`, the LLM proxy or
+    config is off — fix before recording (green Status is the payoff).
   - Showing the _unhealthy → why_ path requires breaking the service on camera;
     consider skipping it live (the narration covers it) or pre-recording it.
+  - This scene is **CLI-only** — resist cutting to the browser. The hosted-app
+    click-through lands in Scene 4; here it is just a verbal tease.
 
 ### Scene 4 — Web UI: Workspaces and Terminal (~1 min)
 
@@ -225,23 +240,32 @@ klangkc rm openclaw        # only if you want a truly fresh sandbox/service scen
   health icon) is also in the list, plus the Potemkin workspaces. This scene is
   a **continuation** of the CLI — open `demo`, don't create anything new.
 - **Action:**
-  1. land on the workspace list → **open the `demo` workspace** (the hero;
-     narrate the others are visible too — `openclaw` still healthy)
-  2. show the terminal is the same tmux session from `klangkc shell` — the
+  1. land on the workspace list (narrate: the same workspaces you saw from the
+     CLI — `openclaw` still showing its green health icon, plus `demo` from
+     Sc 2)
+  2. **hosted-app payoff (from the Sc 3 tease):** click the **openclaw**
+     workspace → **Service** tab → click **"Open hosted app"** → land in
+     openclaw's own web UI. Narrate: proxied through Klangk's single port, no
+     separate port to open, no extra auth to wire up. Close/return to the list.
+  3. **open the `demo` workspace** (the hero for the rest of the browser arc)
+  4. show the terminal is the same tmux session from `klangkc shell` — the
      cloned repo / Pi scrollback from Sc 2 are still here (the continuity payoff)
-  3. click `+` next to the terminal tab bar → a new tab opens → double-click
+  5. click `+` next to the terminal tab bar → a new tab opens → double-click
      its name → rename it "scratch"
-  4. narrate the correction: tabs created here **can be connected to from the
+  6. narrate the correction: tabs created here **can be connected to from the
      CLI** with `klangkc shell` — they do NOT auto-"show up" in the CLI; the web
      UI and CLI are two ways into the same sessions
 - **Reset:** none (pure navigation).
 - **Gotchas:**
-  - Open **`demo`**, not openclaw — continuity into Sc 5/5b/6/7 depends on it.
-    (openclaw's Service tab was already showcased in Sc 3; here it's just a list
-    entry with its health icon.)
-  - The Sc 2→4 continuity beat lands hardest if the cloned repo / Pi session are
-    genuinely still in `demo`'s terminal — record Sc 4 right after Sc 2's state
-    is in place.
+  - The hosted-app beat (step 2) opens **openclaw**; the rest of the scene
+    (steps 3–6) opens **`demo`**. Don't confuse the two on camera — openclaw is
+    just the hosted-app payoff, then switch to `demo` for the terminal arc.
+    (openclaw's service/health was already shown via `klangkc ls` + `monitor` in
+    the CLI-only Sc 3; the Service tab here is only for the hosted-app
+    click-through.)
+  - The Sc 2→4 continuity beat lands hardest if the cloned repo / Pi session
+    are genuinely still in `demo`'s terminal — record Sc 4 right after Sc 2's
+    state is in place.
   - Get the CLI-connectivity wording right: **"can be connected to from the
     CLI"**, not "shows up in the CLI".
 
