@@ -23,6 +23,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _service_health_frame(
+    workspace_id: str, healthy: bool, message: str | None
+) -> dict:
+    """Build a ``service_health`` frame.
+
+    Single source of truth for the event shape shared by the transition
+    broadcast (:meth:`WebSocketState.notify_service_health`) and the
+    connect-time snapshot (:meth:`send_service_health_snapshot`).
+    """
+    return {
+        "type": "service_health",
+        "workspace_id": workspace_id,
+        "healthy": healthy,
+        "health_message": message,
+    }
+
+
 class WorkspaceSession:
     """Shared state for a single workspace.
 
@@ -503,12 +520,7 @@ class WebSocketState:
         box -- operators can see *why* it failed without log access
         (#1088).  ``None`` when healthy.
         """
-        message_dict = {
-            "type": "service_health",
-            "workspace_id": workspace_id,
-            "healthy": healthy,
-            "health_message": message,
-        }
+        message_dict = _service_health_frame(workspace_id, healthy, message)
         dead = []
         for sock, conn in self.connections.items():
             if conn.user.get("id") is None:
@@ -520,6 +532,41 @@ class WebSocketState:
         for sock, conn in dead:
             self.connections.pop(sock, None)
             asyncio.create_task(conn.cleanup())
+
+    def send_service_health_snapshot(self, sock: SafeWebSocket) -> None:
+        """Send the current health of every health-checked workspace.
+
+        The ``service_health`` stream is **deltas only**: it fires on a
+        status transition, not every poll, so a steady-state unhealthy
+        workspace is invisible to a consumer that connects after the
+        transition (#1175).  This closes that hole by replaying the
+        current status of every workspace the registry has *already*
+        checked (``health_check`` configured and at least one poll
+        completed) to a single connection right after it registers.
+
+        Mirrors :meth:`notify_service_health`'s fan-out scope (every
+        workspace, consumer filters): server-side scoping is tracked
+        separately (#1175 item 5).  Consumer-side the frame is applied
+        idempotently, so a transition arriving just after the snapshot
+        is harmless.  Workspaces whose container has died are absent
+        from ``registry.states`` and thus skipped (the container-death
+        hole is #1175 item 2).
+        """
+        for cs in list(container.registry.states.values()):
+            if cs.health_check is None or cs.health_status is None:
+                continue
+            try:
+                sock.send_json(
+                    _service_health_frame(
+                        cs.workspace_id,
+                        cs.health_status == "healthy",
+                        cs.health_message,
+                    )
+                )
+            except _WS_ERRORS:
+                # The just-registered socket is already gone; nothing to
+                # snapshot to.  dispatch.py owns cleanup on disconnect.
+                break
 
     def notify_user_workspaces_changed(self, user_id: str) -> None:
         """Send ``workspaces_changed`` to all of a user's connections.
