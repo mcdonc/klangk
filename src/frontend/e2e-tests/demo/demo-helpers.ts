@@ -462,6 +462,24 @@ export async function mouseClick(
   await page.mouse.click(absX, absY);
 }
 
+/** Right-click at (x, y) relative to <flutter-view>. Same animated-glide
+ *  approach as mouseClick, but sends a secondary (right) button press —
+ *  triggers Flutter's onSecondaryTap for context menus (e.g. terminal tab
+ *  rename). */
+export async function mouseClickRight(
+  page: Page,
+  x: number,
+  y: number,
+  { steps = 25, settleMs = 150 }: { steps?: number; settleMs?: number } = {},
+) {
+  const box = await fv(page).boundingBox();
+  const absX = (box?.x ?? 0) + x;
+  const absY = (box?.y ?? 0) + y;
+  await page.mouse.move(absX, absY, { steps });
+  await page.waitForTimeout(settleMs);
+  await page.mouse.click(absX, absY, { button: "right" });
+}
+
 /** Log in via the Flutter login form using coordinate clicks on the canvas.
  *  CRITICAL: do NOT enable Flutter semantics here. Semantics-on interferes
  *  with the terminal xterm widget's FocusNode, so typing into the terminal
@@ -659,11 +677,19 @@ export async function seedDemoFile(
   }
 }
 
-/** Add a new terminal tab by clicking the "+" ("New terminal") button in the
- *  terminal tab strip with the visible mouse cursor. */
+/** Add a new terminal tab by clicking the "+" ("New terminal") button in
+ *  the terminal tab strip with the visible mouse cursor.
+ *
+ *  Layout (at 960×540, Flutter logical): the terminal tab strip is a 32px-tall
+ *  Row below the 40px nav-tab bar, inside the Terminal content pane. Each
+ *  _TerminalTab is 120px wide (SizedBox) + 2px padding = 122px. The "+"
+ *  button sits AFTER the first tab: 4px left margin + 122px (bash tab) +
+ *  ~13px (half the 26px-wide icon button) ≈ 139px → fracX ≈ 0.145.
+ *  Vertically the strip center is at fracY ≈ 0.20 (56px AppBar + 40px nav
+ *  tabs + 4px content padding + 16px half-strip-height ≈ 116px / 540). */
 export const addTerminalTab = (page: Page) => {
   const { width, height } = vp(page);
-  return mouseClick(page, width * 0.05, height * tabFracY(height));
+  return mouseClick(page, width * 0.145, height * 0.2);
 };
 
 /** Wait until the workspace terminal is interactive. Semantics-independent:
