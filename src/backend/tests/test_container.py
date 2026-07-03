@@ -682,6 +682,34 @@ class TestStartContainer:
         assert "KLANGK_HOSTING_PROTO=https" in env
         assert "KLANGK_HOSTING_BASE_PATH=/klangk" in env
 
+    async def test_hosting_env_vars_default_is_bare_localhost(
+        self, workspace, monkeypatch
+    ):
+        """Omitted hosting_* resolves to bare localhost (#1240).
+
+        This is the path ``eager_start_workspace`` takes (autostart /
+        workspace create have no request to derive from). Before the fix
+        the defaults were a bare ``localhost`` with no port anyway, but
+        *bypassed* ``derive_hosting_info`` entirely — so a deployer who set
+        ``KLANGK_HOSTING_HOSTNAME`` saw it ignored on every eager start.
+        Now the choke point resolves it, and no port is synthesized from
+        ``KLANGK_NGINX_PORT`` (the port must live in HOSTING_HOSTNAME).
+        """
+        monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
+        monkeypatch.setenv("KLANGK_NGINX_PORT", "8996")
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+            )
+        env = p.create_container.call_args.kwargs["env"]
+        assert "KLANGK_HOSTING_HOSTNAME=localhost" in env
+        assert "KLANGK_HOSTING_PROTO=http" in env
+        assert "KLANGK_HOSTING_BASE_PATH=" in env
+
     async def test_terminal_banner_default_empty(self, workspace):
         """Default terminal banner is empty, so env var is not passed."""
         with patch_podman() as p:
