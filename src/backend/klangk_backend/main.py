@@ -1,8 +1,10 @@
 """Klangk backend: FastAPI app with HTTP + WebSocket endpoints."""
 
+import asyncio
 import logging
 import os
 import secrets
+import signal
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,6 +16,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import (
+    agent,
     auth,
     container,
     model,
@@ -272,6 +275,83 @@ def remove_pid_file() -> None:
         pass
 
 
+async def _startup() -> None:
+    """Container-side startup (self-healing on re-run).
+
+    Warms podman, adopts/reaps leftover containers, launches the idle
+    and health background loops, and auto-starts workspaces.  Every
+    step is idempotent -- ``init_db`` uses ``CREATE TABLE IF NOT
+    EXISTS``, the loop starters are gated on ``task is None``, and
+    ``auto_start`` re-creates stopped containers -- so re-running this
+    after ``_runtime_shutdown`` is exactly the SIGHUP restart path.
+    """
+    await container.registry.prewarm_podman()
+    await container.registry.adopt_orphaned_containers()
+    container.registry.start_cleanup_loop()
+    container.registry.start_health_loop()
+    n = await workspaces.auto_start_workspaces()
+    if n:  # pragma: no cover
+        logger.info("Auto-started %d workspace(s)", n)
+
+
+async def _runtime_shutdown() -> None:
+    """Stop the runtime, keeping the HTTP listener and DB alive.
+
+    Drops every WebSocket client (code 1012 = "reconnect"), tears down
+    agent subprocesses and in-flight agent runs, then stops all
+    containers and cancels the idle/health loops.  Used by both the
+    normal process-shutdown path and the SIGHUP restart path -- the
+    difference is only whether ``_startup()`` runs again afterwards.
+    """
+    await wshandler.disconnect_all_websockets()
+    await agent.stop_all_sessions()
+    wshandler.clear_agent_mention_state()
+    await container.registry.shutdown()
+
+
+async def _process_shutdown() -> None:
+    """Full process teardown (run once, at the very end)."""
+    remove_pid_file()
+    await model.dispose_engine()
+
+
+# Serializes concurrent SIGHUP-triggered restarts so a second signal
+# arriving mid-restart queues behind the first instead of racing.
+_restart_lock: asyncio.Lock | None = None
+
+
+async def _restart_runtime() -> None:
+    """Graceful runtime restart: stop containers, keep the listener.
+
+    Triggered by SIGHUP.  Closes all WebSocket clients (code 1012),
+    stops containers and background loops, then re-runs container-side
+    startup (prewarm, adopt, loops, auto-start).  The HTTP listener
+    and DB engine stay up throughout -- clients reconnect
+    automatically, and in-flight HTTP requests are never dropped.
+    """
+    global _restart_lock
+    if _restart_lock is None:
+        _restart_lock = asyncio.Lock()
+    async with _restart_lock:
+        logger.info("SIGHUP: restarting runtime (keeping HTTP listener)")
+        await _runtime_shutdown()
+        await _startup()
+        logger.info("SIGHUP: runtime restarted")
+
+
+def _on_sighup() -> None:
+    """Schedule a runtime restart on the running event loop.
+
+    Signal callbacks can't be async, so this just creates a task.  The
+    restart itself is serialized by ``_restart_lock``.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover - no loop during shutdown
+        return
+    loop.create_task(_restart_runtime())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     existing_pid = check_pid_file()
@@ -301,19 +381,22 @@ async def lifespan(app: FastAPI):
     container.registry.set_on_container_status_changed(
         wshandler.state.notify_container_status
     )
-    await container.registry.prewarm_podman()
-    await container.registry.adopt_orphaned_containers()
-    container.registry.start_cleanup_loop()
-    container.registry.start_health_loop()
-    n = await workspaces.auto_start_workspaces()
-    if n:  # pragma: no cover
-        logger.info("Auto-started %d workspace(s)", n)
+    await _startup()
     logger.info("Klangk backend started")
-    yield
-    await container.registry.shutdown()
-    remove_pid_file()
-    await model.dispose_engine()
-    logger.info("Klangk backend stopped")
+
+    # uvicorn only handles SIGINT/SIGTERM, so SIGHUP is ours to claim:
+    # the default disposition would kill the process, but we use it for
+    # an in-place runtime restart that keeps the HTTP listener up
+    # (#1212).
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGHUP, _on_sighup)
+    try:
+        yield
+    finally:
+        loop.remove_signal_handler(signal.SIGHUP)
+        await _runtime_shutdown()
+        await _process_shutdown()
+        logger.info("Klangk backend stopped")
 
 
 app = FastAPI(title="Klangk", lifespan=lifespan)

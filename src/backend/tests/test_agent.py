@@ -15,6 +15,7 @@ from klangk_backend.agent import (
     get_session,
     is_disabled,
     is_running,
+    stop_all_sessions,
     stop_session,
     _agents,
 )
@@ -950,6 +951,24 @@ class TestStopSession:
 
     async def test_stop_nonexistent(self):
         await stop_session("no-such-ws")  # should not raise
+
+
+class TestStopAllSessions:
+    async def test_stops_every_session(self):
+        for ws_id in ("ws-a", "ws-b"):
+            session = await get_session(ws_id)
+            session._proc = AsyncMock()
+            session._proc.returncode = None
+            session._proc.kill = MagicMock()
+            session._proc.wait = AsyncMock()
+
+        assert len(_agents) == 2
+        await stop_all_sessions()
+        assert _agents == {}
+
+    async def test_empty_is_noop(self):
+        await stop_all_sessions()
+        assert _agents == {}
 
 
 class TestIsRunning:

@@ -38,6 +38,8 @@ from klangk_backend.wshandler import (
     TerminalController,
     WorkspaceSession,
     state,
+    clear_agent_mention_state,
+    disconnect_all_websockets,
     send_error,
     handle_websocket,
     reset_workspace_state,
@@ -273,6 +275,83 @@ class TestSafeWebSocket:
         await sw.stop_sender()
         with pytest.raises(SlowClientError):
             sw.send_json({"type": "late"})
+
+
+# --- disconnect_all (SIGHUP runtime restart) ---
+
+
+class TestDisconnectAll:
+    async def test_clears_connections_sessions_and_sockets(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        state.connections[sock] = conn
+        state.get_or_create_session("ws-disc")
+        # A pending presence-leave task to confirm it gets cancelled.
+        leave_task = asyncio.create_task(asyncio.sleep(100))
+        state._pending_leaves[("ws-disc", "u1")] = leave_task
+        # A pending browser-delegate request with an unresolved future.
+        br_future = asyncio.get_running_loop().create_future()
+        state.pending_browser_requests["req-1"] = (br_future, sock)
+        # A streaming browser request.
+        stream_q = asyncio.Queue()
+        state.streaming_browser_requests["req-2"] = (stream_q, sock)
+
+        await state.disconnect_all()
+
+        assert state.connections == {}
+        assert state.sessions == {}
+        assert state._pending_leaves == {}
+        assert state.pending_browser_requests == {}
+        assert state.streaming_browser_requests == {}
+        # Leave task was cancelled; await it so the cancellation completes.
+        with pytest.raises(asyncio.CancelledError):
+            await leave_task
+        assert leave_task.cancelled()
+        assert br_future.cancelled()
+        sock.close.assert_awaited_once_with(code=1012)
+
+    async def test_swallows_close_errors(self):
+        bad_sock = _mock_sock()
+        bad_sock.close = AsyncMock(side_effect=RuntimeError("boom"))
+        state.connections[bad_sock] = _base_conn(ws=bad_sock)
+
+        # Must not raise even though close() blows up.
+        await state.disconnect_all()
+
+        assert state.connections == {}
+
+    async def test_empty_is_noop(self):
+        await state.disconnect_all()
+        assert state.connections == {}
+        assert state.sessions == {}
+
+    async def test_disconnect_all_websockets_wrapper(self):
+        """The package-level wrapper delegates to state.disconnect_all."""
+        sock = _mock_sock()
+        state.connections[sock] = _base_conn(ws=sock)
+        await disconnect_all_websockets()
+        assert state.connections == {}
+        sock.close.assert_awaited_once_with(code=1012)
+
+
+class TestClearAgentMentionState:
+    async def test_cancels_tasks_and_clears_conversations(self):
+        task = asyncio.create_task(asyncio.sleep(100))
+        _ws_constants._agent_tasks["ws-m"] = task
+        _ws_constants._agent_conversations["ws-m"] = {"user_id": "u1"}
+
+        clear_agent_mention_state()
+
+        assert _ws_constants._agent_tasks == {}
+        assert _ws_constants._agent_conversations == {}
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert task.cancelled()
+
+    def test_empty_is_noop(self):
+        clear_agent_mention_state()
+        assert _ws_constants._agent_tasks == {}
+        assert _ws_constants._agent_conversations == {}
 
 
 # --- send_error ---
