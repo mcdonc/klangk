@@ -338,6 +338,16 @@ async def ensure_service_session(
                 user=CONTAINER_USER,
                 timeout=5,
             )
+            # The service command just fired -- reset the health-check
+            # startup-grace anchor so the monitor gives the service time
+            # to boot before a failing poll can flag it unhealthy (e.g.
+            # a gateway that isn't accepting connections yet).  Set only
+            # on a successful send-keys; the except path below never
+            # launched the command, so it must not start the grace
+            # window.  Lazy import breaks the container<->terminal cycle.
+            from . import container as _container  # noqa: allow-deferred-import
+
+            _container.registry.mark_service_started(container_id)
         except Exception:
             logger.warning(
                 "Failed to send service command to %s", SERVICE_SESSION
