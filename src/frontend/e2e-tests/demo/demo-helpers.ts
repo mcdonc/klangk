@@ -391,6 +391,24 @@ export async function ensureSharedWorkspace(
   );
 }
 
+/** Fetch a workspace's status (running state, health, allocated host ports).
+ *  Used by Scene 4 to discover the host port for a hosted app (container port
+ *  8000 maps to status.ports[0]). */
+export async function getWorkspaceStatus(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  workspaceId: string,
+) {
+  const resp = await request.get(
+    `${DEMO_URL}/api/v1/workspaces/${workspaceId}/status`,
+    { headers, timeout: 30_000 },
+  );
+  if (!resp.ok()) {
+    throw new Error(`status ${workspaceId} failed: ${resp.status()}`);
+  }
+  return resp.json();
+}
+
 /** Add a user to a workspace role. role ∈ owners|coders|collaborators|spectators. */
 export async function addRole(
   request: APIRequestContext,
