@@ -461,7 +461,7 @@ def members(
         _err.print(f"[red]No workspace named[/red] '{workspace}'")
         raise typer.Exit(code=1) from None
     resp = client.get(f"/api/v1/workspaces/{ws.id}/roles")
-    client._check_auth(resp)
+    client.check_auth(resp)
     resp.raise_for_status()
     roles = resp.json()
     any_members = False
@@ -1938,7 +1938,7 @@ def invite(
     require_auth()
     client = _client()
     resp = client.post("/api/v1/admin/invitations", json={"email": email})
-    client._check_auth(resp)
+    client.check_auth(resp)
     if resp.status_code in (400, 403):
         detail = resp.json().get("detail", resp.text)
         _err.print(f"[red]{detail}[/red]")
@@ -1953,7 +1953,7 @@ def list_invitations() -> None:
     require_auth()
     client = _client()
     resp = client.get("/api/v1/admin/invitations?page_size=200")
-    client._check_auth(resp)
+    client.check_auth(resp)
     resp.raise_for_status()
     data = resp.json().get("invitations", [])
     if not data:
@@ -1983,7 +1983,7 @@ def volumes_list(
     require_auth()
     client = _client()
     resp = client.get("/api/v1/volumes")
-    client._check_auth(resp)
+    client.check_auth(resp)
     resp.raise_for_status()
     volumes = resp.json()
     if not volumes:
@@ -2010,7 +2010,7 @@ def volumes_create(
     require_auth()
     client = _client()
     resp = client.post("/api/v1/volumes", json={"name": name})
-    client._check_auth(resp)
+    client.check_auth(resp)
     if resp.status_code == 409:
         _err.print(f"[red]Volume already exists:[/red] {name}")
         raise typer.Exit(code=1)
@@ -2026,7 +2026,7 @@ def volumes_rm(
     require_auth()
     client = _client()
     resp = client.delete(f"/api/v1/volumes/{name}")
-    client._check_auth(resp)
+    client.check_auth(resp)
     if resp.status_code == 403:
         _err.print(f"[red]Permission denied:[/red] {name}")
         raise typer.Exit(code=1)

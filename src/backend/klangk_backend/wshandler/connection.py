@@ -65,7 +65,7 @@ class Connection:
         self.workspace: dict | None = None
         self._idle_cb = None
         self.pending_status_msg: str | None = None
-        self._browser_id: str | None = None
+        self.browser_id: str | None = None
         self._user_home: str | None = None
         self._service_command: str | None = None
         self._home_created: bool = False
@@ -76,7 +76,7 @@ class Connection:
         # Shared-terminal state is owned by the
         # SharedTerminalController collaborator; Connection delegates
         # the share/unshare/join/list/create/delete commands to it.
-        # The ``_viewing_shared`` property below proxies to the
+        # The ``viewing_shared`` property below proxies to the
         # controller for backwards compatibility with code (and tests)
         # that read/write that field directly.
         self.shared = SharedTerminalController(self)
@@ -204,16 +204,16 @@ class Connection:
     async def handle_terminal_list_windows(self) -> None:
         await self.terminal.list_windows()
 
-    def _tmux_session_name(self) -> str:
+    def tmux_session_name(self) -> str:
         return self.terminal.tmux_session_name()
 
-    def _sync_terminal_windows(self, windows: list[dict]) -> None:
+    def sync_terminal_windows(self, windows: list[dict]) -> None:
         self.terminal.sync_terminal_windows(windows)
 
     def _notify_user_terminal_windows(self, windows: list[dict]) -> None:
         self.terminal.notify_user_terminal_windows(windows)
 
-    async def _activate_session(
+    async def activate_session(
         self, session: TerminalSession, cols: int, rows: int
     ) -> bool:
         return await self.terminal.activate_session(session, cols, rows)
@@ -588,7 +588,7 @@ class Connection:
         except Exception as e:
             logger.warning("Error stopping container: %s", e)
 
-        await container.registry._notify_workspace_killed(workspace_id)
+        await container.registry.notify_workspace_killed(workspace_id)
 
         # Stop the Pi RPC subprocess now that its container is gone.
         await agent.stop_session(workspace_id)
@@ -623,11 +623,11 @@ class Connection:
     # --- Shared terminals (delegates to SharedTerminalController) ---
 
     @property
-    def _viewing_shared(self):
+    def viewing_shared(self):
         return self.shared.viewing_shared
 
-    @_viewing_shared.setter
-    def _viewing_shared(self, value):
+    @viewing_shared.setter
+    def viewing_shared(self, value):
         self.shared.viewing_shared = value
 
     def _find_window(
@@ -659,7 +659,7 @@ class Connection:
     async def handle_list_shared_terminals(self) -> None:
         await self.shared.list_shared_terminals()
 
-    def _broadcast_shared_terminals(self, ws_session) -> None:
+    def broadcast_shared_terminals(self, ws_session) -> None:
         self.shared.broadcast_shared_terminals(ws_session)
 
     def _save_state_snapshot(self, ws_session) -> None:
@@ -807,7 +807,7 @@ class Connection:
         """Start the Pi RPC agent so it shows in presence."""
         try:
             session = await agent.get_session(self.workspace_id)
-            await session._ensure_started()
+            await session.ensure_started()
             # Broadcast updated presence now that agent is alive
             if self.workspace_id:
                 ws_session = state.get_session(self.workspace_id)
@@ -889,7 +889,7 @@ class Connection:
 
         # Revoke per-connection browser registrations
         container.registry.revoke_browser(self.sock)
-        self._browser_id = None
+        self.browser_id = None
 
         await self.stop_terminal()
         await self.stop_exec()

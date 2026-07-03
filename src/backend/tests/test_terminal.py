@@ -166,7 +166,7 @@ class TestStart:
         argv = fake.argv
         assert argv[-2:] == ["bash", "-l"]
         assert "tmux" not in argv
-        assert s._tmux_session_name is None
+        assert s.tmux_session_name is None
         await s.stop()
 
     async def test_start_unsets_sensitive_env_vars(self, monkeypatch):
@@ -509,7 +509,7 @@ class TestStop:
             await s.start()
         # Manually set tmux session name (normally set by build_shell_command
         # when join_session is used with a socket path)
-        s._tmux_session_name = "uid-abc123"
+        s.tmux_session_name = "uid-abc123"
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
@@ -530,7 +530,7 @@ class TestStop:
                 "cid", session_name="uid", socket_path="/tmp/s.sock"
             )
             await s.start()
-        s._tmux_session_name = "uid-abc123"
+        s.tmux_session_name = "uid-abc123"
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,

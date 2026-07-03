@@ -96,7 +96,7 @@ class TestAgentDisabled:
         session = _make_session("ws-disabled")
         with patch("asyncio.create_subprocess_exec") as mock_spawn:
             with pytest.raises(AgentError, match="disabled"):
-                await session._ensure_started()
+                await session.ensure_started()
             mock_spawn.assert_not_called()
 
     async def test_send_prompt_raises_when_disabled(self, monkeypatch):
@@ -555,7 +555,7 @@ class TestAgentSession:
         session = _make_session("ws-reset")
         # Two prior restarts: one more death (without a recovery) would
         # brick the agent. _gave_up stays False — once it's True,
-        # _ensure_started raises before a prompt can ever run.
+        # ensure_started raises before a prompt can ever run.
         session._restart_attempts = 2
 
         await self._run_successful_prompt(session)
@@ -595,12 +595,12 @@ class TestAgentSession:
                 return_value={"id": "m1", "message": "msg"},
             ),
             patch(
-                "klangk_backend.agent._get_workspace_session",
+                "klangk_backend.agent.get_workspace_session",
                 return_value=MagicMock(),
             ),
             patch.object(
                 session,
-                "_ensure_started",
+                "ensure_started",
                 new_callable=AsyncMock,
             ) as mock_start,
             patch(
@@ -1014,10 +1014,10 @@ class TestAnyRunning:
 
 
 class TestSpawnSerialization:
-    """``_ensure_started``'s check-then-spawn must be atomic (#1189).
+    """``ensure_started``'s check-then-spawn must be atomic (#1189).
 
     ``_monitor_process`` (auto-restart) and ``send_prompt`` (lazy start)
-    call ``_ensure_started`` concurrently on the same singleton session
+    call ``ensure_started`` concurrently on the same singleton session
     while ``self._proc`` is None.  ``_ensure_home`` does slow podman work
     between the live-process check and the spawn, so without the spawn
     lock both callers observe None and each spawn a ``pi --mode rpc``
@@ -1056,8 +1056,8 @@ class TestSpawnSerialization:
             patch("asyncio.create_task", new=MagicMock()),
         ):
             proc_a, proc_b = await asyncio.gather(
-                session._ensure_started(),
-                session._ensure_started(),
+                session.ensure_started(),
+                session.ensure_started(),
             )
 
         assert len(spawns) == 1, f"expected one spawn, got {len(spawns)}"
@@ -1083,7 +1083,7 @@ class TestMonitorProcess:
                 new_callable=AsyncMock,
             ) as mock_chat,
             patch(
-                "klangk_backend.agent._get_workspace_session"
+                "klangk_backend.agent.get_workspace_session"
             ) as mock_get_session,
         ):
             mock_session = MagicMock()
@@ -1150,12 +1150,12 @@ class TestMonitorProcess:
                 return_value={"id": "m1", "message": "msg"},
             ),
             patch(
-                "klangk_backend.agent._get_workspace_session",
+                "klangk_backend.agent.get_workspace_session",
                 return_value=MagicMock(),
             ),
             patch.object(
                 session,
-                "_ensure_started",
+                "ensure_started",
                 new_callable=AsyncMock,
             ) as mock_start,
             patch(
@@ -1189,12 +1189,12 @@ class TestMonitorProcess:
                 return_value={"id": "m1", "message": "msg"},
             ),
             patch(
-                "klangk_backend.agent._get_workspace_session",
+                "klangk_backend.agent.get_workspace_session",
                 return_value=MagicMock(),
             ),
             patch.object(
                 session,
-                "_ensure_started",
+                "ensure_started",
                 new_callable=AsyncMock,
             ) as mock_start,
         ):
@@ -1209,7 +1209,7 @@ class TestMonitorProcess:
         session._gave_up = True
 
         with pytest.raises(AgentError, match="gave up"):
-            await session._ensure_started()
+            await session.ensure_started()
 
     async def test_gave_up_reset_on_container_change(self):
         session = _make_session("ws-gaveup2")
@@ -1249,7 +1249,7 @@ class TestMonitorProcess:
                 return_value={"id": "m1", "message": "msg"},
             ),
             patch(
-                "klangk_backend.agent._get_workspace_session",
+                "klangk_backend.agent.get_workspace_session",
                 return_value=MagicMock(),
             ),
             caplog.at_level(logging.WARNING, logger="klangk_backend.agent"),
@@ -1283,7 +1283,7 @@ class TestMonitorProcess:
                 return_value={"id": "m1", "message": "msg"},
             ),
             patch(
-                "klangk_backend.agent._get_workspace_session",
+                "klangk_backend.agent.get_workspace_session",
                 return_value=MagicMock(),
             ),
         ):
@@ -1311,12 +1311,12 @@ class TestMonitorProcess:
                 return_value={"id": "m1", "message": "msg"},
             ),
             patch(
-                "klangk_backend.agent._get_workspace_session",
+                "klangk_backend.agent.get_workspace_session",
                 return_value=MagicMock(),
             ),
             patch.object(
                 session,
-                "_ensure_started",
+                "ensure_started",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("startup failed"),
             ),
@@ -1344,7 +1344,7 @@ class TestMonitorProcess:
                 new_callable=AsyncMock,
             ) as mock_chat,
             patch(
-                "klangk_backend.agent._get_workspace_session"
+                "klangk_backend.agent.get_workspace_session"
             ) as mock_get_session,
         ):
             mock_session = MagicMock()
@@ -1394,7 +1394,7 @@ class TestMonitorProcess:
                 return_value={"id": "m1", "message": "msg"},
             ),
             patch(
-                "klangk_backend.agent._get_workspace_session",
+                "klangk_backend.agent.get_workspace_session",
                 return_value=MagicMock(),
             ),
             patch(
@@ -1406,7 +1406,7 @@ class TestMonitorProcess:
             ),
             patch.object(
                 session,
-                "_ensure_started",
+                "ensure_started",
                 new_callable=AsyncMock,
             ) as mock_start,
             caplog.at_level(logging.INFO, logger="klangk_backend.agent"),
@@ -1441,7 +1441,7 @@ class TestMonitorProcess:
                 return_value={"id": "m1", "message": "msg"},
             ),
             patch(
-                "klangk_backend.agent._get_workspace_session",
+                "klangk_backend.agent.get_workspace_session",
                 return_value=MagicMock(),
             ),
             patch(
@@ -1450,7 +1450,7 @@ class TestMonitorProcess:
             ),
             patch.object(
                 session,
-                "_ensure_started",
+                "ensure_started",
                 new_callable=AsyncMock,
             ) as mock_start,
         ):

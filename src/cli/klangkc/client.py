@@ -254,7 +254,7 @@ class KlangkClient:
 
     # --- REST API ---
 
-    def _check_auth(self, resp: httpx.Response) -> None:
+    def check_auth(self, resp: httpx.Response) -> None:
         """Raise AuthError if the server returned 401."""
         if resp.status_code == 401:
             raise AuthError("Session expired — run `klangkc login`")
@@ -282,7 +282,7 @@ class KlangkClient:
     def get_handle(self) -> str:
         """Return the current user's handle via ``GET /auth/me``."""
         resp = self.get("/api/v1/auth/me")
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
         return resp.json()["handle"]
 
@@ -357,7 +357,7 @@ class KlangkClient:
             params["q"] = q
         while True:
             resp = self.get(path, params=params)
-            self._check_auth(resp)
+            self.check_auth(resp)
             self._raise_for_status(resp)
             body = resp.json()
             for w in body["items"]:
@@ -412,7 +412,7 @@ class KlangkClient:
         if health_check:
             body["health_check"] = health_check
         resp = self.post("/api/v1/workspaces", json=body)
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
         w = resp.json()
         return Workspace(
@@ -430,12 +430,12 @@ class KlangkClient:
             f"/api/v1/workspaces/{workspace_id}",
             json={"setup_state": setup_state},
         )
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
 
     def list_images(self) -> dict:
         resp = self.get("/api/v1/images")
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
         return resp.json()
 
@@ -455,13 +455,13 @@ class KlangkClient:
     def delete_workspace(self, name: str) -> None:
         ws = self.resolve_workspace(name)
         resp = self.delete(f"/api/v1/workspaces/{ws.id}")
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
 
     def list_workspace_members(self, name: str) -> list[dict]:
         ws = self.resolve_workspace(name)
         resp = self.get(f"/api/v1/workspaces/{ws.id}/members")
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
         return resp.json()
 
@@ -473,7 +473,7 @@ class KlangkClient:
             f"/api/v1/workspaces/{ws.id}/roles",
             json={"email": email, "role": role},
         )
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
         return resp.json()
 
@@ -483,7 +483,7 @@ class KlangkClient:
             f"/api/v1/workspaces/{ws.id}/roles",
             json={"email": email, "role": None},
         )
-        self._check_auth(resp)
+        self.check_auth(resp)
         if resp.status_code == 404:
             raise WorkspaceNotFoundError(
                 f"User '{email}' is not a member of '{name}'"
@@ -493,7 +493,7 @@ class KlangkClient:
     def restart_workspace(self, name: str) -> None:
         ws = self.resolve_workspace(name)
         resp = self.post(f"/api/v1/workspaces/{ws.id}/restart")
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
 
     def export_workspace(
@@ -513,7 +513,7 @@ class KlangkClient:
             headers=self._headers(),
             timeout=300.0,
         ) as resp:
-            self._check_auth(resp)
+            self.check_auth(resp)
             if not resp.is_success:
                 resp.read()  # consume body so .text is available
                 self._raise_for_status(resp)
@@ -578,7 +578,7 @@ class KlangkClient:
                 params=params,
                 timeout=300.0,
             )
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
         w = resp.json()
         return Workspace(

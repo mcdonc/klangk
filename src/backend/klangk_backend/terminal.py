@@ -703,7 +703,7 @@ async def save_workspace_state(container_id: str, state: dict) -> None:
 
     Delegates to ``klangk-save-workspace-state`` inside the container,
     which atomically writes stdin to the target path via mktemp + rename.
-    Callers should serialize access via WorkspaceSession._save_lock.
+    Callers should serialize access via WorkspaceSession.save_lock.
     """
     data = json.dumps(state, indent=2)
     await podman.exec_container(
@@ -883,7 +883,7 @@ class TerminalSession:
         )
         self._running = False
         self._read_task: asyncio.Task | None = None
-        self._tmux_session_name: str | None = None
+        self.tmux_session_name: str | None = None
 
     async def start(
         self,
@@ -913,7 +913,7 @@ class TerminalSession:
             user_handle=self.user_handle,
             ssh_agent_socket=self.ssh_agent_socket,
         )
-        shell_cmd, self._tmux_session_name = build_shell_command(
+        shell_cmd, self.tmux_session_name = build_shell_command(
             session_name=self.session_name,
             user_home=self.user_home,
             socket_path=self.socket_path,
@@ -1065,9 +1065,9 @@ class TerminalSession:
         # Kill the tmux session inside the container so the client
         # doesn't stay attached after the host-side process is gone.
         # All grouped sessions (own, join, shared) are killed — the
-        # base session persists independently.  _tmux_session_name is
+        # base session persists independently.  tmux_session_name is
         # a unique grouped name for all connection types.
-        if self._tmux_session_name:
+        if self.tmux_session_name:
             try:
                 socket_args = (
                     ["-S", self.socket_path] if self.socket_path else []
@@ -1079,7 +1079,7 @@ class TerminalSession:
                         *socket_args,
                         "kill-session",
                         "-t",
-                        self._tmux_session_name,
+                        self.tmux_session_name,
                     ],
                     user=CONTAINER_USER,
                     timeout=5,
@@ -1087,7 +1087,7 @@ class TerminalSession:
             except Exception:
                 logger.debug(
                     "Failed to kill tmux session %s",
-                    self._tmux_session_name,
+                    self.tmux_session_name,
                     exc_info=True,
                 )
 

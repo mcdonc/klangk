@@ -48,11 +48,11 @@ def get_shared_terminals(ws_session) -> list[dict]:
     viewer_map: dict[tuple[str, str], list[dict]] = {}
     for sock in ws_session.subscribers:
         conn = state.connections.get(sock)
-        if not conn or not conn._viewing_shared:
+        if not conn or not conn.viewing_shared:
             continue
         key = (
-            conn._viewing_shared["user_id"],
-            conn._viewing_shared["window_id"],
+            conn.viewing_shared["user_id"],
+            conn.viewing_shared["window_id"],
         )
         viewer_map.setdefault(key, []).append(
             {"user_id": conn.user["id"], "email": conn.user.get("email", "")}

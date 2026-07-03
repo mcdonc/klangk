@@ -64,7 +64,7 @@ class WorkspaceSession:
         # "offline" the way the owner could be under the old model
         # (#1133). Populated by ``_sync_service_windows``.
         self.agent_handle: str | None = None
-        self._save_lock = asyncio.Lock()
+        self.save_lock = asyncio.Lock()
         # Workspace token renewal tracking.
         self.workspace_token_expiry: datetime | None = None
         self._token_renewal_task: asyncio.Task | None = None
@@ -702,4 +702,4 @@ state = WebSocketState()
 # Wire up the agent broadcast callback so agent.py can broadcast
 # to WebSocket sessions without importing wshandler (breaking the
 # agent ↔ wshandler circular dependency).
-agent._get_workspace_session = state.get_session
+agent.get_workspace_session = state.get_session

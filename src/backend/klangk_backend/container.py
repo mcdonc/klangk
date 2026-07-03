@@ -394,7 +394,7 @@ class IdleMonitor:
                         except Exception as e:
                             logger.error("Idle callback error: %s", e)
                 await self._registry.stop_and_remove_container(cid)
-                await self._registry._notify_workspace_killed(wid)
+                await self._registry.notify_workspace_killed(wid)
 
     def start_cleanup_loop(self) -> None:
         logger.info(
@@ -1280,7 +1280,7 @@ class ContainerRegistry:
         # Drop the per-container service-firing lock (#1188).
         terminal.clear_service_session_lock(container_id)
 
-    async def _notify_workspace_killed(self, workspace_id: str) -> None:
+    async def notify_workspace_killed(self, workspace_id: str) -> None:
         """Call the on_workspace_killed callback, logging any errors."""
         self._notify_status_changed(workspace_id, False)
         if self.on_workspace_killed:
@@ -1299,7 +1299,7 @@ class ContainerRegistry:
         for ws in workspaces:
             if ws["container_id"]:
                 await self.stop_and_remove_container(ws["container_id"])
-                await self._notify_workspace_killed(ws["id"])
+                await self.notify_workspace_killed(ws["id"])
 
     # --- Pre-warm ---
 

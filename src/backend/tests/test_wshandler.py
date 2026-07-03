@@ -816,7 +816,7 @@ class TestHandleTerminalStart:
         )
 
         # browser_id should be registered and stored on the connection
-        assert conn._browser_id == "test-browser-id"
+        assert conn.browser_id == "test-browser-id"
         assert conn.terminal_session is mock_session
         assert conn.terminal_task is not None
         # Should have sent terminal_started ack (followed by terminal_windows)
@@ -825,7 +825,7 @@ class TestHandleTerminalStart:
             for m in sent
         )
 
-        # _sync_terminal_windows should have populated terminal_windows
+        # sync_terminal_windows should have populated terminal_windows
         ws_session = wshandler.state.sessions.get("ws")
         assert ws_session is not None
         assert "uid" in ws_session.terminal_windows
@@ -1250,7 +1250,7 @@ class TestHandleTerminalStart:
                 {"cols": 80, "rows": 24, "browser_id": "bid-1"}
             )
             await asyncio.sleep(0)
-            assert conn._browser_id == "bid-1"
+            assert conn.browser_id == "bid-1"
             assert container.registry.resolve_browser("bid-1") is not None
 
             conn.terminal_task.cancel()
@@ -1264,7 +1264,7 @@ class TestHandleTerminalStart:
                 {"cols": 80, "rows": 24, "browser_id": "bid-1"}
             )
             await asyncio.sleep(0)
-            assert conn._browser_id == "bid-1"
+            assert conn.browser_id == "bid-1"
             assert container.registry.resolve_browser("bid-1") is not None
 
             conn.terminal_task.cancel()
@@ -1283,12 +1283,12 @@ class TestHandleTerminalStart:
         conn.workspace_id = "ws"
 
         container.registry.register_browser("bid-old", "ws", sock)
-        conn._browser_id = "bid-old"
+        conn.browser_id = "bid-old"
 
         with patch.object(_ws_controllers, "attach_browser") as mock_attach:
             await conn.handle_browser_reattach({"browser_id": "bid-new"})
 
-        assert conn._browser_id == "bid-new"
+        assert conn.browser_id == "bid-new"
         assert container.registry.resolve_browser("bid-new") == ("ws", sock)
         assert container.registry.resolve_browser("bid-old") is None
         mock_attach.assert_awaited_once_with("cid", "bid-new")
@@ -1301,12 +1301,12 @@ class TestHandleTerminalStart:
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
         conn.workspace_id = "ws"
-        conn._browser_id = "bid-existing"
+        conn.browser_id = "bid-existing"
 
         with patch.object(_ws_controllers, "attach_browser") as mock_attach:
             await conn.handle_browser_reattach({})
 
-        assert conn._browser_id == "bid-existing"
+        assert conn.browser_id == "bid-existing"
         mock_attach.assert_not_awaited()
 
     async def test_browser_reattach_no_container_is_noop(self):
@@ -1319,7 +1319,7 @@ class TestHandleTerminalStart:
         with patch.object(_ws_controllers, "attach_browser") as mock_attach:
             await conn.handle_browser_reattach({"browser_id": "bid-new"})
 
-        assert conn._browser_id is None
+        assert conn.browser_id is None
         mock_attach.assert_not_awaited()
 
     async def test_passes_service_command(self):
@@ -3132,7 +3132,7 @@ class TestSSHAgentHandlers:
         mock_session = AsyncMock()
         mock_session.start = AsyncMock()
         mock_session.session_name = "uid"
-        mock_session._tmux_session_name = "uid"
+        mock_session.tmux_session_name = "uid"
 
         async def empty_output():
             return
@@ -3939,7 +3939,7 @@ class TestCleanupRevokesBrowser:
 
         # Register a browser ID for this connection
         container.registry.register_browser("bid-revoke", "ws-revoke", sock)
-        conn._browser_id = "bid-revoke"
+        conn.browser_id = "bid-revoke"
 
         container.registry.track_activity("cid-revoke", "ws-revoke")
         session = WorkspaceSession("ws-revoke")
@@ -3949,7 +3949,7 @@ class TestCleanupRevokesBrowser:
         await conn.cleanup()
 
         assert container.registry.resolve_browser("bid-revoke") is None
-        assert conn._browser_id is None
+        assert conn.browser_id is None
 
         container.registry.revoke_workspace_browsers("ws-revoke")
         container.registry.states.pop("ws-revoke", None)
@@ -5459,13 +5459,13 @@ class TestTerminalController:
             workspace_id=workspace_id,
             _user_home=user_home,
             _ssh_agent_socket=None,
-            _browser_id=None,
-            _viewing_shared=None,
+            browser_id=None,
+            viewing_shared=None,
             _service_command=None,
             user=user,
             workspace=None,
             _has_perm=AsyncMock(return_value=has_perm),
-            _broadcast_shared_terminals=MagicMock(),
+            broadcast_shared_terminals=MagicMock(),
             _save_state_snapshot=MagicMock(),
         )
         return TerminalController(conn), sock, conn
@@ -5666,29 +5666,29 @@ class TestTerminalController:
         session.stop.assert_awaited_once()
 
     async def test_stop_cancels_task_and_clears_viewing(self):
-        """stop() clears the connection's _viewing_shared and resets debounce."""
+        """stop() clears the connection's viewing_shared and resets debounce."""
         ctrl, _, conn = self._controller()
         session = AsyncMock()
         ctrl.session = session
         ctrl.task = asyncio.create_task(asyncio.sleep(999))
-        conn._viewing_shared = {"user_id": "x", "window_id": "@0"}
+        conn.viewing_shared = {"user_id": "x", "window_id": "@0"}
         conn._last_terminal_start = 12345.0
         await ctrl.stop()
         assert ctrl.task is None
         assert ctrl.session is None
-        assert conn._viewing_shared is None
+        assert conn.viewing_shared is None
         assert conn._last_terminal_start == 0
 
     async def test_stop_broadcasts_when_was_viewing(self):
         ctrl, _, conn = self._controller()
         session = AsyncMock()
         ctrl.session = session
-        conn._viewing_shared = {"user_id": "x", "window_id": "@0"}
+        conn.viewing_shared = {"user_id": "x", "window_id": "@0"}
         with patch("klangk_backend.wshandler.state.get_session") as gs:
             ws_session = MagicMock()
             gs.return_value = ws_session
             await ctrl.stop()
-        conn._broadcast_shared_terminals.assert_called_once_with(ws_session)
+        conn.broadcast_shared_terminals.assert_called_once_with(ws_session)
 
     async def test_activate_session_superseded_returns_false(self):
         """If terminal_session changed, activate_session stops the stale one."""
@@ -5835,7 +5835,7 @@ class TestTerminalController:
     async def test_select_window_uses_grouped_session_name(self):
         ctrl, _, _ = self._controller()
         session = MagicMock()
-        session._tmux_session_name = "grouped"
+        session.tmux_session_name = "grouped"
         ctrl.session = session
         with patch("klangk_backend.terminal.select_window") as sel:
             await ctrl.select_window({"window_id": "@2"})
@@ -5844,7 +5844,7 @@ class TestTerminalController:
     async def test_select_window_falls_back_to_tmux_session_name(self):
         ctrl, _, _ = self._controller()
         session = MagicMock()
-        session._tmux_session_name = None
+        session.tmux_session_name = None
         ctrl.session = session
         with patch("klangk_backend.terminal.select_window") as sel:
             await ctrl.select_window({"index": 1})
@@ -6097,12 +6097,12 @@ class TestTerminalController:
     async def test_browser_reattach_no_browser_id(self):
         ctrl, _, _ = self._controller()
         await ctrl.browser_reattach({})
-        # No registration, no _browser_id set.
+        # No registration, no browser_id set.
 
     async def test_browser_reattach_no_container(self):
         ctrl, _, conn = self._controller(container_id=None)
         await ctrl.browser_reattach({"browser_id": "bid"})
-        assert conn._browser_id is None
+        assert conn.browser_id is None
 
     async def test_browser_reattach_registers_and_attaches(self):
         ctrl, _, conn = self._controller()
@@ -6118,7 +6118,7 @@ class TestTerminalController:
         rev.assert_called_once_with(conn.sock)
         reg.assert_called_once_with("bid", "ws-1", conn.sock)
         attach.assert_awaited_once_with("cid", "bid")
-        assert conn._browser_id == "bid"
+        assert conn.browser_id == "bid"
 
     # --- tmux_session_name ---
 
@@ -6140,7 +6140,7 @@ class TestTerminalController:
         conn = _base_conn()
         windows = [{"id": "@0", "name": "bash"}]
         with patch.object(conn.terminal, "sync_terminal_windows") as m:
-            conn._sync_terminal_windows(windows)
+            conn.sync_terminal_windows(windows)
         m.assert_called_once_with(windows)
 
     async def test_connection_tmux_session_name_delegate(self):
@@ -6148,7 +6148,7 @@ class TestTerminalController:
         with patch.object(
             conn.terminal, "tmux_session_name", return_value="uid"
         ) as m:
-            assert conn._tmux_session_name() == "uid"
+            assert conn.tmux_session_name() == "uid"
         m.assert_called_once_with()
 
     async def test_connection_activate_session_delegate(self):
@@ -6157,7 +6157,7 @@ class TestTerminalController:
         with patch.object(
             conn.terminal, "activate_session", new=AsyncMock(return_value=True)
         ) as m:
-            result = await conn._activate_session(session, 80, 24)
+            result = await conn.activate_session(session, 80, 24)
         assert result is True
         m.assert_awaited_once_with(session, 80, 24)
 
@@ -6323,7 +6323,7 @@ class TestShareWindowHandlers:
         viewer_sock = _mock_sock()
         viewer_conn = _base_conn(user=viewer_user, ws=viewer_sock)
         viewer_conn.workspace_id = "ws-v"
-        viewer_conn._viewing_shared = {
+        viewer_conn.viewing_shared = {
             "user_id": user["id"],
             "window_id": "@0",
         }
@@ -6358,9 +6358,9 @@ class TestShareWindowHandlers:
         async with _conn_in_workspace(
             user, "ws-sv", user_home="/home/admin"
         ) as (sock, conn, session):
-            conn._viewing_shared = {"user_id": "owner-1", "window_id": "@0"}
+            conn.viewing_shared = {"user_id": "owner-1", "window_id": "@0"}
             await conn.stop_terminal()
-            assert conn._viewing_shared is None
+            assert conn.viewing_shared is None
             calls = [c[0][0] for c in sock.send_json.call_args_list]
             shared = [c for c in calls if c.get("type") == "shared_terminals"]
             assert len(shared) == 1
@@ -6665,7 +6665,7 @@ class TestShareWindowHandlers:
         assert any("required" in c.get("message", "").lower() for c in calls)
 
     async def test_join_shared_terminal_superseded(self, user, temp_data_dir):
-        """If session is superseded during start, _activate_session returns False."""
+        """If session is superseded during start, activate_session returns False."""
         owner = await model.create_user(
             "owner-sup@test.com", "hash", verified=True
         )
@@ -6681,7 +6681,7 @@ class TestShareWindowHandlers:
         container.registry.track_activity("cid", "ws-1")
 
         async def fake_start(*a, **kw):
-            # Supersede the session before _activate_session runs
+            # Supersede the session before activate_session runs
             conn.terminal_session = None
 
         try:
@@ -6747,7 +6747,7 @@ class TestShareWindowHandlers:
                 ) as mock_select,
             ):
                 mock_sess = _mock_terminal()
-                mock_sess._tmux_session_name = "joiner-abc"
+                mock_sess.tmux_session_name = "joiner-abc"
 
                 async def fake_output():
                     return
@@ -6801,7 +6801,7 @@ class TestShareWindowHandlers:
             ):
                 mock_sess = _mock_terminal()
                 # No joiner session name
-                mock_sess._tmux_session_name = None
+                mock_sess.tmux_session_name = None
 
                 async def fake_output():
                     return
@@ -7197,9 +7197,9 @@ class TestSharedTerminalController:
                 self.user = user
                 self._has_perm = AsyncMock(return_value=has_perm)
                 self.stop_terminal = AsyncMock()
-                self._activate_session = AsyncMock(return_value=True)
-                self._tmux_session_name = MagicMock(return_value="uid")
-                self._sync_terminal_windows = MagicMock()
+                self.activate_session = AsyncMock(return_value=True)
+                self.tmux_session_name = MagicMock(return_value="uid")
+                self.sync_terminal_windows = MagicMock()
                 self._terminal_cols = 80
                 self._terminal_rows = 24
                 self.terminal = SimpleNamespace(
@@ -7448,10 +7448,10 @@ class TestSharedTerminalController:
                 return_value=[{"id": "@0", "index": 0, "name": "build"}],
             ):
                 await ctrl.create_shared_terminal({"name": "build"})
-            # _sync_terminal_windows is a delegate that Connection would
+            # sync_terminal_windows is a delegate that Connection would
             # route to TerminalController; on the fake conn it's a
             # MagicMock, so populate the windows manually as the real
-            # _sync_terminal_windows would.
+            # sync_terminal_windows would.
             ws.terminal_windows[user["id"]] = [
                 {"id": "@0", "index": 0, "name": "build", "shared": True}
             ]
@@ -7751,7 +7751,7 @@ class TestSharedTerminalController:
         ws = wshandler.state.get_or_create_session("ws-1")
         try:
             with patch.object(conn.shared, "broadcast_shared_terminals") as m:
-                conn._broadcast_shared_terminals(ws)
+                conn.broadcast_shared_terminals(ws)
             m.assert_called_once_with(ws)
         finally:
             wshandler.state.sessions.pop("ws-1", None)
@@ -7791,8 +7791,8 @@ class TestSharedTerminalController:
     async def test_viewing_shared_property_round_trip(self, user):
         conn = _base_conn(user=user)
         marker = {"user_id": "x", "window_id": "@0"}
-        conn._viewing_shared = marker
-        assert conn._viewing_shared is marker
+        conn.viewing_shared = marker
+        assert conn.viewing_shared is marker
         assert conn.shared.viewing_shared is marker
 
 
@@ -9643,7 +9643,7 @@ class TestStartAgentIfNeeded:
         await session.add_subscriber(sock, "cid")
 
         mock_agent_session = AsyncMock()
-        mock_agent_session._ensure_started = AsyncMock()
+        mock_agent_session.ensure_started = AsyncMock()
 
         try:
             with patch(
@@ -9651,7 +9651,7 @@ class TestStartAgentIfNeeded:
                 return_value=mock_agent_session,
             ):
                 await conn._start_agent_if_needed()
-            mock_agent_session._ensure_started.assert_awaited_once()
+            mock_agent_session.ensure_started.assert_awaited_once()
         finally:
             await session.remove_subscriber(sock)
             state.sessions.pop(workspace["id"], None)
