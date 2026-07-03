@@ -44,6 +44,7 @@ so common development tasks work out of the box.
 | `tree`           | Directory tree listing                     |
 | `htop`           | Interactive process viewer                 |
 | `tmux`           | Terminal multiplexer (backs terminal tabs) |
+| `supervisor`     | Process manager (`supervisord`)            |
 | `less`           | Pager                                      |
 | `rsync`          | File synchronization                       |
 | `file`           | File type detection                        |
