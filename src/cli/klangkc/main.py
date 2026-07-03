@@ -1811,6 +1811,14 @@ def exec_cmd(
     _require_auth()
 
     command = ctx.args
+    # With allow_extra_args + allow_interspersed_args=False, Click does
+    # NOT consume the ``--`` end-of-options separator -- it lands in
+    # ctx.args verbatim (verified), so ``klangkc exec ws -- echo hi``
+    # would try to run ``--`` as a command. Strip a single leading
+    # ``--`` so the conventional separator works. A ``--`` elsewhere is
+    # left alone (it is then a real command argument).
+    if command and command[0] == "--":
+        command = command[1:]
     if not command:
         _err.print("[red]No command specified[/red]")
         raise typer.Exit(code=1)

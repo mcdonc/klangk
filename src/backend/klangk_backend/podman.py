@@ -16,7 +16,6 @@ import asyncio
 import json
 import logging
 import os
-import shlex
 import tempfile
 import time
 from collections.abc import AsyncGenerator
@@ -526,20 +525,25 @@ class ExecSession:
         rsync stream (the classic ssh/scp footgun), and rsync's argv is
         shell-quoted precisely so a non-login round-trips cleanly.
 
-        When *login* is set the command is wrapped in
-        ``bash -lc shlex.join(command)`` so it runs as a **login shell**
-        and sources ``~/.profile`` -- matching what an interactive
-        terminal sees. This is what ``klangkc exec`` uses by default
-        (#1041): a user typing ``klangkc exec ws openclaw --version``
-        expects the nvm-installed binary on PATH, exactly like a
-        terminal. ``shlex.join`` re-quots so a re-parse by bash
-        round-trips to the same argv.
+        When *login* is set the command runs under a **login shell** that
+        sources ``~/.profile`` -- matching what an interactive terminal
+        sees, and what ``klangkc exec`` needs by default (#1041): a user
+        typing ``klangkc exec ws openclaw --version`` expects the
+        nvm-installed binary on PATH. The login shell is run as
+        ``bash -lc 'exec "$@"'`` with the command as its argv -- the
+        standard wrapper-script idiom that gets BOTH a login shell
+        (profile sourced) AND argv fidelity (each element survives as
+        one word, no quoting games). This is how ``docker exec`` /
+        ``kubectl exec`` behave: the argv is exec'd, not shell-parsed,
+        so a compound command needs an explicit ``bash -c`` just like
+        those tools. Callers that must avoid the login shell entirely
+        (rsync's binary stream) use the default ``login=False`` path.
         """
         env_flags: list[str] = []
         for entry in self.env:
             env_flags += ["-e", entry]
         if login:
-            argv = ["bash", "-lc", shlex.join(command)]
+            argv = ["bash", "-lc", 'exec "$@"', "bash", *command]
         else:
             argv = command
         exec_cmd = [

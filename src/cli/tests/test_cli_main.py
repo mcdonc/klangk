@@ -2340,6 +2340,37 @@ class TestMainCLI:
         assert result.exit_code == 0
         assert mock_exec.call_args.kwargs["login"] is False
 
+    def test_exec_strips_leading_dashdash_separator(self, logged_in_cfg):
+        """With allow_extra_args + allow_interspersed_args=False, Click
+        does NOT consume the ``--`` end-of-options separator -- it lands
+        in ctx.args verbatim. exec_cmd strips a single leading ``--`` so
+        the conventional ``klangkc exec ws -- echo hi`` works instead of
+        trying to run ``--`` as a command.
+        """
+        from klangkc import main
+        from klangkc.client import Workspace
+        from typer.testing import CliRunner
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        with patch.object(main, "_client", return_value=client):
+            with patch.object(
+                main, "_ws_exec", AsyncMock(return_value=0)
+            ) as mock_exec:
+                runner = CliRunner()
+                result = runner.invoke(
+                    main.app, ["exec", "my-ws", "--", "echo", "hi"]
+                )
+        assert result.exit_code == 0
+        # the leading ``--`` is stripped; the command is echo hi.
+        assert mock_exec.call_args.args[3] == ["echo", "hi"]
+
     def test_exec_no_command(self, logged_in_cfg):
         from klangkc import main
 

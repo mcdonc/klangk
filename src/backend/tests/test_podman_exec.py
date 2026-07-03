@@ -1,7 +1,6 @@
 """Tests for podman ExecSession: raw podman exec without PTY."""
 
 import asyncio
-import shlex
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -70,11 +69,15 @@ class TestExecSession:
         assert "bash" not in argv
         assert "-lc" not in argv
 
-    async def test_start_login_wraps_in_bash_login_shell(self):
-        """#1041: ``login=True`` wraps the command in
-        ``bash -lc shlex.join(command)`` so it sources ~/.profile and a
-        PATH-only binary (e.g. an nvm-installed tool) resolves, matching
-        an interactive terminal.
+    async def test_start_login_uses_login_shell_exec_at_idiom(self):
+        """#1041: ``login=True`` runs the command under a login shell that
+        sources ``~/.profile`` (so a PATH-only binary like an nvm-installed
+        tool resolves) while preserving argv fidelity. It uses the
+        standard wrapper idiom ``bash -lc 'exec "$@"'`` with the command
+        as the trailing argv -- the same semantics as ``docker exec`` /
+        ``kubectl exec``: argv is exec'd, not shell-parsed, so a compound
+        command needs an explicit ``bash -c``. Each element survives as
+        one word (no shlex/quoting games).
         """
         session = ExecSession("cid")
         proc = _mock_proc(b"")
@@ -84,27 +87,40 @@ class TestExecSession:
         ) as mock_exec:
             await session.start(["openclaw", "--version"], login=True)
         argv = mock_exec.call_args.args
-        # ... bash -lc 'openclaw --version'
-        assert argv[-3:-1] == ("bash", "-lc")
-        assert argv[-1] == "openclaw --version"
+        # bash -lc 'exec "$@"' bash openclaw --version
+        assert argv[-6:] == (
+            "bash",
+            "-lc",
+            'exec "$@"',
+            "bash",
+            "openclaw",
+            "--version",
+        )
 
-    async def test_start_login_shlex_round_trips_metachars(self):
-        """#1041: shell-special characters survive the shlex.join ->
-        bash re-parse round trip, so a command's argv still parses back
-        to the same words (spaces, $, quotes) after the login wrap.
+    async def test_start_login_preserves_argv_with_spaces_and_metachars(
+        self,
+    ):
+        """The login path does NOT shell-join the command: every element is
+        passed through ``exec "$@"`` verbatim, so an element containing
+        spaces (e.g. a ``bash -c 'script with a redirect'`` invocation)
+        survives as one word. This is what ``bash -c``-style commands
+        and the e2e sync tests rely on, and what a naive space-join or
+        ``shlex.join`` would each break in a different way.
         """
         session = ExecSession("cid")
         proc = _mock_proc(b"")
-        cmd = ["echo", "a b", "$X", "o'reilly"]
+        cmd = ["bash", "-c", "echo remote-data > /home/work/out.txt"]
         with patch(
             "asyncio.create_subprocess_exec",
             return_value=proc,
         ) as mock_exec:
             await session.start(cmd, login=True)
         argv = mock_exec.call_args.args
-        assert argv[-2] == "-lc"
-        # bash -lc would re-tokenise this string back to ``cmd``.
-        assert argv[-1] == shlex.join(cmd)
+        # the command list is the verbatim tail after the idiom prefix
+        prefix = ("bash", "-lc", 'exec "$@"', "bash")
+        assert argv[-len(cmd) - len(prefix) :] == (*prefix, *cmd)
+        # specifically, the script-with-spaces is one element, not split
+        assert argv[-1] == "echo remote-data > /home/work/out.txt"
 
     async def test_write_sends_to_stdin(self):
         session = ExecSession("cid")
