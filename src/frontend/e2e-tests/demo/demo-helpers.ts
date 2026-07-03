@@ -42,13 +42,12 @@ export const DEMO_PASSWORD = process.env.KLANGK_DEMO_PASSWORD || "demopass123";
  *  scenes, operating the same accumulating `demo` workspace, not a parallel
  *  cast of throwaway users.
  *
- *  NOTE: the hero's password defaults to "adminpass" (matching demo-seed.ts
- *  and cli_demo.py). Do NOT fall through to KLANGK_DEFAULT_PASSWORD — that's
- *  the bootstrap admin (admin@plope.com), a DIFFERENT account. */
+ *  NOTE: do NOT fall through to KLANGK_DEFAULT_USER / KLANGK_DEFAULT_PASSWORD
+ *  — those are the BOOTSTRAP admin (admin@plope.com / "admin"), a DIFFERENT
+ *  account used only by demo-seed.ts for destructive reset. The hero is its
+ *  own account: admin@example.com / "adminpass". */
 export const DEMO_ADMIN_EMAIL =
-  process.env.KLANGK_DEMO_ADMIN_EMAIL ||
-  process.env.KLANGK_DEFAULT_USER ||
-  "admin@example.com";
+  process.env.KLANGK_DEMO_ADMIN_EMAIL || "admin@example.com";
 export const DEMO_ADMIN_PASSWORD =
   process.env.KLANGK_DEMO_ADMIN_PASSWORD || "adminpass";
 
