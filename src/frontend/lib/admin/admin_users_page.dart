@@ -163,12 +163,41 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   }
 
   Future<void> _deleteUser(String userId, String email) async {
+    final auth = context.read<AuthService>();
+
+    // Fetch the user's owned workspaces up front so the confirmation can
+    // show exactly what a delete will destroy (#1224). On failure we fall
+    // back to the old generic message.
+    List<String> workspaceNames = [];
+    var hasMoreWorkspaces = false;
+    var fetchFailed = false;
+    try {
+      final wsResp = await auth.authGet(
+        '/api/v1/admin/users/$userId/workspaces?limit=100',
+      );
+      if (wsResp.statusCode == 200) {
+        final body = jsonDecode(wsResp.body);
+        final items = body['items'] as List? ?? [];
+        workspaceNames = items.map((w) => w['name'] as String? ?? '').toList();
+        hasMoreWorkspaces = body['has_more'] as bool? ?? false;
+      } else {
+        fetchFailed = true;
+      }
+    } catch (_) {
+      fetchFailed = true;
+    }
+
+    if (!mounted) return;
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete User'),
-        content: Text(
-          'Delete user "$email"? This will delete all their workspaces and data.',
+        content: _deleteUserDialogContent(
+          email,
+          workspaceNames,
+          hasMoreWorkspaces,
+          fetchFailed,
         ),
         actions: [
           TextButton(
@@ -189,7 +218,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     );
     if (confirm != true) return;
 
-    final auth = context.read<AuthService>();
     final resp = await auth.authDelete('/api/v1/admin/users/$userId');
     if (resp.statusCode == 200) {
       _loadUsers();
@@ -201,6 +229,78 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         );
       }
     }
+  }
+
+  /// Body for the delete-user confirmation dialog. Lists the workspaces
+  /// that will be destroyed so the admin can sanity-check before
+  /// committing (#1224). Falls back to a generic message when the
+  /// workspace fetch failed.
+  Widget _deleteUserDialogContent(
+    String email,
+    List<String> workspaceNames,
+    bool hasMoreWorkspaces,
+    bool fetchFailed,
+  ) {
+    final count = workspaceNames.length;
+    final word = count == 1 ? 'workspace' : 'workspaces';
+
+    String summary;
+    if (fetchFailed) {
+      summary = 'Delete user "$email"? This will permanently delete all their '
+          'workspaces and data.';
+    } else if (count == 0) {
+      summary = 'Delete user "$email"? They own no workspaces.';
+    } else if (hasMoreWorkspaces) {
+      summary = 'Delete user "$email"? This will permanently delete '
+          '100+ workspaces and all their data:';
+    } else {
+      summary = 'Delete user "$email"? This will permanently delete '
+          '$count $word and all their data:';
+    }
+
+    final children = <Widget>[
+      Text(summary),
+    ];
+
+    // List the names (capped at 100 by the fetch; scrollable so a long
+    // list doesn't blow out the dialog).
+    if (!fetchFailed && count > 0) {
+      children.add(
+        const SizedBox(height: 12),
+      );
+      children.add(
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 240),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final name in workspaceNames)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 1),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('•  '),
+                        Expanded(child: Text(name)),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return SizedBox(
+      width: double.maxFinite,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: children,
+      ),
+    );
   }
 
   Future<void> _editUser(Map<String, dynamic> user) async {

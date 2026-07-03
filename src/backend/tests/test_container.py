@@ -2094,13 +2094,20 @@ def _health_state(
     owner_id="uid-owner",
     setup_state="complete",
     health_status=None,
+    in_startup_grace=False,
 ):
-    """Build a ContainerState wired up for health checks."""
+    """Build a ContainerState wired up for health checks.
+
+    *in_startup_grace* defaults to False so the core healthy/unhealthy
+    tests exercise post-grace behavior; the startup-grace tests opt in.
+    """
     st = container.ContainerState(workspace_id, container_id)
     st.health_check = health_check
     st.owner_id = owner_id
     st.setup_state = setup_state
     st.health_status = health_status
+    # 0.0 = epoch, comfortably outside any real grace window.
+    st.service_started_at = time.time() if in_startup_grace else 0.0
     return st
 
 
@@ -2366,7 +2373,107 @@ class TestHealthMonitorCheckWorkspace:
         )
 
 
-class TestHealthMonitorBroadcast:
+class TestHealthMonitorStartupGrace:
+    """A failing check inside the startup grace window is not an outage.
+
+    Mirrors Docker's HEALTHCHECK --start-period: while the service
+    command is booting, unhealthy results are suppressed (no status
+    change, no broadcast, no health_checked_at), but a *healthy* result
+    is still recorded so a fast-booting service is marked up the moment
+    it responds.  Prevents the boot-time false "unhealthy: Gateway not
+    yet ready to accept connections" the very first poll produced.
+    """
+
+    async def test_unhealthy_during_grace_is_suppressed(self):
+        monitor = container.registry.health
+        st = _health_state(health_status=None, in_startup_grace=True)
+        with (
+            patch.object(
+                monitor,
+                "_run_one",
+                AsyncMock(return_value=("unhealthy", "connection refused")),
+            ),
+            patch.object(monitor, "_broadcast") as bcast,
+        ):
+            await monitor._check_workspace(st)
+        # Status, reason, and last-checked are all untouched: the grace
+        # window swallowed the failure as an expected boot-time blip.
+        assert st.health_status is None
+        assert st.health_message is None
+        assert st.health_checked_at is None
+        bcast.assert_not_called()
+
+    async def test_healthy_during_grace_recorded_immediately(self):
+        # Even mid-grace, a passing check marks the service healthy
+        # right away -- the grace only suppresses failures, not
+        # successes, so a fast-booting service isn't hidden.
+        monitor = container.registry.health
+        st = _health_state(health_status=None, in_startup_grace=True)
+        with (
+            patch.object(
+                monitor, "_run_one", AsyncMock(return_value=("healthy", ""))
+            ),
+            patch.object(monitor, "_broadcast") as bcast,
+        ):
+            await monitor._check_workspace(st)
+        assert st.health_status == "healthy"
+        assert st.health_checked_at is not None
+        bcast.assert_called_once_with("ws-h", "healthy", None)
+
+    async def test_unhealthy_after_grace_is_recorded(self):
+        # Once the grace window has elapsed, a failing check is a real
+        # outage again: status flips, reason is kept, and it broadcasts.
+        monitor = container.registry.health
+        st = _health_state(health_status=None, in_startup_grace=False)
+        with (
+            patch.object(
+                monitor,
+                "_run_one",
+                AsyncMock(return_value=("unhealthy", "connection refused")),
+            ),
+            patch.object(monitor, "_broadcast") as bcast,
+        ):
+            await monitor._check_workspace(st)
+        assert st.health_status == "unhealthy"
+        assert st.health_message == "connection refused"
+        bcast.assert_called_once_with(
+            "ws-h", "unhealthy", "connection refused"
+        )
+
+    def test_in_startup_grace_uses_anchor_window(self):
+        monitor = container.registry.health
+        # service_started_at = now -> within the default 30s window.
+        st_in = _health_state(in_startup_grace=True)
+        assert monitor._in_startup_grace(st_in) is True
+        # service_started_at = epoch -> long past the window.
+        st_out = _health_state(in_startup_grace=False)
+        assert monitor._in_startup_grace(st_out) is False
+
+    def test_mark_service_started_resets_anchor(self):
+        # mark_service_started pushes the anchor forward, restarting the
+        # grace window (e.g. the service command re-fires after a
+        # container restart).
+        st = _health_state(in_startup_grace=False)
+        assert st.service_started_at == 0.0
+        st.mark_service_started()
+        assert time.time() - st.service_started_at < 1
+
+    def test_registry_mark_service_started_looks_up_state(self):
+        # The registry proxy resolves container_id -> workspace and
+        # resets that workspace's anchor; unknown containers no-op.
+        st = _health_state(in_startup_grace=False)
+        container.registry.states[st.workspace_id] = st
+        container.registry._cid_to_wsid[st.container_id] = st.workspace_id
+        try:
+            assert st.service_started_at == 0.0
+            container.registry.mark_service_started(st.container_id)
+            assert time.time() - st.service_started_at < 1
+            # Unknown container is a safe no-op.
+            container.registry.mark_service_started("no-such-cid")
+        finally:
+            container.registry.states.pop(st.workspace_id, None)
+            container.registry._cid_to_wsid.pop(st.container_id, None)
+
     """_broadcast fans out to ALL connections, not just the session."""
 
     def test_fans_out_via_notify_service_health(self):

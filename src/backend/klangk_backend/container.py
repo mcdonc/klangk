@@ -199,6 +199,21 @@ HEALTH_CHECK_INTERVAL_SECONDS = int(
 HEALTH_CHECK_TIMEOUT_SECONDS = float(
     util.resolve_env_value("KLANGK_HEALTH_CHECK_TIMEOUT") or "10"
 )
+# Startup grace period (seconds).  After a service begins starting,
+# failing health checks do NOT count as unhealthy until this much time
+# has elapsed -- mirroring Docker's HEALTHCHECK `--start-period`.  The
+# service command (a dev server, AI gateway, daemon) needs time to boot
+# after it's launched; without a grace window the very first poll fires
+# while it's still coming up and false-flags the workspace unhealthy
+# (e.g. "Gateway not yet ready to accept connections").  A *healthy*
+# result is still recorded immediately, so a fast-booting service shows
+# up as healthy as soon as it actually responds.  The window is anchored
+# to when the service command fires (see ``mark_service_started``) and
+# falls back to when the container state was first tracked, so
+# health-checked workspaces with no service command also get a grace.
+HEALTH_CHECK_STARTUP_GRACE_SECONDS = float(
+    util.resolve_env_value("KLANGK_HEALTH_CHECK_STARTUP_GRACE") or "30"
+)
 # Maximum bytes of check output retained as the failure reason (#1088).
 # A bounded tail keeps a verbose check from growing memory unbounded
 # across many workspaces while still capturing *why* it failed.
@@ -226,9 +241,30 @@ class ContainerState:
         self.health_check: str | None = None  # shell command, None = disabled
         self.owner_id: str | None = None
         self.setup_state: str | None = None
+        # Anchor for the startup grace window
+        # (HEALTH_CHECK_STARTUP_GRACE_SECONDS): the moment the monitored
+        # service began starting.  Defaults to now (container-state
+        # creation) so health-checked workspaces with no service command
+        # still get a grace window; reset to "now" by
+        # ``mark_service_started`` when the service command actually
+        # fires, which is the precise point the service begins booting.
+        self.service_started_at: float = time.time()
 
     def record_activity(self) -> None:
         self.last_activity = time.time()
+
+    def mark_service_started(self) -> None:
+        """Record that the service command just fired.
+
+        Resets the startup-grace anchor to now.  Called from
+        ``terminal.ensure_service_session`` right after it launches the
+        service command, so the grace window is measured from the real
+        start of the service rather than from the (earlier) container
+        creation -- important for the per-connection fire path where a
+        freshly-created workspace launches its service command on first
+        ``terminal_start``, possibly long after the container started.
+        """
+        self.service_started_at = time.time()
 
     def get_idle_timeout(self) -> int:
         if self.idle_timeout is not None:
@@ -452,6 +488,22 @@ class HealthMonitor:
         """
         return state.setup_state == "complete"
 
+    def _in_startup_grace(self, state: ContainerState) -> bool:
+        """True while the service is still within its startup grace window.
+
+        Mirrors Docker's HEALTHCHECK ``--start-period``: while the
+        service command is booting, a failing check is expected rather
+        than a real outage, so :meth:`_check_workspace` ignores
+        unhealthy results here (but still records a *healthy* result so
+        a fast-booting service is marked up immediately).  Anchored to
+        ``service_started_at`` (when the command fired, or container
+        creation as a fallback).
+        """
+        return (
+            time.time() - state.service_started_at
+            < HEALTH_CHECK_STARTUP_GRACE_SECONDS
+        )
+
     async def _run_one(self, state: ContainerState) -> tuple[str, str]:
         """Run a single workspace's health check.
 
@@ -530,6 +582,22 @@ class HealthMonitor:
     async def _check_workspace(self, state: ContainerState) -> None:
         """Poll one workspace, record the reason, and broadcast on change."""
         new_status, message = await self._run_one(state)
+        # Startup grace window: the service command may still be
+        # booting, so an unhealthy result here is expected, not a real
+        # outage.  Don't transition to unhealthy, broadcast, or log a
+        # failure (mirrors Docker HEALTHCHECK --start-period).  A
+        # healthy result is still recorded below so a fast-booting
+        # service is marked up the moment it actually responds.
+        if new_status == "unhealthy" and self._in_startup_grace(state):
+            logger.debug(
+                "Health check for workspace %s (container %s) failing "
+                "but within startup grace (%.0fs elapsed); not flagging "
+                "unhealthy",
+                state.workspace_id,
+                state.container_id[:12],
+                time.time() - state.service_started_at,
+            )
+            return
         old_status = state.health_status
         state.health_status = new_status
         # Clear the reason once healthy again so a stale failure message
@@ -670,6 +738,21 @@ class ContainerRegistry:
             state = self.states.get(ws_id)
             if state:
                 state.record_activity()
+
+    def mark_service_started(self, container_id: str) -> None:
+        """Reset the startup-grace anchor for a container's service.
+
+        Called by ``terminal.ensure_service_session`` right after it
+        launches the service command, so the health monitor's grace
+        window is measured from the real start of the service.  No-op
+        if the container isn't tracked (e.g. the service session fired
+        before the state was registered).
+        """
+        ws_id = self._cid_to_wsid.get(container_id)
+        if ws_id:
+            state = self.states.get(ws_id)
+            if state:
+                state.mark_service_started()
 
     def get_state(self, workspace_id: str) -> ContainerState | None:
         return self.states.get(workspace_id)

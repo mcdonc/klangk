@@ -4564,6 +4564,46 @@ class TestAdminEndpoints:
         ws_list = await model.get_user_workspaces_with_containers(user["id"])
         assert len(ws_list) == 0
 
+    async def test_list_user_workspaces_admin(self, client, admin_user, user):
+        """Admin can list another user's workspaces (#1224)."""
+        headers = await self._admin_headers(client)
+        # The `user` fixture owns no workspaces yet.
+        resp = await client.get(
+            f"/api/v1/admin/users/{user['id']}/workspaces", headers=headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
+        assert resp.json()["has_more"] is False
+
+        # Create a workspace as that user, then it should appear.
+        user_login = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "testuser@example.com", "password": "testpass"},
+        )
+        user_headers = {
+            "Authorization": f"Bearer {user_login.json()['access_token']}"
+        }
+        ws_resp = await client.post(
+            "/api/v1/workspaces",
+            headers=user_headers,
+            json={"name": "doomed"},
+        )
+        assert ws_resp.status_code == 200
+        resp = await client.get(
+            f"/api/v1/admin/users/{user['id']}/workspaces", headers=headers
+        )
+        assert resp.status_code == 200
+        names = [ws["name"] for ws in resp.json()["items"]]
+        assert names == ["doomed"]
+
+    async def test_list_user_workspaces_admin_404(self, client, admin_user):
+        """Listing workspaces for a nonexistent user 404s."""
+        headers = await self._admin_headers(client)
+        resp = await client.get(
+            "/api/v1/admin/users/nonexistent-id/workspaces", headers=headers
+        )
+        assert resp.status_code == 404
+
     async def test_update_email(self, client, admin_user, user):
         headers = await self._admin_headers(client)
         resp = await client.patch(
