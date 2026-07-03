@@ -299,6 +299,27 @@ async def ensure_service_session(
         )
     except Exception:
         logger.warning("Failed to send service command to %s", SERVICE_SESSION)
+        # The window was created above but we never typed the command
+        # into it. Kill it so the next fire re-runs the whole sequence
+        # instead of no-op'ing forever on the half-created window (#1186).
+        try:
+            await podman.exec_container(
+                container_id,
+                [
+                    "tmux",
+                    "kill-window",
+                    "-t",
+                    f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
+                ],
+                user=CONTAINER_USER,
+                timeout=5,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to clean up %s window in %s",
+                SERVICE_CMD_WINDOW,
+                SERVICE_SESSION,
+            )
 
 
 def _build_shell_command(
