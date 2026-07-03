@@ -25,7 +25,7 @@ from klangk_backend.util import (
     derive_hosting_info,
 )
 from klangk_backend.wshandler import (
-    _constants as _ws_constants,
+    constants as _ws_constants,
     controllers as _ws_controllers,
 )
 from klangk_backend.wshandler import (
@@ -44,7 +44,7 @@ from klangk_backend.wshandler import (
     handle_websocket,
     reset_workspace_state,
     log_ws_msg,
-    _SEND_QUEUE_SIZE,
+    SEND_QUEUE_SIZE,
     get_presence_list,
 )
 
@@ -337,21 +337,21 @@ class TestDisconnectAll:
 class TestClearAgentMentionState:
     async def test_cancels_tasks_and_clears_conversations(self):
         task = asyncio.create_task(asyncio.sleep(100))
-        _ws_constants._agent_tasks["ws-m"] = task
-        _ws_constants._agent_conversations["ws-m"] = {"user_id": "u1"}
+        _ws_constants.agent_tasks["ws-m"] = task
+        _ws_constants.agent_conversations["ws-m"] = {"user_id": "u1"}
 
         clear_agent_mention_state()
 
-        assert _ws_constants._agent_tasks == {}
-        assert _ws_constants._agent_conversations == {}
+        assert _ws_constants.agent_tasks == {}
+        assert _ws_constants.agent_conversations == {}
         with pytest.raises(asyncio.CancelledError):
             await task
         assert task.cancelled()
 
     def test_empty_is_noop(self):
         clear_agent_mention_state()
-        assert _ws_constants._agent_tasks == {}
-        assert _ws_constants._agent_conversations == {}
+        assert _ws_constants.agent_tasks == {}
+        assert _ws_constants.agent_conversations == {}
 
 
 # --- send_error ---
@@ -1468,7 +1468,7 @@ class TestHandleTerminalStart:
 
         mock_session = AsyncMock()
         mock_session.start = AsyncMock(side_effect=ValueError("bad config"))
-        # send_json raises RuntimeError (a _WS_ERRORS member) when
+        # send_json raises RuntimeError (a WS_ERRORS member) when
         # trying to send the error message
         sock.send_json = MagicMock(side_effect=RuntimeError("ws gone"))
         MockTS = MagicMock(return_value=mock_session)
@@ -4088,17 +4088,17 @@ class TestResetWorkspaceState:
     async def test_reset_cleans_agent_state(self):
         """reset_workspace removes agent conversations and cancels agent tasks."""
         ws_id = "ws-agent-cleanup"
-        wshandler._agent_conversations[ws_id] = {"user_id": "u1"}
+        wshandler.agent_conversations[ws_id] = {"user_id": "u1"}
 
         async def noop():
             await asyncio.sleep(999)
 
         task = asyncio.create_task(noop())
-        wshandler._agent_tasks[ws_id] = task
+        wshandler.agent_tasks[ws_id] = task
         try:
             await reset_workspace_state(ws_id)
-            assert ws_id not in wshandler._agent_conversations
-            assert ws_id not in wshandler._agent_tasks
+            assert ws_id not in wshandler.agent_conversations
+            assert ws_id not in wshandler.agent_tasks
             # Let cancellation propagate
             try:
                 await task
@@ -4106,8 +4106,8 @@ class TestResetWorkspaceState:
                 pass
             assert task.cancelled()
         finally:
-            wshandler._agent_conversations.pop(ws_id, None)
-            wshandler._agent_tasks.pop(ws_id, None)
+            wshandler.agent_conversations.pop(ws_id, None)
+            wshandler.agent_tasks.pop(ws_id, None)
             if not task.done():
                 task.cancel()
 
@@ -4157,10 +4157,10 @@ class TestNotifyUserWorkspacesChanged:
         wshandler.state.notify_user_workspaces_changed("nobody")
 
     async def test_dead_socket_is_pruned(self):
-        from klangk_backend.wshandler import _WS_ERRORS
+        from klangk_backend.wshandler import WS_ERRORS
 
         sock = _mock_sock()
-        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
+        sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
             conn = self._register(sock, {"id": "uid-1", "email": "a@x"})
             with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
@@ -4219,10 +4219,10 @@ class TestNotifyContainerStatus:
         sock.send_json.assert_not_called()
 
     async def test_dead_socket_is_pruned(self):
-        from klangk_backend.wshandler import _WS_ERRORS
+        from klangk_backend.wshandler import WS_ERRORS
 
         sock = _mock_sock()
-        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
+        sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
             conn = self._register(sock, {"id": "uid-1", "email": "a@x"})
             with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
@@ -4287,10 +4287,10 @@ class TestNotifyServiceHealth:
         sock.send_json.assert_not_called()
 
     async def test_dead_socket_is_pruned(self):
-        from klangk_backend.wshandler import _WS_ERRORS
+        from klangk_backend.wshandler import WS_ERRORS
 
         sock = _mock_sock()
-        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
+        sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
             conn = self._register(sock, {"id": "uid-1", "email": "a@x"})
             with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
@@ -4378,11 +4378,11 @@ class TestServiceHealthSnapshot:
         other.send_json.assert_not_called()
 
     def test_dead_socket_breaks_cleanly(self):
-        from klangk_backend.wshandler import _WS_ERRORS
+        from klangk_backend.wshandler import WS_ERRORS
 
         saved = dict(container.registry.states)
         sock = _mock_sock()
-        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
+        sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
             container.registry.states.clear()
             container.registry.states["ws-1"] = self._state(
@@ -4491,7 +4491,7 @@ class TestWsDebugLogging:
     async def test_recv_logged_when_debug(self, user, monkeypatch):
         from klangk_backend import auth as auth_mod
 
-        monkeypatch.setattr(wshandler, "_WS_DEBUG", True)
+        monkeypatch.setattr(wshandler, "WS_DEBUG", True)
         token = auth_mod.create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
@@ -4504,7 +4504,7 @@ class TestWsDebugLogging:
         websocket.accept.assert_awaited_once()
 
     def test_send_error_logged_when_debug(self, monkeypatch):
-        monkeypatch.setattr(wshandler, "_WS_DEBUG", True)
+        monkeypatch.setattr(wshandler, "WS_DEBUG", True)
         sock = _mock_sock()
         send_error(sock, "test error")
         sock.send_json.assert_called_once()
@@ -4532,7 +4532,7 @@ class TestWsDebugLogging:
 
 class TestLogWsMsg:
     def test_terminal_output_truncated(self):
-        with patch.object(_ws_constants, "_WS_DEBUG", True):
+        with patch.object(_ws_constants, "WS_DEBUG", True):
             log_ws_msg(
                 "RECV",
                 {"type": "terminal_output", "data": "x" * 200},
@@ -4540,18 +4540,18 @@ class TestLogWsMsg:
             )
 
     def test_terminal_input_truncated(self):
-        with patch.object(_ws_constants, "_WS_DEBUG", True):
+        with patch.object(_ws_constants, "WS_DEBUG", True):
             log_ws_msg(
                 "SEND",
                 {"type": "terminal_input", "data": "y" * 50},
             )
 
     def test_other_message(self):
-        with patch.object(_ws_constants, "_WS_DEBUG", True):
+        with patch.object(_ws_constants, "WS_DEBUG", True):
             log_ws_msg("RECV", {"type": "heartbeat"})
 
     def test_other_message_with_user(self):
-        with patch.object(_ws_constants, "_WS_DEBUG", True):
+        with patch.object(_ws_constants, "WS_DEBUG", True):
             log_ws_msg(
                 "RECV",
                 {"cmd": "workspace_connect", "workspaceId": "ws-1"},
@@ -4559,7 +4559,7 @@ class TestLogWsMsg:
             )
 
     def test_noop_when_debug_disabled(self):
-        with patch.object(_ws_constants, "_WS_DEBUG", False):
+        with patch.object(_ws_constants, "WS_DEBUG", False):
             log_ws_msg("RECV", {"type": "heartbeat"})
 
 
@@ -5752,7 +5752,7 @@ class TestTerminalController:
         rec.assert_called_once_with("cid")
 
     async def test_forward_output_swallows_ws_error(self):
-        from klangk_backend.wshandler import _WS_ERRORS
+        from klangk_backend.wshandler import WS_ERRORS
 
         ctrl, sock, _ = self._controller()
         session = AsyncMock()
@@ -5762,7 +5762,7 @@ class TestTerminalController:
             yield "data"
 
         session.output = fake_output
-        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("ws dead"))
+        sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("ws dead"))
         with patch("klangk_backend.wshandler.controllers.send_event"):
             await ctrl.forward_output(session)
         session.stop.assert_awaited_once()
@@ -7984,7 +7984,7 @@ class TestSendQueueBehavior:
         websocket.send_json = AsyncMock(side_effect=blocking_send)
 
         # Client sends many messages that trigger send_json responses
-        msgs = [json.dumps({"cmd": "bogus"})] * (_SEND_QUEUE_SIZE + 5) + [
+        msgs = [json.dumps({"cmd": "bogus"})] * (SEND_QUEUE_SIZE + 5) + [
             WebSocketDisconnect()
         ]
         websocket.receive_text = AsyncMock(side_effect=msgs)
@@ -8132,7 +8132,7 @@ class TestChatFollowUp:
         self, workspace, user, agent_user
     ):
         """Same user's follow-up routes without timer."""
-        from klangk_backend.wshandler import state, _agent_conversations
+        from klangk_backend.wshandler import state, agent_conversations
 
         mock_session = AsyncMock()
         mock_session.send_prompt = AsyncMock(return_value="reply")
@@ -8144,7 +8144,7 @@ class TestChatFollowUp:
         session = state.get_or_create_session(workspace["id"])
         await session.add_subscriber(sock, "cid")
         try:
-            _agent_conversations[workspace["id"]] = {
+            agent_conversations[workspace["id"]] = {
                 "user_id": user["id"],
                 "time": time.monotonic(),
                 "interjected": False,
@@ -8163,14 +8163,14 @@ class TestChatFollowUp:
             ]
             assert len(agent_msgs) == 1
         finally:
-            _agent_conversations.pop(workspace["id"], None)
+            agent_conversations.pop(workspace["id"], None)
             await session.remove_subscriber(sock)
 
     async def test_interjection_within_window(
         self, workspace, user, agent_user
     ):
         """After interjection, follow-up within 30s still routes."""
-        from klangk_backend.wshandler import state, _agent_conversations
+        from klangk_backend.wshandler import state, agent_conversations
 
         mock_session = AsyncMock()
         mock_session.send_prompt = AsyncMock(return_value="reply")
@@ -8182,7 +8182,7 @@ class TestChatFollowUp:
         session = state.get_or_create_session(workspace["id"])
         await session.add_subscriber(sock, "cid")
         try:
-            _agent_conversations[workspace["id"]] = {
+            agent_conversations[workspace["id"]] = {
                 "user_id": user["id"],
                 "time": time.monotonic(),
                 "interjected": True,
@@ -8201,12 +8201,12 @@ class TestChatFollowUp:
             ]
             assert len(agent_msgs) == 1
         finally:
-            _agent_conversations.pop(workspace["id"], None)
+            agent_conversations.pop(workspace["id"], None)
             await session.remove_subscriber(sock)
 
     async def test_interjection_expired(self, workspace, user, agent_user):
         """After interjection + 30s, follow-up does NOT route."""
-        from klangk_backend.wshandler import state, _agent_conversations
+        from klangk_backend.wshandler import state, agent_conversations
 
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
@@ -8215,7 +8215,7 @@ class TestChatFollowUp:
         session = state.get_or_create_session(workspace["id"])
         await session.add_subscriber(sock, "cid")
         try:
-            _agent_conversations[workspace["id"]] = {
+            agent_conversations[workspace["id"]] = {
                 "user_id": user["id"],
                 "time": time.monotonic() - 60,
                 "interjected": True,
@@ -8230,14 +8230,14 @@ class TestChatFollowUp:
             ]
             assert len(agent_msgs) == 0
         finally:
-            _agent_conversations.pop(workspace["id"], None)
+            agent_conversations.pop(workspace["id"], None)
             await session.remove_subscriber(sock)
 
     async def test_different_user_marks_interjection(
         self, workspace, user, agent_user
     ):
         """A different user's message marks interjection."""
-        from klangk_backend.wshandler import state, _agent_conversations
+        from klangk_backend.wshandler import state, agent_conversations
 
         sock = _mock_sock()
         other_user = {"id": "other-uid", "email": "other@test.com"}
@@ -8247,23 +8247,23 @@ class TestChatFollowUp:
         session = state.get_or_create_session(workspace["id"])
         await session.add_subscriber(sock, "cid")
         try:
-            _agent_conversations[workspace["id"]] = {
+            agent_conversations[workspace["id"]] = {
                 "user_id": user["id"],
                 "time": time.monotonic(),
                 "interjected": False,
             }
             await conn.handle_chat_send({"message": "hey everyone"})
             await asyncio.sleep(0.1)
-            assert _agent_conversations[workspace["id"]]["interjected"]
+            assert agent_conversations[workspace["id"]]["interjected"]
         finally:
-            _agent_conversations.pop(workspace["id"], None)
+            agent_conversations.pop(workspace["id"], None)
             await session.remove_subscriber(sock)
 
     async def test_addressed_to_other_breaks(
         self, workspace, user, agent_user
     ):
         """Message starting with @someone else breaks conversation."""
-        from klangk_backend.wshandler import state, _agent_conversations
+        from klangk_backend.wshandler import state, agent_conversations
 
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
@@ -8272,16 +8272,16 @@ class TestChatFollowUp:
         session = state.get_or_create_session(workspace["id"])
         await session.add_subscriber(sock, "cid")
         try:
-            _agent_conversations[workspace["id"]] = {
+            agent_conversations[workspace["id"]] = {
                 "user_id": user["id"],
                 "time": time.monotonic(),
                 "interjected": False,
             }
             await conn.handle_chat_send({"message": "@bob hey"})
             await asyncio.sleep(0.1)
-            assert workspace["id"] not in _agent_conversations
+            assert workspace["id"] not in agent_conversations
         finally:
-            _agent_conversations.pop(workspace["id"], None)
+            agent_conversations.pop(workspace["id"], None)
             await session.remove_subscriber(sock)
 
 
@@ -8611,27 +8611,27 @@ class TestChatSend:
                 new=slow_mention,
             ):
                 await conn1.handle_chat_send({"message": "@clanker first"})
-                task1 = wshandler._agent_tasks[workspace["id"]]
+                task1 = wshandler.agent_tasks[workspace["id"]]
                 # A second mention from a different user must supersede
                 # task1 rather than orphaning it.
                 await conn2.handle_chat_send({"message": "@clanker second"})
-                task2 = wshandler._agent_tasks[workspace["id"]]
+                task2 = wshandler.agent_tasks[workspace["id"]]
                 assert task2 is not task1
                 await asyncio.sleep(0)
                 assert task1.cancelled()
                 # abort reaches the now-current run.
                 await conn2.handle_chat_agent_abort()
-                assert workspace["id"] not in wshandler._agent_tasks
+                assert workspace["id"] not in wshandler.agent_tasks
                 await asyncio.sleep(0)
                 assert task2.cancelled()
         finally:
             await session.remove_subscriber(sock1)
             await session.remove_subscriber(sock2)
-            for t in list(wshandler._agent_tasks.values()):
+            for t in list(wshandler.agent_tasks.values()):
                 if not t.done():
                     t.cancel()
-            wshandler._agent_tasks.clear()
-            wshandler._agent_conversations.pop(workspace["id"], None)
+            wshandler.agent_tasks.clear()
+            wshandler.agent_conversations.pop(workspace["id"], None)
 
     async def test_chat_history_on_connect(self, user, agent_user):
         from klangk_backend import model
@@ -9680,15 +9680,15 @@ class TestHandleChatAgentAbort:
             await asyncio.sleep(999)
 
         task = asyncio.create_task(slow())
-        wshandler._agent_tasks[workspace["id"]] = task
+        wshandler.agent_tasks[workspace["id"]] = task
         try:
             await conn.handle_chat_agent_abort()
             # Let cancellation propagate
             await asyncio.sleep(0)
-            assert workspace["id"] not in wshandler._agent_tasks
+            assert workspace["id"] not in wshandler.agent_tasks
             assert task.cancelled() or task.done()
         finally:
-            wshandler._agent_tasks.pop(workspace["id"], None)
+            wshandler.agent_tasks.pop(workspace["id"], None)
             if not task.done():
                 task.cancel()
                 try:
@@ -9707,18 +9707,18 @@ class TestHandleChatAgentAbort:
         conn = _base_conn(user=user, ws=sock)
         workspace = await ws_mod.create_workspace(user["id"], "abort-none")
         conn.workspace_id = workspace["id"]
-        wshandler._agent_tasks.pop(workspace["id"], None)
+        wshandler.agent_tasks.pop(workspace["id"], None)
         await conn.handle_chat_agent_abort()
 
     async def test_drop_if_current_removes_own_entry(self):
         """A finishing run drops the entry only when it is the current task."""
         ws_id = "ws-drop-self"
-        wshandler._agent_tasks[ws_id] = asyncio.current_task()
+        wshandler.agent_tasks[ws_id] = asyncio.current_task()
         try:
             wshandler.drop_agent_task_if_current(ws_id)
-            assert ws_id not in wshandler._agent_tasks
+            assert ws_id not in wshandler.agent_tasks
         finally:
-            wshandler._agent_tasks.pop(ws_id, None)
+            wshandler.agent_tasks.pop(ws_id, None)
 
     async def test_drop_if_current_keeps_other_entry(self):
         """A superseded (older) run must not pop a newer task's entry."""
@@ -9728,18 +9728,18 @@ class TestHandleChatAgentAbort:
             await asyncio.sleep(999)
 
         other_task = asyncio.create_task(other())
-        wshandler._agent_tasks[ws_id] = other_task
+        wshandler.agent_tasks[ws_id] = other_task
         try:
             wshandler.drop_agent_task_if_current(ws_id)
             # Entry belongs to a different task; left intact.
-            assert wshandler._agent_tasks[ws_id] is other_task
+            assert wshandler.agent_tasks[ws_id] is other_task
         finally:
             other_task.cancel()
             try:
                 await other_task
             except asyncio.CancelledError:
                 pass
-            wshandler._agent_tasks.pop(ws_id, None)
+            wshandler.agent_tasks.pop(ws_id, None)
 
 
 class TestPresenceIncludesAgent:
@@ -9838,7 +9838,7 @@ class TestAgentMentionOtherMsgsContext:
         finally:
             await session.remove_subscriber(sock)
             state.sessions.pop(ws_id, None)
-            wshandler._agent_tasks.pop(ws_id, None)
+            wshandler.agent_tasks.pop(ws_id, None)
 
 
 class TestAgentMentionAskerIdentity:
@@ -9909,7 +9909,7 @@ class TestAgentMentionAskerIdentity:
         finally:
             await session.remove_subscriber(sock)
             state.sessions.pop(ws_id, None)
-            wshandler._agent_tasks.pop(ws_id, None)
+            wshandler.agent_tasks.pop(ws_id, None)
 
 
 class TestTokenRenewalFailureLogged:

@@ -20,8 +20,8 @@ from ..terminal import (
     SERVICE_CMD_WINDOW,
     SERVICE_SESSION,
 )
-from .safe_websocket import SlowClientError, _WS_ERRORS
-from ._constants import _MAX_INPUT_SIZE
+from .safe_websocket import SlowClientError, WS_ERRORS
+from .constants import MAX_INPUT_SIZE
 from .helpers import send_error, send_event, get_shared_terminals
 from .session import state
 
@@ -261,7 +261,7 @@ class ExecController:
         if session is None or not session.is_alive:
             return
         raw = base64.b64decode(msg.get("data", ""))
-        if len(raw) > _MAX_INPUT_SIZE:
+        if len(raw) > MAX_INPUT_SIZE:
             logger.warning(
                 "exec_input too large (%d bytes), dropping", len(raw)
             )
@@ -320,7 +320,7 @@ class ExecController:
             )
         except asyncio.CancelledError:
             raise
-        except _WS_ERRORS as e:
+        except WS_ERRORS as e:
             logger.error("Exec output forwarding error: %s", e)
         finally:
             await self.claim_and_stop()
@@ -612,7 +612,7 @@ class TerminalController:
                 logger.exception("Terminal start failed: %s", e)
                 try:
                     send_error(conn.sock, f"Terminal start failed: {e}")
-                except _WS_ERRORS:
+                except WS_ERRORS:
                     pass
 
         self.task = asyncio.create_task(_start_terminal())
@@ -653,7 +653,7 @@ class TerminalController:
             # Block user-typed input.
             if not data.startswith("\x1b"):
                 return
-        if len(data) > _MAX_INPUT_SIZE:
+        if len(data) > MAX_INPUT_SIZE:
             logger.warning(
                 "terminal_input too large (%d bytes), dropping", len(data)
             )
@@ -943,11 +943,11 @@ class TerminalController:
             )
         except asyncio.CancelledError:
             raise  # Normal cleanup, don't send event
-        except _WS_ERRORS as e:
+        except WS_ERRORS as e:
             logger.error("Terminal output forwarding error: %s", e)
             try:
                 send_event(self._conn.sock, "container_stopped")
-            except _WS_ERRORS:
+            except WS_ERRORS:
                 pass
         finally:
             await self.claim_and_stop()

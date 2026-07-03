@@ -4,7 +4,7 @@ import logging
 
 from .. import agent, container, model
 from .safe_websocket import SafeWebSocket
-from ._constants import log_ws_msg
+from .constants import log_ws_msg
 from .session import state
 
 logger = logging.getLogger(__name__)

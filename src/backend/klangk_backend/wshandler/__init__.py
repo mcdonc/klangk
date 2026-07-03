@@ -2,7 +2,7 @@
 
 Historically all WebSocket handling lived in a single ~3000-line
 ``wshandler.py``.  That module has been split into per-concern
-submodules (``_constants``, ``safe_websocket``, ``session``,
+submodules (``constants``, ``safe_websocket``, ``session``,
 ``controllers``, ``connection``, ``agent_mention``, ``dispatch``,
 ``helpers``).
 
@@ -26,12 +26,12 @@ from .. import podman as podman  # noqa: F401
 from .. import terminal as terminal  # noqa: F401
 from .. import workspaces as workspaces  # noqa: F401
 
-from ._constants import (
-    _MAX_INPUT_SIZE as _MAX_INPUT_SIZE,
-    _SEND_QUEUE_SIZE as _SEND_QUEUE_SIZE,
-    _WS_DEBUG as _WS_DEBUG,
-    _agent_conversations as _agent_conversations,
-    _agent_tasks as _agent_tasks,
+from .constants import (
+    MAX_INPUT_SIZE as MAX_INPUT_SIZE,
+    SEND_QUEUE_SIZE as SEND_QUEUE_SIZE,
+    WS_DEBUG as WS_DEBUG,
+    agent_conversations as agent_conversations,
+    agent_tasks as agent_tasks,
     cancel_agent_task as cancel_agent_task,
     drop_agent_task_if_current as drop_agent_task_if_current,
     log_ws_msg as log_ws_msg,
@@ -41,7 +41,7 @@ from ._constants import (
 from .safe_websocket import (
     SafeWebSocket as SafeWebSocket,
     SlowClientError as SlowClientError,
-    _WS_ERRORS as _WS_ERRORS,
+    WS_ERRORS as WS_ERRORS,
     broadcast_to_set as broadcast_to_set,
 )
 from .session import (

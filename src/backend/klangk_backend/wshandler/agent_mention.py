@@ -5,9 +5,9 @@ import logging
 import re
 
 from .. import agent, model
-from ._constants import (
-    _agent_conversations as _agent_conversations,
-    _agent_tasks as _agent_tasks,
+from .constants import (
+    agent_conversations as agent_conversations,
+    agent_tasks as agent_tasks,
     cancel_agent_task as cancel_agent_task,
     drop_agent_task_if_current as drop_agent_task_if_current,
 )

@@ -10,9 +10,9 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from .. import agent, auth, container, model, terminal
-from .safe_websocket import SafeWebSocket, _WS_ERRORS, broadcast_to_set
-from ._constants import (
-    _agent_conversations,
+from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
+from .constants import (
+    agent_conversations,
     cancel_agent_task,
     log_ws_msg,
 )
@@ -215,7 +215,7 @@ class WorkspaceSession:
         log_ws_msg("BCAST", message)
         try:
             target_sock.send_json(message)
-        except _WS_ERRORS:
+        except WS_ERRORS:
             state.pending_browser_requests.pop(request_id, None)
             return {"error": "Browser connection not available"}
 
@@ -255,7 +255,7 @@ class WorkspaceSession:
         log_ws_msg("SEND", message)
         try:
             target_sock.send_json(message)
-        except _WS_ERRORS:
+        except WS_ERRORS:
             state.streaming_browser_requests.pop(request_id, None)
             yield (
                 json.dumps(
@@ -495,7 +495,7 @@ class WebSocketState:
             logger.info("Reset workspace state for %s", workspace_id)
 
         # Clean up module-level agent state for this workspace.
-        _agent_conversations.pop(workspace_id, None)
+        agent_conversations.pop(workspace_id, None)
         cancel_agent_task(workspace_id)
         # Stop the Pi RPC subprocess so it doesn't outlive the container.
         await agent.stop_session(workspace_id)
@@ -542,7 +542,7 @@ class WebSocketState:
                 continue
             try:
                 sock.send_json(message)
-            except _WS_ERRORS:
+            except WS_ERRORS:
                 dead.append((sock, conn))
         for sock, conn in dead:
             self.connections.pop(sock, None)
@@ -571,7 +571,7 @@ class WebSocketState:
                 continue
             try:
                 sock.send_json(message_dict)
-            except _WS_ERRORS:
+            except WS_ERRORS:
                 dead.append((sock, conn))
         for sock, conn in dead:
             self.connections.pop(sock, None)
@@ -607,7 +607,7 @@ class WebSocketState:
                         cs.health_message,
                     )
                 )
-            except _WS_ERRORS:
+            except WS_ERRORS:
                 # The just-registered socket is already gone; nothing to
                 # snapshot to.  dispatch.py owns cleanup on disconnect.
                 break
@@ -627,7 +627,7 @@ class WebSocketState:
                 continue
             try:
                 sock.send_json(message)
-            except _WS_ERRORS:
+            except WS_ERRORS:
                 dead.append((sock, conn))
         for sock, conn in dead:
             self.connections.pop(sock, None)

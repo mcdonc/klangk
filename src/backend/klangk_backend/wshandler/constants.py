@@ -14,13 +14,13 @@ from ..util import resolve_env_value
 
 logger = logging.getLogger(__name__)
 
-_WS_DEBUG = bool(resolve_env_value("KLANGK_WS_DEBUG"))
+WS_DEBUG = bool(resolve_env_value("KLANGKWS_DEBUG"))
 
 # Max size for terminal/exec input data (base64-decoded bytes).
-_MAX_INPUT_SIZE = 65536
+MAX_INPUT_SIZE = 65536
 
 # Max outbound messages before we declare the client too slow and close.
-_SEND_QUEUE_SIZE = 256
+SEND_QUEUE_SIZE = 256
 
 
 def bridge_idle_timeout() -> float:
@@ -39,13 +39,13 @@ def bridge_idle_timeout() -> float:
 
 # ---------------------------------------------------------------------------
 # log_ws_msg lives here (not in helpers) to break the
-# helpers → session → helpers cycle.  It only needs _WS_DEBUG and logging.
+# helpers → session → helpers cycle.  It only needs WS_DEBUG and logging.
 # ---------------------------------------------------------------------------
 
 
 def log_ws_msg(direction: str, msg: dict, user: dict | None = None) -> None:
-    """Log a WebSocket message for debugging (KLANGK_WS_DEBUG=1)."""
-    if not _WS_DEBUG:
+    """Log a WebSocket message for debugging (KLANGKWS_DEBUG=1)."""
+    if not WS_DEBUG:
         return
     msg_type = msg.get("type") or msg.get("cmd") or "?"
     # Truncate terminal_output/terminal_input data to avoid log spam
@@ -68,10 +68,10 @@ def log_ws_msg(direction: str, msg: dict, user: dict | None = None) -> None:
 # user_id: who started the conversation
 # time: monotonic timestamp of the last agent exchange
 # interjected: True after a different human spoke
-_agent_conversations: dict[str, dict] = {}
+agent_conversations: dict[str, dict] = {}
 
 # Active agent tasks per workspace, for abort support.
-_agent_tasks: dict[str, asyncio.Task] = {}
+agent_tasks: dict[str, asyncio.Task] = {}
 
 
 def cancel_agent_task(workspace_id: str) -> None:
@@ -81,7 +81,7 @@ def cancel_agent_task(workspace_id: str) -> None:
     supersede (cancel) any still-running one — otherwise the earlier
     task is orphaned and can no longer be reached by an abort.
     """
-    task = _agent_tasks.pop(workspace_id, None)
+    task = agent_tasks.pop(workspace_id, None)
     if task is not None and not task.done():
         task.cancel()
 
@@ -93,8 +93,8 @@ def drop_agent_task_if_current(workspace_id: str) -> None:
     task, so a finishing (or cancelled) run must not pop an entry that
     now belongs to its replacement.
     """
-    if _agent_tasks.get(workspace_id) is asyncio.current_task():
-        _agent_tasks.pop(workspace_id, None)
+    if agent_tasks.get(workspace_id) is asyncio.current_task():
+        agent_tasks.pop(workspace_id, None)
 
 
 def clear_agent_mention_state() -> None:
@@ -105,6 +105,6 @@ def clear_agent_mention_state() -> None:
     Mirrors the per-workspace cleanup in ``reset_workspace`` but across
     every workspace at once.
     """
-    for ws_id in list(_agent_tasks):
+    for ws_id in list(agent_tasks):
         cancel_agent_task(ws_id)
-    _agent_conversations.clear()
+    agent_conversations.clear()

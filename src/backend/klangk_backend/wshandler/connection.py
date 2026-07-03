@@ -11,12 +11,12 @@ from .. import agent, auth, container, model, terminal, workspaces
 from ..terminal import TerminalSession
 from ..podman import ExecSession
 from ..util import derive_hosting_info
-from ._constants import (
-    _agent_conversations,
-    _agent_tasks,
+from .constants import (
+    agent_conversations,
+    agent_tasks,
     cancel_agent_task,
 )
-from .safe_websocket import SafeWebSocket, _WS_ERRORS
+from .safe_websocket import SafeWebSocket, WS_ERRORS
 from .helpers import (
     send_error,
     send_event,
@@ -339,7 +339,7 @@ class Connection:
         async def on_idle(wid: str) -> None:
             try:
                 send_event(sock, "container_stopped", "idle timeout")
-            except _WS_ERRORS:
+            except WS_ERRORS:
                 pass
 
         self._idle_cb = on_idle
@@ -510,7 +510,7 @@ class Connection:
 
         try:
             await self.cleanup()
-        except _WS_ERRORS as e:
+        except WS_ERRORS as e:
             logger.warning("Cleanup error during restart: %s", e)
 
         if workspace is None:
@@ -719,11 +719,11 @@ class Connection:
         # starting with @someone-else always break the conversation.
         should_route = False
         user_id = self.user["id"]
-        conv = _agent_conversations.get(workspace_id)
+        conv = agent_conversations.get(workspace_id)
 
         if await mentions_agent(text):
             should_route = True
-            _agent_conversations[workspace_id] = {
+            agent_conversations[workspace_id] = {
                 "user_id": user_id,
                 "time": time.monotonic(),
                 "interjected": False,
@@ -740,13 +740,13 @@ class Connection:
                     conv["time"] = time.monotonic()
                 else:
                     # Window expired
-                    del _agent_conversations[workspace_id]
+                    del agent_conversations[workspace_id]
             else:
                 # Different human speaking — mark interjection
                 conv["interjected"] = True
         elif conv:
             # Addressed to someone else — break conversation
-            del _agent_conversations[workspace_id]
+            del agent_conversations[workspace_id]
 
         if should_route and self.container_id:
             # One agent-run slot per workspace: cancel any in-flight run
@@ -754,7 +754,7 @@ class Connection:
             # Pass the asking user's identity so the agent can resolve
             # "my" (its process has no user identity of its own).
             cancel_agent_task(workspace_id)
-            _agent_tasks[workspace_id] = asyncio.create_task(
+            agent_tasks[workspace_id] = asyncio.create_task(
                 handle_agent_mention(
                     workspace_id,
                     self.container_id,
