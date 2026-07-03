@@ -373,20 +373,18 @@ class TestLoginRateLimit:
         assert info["attempt_count"] == 1
 
     def test_window_elapsed_policy(self):
-        """_window_elapsed decides whether the sliding window has passed."""
-        assert auth._window_elapsed(None) is False
-        assert auth._window_elapsed({"first_attempt_at": None}) is False
+        """window_elapsed decides whether the sliding window has passed."""
+        assert auth.window_elapsed(None) is False
+        assert auth.window_elapsed({"first_attempt_at": None}) is False
         # Unparseable timestamp is treated as not-elapsed (safe default).
-        assert (
-            auth._window_elapsed({"first_attempt_at": "not-a-date"}) is False
-        )
+        assert auth.window_elapsed({"first_attempt_at": "not-a-date"}) is False
         old = (
             datetime.now(timezone.utc)
             - timedelta(seconds=auth.LOGIN_LOCKOUT_WINDOW + 1)
         ).isoformat()
-        assert auth._window_elapsed({"first_attempt_at": old}) is True
+        assert auth.window_elapsed({"first_attempt_at": old}) is True
         recent = datetime.now(timezone.utc).isoformat()
-        assert auth._window_elapsed({"first_attempt_at": recent}) is False
+        assert auth.window_elapsed({"first_attempt_at": recent}) is False
 
     async def test_login_lockout_message_shows_remaining_time(self, user):
         """Lockout message includes remaining minutes."""
@@ -434,31 +432,31 @@ class TestLoginRateLimit:
         assert exc_info.value.status_code == 429
 
     async def test_should_lockout_helper(self, db):
-        """_should_lockout returns True at threshold, False below/above."""
-        assert auth._should_lockout({"attempt_count": 4}) is False
-        assert auth._should_lockout({"attempt_count": 5}) is True
-        assert auth._should_lockout(None) is False
+        """should_lockout returns True at threshold, False below/above."""
+        assert auth.should_lockout({"attempt_count": 4}) is False
+        assert auth.should_lockout({"attempt_count": 5}) is True
+        assert auth.should_lockout(None) is False
 
     async def test_should_lockout_respects_configured_threshold(self, db):
-        """_should_lockout uses LOGIN_LOCKOUT_FAILURES as the threshold."""
-        assert auth._should_lockout({"attempt_count": 5}) is True
-        assert auth._should_lockout({"attempt_count": 4}) is False
+        """should_lockout uses LOGIN_LOCKOUT_FAILURES as the threshold."""
+        assert auth.should_lockout({"attempt_count": 5}) is True
+        assert auth.should_lockout({"attempt_count": 4}) is False
 
     async def test_is_locked_out_helper(self, db):
-        """_is_locked_out returns True/msg when locked_until is in the future."""
+        """is_locked_out returns True/msg when locked_until is in the future."""
         future = datetime.now(timezone.utc) + timedelta(minutes=10)
         past = datetime.now(timezone.utc) - timedelta(minutes=1)
         locked = {"attempt_count": 5, "locked_until": future.isoformat()}
-        is_locked, msg = auth._is_locked_out(locked)
+        is_locked, msg = auth.is_locked_out(locked)
         assert is_locked is True
         assert "minutes" in msg
         expired = {"attempt_count": 5, "locked_until": past.isoformat()}
-        is_locked2, msg2 = auth._is_locked_out(expired)
+        is_locked2, msg2 = auth.is_locked_out(expired)
         assert is_locked2 is False
         assert msg2 is None
         no_lock = {"attempt_count": 1, "locked_until": None}
-        assert auth._is_locked_out(no_lock) == (False, None)
-        assert auth._is_locked_out(None) == (False, None)
+        assert auth.is_locked_out(no_lock) == (False, None)
+        assert auth.is_locked_out(None) == (False, None)
 
     async def test_login_lockout_disabled_when_zero(self, db, monkeypatch):
         """With LOGIN_LOCKOUT_FAILURES=0, no rate limiting occurs."""

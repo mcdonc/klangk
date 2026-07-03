@@ -40,7 +40,7 @@ def _provider(**overrides):
 class TestGet:
     def test_missing_key_raises(self):
         with pytest.raises(KeyError, match="missing-key"):
-            oidc._get({}, "missing-key")
+            oidc.get({}, "missing-key")
 
 
 class TestLoadConfig:
@@ -318,11 +318,11 @@ class TestAuthModes:
 class TestClientKwargs:
     def test_no_ca_cert(self):
         provider = _provider()
-        assert oidc._client_kwargs(provider) == {}
+        assert oidc.client_kwargs(provider) == {}
 
     def test_with_ca_cert(self):
         provider = _provider(ca_cert="/etc/pki/ca.pem")
-        assert oidc._client_kwargs(provider) == {"verify": "/etc/pki/ca.pem"}
+        assert oidc.client_kwargs(provider) == {"verify": "/etc/pki/ca.pem"}
 
 
 class TestPKCE:
@@ -410,7 +410,7 @@ class TestDiscovery:
 class TestBuildAuthUrl:
     async def test_build_auth_url(self):
         provider = _provider()
-        oidc._discovery_cache[provider.id] = oidc._CachedDiscovery(
+        oidc._discovery_cache[provider.id] = oidc.CachedDiscovery(
             data={
                 "authorization_endpoint": "https://idp.example.com/auth",
             },
@@ -432,7 +432,7 @@ class TestBuildAuthUrl:
 class TestExchangeCode:
     async def test_exchange_code(self):
         provider = _provider()
-        oidc._discovery_cache[provider.id] = oidc._CachedDiscovery(
+        oidc._discovery_cache[provider.id] = oidc.CachedDiscovery(
             data={"token_endpoint": "https://idp.example.com/token"},
             fetched_at=time.time(),
         )
@@ -455,7 +455,7 @@ class TestGetJWKS:
     async def test_get_jwks_caches(self):
         provider = _provider()
         # Pre-populate discovery cache
-        oidc._discovery_cache[provider.id] = oidc._CachedDiscovery(
+        oidc._discovery_cache[provider.id] = oidc.CachedDiscovery(
             data={"jwks_uri": "https://idp.example.com/jwks"},
             fetched_at=time.time(),
         )
@@ -472,7 +472,7 @@ class TestGetJWKS:
 
     async def test_get_jwks_cache_expires(self):
         provider = _provider()
-        oidc._discovery_cache[provider.id] = oidc._CachedDiscovery(
+        oidc._discovery_cache[provider.id] = oidc.CachedDiscovery(
             data={"jwks_uri": "https://idp.example.com/jwks"},
             fetched_at=time.time(),
         )
@@ -554,7 +554,7 @@ class TestBuildLogoutUrl:
 
     async def test_no_end_session_endpoint(self):
         provider = _provider(logout_redirect=True)
-        oidc._discovery_cache[provider.id] = oidc._CachedDiscovery(
+        oidc._discovery_cache[provider.id] = oidc.CachedDiscovery(
             data={"authorization_endpoint": "https://idp/auth"},
             fetched_at=time.time(),
         )
@@ -563,7 +563,7 @@ class TestBuildLogoutUrl:
 
     async def test_builds_url(self):
         provider = _provider(logout_redirect=True)
-        oidc._discovery_cache[provider.id] = oidc._CachedDiscovery(
+        oidc._discovery_cache[provider.id] = oidc.CachedDiscovery(
             data={
                 "end_session_endpoint": "https://idp.example.com/logout",
             },

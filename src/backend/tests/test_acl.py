@@ -22,7 +22,7 @@ class TestAceMatchesPrincipals:
             "system_principal": SYSTEM_EVERYONE,
         }
         principals = {"user_id": "u1", "group_ids": [], "authenticated": False}
-        assert acl._ace_matches_principals(ace, principals) is True
+        assert acl.ace_matches_principals(ace, principals) is True
 
     def test_system_authenticated_matches_authed(self):
         ace = {
@@ -30,7 +30,7 @@ class TestAceMatchesPrincipals:
             "system_principal": SYSTEM_AUTHENTICATED,
         }
         principals = {"user_id": "u1", "group_ids": [], "authenticated": True}
-        assert acl._ace_matches_principals(ace, principals) is True
+        assert acl.ace_matches_principals(ace, principals) is True
 
     def test_system_authenticated_no_match_unauthed(self):
         ace = {
@@ -38,17 +38,17 @@ class TestAceMatchesPrincipals:
             "system_principal": SYSTEM_AUTHENTICATED,
         }
         principals = {"user_id": "u1", "group_ids": [], "authenticated": False}
-        assert acl._ace_matches_principals(ace, principals) is False
+        assert acl.ace_matches_principals(ace, principals) is False
 
     def test_user_principal_matches(self):
         ace = {"principal_type": PRINCIPAL_USER, "user_id": "u1"}
         principals = {"user_id": "u1", "group_ids": [], "authenticated": True}
-        assert acl._ace_matches_principals(ace, principals) is True
+        assert acl.ace_matches_principals(ace, principals) is True
 
     def test_user_principal_no_match(self):
         ace = {"principal_type": PRINCIPAL_USER, "user_id": "u2"}
         principals = {"user_id": "u1", "group_ids": [], "authenticated": True}
-        assert acl._ace_matches_principals(ace, principals) is False
+        assert acl.ace_matches_principals(ace, principals) is False
 
     def test_group_principal_matches(self):
         ace = {"principal_type": PRINCIPAL_GROUP, "group_id": "g1"}
@@ -57,7 +57,7 @@ class TestAceMatchesPrincipals:
             "group_ids": ["g1", "g2"],
             "authenticated": True,
         }
-        assert acl._ace_matches_principals(ace, principals) is True
+        assert acl.ace_matches_principals(ace, principals) is True
 
     def test_group_principal_no_match(self):
         ace = {"principal_type": PRINCIPAL_GROUP, "group_id": "g3"}
@@ -66,12 +66,12 @@ class TestAceMatchesPrincipals:
             "group_ids": ["g1", "g2"],
             "authenticated": True,
         }
-        assert acl._ace_matches_principals(ace, principals) is False
+        assert acl.ace_matches_principals(ace, principals) is False
 
     def test_unknown_principal_type(self):
         ace = {"principal_type": 99}
         principals = {"user_id": "u1", "group_ids": [], "authenticated": True}
-        assert acl._ace_matches_principals(ace, principals) is False
+        assert acl.ace_matches_principals(ace, principals) is False
 
 
 class TestCheckPermission:
@@ -197,7 +197,7 @@ class TestCheckPermissionInMemory:
 
         ancestor_paths: list[str] = []
         for res in self._RESOURCES:
-            ancestor_paths.extend(acl._resource_ancestors(res))
+            ancestor_paths.extend(acl.resource_ancestors(res))
         entries = await model.get_acl_entries_map(ancestor_paths)
 
         for res in self._RESOURCES:
@@ -307,23 +307,23 @@ class TestRequestToResource:
         return request
 
     def test_root(self):
-        assert acl._request_to_resource(self._make_request("/")) == "/"
+        assert acl.request_to_resource(self._make_request("/")) == "/"
 
     def test_workspaces_collection(self):
         assert (
-            acl._request_to_resource(self._make_request("/workspaces"))
+            acl.request_to_resource(self._make_request("/workspaces"))
             == "/workspaces"
         )
 
     def test_workspace_detail(self):
         assert (
-            acl._request_to_resource(self._make_request("/workspaces/abc-123"))
+            acl.request_to_resource(self._make_request("/workspaces/abc-123"))
             == "/workspaces/abc-123"
         )
 
     def test_workspace_sub_path(self):
         assert (
-            acl._request_to_resource(
+            acl.request_to_resource(
                 self._make_request("/workspaces/abc-123/export")
             )
             == "/workspaces/abc-123"
@@ -331,25 +331,24 @@ class TestRequestToResource:
 
     def test_admin_users(self):
         assert (
-            acl._request_to_resource(self._make_request("/admin/users"))
+            acl.request_to_resource(self._make_request("/admin/users"))
             == "/admin/users"
         )
 
     def test_admin_users_detail(self):
         assert (
-            acl._request_to_resource(self._make_request("/admin/users/u1"))
+            acl.request_to_resource(self._make_request("/admin/users/u1"))
             == "/admin/users/u1"
         )
 
     def test_admin_base(self):
         assert (
-            acl._request_to_resource(self._make_request("/admin")) == "/admin"
+            acl.request_to_resource(self._make_request("/admin")) == "/admin"
         )
 
     def test_other_path(self):
         assert (
-            acl._request_to_resource(self._make_request("/health"))
-            == "/health"
+            acl.request_to_resource(self._make_request("/health")) == "/health"
         )
 
 

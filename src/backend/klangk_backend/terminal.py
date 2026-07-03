@@ -36,7 +36,7 @@ _SAFE_WINDOW_NAME = re.compile(r"^[A-Za-z0-9 _.\-]+$")
 _MAX_WINDOW_NAME_LEN = 64
 
 
-def _validate_window_name(name: str) -> None:
+def validate_window_name(name: str) -> None:
     """Raise ``ValueError`` if *name* contains shell-unsafe characters."""
     if not name or len(name) > _MAX_WINDOW_NAME_LEN:
         raise ValueError(
@@ -73,7 +73,7 @@ _SENSITIVE_ENV_PREFIXES = (
 )
 
 
-def _build_environment(
+def build_environment(
     user_home: str | None = None,
     user_id: str | None = None,
     user_handle: str | None = None,
@@ -109,7 +109,7 @@ SERVICE_SESSION = "service"
 # ensure_service_session (#1188). Two unserialized callers -- the boot path
 # (workspaces.eager_start_workspace) and the per-connection path
 # (wshandler _fire_service_command) -- could both observe
-# _service_cmd_window_exists -> False before either's new-window landed, and
+# service_cmd_window_exists -> False before either's new-window landed, and
 # since tmux permits duplicate window names, both would create a service-cmd
 # window. The lock makes the window-exists -> new-window -> send-keys sequence
 # atomic per container, so unrelated workspaces fire concurrently but the
@@ -118,7 +118,7 @@ SERVICE_SESSION = "service"
 _service_session_locks: dict[str, asyncio.Lock] = {}
 
 
-def _get_service_session_lock(container_id: str) -> asyncio.Lock:
+def get_service_session_lock(container_id: str) -> asyncio.Lock:
     """Get or create the per-container lock for service-command firing."""
     if container_id not in _service_session_locks:
         _service_session_locks[container_id] = asyncio.Lock()
@@ -134,7 +134,7 @@ def clear_service_session_lock(container_id: str) -> None:
     _service_session_locks.pop(container_id, None)
 
 
-async def _has_tmux_session(container_id: str, session_name: str) -> bool:
+async def has_tmux_session(container_id: str, session_name: str) -> bool:
     """Return True if a tmux session named *session_name* exists."""
     try:
         rc, _, _ = await podman.exec_container(
@@ -148,7 +148,7 @@ async def _has_tmux_session(container_id: str, session_name: str) -> bool:
     return rc == 0
 
 
-async def _service_cmd_window_exists(
+async def service_cmd_window_exists(
     container_id: str, session_name: str
 ) -> bool:
     """Return True if the ``service-cmd`` window exists in *session_name*.
@@ -183,7 +183,7 @@ async def _service_cmd_window_exists(
     }
 
 
-def _should_fire_service_command(
+def should_fire_service_command(
     service_command: str | None, setup_state: str
 ) -> bool:
     """The setup-phase half of the firing predicate (#1033).
@@ -195,7 +195,7 @@ def _should_fire_service_command(
     there is no ``None`` case to handle here.
 
     The other half -- "the service-cmd window doesn't already exist" --
-    is checked by the caller via :func:`_service_cmd_window_exists`,
+    is checked by the caller via :func:`service_cmd_window_exists`,
     since it is per-container and ephemeral.
     """
     if not service_command:
@@ -217,7 +217,7 @@ async def _ensure_tmux_session(
     not podman's), so the session's window-0 shell sources the right
     profile.
     """
-    if await _has_tmux_session(container_id, session_name):
+    if await has_tmux_session(container_id, session_name):
         return False
     env_args: list[str] = []
     if user_home is not None:
@@ -237,7 +237,7 @@ async def _ensure_tmux_session(
     return True
 
 
-async def _ensure_base_session(
+async def ensure_base_session(
     container_id: str,
     session_name: str,
     user_home: str | None = None,
@@ -281,7 +281,7 @@ async def ensure_service_session(
     window-exists check makes it a no-op after the first fire.
 
     The window-exists -> new-window -> send-keys sequence is serialized
-    per container via :func:`_get_service_session_lock` (#1188): without
+    per container via :func:`get_service_session_lock` (#1188): without
     it the boot path and the per-connection path could both pass the
     existence check before either created the window, producing two
     duplicate-named ``service-cmd`` windows (tmux allows duplicate
@@ -292,11 +292,11 @@ async def ensure_service_session(
     # collaborator) cannot interleave: the second waits, then observes
     # the window exists and no-ops. This also bounds the partial-failure
     # window from #1186.
-    async with _get_service_session_lock(container_id):
+    async with get_service_session_lock(container_id):
         await _ensure_tmux_session(container_id, SERVICE_SESSION, agent_home)
         if not (
-            _should_fire_service_command(service_command, setup_state)
-        ) or await _service_cmd_window_exists(container_id, SERVICE_SESSION):
+            should_fire_service_command(service_command, setup_state)
+        ) or await service_cmd_window_exists(container_id, SERVICE_SESSION):
             return
         try:
             await podman.exec_container(
@@ -365,7 +365,7 @@ async def ensure_service_session(
                 )
 
 
-def _build_shell_command(
+def build_shell_command(
     session_name: str | None = None,
     user_home: str | None = None,
     socket_path: str | None = None,
@@ -422,7 +422,7 @@ def _build_shell_command(
             # Each connection gets a grouped session so that
             # select-window only affects this client.  The base
             # session is created detached if it doesn't exist yet
-            # (via _ensure_base_session), then we always create a
+            # (via ensure_base_session), then we always create a
             # grouped session targeting it.
             unique = f"{session_name}-{uuid.uuid4().hex[:8]}"
             session_args = ["-t", session_name, "-s", unique]
@@ -560,7 +560,7 @@ async def new_window(
     round-trips (list + create + list in one call).
     """
     if name is not None:
-        _validate_window_name(name)
+        validate_window_name(name)
         # Explicit name — check + create + list in one exec. The window
         # name and session name are passed as positional argv ($1/$2),
         # never interpolated into the script, so shell metacharacters in
@@ -621,7 +621,7 @@ async def rename_window(
     Raises ``ValueError`` if *name* contains unsafe characters or
     duplicates another window's name.
     """
-    _validate_window_name(name)
+    validate_window_name(name)
     existing = await list_windows(container_id, session_name)
     if any(w["name"] == name and w["index"] != index for w in existing):
         raise ValueError(f"Window name '{name}' already exists")
@@ -849,7 +849,7 @@ def _set_winsize(fd: int, rows: int, cols: int) -> None:  # pragma: no cover
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
-def _make_shell_process() -> ShellProcess:
+def make_shell_process() -> ShellProcess:
     return ShellProcess()
 
 
@@ -901,19 +901,19 @@ class TerminalSession:
             and not self.socket_path
             and terminal_tmux_enabled()
         ):
-            await _ensure_base_session(
+            await ensure_base_session(
                 self.container_id,
                 self.session_name,
                 user_home=self.user_home,
                 ssh_agent_socket=self.ssh_agent_socket,
             )
-        env = _build_environment(
+        env = build_environment(
             self.user_home,
             user_id=self.user_id,
             user_handle=self.user_handle,
             ssh_agent_socket=self.ssh_agent_socket,
         )
-        shell_cmd, self._tmux_session_name = _build_shell_command(
+        shell_cmd, self._tmux_session_name = build_shell_command(
             session_name=self.session_name,
             user_home=self.user_home,
             socket_path=self.socket_path,
@@ -926,7 +926,7 @@ class TerminalSession:
         argv = _build_exec_argv(self.container_id, env, shell_cmd, work_dir)
 
         logger.info("Terminal exec argv: %s", argv)
-        shell = _make_shell_process()
+        shell = make_shell_process()
         try:
             await shell.start(argv, rows, cols)
         except Exception:

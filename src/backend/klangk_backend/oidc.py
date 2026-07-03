@@ -42,7 +42,7 @@ class OIDCProvider:
 
 
 @dataclass
-class _CachedDiscovery:
+class CachedDiscovery:
     data: dict
     fetched_at: float
 
@@ -53,7 +53,7 @@ class _CachedJWKS:
     fetched_at: float
 
 
-_discovery_cache: dict[str, _CachedDiscovery] = {}
+_discovery_cache: dict[str, CachedDiscovery] = {}
 _jwks_cache: dict[str, _CachedJWKS] = {}
 
 # Provider registry — loaded once at startup
@@ -63,7 +63,7 @@ _providers: list[OIDCProvider] = []
 _SENTINEL = object()
 
 
-def _get(entry: dict, key: str, default: object = _SENTINEL) -> object:
+def get(entry: dict, key: str, default: object = _SENTINEL) -> object:
     """Look up *key* (kebab-case) with snake_case fallback for backwards compat."""
     value = entry.get(key, _SENTINEL)
     if value is not _SENTINEL:
@@ -97,22 +97,22 @@ def load_config() -> list[OIDCProvider]:
 
     providers = []
     for entry in raw:
-        secret = resolve_file_value(_get(entry, "client-secret", ""))
+        secret = resolve_file_value(get(entry, "client-secret", ""))
         # Resolve ca-cert relative to the config file's directory
-        ca_cert = _get(entry, "ca-cert", None)
+        ca_cert = get(entry, "ca-cert", None)
         if ca_cert and not os.path.isabs(ca_cert):
             ca_cert = os.path.join(config_dir, ca_cert)
         providers.append(
             OIDCProvider(
                 id=entry["id"],
-                display_name=_get(entry, "display-name"),
+                display_name=get(entry, "display-name"),
                 issuer=entry["issuer"].rstrip("/"),
-                client_id=_get(entry, "client-id"),
+                client_id=get(entry, "client-id"),
                 client_secret=secret or "",
                 scopes=entry.get("scopes", "openid email profile"),
                 ca_cert=ca_cert,
-                token_validation_pem=_get(entry, "token-validation-pem", None),
-                logout_redirect=_get(entry, "logout-redirect", False),
+                token_validation_pem=get(entry, "token-validation-pem", None),
+                logout_redirect=get(entry, "logout-redirect", False),
             )
         )
     return providers
@@ -180,7 +180,7 @@ def generate_pkce() -> tuple[str, str]:
 # --- HTTP client ---
 
 
-def _client_kwargs(provider: OIDCProvider) -> dict:
+def client_kwargs(provider: OIDCProvider) -> dict:
     """Return httpx.AsyncClient kwargs for a provider, including
     custom CA cert if configured."""
     kwargs: dict = {}
@@ -200,12 +200,12 @@ async def discover(provider: OIDCProvider) -> dict:
         return cached.data
 
     url = f"{provider.issuer}/.well-known/openid-configuration"
-    async with httpx.AsyncClient(**_client_kwargs(provider)) as client:
+    async with httpx.AsyncClient(**client_kwargs(provider)) as client:
         resp = await client.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
 
-    _discovery_cache[provider.id] = _CachedDiscovery(data=data, fetched_at=now)
+    _discovery_cache[provider.id] = CachedDiscovery(data=data, fetched_at=now)
     return data
 
 
@@ -218,7 +218,7 @@ async def get_jwks(provider: OIDCProvider) -> dict:
 
     disc = await discover(provider)
     jwks_uri = disc["jwks_uri"]
-    async with httpx.AsyncClient(**_client_kwargs(provider)) as client:
+    async with httpx.AsyncClient(**client_kwargs(provider)) as client:
         resp = await client.get(jwks_uri, timeout=10)
         resp.raise_for_status()
         keys = resp.json()
@@ -269,7 +269,7 @@ async def exchange_code(
         "client_secret": provider.client_secret,
         "code_verifier": code_verifier,
     }
-    async with httpx.AsyncClient(**_client_kwargs(provider)) as client:
+    async with httpx.AsyncClient(**client_kwargs(provider)) as client:
         resp = await client.post(
             disc["token_endpoint"],
             data=data,

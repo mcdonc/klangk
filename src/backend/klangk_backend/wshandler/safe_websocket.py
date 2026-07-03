@@ -114,7 +114,7 @@ class SafeWebSocket:
         """Proxy client (peer address) access to the underlying WebSocket.
 
         Used by derive_hosting_info to scope X-Forwarded-* trust to the
-        real connection peer (see util._peer_trusted).
+        real connection peer (see util.peer_trusted).
         """
         return self._sock.client
 

@@ -5176,25 +5176,25 @@ class TestAdminResourceACL:
 
 class TestSafePath:
     def test_valid_path(self, temp_data_dir):
-        path = ws_mod._safe_path("user1", "home", "ws1")
+        path = ws_mod.safe_path("user1", "home", "ws1")
         assert path == ws_mod.WORKSPACES_ROOT / "user1" / "home" / "ws1"
 
     def test_traversal_raises(self, temp_data_dir):
         with pytest.raises(ValueError, match="Path traversal blocked"):
-            ws_mod._safe_path("..", "..", "etc", "passwd")
+            ws_mod.safe_path("..", "..", "etc", "passwd")
 
 
 class TestSanitizeFilename:
     def test_safe_characters_preserved(self):
-        assert ws_mod._sanitize_filename("hello-world_v2.tar.gz") == (
+        assert ws_mod.sanitize_filename("hello-world_v2.tar.gz") == (
             "hello-world_v2.tar.gz"
         )
 
     def test_unsafe_characters_replaced(self):
-        assert ws_mod._sanitize_filename("a/b\\c..d\x00e") == "a_b_c..d_e"
+        assert ws_mod.sanitize_filename("a/b\\c..d\x00e") == "a_b_c..d_e"
 
     def test_email_sanitized(self):
-        assert ws_mod._sanitize_filename("user@example.com") == (
+        assert ws_mod.sanitize_filename("user@example.com") == (
             "user@example.com"
         )
 
@@ -5204,7 +5204,7 @@ class TestRmtree:
         d = temp_data_dir / "workspaces" / "toremove"
         d.mkdir(parents=True)
         (d / "file.txt").write_text("data")
-        ws_mod._rmtree(d, "test")
+        ws_mod.rmtree(d, "test")
         assert not d.exists()
 
     def test_logs_errors(self, temp_data_dir, caplog):
@@ -5219,7 +5219,7 @@ class TestRmtree:
             import logging
 
             with caplog.at_level(logging.WARNING):
-                ws_mod._rmtree(d, "test-label")
+                ws_mod.rmtree(d, "test-label")
         assert "denied" in caplog.text
         assert "test-label" in caplog.text
 

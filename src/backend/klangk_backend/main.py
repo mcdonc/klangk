@@ -205,7 +205,7 @@ async def seed_agent_user() -> None:
 # --- PID file helpers ---
 
 
-def _runtime_dir() -> Path:
+def runtime_dir() -> Path:
     """Per-user runtime dir for the PID file.
 
     Prefer XDG_RUNTIME_DIR (set on most Linux desktops), then the Linux
@@ -224,9 +224,9 @@ def _runtime_dir() -> Path:
     return fallback
 
 
-def _pid_file_path() -> Path:
+def pid_file_path() -> Path:
     """Return the PID file path for this instance."""
-    return _runtime_dir() / f"klangk-{container.INSTANCE_ID}.pid"
+    return runtime_dir() / f"klangk-{container.INSTANCE_ID}.pid"
 
 
 def check_pid_file() -> int | None:
@@ -235,7 +235,7 @@ def check_pid_file() -> int | None:
     Returns the PID of the running process, or None if no live process
     holds the PID file.  Removes stale PID files automatically.
     """
-    path = _pid_file_path()
+    path = pid_file_path()
     try:
         pid = int(path.read_text().strip())
     except (FileNotFoundError, ValueError):
@@ -258,7 +258,7 @@ def check_pid_file() -> int | None:
 
 def write_pid_file() -> None:
     """Write the current PID to the instance PID file."""
-    path = _pid_file_path()
+    path = pid_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(str(os.getpid()))
 
@@ -266,7 +266,7 @@ def write_pid_file() -> None:
 def remove_pid_file() -> None:
     """Remove the PID file (best-effort)."""
     try:
-        path = _pid_file_path()
+        path = pid_file_path()
         # Only remove if it contains our PID (another instance may
         # have overwritten it after we were signalled to stop).
         if path.read_text().strip() == str(os.getpid()):
@@ -275,7 +275,7 @@ def remove_pid_file() -> None:
         pass
 
 
-async def _startup() -> None:
+async def startup() -> None:
     """Container-side startup (self-healing on re-run).
 
     Warms podman, adopts/reaps leftover containers, launches the idle
@@ -283,7 +283,7 @@ async def _startup() -> None:
     step is idempotent -- ``init_db`` uses ``CREATE TABLE IF NOT
     EXISTS``, the loop starters are gated on ``task is None``, and
     ``auto_start`` re-creates stopped containers -- so re-running this
-    after ``_runtime_shutdown`` is exactly the SIGHUP restart path.
+    after ``runtime_shutdown`` is exactly the SIGHUP restart path.
     """
     await container.registry.prewarm_podman()
     await container.registry.adopt_orphaned_containers()
@@ -294,14 +294,14 @@ async def _startup() -> None:
         logger.info("Auto-started %d workspace(s)", n)
 
 
-async def _runtime_shutdown() -> None:
+async def runtime_shutdown() -> None:
     """Stop the runtime, keeping the HTTP listener and DB alive.
 
     Drops every WebSocket client (code 1012 = "reconnect"), tears down
     agent subprocesses and in-flight agent runs, then stops all
     containers and cancels the idle/health loops.  Used by both the
     normal process-shutdown path and the SIGHUP restart path -- the
-    difference is only whether ``_startup()`` runs again afterwards.
+    difference is only whether ``startup()`` runs again afterwards.
     """
     await wshandler.disconnect_all_websockets()
     await agent.stop_all_sessions()
@@ -309,7 +309,7 @@ async def _runtime_shutdown() -> None:
     await container.registry.shutdown()
 
 
-async def _process_shutdown() -> None:
+async def process_shutdown() -> None:
     """Full process teardown (run once, at the very end)."""
     remove_pid_file()
     await model.dispose_engine()
@@ -320,7 +320,7 @@ async def _process_shutdown() -> None:
 _restart_lock: asyncio.Lock | None = None
 
 
-async def _restart_runtime() -> None:
+async def restart_runtime() -> None:
     """Graceful runtime restart: stop containers, keep the listener.
 
     Triggered by SIGHUP.  Closes all WebSocket clients (code 1012),
@@ -334,12 +334,12 @@ async def _restart_runtime() -> None:
         _restart_lock = asyncio.Lock()
     async with _restart_lock:
         logger.info("SIGHUP: restarting runtime (keeping HTTP listener)")
-        await _runtime_shutdown()
-        await _startup()
+        await runtime_shutdown()
+        await startup()
         logger.info("SIGHUP: runtime restarted")
 
 
-def _on_sighup() -> None:
+def on_sighup() -> None:
     """Schedule a runtime restart on the running event loop.
 
     Signal callbacks can't be async, so this just creates a task.  The
@@ -349,7 +349,7 @@ def _on_sighup() -> None:
         loop = asyncio.get_running_loop()
     except RuntimeError:  # pragma: no cover - no loop during shutdown
         return
-    loop.create_task(_restart_runtime())
+    loop.create_task(restart_runtime())
 
 
 @asynccontextmanager
@@ -381,7 +381,7 @@ async def lifespan(app: FastAPI):
     container.registry.set_on_container_status_changed(
         wshandler.state.notify_container_status
     )
-    await _startup()
+    await startup()
     logger.info("Klangk backend started")
 
     # uvicorn only handles SIGINT/SIGTERM, so SIGHUP is ours to claim:
@@ -389,13 +389,13 @@ async def lifespan(app: FastAPI):
     # an in-place runtime restart that keeps the HTTP listener up
     # (#1212).
     loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGHUP, _on_sighup)
+    loop.add_signal_handler(signal.SIGHUP, on_sighup)
     try:
         yield
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
-        await _runtime_shutdown()
-        await _process_shutdown()
+        await runtime_shutdown()
+        await process_shutdown()
         logger.info("Klangk backend stopped")
 
 
@@ -424,7 +424,7 @@ def setup_logfire(app: FastAPI) -> bool:
 setup_logfire(app)
 
 
-def _cors_origins() -> list[str]:
+def cors_origins() -> list[str]:
     """Build the CORS allowed-origins list.
 
     Priority: KLANGK_CORS_ORIGINS (comma-separated) > derived from
@@ -443,7 +443,7 @@ def _cors_origins() -> list[str]:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins(),
+    allow_origins=cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

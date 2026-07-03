@@ -304,22 +304,22 @@ class TestPortAllocation:
 class TestDnsConfig:
     def test_no_env_returns_empty(self, monkeypatch):
         monkeypatch.delenv("KLANGK_DNS_SERVERS", raising=False)
-        assert container._container_dns_config() == []
+        assert container.container_dns_config() == []
 
     def test_single_server(self, monkeypatch):
         monkeypatch.setenv("KLANGK_DNS_SERVERS", "100.100.100.100")
-        assert container._container_dns_config() == ["100.100.100.100"]
+        assert container.container_dns_config() == ["100.100.100.100"]
 
     def test_multiple_servers(self, monkeypatch):
         monkeypatch.setenv("KLANGK_DNS_SERVERS", "100.100.100.100, 8.8.8.8")
-        assert container._container_dns_config() == [
+        assert container.container_dns_config() == [
             "100.100.100.100",
             "8.8.8.8",
         ]
 
     def test_empty_string(self, monkeypatch):
         monkeypatch.setenv("KLANGK_DNS_SERVERS", "")
-        assert container._container_dns_config() == []
+        assert container.container_dns_config() == []
 
 
 class TestConstants:
@@ -2216,7 +2216,7 @@ class TestHealthMonitorRunOne:
         # the last HEALTH_MESSAGE_MAX_BYTES bytes are kept (#1088).
         big = "x" * (container.HEALTH_MESSAGE_MAX_BYTES * 4)
         assert len(
-            container._unhealthy_message(1, "", big)
+            container.unhealthy_message(1, "", big)
         ) == container.HEALTH_MESSAGE_MAX_BYTES + len("...") + len(
             "exited 1: "
         )

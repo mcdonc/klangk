@@ -164,7 +164,7 @@ async def handle_agent_mention(
         # Broadcast an ephemeral (non-persisted) system message — agent
         # presence transitions are container-lifecycle events and must
         # not linger in chat history (no symmetric persisted "connected").
-        sys_msg = agent._ephemeral_system_message(
+        sys_msg = agent.ephemeral_system_message(
             workspace_id,
             agent_email,
             agent_handle,

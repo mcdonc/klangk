@@ -26,7 +26,7 @@ async def get_principals(user_id: str) -> dict:
     }
 
 
-def _ace_matches_principals(ace: dict, principals: dict) -> bool:
+def ace_matches_principals(ace: dict, principals: dict) -> bool:
     """Check whether a single ACE matches the given principals."""
     pt = ace["principal_type"]
     if pt == PRINCIPAL_SYSTEM:
@@ -42,7 +42,7 @@ def _ace_matches_principals(ace: dict, principals: dict) -> bool:
     return False
 
 
-def _resource_ancestors(resource_path: str) -> list[str]:
+def resource_ancestors(resource_path: str) -> list[str]:
     """Return [resource_path, ..., '/'] — the paths ``check_permission`` walks.
 
     Mirrors the loop in [check_permission] so a caller can preload ACL
@@ -78,7 +78,7 @@ async def check_permission(
     every call, so a permission change is reflected immediately.
     """
     entries = await model.get_acl_entries_map(
-        _resource_ancestors(resource_path)
+        resource_ancestors(resource_path)
     )
     return check_permission_inmemory(
         resource_path, principals, permission, entries
@@ -94,7 +94,7 @@ def check_permission_inmemory(
     """In-memory equivalent of [check_permission] over a preloaded ACE map.
 
     ``entries_by_resource`` must contain every ancestor of
-    ``resource_path`` (see [_resource_ancestors]); missing paths are treated
+    ``resource_path`` (see [resource_ancestors]); missing paths are treated
     as having no entries, matching the async version's behavior.
 
     This does no I/O and stores nothing: ``entries_by_resource`` is a local
@@ -102,9 +102,9 @@ def check_permission_inmemory(
     request re-reads the live ``acl_entries`` table. There is no
     cross-request cache and therefore no invalidation surface.
     """
-    for path in _resource_ancestors(resource_path):
+    for path in resource_ancestors(resource_path):
         for ace in entries_by_resource.get(path, ()):
-            if _ace_matches_principals(ace, principals):
+            if ace_matches_principals(ace, principals):
                 if ace["permission"] == "*" or ace["permission"] == permission:
                     return ace["action"] == ACTION_ALLOW
     return False
@@ -134,7 +134,7 @@ async def permissions_for_resources(
     """
     ancestor_paths: list[str] = []
     for res in resources:
-        ancestor_paths.extend(_resource_ancestors(res))
+        ancestor_paths.extend(resource_ancestors(res))
     entries = await model.get_acl_entries_map(ancestor_paths)
     result: dict[str, list[str]] = {}
     for res in resources:
@@ -148,7 +148,7 @@ async def permissions_for_resources(
     return result
 
 
-def _request_to_resource(request: Request) -> str:
+def request_to_resource(request: Request) -> str:
     """Derive a resource path from the request URL.
 
     Maps URL paths to the ACL resource tree:
@@ -192,7 +192,7 @@ def has_permission(permission: str, resource_fn=None):
         if resource_fn:
             resource = await resource_fn(request, user)
         else:
-            resource = _request_to_resource(request)
+            resource = request_to_resource(request)
         principals = await get_principals(user["id"])
         if not await check_permission(resource, principals, permission):
             raise HTTPException(status_code=403, detail="Permission denied")

@@ -10,7 +10,7 @@ from . import auth, model, plugins, podman, terminal, util
 logger = logging.getLogger(__name__)
 
 
-def _container_dns_config() -> list[str]:
+def container_dns_config() -> list[str]:
     """Return DNS server list from KLANGK_DNS_SERVERS env var.
 
     Set KLANGK_DNS_SERVERS to a comma-separated list of DNS server IPs
@@ -409,7 +409,7 @@ class IdleMonitor:
             )
 
 
-def _unhealthy_message(rc: int, out: str, err: str) -> str:
+def unhealthy_message(rc: int, out: str, err: str) -> str:
     """Build a bounded failure reason from a check's exit code/output.
 
     Prefers stderr (where shells/diagnostics write their failures);
@@ -525,7 +525,7 @@ class HealthMonitor:
             return "unhealthy", f"{type(e).__name__}: {e}"
         if rc == 0:
             return "healthy", ""
-        return "unhealthy", _unhealthy_message(rc, out, err)
+        return "unhealthy", unhealthy_message(rc, out, err)
 
     async def _check_workspace(self, state: ContainerState) -> None:
         """Poll one workspace, record the reason, and broadcast on change."""
@@ -1217,7 +1217,7 @@ class ContainerRegistry:
             },
             publish=publish,
             add_hosts=["host.containers.internal:host-gateway"],
-            dns=_container_dns_config() or None,
+            dns=container_dns_config() or None,
             env=env_vars,
             init=True,
             interactive=True,

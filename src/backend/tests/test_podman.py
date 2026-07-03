@@ -14,7 +14,7 @@ EXEC = "klangk_backend.podman.asyncio.create_subprocess_exec"
 def _procs(*results):
     """Build fake subprocess objects, one per (stdout, stderr, rc).
 
-    ``_run`` reads output from the temp files it passes as stdout/stderr and
+    ``run`` reads output from the temp files it passes as stdout/stderr and
     awaits ``proc.wait()`` (not ``communicate()``), so each fake carries its
     canned bytes for ``_exec`` to write into those files.
     """
@@ -33,7 +33,7 @@ def _procs(*results):
 def _exec(*results):
     """An AsyncMock standing in for create_subprocess_exec.
 
-    Writes each fake's canned output into the temp files ``_run`` passes as
+    Writes each fake's canned output into the temp files ``run`` passes as
     ``stdout``/``stderr`` so the wrapper reads them back as real output.
     """
     procs = iter(_procs(*results))
@@ -56,7 +56,7 @@ def _args(mock_exec, call_index=0):
     return list(mock_exec.call_args_list[call_index].args[1:])
 
 
-# --- _classify ---
+# --- classify ---
 
 
 class TestClassify:
@@ -73,16 +73,16 @@ class TestClassify:
         ],
     )
     def test_classify(self, stderr, expected):
-        assert podman._classify(stderr) == expected
+        assert podman.classify(stderr) == expected
 
 
-# --- _run ---
+# --- run ---
 
 
 class TestRun:
     async def test_success(self):
         with patch(EXEC, _exec(("hello\n", "", 0))) as m:
-            rc, out, err = await podman._run(["version"])
+            rc, out, err = await podman.run(["version"])
         assert (rc, out, err) == (0, "hello\n", "")
         assert m.call_args.args[0] == podman.PODMAN_BIN
         assert m.call_args.kwargs["stdin"] is None
@@ -90,33 +90,33 @@ class TestRun:
     async def test_check_raises_with_classified_status(self):
         with patch(EXEC, _exec(("", "no such container x", 1))):
             with pytest.raises(podman.PodmanError) as exc:
-                await podman._run(["start", "x"])
+                await podman.run(["start", "x"])
         assert exc.value.status == 404
         assert "no such container" in exc.value.message
 
     async def test_check_raises_empty_stderr_fallback(self):
         with patch(EXEC, _exec(("", "", 5))):
             with pytest.raises(podman.PodmanError) as exc:
-                await podman._run(["boom"])
+                await podman.run(["boom"])
         assert exc.value.status == 500
         assert exc.value.message == "podman boom"
 
     async def test_no_check_returns_nonzero(self):
         with patch(EXEC, _exec(("", "bad", 2))):
-            rc, out, err = await podman._run(["x"], check=False)
+            rc, out, err = await podman.run(["x"], check=False)
         assert rc == 2
 
     async def test_stdin_data_uses_pipe(self):
         proc = _procs(("", "", 0))[0]
         with patch(EXEC, AsyncMock(return_value=proc)) as m:
-            await podman._run(["x"], stdin_data=b"payload")
+            await podman.run(["x"], stdin_data=b"payload")
         assert m.call_args.kwargs["stdin"] is not None
         proc.stdin.write.assert_called_once_with(b"payload")
         proc.stdin.close.assert_called_once()
 
     async def test_returncode_none_treated_as_zero(self):
         with patch(EXEC, _exec(("ok", "", None))):
-            rc, _out, _err = await podman._run(["x"], check=False)
+            rc, _out, _err = await podman.run(["x"], check=False)
         assert rc == 0
 
     async def test_timeout_kills_process(self):
@@ -136,7 +136,7 @@ class TestRun:
         proc.kill = MagicMock(side_effect=do_kill)
 
         with patch(EXEC, AsyncMock(return_value=proc)):
-            rc, _out, err = await podman._run(
+            rc, _out, err = await podman.run(
                 ["rm", "-f", "cid"], check=False, timeout=0.1
             )
         assert rc == -1
@@ -161,7 +161,7 @@ class TestRun:
 
         with patch(EXEC, AsyncMock(return_value=proc)):
             with pytest.raises(podman.PodmanError) as exc:
-                await podman._run(["rm", "-f", "cid"], timeout=0.1)
+                await podman.run(["rm", "-f", "cid"], timeout=0.1)
         assert exc.value.status == 500
         assert "timed out" in exc.value.message
 
@@ -292,7 +292,7 @@ class TestWaitForContainerReady:
         ]
 
     async def test_raises_when_exec_fails(self):
-        # _run returns rc=-1 on timeout (check=False); the sentinel never
+        # run returns rc=-1 on timeout (check=False); the sentinel never
         # appeared, so wait_for_container_ready raises PodmanError(500).
         with patch(EXEC, _exec(("", "timed out", -1))):
             with pytest.raises(podman.PodmanError) as exc:
@@ -393,7 +393,7 @@ class TestExecContainerBytes:
         assert err == "err"
 
     async def test_timeout(self):
-        """Verify _run_raw handles timeout the same way as _run."""
+        """Verify run_raw handles timeout the same way as run."""
         mock_proc = _procs(("", "", 0))[0]
         # First call raises TimeoutError (asyncio.wait_for catches it),
         # second call (after kill) returns normally.
@@ -424,11 +424,11 @@ class TestExecContainerBytes:
 
 
 class TestRunRaw:
-    """Tests for _run_raw edge cases not covered by exec_container_bytes."""
+    """Tests for run_raw edge cases not covered by exec_container_bytes."""
 
     async def test_stdin_data(self):
         with patch(EXEC, _exec(("out", "", 0))):
-            rc, out, err = await podman._run_raw(
+            rc, out, err = await podman.run_raw(
                 ["exec", "cid", "cat"], stdin_data=b"hello"
             )
         assert rc == 0
@@ -437,7 +437,7 @@ class TestRunRaw:
     async def test_check_raises_on_error(self):
         with patch(EXEC, _exec(("", "fail", 1))):
             with pytest.raises(podman.PodmanError):
-                await podman._run_raw(["exec", "cid", "false"], check=True)
+                await podman.run_raw(["exec", "cid", "false"], check=True)
 
 
 class TestExecContainerStream:

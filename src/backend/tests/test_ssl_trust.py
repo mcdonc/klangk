@@ -88,7 +88,7 @@ class TestApplyBackendSslTrust:
         monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(cert_dir))
         monkeypatch.setattr(
             ssl_trust,
-            "_system_ca_bundle",
+            "system_ca_bundle",
             lambda self_bundle=None: str(tmp_path / "sys.pem"),
         )
         (tmp_path / "sys.pem").write_text("FAKE-SYSTEM-CA\n")
@@ -115,7 +115,7 @@ class TestApplyBackendSslTrust:
         monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(cert_dir))
         monkeypatch.setattr(
             ssl_trust,
-            "_system_ca_bundle",
+            "system_ca_bundle",
             lambda self_bundle=None: str(tmp_path / "sys.pem"),
         )
         (tmp_path / "sys.pem").write_text("SYSTEM-MARKER\n")
@@ -141,7 +141,7 @@ class TestApplyBackendSslTrust:
         monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(cert_dir))
         monkeypatch.setattr(
             ssl_trust,
-            "_system_ca_bundle",
+            "system_ca_bundle",
             lambda self_bundle=None: str(tmp_path / "sys.pem"),
         )
         (tmp_path / "sys.pem").write_text("SYSTEM\n")
@@ -166,7 +166,7 @@ class TestApplyBackendSslTrust:
         cert_dir.mkdir()
         (cert_dir / "corp-ca.pem").write_text("CORP\n")
         monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(cert_dir))
-        monkeypatch.setattr(ssl_trust, "_system_ca_bundle", lambda **kw: None)
+        monkeypatch.setattr(ssl_trust, "system_ca_bundle", lambda **kw: None)
         monkeypatch.setenv("KLANGK_DATA_DIR", str(tmp_path / "data"))
 
         with caplog.at_level(logging.WARNING):
@@ -177,12 +177,12 @@ class TestApplyBackendSslTrust:
 
 
 class TestSystemCaBundle:
-    """_system_ca_bundle() resolution, fallback chain, and self-reference guard."""
+    """system_ca_bundle() resolution, fallback chain, and self-reference guard."""
 
     def test_real_host_bundle_resolves(self):
         # Real call: openssl_cafile resolves to a file on the test host (or
         # certifi fallback). Never raises; result is an existing file or None.
-        got = ssl_trust._system_ca_bundle()
+        got = ssl_trust.system_ca_bundle()
         assert got is None or os.path.isfile(got)
 
     @staticmethod
@@ -205,7 +205,7 @@ class TestSystemCaBundle:
             "get_default_verify_paths",
             lambda: self._dvp(str(sys_pem), ""),
         )
-        assert ssl_trust._system_ca_bundle() == str(sys_pem)
+        assert ssl_trust.system_ca_bundle() == str(sys_pem)
 
     def test_certifi_fallback_when_no_candidates(self, monkeypatch):
         import certifi
@@ -215,7 +215,7 @@ class TestSystemCaBundle:
             "get_default_verify_paths",
             lambda: self._dvp("", ""),
         )
-        assert ssl_trust._system_ca_bundle() == certifi.where()
+        assert ssl_trust.system_ca_bundle() == certifi.where()
 
     def test_none_when_no_candidates_and_certifi_missing_file(
         self, monkeypatch
@@ -232,7 +232,7 @@ class TestSystemCaBundle:
             "certifi",
             types.SimpleNamespace(where=lambda: "/no/such/cacert.pem"),
         )
-        assert ssl_trust._system_ca_bundle() is None
+        assert ssl_trust.system_ca_bundle() is None
 
     def test_skips_self_reference(self, monkeypatch, tmp_path):
         me = tmp_path / "me.crt"
@@ -243,7 +243,7 @@ class TestSystemCaBundle:
             "get_default_verify_paths",
             lambda: self._dvp(str(me), str(me)),
         )
-        assert ssl_trust._system_ca_bundle(self_bundle=str(me)) != str(me)
+        assert ssl_trust.system_ca_bundle(self_bundle=str(me)) != str(me)
 
 
 class TestInternalsAndErrorBranches:
@@ -255,7 +255,7 @@ class TestInternalsAndErrorBranches:
             "listdir",
             lambda p: (_ for _ in ()).throw(OSError("denied")),
         )
-        assert list(ssl_trust._iter_cert_files(str(tmp_path))) == []
+        assert list(ssl_trust.iter_cert_files(str(tmp_path))) == []
 
     def test_write_skips_unreadable_system_bundle(self, monkeypatch, tmp_path):
         cert_dir = tmp_path / "ssl"
@@ -263,23 +263,23 @@ class TestInternalsAndErrorBranches:
         (cert_dir / "corp.pem").write_text("CORP\n")
         monkeypatch.setattr(
             ssl_trust,
-            "_system_ca_bundle",
+            "system_ca_bundle",
             lambda self_bundle=None: "/no/such/sys.pem",
         )
         out = tmp_path / "bundle.crt"
-        ok = ssl_trust._write_merged_bundle(str(out), str(cert_dir))
+        ok = ssl_trust.write_merged_bundle(str(out), str(cert_dir))
         assert ok is True
         assert open(out).read() == "CORP\n"  # system skipped, custom kept
 
     def test_write_empty_when_cert_unreadable(self, monkeypatch, tmp_path):
         out = tmp_path / "bundle.crt"
         monkeypatch.setattr(
-            ssl_trust, "_iter_cert_files", lambda d: ["/no/such/cert.pem"]
+            ssl_trust, "iter_cert_files", lambda d: ["/no/such/cert.pem"]
         )
         monkeypatch.setattr(
-            ssl_trust, "_system_ca_bundle", lambda self_bundle=None: None
+            ssl_trust, "system_ca_bundle", lambda self_bundle=None: None
         )
-        assert ssl_trust._write_merged_bundle(str(out), str(tmp_path)) is False
+        assert ssl_trust.write_merged_bundle(str(out), str(tmp_path)) is False
 
     def test_apply_returns_none_when_makedirs_fails(
         self, monkeypatch, tmp_path
@@ -302,10 +302,10 @@ class TestInternalsAndErrorBranches:
         monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(cert_dir))
         monkeypatch.setenv("KLANGK_DATA_DIR", str(tmp_path / "data"))
         monkeypatch.setattr(
-            ssl_trust, "_system_ca_bundle", lambda self_bundle=None: None
+            ssl_trust, "system_ca_bundle", lambda self_bundle=None: None
         )
         monkeypatch.setattr(
-            ssl_trust, "_iter_cert_files", lambda d: ["/nope/cert.pem"]
+            ssl_trust, "iter_cert_files", lambda d: ["/nope/cert.pem"]
         )
         with caplog.at_level(logging.WARNING):
             assert ssl_trust.apply_backend_ssl_trust() is None

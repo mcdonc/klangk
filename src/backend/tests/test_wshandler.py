@@ -376,7 +376,7 @@ class TestTrustedProxyCidrs:
         import klangk_backend.util as util
 
         monkeypatch.delenv("KLANGK_TRUSTED_PROXY_CIDRS", raising=False)
-        trusted = util._load_trusted_proxy_cidrs()
+        trusted = util.load_trusted_proxy_cidrs()
         assert ipaddress.ip_address("127.0.0.1") in trusted
         assert ipaddress.ip_address("::1") in trusted
 
@@ -388,7 +388,7 @@ class TestTrustedProxyCidrs:
         monkeypatch.setenv(
             "KLANGK_TRUSTED_PROXY_CIDRS", "10.0.0.0/8, 192.168.1.5"
         )
-        trusted = util._load_trusted_proxy_cidrs()
+        trusted = util.load_trusted_proxy_cidrs()
         assert ipaddress.ip_network("10.0.0.0/8") in trusted
         assert ipaddress.ip_address("192.168.1.5") in trusted
 
@@ -401,7 +401,7 @@ class TestTrustedProxyCidrs:
             "KLANGK_TRUSTED_PROXY_CIDRS", "not-an-ip, 127.0.0.1"
         )
         with caplog.at_level("WARNING", logger="klangk_backend.util"):
-            trusted = util._load_trusted_proxy_cidrs()
+            trusted = util.load_trusted_proxy_cidrs()
         assert ipaddress.ip_address("127.0.0.1") in trusted
         # The invalid entry is logged without echoing its value (env-var-
         # derived data is treated as potentially sensitive by CodeQL).
@@ -416,7 +416,7 @@ class TestTrustedProxyCidrs:
         import klangk_backend.util as util
 
         monkeypatch.setenv("KLANGK_TRUSTED_PROXY_CIDRS", "garbage")
-        trusted = util._load_trusted_proxy_cidrs()
+        trusted = util.load_trusted_proxy_cidrs()
         assert ipaddress.ip_address("127.0.0.1") in trusted
 
     def test_load_empty_value_falls_back_to_loopback(self, monkeypatch):
@@ -425,20 +425,20 @@ class TestTrustedProxyCidrs:
         import klangk_backend.util as util
 
         monkeypatch.setenv("KLANGK_TRUSTED_PROXY_CIDRS", "")
-        trusted = util._load_trusted_proxy_cidrs()
+        trusted = util.load_trusted_proxy_cidrs()
         assert ipaddress.ip_address("127.0.0.1") in trusted
 
     def test_peer_trusted_rejects_non_ip_string(self, monkeypatch):
         import klangk_backend.util as util
 
         monkeypatch.setattr(util, "_TRUSTED_PROXY_CIDRS", _trusted_default())
-        assert util._peer_trusted("not-an-ip") is False
+        assert util.peer_trusted("not-an-ip") is False
 
     def test_peer_trusted_rejects_none(self, monkeypatch):
         import klangk_backend.util as util
 
         monkeypatch.setattr(util, "_TRUSTED_PROXY_CIDRS", _trusted_default())
-        assert util._peer_trusted(None) is False
+        assert util.peer_trusted(None) is False
 
 
 class TestDeriveHostingInfo:

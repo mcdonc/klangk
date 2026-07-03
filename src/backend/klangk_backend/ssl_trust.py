@@ -54,7 +54,7 @@ SSL_TRUST_VARS = (
 )
 
 
-def _iter_cert_files(ssl_dir: str):
+def iter_cert_files(ssl_dir: str):
     """Yield absolute paths of ``*.pem``/``*.crt`` files in ``ssl_dir``.
 
     Sorted for deterministic bundle contents; case-insensitive extension
@@ -83,7 +83,7 @@ def ssl_cert_dir() -> str | None:
     path = os.path.realpath(raw)
     if not os.path.isdir(path):
         return None
-    return path if any(True for _ in _iter_cert_files(path)) else None
+    return path if any(True for _ in iter_cert_files(path)) else None
 
 
 def ssl_env_vars(ssl_dir: str | None) -> list[str]:
@@ -98,7 +98,7 @@ def ssl_env_vars(ssl_dir: str | None) -> list[str]:
     return [f"{name}={SSL_BUNDLE_DEST}" for name in SSL_TRUST_VARS]
 
 
-def _system_ca_bundle(self_bundle: str | None = None) -> str | None:
+def system_ca_bundle(self_bundle: str | None = None) -> str | None:
     """Best-effort path to the host's default (system) CA bundle.
 
     The trust env vars *replace* the default store, so a merged bundle must
@@ -128,7 +128,7 @@ def _system_ca_bundle(self_bundle: str | None = None) -> str | None:
     return None
 
 
-def _write_merged_bundle(bundle_path: str, ssl_dir: str) -> bool:
+def write_merged_bundle(bundle_path: str, ssl_dir: str) -> bool:
     """Write system CAs + custom certs to ``bundle_path``.
 
     Returns ``True`` if a non-empty bundle was written.  System bundle is read
@@ -136,7 +136,7 @@ def _write_merged_bundle(bundle_path: str, ssl_dir: str) -> bool:
     """
     written = 0
     with open(bundle_path, "w") as out:
-        sys_bundle = _system_ca_bundle(self_bundle=bundle_path)
+        sys_bundle = system_ca_bundle(self_bundle=bundle_path)
         if sys_bundle:
             try:
                 out.write(open(sys_bundle).read())
@@ -145,7 +145,7 @@ def _write_merged_bundle(bundle_path: str, ssl_dir: str) -> bool:
                 logger.warning(
                     "Could not read system CA bundle %s: %s", sys_bundle, exc
                 )
-        for cert in _iter_cert_files(ssl_dir):
+        for cert in iter_cert_files(ssl_dir):
             try:
                 out.write(open(cert).read())
                 written += 1
@@ -180,14 +180,14 @@ def apply_backend_ssl_trust() -> str | None:
         logger.error("Cannot create SSL bundle dir %s: %s", bundle_dir, exc)
         return None
     bundle_path = os.path.join(bundle_dir, "ca-bundle.crt")
-    if not _write_merged_bundle(bundle_path, ssl_dir):
+    if not write_merged_bundle(bundle_path, ssl_dir):
         logger.warning(
             "SSL bundle %s is empty (no system bundle and no custom certs); "
             "not applying backend trust",
             bundle_path,
         )
         return None
-    if not _system_ca_bundle(self_bundle=bundle_path):
+    if not system_ca_bundle(self_bundle=bundle_path):
         logger.warning(
             "Applying backend SSL trust without a system bundle: the trust "
             "vars replace the default store, so public-internet TLS endpoints "

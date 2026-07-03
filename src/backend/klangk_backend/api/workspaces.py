@@ -478,7 +478,7 @@ async def export_workspace(
             pass  # fall back to 0
 
     # Stream the tarball using GNU tar piped to stdout. Uses the shared
-    # _build_export_tar_args (workspaces.py), same as build_workspace_archive.
+    # build_export_tar_args (workspaces.py), same as build_workspace_archive.
     # Symlinks are stored as symlinks (not dereferenced).
     _CHUNK_SIZE = 256 * 1024  # 256 KB read chunks
 
@@ -490,7 +490,7 @@ async def export_workspace(
             with open(meta_file, "w") as f:
                 json.dump(metadata, f, indent=2)
 
-            tar_args = workspaces._build_export_tar_args("-", tmpdir, home_dir)
+            tar_args = workspaces.build_export_tar_args("-", tmpdir, home_dir)
 
             proc = await asyncio.create_subprocess_exec(
                 *tar_args,

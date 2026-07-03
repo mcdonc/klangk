@@ -1068,7 +1068,7 @@ class TestSpawnSerialization:
 class TestMonitorProcess:
     async def test_monitor_broadcasts_on_death(self):
         from klangk_backend import model
-        from klangk_backend.agent import _broadcast_agent_disconnect
+        from klangk_backend.agent import broadcast_agent_disconnect
 
         with (
             patch.object(
@@ -1089,7 +1089,7 @@ class TestMonitorProcess:
             mock_session = MagicMock()
             mock_get_session.return_value = mock_session
 
-            await _broadcast_agent_disconnect("ws-mon")
+            await broadcast_agent_disconnect("ws-mon")
 
             # Presence transitions must NOT be persisted to chat history
             # (they'd linger as stale "has disconnected" on the next visit).
@@ -1103,16 +1103,16 @@ class TestMonitorProcess:
             assert chat_broadcast["message_type"] == model.MSG_SYSTEM
 
     async def test_broadcast_no_workspace(self):
-        from klangk_backend.agent import _broadcast_agent_disconnect
+        from klangk_backend.agent import broadcast_agent_disconnect
 
         # Should not raise when workspace_id is empty
-        await _broadcast_agent_disconnect("")
+        await broadcast_agent_disconnect("")
 
     async def test_broadcast_disconnect_deleted_workspace(self):
-        from klangk_backend.agent import _broadcast_agent_disconnect
+        from klangk_backend.agent import broadcast_agent_disconnect
 
         # Should not raise when workspace has been deleted
-        await _broadcast_agent_disconnect("deleted-ws-id")
+        await broadcast_agent_disconnect("deleted-ws-id")
 
     async def test_stop_cancels_monitor(self):
         session = _make_session()
@@ -1329,7 +1329,7 @@ class TestMonitorProcess:
 
     async def test_broadcast_reconnect(self):
         from klangk_backend import model
-        from klangk_backend.agent import _broadcast_agent_reconnect
+        from klangk_backend.agent import broadcast_agent_reconnect
 
         with (
             patch.object(
@@ -1350,7 +1350,7 @@ class TestMonitorProcess:
             mock_session = MagicMock()
             mock_get_session.return_value = mock_session
 
-            await _broadcast_agent_reconnect("ws-rc")
+            await broadcast_agent_reconnect("ws-rc")
 
             # Reconnect is ephemeral too — never persisted.
             mock_chat.assert_not_awaited()
@@ -1361,15 +1361,15 @@ class TestMonitorProcess:
             assert chat_broadcast["message_type"] == model.MSG_SYSTEM
 
     async def test_broadcast_reconnect_no_workspace(self):
-        from klangk_backend.agent import _broadcast_agent_reconnect
+        from klangk_backend.agent import broadcast_agent_reconnect
 
-        await _broadcast_agent_reconnect("")
+        await broadcast_agent_reconnect("")
 
     async def test_broadcast_reconnect_deleted_workspace(self):
-        from klangk_backend.agent import _broadcast_agent_reconnect
+        from klangk_backend.agent import broadcast_agent_reconnect
 
         # Should not raise when workspace has been deleted
-        await _broadcast_agent_reconnect("deleted-ws-id")
+        await broadcast_agent_reconnect("deleted-ws-id")
 
     async def test_monitor_skips_restart_if_container_gone(self, caplog):
         """Monitor does not restart when the container has been removed."""

@@ -33,7 +33,7 @@ EMAIL_EVENTS = ("verify", "reset", "invite")
 _env: Environment | None = None
 
 
-def _resolve_password() -> str | None:
+def resolve_password() -> str | None:
     """Resolve KLANGK_SMTP_PASSWORD via resolve_env_value."""
     return resolve_env_value("KLANGK_SMTP_PASSWORD")
 
@@ -54,7 +54,7 @@ def smtp_config() -> dict:
         "host": resolve_env_value("KLANGK_SMTP_HOST"),
         "port": int(resolve_env_value("KLANGK_SMTP_PORT", "587")),
         "user": resolve_env_value("KLANGK_SMTP_USER"),
-        "password": _resolve_password(),
+        "password": resolve_password(),
         "from_addr": resolve_env_value("KLANGK_SMTP_FROM"),
         "use_tls": resolve_env_value("KLANGK_SMTP_USE_TLS", "true").lower()
         in ("true", "1"),
@@ -233,7 +233,7 @@ def render_email(
     return EmailRender(subject=subject, text=text, html=html)
 
 
-def _build_multipart(to: str, rendered: EmailRender) -> EmailMessage:
+def build_multipart(to: str, rendered: EmailRender) -> EmailMessage:
     """Assemble a multipart/alternative (text + HTML) message."""
     cfg = smtp_config()
     msg = EmailMessage()
@@ -261,7 +261,7 @@ async def send_verification_email(to: str, verification_url: str) -> None:
         link=verification_url,
         expiry_hours=auth.VERIFY_TOKEN_EXPIRE_HOURS,
     )
-    await _send(_build_multipart(to, rendered))
+    await _send(build_multipart(to, rendered))
     logger.info("Verification email sent to %s", to)
 
 
@@ -272,7 +272,7 @@ async def send_password_reset_email(to: str, reset_url: str) -> None:
         link=reset_url,
         expiry_hours=auth.RESET_TOKEN_EXPIRE_HOURS,
     )
-    await _send(_build_multipart(to, rendered))
+    await _send(build_multipart(to, rendered))
     logger.info("Password reset email sent to %s", to)
 
 
@@ -286,7 +286,7 @@ async def send_invitation_email(
         expiry_hours=auth.INVITE_TOKEN_EXPIRE_HOURS,
         invited_by=invited_by_email,
     )
-    await _send(_build_multipart(to, rendered))
+    await _send(build_multipart(to, rendered))
     logger.info(
         "Invitation email sent to %s (invited by %s)", to, invited_by_email
     )

@@ -291,7 +291,7 @@ class AgentSession:
             f": {stderr_text}" if stderr_text else "",
         )
 
-        await _broadcast_agent_disconnect(self.workspace_id)
+        await broadcast_agent_disconnect(self.workspace_id)
         # Auto-restart after a brief delay to avoid tight loops
         self._restart_attempts += 1
         if self._restart_attempts > 2:
@@ -313,7 +313,7 @@ class AgentSession:
             return
         try:
             await self._ensure_started()
-            await _broadcast_agent_reconnect(self.workspace_id)
+            await broadcast_agent_reconnect(self.workspace_id)
         except Exception:
             logger.exception(
                 "Failed to auto-restart agent for workspace %s",
@@ -598,7 +598,7 @@ async def stop_all_sessions() -> None:
         await stop_session(ws_id)
 
 
-def _ephemeral_system_message(
+def ephemeral_system_message(
     workspace_id: str,
     agent_email: str,
     agent_handle: str,
@@ -627,7 +627,7 @@ def _ephemeral_system_message(
     }
 
 
-async def _broadcast_agent_disconnect(workspace_id: str) -> None:
+async def broadcast_agent_disconnect(workspace_id: str) -> None:
     """Broadcast a disconnect system message when the agent process dies.
 
     Ephemeral only — sent to currently-connected subscribers, never written
@@ -644,7 +644,7 @@ async def _broadcast_agent_disconnect(workspace_id: str) -> None:
         return
     agent_handle = await model.agent_handle()
     agent_email = await model.agent_email()
-    sys_msg = _ephemeral_system_message(
+    sys_msg = ephemeral_system_message(
         workspace_id,
         agent_email,
         agent_handle,
@@ -668,10 +668,10 @@ async def _broadcast_agent_disconnect(workspace_id: str) -> None:
         )
 
 
-async def _broadcast_agent_reconnect(workspace_id: str) -> None:
+async def broadcast_agent_reconnect(workspace_id: str) -> None:
     """Broadcast a reconnect system message after auto-restart.
 
-    Ephemeral only — see [_broadcast_agent_disconnect].
+    Ephemeral only — see [broadcast_agent_disconnect].
     """
     if not workspace_id:
         return
@@ -680,7 +680,7 @@ async def _broadcast_agent_reconnect(workspace_id: str) -> None:
         return
     agent_handle = await model.agent_handle()
     agent_email = await model.agent_email()
-    sys_msg = _ephemeral_system_message(
+    sys_msg = ephemeral_system_message(
         workspace_id,
         agent_email,
         agent_handle,
