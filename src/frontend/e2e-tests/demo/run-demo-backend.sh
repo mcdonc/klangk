@@ -56,7 +56,8 @@ _ensure_env() {
   # Already configured (and nothing changed)? Skip the rewrite.
   if grep -qF "KLANGK_INSTANCE_ID=$DEMO_INSTANCE" .env 2>/dev/null &&
     grep -qF "KLANGK_PORT=$DEMO_PORT" .env 2>/dev/null &&
-    grep -qF "KLANGK_NGINX_PORT=$DEMO_NGINX_PORT" .env 2>/dev/null; then
+    grep -qF "KLANGK_NGINX_PORT=$DEMO_NGINX_PORT" .env 2>/dev/null &&
+    grep -qF "KLANGK_HOSTING_HOSTNAME=localhost:$DEMO_NGINX_PORT" .env 2>/dev/null; then
     return 0
   fi
   echo "  configuring demo ports in .env (instance=$DEMO_INSTANCE, backend=$DEMO_PORT, nginx=$DEMO_NGINX_PORT)"
@@ -73,6 +74,11 @@ _ensure_env() {
     echo "KLANGK_INSTANCE_ID=$DEMO_INSTANCE"
     echo "KLANGK_PORT=$DEMO_PORT"
     echo "KLANGK_NGINX_PORT=$DEMO_NGINX_PORT"
+    # Post-#1241: derive_hosting_info treats the env var as the
+    # authoritative override, so the eager-start path (no live request)
+    # builds hosted URLs that resolve through nginx on the public port.
+    # Carries host[:port]; the demo's public origin is the nginx port.
+    echo "KLANGK_HOSTING_HOSTNAME=localhost:$DEMO_NGINX_PORT"
     echo "$_ENV_BLOCK_END"
   } >>.env
 }
