@@ -7,6 +7,7 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Query,
     Request,
 )
 from pydantic import BaseModel
@@ -242,6 +243,27 @@ async def admin_create_user(
     password_hash = auth.hash_password(req.password)
     user = await model.create_user(req.email, password_hash, verified=True)
     return {"id": user["id"], "email": user["email"], "status": "created"}
+
+
+@router.get("/admin/users/{user_id}/workspaces")
+async def list_user_workspaces(
+    user_id: str,
+    limit: int | None = Query(None, ge=1, le=200),
+    offset: int | None = Query(None, ge=0),
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    """List workspaces owned by a user (admin only).
+
+    Used by the admin UI to show what a delete-user will destroy (#1224).
+    Returns the standard pagination envelope
+    ``{"items": [...], "has_more": bool, "next_offset": int | None}``.
+    """
+    user = await model.get_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return await workspaces.list_workspaces(
+        user_id, limit=limit or 100, offset=offset or 0
+    )
 
 
 @router.delete("/admin/users/{user_id}")
