@@ -980,9 +980,20 @@ def _dispatch_monitor_event(msg: dict, command: list[str]) -> None:
         env["KLANGK_WORKSPACE_ID"] = str(wid)
     if msg.get("type") == "service_health":
         env["KLANGK_HEALTHY"] = "true" if msg.get("healthy") else "false"
+        # ``running`` distinguishes "unhealthy check" from "container
+        # stopped" -- both have healthy=false, but a death frame carries
+        # running=false (#1175 item 2).  Defaults to true for older
+        # servers that don't send the field.
+        env["KLANGK_RUNNING"] = "true" if msg.get("running", True) else "false"
         health_msg = msg.get("health_message")
         if health_msg:
             env["KLANGK_HEALTH_MESSAGE"] = str(health_msg)
+        checked_at = msg.get("health_checked_at")
+        if checked_at:
+            env["KLANGK_HEALTH_CHECKED_AT"] = str(checked_at)
+        seq = msg.get("seq")
+        if seq is not None:
+            env["KLANGK_HEALTH_SEQ"] = str(seq)
     # FileNotFoundError (missing binary) propagates to the caller.
     subprocess.run(command, input=payload.encode(), env=env, check=False)
 
@@ -1155,7 +1166,22 @@ def monitor(
     changes). With no command, events are printed as line-delimited JSON
     (pipe to jq to inspect). With a command after '--', the command's
     stdin gets the event JSON and env vars KLANGK_EVENT_TYPE,
-    KLANGK_WORKSPACE_ID, and KLANGK_HEALTHY are set.
+    KLANGK_WORKSPACE_ID, and (for health events) KLANGK_HEALTHY,
+    KLANGK_RUNNING, KLANGK_HEALTH_MESSAGE, KLANGK_HEALTH_CHECKED_AT and
+    KLANGK_HEALTH_SEQ are set.
+
+    ``service_health`` frames now carry ``running`` (#1175 item 2): a
+    container death emits a frame with ``healthy=false`` *and*
+    ``running=false`` (KLANGK_RUNNING=false), so a command can tell
+    "check failed" from "container stopped" without also subscribing
+    to ``container_status``. ``health_checked_at`` / ``seq`` give
+    freshness and gap detection.
+
+    A separate ``service_health_heartbeat`` event type is available for
+    liveness: send ``{"cmd": "subscribe_health_heartbeat", "enabled":
+    true}`` to opt in, and the server ticks a heartbeat each health-loop
+    interval. It's its own type, so ``--type service_health`` filters it
+    out; drop the filter to observe it.
 
     The monitor reconnects automatically (by default forever, with
     capped exponential backoff) and refreshes its JWT on auth failures,
@@ -1168,6 +1194,8 @@ def monitor(
       klangkc monitor --type service_health | jq .   # pretty health events
       klangkc monitor --type service_health -- sh -c \
         '[ "$KLANGK_HEALTHY" = false ] && notify-send "Service unhealthy"'
+      klangkc monitor --type service_health -- sh -c \
+        '[ "$KLANGK_RUNNING" = false ] && echo "container stopped"'
       klangkc monitor --workspace <id> --type service_health
     """
     require_auth()

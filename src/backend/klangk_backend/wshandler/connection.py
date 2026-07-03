@@ -66,6 +66,10 @@ class Connection:
         self._idle_cb = None
         self.pending_status_msg: str | None = None
         self.browser_id: str | None = None
+        # Opt-in flag for the service_health liveness heartbeat
+        # (#1175 item 3b); toggled by the ``subscribe_health_heartbeat``
+        # command.  Off by default so the heartbeat is opt-in.
+        self.wants_health_heartbeat: bool = False
         self._user_home: str | None = None
         self._service_command: str | None = None
         self._home_created: bool = False

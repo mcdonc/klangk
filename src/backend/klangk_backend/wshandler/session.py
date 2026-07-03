@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -23,20 +24,56 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _iso_utc(ts: float | None) -> str | None:
+    """Render an epoch timestamp as an ISO-8601 UTC string, or ``None``."""
+    if ts is None:
+        return None
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
 def _service_health_frame(
-    workspace_id: str, healthy: bool, message: str | None
+    workspace_id: str,
+    *,
+    healthy: bool,
+    message: str | None,
+    running: bool = True,
+    health_checked_at: float | None = None,
+    seq: int = 0,
 ) -> dict:
     """Build a ``service_health`` frame.
 
     Single source of truth for the event shape shared by the transition
-    broadcast (:meth:`WebSocketState.notify_service_health`) and the
-    connect-time snapshot (:meth:`send_service_health_snapshot`).
+    broadcast (:meth:`WebSocketState.notify_service_health`), the
+    container-death broadcast, and the connect-time snapshot
+    (:meth:`send_service_health_snapshot`).
+
+    Fields beyond the original ``healthy`` / ``health_message`` pair are
+    *additive* -- consumers that ignore unknown keys are unaffected
+    (#1175):
+
+    - ``running`` (bool): ``False`` only on the container-death frame,
+      so a consumer watching *only* ``service_health`` learns the
+      service is down instead of seeing "healthy, then silence"
+      (#1175 item 2).  ``True`` for every live-container frame.
+    - ``health_checked_at`` (ISO-8601 str | None): when the check last
+      ran; ``None`` until the first poll completes.  Lets a consumer
+      judge freshness without correlating its own receive clock
+      (#1175 item 3a).
+    - ``seq`` (int): per-workspace monotonic counter, incremented on
+      every emitted frame (transition and death).  On reconnect a
+      consumer reconciles snapshot + seq to detect a missed transition
+      (#1175 item 4).  Resets when the container state is recreated
+      (restart), which is fine -- the connect-time snapshot is the
+      reconciliation authority.
     """
     return {
         "type": "service_health",
         "workspace_id": workspace_id,
         "healthy": healthy,
         "health_message": message,
+        "running": running,
+        "health_checked_at": _iso_utc(health_checked_at),
+        "seq": seq,
     }
 
 
@@ -549,7 +586,14 @@ class WebSocketState:
             asyncio.create_task(conn.cleanup())
 
     def notify_service_health(
-        self, workspace_id: str, healthy: bool, message: str | None = None
+        self,
+        workspace_id: str,
+        *,
+        healthy: bool,
+        message: str | None = None,
+        running: bool = True,
+        health_checked_at: float | None = None,
+        seq: int = 0,
     ) -> None:
         """Broadcast service-health status to all connections.
 
@@ -563,8 +607,21 @@ class WebSocketState:
         check's stderr/stdout) so an unhealthy workspace isn't a black
         box -- operators can see *why* it failed without log access
         (#1088).  ``None`` when healthy.
+
+        ``running`` is ``True`` for live-container transitions and
+        ``False`` for the terminal container-death frame (#1175 item 2);
+        ``health_checked_at`` is the epoch of the last poll (#1175 item
+        3a); ``seq`` is the per-workspace monotonic counter (#1175 item
+        4).  All additive -- defaults preserve the legacy shape.
         """
-        message_dict = _service_health_frame(workspace_id, healthy, message)
+        message_dict = _service_health_frame(
+            workspace_id,
+            healthy=healthy,
+            message=message,
+            running=running,
+            health_checked_at=health_checked_at,
+            seq=seq,
+        )
         dead = []
         for sock, conn in self.connections.items():
             if conn.user.get("id") is None:
@@ -603,14 +660,66 @@ class WebSocketState:
                 sock.send_json(
                     _service_health_frame(
                         cs.workspace_id,
-                        cs.health_status == "healthy",
-                        cs.health_message,
+                        healthy=cs.health_status == "healthy",
+                        message=cs.health_message,
+                        running=True,
+                        health_checked_at=cs.health_checked_at,
+                        seq=cs.health_seq,
                     )
                 )
             except WS_ERRORS:
                 # The just-registered socket is already gone; nothing to
                 # snapshot to.  dispatch.py owns cleanup on disconnect.
                 break
+
+    def send_health_heartbeats(self) -> None:
+        """Send a liveness heartbeat to connections that opted in.
+
+        The ``service_health`` stream is deltas-only, so a consumer
+        can't tell "nothing changed" from "the health loop stalled /
+        the server wedged" -- silence looks like health, the worst
+        failure mode (#1175 item 3b).  This emits a
+        ``service_health_heartbeat`` frame (its own type, so
+        ``--type service_health`` consumers are unaffected) to every
+        connection that asked for it via the
+        ``subscribe_health_heartbeat`` command.
+
+        Called from ``HealthMonitor.run_health_loop`` at the end of
+        each tick, so the heartbeat's presence proves the health loop
+        itself is alive -- if the loop stalls, heartbeats stop.
+        """
+        frame = {
+            "type": "service_health_heartbeat",
+            "timestamp": _iso_utc(time.time()),
+        }
+        dead = []
+        for sock, conn in self.connections.items():
+            if conn.user.get("id") is None:
+                continue
+            if not getattr(conn, "wants_health_heartbeat", False):
+                continue
+            try:
+                sock.send_json(frame)
+            except WS_ERRORS:
+                dead.append((sock, conn))
+        for sock, conn in dead:
+            self.connections.pop(sock, None)
+            asyncio.create_task(conn.cleanup())
+
+    def handle_subscribe_health_heartbeat(
+        self, msg: dict, sock: SafeWebSocket
+    ) -> None:
+        """Opt a connection into (or out of) health heartbeats.
+
+        Request: ``{"cmd": "subscribe_health_heartbeat", "enabled":
+        true}``.  ``enabled`` defaults to True when omitted.  Stores the
+        flag on the connection so :meth:`send_health_heartbeats`
+        includes it on every health-loop tick (#1175 item 3b).
+        """
+        conn = self.connections.get(sock)
+        if conn is None:
+            return
+        conn.wants_health_heartbeat = bool(msg.get("enabled", True))
 
     def notify_user_workspaces_changed(self, user_id: str) -> None:
         """Send ``workspaces_changed`` to all of a user's connections.

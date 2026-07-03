@@ -2866,6 +2866,41 @@ class TestMonitor:
         assert env["KLANGK_HEALTH_MESSAGE"] == "curl: connection refused"
 
     @pytest.mark.asyncio
+    async def test_death_frame_exposes_running_and_freshness_env(self):
+        # A container-death frame carries running=false plus the
+        # additive freshness/seq fields (#1175).  The dispatcher must
+        # surface them so a command can tell "stopped" from "unhealthy".
+        from klangkc.main import monitor_connection
+
+        event = {
+            "type": "service_health",
+            "workspace_id": "w1",
+            "healthy": False,
+            "running": False,
+            "health_checked_at": "2023-11-14T22:13:20+00:00",
+            "seq": 7,
+        }
+        conn = _FakeMonitorConn([json.dumps(event)])
+        with patch(
+            "klangkc.main.websockets.connect",
+            return_value=_FakeMonitorCM(conn),
+        ):
+            with patch("klangkc.main.subprocess.run") as run_mock:
+                await monitor_connection(
+                    "ws://x/ws",
+                    "tok",
+                    1024,
+                    command=["notify-send"],
+                    types=[],
+                    workspaces=[],
+                )
+        env = run_mock.call_args.kwargs["env"]
+        assert env["KLANGK_HEALTHY"] == "false"
+        assert env["KLANGK_RUNNING"] == "false"
+        assert env["KLANGK_HEALTH_CHECKED_AT"] == "2023-11-14T22:13:20+00:00"
+        assert env["KLANGK_HEALTH_SEQ"] == "7"
+
+    @pytest.mark.asyncio
     async def test_command_not_found_propagates(self, monkeypatch):
         # A missing command binary propagates FileNotFoundError out of
         # the single-connection loop (the runner turns it into an exit).

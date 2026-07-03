@@ -4257,6 +4257,9 @@ class TestNotifyServiceHealth:
             "workspace_id": "ws-123",
             "healthy": True,
             "health_message": None,
+            "running": True,
+            "health_checked_at": None,
+            "seq": 0,
         }
         sock_a.send_json.assert_called_once_with(expected)
         sock_b.send_json.assert_called_once_with(expected)
@@ -4411,6 +4414,191 @@ class TestServiceHealthSnapshot:
             container.registry.states.clear()
             container.registry.states.update(saved)
         sock.send_json.assert_not_called()
+
+
+class TestServiceHealthFrame:
+    """_service_health_frame: the additive contract fields (#1175)."""
+
+    def test_defaults_preserve_legacy_shape(self):
+        # Only the required healthy/message need to be supplied; the new
+        # fields default so an old-style caller produces a superset of
+        # the legacy frame (additive, non-breaking).
+        from klangk_backend.wshandler.session import _service_health_frame
+
+        out = _service_health_frame("ws-1", healthy=True, message=None)
+        assert out["type"] == "service_health"
+        assert out["workspace_id"] == "ws-1"
+        assert out["healthy"] is True
+        assert out["health_message"] is None
+        assert out["running"] is True
+        assert out["health_checked_at"] is None
+        assert out["seq"] == 0
+
+    def test_health_checked_at_serialized_as_iso(self):
+        from klangk_backend.wshandler.session import (
+            _service_health_frame,
+            _iso_utc,
+        )
+
+        # A known epoch renders as a fixed ISO-8601 UTC string.
+        ts = 1_700_000_000.0
+        assert _iso_utc(ts) == "2023-11-14T22:13:20+00:00"
+        assert _iso_utc(None) is None
+        out = _service_health_frame(
+            "ws-1", healthy=False, message="x", health_checked_at=ts
+        )
+        assert out["health_checked_at"] == "2023-11-14T22:13:20+00:00"
+
+    def test_running_false_and_seq_forwarded(self):
+        from klangk_backend.wshandler.session import _service_health_frame
+
+        out = _service_health_frame(
+            "ws-1",
+            healthy=False,
+            message=None,
+            running=False,
+            seq=7,
+        )
+        assert out["running"] is False
+        assert out["seq"] == 7
+
+
+class TestNotifyServiceHealthForwarding:
+    """notify_service_health forwards running/checked_at/seq (#1175)."""
+
+    def _register(self, sock, user):
+        conn = _base_conn(user=user, ws=sock)
+        wshandler.state.connections[sock] = conn
+        return conn
+
+    def test_forwards_death_frame_fields(self):
+        # A container-death call passes running=False + a seq; the frame
+        # a subscriber receives carries them (#1175 items 2, 4).
+        sock = _mock_sock()
+        try:
+            self._register(sock, {"id": "uid-1", "email": "a@x"})
+            wshandler.state.notify_service_health(
+                "ws-9",
+                healthy=False,
+                running=False,
+                health_checked_at=1_700_000_000.0,
+                seq=3,
+            )
+        finally:
+            wshandler.state.connections.pop(sock, None)
+        msg = sock.send_json.call_args[0][0]
+        assert msg["running"] is False
+        assert msg["healthy"] is False
+        assert msg["seq"] == 3
+        assert msg["health_checked_at"] == "2023-11-14T22:13:20+00:00"
+
+
+class TestServiceHealthSnapshotFields:
+    """send_service_health_snapshot carries running/seq/checked_at."""
+
+    def _state(self, ws_id, *, checked_at=None, seq=0):
+        cs = container.ContainerState(ws_id, f"cid-{ws_id}")
+        cs.health_check = "true"
+        cs.health_status = "unhealthy"
+        cs.health_message = "down"
+        cs.health_checked_at = checked_at
+        cs.health_seq = seq
+        return cs
+
+    def test_snapshot_frame_carries_live_fields(self):
+        saved = dict(container.registry.states)
+        sock = _mock_sock()
+        try:
+            container.registry.states.clear()
+            container.registry.states["ws-1"] = self._state(
+                "ws-1", checked_at=1_700_000_000.0, seq=5
+            )
+            wshandler.state.send_service_health_snapshot(sock)
+        finally:
+            container.registry.states.clear()
+            container.registry.states.update(saved)
+        frame = sock.send_json.call_args[0][0]
+        # A snapshot is a live-container replay: running=True.
+        assert frame["running"] is True
+        assert frame["seq"] == 5
+        assert frame["health_checked_at"] == "2023-11-14T22:13:20+00:00"
+
+
+class TestHealthHeartbeat:
+    """send_health_heartbeats: opt-in liveness frames (#1175 item 3b)."""
+
+    def _register(self, sock, user, *, wants=False):
+        conn = _base_conn(user=user, ws=sock)
+        conn.wants_health_heartbeat = wants
+        wshandler.state.connections[sock] = conn
+        return conn
+
+    def _frame(self, sock):
+        return sock.send_json.call_args[0][0]
+
+    def test_only_opted_in_connections_receive_it(self):
+        opted = _mock_sock()
+        quiet = _mock_sock()
+        try:
+            self._register(opted, {"id": "u1", "email": "a@x"}, wants=True)
+            self._register(quiet, {"id": "u2", "email": "b@x"}, wants=False)
+            wshandler.state.send_health_heartbeats()
+        finally:
+            wshandler.state.connections.pop(opted, None)
+            wshandler.state.connections.pop(quiet, None)
+        opted.send_json.assert_called_once()
+        frame = self._frame(opted)
+        assert frame["type"] == "service_health_heartbeat"
+        assert "timestamp" in frame
+        # Default-off connections are left alone.
+        quiet.send_json.assert_not_called()
+
+    def test_skips_unauthenticated(self):
+        sock = _mock_sock()
+        try:
+            self._register(sock, {"id": None, "email": ""}, wants=True)
+            wshandler.state.send_health_heartbeats()
+        finally:
+            wshandler.state.connections.pop(sock, None)
+        sock.send_json.assert_not_called()
+
+    async def test_dead_opted_in_socket_is_pruned(self):
+        from klangk_backend.wshandler import WS_ERRORS
+
+        sock = _mock_sock()
+        sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
+        try:
+            conn = self._register(
+                sock, {"id": "u1", "email": "a@x"}, wants=True
+            )
+            with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
+                wshandler.state.send_health_heartbeats()
+                await asyncio.sleep(0)
+                mock.assert_awaited_once()
+            assert sock not in wshandler.state.connections
+        finally:
+            wshandler.state.connections.pop(sock, None)
+
+    def test_subscribe_command_toggles_flag(self):
+        # The subscribe_health_heartbeat command flips the per-connection
+        # flag; enabled defaults to True when omitted.
+        sock = _mock_sock()
+        try:
+            conn = self._register(sock, {"id": "u1", "email": "a@x"})
+            assert conn.wants_health_heartbeat is False
+            wshandler.state.handle_subscribe_health_heartbeat({}, sock)
+            assert conn.wants_health_heartbeat is True
+            wshandler.state.handle_subscribe_health_heartbeat(
+                {"enabled": False}, sock
+            )
+            assert conn.wants_health_heartbeat is False
+        finally:
+            wshandler.state.connections.pop(sock, None)
+
+    def test_subscribe_unknown_socket_is_noop(self):
+        sock = _mock_sock()
+        # Not registered -- must not raise.
+        wshandler.state.handle_subscribe_health_heartbeat({}, sock)
 
 
 class TestRemoveSessionLocked:

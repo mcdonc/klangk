@@ -51,6 +51,12 @@ For each workspace with a health check configured:
    workspace's current status immediately on connect -- so a pure-WS
    consumer like `klangkc monitor` sees steady-state failures right
    away instead of being blind until the next transition (#1175).
+   Each `service_health` frame also carries three additive fields:
+   `running` (`false` on the terminal **container-death** frame, so a
+   consumer watching only this stream learns the service is down
+   instead of seeing "healthy, then silence"), `health_checked_at`
+   (when the last poll ran), and `seq` (a per-workspace counter to
+   detect a missed transition across a reconnect).
 4. The current status, the **reason** it's unhealthy (a tail of the
    check's stderr/stdout), and the time of the last check are exposed
    via `GET /api/v1/workspaces/{id}/status`.
@@ -123,7 +129,10 @@ Health checks are deliberately conservative:
   during setup would report false negatives (the service isn't running
   yet because `setup.sh` hasn't installed it).
 - **Container stopped/removed** — its health state goes away with the
-  container.
+  container. The server first emits one terminal `service_health` frame
+  with `running=false` (and `healthy=false`) so a consumer watching only
+  that stream learns the service is down; after that the workspace no
+  longer appears on the stream until it restarts.
 
 ### Informational only
 
@@ -152,8 +161,16 @@ miss:
 the web UI does — health transitions, container starts/stops, workspace
 changes — and can run a command for each one. The event JSON is piped
 to the command's stdin, and details are exposed as environment
-variables (`KLANGK_EVENT_TYPE`, `KLANGK_WORKSPACE_ID`, `KLANGK_HEALTHY`,
-and `KLANGK_HEALTH_MESSAGE` — the failure reason, when unhealthy).
+variables. For `service_health` events those are:
+
+- `KLANGK_HEALTHY` — `true` / `false`.
+- `KLANGK_RUNNING` — `true` for live-container frames, `false` on the
+  terminal container-death frame. This lets a command tell "the health
+  check failed" from "the container stopped" without also subscribing
+  to `container_status`.
+- `KLANGK_HEALTH_MESSAGE` — the failure reason, when unhealthy.
+- `KLANGK_HEALTH_CHECKED_AT` — ISO-8601 timestamp of the last poll.
+- `KLANGK_HEALTH_SEQ` — per-workspace monotonic counter.
 
 Fire a desktop notification when a service goes unhealthy:
 
@@ -174,6 +191,15 @@ Just watch the stream (pipe to `jq`):
 ```bash
 klangkc monitor --type service_health | jq .
 ```
+
+Because the stream is deltas-only, silence normally means "nothing
+changed" — but it's indistinguishable from "the server's health loop
+stalled." For a liveness signal, opt into a periodic heartbeat by
+sending `{"cmd": "subscribe_health_heartbeat", "enabled": true}` on
+the socket: the server then emits a `service_health_heartbeat` frame
+at the end of every health-loop tick, so if the loop stalls the
+heartbeats stop. It's its own event type, so `--type service_health`
+filters it out — drop the filter to observe it.
 
 `monitor` reconnects automatically — by default forever, with capped
 exponential backoff — and refreshes its login token on auth failures,

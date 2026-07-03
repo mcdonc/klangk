@@ -238,6 +238,12 @@ class ContainerState:
         # not yet checked.  Surfaced via the status API + service_health
         # event so an unhealthy workspace isn't a black box (#1088).
         self.health_message: str | None = None
+        # Per-workspace monotonic counter carried on every service_health
+        # frame so a reconnecting consumer can detect a missed transition
+        # against the connect-time snapshot (#1175 item 4).  Increments on
+        # each emitted frame (transition and death); resets when the state
+        # is recreated (container restart) -- the snapshot reconciles.
+        self.health_seq: int = 0
         self.health_check: str | None = None  # shell command, None = disabled
         self.owner_id: str | None = None
         self.setup_state: str | None = None
@@ -616,17 +622,15 @@ class HealthMonitor:
                 message,
             )
         if new_status != old_status:
-            self._broadcast(
-                state.workspace_id, new_status, state.health_message
-            )
+            self._broadcast(state, new_status, state.health_message)
 
     def _broadcast(
         self,
-        workspace_id: str,
+        state: ContainerState,
         status: str,
         message: str | None = None,
     ) -> None:
-        """Emit a ``service_health`` event to all connections.
+        """Emit a ``service_health`` transition event to all connections.
 
         Fanned out via :meth:`WsState.notify_service_health` so the
         workspace list page learns about health transitions for
@@ -634,16 +638,61 @@ class HealthMonitor:
         workspace's terminal session (#1015).  The failure *reason*
         rides along as ``health_message`` so operators can see *why*
         it's unhealthy without digging through logs (#1088).
+
+        Also forwards the additive contract fields (#1175):
+        ``running=True`` (this is a live-container frame), the last
+        ``health_checked_at`` (#1175 item 3a), and a per-workspace
+        ``seq`` (#1175 item 4) bumped on every emit so a reconnecting
+        consumer can detect a missed transition.
         """
         # Imported lazily to avoid an import cycle with wshandler.
         from .wshandler import state as _ws_state  # noqa: allow-deferred-import
 
+        state.health_seq += 1
         _ws_state.notify_service_health(
-            workspace_id, healthy=status == "healthy", message=message
+            state.workspace_id,
+            healthy=status == "healthy",
+            message=message,
+            running=True,
+            health_checked_at=state.health_checked_at,
+            seq=state.health_seq,
+        )
+
+    def broadcast_death(self, state: ContainerState) -> None:
+        """Emit the terminal ``service_health`` frame for a dying container.
+
+        When a container dies the server emits
+        ``container_status{running: false}`` and then *silence* on the
+        ``service_health`` stream, because the health loop only polls
+        ``registry.states`` and a dead container's state is removed.  A
+        consumer watching ``service_health`` therefore believes the
+        last-known status (possibly healthy) still holds while the
+        container is gone (#1175 item 2).  This closes the hole by
+        emitting one unambiguous terminal frame with ``running=False``
+        and ``healthy=False`` *before* the state is dropped, so a single
+        stream is a single source of truth.
+        """
+        # Imported lazily to avoid an import cycle with wshandler.
+        from .wshandler import state as _ws_state  # noqa: allow-deferred-import
+
+        state.health_seq += 1
+        _ws_state.notify_service_health(
+            state.workspace_id,
+            healthy=False,
+            message=None,
+            running=False,
+            health_checked_at=state.health_checked_at,
+            seq=state.health_seq,
         )
 
     async def run_health_loop(self) -> None:
-        """Background loop: every interval, poll eligible workspaces."""
+        """Background loop: every interval, poll eligible workspaces.
+
+        After each poll sweep, emits liveness heartbeats to connections
+        that opted in (#1175 item 3b).  Emitting from *this* loop (rather
+        than a standalone task) ties heartbeat presence to the health
+        loop being alive -- if the loop stalls, the heartbeats stop.
+        """
         while True:
             await asyncio.sleep(HEALTH_CHECK_INTERVAL_SECONDS)
             for state in list(self._registry.states.values()):
@@ -659,6 +708,14 @@ class HealthMonitor:
                         state.workspace_id,
                         e,
                     )
+            self._send_heartbeats()
+
+    def _send_heartbeats(self) -> None:
+        """Fan health heartbeats to opt-in connections (lazy ws import)."""
+        # Imported lazily to avoid an import cycle with wshandler.
+        from .wshandler import state as _ws_state  # noqa: allow-deferred-import
+
+        _ws_state.send_health_heartbeats()
 
     def start_health_loop(self) -> None:
         if self.health_task is None:
@@ -1366,6 +1423,17 @@ class ContainerRegistry:
     async def notify_workspace_killed(self, workspace_id: str) -> None:
         """Call the on_workspace_killed callback, logging any errors."""
         self._notify_status_changed(workspace_id, False)
+        # Close the container-death hole (#1175 item 2): without this,
+        # a dying container looks like "healthy, then silence" on the
+        # service_health stream because the health loop only polls
+        # ``registry.states`` and the on_workspace_killed callback below
+        # drops the state.  Emit one terminal frame with ``running=False``
+        # first, so a consumer watching only service_health learns the
+        # service is down.  Only health-checked workspaces ever appeared
+        # on the stream, so only those get a terminal frame.
+        state = self.states.get(workspace_id)
+        if state is not None and state.health_check is not None:
+            self.health.broadcast_death(state)
         if self.on_workspace_killed:
             try:
                 await self.on_workspace_killed(workspace_id)
