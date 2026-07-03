@@ -4,7 +4,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from ._core import _fetchone, transaction
+from ._core import fetchone, transaction
 from .acl import ACTION_ALLOW, PRINCIPAL_GROUP, PRINCIPAL_USER
 from .users import AGENT_USER_ID, AgentPrincipalError, get_user_group_ids
 
@@ -249,7 +249,7 @@ async def create_workspace(
 _SORT_COLUMNS = {"created": "created_at", "name": "name"}
 
 
-def _sort_order_clause(sort: str, order: str, prefix: str = "") -> str:
+def sort_order_clause(sort: str, order: str, prefix: str = "") -> str:
     """Build a deterministic ORDER BY clause for paginated workspace lists.
 
     ``sort`` is whitelisted against ``_SORT_COLUMNS``; ``order`` is
@@ -278,7 +278,7 @@ async def list_workspaces(
     whitelisted; ``q`` filters by name substring. The ``id`` tiebreaker
     keeps offset pagination deterministic.
     """
-    order_by = _sort_order_clause(sort, order)
+    order_by = sort_order_clause(sort, order)
     where = "WHERE user_id = ?"
     params: list = [user_id]
     if q:
@@ -334,7 +334,7 @@ async def list_shared_workspaces(
     envelope: ``{"items": [...], "has_more": bool, "next_offset": int | None}``.
     ``sort``/``order``/``q`` as in :func:`list_workspaces`.
     """
-    order_by = _sort_order_clause(sort, order, prefix="w")
+    order_by = sort_order_clause(sort, order, prefix="w")
     name_filter = " AND w.name LIKE '%' || ? || '%'" if q else ""
     async with transaction() as db:
         group_ids = await get_user_group_ids(user_id)
@@ -442,7 +442,7 @@ async def get_workspace(
 
 async def get_workspace_by_id(workspace_id: str) -> dict | None:
     """Get a workspace by ID without access control (for admin use)."""
-    row = await _fetchone(
+    row = await fetchone(
         "SELECT id, user_id, name, container_id, num_ports, image,"
         " service_command, setup_state, health_check, mounts, env"
         " FROM workspaces WHERE id = ?",

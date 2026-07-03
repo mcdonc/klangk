@@ -3,7 +3,7 @@
 import re
 import uuid
 
-from ._core import _Connection, transaction
+from ._core import Connection, transaction
 from .acl import ACTION_ALLOW, PRINCIPAL_USER
 
 # Chat message types
@@ -15,7 +15,7 @@ _MENTION_RE = re.compile(r"@([a-zA-Z0-9._-]+)")
 
 
 async def parse_mentions(
-    db: _Connection, message: str, workspace_id: str
+    db: Connection, message: str, workspace_id: str
 ) -> list[str]:
     """Extract @handle mentions from message text and resolve to user IDs.
 

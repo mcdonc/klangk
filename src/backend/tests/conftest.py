@@ -32,7 +32,7 @@ def temp_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("KLANGK_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("KLANGK_IMAGE_PULL_POLICY", raising=False)
     # Re-import to pick up the new env var.  The engine state lives on
-    # ``model._core`` (where ``_ensure_engine`` reads it), so the globals
+    # ``model._core`` (where ``ensure_engine`` reads it), so the globals
     # must be rebound there — setting them on the package would not be
     # seen by the core helpers.
     import klangk_backend.model as us

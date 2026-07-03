@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from ._core import _fetchone, transaction
+from ._core import fetchone, transaction
 
 
 async def create_invitation(email: str, invited_by: str) -> dict:
@@ -30,7 +30,7 @@ async def create_invitation(email: str, invited_by: str) -> dict:
 
 async def get_invitation(invitation_id: str) -> dict | None:
     """Get an invitation by ID."""
-    row = await _fetchone(
+    row = await fetchone(
         "SELECT id, email, invited_by, status, created_at, accepted_at"
         " FROM invitations WHERE id = ?",
         (invitation_id,),
@@ -49,7 +49,7 @@ async def get_invitation(invitation_id: str) -> dict | None:
 
 async def get_pending_invitation_by_email(email: str) -> dict | None:
     """Get a pending invitation for the given email."""
-    row = await _fetchone(
+    row = await fetchone(
         "SELECT id, email, invited_by, status, created_at, accepted_at"
         " FROM invitations WHERE email = ? AND status = 'pending'",
         (email,),

@@ -634,7 +634,7 @@ class TestPortAllocations:
         assert all_ports == set()
 
     async def test_find_and_allocate_ports(self, workspace, monkeypatch):
-        monkeypatch.setattr(model.ports, "_port_in_use", lambda p: False)
+        monkeypatch.setattr(model.ports, "port_in_use", lambda p: False)
         ports = await model.find_and_allocate_ports(workspace["id"], 3, 9000)
         assert ports == [9000, 9001, 9002]
         stored = await model.get_workspace_ports(workspace["id"])
@@ -643,7 +643,7 @@ class TestPortAllocations:
     async def test_find_and_allocate_skips_used(
         self, workspace, user, monkeypatch
     ):
-        monkeypatch.setattr(model.ports, "_port_in_use", lambda p: False)
+        monkeypatch.setattr(model.ports, "port_in_use", lambda p: False)
         await model.add_port_allocations(workspace["id"], [9000, 9002])
         ws2 = await model.create_workspace(user["id"], "ws2")
         ports = await model.find_and_allocate_ports(ws2["id"], 3, 9000)
@@ -653,7 +653,7 @@ class TestPortAllocations:
         self, workspace, monkeypatch
     ):
         monkeypatch.setattr(
-            model.ports, "_port_in_use", lambda p: p in {9001, 9003}
+            model.ports, "port_in_use", lambda p: p in {9001, 9003}
         )
         ports = await model.find_and_allocate_ports(workspace["id"], 3, 9000)
         assert ports == [9000, 9002, 9004]
@@ -664,7 +664,7 @@ class TestPortAllocations:
         """Exhausting the port range fails fast instead of looping forever."""
         # Every port at/after start is treated as in-use; asking for any
         # ports from a start of MAX_PORT guarantees immediate exhaustion.
-        monkeypatch.setattr(model.ports, "_port_in_use", lambda p: True)
+        monkeypatch.setattr(model.ports, "port_in_use", lambda p: True)
         with pytest.raises(ValueError):
             await model.find_and_allocate_ports(
                 workspace["id"], 1, model.MAX_PORT
@@ -677,7 +677,7 @@ class TestPortAllocations:
         # Only the last two ports are free; requesting two succeeds, three raises.
         free = {model.MAX_PORT - 1, model.MAX_PORT}
         monkeypatch.setattr(
-            model.ports, "_port_in_use", lambda p: p not in free
+            model.ports, "port_in_use", lambda p: p not in free
         )
         ports = await model.find_and_allocate_ports(
             workspace["id"], 2, model.MAX_PORT - 1
@@ -692,14 +692,14 @@ class TestPortAllocations:
 
 class TestPortInUse:
     def test_free_port(self):
-        assert model._port_in_use(59123) is False
+        assert model.port_in_use(59123) is False
 
     def test_bound_port(self):
         import socket
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("0.0.0.0", 59124))
-            assert model._port_in_use(59124) is True
+            assert model.port_in_use(59124) is True
 
 
 class TestServiceCommand:
@@ -1501,17 +1501,17 @@ class TestSchemaAgentBackstops:
 
 class TestHashFallbackHandle:
     def test_returns_hash_based_handle(self):
-        from klangk_backend.model import _hash_fallback_handle
+        from klangk_backend.model import hash_fallback_handle
 
-        result = _hash_fallback_handle("testbase")
+        result = hash_fallback_handle("testbase")
         assert result.startswith("testbase-")
         assert len(result) <= model._MAX_HANDLE_LEN
 
     def test_truncates_long_base(self):
-        from klangk_backend.model import _hash_fallback_handle
+        from klangk_backend.model import hash_fallback_handle
 
         long_base = "a" * 100
-        result = _hash_fallback_handle(long_base)
+        result = hash_fallback_handle(long_base)
         assert len(result) <= model._MAX_HANDLE_LEN
         # Should end with a hex suffix
         assert "-" in result
@@ -1521,7 +1521,7 @@ class TestUniqueHandleFallback:
     async def test_falls_back_to_hash_after_exhausting_suffixes(self, db):
         from unittest.mock import AsyncMock
 
-        from klangk_backend.model import _unique_handle
+        from klangk_backend.model import unique_handle
 
         # Mock a DB cursor that always finds a collision
         mock_cursor = AsyncMock()
@@ -1529,8 +1529,8 @@ class TestUniqueHandleFallback:
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock(return_value=mock_cursor)
 
-        result = await _unique_handle(mock_db, "taken")
-        # Should fall through to _hash_fallback_handle
+        result = await unique_handle(mock_db, "taken")
+        # Should fall through to hash_fallback_handle
         assert "-" in result
         assert len(result) <= model._MAX_HANDLE_LEN
         # Should contain a hex suffix, not a numeric one
