@@ -70,6 +70,26 @@ in
   env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
 
   tasks = {
+    # WORKAROUND: devenv's languages.python.uv.sync gate only hashes the root
+    # pyproject.toml (a bare [tool.uv.workspace] stub), so dependency changes in
+    # workspace members or captured in uv.lock never invalidate the checksum and
+    # `uv sync` is silently skipped -- the venv goes stale (e.g.
+    # "ModuleNotFoundError: No module named 'jinja2'" at backend startup).
+    # Re-sync into the devenv-managed venv when the lock or a member pyproject
+    # changes. Remove once devenv hashes uv.lock upstream (poetry/npm/pnpm/yarn/
+    # bun already hash their lock files; uv is the lone exception).
+    "klangk:uv-sync" = {
+      exec = ''
+        cd "$DEVENV_ROOT"
+        uv sync -p "$UV_PYTHON"
+      '';
+      execIfModified = [
+        "uv.lock"
+        "pyproject.toml"
+        "src/backend/pyproject.toml"
+        "src/cli/pyproject.toml"
+      ];
+    };
     "klangk:flutter-build" = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh"'';
       showOutput = true;
@@ -135,6 +155,7 @@ in
         cd $DEVENV_ROOT/src/backend && exec ${uvicornCmd}
       '';
       after = [
+        "klangk:uv-sync"
         "klangk:flutter-build"
         "klangk:build-workspace-image"
         "klangk:kill-containers"
