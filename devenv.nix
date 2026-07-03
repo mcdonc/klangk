@@ -83,8 +83,18 @@ in
     # pre-commit hooks, AND `devenv processes up` -- not just the backend process.
     # `after` pins ordering: devenv must create the venv
     # (devenv:python:virtualenv) first, or it would `rm -rf` our freshly-synced
-    # deps on a cold / interpreter-changed venv. execIfModified makes it a no-op
-    # when nothing changed. Remove once devenv hashes uv.lock upstream
+    # deps on a cold / interpreter-changed venv.
+    #
+    # Deliberately NO execIfModified gate: the gate would fingerprint only the
+    # source files (uv.lock + pyproject.toml), which is a necessary-but-not-
+    # sufficient condition for a correct venv. devenv:python:virtualenv can wipe
+    # the venv (cold start, interpreter bump) independent of any source change,
+    # leaving an empty venv that the gate happily skips -- reproducing the
+    # "No module named uvicorn" startup crash on `devenv processes up`. `uv sync`
+    # is the source of truth: on a current venv it's a ~0.1s no-op
+    # (resolve+check, no installs), so running it unconditionally is cheaper
+    # than getting the gate right. Remove this whole task once devenv hashes
+    # uv.lock AND re-runs sync after virtualenv recreation upstream
     # (poetry/npm/pnpm/yarn/bun already hash their lock files; uv is the lone
     # exception).
     "klangk:uv-sync" = {
@@ -94,12 +104,6 @@ in
       '';
       after = [ "devenv:python:virtualenv" ];
       before = [ "devenv:enterShell" ];
-      execIfModified = [
-        "uv.lock"
-        "pyproject.toml"
-        "src/backend/pyproject.toml"
-        "src/cli/pyproject.toml"
-      ];
     };
     "klangk:flutter-build" = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh"'';
