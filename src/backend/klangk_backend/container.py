@@ -688,6 +688,8 @@ class ContainerRegistry:
         state = self.states.pop(workspace_id, None)
         if state:
             self._cid_to_wsid.pop(state.container_id, None)
+            # Drop the per-container service-firing lock (#1188).
+            terminal.clear_service_session_lock(state.container_id)
         self._workspace_locks.pop(workspace_id, None)
 
     # --- Proxy: PortAllocator ---
@@ -1275,6 +1277,8 @@ class ContainerRegistry:
             self.revoke_workspace_browsers(ws_id)
             self.states.pop(ws_id, None)
             self._workspace_locks.pop(ws_id, None)
+        # Drop the per-container service-firing lock (#1188).
+        terminal.clear_service_session_lock(container_id)
 
     async def _notify_workspace_killed(self, workspace_id: str) -> None:
         """Call the on_workspace_killed callback, logging any errors."""
