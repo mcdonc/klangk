@@ -1472,6 +1472,36 @@ class TestEnsureServiceSession:
         assert "kill-window" in argv
         assert "service:service-cmd" in argv
 
+    async def test_send_keys_failure_cleanup_failure_is_logged(self):
+        """If the kill-window cleanup itself raises, it's logged but the
+        function still returns without raising (#1186)."""
+        from klangk_backend.terminal import ensure_service_session
+
+        with (
+            patch(
+                "klangk_backend.terminal._ensure_tmux_session",
+                new=AsyncMock(),
+            ),
+            patch(
+                "klangk_backend.terminal._service_cmd_window_exists",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "klangk_backend.terminal.podman.exec_container",
+                new=AsyncMock(
+                    side_effect=[
+                        (0, "", ""),  # new-window succeeds
+                        RuntimeError("send broke"),  # send-keys fails
+                        RuntimeError("cleanup broke"),  # kill-window fails
+                    ]
+                ),
+            ),
+            patch("klangk_backend.terminal.logger") as mock_logger,
+        ):
+            await ensure_service_session("cid", "/home/clanker", "cmd")
+        # Both the send-keys failure and the cleanup failure are warned.
+        assert mock_logger.warning.call_count == 2
+
 
 class TestServiceSessionHelpers:
     """Direct coverage for the firing-predicate helpers used by
