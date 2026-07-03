@@ -27,7 +27,7 @@ from . import (
     wshandler,
 )
 from .api import root_router, router
-from .util import API_PREFIX
+from .util import API_PREFIX, derive_hosting_info
 from .model import (
     ACTION_ALLOW,
     ACTION_DENY,
@@ -427,18 +427,20 @@ setup_logfire(app)
 def cors_origins() -> list[str]:
     """Build the CORS allowed-origins list.
 
-    Priority: KLANGK_CORS_ORIGINS (comma-separated) > derived from
-    hosting env vars > localhost with nginx port.
+    Priority: KLANGK_CORS_ORIGINS (comma-separated) > derived from the
+    hosting env vars (via derive_hosting_info) > bare localhost.
+
+    Consistent with hosted-app URL construction: the port comes from
+    KLANGK_HOSTING_HOSTNAME (which carries host[:port]); it is never
+    synthesized from KLANGK_NGINX_PORT (that is internal container
+    wiring, not the browser origin). Origins carry no path, so
+    KLANGK_HOSTING_BASE_PATH is ignored here.
     """
     explicit = resolve_env_value("KLANGK_CORS_ORIGINS")
     if explicit:
         return [o.strip() for o in explicit.split(",") if o.strip()]
-    hostname = resolve_env_value("KLANGK_HOSTING_HOSTNAME")
-    proto = resolve_env_value("KLANGK_HOSTING_PROTO", "http")
-    if hostname:
-        return [f"{proto}://{hostname}"]
-    nginx_port = resolve_env_value("KLANGK_NGINX_PORT", "8995")
-    return [f"http://localhost:{nginx_port}"]
+    hostname, proto, _ = derive_hosting_info(None, None)
+    return [f"{proto}://{hostname}"]
 
 
 app.add_middleware(

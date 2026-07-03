@@ -496,9 +496,10 @@ class TestDeriveHostingInfo:
                 "x-forwarded-prefix": "/phish",
             }
         )
-        # Peer is a public address, not in the default trusted set.
+        # Peer is a public address, not in the default trusted set, so the
+        # forwarded header is rejected and the verbatim Host header is used.
         h, p, b = derive_hosting_info(sock.headers, "203.0.113.7")
-        assert h == "localhost:8995"
+        assert h == "localhost:8997"
         assert p == "http"
         assert b == ""
 
@@ -520,7 +521,7 @@ class TestDeriveHostingInfo:
             }
         )
         h, p, b = derive_hosting_info(sock.headers, None)
-        assert h == "localhost:8995"
+        assert h == "localhost:8997"
         assert p == "http"
         assert b == ""
 
@@ -543,7 +544,7 @@ class TestDeriveHostingInfo:
             }
         )
         h, p, b = derive_hosting_info(sock.headers, "127.0.0.1")
-        assert h == "localhost:8995"
+        assert h == "localhost:8997"
         assert p == "http"
         assert b == ""
 
@@ -572,15 +573,21 @@ class TestDeriveHostingInfo:
         assert p == "https"
         assert b == "/klangk"
 
-    def test_host_header_with_nginx_port(self, monkeypatch):
-        """Direct access (local dev) — substitute nginx port."""
+    def test_host_header_used_verbatim(self, monkeypatch):
+        """Direct access: the Host header (with its port) is used verbatim.
+
+        nginx forwards the client's Host as both Host and X-Forwarded-Host,
+        so the port the browser hit rides along unmodified — no port is
+        synthesized from KLANGK_NGINX_PORT (that is internal wiring, not the
+        public port; wrong behind a real proxy/ingress).
+        """
         monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
         monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
         sock = _mock_sock(headers={"host": "myhost:8997"})
         h, p, b = derive_hosting_info(sock.headers, "127.0.0.1")
-        assert h == "myhost:8995"
+        assert h == "myhost:8997"
         assert p == "http"
         assert b == ""
 
@@ -595,14 +602,21 @@ class TestDeriveHostingInfo:
         assert p == "http"
         assert b == ""
 
-    def test_defaults_with_nginx_port(self, monkeypatch):
+    def test_nginx_port_not_synthesized_into_host(self, monkeypatch):
+        """KLANGK_NGINX_PORT is NOT used to compose the URL authority.
+
+        With no env override and an uninformative (empty) request, the floor
+        is bare localhost — even though KLANGK_NGINX_PORT is set. The port
+        must come from KLANGK_HOSTING_HOSTNAME or the Host header, never
+        guessed from the internal nginx port (#1240).
+        """
         monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
         monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
         sock = _mock_sock(headers={})
         h, p, b = derive_hosting_info(sock.headers, "127.0.0.1")
-        assert h == "localhost:8995"
+        assert h == "localhost"
         assert p == "http"
         assert b == ""
 
@@ -613,6 +627,45 @@ class TestDeriveHostingInfo:
         monkeypatch.delenv("KLANGK_NGINX_PORT", raising=False)
         sock = _mock_sock(headers={})
         h, p, b = derive_hosting_info(sock.headers, "127.0.0.1")
+        assert h == "localhost"
+        assert p == "http"
+        assert b == ""
+
+    # --- no request in hand (eager start: autostart / workspace create) ---
+    # These exercise the path eager_start_workspace takes: no connection
+    # exists at boot, so derive_hosting_info is called with no headers and
+    # must still return a port-correct floor (the bug was that the eager
+    # path used to bypass this entirely and inject bare "localhost").
+
+    def test_no_headers_env_hostname_wins(self, monkeypatch):
+        """Env override applies even with no request (#1240)."""
+        monkeypatch.setenv("KLANGK_HOSTING_HOSTNAME", "klangk.example.com")
+        monkeypatch.setenv("KLANGK_HOSTING_PROTO", "https")
+        monkeypatch.setenv("KLANGK_HOSTING_BASE_PATH", "/klangk")
+        monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
+        h, p, b = derive_hosting_info(None, None)
+        assert h == "klangk.example.com"
+        assert p == "https"
+        assert b == "/klangk"
+
+    def test_no_headers_falls_back_to_localhost(self, monkeypatch):
+        """No env, no request -> bare localhost (no port synthesized)."""
+        monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
+        monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
+        h, p, b = derive_hosting_info(None, None)
+        assert h == "localhost"
+        assert p == "http"
+        assert b == ""
+
+    def test_no_headers_no_env_no_nginx_port(self, monkeypatch):
+        """Absolute floor: bare localhost when nothing is configured."""
+        monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
+        monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
+        monkeypatch.delenv("KLANGK_NGINX_PORT", raising=False)
+        h, p, b = derive_hosting_info(None, None)
         assert h == "localhost"
         assert p == "http"
         assert b == ""

@@ -214,20 +214,39 @@ def peer_trusted(client_host: str | None) -> bool:
 
 
 def derive_hosting_info(
-    headers, client_host: str | None = None
+    headers=None, client_host: str | None = None
 ) -> tuple[str, str, str]:
     """Derive hosting hostname, proto, and base path from env vars or request headers.
 
     Returns (hostname, proto, base_path). Env vars take precedence over
-    headers. Works with both Request.headers and WebSocket.headers.
+    headers, so setting ``KLANGK_HOSTING_HOSTNAME`` / ``KLANGK_HOSTING_PROTO`` /
+    ``KLANGK_HOSTING_BASE_PATH`` pins every URL the backend builds —
+    independent of how a request arrives (or whether one arrives at all).
 
-    Forwarded headers (``X-Forwarded-Host``, ``X-Forwarded-Proto``,
+    With no env vars set, the request headers provide the values:
+    forwarded headers (``X-Forwarded-Host``, ``X-Forwarded-Proto``,
     ``X-Forwarded-Prefix``) are trusted ONLY when the immediate peer
     (``client_host``) is in ``KLANGK_TRUSTED_PROXY_CIDRS`` (default
     ``127.0.0.1,::1`` — every klangk deployment runs the backend behind a
     local reverse proxy). This prevents an attacker who reaches the backend
     port directly from spoofing the host/proto to poison the
     verification/reset/OIDC links the backend generates.
+
+    Both args are optional so the same resolver serves callers that have no
+    request in hand — chiefly ``eager_start_workspace`` (autostart/create,
+    which runs at boot with no connection). With no headers the request
+    branches are skipped and the env vars are the sole source, falling back
+    to bare ``localhost`` / ``http`` / ``""``.
+
+    The port is NOT synthesized from ``KLANGK_NGINX_PORT``: that var is the
+    internal port containers use to reach the backend's llm-proxy/bridge,
+    not the public port a browser hits (they only coincide in the default
+    single-host topology; behind a real proxy/ingress the public port is
+    unrelated). The port comes from the authority itself — either
+    ``KLANGK_HOSTING_HOSTNAME`` (which carries ``host[:port]``) or the
+    ``Host`` / ``X-Forwarded-Host`` header (both carry host and port), used
+    verbatim. ``X-Forwarded-For`` is not consulted — it carries the client
+    IP chain, not a host, so it has no role in URL composition.
 
     Pass the real connection peer (``request.client.host`` for HTTP,
     ``websocket.client.host`` for WS). When ``client_host`` is unavailable
@@ -238,28 +257,37 @@ def derive_hosting_info(
     hostname = resolve_env_value("KLANGK_HOSTING_HOSTNAME")
     proto = resolve_env_value("KLANGK_HOSTING_PROTO")
     base_path = resolve_env_value("KLANGK_HOSTING_BASE_PATH")
-    trust = (not _REJECT_PROXY) and peer_trusted(client_host)
-    if not hostname:
+    trust = (
+        (not _REJECT_PROXY)
+        and peer_trusted(client_host)
+        # Only a real request can inform a forwarded header; an eager
+        # start (no connection) must fall back to env / bare localhost.
+        and headers is not None
+    )
+    if not hostname and headers is not None:
         if trust:
             forwarded_host = headers.get("x-forwarded-host")
             if forwarded_host:
                 hostname = forwarded_host
         if not hostname:
-            # Direct access (local dev) — use nginx port for hosted app URLs
-            nginx_port = resolve_env_value("KLANGK_NGINX_PORT")
-            host = headers.get("host") or "localhost"
-            if nginx_port:
-                host_no_port = host.split(":")[0]
-                hostname = f"{host_no_port}:{nginx_port}"
-            else:
-                hostname = host
+            # The Host header carries the host (and port) the client
+            # actually used to reach us — use it verbatim rather than
+            # substituting an internal port (wrong behind a proxy). The
+            # override is KLANGK_HOSTING_HOSTNAME when the request is
+            # absent or uninformative.
+            hostname = headers.get("host") or "localhost"
+    if not hostname:
+        # No env var and no (or uninformative) request: bare localhost.
+        # The deployer sets KLANGK_HOSTING_HOSTNAME (with its port) to get
+        # a reachable URL; no port is guessed.
+        hostname = "localhost"
     if not proto:
-        if trust:
+        if headers is not None and trust:
             proto = headers.get("x-forwarded-proto") or "http"
         else:
             proto = "http"
     if base_path is None:
-        if trust:
+        if headers is not None and trust:
             base_path = headers.get("x-forwarded-prefix") or ""
         else:
             base_path = ""

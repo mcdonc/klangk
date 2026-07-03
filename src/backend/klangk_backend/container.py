@@ -923,9 +923,9 @@ class ContainerRegistry:
         home_path: str,
         existing_container_id: str | None = None,
         num_ports: int = DEFAULT_PORTS_PER_WORKSPACE,
-        hosting_hostname: str = "localhost",
-        hosting_proto: str = "http",
-        hosting_base_path: str = "",
+        hosting_hostname: str | None = None,
+        hosting_proto: str | None = None,
+        hosting_base_path: str | None = None,
         image: str | None = None,
         config_path: str | None = None,
         extra_mounts: list[str] | None = None,
@@ -1039,14 +1039,40 @@ class ContainerRegistry:
         self,
         workspace_id: str,
         host_ports: list[int],
-        hosting_hostname: str,
-        hosting_proto: str,
-        hosting_base_path: str,
+        hosting_hostname: str | None,
+        hosting_proto: str | None,
+        hosting_base_path: str | None,
         agent_home: str,
         extra_env: dict[str, str] | None,
         ssl_dir: str | None = None,
     ) -> list[str]:
-        """Build the container environment variable list."""
+        """Build the container environment variable list.
+
+        ``hosting_hostname``/``hosting_proto``/``hosting_base_path`` are
+        optional: callers with a live request pass the values they derived
+        from its headers (``wshandler.connection``), and callers without one
+        (``eager_start_workspace`` — autostart/create, no connection yet) pass
+        ``None``. Resolving the floor here, at the single choke point, means
+        no start path can bypass the override: when a caller omits them we
+        derive the env / bare-localhost floor via ``derive_hosting_info``
+        (the same resolver the request paths use), so a deployer's
+        ``KLANGK_HOSTING_HOSTNAME`` is honored on every start — eager or not.
+        """
+        if (
+            hosting_hostname is None
+            or hosting_proto is None
+            or hosting_base_path is None
+        ):
+            h, p, b = util.derive_hosting_info(None, None)
+            # Use ``is None`` (not ``or``): an explicit empty base_path
+            # (root deployment) is a legitimate value that must survive,
+            # not be clobbered by the resolved floor.
+            if hosting_hostname is None:
+                hosting_hostname = h
+            if hosting_proto is None:
+                hosting_proto = p
+            if hosting_base_path is None:
+                hosting_base_path = b
         env_vars: list[str] = []
         nginx_port = util.resolve_env_value("KLANGK_NGINX_PORT", "8995")
         proxy_url = f"http://host.containers.internal:{nginx_port}/llm-proxy"
@@ -1268,9 +1294,9 @@ class ContainerRegistry:
         home_path: str,
         existing_container_id: str | None = None,
         num_ports: int = DEFAULT_PORTS_PER_WORKSPACE,
-        hosting_hostname: str = "localhost",
-        hosting_proto: str = "http",
-        hosting_base_path: str = "",
+        hosting_hostname: str | None = None,
+        hosting_proto: str | None = None,
+        hosting_base_path: str | None = None,
         image: str | None = None,
         config_path: str | None = None,
         extra_mounts: list[str] | None = None,
