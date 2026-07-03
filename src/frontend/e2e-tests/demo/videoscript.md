@@ -297,7 +297,15 @@ Now let me continue in the browser. When you open Klangk on the web, you see the
 
 First, that hosted app I teased a moment ago. Let me click into `openclaw` and open its Service tab.
 
-_[Click the openclaw workspace, then the Service tab, then the "Open hosted app" button — openclaw's own web UI loads]_
+_[Click the openclaw workspace, then the Service tab, show the output of the service running]_
+
+There's Openclaw running. We know it's running on port 800, so let's find out which hosted URL that translates to in klangk.
+
+-[Click the bash tab, type `klangk-hosted-url 8000` into it to display the URL that openclaw is istening on]\_
+
+There's the URL, lets open it in another browser instance.
+
+_[openclaw's own web UI loads]_
 
 There — openclaw's own web UI, proxied through Klangk's single port. No separate port to open, no extra auth to wire up. Let me go back and open `demo`.
 
