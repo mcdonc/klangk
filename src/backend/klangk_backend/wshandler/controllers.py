@@ -413,19 +413,36 @@ class TerminalController:
     async def _setup_state_for_workspace(self) -> str:
         """Fetch the workspace's setup_state fresh from the DB (#1033).
 
-        Returns the literal lifecycle value, defaulting to 'complete'
+        Returns the literal lifecycle value, deferring to ``pending``
         if the workspace can't be loaded or the lookup fails. A failed
-        lookup must NOT crash terminal_start -- defaulting to
-        'complete' preserves the historical fire-by-default behaviour
-        rather than silently disabling service commands.
+        lookup must NOT crash terminal_start -- but it also must NOT
+        eagerly fire the service command mid-setup (#1187): returning
+        ``pending`` makes :func:`terminal._should_fire_service_command`
+        defer firing until the next successful lookup reads the real,
+        post-setup state. The persisted DB ``setup_state`` stays
+        authoritative; only this terminal_start firing decision is
+        best-effort. (Fail-open-to-'complete' here used to let a
+        transient DB blip fire the default command against a
+        half-installed workspace while setup.sh was still running.)
         """
         try:
             ws = await model.get_workspace(self._conn.workspace_id)
         except Exception:
-            return "complete"
+            # Log + defer firing; don't crash terminal_start (#1187). A
+            # silent swallow would hide real bugs, so record the
+            # traceback -- info level so the failure is visible in
+            # normal operation; the lookup retries on the next
+            # terminal_start.
+            logger.info(
+                "setup_state lookup failed for workspace %s; "
+                "deferring service-command firing",
+                self._conn.workspace_id,
+                exc_info=True,
+            )
+            return model.SETUP_STATE_PENDING
         if ws is None:
-            return "complete"
-        return ws.get("setup_state") or "complete"
+            return model.SETUP_STATE_PENDING  # row genuinely absent
+        return ws.get("setup_state") or model.SETUP_STATE_PENDING
 
     async def _fire_service_command(self) -> None:
         """Fire the service command in the agent's ``service`` session.

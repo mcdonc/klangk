@@ -5493,10 +5493,16 @@ class TestTerminalController:
         assert msg == {"type": "terminal_started"}
         assert ctrl.session is None
 
-    # --- _setup_state_for_workspace: defensive fallbacks (#1033) ---
+    # --- _setup_state_for_workspace: defensive fallbacks (#1033, #1187) ---
 
-    async def test_setup_state_db_error_defaults_to_complete(self):
-        """If the setup_state lookup raises, default to 'complete'."""
+    async def test_setup_state_db_error_defers_to_pending(self):
+        """If the setup_state lookup raises, defer firing (return 'pending').
+
+        Fail-closed, not fail-open: a transient DB failure during a
+        pending/failed workspace must NOT let the service command fire
+        mid-setup (#1187). The next successful lookup reads the real
+        state and fires then.
+        """
         ctrl, _, _ = self._controller()
         with patch.object(
             _ws_controllers.model,
@@ -5505,10 +5511,10 @@ class TestTerminalController:
             side_effect=RuntimeError("db down"),
         ):
             result = await ctrl._setup_state_for_workspace()
-        assert result == "complete"
+        assert result == "pending"
 
-    async def test_setup_state_workspace_missing_defaults_to_complete(self):
-        """If get_workspace returns None, default to 'complete'."""
+    async def test_setup_state_workspace_missing_defers_to_pending(self):
+        """If get_workspace returns None, defer firing (return 'pending')."""
         ctrl, _, _ = self._controller()
         with patch.object(
             _ws_controllers.model,
@@ -5517,7 +5523,24 @@ class TestTerminalController:
             return_value=None,
         ):
             result = await ctrl._setup_state_for_workspace()
-        assert result == "complete"
+        assert result == "pending"
+
+    async def test_setup_state_empty_value_defers_to_pending(self):
+        """A NULL/empty setup_state on the row defers firing (#1187).
+
+        The DB column is NOT NULL DEFAULT 'complete' so this is defensive,
+        but if it ever happens we treat it as unknown (don't fire) rather
+        than assuming complete.
+        """
+        ctrl, _, _ = self._controller()
+        with patch.object(
+            _ws_controllers.model,
+            "get_workspace",
+            new_callable=AsyncMock,
+            return_value={"setup_state": None},
+        ):
+            result = await ctrl._setup_state_for_workspace()
+        assert result == "pending"
 
     async def test_setup_state_returns_workspace_value(self):
         """Returns the workspace's actual setup_state when present (#1033)."""
