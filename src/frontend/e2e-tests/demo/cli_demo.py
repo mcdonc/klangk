@@ -279,6 +279,21 @@ def scene_demo(t: Term) -> None:
     t.pause(1.2)
 
 
+def _row_healthy(pane: str, name: str = "openclaw") -> bool:
+    """True if the ``name`` workspace row shows ``healthy`` in the pane.
+
+    Used while ``watch klangkc ls`` refreshes the Status column live: Rich
+    strips color under the non-TTY watch capture, so the status reads as plain
+    text. A per-line check for both the workspace name and ``healthy`` is
+    reliable (the table header says "Status", not "healthy").
+    """
+    for line in pane.splitlines():
+        low = line.lower()
+        if name in low and "healthy" in low:
+            return True
+    return False
+
+
 def _wait_remote(t: Term, *, timeout: float = 120.0) -> None:
     """Wait until the remote container prompt is idle.
 
@@ -335,8 +350,8 @@ def scene_2(t: Term) -> None:
     klangk server reachable by ``klangkc`` (see README).
     """
     server = os.environ.get("KLANGK_DEMO_SERVER", "http://localhost:8995")
-    admin = os.environ.get("KLANGK_DEMO_USER", "admin@example.com")
-    password = os.environ.get("KLANGK_DEMO_PASSWORD", "adminpass")
+    admin = os.environ.get("KLANGK_DEMO_ADMIN_EMAIL", "admin@example.com")
+    password = os.environ.get("KLANGK_DEMO_ADMIN_PASSWORD", "adminpass")
     # Hold between commands so the voiceover has room to breathe.
     HOLD = float(os.environ.get("KLANGK_DEMO_HOLD", "5"))
 
@@ -620,27 +635,27 @@ def scene_3b(t: Term) -> None:
     t.pause(HOLD)
 
     # step 7 — auto-start recovery via SIGHUP runtime restart (#1212/#1213).
-    # The backend is bare uvicorn (``devenv processes restart backend`` is a
-    # no-op); SIGHUP recycles the container layer while keeping the HTTP
-    # listener up. openclaw has auto-start: true, so after the recycle it
-    # boots on its own — no one connects. Poll klangkc ls until the Status
-    # column is healthy again; each read is a clean ``clear`` + ls so
-    # scrollback never false-matches. (This window is trimmed in edit.)
+    # Send SIGHUP (the backend is bare uvicorn; this recycles the container
+    # layer while keeping the HTTP listener up), then watch the Status column
+    # live as openclaw reboots: stopped → starting → healthy. ``watch`` does
+    # the repeated refresh for us — no re-typing klangkc ls. Ctrl+C once the
+    # openclaw row reads healthy again. (This window is trimmed in edit.)
     t.run("clear")
     pid_glob = "$XDG_RUNTIME_DIR/klangk-*.pid"
     t.type(f"kill -HUP $(cat {pid_glob})", per_char=0.03)
     t.enter()
-    t.pause(6)  # let the shutdown + autostart kick off
-    deadline = time.monotonic() + 150
+    t.pause(3)  # let the shutdown register before watching
+    t.type("watch -n 3 klangkc ls", per_char=0.03)
+    t.enter()
+    t.pause(4)  # let the first watch frame land
+    deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
-        t.clear()
-        t.type("klangkc ls", per_char=0.03)
-        t.enter()
-        t.pause(4)
-        tail = "\n".join(t.pane().splitlines()[-12:])
-        if "openclaw" in tail and "healthy" in tail.lower():
+        if _row_healthy(t.pane()):
             break
-        t.pause(6)
+        t.pause(3)
+    t.pause(HOLD)  # let the healthy frame sit on screen
+    t.interrupt()  # Ctrl+C to exit watch
+    t.expect("host $", timeout=10)
     t.pause(HOLD)
 
     # step 8 — hosted-app tease (NARRATION ONLY, no browser).

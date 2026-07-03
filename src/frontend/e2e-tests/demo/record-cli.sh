@@ -11,15 +11,18 @@
 #
 # State flow (the recording shell shares $HOME, so klangkc login state and the
 # container layer persist between takes):
-#   Scene 2  prep: logout + rm demo  → records an on-camera login + create
-#   Scene 3  prep: ensure login + rm openclaw → on-camera sandbox create
-#   Scene 3b prep: ensure login + openclaw must be healthy (carried from 3)
+#   Scene 2  prep: seed --reset (full repave → only potemkin remain) + logout
+#                 → records an on-camera login + create
+#   Scene 3  prep: ensure login + rm openclaw → on-camera sandbox create;
+#                 the created container STAYS RUNNING into 3b
+#   Scene 3b prep: ensure login + openclaw must be healthy (carried from 3;
+#                 NOT removed)
 #
 # Preconditions YOU manage (not this script): the klangk server must be up at
 # $SERVER with KLANGK_ALLOW_AUTOSTART=1 + KLANGK_HEALTH_CHECK_INTERVAL=10, the
-# hero (admin@example.com / adminpass) must exist + be an admin, and demo-seed
-# must have been run. The openclaw host install (nvm/Node) must already be
-# present in sandboxes/openclaw/ so the on-camera create is fast.
+# bootstrap admin (admin@plope.com / admin) must exist (the seed uses it to
+# reset + recreate the hero), and the openclaw host install (nvm/Node) must
+# already be present in sandboxes/openclaw/ so the on-camera create is fast.
 set -uo pipefail
 
 WT=/home/chrism/projects/klangk/.worktrees/demo-video-scripts
@@ -59,6 +62,12 @@ rm_ws() {
   kc rm "$1" >/dev/null 2>&1 || true
 }
 
+run_seed() {
+  echo "  [prep] seed $*"
+  devenv shell -- node --experimental-strip-types \
+    "$DEMO_DIR/demo-seed.ts" "$@" 2>&1 | quiet
+}
+
 ensure_healthy() {
   # Warn (don't fail) — the user may handle the openclaw state in post.
   local st
@@ -89,8 +98,7 @@ record() {
 }
 
 prep_2() {
-  ensure_logged_in
-  rm_ws demo
+  run_seed --reset
   ensure_logged_out
 }
 prep_3() {
