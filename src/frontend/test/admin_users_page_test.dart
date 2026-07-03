@@ -940,4 +940,124 @@ void main() {
       expect(writes, isEmpty);
     });
   });
+
+  group('AdminUsersPage delete-user confirmation', () {
+    /// Serves a single user plus [workspaces] for that user's
+    /// `/admin/users/{id}/workspaces` endpoint, and captures the DELETE.
+    void serveDeleteUser(
+      List<Map<String, dynamic>> workspaces, {
+      bool hasMore = false,
+      List<String> deletedIds = const [],
+    }) {
+      testAuthHttpClientOverride = _mockClient((request) async {
+        final path = request.url.path;
+        if (path == '/api/v1/admin/users') {
+          return http.Response(
+            _usersEnvelope([_user('alice@example.com', id: 'u1')], total: 1),
+            200,
+          );
+        }
+        if (path == '/api/v1/admin/users/u1/workspaces') {
+          return http.Response(
+            jsonEncode({
+              'items': workspaces,
+              'has_more': hasMore,
+              'next_offset': hasMore ? 100 : null,
+            }),
+            200,
+          );
+        }
+        if (path == '/api/v1/admin/users/u1' && request.method == 'DELETE') {
+          deletedIds.add('u1');
+          return http.Response(jsonEncode({'status': 'deleted'}), 200);
+        }
+        if (path == '/api/v1/admin/invitations') {
+          return http.Response(emptyInvitationsEnvelope(), 200);
+        }
+        if (path == '/api/v1/admin/groups') {
+          return http.Response(_groupsEnvelope([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+    }
+
+    Map<String, dynamic> _ws(String name) => {'name': name};
+
+    testWidgets('lists owned workspaces and their count', (tester) async {
+      final deleted = <String>[];
+      serveDeleteUser(
+        [_ws('my-app'), _ws('staging-env'), _ws('scratch')],
+        deletedIds: deleted,
+      );
+      await pumpPage(tester);
+
+      await tester.tap(find.byTooltip('Delete user'));
+      await tester.pumpAndSettle();
+
+      // Count + each name appears in the confirmation.
+      expect(find.textContaining('3 workspaces'), findsOneWidget);
+      expect(find.text('my-app'), findsOneWidget);
+      expect(find.text('staging-env'), findsOneWidget);
+      expect(find.text('scratch'), findsOneWidget);
+
+      // Confirming issues the DELETE.
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+      await tester.pumpAndSettle();
+      expect(deleted, ['u1']);
+    });
+
+    testWidgets('singular "workspace" for a single owned workspace',
+        (tester) async {
+      serveDeleteUser([_ws('lonely')]);
+      await pumpPage(tester);
+
+      await tester.tap(find.byTooltip('Delete user'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('1 workspace'), findsOneWidget);
+      expect(find.text('lonely'), findsOneWidget);
+    });
+
+    testWidgets('zero workspaces does not imply workspace data loss',
+        (tester) async {
+      serveDeleteUser([]);
+      await pumpPage(tester);
+
+      await tester.tap(find.byTooltip('Delete user'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('no workspaces'), findsOneWidget);
+      // No bulleted workspace list rendered.
+      expect(find.text('•'), findsNothing);
+    });
+
+    testWidgets('100+ workspaces handled gracefully when has_more',
+        (tester) async {
+      serveDeleteUser(
+        [for (var i = 0; i < 100; i++) _ws('ws$i')],
+        hasMore: true,
+      );
+      await pumpPage(tester);
+
+      await tester.tap(find.byTooltip('Delete user'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('100+ workspaces'), findsOneWidget);
+    });
+
+    testWidgets('cancel closes the dialog without deleting', (tester) async {
+      final deleted = <String>[];
+      serveDeleteUser([_ws('my-app')], deletedIds: deleted);
+      await pumpPage(tester);
+
+      await tester.tap(find.byTooltip('Delete user'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(deleted, isEmpty);
+    });
+  });
 }
