@@ -24,6 +24,9 @@ set -uo pipefail
 
 WT=/home/chrism/projects/klangk/.worktrees/demo-video-scripts
 cd "$WT" || exit 1
+DEMO_DIR="src/frontend/e2e-tests/demo"
+RECORDINGS_DIR="$DEMO_DIR/recordings"
+mkdir -p "$RECORDINGS_DIR"
 SERVER=http://localhost:8995
 HERO=admin@example.com
 PASS=adminpass
@@ -76,7 +79,7 @@ clean_display() {
 
 # record <cli_demo_scene> <output_filename>
 record() {
-  local scene=$1 out="recordings/$2"
+  local scene=$1 out="$RECORDINGS_DIR/$2"
   echo
   echo "================ RECORD $scene → $out ================"
   clean_display
@@ -131,7 +134,7 @@ echo "================ SUMMARY ================"
 for r in "${RESULTS[@]}"; do echo "  $r"; done
 echo
 echo "recordings:"
-for f in recordings/scene-0*.mp4; do
+for f in "$RECORDINGS_DIR"/scene-0*.mp4; do
   [ -f "$f" ] || continue
   dur=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$f" 2>/dev/null)
   dim=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x "$f" 2>/dev/null)

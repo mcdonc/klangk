@@ -1,8 +1,8 @@
-# Recording / re-take artifacts (never committed). These dirs hold the
-# Xvfb/ffmpeg captures (.mp4), Playwright's downscaled .webm fallbacks, and
-# screenshot .png diagnostics.
+# Recording / re-take artifacts (never committed). recordings/ is THE single
+# dir for finished captures (.mp4) from record-cli.sh / record-demo.sh.
+# Playwright's downscaled .webm fallback is redirected to a temp dir and
+# discarded; test-results/ stays ignored for direct `playwright test` runs.
 recordings/
-demo-videos/
 test-results/
 *.mp4
 *.webm

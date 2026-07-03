@@ -19,7 +19,7 @@
 # Extra args (after the script name) are forwarded to `playwright test`.
 # Requires: Xvfb + ffmpeg (both on the system PATH via NixOS).
 #
-# Output: src/frontend/e2e-tests/demo/demo-videos/<scene>-<timestamp>.mp4
+# Output: src/frontend/e2e-tests/demo/recordings/<scene>-<timestamp>.mp4
 #
 # By default the browser chrome (~100px: tabs + omnibox) is CROPPED off the
 # top so the output is clean app content at a YouTube-exact 16:9 size.
@@ -37,8 +37,13 @@ WORKTREE_ROOT="$(git rev-parse --show-toplevel)"
 cd "$WORKTREE_ROOT"
 
 DEMO_DIR="src/frontend/e2e-tests/demo"
-VIDEO_DIR="$DEMO_DIR/demo-videos"
+VIDEO_DIR="$DEMO_DIR/recordings"
 mkdir -p "$VIDEO_DIR"
+# Playwright's built-in `video: "on"` writes a downscaled .webm fallback we
+# never use (the ffmpeg capture above is the keeper). Redirect it to a temp
+# dir and discard it so no stray artifacts are left outside recordings/.
+PW_OUTPUT="$(mktemp -d)"
+export KLANGK_DEMO_PW_OUTPUT="$PW_OUTPUT"
 
 # Recording canvas. The browser renders into this; ffmpeg captures all of it.
 # Recording canvas (Flutter layout size = Xvfb capture width/height). Default
@@ -145,6 +150,7 @@ cleanup() {
   [ -n "$MBWM_PID" ] && kill "$MBWM_PID" 2>/dev/null || true
   kill "$XVFB_PID" 2>/dev/null || true
   rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}"
+  rm -rf "$PW_OUTPUT"
 }
 trap cleanup EXIT
 

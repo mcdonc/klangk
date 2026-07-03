@@ -41,6 +41,11 @@ export default defineConfig({
   // Demo runs are re-take-driven; never retry automatically (a flubbed take
   // should be visible, not papered over).
   retries: 0,
+  // Playwright's built-in `video` writes a downscaled .webm fallback here.
+  // record-demo.sh points this at a temp dir and discards it (the ffmpeg
+  // capture is the keeper), so no stray artifacts land outside recordings/.
+  // Defaults to `test-results` for a direct `playwright test` dry check.
+  outputDir: process.env.KLANGK_DEMO_PW_OUTPUT || "test-results",
   // No global setup/teardown: we point at YOUR running server via KLANGK_TEST_URL.
   use: {
     baseURL: DEMO_URL,
