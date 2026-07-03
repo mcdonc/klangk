@@ -159,7 +159,7 @@ def prune_timestamps(
         del timestamps[email]
 
 
-_resend_timestamps: dict[str, float] = {}
+resend_timestamps: dict[str, float] = {}
 RESEND_COOLDOWN_SECONDS = 60
 
 
@@ -183,14 +183,14 @@ async def resend_verification(
 
     # Rate limit: one resend per email per minute
     now = time.time()
-    prune_timestamps(_resend_timestamps, RESEND_COOLDOWN_SECONDS, now)
-    last = _resend_timestamps.get(req.email, 0)
+    prune_timestamps(resend_timestamps, RESEND_COOLDOWN_SECONDS, now)
+    last = resend_timestamps.get(req.email, 0)
     if now - last < RESEND_COOLDOWN_SECONDS:
         raise HTTPException(
             status_code=429,
             detail="Please wait before requesting another email",
         )
-    _resend_timestamps[req.email] = now
+    resend_timestamps[req.email] = now
 
     hostname, proto, base_path = derive_hosting_info(
         request.headers, request.client.host if request.client else None
@@ -211,7 +211,7 @@ class ForgotPasswordRequest(auth.BaseModel):
     email: str
 
 
-_reset_timestamps: dict[str, float] = {}
+reset_timestamps: dict[str, float] = {}
 RESET_COOLDOWN_SECONDS = 60
 
 
@@ -225,14 +225,14 @@ async def forgot_password(req: ForgotPasswordRequest, request: Request):
 
     # Rate limit: one reset email per address per minute
     now = time.time()
-    prune_timestamps(_reset_timestamps, RESET_COOLDOWN_SECONDS, now)
-    last = _reset_timestamps.get(req.email, 0)
+    prune_timestamps(reset_timestamps, RESET_COOLDOWN_SECONDS, now)
+    last = reset_timestamps.get(req.email, 0)
     if now - last < RESET_COOLDOWN_SECONDS:
         raise HTTPException(
             status_code=429,
             detail="Please wait before requesting another email",
         )
-    _reset_timestamps[req.email] = now
+    reset_timestamps[req.email] = now
 
     hostname, proto, base_path = derive_hosting_info(
         request.headers, request.client.host if request.client else None

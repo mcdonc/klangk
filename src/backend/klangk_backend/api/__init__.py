@@ -26,7 +26,7 @@ It also re-exports the names external callers and tests depend on so
 ``router`` and ``root_router`` (used by ``main.py`` and the test fixture),
 the shared logic modules referenced as ``api.emailsvc`` / ``api.oidc`` /
 ``api.container`` / ``api.wshandler`` (patched by tests), and the auth
-rate-limit globals (``api._resend_timestamps`` and friends).
+rate-limit globals (``api.resend_timestamps`` and friends).
 """
 
 import json
@@ -73,8 +73,8 @@ from .auth import (
     RESET_COOLDOWN_SECONDS,
     RESEND_COOLDOWN_SECONDS,
     prune_timestamps,
-    _reset_timestamps,
-    _resend_timestamps,
+    reset_timestamps,
+    resend_timestamps,
 )
 
 # ``klangk_backend.api.auth`` (the attribute) now points at the route
@@ -319,8 +319,8 @@ __all__ = (
     "wshandler",
     # auth rate-limit state (see test_api.py)
     "prune_timestamps",
-    "_resend_timestamps",
-    "_reset_timestamps",
+    "resend_timestamps",
+    "reset_timestamps",
     "RESEND_COOLDOWN_SECONDS",
     "RESET_COOLDOWN_SECONDS",
 )
