@@ -1,8 +1,8 @@
 """Tests for util: file- and command-backed secret resolution."""
 
 from klangk_backend.util import (
-    _read_file_value,
-    _run_cmd_value,
+    read_file_value,
+    run_cmd_value,
     resolve_env_bool,
     resolve_env_value,
     resolve_file_value,
@@ -11,38 +11,38 @@ from klangk_backend.util import (
 
 
 class TestReadFileValue:
-    """_read_file_value is the shared helper behind resolve_env_value
+    """read_file_value is the shared helper behind resolve_env_value
     and resolve_file_value."""
 
     def test_reads_and_strips_contents(self, tmp_path):
         f = tmp_path / "secret"
         f.write_text("from-file\n")
-        contents, err = _read_file_value(f"file:{f}")
+        contents, err = read_file_value(f"file:{f}")
         assert contents == "from-file"
         assert err is None
 
     def test_missing_file_returns_error(self):
-        contents, err = _read_file_value("file:/no/such/file")
+        contents, err = read_file_value("file:/no/such/file")
         assert contents is None
         assert isinstance(err, OSError)
         assert err.filename == "/no/such/file"
 
 
 class TestRunCmdValue:
-    """_run_cmd_value is the cmd: counterpart of _read_file_value."""
+    """run_cmd_value is the cmd: counterpart of read_file_value."""
 
     def test_runs_and_strips_stdout(self):
-        contents, err = _run_cmd_value("cmd:printf 'from-cmd\\n'")
+        contents, err = run_cmd_value("cmd:printf 'from-cmd\\n'")
         assert contents == "from-cmd"
         assert err is None
 
     def test_pipe_and_shell_features(self):
-        contents, err = _run_cmd_value("cmd:echo hello | tr a-z A-Z")
+        contents, err = run_cmd_value("cmd:echo hello | tr a-z A-Z")
         assert contents == "HELLO"
         assert err is None
 
     def test_nonzero_exit_returns_error(self):
-        contents, err = _run_cmd_value("cmd:false")
+        contents, err = run_cmd_value("cmd:false")
         assert contents is None
         assert err is not None
         assert "exited with code" in err
@@ -50,7 +50,7 @@ class TestRunCmdValue:
     def test_no_output_is_none(self):
         # A command that succeeds but prints nothing yields empty stdout,
         # which we surface as the stripped empty string (not an error).
-        contents, err = _run_cmd_value("cmd:true")
+        contents, err = run_cmd_value("cmd:true")
         assert contents == ""
         assert err is None
 
@@ -58,7 +58,7 @@ class TestRunCmdValue:
         import klangk_backend.util as util
 
         monkeypatch.setattr(util, "_CMD_TIMEOUT_SECONDS", 0.1)
-        contents, err = _run_cmd_value("cmd:sleep 1")
+        contents, err = run_cmd_value("cmd:sleep 1")
         assert contents is None
         assert err is not None
         assert "timed out" in err
@@ -70,7 +70,7 @@ class TestRunCmdValue:
             raise OSError("no shell")
 
         monkeypatch.setattr(util.subprocess, "run", _boom)
-        contents, err = _run_cmd_value("cmd:anything")
+        contents, err = run_cmd_value("cmd:anything")
         assert contents is None
         assert err == "no shell"
 

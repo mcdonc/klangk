@@ -16,7 +16,7 @@ API_PREFIX = "/api/v1"
 logger = logging.getLogger(__name__)
 
 
-def _read_file_value(value: str) -> tuple[str | None, OSError | None]:
+def read_file_value(value: str) -> tuple[str | None, OSError | None]:
     """Strip a 'file:' prefix and read the referenced file.
 
     Returns (contents, None) on success, where contents is the
@@ -40,13 +40,13 @@ def _read_file_value(value: str) -> tuple[str | None, OSError | None]:
 _CMD_TIMEOUT_SECONDS = 10
 
 
-def _run_cmd_value(value: str) -> tuple[str | None, str | None]:
+def run_cmd_value(value: str) -> tuple[str | None, str | None]:
     """Strip a 'cmd:' prefix and run the referenced command.
 
     Returns (stdout, None) on success, where stdout is the command's
     output stripped of surrounding whitespace, or (None, error_msg) on
     failure, where error_msg is a human-readable description. Mirrors
-    [_read_file_value] so the two prefixes share the same resolve flow.
+    [read_file_value] so the two prefixes share the same resolve flow.
 
     The command runs via the shell (``shell=True``) so it may use pipes
     and shell features (e.g. ``cmd:aws secretsmanager get-secret-value
@@ -86,13 +86,13 @@ def resolve_env_value(key: str, default: str | None = None) -> str | None:
     if val is None:
         return default
     if val.startswith("file:"):
-        contents, err = _read_file_value(val)
+        contents, err = read_file_value(val)
         if err is not None:
             logger.error("Cannot read %s from %s: %s", key, err.filename, err)
             return None
         return contents
     if val.startswith("cmd:"):
-        contents, err = _run_cmd_value(val)
+        contents, err = run_cmd_value(val)
         if err is not None:
             logger.error("Cannot resolve %s via cmd: %s", key, err)
             return None
@@ -120,14 +120,14 @@ def resolve_file_value(value: str) -> str:
     returns its stripped stdout. Otherwise returns the value as-is.
     """
     if value.startswith("file:"):
-        contents, err = _read_file_value(value)
+        contents, err = read_file_value(value)
         if err is not None:
             logger.error("Cannot read secret file: %s", err)
             return ""
         assert contents is not None
         return contents
     if value.startswith("cmd:"):
-        contents, err = _run_cmd_value(value)
+        contents, err = run_cmd_value(value)
         if err is not None:
             logger.error("Cannot resolve secret via cmd: %s", err)
             return ""
@@ -162,7 +162,7 @@ def sanitize_disposition_name(name: str) -> str:
 _REJECT_PROXY = resolve_env_bool("KLANGK_REJECT_PROXY_HEADERS")
 
 
-def _load_trusted_proxy_cidrs() -> set[ipaddress._BaseAddress]:
+def load_trusted_proxy_cidrs() -> set[ipaddress._BaseAddress]:
     # KLANGK_TRUSTED_PROXY_CIDRS is a public CIDR/IP list (not a secret), so read
     # it via os.environ rather than resolve_env_value (which treats its input
     # as a secret and would both support an unwanted "file:" prefix and trip
@@ -193,10 +193,10 @@ def _load_trusted_proxy_cidrs() -> set[ipaddress._BaseAddress]:
     return trusted
 
 
-_TRUSTED_PROXY_CIDRS = _load_trusted_proxy_cidrs()
+_TRUSTED_PROXY_CIDRS = load_trusted_proxy_cidrs()
 
 
-def _peer_trusted(client_host: str | None) -> bool:
+def peer_trusted(client_host: str | None) -> bool:
     """True if the immediate peer is in the trusted proxy set."""
     if not client_host:
         return False
@@ -238,7 +238,7 @@ def derive_hosting_info(
     hostname = resolve_env_value("KLANGK_HOSTING_HOSTNAME")
     proto = resolve_env_value("KLANGK_HOSTING_PROTO")
     base_path = resolve_env_value("KLANGK_HOSTING_BASE_PATH")
-    trust = (not _REJECT_PROXY) and _peer_trusted(client_host)
+    trust = (not _REJECT_PROXY) and peer_trusted(client_host)
     if not hostname:
         if trust:
             forwarded_host = headers.get("x-forwarded-host")

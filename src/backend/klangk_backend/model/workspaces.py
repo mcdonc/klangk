@@ -4,12 +4,12 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from ._core import _fetchone, transaction
+from .db import fetchone, transaction
 from .acl import ACTION_ALLOW, PRINCIPAL_GROUP, PRINCIPAL_USER
 from .users import AGENT_USER_ID, AgentPrincipalError, get_user_group_ids
 
 # Must match the DB default and container.DEFAULT_PORTS_PER_WORKSPACE.
-_DEFAULT_PORTS_PER_WORKSPACE = 5
+DEFAULT_PORTS_PER_WORKSPACE = 5
 
 # Per-workspace role groups created for every workspace. The key is the
 # group-name suffix appended to ``<suffix>-<workspace_id>``; the value is the
@@ -102,7 +102,7 @@ async def _insert_workspace_row(
         "health_check": health_check,
         "mounts": mounts,
         "env": env,
-        "num_ports": _DEFAULT_PORTS_PER_WORKSPACE,
+        "num_ports": DEFAULT_PORTS_PER_WORKSPACE,
         "created_at": created_at,
     }
 
@@ -246,17 +246,17 @@ async def create_workspace(
 
 # Whitelisted sort columns for workspace list queries. Values are the
 # real column names; the prefix (e.g. "w.") is applied by the caller.
-_SORT_COLUMNS = {"created": "created_at", "name": "name"}
+SORT_COLUMNS = {"created": "created_at", "name": "name"}
 
 
-def _sort_order_clause(sort: str, order: str, prefix: str = "") -> str:
+def sort_order_clause(sort: str, order: str, prefix: str = "") -> str:
     """Build a deterministic ORDER BY clause for paginated workspace lists.
 
-    ``sort`` is whitelisted against ``_SORT_COLUMNS``; ``order`` is
+    ``sort`` is whitelisted against ``SORT_COLUMNS``; ``order`` is
     coerced to ASC/DESC. The ``id`` tiebreaker uses the same direction so
     offset pagination stays stable when rows share the sort key.
     """
-    col = _SORT_COLUMNS.get(sort, "created_at")
+    col = SORT_COLUMNS.get(sort, "created_at")
     p = f"{prefix}." if prefix else ""
     direction = "DESC" if order.lower() == "desc" else "ASC"
     return f"ORDER BY {p}{col} {direction}, {p}id {direction}"
@@ -278,7 +278,7 @@ async def list_workspaces(
     whitelisted; ``q`` filters by name substring. The ``id`` tiebreaker
     keeps offset pagination deterministic.
     """
-    order_by = _sort_order_clause(sort, order)
+    order_by = sort_order_clause(sort, order)
     where = "WHERE user_id = ?"
     params: list = [user_id]
     if q:
@@ -334,7 +334,7 @@ async def list_shared_workspaces(
     envelope: ``{"items": [...], "has_more": bool, "next_offset": int | None}``.
     ``sort``/``order``/``q`` as in :func:`list_workspaces`.
     """
-    order_by = _sort_order_clause(sort, order, prefix="w")
+    order_by = sort_order_clause(sort, order, prefix="w")
     name_filter = " AND w.name LIKE '%' || ? || '%'" if q else ""
     async with transaction() as db:
         group_ids = await get_user_group_ids(user_id)
@@ -442,7 +442,7 @@ async def get_workspace(
 
 async def get_workspace_by_id(workspace_id: str) -> dict | None:
     """Get a workspace by ID without access control (for admin use)."""
-    row = await _fetchone(
+    row = await fetchone(
         "SELECT id, user_id, name, container_id, num_ports, image,"
         " service_command, setup_state, health_check, mounts, env"
         " FROM workspaces WHERE id = ?",

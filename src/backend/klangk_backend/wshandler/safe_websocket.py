@@ -5,7 +5,7 @@ import logging
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from ._constants import _SEND_QUEUE_SIZE
+from .constants import SEND_QUEUE_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ class SlowClientError(Exception):
 
 
 # Exceptions that indicate a dead or broken WebSocket connection.
-_WS_ERRORS = (
+WS_ERRORS = (
     SlowClientError,
     WebSocketDisconnect,
     RuntimeError,
@@ -35,7 +35,7 @@ class SafeWebSocket:
     """
 
     def __init__(
-        self, websocket: WebSocket, *, maxsize: int = _SEND_QUEUE_SIZE
+        self, websocket: WebSocket, *, maxsize: int = SEND_QUEUE_SIZE
     ):
         self._sock = websocket
         self._queue: asyncio.Queue[dict | None] = asyncio.Queue(
@@ -58,7 +58,7 @@ class SafeWebSocket:
                 await self._sock.send_json(msg)
         except asyncio.CancelledError:
             raise
-        except _WS_ERRORS:
+        except WS_ERRORS:
             # Socket gone — nothing to do, cleanup handles the rest.
             pass
 
@@ -114,7 +114,7 @@ class SafeWebSocket:
         """Proxy client (peer address) access to the underlying WebSocket.
 
         Used by derive_hosting_info to scope X-Forwarded-* trust to the
-        real connection peer (see util._peer_trusted).
+        real connection peer (see util.peer_trusted).
         """
         return self._sock.client
 
@@ -124,7 +124,7 @@ class SafeWebSocket:
         return self._sock
 
 
-def _broadcast_to_set(subscribers: set[SafeWebSocket], message: dict) -> int:
+def broadcast_to_set(subscribers: set[SafeWebSocket], message: dict) -> int:
     """Send *message* to each socket in *subscribers*, removing dead ones.
 
     Returns the number of live subscribers the message was delivered to.
@@ -135,7 +135,7 @@ def _broadcast_to_set(subscribers: set[SafeWebSocket], message: dict) -> int:
         try:
             sub.send_json(message)
             delivered += 1
-        except _WS_ERRORS:
+        except WS_ERRORS:
             dead.append(sub)
     for sub in dead:
         subscribers.discard(sub)

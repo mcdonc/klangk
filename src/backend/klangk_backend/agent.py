@@ -52,14 +52,14 @@ _agents: dict[str, "AgentSession"] = {}
 
 # Callback to get a workspace session for broadcasting.
 # Set by wshandler at import time to break the circular dependency.
-_get_workspace_session = None
+get_workspace_session = None
 
 
 def is_disabled() -> bool:
     """True if the chat agent has been disabled by an admin.
 
     When disabled, the ``pi --mode rpc`` subprocess is never spawned —
-    see ``_ensure_started``, which consults this before creating the
+    see ``ensure_started``, which consults this before creating the
     process.  Resolved at call time so tests can toggle it via
     ``monkeypatch.setenv``.
     """
@@ -151,12 +151,12 @@ class AgentSession:
         # Serializes prompt round-trips so two concurrent prompts can't
         # interleave their stdin writes / stdout reads on one subprocess.
         self._lock = asyncio.Lock()
-        # Serializes the check-then-spawn in ``_ensure_started`` so the
+        # Serializes the check-then-spawn in ``ensure_started`` so the
         # auto-restart path (``_monitor_process``) and the lazy-start
         # path (``send_prompt``) can't both spawn a subprocess for the
         # same dead process (#1189).  Separate from ``_lock`` because
         # ``send_prompt`` already holds ``_lock`` when it calls
-        # ``_ensure_started``, and ``asyncio.Lock`` is not reentrant.
+        # ``ensure_started``, and ``asyncio.Lock`` is not reentrant.
         self._spawn_lock = asyncio.Lock()
         self._home_ready = False
         self._monitor_task: asyncio.Task | None = None
@@ -196,7 +196,7 @@ class AgentSession:
         self._home_ready = True
         return container_home
 
-    async def _ensure_started(self) -> asyncio.subprocess.Process:
+    async def ensure_started(self) -> asyncio.subprocess.Process:
         if self._proc is not None and self._proc.returncode is None:
             return self._proc
         if is_disabled():
@@ -213,7 +213,7 @@ class AgentSession:
                 "Agent gave up restarting for workspace %s" % self.workspace_id
             )
 
-        # Serialize the check-then-spawn.  ``_ensure_started`` has two
+        # Serialize the check-then-spawn.  ``ensure_started`` has two
         # concurrent callers on this singleton session: ``_monitor_process``
         # (auto-restart, no other lock) and ``send_prompt`` (lazy start,
         # under ``self._lock``).  Between the fast-path check above and the
@@ -291,7 +291,7 @@ class AgentSession:
             f": {stderr_text}" if stderr_text else "",
         )
 
-        await _broadcast_agent_disconnect(self.workspace_id)
+        await broadcast_agent_disconnect(self.workspace_id)
         # Auto-restart after a brief delay to avoid tight loops
         self._restart_attempts += 1
         if self._restart_attempts > 2:
@@ -312,8 +312,8 @@ class AgentSession:
             )
             return
         try:
-            await self._ensure_started()
-            await _broadcast_agent_reconnect(self.workspace_id)
+            await self.ensure_started()
+            await broadcast_agent_reconnect(self.workspace_id)
         except Exception:
             logger.exception(
                 "Failed to auto-restart agent for workspace %s",
@@ -323,7 +323,7 @@ class AgentSession:
     async def send_prompt(self, message: str, timeout: float = 120) -> str:
         """Send a prompt to Pi and return the accumulated text response."""
         async with self._lock:
-            proc = await self._ensure_started()
+            proc = await self.ensure_started()
             assert proc.stdin is not None
             assert proc.stdout is not None
 
@@ -400,7 +400,7 @@ class AgentSession:
         Used on timeout, where leftover turn-1 events would otherwise
         linger in the stdout pipe and risk corrupting the next turn
         (#894).  The next ``send_prompt`` spawns a fresh subprocess via
-        ``_ensure_started``.
+        ``ensure_started``.
         """
         if self._monitor_task is not None:
             self._monitor_task.cancel()
@@ -598,7 +598,7 @@ async def stop_all_sessions() -> None:
         await stop_session(ws_id)
 
 
-def _ephemeral_system_message(
+def ephemeral_system_message(
     workspace_id: str,
     agent_email: str,
     agent_handle: str,
@@ -627,7 +627,7 @@ def _ephemeral_system_message(
     }
 
 
-async def _broadcast_agent_disconnect(workspace_id: str) -> None:
+async def broadcast_agent_disconnect(workspace_id: str) -> None:
     """Broadcast a disconnect system message when the agent process dies.
 
     Ephemeral only — sent to currently-connected subscribers, never written
@@ -644,16 +644,14 @@ async def _broadcast_agent_disconnect(workspace_id: str) -> None:
         return
     agent_handle = await model.agent_handle()
     agent_email = await model.agent_email()
-    sys_msg = _ephemeral_system_message(
+    sys_msg = ephemeral_system_message(
         workspace_id,
         agent_email,
         agent_handle,
         f"{agent_handle} has disconnected",
     )
     session = (
-        _get_workspace_session(workspace_id)
-        if _get_workspace_session
-        else None
+        get_workspace_session(workspace_id) if get_workspace_session else None
     )
     if session:
         session.broadcast({"type": "agent_thinking", "thinking": False})
@@ -668,10 +666,10 @@ async def _broadcast_agent_disconnect(workspace_id: str) -> None:
         )
 
 
-async def _broadcast_agent_reconnect(workspace_id: str) -> None:
+async def broadcast_agent_reconnect(workspace_id: str) -> None:
     """Broadcast a reconnect system message after auto-restart.
 
-    Ephemeral only — see [_broadcast_agent_disconnect].
+    Ephemeral only — see [broadcast_agent_disconnect].
     """
     if not workspace_id:
         return
@@ -680,16 +678,14 @@ async def _broadcast_agent_reconnect(workspace_id: str) -> None:
         return
     agent_handle = await model.agent_handle()
     agent_email = await model.agent_email()
-    sys_msg = _ephemeral_system_message(
+    sys_msg = ephemeral_system_message(
         workspace_id,
         agent_email,
         agent_handle,
         f"{agent_handle} has reconnected",
     )
     session = (
-        _get_workspace_session(workspace_id)
-        if _get_workspace_session
-        else None
+        get_workspace_session(workspace_id) if get_workspace_session else None
     )
     if session:
         session.broadcast({"type": "chat_message", **sys_msg})

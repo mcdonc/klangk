@@ -575,7 +575,7 @@ class TestResendVerification:
         )
 
     def test_prune_timestamps_evicts_expired_keeps_recent(self):
-        """_prune_timestamps drops entries older than the cooldown only."""
+        """prune_timestamps drops entries older than the cooldown only."""
         import time
 
         now = time.time()
@@ -586,7 +586,7 @@ class TestResendVerification:
             "fresh@a.com": now - 10,  # within window
             "recent@a.com": now,  # within window
         }
-        api._prune_timestamps(ts, cooldown, now)
+        api.prune_timestamps(ts, cooldown, now)
         assert "old@a.com" not in ts
         assert "edge@a.com" not in ts
         assert "fresh@a.com" in ts
@@ -597,7 +597,7 @@ class TestResendVerification:
         import time
 
         ts: dict[str, float] = {}
-        api._prune_timestamps(ts, 60, time.time())
+        api.prune_timestamps(ts, 60, time.time())
         assert ts == {}
 
     async def test_resend_success(self, client, db):
@@ -664,7 +664,7 @@ class TestResendVerification:
 
     async def test_resend_rate_limited(self, client, db):
         # Clear stale rate limit state from parallel test workers
-        api._resend_timestamps.pop("unverified@example.com", None)
+        api.resend_timestamps.pop("unverified@example.com", None)
         await self._create_unverified_user()
         with patch.object(
             api.emailsvc,
@@ -687,11 +687,11 @@ class TestResendVerification:
                 },
             )
         assert resp2.status_code == 429
-        api._resend_timestamps.pop("unverified@example.com", None)
+        api.resend_timestamps.pop("unverified@example.com", None)
 
     async def test_resend_prunes_expired_entries(self, client, db):
         # Stale rate-limit state from parallel test workers
-        api._resend_timestamps.clear()
+        api.resend_timestamps.clear()
         await self._create_unverified_user()
         with patch.object(
             api.emailsvc, "send_verification_email", new_callable=AsyncMock
@@ -707,11 +707,11 @@ class TestResendVerification:
             # Backdate the entry past the cooldown window.
             import time
 
-            api._resend_timestamps["unverified@example.com"] = (
+            api.resend_timestamps["unverified@example.com"] = (
                 time.time() - api.RESEND_COOLDOWN_SECONDS - 1
             )
             # Also seed an unrelated expired address to confirm it is evicted.
-            api._resend_timestamps["stale@example.com"] = (
+            api.resend_timestamps["stale@example.com"] = (
                 time.time() - api.RESEND_COOLDOWN_SECONDS - 1
             )
             resp2 = await client.post(
@@ -724,8 +724,8 @@ class TestResendVerification:
         # Expired entry no longer rate-limits, and unrelated stale entry
         # was swept on access.
         assert resp2.status_code == 200
-        assert "stale@example.com" not in api._resend_timestamps
-        api._resend_timestamps.clear()
+        assert "stale@example.com" not in api.resend_timestamps
+        api.resend_timestamps.clear()
 
 
 class TestForgotPassword:
@@ -749,7 +749,7 @@ class TestForgotPassword:
         assert resp.status_code == 200
         assert resp.json()["status"] == "sent"
         mock_send.assert_awaited_once()
-        api._reset_timestamps.pop("forgot@example.com", None)
+        api.reset_timestamps.pop("forgot@example.com", None)
 
     async def test_forgot_unknown_email_still_returns_sent(self, client, db):
         resp = await client.post(
@@ -775,10 +775,10 @@ class TestForgotPassword:
                 json={"email": "forgot@example.com"},
             )
         assert resp2.status_code == 429
-        api._reset_timestamps.pop("forgot@example.com", None)
+        api.reset_timestamps.pop("forgot@example.com", None)
 
     async def test_forgot_prunes_expired_entries(self, client, db):
-        api._reset_timestamps.clear()
+        api.reset_timestamps.clear()
         await self._create_user()
         with patch.object(
             api.emailsvc, "send_password_reset_email", new_callable=AsyncMock
@@ -791,10 +791,10 @@ class TestForgotPassword:
             # Backdate the entry and seed an unrelated expired address.
             import time
 
-            api._reset_timestamps["forgot@example.com"] = (
+            api.reset_timestamps["forgot@example.com"] = (
                 time.time() - api.RESET_COOLDOWN_SECONDS - 1
             )
-            api._reset_timestamps["stale@example.com"] = (
+            api.reset_timestamps["stale@example.com"] = (
                 time.time() - api.RESET_COOLDOWN_SECONDS - 1
             )
             resp2 = await client.post(
@@ -802,8 +802,8 @@ class TestForgotPassword:
                 json={"email": "forgot@example.com"},
             )
         assert resp2.status_code == 200
-        assert "stale@example.com" not in api._reset_timestamps
-        api._reset_timestamps.clear()
+        assert "stale@example.com" not in api.reset_timestamps
+        api.reset_timestamps.clear()
 
 
 class TestResetPassword:
@@ -5216,25 +5216,25 @@ class TestAdminResourceACL:
 
 class TestSafePath:
     def test_valid_path(self, temp_data_dir):
-        path = ws_mod._safe_path("user1", "home", "ws1")
+        path = ws_mod.safe_path("user1", "home", "ws1")
         assert path == ws_mod.WORKSPACES_ROOT / "user1" / "home" / "ws1"
 
     def test_traversal_raises(self, temp_data_dir):
         with pytest.raises(ValueError, match="Path traversal blocked"):
-            ws_mod._safe_path("..", "..", "etc", "passwd")
+            ws_mod.safe_path("..", "..", "etc", "passwd")
 
 
 class TestSanitizeFilename:
     def test_safe_characters_preserved(self):
-        assert ws_mod._sanitize_filename("hello-world_v2.tar.gz") == (
+        assert ws_mod.sanitize_filename("hello-world_v2.tar.gz") == (
             "hello-world_v2.tar.gz"
         )
 
     def test_unsafe_characters_replaced(self):
-        assert ws_mod._sanitize_filename("a/b\\c..d\x00e") == "a_b_c..d_e"
+        assert ws_mod.sanitize_filename("a/b\\c..d\x00e") == "a_b_c..d_e"
 
     def test_email_sanitized(self):
-        assert ws_mod._sanitize_filename("user@example.com") == (
+        assert ws_mod.sanitize_filename("user@example.com") == (
             "user@example.com"
         )
 
@@ -5244,7 +5244,7 @@ class TestRmtree:
         d = temp_data_dir / "workspaces" / "toremove"
         d.mkdir(parents=True)
         (d / "file.txt").write_text("data")
-        ws_mod._rmtree(d, "test")
+        ws_mod.rmtree(d, "test")
         assert not d.exists()
 
     def test_logs_errors(self, temp_data_dir, caplog):
@@ -5259,7 +5259,7 @@ class TestRmtree:
             import logging
 
             with caplog.at_level(logging.WARNING):
-                ws_mod._rmtree(d, "test-label")
+                ws_mod.rmtree(d, "test-label")
         assert "denied" in caplog.text
         assert "test-label" in caplog.text
 

@@ -2,7 +2,7 @@
 
 Historically all WebSocket handling lived in a single ~3000-line
 ``wshandler.py``.  That module has been split into per-concern
-submodules (``_constants``, ``safe_websocket``, ``session``,
+submodules (``constants``, ``safe_websocket``, ``session``,
 ``controllers``, ``connection``, ``agent_mention``, ``dispatch``,
 ``helpers``).
 
@@ -26,23 +26,23 @@ from .. import podman as podman  # noqa: F401
 from .. import terminal as terminal  # noqa: F401
 from .. import workspaces as workspaces  # noqa: F401
 
-from ._constants import (
-    _MAX_INPUT_SIZE as _MAX_INPUT_SIZE,
-    _SEND_QUEUE_SIZE as _SEND_QUEUE_SIZE,
-    _WS_DEBUG as _WS_DEBUG,
-    _agent_conversations as _agent_conversations,
-    _agent_tasks as _agent_tasks,
-    _cancel_agent_task as _cancel_agent_task,
-    _drop_agent_task_if_current as _drop_agent_task_if_current,
-    _log_ws_msg as _log_ws_msg,
+from .constants import (
+    MAX_INPUT_SIZE as MAX_INPUT_SIZE,
+    SEND_QUEUE_SIZE as SEND_QUEUE_SIZE,
+    WS_DEBUG as WS_DEBUG,
+    agent_conversations as agent_conversations,
+    agent_tasks as agent_tasks,
+    cancel_agent_task as cancel_agent_task,
+    drop_agent_task_if_current as drop_agent_task_if_current,
+    log_ws_msg as log_ws_msg,
     bridge_idle_timeout as bridge_idle_timeout,
     clear_agent_mention_state as clear_agent_mention_state,
 )
 from .safe_websocket import (
     SafeWebSocket as SafeWebSocket,
     SlowClientError as SlowClientError,
-    _WS_ERRORS as _WS_ERRORS,
-    _broadcast_to_set as _broadcast_to_set,
+    WS_ERRORS as WS_ERRORS,
+    broadcast_to_set as broadcast_to_set,
 )
 from .session import (
     WebSocketState as WebSocketState,
@@ -58,10 +58,10 @@ from .controllers import (
 from .connection import Connection as Connection
 from .agent_mention import (
     _ANY_MENTION_RE as _ANY_MENTION_RE,
-    _addresses_other_user as _addresses_other_user,
-    _get_agent_mention_re as _get_agent_mention_re,
-    _handle_agent_mention as _handle_agent_mention,
-    _mentions_agent as _mentions_agent,
+    addresses_other_user as addresses_other_user,
+    get_agent_mention_re as get_agent_mention_re,
+    handle_agent_mention as handle_agent_mention,
+    mentions_agent as mentions_agent,
 )
 from .dispatch import (
     _WS_CONNECTION_COMMANDS as _WS_CONNECTION_COMMANDS,
@@ -69,11 +69,11 @@ from .dispatch import (
     handle_websocket as handle_websocket,
 )
 from .helpers import (
-    _format_container_info as _format_container_info,
-    _format_idle_timeout as _format_idle_timeout,
-    _get_presence_list as _get_presence_list,
-    _get_shared_terminals as _get_shared_terminals,
-    _send_event as _send_event,
+    format_container_info as format_container_info,
+    format_idle_timeout as format_idle_timeout,
+    get_presence_list as get_presence_list,
+    get_shared_terminals as get_shared_terminals,
+    send_event as send_event,
     disconnect_all_websockets as disconnect_all_websockets,
     refresh_user_handle as refresh_user_handle,
     reset_workspace_state as reset_workspace_state,

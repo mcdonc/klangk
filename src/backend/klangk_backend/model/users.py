@@ -4,13 +4,13 @@ import hashlib
 import re
 import uuid
 
-from ._core import _fetchone, transaction
+from .db import fetchone, transaction
 
 # Agent identity
 AGENT_USER_ID = "00000000-0000-0000-0000-000000000001"
 # Unseeded fallback handle/email (before seed_agent_user runs). Single
 # source of truth for the default agent identity used by get_agent_user
-# and the migration-safe handle resolver in _unique_handle (#1160).
+# and the migration-safe handle resolver in unique_handle (#1160).
 _DEFAULT_AGENT_HANDLE = "clanker"
 _DEFAULT_AGENT_EMAIL = "clanker@example.com"
 
@@ -30,20 +30,20 @@ class AgentPrincipalError(ValueError):
 
 
 # Cached agent user dict (populated after seeding).
-_agent_user_cache: dict | None = None
+agent_user_cache: dict | None = None
 
 
 def clear_agent_cache() -> None:
     """Clear the cached agent user so the next lookup hits the DB."""
-    global _agent_user_cache
-    _agent_user_cache = None
+    global agent_user_cache
+    agent_user_cache = None
 
 
 async def get_agent_user() -> dict:
     """Return the agent user dict from DB, cached after first call."""
-    global _agent_user_cache
-    if _agent_user_cache is not None:
-        return _agent_user_cache
+    global agent_user_cache
+    if agent_user_cache is not None:
+        return agent_user_cache
     user = await get_user_by_id(AGENT_USER_ID)
     if user is None:
         # Fallback before seeding has run (should not happen at runtime).
@@ -52,7 +52,7 @@ async def get_agent_user() -> dict:
             "email": _DEFAULT_AGENT_EMAIL,
             "handle": _DEFAULT_AGENT_HANDLE,
         }
-    _agent_user_cache = user
+    agent_user_cache = user
     return user
 
 
@@ -68,9 +68,9 @@ async def agent_handle() -> str:
 
 # --- Handle helpers ---
 
-_HANDLE_RE = re.compile(r"^[a-z0-9._-]+$")
-_RESERVED_HANDLES = frozenset({"work", ".users"})
-_MAX_HANDLE_LEN = 32
+HANDLE_RE = re.compile(r"^[a-z0-9._-]+$")
+RESERVED_HANDLES = frozenset({"work", ".users"})
+MAX_HANDLE_LEN = 32
 
 
 def derive_handle(email: str) -> str:
@@ -79,7 +79,7 @@ def derive_handle(email: str) -> str:
     handle = re.sub(r"[^a-z0-9._-]", "", local.lower())
     if not handle:
         handle = "user"
-    return handle[:_MAX_HANDLE_LEN]
+    return handle[:MAX_HANDLE_LEN]
 
 
 def validate_handle(handle: str) -> str | None:
@@ -88,17 +88,17 @@ def validate_handle(handle: str) -> str | None:
     Note: this only checks *static* rules (length, charset, the fixed
     reserved set). The *dynamic* reserved handle — the live agent's
     handle — is checked async in :func:`_assert_handle_not_agent` (it
-    can't be in ``_RESERVED_HANDLES`` because it's configurable).
+    can't be in ``RESERVED_HANDLES`` because it's configurable).
     """
     if not handle:
         return "Handle cannot be empty"
-    if len(handle) > _MAX_HANDLE_LEN:
-        return f"Handle must be {_MAX_HANDLE_LEN} characters or fewer"
+    if len(handle) > MAX_HANDLE_LEN:
+        return f"Handle must be {MAX_HANDLE_LEN} characters or fewer"
     if handle.startswith("."):
         return "Handle cannot start with a dot"
-    if handle in _RESERVED_HANDLES:
+    if handle in RESERVED_HANDLES:
         return f"'{handle}' is reserved"
-    if not _HANDLE_RE.match(handle):
+    if not HANDLE_RE.match(handle):
         return (
             "Handle may only contain lowercase letters, digits,"
             " dots, dashes, and underscores"
@@ -110,17 +110,17 @@ async def _assert_handle_not_agent(handle: str) -> None:
     """Raise ``ValueError`` if *handle* is the live agent's handle.
 
     The agent's handle is dynamic (``KLANGK_AGENT_HANDLE``, default
-    ``clanker``), so it can't live in the static :data:`_RESERVED_HANDLES`.
+    ``clanker``), so it can't live in the static :data:`RESERVED_HANDLES`.
     A human taking it would collide at ``/home/<handle>`` with the
     agent's home (#1160). Called from both :func:`set_user_handle` and
-    :func:`create_user`/``_unique_handle`` so the guard holds on every
+    :func:`create_user`/``unique_handle`` so the guard holds on every
     path a human can acquire a handle, independent of seeding.
     """
     if handle == await agent_handle():
         raise ValueError(f"'{handle}' is reserved for the workspace agent")
 
 
-async def _unique_handle(db, base: str) -> str:
+async def unique_handle(db, base: str) -> str:
     """Return *base* if available, else append -2, -3, … until unique.
 
     The live agent handle is always treated as taken (#1160) — even if
@@ -149,17 +149,17 @@ async def _unique_handle(db, base: str) -> str:
                 return candidate
         i += 1
         candidate = f"{base}-{i}"
-        if len(candidate) > _MAX_HANDLE_LEN:
-            candidate = f"{base[: _MAX_HANDLE_LEN - len(str(i)) - 1]}-{i}"
-    return _hash_fallback_handle(base)
+        if len(candidate) > MAX_HANDLE_LEN:
+            candidate = f"{base[: MAX_HANDLE_LEN - len(str(i)) - 1]}-{i}"
+    return hash_fallback_handle(base)
 
 
-def _hash_fallback_handle(base: str) -> str:
+def hash_fallback_handle(base: str) -> str:
     suffix = hashlib.sha256(base.encode()).hexdigest()[:8]
-    return f"{base[: _MAX_HANDLE_LEN - 9]}-{suffix}"
+    return f"{base[: MAX_HANDLE_LEN - 9]}-{suffix}"
 
 
-async def _backfill_handles(db) -> None:
+async def backfill_handles(db) -> None:
     """Assign handles to any users that don't have one yet."""
     cursor = await db.execute(
         "SELECT id, email FROM users WHERE handle IS NULL"
@@ -167,7 +167,7 @@ async def _backfill_handles(db) -> None:
     rows = await cursor.fetchall()
     for row in rows:
         base = derive_handle(row["email"])
-        handle = await _unique_handle(db, base)
+        handle = await unique_handle(db, base)
         await db.execute(
             "UPDATE users SET handle = ? WHERE id = ?",
             (handle, row["id"]),
@@ -186,7 +186,7 @@ async def create_user(
     async with transaction() as db:
         user_id = str(uuid.uuid4())
         base = derive_handle(email)
-        handle = await _unique_handle(db, base)
+        handle = await unique_handle(db, base)
         await db.execute(
             "INSERT INTO users (id, email, password_hash, verified,"
             " provider, external_id, handle) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -239,7 +239,7 @@ async def set_user_handle(user_id: str, handle: str) -> None:
 
 async def get_user_by_handle(handle: str) -> dict | None:
     """Find a user by handle."""
-    row = await _fetchone(
+    row = await fetchone(
         "SELECT id, email, handle FROM users WHERE handle = ?",
         (handle,),
     )
@@ -256,7 +256,7 @@ async def get_user_by_external_id(
     provider: str, external_id: str
 ) -> dict | None:
     """Find a user by OIDC provider + external ID."""
-    row = await _fetchone(
+    row = await fetchone(
         "SELECT id, email, password_hash, verified, provider,"
         " external_id, handle"
         " FROM users WHERE provider = ? AND external_id = ?",
@@ -313,7 +313,7 @@ async def create_group(
 
 async def get_group_by_name(name: str) -> dict | None:
     """Find a group by name."""
-    row = await _fetchone(
+    row = await fetchone(
         "SELECT id, name, description, created_at FROM groups WHERE name = ?",
         (name,),
     )
@@ -329,7 +329,7 @@ async def get_group_by_name(name: str) -> dict | None:
 
 async def get_group_by_id(group_id: str) -> dict | None:
     """Find a group by ID."""
-    row = await _fetchone(
+    row = await fetchone(
         "SELECT id, name, description, created_at FROM groups WHERE id = ?",
         (group_id,),
     )
@@ -527,7 +527,7 @@ async def get_user_groups(user_id: str) -> list[dict]:
 
 
 async def get_user_by_email(email: str) -> dict | None:
-    row = await _fetchone(
+    row = await fetchone(
         "SELECT id, email, password_hash, verified, provider,"
         " external_id, handle"
         " FROM users WHERE email = ?",
@@ -546,7 +546,7 @@ async def get_user_by_email(email: str) -> dict | None:
     }
 
 
-_ADMIN_USER_SORT_COLUMNS = {
+ADMIN_USER_SORT_COLUMNS = {
     "email": "email",
     "handle": "handle",
     "created": "created_at",
@@ -568,7 +568,7 @@ async def list_users(
     N+1 query (one per user). Group membership is available via the
     ``GET /admin/groups/{id}/members`` endpoint.
     """
-    sort_col = _ADMIN_USER_SORT_COLUMNS.get(sort, "created_at")
+    sort_col = ADMIN_USER_SORT_COLUMNS.get(sort, "created_at")
     direction = "DESC" if order.lower() == "desc" else "ASC"
     page = max(1, page)
     page_size = max(1, min(page_size, 200))
@@ -651,7 +651,7 @@ async def update_password(user_id: str, password_hash: str) -> None:
 
 
 async def get_user_by_id(user_id: str) -> dict | None:
-    row = await _fetchone(
+    row = await fetchone(
         "SELECT id, email, handle FROM users WHERE id = ?",
         (user_id,),
     )

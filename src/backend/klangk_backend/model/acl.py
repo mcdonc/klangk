@@ -1,6 +1,6 @@
 """ACL entries (access-control list rows) and principal/action constants."""
 
-from ._core import transaction
+from .db import transaction
 from .users import AGENT_USER_ID, AgentPrincipalError
 
 # ACL constants
@@ -56,7 +56,7 @@ async def add_acl_entry(
         return cursor.lastrowid
 
 
-def _row_to_acl_entry(row) -> dict:
+def row_to_acl_entry(row) -> dict:
     """Map an acl_entries row to the dict shape callers expect."""
     return {
         "id": row["id"],
@@ -81,7 +81,7 @@ async def get_acl_entries(resource: str) -> list[dict]:
             " ORDER BY position",
             (resource,),
         )
-        return [_row_to_acl_entry(row) for row in await cursor.fetchall()]
+        return [row_to_acl_entry(row) for row in await cursor.fetchall()]
 
 
 async def get_acl_entries_map(
@@ -110,7 +110,7 @@ async def get_acl_entries_map(
         )
         for row in await cursor.fetchall():
             result.setdefault(row["resource"], []).append(
-                _row_to_acl_entry(row)
+                row_to_acl_entry(row)
             )
     return result
 

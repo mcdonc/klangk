@@ -69,7 +69,7 @@ def _query_local_ssh_agent(sock_path: str, data: bytes) -> bytes | None:
         agent.close()
 
 
-async def _wait_container_ready(
+async def wait_container_ready(
     ws: websockets.ClientConnection,
     workspace_id: str,
     timeout: float = _WS_CONNECT_TIMEOUT,
@@ -98,7 +98,7 @@ async def _wait_container_ready(
             raise ConnectionError(f"Connection failed: {resp}")
 
 
-def _request_with_retry(
+def request_with_retry(
     method: str,
     url: str,
     *,
@@ -161,7 +161,7 @@ class Workspace:
     health_message: str | None = None
 
 
-def _get_terminal_size() -> tuple[int, int]:
+def get_terminal_size() -> tuple[int, int]:
     """Return (columns, rows) of the local terminal, or a sensible default."""
     if sys.stdin.isatty():
         size = os.get_terminal_size()
@@ -172,7 +172,7 @@ def _get_terminal_size() -> tuple[int, int]:
 _REFRESH_MARGIN_SECONDS = 300  # refresh 5 minutes before expiry
 
 
-def _token_expires_soon(token: str) -> bool:
+def token_expires_soon(token: str) -> bool:
     """Return True if *token* expires within ``_REFRESH_MARGIN_SECONDS``.
 
     Decodes the JWT payload without verifying the signature (no secret
@@ -214,13 +214,13 @@ class KlangkClient:
         return False
 
     def _headers(self) -> dict[str, str]:
-        if self.token and _token_expires_soon(self.token):
+        if self.token and token_expires_soon(self.token):
             self._try_refresh()
         token = self.token or ""
         return {"Authorization": f"Bearer {token}"}
 
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
-        resp = _request_with_retry(
+        resp = request_with_retry(
             method,
             f"{self.server_url}{path}",
             headers=self._headers(),
@@ -229,7 +229,7 @@ class KlangkClient:
         if resp.status_code == 401 and not self._refreshed:
             self._refreshed = True
             if self._try_refresh():
-                resp = _request_with_retry(
+                resp = request_with_retry(
                     method,
                     f"{self.server_url}{path}",
                     headers=self._headers(),
@@ -254,7 +254,7 @@ class KlangkClient:
 
     # --- REST API ---
 
-    def _check_auth(self, resp: httpx.Response) -> None:
+    def check_auth(self, resp: httpx.Response) -> None:
         """Raise AuthError if the server returned 401."""
         if resp.status_code == 401:
             raise AuthError("Session expired — run `klangkc login`")
@@ -282,7 +282,7 @@ class KlangkClient:
     def get_handle(self) -> str:
         """Return the current user's handle via ``GET /auth/me``."""
         resp = self.get("/api/v1/auth/me")
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
         return resp.json()["handle"]
 
@@ -357,7 +357,7 @@ class KlangkClient:
             params["q"] = q
         while True:
             resp = self.get(path, params=params)
-            self._check_auth(resp)
+            self.check_auth(resp)
             self._raise_for_status(resp)
             body = resp.json()
             for w in body["items"]:
@@ -412,7 +412,7 @@ class KlangkClient:
         if health_check:
             body["health_check"] = health_check
         resp = self.post("/api/v1/workspaces", json=body)
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
         w = resp.json()
         return Workspace(
@@ -430,12 +430,12 @@ class KlangkClient:
             f"/api/v1/workspaces/{workspace_id}",
             json={"setup_state": setup_state},
         )
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
 
     def list_images(self) -> dict:
         resp = self.get("/api/v1/images")
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
         return resp.json()
 
@@ -455,13 +455,13 @@ class KlangkClient:
     def delete_workspace(self, name: str) -> None:
         ws = self.resolve_workspace(name)
         resp = self.delete(f"/api/v1/workspaces/{ws.id}")
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
 
     def list_workspace_members(self, name: str) -> list[dict]:
         ws = self.resolve_workspace(name)
         resp = self.get(f"/api/v1/workspaces/{ws.id}/members")
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
         return resp.json()
 
@@ -473,7 +473,7 @@ class KlangkClient:
             f"/api/v1/workspaces/{ws.id}/roles",
             json={"email": email, "role": role},
         )
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
         return resp.json()
 
@@ -483,7 +483,7 @@ class KlangkClient:
             f"/api/v1/workspaces/{ws.id}/roles",
             json={"email": email, "role": None},
         )
-        self._check_auth(resp)
+        self.check_auth(resp)
         if resp.status_code == 404:
             raise WorkspaceNotFoundError(
                 f"User '{email}' is not a member of '{name}'"
@@ -493,7 +493,7 @@ class KlangkClient:
     def restart_workspace(self, name: str) -> None:
         ws = self.resolve_workspace(name)
         resp = self.post(f"/api/v1/workspaces/{ws.id}/restart")
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
 
     def export_workspace(
@@ -513,7 +513,7 @@ class KlangkClient:
             headers=self._headers(),
             timeout=300.0,
         ) as resp:
-            self._check_auth(resp)
+            self.check_auth(resp)
             if not resp.is_success:
                 resp.read()  # consume body so .text is available
                 self._raise_for_status(resp)
@@ -578,7 +578,7 @@ class KlangkClient:
                 params=params,
                 timeout=300.0,
             )
-        self._check_auth(resp)
+        self.check_auth(resp)
         self._raise_for_status(resp)
         w = resp.json()
         return Workspace(
@@ -597,7 +597,7 @@ class AuthError(Exception):
 # --- Shell session ---
 
 
-async def _send_ignore_closed(ws, msg: str) -> None:
+async def send_ignore_closed(ws, msg: str) -> None:
     """Send a WebSocket message, ignoring errors if the connection is closed."""
     try:
         await ws.send(msg)
@@ -625,7 +625,7 @@ _TERMINAL_RESPONSE_RE = re.compile(
 )
 
 
-def _is_terminal_response(data: bytes) -> bool:
+def is_terminal_response(data: bytes) -> bool:
     """True if *data* looks like a terminal query response, not user input.
 
     Terminal responses start with ESC followed by ] (OSC), P (DCS), or
@@ -645,7 +645,7 @@ def _is_terminal_response(data: bytes) -> bool:
     return False
 
 
-def _drain_stdin() -> None:
+def drain_stdin() -> None:
     """Drain any pending bytes from stdin (terminal query responses).
 
     Terminal capability responses can arrive over several hundred
@@ -708,7 +708,7 @@ def reset_terminal() -> None:
     sys.stdout.flush()
 
 
-async def _ws_shell(
+async def ws_shell(
     ws_url: str,
     token: str,
     workspace_id: str,
@@ -732,7 +732,7 @@ async def _ws_shell(
         f"{ws_url}?token={token}", max_size=max_size
     ) as ws:
         # 1. Connect to workspace
-        await _wait_container_ready(ws, workspace_id)
+        await wait_container_ready(ws, workspace_id)
 
         # 2a. Start SSH agent forwarding if requested and available.
         ssh_agent_active = False
@@ -796,7 +796,7 @@ async def _ws_shell(
             await sandbox_setup(ws)
 
         # 2c. Start terminal
-        cols, rows = _get_terminal_size()
+        cols, rows = get_terminal_size()
         await ws.send(
             json.dumps(
                 {
@@ -962,7 +962,7 @@ async def _ws_shell(
         if _http_url.endswith("/ws"):
             _http_url = _http_url[:-3]
         try:
-            await _run_shell(
+            await run_shell(
                 ws,
                 cols,
                 rows,
@@ -976,19 +976,19 @@ async def _ws_shell(
                 reset_terminal()
             # Drain any terminal query responses still buffered in stdin
             # so they don't leak to the host shell after exit.
-            _drain_stdin()
+            drain_stdin()
             if ssh_agent_active:
-                await _send_ignore_closed(
+                await send_ignore_closed(
                     ws, json.dumps({"cmd": "ssh_agent_stop"})
                 )
-            await _send_ignore_closed(ws, json.dumps({"cmd": "terminal_stop"}))
+            await send_ignore_closed(ws, json.dumps({"cmd": "terminal_stop"}))
 
 
 class _ShellSession:
     """Shared I/O pump infrastructure for terminal and exec sessions.
 
     Owns the WebSocket, stop event, heartbeat loop, and SSH agent relay
-    that both ``_TerminalSession`` and ``_ExecSession`` need.
+    that both ``TerminalSession`` and ``ExecSession`` need.
     """
 
     def __init__(self, ws, ssh_agent_sock: str | None = None):
@@ -1073,7 +1073,7 @@ class _ShellSession:
         raise NotImplementedError
 
 
-class _TerminalSession(_ShellSession):
+class TerminalSession(_ShellSession):
     """Interactive PTY-over-WebSocket I/O pump."""
 
     def __init__(
@@ -1144,7 +1144,7 @@ class _TerminalSession(_ShellSession):
                         )
                         if more:
                             data += more
-                    if _is_terminal_response(data):
+                    if is_terminal_response(data):
                         for _ in range(10):
                             if not select.select([fd], [], [], 0.02)[0]:
                                 break
@@ -1225,7 +1225,7 @@ class _TerminalSession(_ShellSession):
                 return  # pragma: no cover
             except asyncio.TimeoutError:
                 pass
-            new_cols, new_rows = _get_terminal_size()
+            new_cols, new_rows = get_terminal_size()
             if new_cols != self._cols or new_rows != self._rows:
                 self._cols = new_cols
                 self._rows = new_rows
@@ -1249,7 +1249,7 @@ class _TerminalSession(_ShellSession):
             await asyncio.gather(*tasks, return_exceptions=True)
 
 
-class _ExecSession(_ShellSession):
+class ExecSession(_ShellSession):
     """Non-interactive command execution over WebSocket."""
 
     def __init__(
@@ -1404,11 +1404,11 @@ class _ExecSession(_ShellSession):
         except asyncio.CancelledError:
             pass
 
-        await _send_ignore_closed(self.ws, json.dumps({"cmd": "exec_stop"}))
+        await send_ignore_closed(self.ws, json.dumps({"cmd": "exec_stop"}))
         return self.exit_code
 
 
-async def _run_shell(
+async def run_shell(
     ws,
     cols: int,
     rows: int,
@@ -1419,7 +1419,7 @@ async def _run_shell(
     token: str | None = None,
 ) -> None:
     """Run stdin/stdout forwarding loop with SIGWINCH support."""
-    session = _TerminalSession(
+    session = TerminalSession(
         ws,
         cols,
         rows,
@@ -1432,7 +1432,7 @@ async def _run_shell(
     await session.run()
 
 
-async def _exec_on_ws(
+async def exec_on_ws(
     ws,
     command: list[str],
     stdin: io.RawIOBase | None = None,
@@ -1445,10 +1445,10 @@ async def _exec_on_ws(
     Returns the remote process exit code.  ``login`` defaults to False
     (raw argv) -- this is the low-level primitive used by setup/file-copy
     paths that already build their own ``sh -c`` command; the
-    interactive ``klangkc exec`` entrypoint (_ws_exec) overrides it to
+    interactive ``klangkc exec`` entrypoint (ws_exec) overrides it to
     True. See #1041.
     """
-    session = _ExecSession(
+    session = ExecSession(
         ws,
         command,
         stdin=stdin,
@@ -1459,7 +1459,7 @@ async def _exec_on_ws(
     return await session.run()
 
 
-async def _ws_exec(
+async def ws_exec(
     ws_url: str,
     token: str,
     workspace_id: str,
@@ -1477,8 +1477,8 @@ async def _ws_exec(
     async with websockets.connect(
         f"{ws_url}?token={token}", max_size=max_size
     ) as ws:
-        await _wait_container_ready(ws, workspace_id)
-        return await _exec_on_ws(
+        await wait_container_ready(ws, workspace_id)
+        return await exec_on_ws(
             ws,
             command,
             stdin=sys.stdin.buffer,
@@ -1487,7 +1487,7 @@ async def _ws_exec(
         )
 
 
-async def _ws_exec_piped(
+async def ws_exec_piped(
     ws_url: str,
     token: str,
     workspace_id: str,
@@ -1503,10 +1503,10 @@ async def _ws_exec_piped(
     async with websockets.connect(
         f"{ws_url}?token={token}", max_size=max_size
     ) as ws:
-        await _wait_container_ready(ws, workspace_id)
+        await wait_container_ready(ws, workspace_id)
         stdin_buf = io.BytesIO(stdin_data) if stdin_data else None
         stdout_buf = io.BytesIO()
-        exit_code = await _exec_on_ws(
+        exit_code = await exec_on_ws(
             ws, command, stdin=stdin_buf, stdout=stdout_buf
         )
         return (

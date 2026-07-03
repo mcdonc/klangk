@@ -24,7 +24,7 @@ FILE_UPLOAD_SIZE_MAX = int(
 )
 
 
-async def _send_email(coro, recipient: str, kind: str = "email") -> None:
+async def send_email(coro, recipient: str, kind: str = "email") -> None:
     """Await an email-sending coroutine, converting failures to 503."""
     try:
         await coro
@@ -36,18 +36,18 @@ async def _send_email(coro, recipient: str, kind: str = "email") -> None:
         ) from None
 
 
-async def _workspace_resource(request: Request, user: dict) -> str:
+async def workspace_resource(request: Request, user: dict) -> str:
     """Resource function for workspace-level permission checks."""
     workspace_id = request.path_params["workspace_id"]
     return f"/workspaces/{workspace_id}"
 
 
-async def _admin_resource(request: Request, user: dict) -> str:  # noqa: ARG001
+async def admin_resource(request: Request, user: dict) -> str:  # noqa: ARG001
     """Resource function for admin operations (always checks /admin)."""
     return "/admin"
 
 
-async def _require_workspace_token(request: Request) -> str:
+async def require_workspace_token(request: Request) -> str:
     """FastAPI dependency: validate workspace JWT from Authorization header.
 
     Returns the workspace_id. Raises 401 if missing, expired, or invalid.

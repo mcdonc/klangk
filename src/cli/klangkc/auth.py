@@ -24,7 +24,7 @@ _out = Console()
 _UNREACHABLE = "unreachable"
 
 
-def _fetch_config(server_url: str) -> dict | str | None:
+def fetch_config(server_url: str) -> dict | str | None:
     """Fetch /api/v1/config from the server.
 
     Returns:
@@ -175,7 +175,7 @@ def login(
                 pass  # Token invalid or server unreachable — fall through
 
     # Probe the server to verify it's a klangk instance
-    config = _fetch_config(server_url)
+    config = fetch_config(server_url)
     if config is None:
         _err.print(
             f"[red]Error:[/red] {server_url} does not appear to be a"

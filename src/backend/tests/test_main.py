@@ -268,7 +268,7 @@ class TestStartupShutdownRestart:
                 return_value=0,
             ) as mock_autostart,
         ):
-            await main._startup()
+            await main.startup()
         mock_prewarm.assert_awaited_once()
         mock_adopt.assert_awaited_once()
         mock_cleanup.assert_called_once()
@@ -292,7 +292,7 @@ class TestStartupShutdownRestart:
                 main.container.registry, "shutdown", new_callable=AsyncMock
             ) as mock_shutdown,
         ):
-            await main._runtime_shutdown()
+            await main.runtime_shutdown()
         mock_disc.assert_awaited_once()
         mock_stop_agents.assert_awaited_once()
         mock_clear.assert_called_once()
@@ -306,7 +306,7 @@ class TestStartupShutdownRestart:
                 new_callable=AsyncMock,
             ) as mock_dispose,
         ):
-            await main._process_shutdown()
+            await main.process_shutdown()
         mock_remove.assert_called_once()
         mock_dispose.assert_awaited_once()
 
@@ -314,13 +314,13 @@ class TestStartupShutdownRestart:
         main._restart_lock = None  # force fresh lock creation
         with (
             patch(
-                "klangk_backend.main._runtime_shutdown", new_callable=AsyncMock
+                "klangk_backend.main.runtime_shutdown", new_callable=AsyncMock
             ) as mock_down,
             patch(
-                "klangk_backend.main._startup", new_callable=AsyncMock
+                "klangk_backend.main.startup", new_callable=AsyncMock
             ) as mock_up,
         ):
-            await main._restart_runtime()
+            await main.restart_runtime()
         mock_down.assert_awaited_once()
         mock_up.assert_awaited_once()
         # Lock was created and is now held-free.
@@ -330,11 +330,11 @@ class TestStartupShutdownRestart:
         existing = main._restart_lock
         with (
             patch(
-                "klangk_backend.main._runtime_shutdown", new_callable=AsyncMock
+                "klangk_backend.main.runtime_shutdown", new_callable=AsyncMock
             ),
-            patch("klangk_backend.main._startup", new_callable=AsyncMock),
+            patch("klangk_backend.main.startup", new_callable=AsyncMock),
         ):
-            await main._restart_runtime()
+            await main.restart_runtime()
         # Same lock object reused, not replaced.
         assert main._restart_lock is existing
 
@@ -353,13 +353,13 @@ class TestStartupShutdownRestart:
 
         with (
             patch(
-                "klangk_backend.main._runtime_shutdown",
+                "klangk_backend.main.runtime_shutdown",
                 side_effect=fake_shutdown,
             ),
-            patch("klangk_backend.main._startup", side_effect=fake_startup),
+            patch("klangk_backend.main.startup", side_effect=fake_startup),
         ):
             await asyncio.gather(
-                main._restart_runtime(), main._restart_runtime()
+                main.restart_runtime(), main.restart_runtime()
             )
         # Two complete down-start...down-end...up cycles, never interleaved.
         assert order == [
@@ -372,11 +372,11 @@ class TestStartupShutdownRestart:
         ]
 
     async def test_on_sighup_schedules_restart(self):
-        """_on_sighup creates a task that runs _restart_runtime."""
+        """on_sighup creates a task that runs restart_runtime."""
         with patch(
-            "klangk_backend.main._restart_runtime", new_callable=AsyncMock
+            "klangk_backend.main.restart_runtime", new_callable=AsyncMock
         ) as mock_restart:
-            main._on_sighup()
+            main.on_sighup()
             # Let the scheduled task run.
             await asyncio.sleep(0)
             await asyncio.sleep(0)
@@ -411,7 +411,7 @@ class TestStartupShutdownRestart:
         ):
             async with main.lifespan(app):
                 mock_add.assert_called_once()
-                # Handler is registered for SIGHUP pointing at _on_sighup.
+                # Handler is registered for SIGHUP pointing at on_sighup.
                 registered_signal = mock_add.call_args.args[0]
                 assert registered_signal == signal.SIGHUP
             mock_remove.assert_called_once_with(signal.SIGHUP)
@@ -559,44 +559,44 @@ class TestCorsOrigins:
         monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
         monkeypatch.delenv("KLANGK_NGINX_PORT", raising=False)
-        assert main._cors_origins() == ["http://localhost:8995"]
+        assert main.cors_origins() == ["http://localhost:8995"]
 
     def test_custom_nginx_port(self, monkeypatch):
         monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
         monkeypatch.setenv("KLANGK_NGINX_PORT", "9000")
-        assert main._cors_origins() == ["http://localhost:9000"]
+        assert main.cors_origins() == ["http://localhost:9000"]
 
     def test_hosting_hostname(self, monkeypatch):
         monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
         monkeypatch.setenv("KLANGK_HOSTING_HOSTNAME", "klangk.example.com")
         monkeypatch.setenv("KLANGK_HOSTING_PROTO", "https")
-        assert main._cors_origins() == ["https://klangk.example.com"]
+        assert main.cors_origins() == ["https://klangk.example.com"]
 
     def test_hosting_hostname_default_proto(self, monkeypatch):
         monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
         monkeypatch.setenv("KLANGK_HOSTING_HOSTNAME", "klangk.example.com")
         monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
-        assert main._cors_origins() == ["http://klangk.example.com"]
+        assert main.cors_origins() == ["http://klangk.example.com"]
 
     def test_explicit_origins(self, monkeypatch):
         monkeypatch.setenv(
             "KLANGK_CORS_ORIGINS",
             "https://a.example.com, https://b.example.com",
         )
-        assert main._cors_origins() == [
+        assert main.cors_origins() == [
             "https://a.example.com",
             "https://b.example.com",
         ]
 
     def test_explicit_origins_strips_empties(self, monkeypatch):
         monkeypatch.setenv("KLANGK_CORS_ORIGINS", "https://a.com,,")
-        assert main._cors_origins() == ["https://a.com"]
+        assert main.cors_origins() == ["https://a.com"]
 
     def test_explicit_overrides_hosting(self, monkeypatch):
         monkeypatch.setenv("KLANGK_CORS_ORIGINS", "https://override.com")
         monkeypatch.setenv("KLANGK_HOSTING_HOSTNAME", "ignored.com")
-        assert main._cors_origins() == ["https://override.com"]
+        assert main.cors_origins() == ["https://override.com"]
 
     def test_with_base_url_and_environment(self, monkeypatch):
         monkeypatch.setenv("LOGFIRE_TOKEN", "test-token")
@@ -618,7 +618,7 @@ class TestCorsOrigins:
 class TestPidFile:
     def test_check_pid_file_no_file(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            main, "_pid_file_path", lambda: tmp_path / "klangk-test.pid"
+            main, "pid_file_path", lambda: tmp_path / "klangk-test.pid"
         )
         assert main.check_pid_file() is None
 
@@ -626,14 +626,14 @@ class TestPidFile:
         pid_file = tmp_path / "klangk-test.pid"
         # Use a PID that (almost certainly) doesn't exist
         pid_file.write_text("2000000")
-        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        monkeypatch.setattr(main, "pid_file_path", lambda: pid_file)
         assert main.check_pid_file() is None
         assert not pid_file.exists()
 
     def test_check_pid_file_own_pid(self, tmp_path, monkeypatch):
         pid_file = tmp_path / "klangk-test.pid"
         pid_file.write_text(str(os.getpid()))
-        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        monkeypatch.setattr(main, "pid_file_path", lambda: pid_file)
         assert main.check_pid_file() is None
 
     def test_check_pid_file_live_pid_permission_error(
@@ -642,7 +642,7 @@ class TestPidFile:
         pid_file = tmp_path / "klangk-test.pid"
         # PID 1 (init) is always alive
         pid_file.write_text("1")
-        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        monkeypatch.setattr(main, "pid_file_path", lambda: pid_file)
         # os.kill(1, 0) raises PermissionError for non-root
         result = main.check_pid_file()
         assert result == 1
@@ -653,19 +653,19 @@ class TestPidFile:
         # Use a PID we know is alive and can signal (our parent process)
         ppid = os.getppid()
         pid_file.write_text(str(ppid))
-        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        monkeypatch.setattr(main, "pid_file_path", lambda: pid_file)
         result = main.check_pid_file()
         assert result == ppid
 
     def test_check_pid_file_invalid_content(self, tmp_path, monkeypatch):
         pid_file = tmp_path / "klangk-test.pid"
         pid_file.write_text("not-a-number")
-        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        monkeypatch.setattr(main, "pid_file_path", lambda: pid_file)
         assert main.check_pid_file() is None
 
     def test_write_and_remove_pid_file(self, tmp_path, monkeypatch):
         pid_file = tmp_path / "klangk-test.pid"
-        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        monkeypatch.setattr(main, "pid_file_path", lambda: pid_file)
         main.write_pid_file()
         assert pid_file.read_text() == str(os.getpid())
         main.remove_pid_file()
@@ -674,31 +674,31 @@ class TestPidFile:
     def test_remove_pid_file_only_own_pid(self, tmp_path, monkeypatch):
         pid_file = tmp_path / "klangk-test.pid"
         pid_file.write_text("99999")
-        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        monkeypatch.setattr(main, "pid_file_path", lambda: pid_file)
         main.remove_pid_file()
         # File should still exist — not our PID
         assert pid_file.exists()
 
     def test_remove_pid_file_missing(self, tmp_path, monkeypatch):
         pid_file = tmp_path / "klangk-test.pid"
-        monkeypatch.setattr(main, "_pid_file_path", lambda: pid_file)
+        monkeypatch.setattr(main, "pid_file_path", lambda: pid_file)
         # Should not raise
         main.remove_pid_file()
 
     def test_pid_file_path_uses_runtime_dir(self):
-        path = main._pid_file_path()
-        assert path.parent == main._runtime_dir()
+        path = main.pid_file_path()
+        assert path.parent == main.runtime_dir()
         assert f"klangk-{main.container.INSTANCE_ID}" in path.name
 
     def test_runtime_dir_prefers_xdg(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-        assert main._runtime_dir() == tmp_path
+        assert main.runtime_dir() == tmp_path
 
     def test_runtime_dir_linux_run_user(self, monkeypatch):
         monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
         linux_run = Path(f"/run/user/{os.getuid()}")
         if linux_run.is_dir():
-            assert main._runtime_dir() == linux_run
+            assert main.runtime_dir() == linux_run
 
     def test_runtime_dir_fallback(self, tmp_path, monkeypatch):
         monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
@@ -712,6 +712,6 @@ class TestPidFile:
 
         monkeypatch.setattr(Path, "is_dir", fake_is_dir)
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-        result = main._runtime_dir()
+        result = main.runtime_dir()
         assert result == tmp_path / ".klangk" / "run"
         assert result.exists()

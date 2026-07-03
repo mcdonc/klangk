@@ -3,7 +3,7 @@
 Historically all database access — users, workspaces, ACL, chat, ports,
 login attempts, and the schema — lived in a single ~2000-line
 ``model.py``.  That module has been split into per-domain submodules
-(``_core``, ``schema``, ``users``, ``acl``, ``workspaces``, ``ports``,
+(``db``, ``schema``, ``users``, ``acl``, ``workspaces``, ``ports``,
 ``chat``, ``login_attempts``, ``tokens``, ``invitations``).
 
 This package re-exports every public (and the few private) names from
@@ -14,20 +14,20 @@ those submodules so existing call sites keep working unchanged, e.g.::
     from .model import ACTION_ALLOW
 
 Only the handful of tests that poke at module-level globals need to
-target the owning submodule directly (``model._core`` for engine state,
+target the owning submodule directly (``model.db`` for engine state,
 ``model.ports`` for the port-in-use probe).
 """
 
-from ._core import (
+from .db import (
     DB_PATH,
-    _Connection,
-    _CursorResult,
-    _Row,
-    _data_dir,
-    _engine,
-    _ensure_engine,
-    _fetchone,
-    _make_engine,
+    Connection,
+    CursorResult,
+    Row,
+    data_dir,
+    engine,
+    ensure_engine,
+    fetchone,
+    make_engine,
     dispose_engine,
     get_db,
     logger,
@@ -37,14 +37,14 @@ from .schema import init_db
 from .users import (
     AGENT_USER_ID,
     AgentPrincipalError,
-    _ADMIN_USER_SORT_COLUMNS,
-    _HANDLE_RE,
-    _MAX_HANDLE_LEN,
-    _RESERVED_HANDLES,
-    _agent_user_cache,
-    _backfill_handles,
-    _hash_fallback_handle,
-    _unique_handle,
+    ADMIN_USER_SORT_COLUMNS,
+    HANDLE_RE,
+    MAX_HANDLE_LEN,
+    RESERVED_HANDLES,
+    agent_user_cache,
+    backfill_handles,
+    hash_fallback_handle,
+    unique_handle,
     add_user_to_group,
     agent_email,
     agent_handle,
@@ -86,7 +86,7 @@ from .acl import (
     PRINCIPAL_USER,
     SYSTEM_AUTHENTICATED,
     SYSTEM_EVERYONE,
-    _row_to_acl_entry,
+    row_to_acl_entry,
     add_acl_entry,
     delete_acl_entries_for_resource,
     get_acl_entries,
@@ -98,9 +98,9 @@ from .acl import (
     replace_acl_entries,
 )
 from .workspaces import (
-    _DEFAULT_PORTS_PER_WORKSPACE,
-    _SORT_COLUMNS,
-    _sort_order_clause,
+    DEFAULT_PORTS_PER_WORKSPACE,
+    SORT_COLUMNS,
+    sort_order_clause,
     create_workspace,
     create_workspace_with_acl,
     delete_workspace,
@@ -120,8 +120,8 @@ from .workspaces import (
 )
 from .ports import (
     MAX_PORT,
-    _port_in_use,
-    _scan_free_ports,
+    port_in_use,
+    scan_free_ports,
     add_port_allocations,
     find_and_allocate_ports,
     get_all_allocated_ports,
@@ -132,7 +132,7 @@ from .chat import (
     MSG_AGENT,
     MSG_SYSTEM,
     MSG_USER,
-    _MENTION_RE,
+    MENTION_RE,
     add_chat_message,
     delete_chat_message,
     get_chat_messages,
@@ -151,7 +151,7 @@ from .tokens import (
     is_token_blocklisted,
 )
 from .invitations import (
-    _ADMIN_INVITATION_SORT_COLUMNS,
+    ADMIN_INVITATION_SORT_COLUMNS,
     create_invitation,
     get_invitation,
     get_pending_invitation_by_email,
@@ -161,16 +161,16 @@ from .invitations import (
 )
 
 __all__ = (
-    # _core
+    # db
     "DB_PATH",
-    "_Connection",
-    "_CursorResult",
-    "_Row",
-    "_data_dir",
-    "_engine",
-    "_ensure_engine",
-    "_fetchone",
-    "_make_engine",
+    "Connection",
+    "CursorResult",
+    "Row",
+    "data_dir",
+    "engine",
+    "ensure_engine",
+    "fetchone",
+    "make_engine",
     "dispose_engine",
     "get_db",
     "logger",
@@ -180,14 +180,14 @@ __all__ = (
     # users
     "AGENT_USER_ID",
     "AgentPrincipalError",
-    "_ADMIN_USER_SORT_COLUMNS",
-    "_HANDLE_RE",
-    "_MAX_HANDLE_LEN",
-    "_RESERVED_HANDLES",
-    "_agent_user_cache",
-    "_backfill_handles",
-    "_hash_fallback_handle",
-    "_unique_handle",
+    "ADMIN_USER_SORT_COLUMNS",
+    "HANDLE_RE",
+    "MAX_HANDLE_LEN",
+    "RESERVED_HANDLES",
+    "agent_user_cache",
+    "backfill_handles",
+    "hash_fallback_handle",
+    "unique_handle",
     "add_user_to_group",
     "agent_email",
     "agent_handle",
@@ -228,7 +228,7 @@ __all__ = (
     "PRINCIPAL_USER",
     "SYSTEM_AUTHENTICATED",
     "SYSTEM_EVERYONE",
-    "_row_to_acl_entry",
+    "row_to_acl_entry",
     "add_acl_entry",
     "delete_acl_entries_for_resource",
     "get_acl_entries",
@@ -239,9 +239,9 @@ __all__ = (
     "get_acl_tree_summary",
     "replace_acl_entries",
     # workspaces
-    "_DEFAULT_PORTS_PER_WORKSPACE",
-    "_SORT_COLUMNS",
-    "_sort_order_clause",
+    "DEFAULT_PORTS_PER_WORKSPACE",
+    "SORT_COLUMNS",
+    "sort_order_clause",
     "create_workspace",
     "create_workspace_with_acl",
     "delete_workspace",
@@ -261,8 +261,8 @@ __all__ = (
     "SETUP_STATES",
     # ports
     "MAX_PORT",
-    "_port_in_use",
-    "_scan_free_ports",
+    "port_in_use",
+    "scan_free_ports",
     "add_port_allocations",
     "find_and_allocate_ports",
     "get_all_allocated_ports",
@@ -272,7 +272,7 @@ __all__ = (
     "MSG_AGENT",
     "MSG_SYSTEM",
     "MSG_USER",
-    "_MENTION_RE",
+    "MENTION_RE",
     "add_chat_message",
     "delete_chat_message",
     "get_chat_messages",
@@ -288,7 +288,7 @@ __all__ = (
     "get_refreshed_token",
     "is_token_blocklisted",
     # invitations
-    "_ADMIN_INVITATION_SORT_COLUMNS",
+    "ADMIN_INVITATION_SORT_COLUMNS",
     "create_invitation",
     "get_invitation",
     "get_pending_invitation_by_email",

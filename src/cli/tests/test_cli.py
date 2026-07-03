@@ -28,8 +28,8 @@ from klangkc.client import (
     KlangkClient,
     Workspace,
     WorkspaceNotFoundError,
-    _request_with_retry,
-    _token_expires_soon,
+    request_with_retry,
+    token_expires_soon,
 )
 from klangkc.auth import refresh_token
 
@@ -447,7 +447,7 @@ class TestCLIState:
 class TestAuth:
     @pytest.fixture(autouse=True)
     def no_oidc(self, monkeypatch):
-        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: {})
+        monkeypatch.setattr("klangkc.auth.fetch_config", lambda _: {})
 
     def test_login_success(self, tmp_path, monkeypatch):
         state_path = tmp_path / "state.yaml"
@@ -659,29 +659,29 @@ class TestAuth:
 
 class TestOIDCCLILogin:
     def test_fetch_config_success(self, monkeypatch):
-        from klangkc.auth import _fetch_config
+        from klangkc.auth import fetch_config
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"auth_modes": "both"}
         with patch("httpx.get", return_value=mock_resp):
-            result = _fetch_config("http://localhost:8995")
+            result = fetch_config("http://localhost:8995")
         assert result == {"auth_modes": "both"}
 
     def test_fetch_config_unreachable(self, monkeypatch):
-        from klangkc.auth import _UNREACHABLE, _fetch_config
+        from klangkc.auth import _UNREACHABLE, fetch_config
 
         with patch("httpx.get", side_effect=httpx.ConnectError("fail")):
-            result = _fetch_config("http://localhost:8995")
+            result = fetch_config("http://localhost:8995")
         assert result == _UNREACHABLE
 
     def test_fetch_config_not_klangk(self, monkeypatch):
-        from klangkc.auth import _fetch_config
+        from klangkc.auth import fetch_config
 
         mock_resp = MagicMock()
         mock_resp.status_code = 404
         with patch("httpx.get", return_value=mock_resp):
-            result = _fetch_config("http://localhost:8995")
+            result = fetch_config("http://localhost:8995")
         assert result is None
 
     def test_oidc_single_provider(self, tmp_path, monkeypatch):
@@ -691,7 +691,7 @@ class TestOIDCCLILogin:
         state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
         monkeypatch.setattr(
-            "klangkc.auth._fetch_config",
+            "klangkc.auth.fetch_config",
             lambda _: {
                 "oidc_providers": [{"id": "test", "display_name": "Test"}],
                 "auth_modes": "oidc",
@@ -709,7 +709,7 @@ class TestOIDCCLILogin:
         state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
         monkeypatch.setattr(
-            "klangkc.auth._fetch_config",
+            "klangkc.auth.fetch_config",
             lambda _: {
                 "oidc_providers": [
                     {"id": "a", "display_name": "A"},
@@ -738,7 +738,7 @@ class TestOIDCCLILogin:
         state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
         monkeypatch.setattr(
-            "klangkc.auth._fetch_config",
+            "klangkc.auth.fetch_config",
             lambda _: {
                 "oidc_providers": [{"id": "test", "display_name": "Test"}],
                 "auth_modes": "both",
@@ -762,7 +762,7 @@ class TestOIDCCLILogin:
         state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
         monkeypatch.setattr(
-            "klangkc.auth._fetch_config",
+            "klangkc.auth.fetch_config",
             lambda _: {
                 "oidc_providers": [
                     {"id": "a", "display_name": "A"},
@@ -786,7 +786,7 @@ class TestOIDCCLILogin:
 
         state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
-        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: {})
+        monkeypatch.setattr("klangkc.auth.fetch_config", lambda _: {})
         mock_resp = MagicMock()
         mock_resp.status_code = 301
         mock_resp.headers = {"location": "https://example.com/auth/login"}
@@ -806,7 +806,7 @@ class TestOIDCCLILogin:
 
         state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
-        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: {})
+        monkeypatch.setattr("klangkc.auth.fetch_config", lambda _: {})
         mock_resp = MagicMock()
         mock_resp.status_code = 403
         mock_resp.json.side_effect = Exception("no body")
@@ -827,7 +827,7 @@ class TestOIDCCLILogin:
 
         state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
-        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: None)
+        monkeypatch.setattr("klangkc.auth.fetch_config", lambda _: None)
         with pytest.raises(SystemExit):
             auth.login(
                 "http://example.com",
@@ -842,7 +842,7 @@ class TestOIDCCLILogin:
         state_path = tmp_path / "state.yaml"
         monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
         monkeypatch.setattr(
-            "klangkc.auth._fetch_config", lambda _: auth._UNREACHABLE
+            "klangkc.auth.fetch_config", lambda _: auth._UNREACHABLE
         )
         with pytest.raises(SystemExit):
             auth.login(
@@ -910,7 +910,7 @@ class TestOIDCCLILogin:
         assert "&lt;script&gt;" in body
 
 
-# --- _request_with_retry tests ---
+# --- request_with_retry tests ---
 
 
 class TestRequestWithRetry:
@@ -921,7 +921,7 @@ class TestRequestWithRetry:
             "klangkc.client.httpx.request",
             lambda *a, **kw: mock_resp,
         )
-        resp = _request_with_retry("GET", "http://test/path")
+        resp = request_with_retry("GET", "http://test/path")
         assert resp.status_code == 200
 
     def test_retries_on_timeout(self, monkeypatch):
@@ -938,7 +938,7 @@ class TestRequestWithRetry:
 
         monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
         monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
-        resp = _request_with_retry("GET", "http://test/path")
+        resp = request_with_retry("GET", "http://test/path")
         assert resp.status_code == 200
         assert call_count == 3
 
@@ -956,7 +956,7 @@ class TestRequestWithRetry:
 
         monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
         monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
-        resp = _request_with_retry("GET", "http://test/path")
+        resp = request_with_retry("GET", "http://test/path")
         assert resp.status_code == 200
         assert call_count == 2
 
@@ -972,7 +972,7 @@ class TestRequestWithRetry:
 
         monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
         monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
-        resp = _request_with_retry("GET", "http://test/path")
+        resp = request_with_retry("GET", "http://test/path")
         assert resp.status_code == 200
         assert call_count == 3
 
@@ -983,7 +983,7 @@ class TestRequestWithRetry:
         monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
         monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
         with pytest.raises(httpx.ReadTimeout):
-            _request_with_retry("GET", "http://test/path")
+            request_with_retry("GET", "http://test/path")
 
     def test_returns_503_after_exhausting_retries(self, monkeypatch):
         def fake_request(*args, **kwargs):
@@ -993,7 +993,7 @@ class TestRequestWithRetry:
 
         monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
         monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
-        resp = _request_with_retry("GET", "http://test/path")
+        resp = request_with_retry("GET", "http://test/path")
         assert resp.status_code == 503
 
 
@@ -1370,19 +1370,19 @@ class TestTokenExpiresSoon:
         import time
 
         token = _make_jwt(time.time() + 60)  # expires in 60s
-        assert _token_expires_soon(token) is True
+        assert token_expires_soon(token) is True
 
     def test_returns_false_when_not_expiring_soon(self):
         import time
 
         token = _make_jwt(time.time() + 600)  # expires in 10 min
-        assert _token_expires_soon(token) is False
+        assert token_expires_soon(token) is False
 
     def test_returns_false_for_invalid_token(self):
-        assert _token_expires_soon("not-a-jwt") is False
+        assert token_expires_soon("not-a-jwt") is False
 
     def test_returns_false_for_empty_token(self):
-        assert _token_expires_soon("") is False
+        assert token_expires_soon("") is False
 
     def test_returns_false_when_no_exp(self):
         import base64
@@ -1392,7 +1392,7 @@ class TestTokenExpiresSoon:
             b'{"sub":"u1","email":"a@b.com"}'
         ).rstrip(b"=")
         token = f"{header.decode()}.{payload.decode()}.sig"
-        assert _token_expires_soon(token) is False
+        assert token_expires_soon(token) is False
 
 
 class TestRefreshToken:
@@ -1468,7 +1468,7 @@ class TestClientRetryOn401:
         resp_200.status_code = 200
         with (
             patch(
-                "klangkc.client._request_with_retry",
+                "klangkc.client.request_with_retry",
                 side_effect=[resp_401, resp_200],
             ),
             patch("klangkc.client._refresh_token", return_value="new-token"),
@@ -1483,7 +1483,7 @@ class TestClientRetryOn401:
         resp_401.status_code = 401
         with (
             patch(
-                "klangkc.client._request_with_retry",
+                "klangkc.client.request_with_retry",
                 return_value=resp_401,
             ),
             patch("klangkc.client._refresh_token", return_value=None),
@@ -1504,7 +1504,7 @@ class TestClientRetryOn401:
 
         with (
             patch(
-                "klangkc.client._request_with_retry",
+                "klangkc.client.request_with_retry",
                 return_value=resp_401,
             ),
             patch(
@@ -1530,7 +1530,7 @@ class TestClientRetryOn401:
 class TestWs4002Refresh:
     @pytest.mark.asyncio
     async def test_ws_4002_refresh_success(self):
-        from klangkc.client import _TerminalSession
+        from klangkc.client import TerminalSession
 
         ws = AsyncMock()
         close_frame = MagicMock()
@@ -1548,7 +1548,7 @@ class TestWs4002Refresh:
             def flush(self):
                 pass
 
-        session = _TerminalSession(
+        session = TerminalSession(
             ws,
             80,
             24,
@@ -1563,7 +1563,7 @@ class TestWs4002Refresh:
 
     @pytest.mark.asyncio
     async def test_ws_4002_refresh_failure(self):
-        from klangkc.client import _TerminalSession
+        from klangkc.client import TerminalSession
 
         ws = AsyncMock()
         close_frame = MagicMock()
@@ -1581,7 +1581,7 @@ class TestWs4002Refresh:
             def flush(self):
                 pass
 
-        session = _TerminalSession(
+        session = TerminalSession(
             ws,
             80,
             24,
@@ -1615,14 +1615,14 @@ class TestShellProtocol:
 
 class TestTerminalSize:
     def test_get_terminal_size_positive_ints(self):
-        from klangkc.client import _get_terminal_size
+        from klangkc.client import get_terminal_size
 
-        cols, rows = _get_terminal_size()
+        cols, rows = get_terminal_size()
         assert isinstance(cols, int) and cols > 0
         assert isinstance(rows, int) and rows > 0
 
     def test_get_terminal_size_returns_default_when_not_tty(self, monkeypatch):
-        """When stdin is not a TTY, _get_terminal_size returns (80, 24) without calling os."""
+        """When stdin is not a TTY, get_terminal_size returns (80, 24) without calling os."""
         from klangkc import client as cli_client
 
         called = []
@@ -1633,7 +1633,7 @@ class TestTerminalSize:
 
         # sys.stdin is not a TTY in tests — no need to call os.get_terminal_size
         monkeypatch.setattr(os, "get_terminal_size", _track)
-        cols, rows = cli_client._get_terminal_size()
+        cols, rows = cli_client.get_terminal_size()
         assert cols == 80
         assert rows == 24
         assert len(called) == 0  # os.get_terminal_size was never invoked
@@ -1654,19 +1654,19 @@ class TestTerminalSize:
         monkeypatch.setattr(os, "get_terminal_size", _track)
         # sys.stdin is not a TTY in tests — make it look like one
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-        cols, rows = cli_client._get_terminal_size()
+        cols, rows = cli_client.get_terminal_size()
         assert cols == 102
         assert rows == 40
         assert len(called_with) == 1
 
 
-# --- _run_shell / _ws_shell ---
+# --- run_shell / ws_shell ---
 
 
 class TestRunShell:
     @pytest.mark.asyncio
     async def test_stdin_loop_sends_terminal_input(self):
-        from klangkc.client import _run_shell
+        from klangkc.client import run_shell
 
         ws = AsyncMock()
         ws.send = AsyncMock()
@@ -1706,7 +1706,7 @@ class TestRunShell:
             ),
             patch("klangkc.client.os.read", side_effect=fake_os_read),
         ):
-            task = asyncio.create_task(_run_shell(ws, 80, 24, stdin=fake_buf))
+            task = asyncio.create_task(run_shell(ws, 80, 24, stdin=fake_buf))
             await asyncio.sleep(0.5)
             task.cancel()
             try:
@@ -1719,7 +1719,7 @@ class TestRunShell:
 
     @pytest.mark.asyncio
     async def test_stdin_loop_batches_escape_sequences(self):
-        from klangkc.client import _run_shell
+        from klangkc.client import run_shell
 
         ws = AsyncMock()
         ws.send = AsyncMock()
@@ -1768,7 +1768,7 @@ class TestRunShell:
             ),
             patch("klangkc.client.os.read", side_effect=fake_os_read),
         ):
-            task = asyncio.create_task(_run_shell(ws, 80, 24, stdin=fake_buf))
+            task = asyncio.create_task(run_shell(ws, 80, 24, stdin=fake_buf))
             await asyncio.sleep(0.5)
             task.cancel()
             try:
@@ -1782,7 +1782,7 @@ class TestRunShell:
 
     @pytest.mark.asyncio
     async def test_stdout_loop_writes_data(self):
-        from klangkc.client import _run_shell
+        from klangkc.client import run_shell
 
         ws = AsyncMock()
         ws.recv = AsyncMock(
@@ -1824,7 +1824,7 @@ class TestRunShell:
             ),
         ):
             task = asyncio.create_task(
-                _run_shell(ws, 80, 24, stdin=fake_buf, stdout=fake_stdout)
+                run_shell(ws, 80, 24, stdin=fake_buf, stdout=fake_stdout)
             )
             await asyncio.sleep(0.3)
             task.cancel()
@@ -1837,7 +1837,7 @@ class TestRunShell:
 
     @pytest.mark.asyncio
     async def test_ws_shell_connection_failure(self):
-        from klangkc.client import _ws_shell
+        from klangkc.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -1856,7 +1856,7 @@ class TestRunShell:
 
         with patch("websockets.connect", return_value=ws_mock):
             with pytest.raises(ConnectionError) as exc_info:
-                await _ws_shell("ws://localhost/ws", "token", "ws1")
+                await ws_shell("ws://localhost/ws", "token", "ws1")
             assert "Connection failed" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -1871,7 +1871,7 @@ class TestRunShell:
         asserts the join resolves the match and sends
         join_shared_terminal rather than raising "not found".
         """
-        from klangkc.client import _ws_shell
+        from klangkc.client import ws_shell
 
         # Message sequence matches a live connect (see #1208 trace):
         # the service-cmd window arrives only in shared_terminals, which
@@ -1931,9 +1931,9 @@ class TestRunShell:
         ws_mock.send = capture_send
 
         with patch("websockets.connect", return_value=ws_mock):
-            with patch("klangkc.client._run_shell", new=AsyncMock()):
+            with patch("klangkc.client.run_shell", new=AsyncMock()):
                 # Should NOT raise "Shared terminal not found".
-                await _ws_shell(
+                await ws_shell(
                     "ws://localhost/ws",
                     "token",
                     "ws1",
@@ -1953,7 +1953,7 @@ class TestRunShell:
     @pytest.mark.asyncio
     async def test_ws_shell_shared_terminal_not_found_when_absent(self):
         """Sanity: if the window truly isn't shared, we still raise."""
-        from klangkc.client import _ws_shell
+        from klangkc.client import ws_shell
 
         msgs = [
             {"type": "container_ready"},
@@ -1988,7 +1988,7 @@ class TestRunShell:
 
         with patch("websockets.connect", return_value=ws_mock):
             with pytest.raises(ConnectionError) as exc_info:
-                await _ws_shell(
+                await ws_shell(
                     "ws://localhost/ws",
                     "token",
                     "ws1",
@@ -2000,7 +2000,7 @@ class TestRunShell:
     @pytest.mark.asyncio
     async def test_tilde_dot_disconnects(self):
         """Enter then ~ then . cleanly exits the shell."""
-        from klangkc.client import _run_shell
+        from klangkc.client import run_shell
 
         ws = AsyncMock()
         ws.send = AsyncMock()
@@ -2051,14 +2051,14 @@ class TestRunShell:
                 side_effect=fake_os_read,
             ),
         ):
-            await _run_shell(ws, 80, 24, stdin=fake_buf, stdout=fake_stdout)
+            await run_shell(ws, 80, 24, stdin=fake_buf, stdout=fake_stdout)
 
         assert "Disconnected" in fake_stdout.getvalue()
 
     @pytest.mark.asyncio
     async def test_tilde_without_dot_sends_tilde(self):
         """~ followed by a non-dot sends the ~ normally."""
-        from klangkc.client import _run_shell
+        from klangkc.client import run_shell
 
         ws = AsyncMock()
         ws.send = AsyncMock()
@@ -2102,7 +2102,7 @@ class TestRunShell:
                 side_effect=fake_os_read,
             ),
         ):
-            task = asyncio.create_task(_run_shell(ws, 80, 24, stdin=fake_buf))
+            task = asyncio.create_task(run_shell(ws, 80, 24, stdin=fake_buf))
             await asyncio.sleep(0.5)
             task.cancel()
             try:
@@ -2123,7 +2123,7 @@ class TestRunShell:
 class TestMisc:
     @pytest.fixture(autouse=True)
     def no_oidc(self, monkeypatch):
-        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: {})
+        monkeypatch.setattr("klangkc.auth.fetch_config", lambda _: {})
 
     def test_auth_error_message(self):
         err = AuthError("Session expired — run `klangkc login`")
@@ -2372,7 +2372,7 @@ class TestHTTPMethodWrappers:
         client = self._make_client()
         mock_resp = MagicMock()
         with patch(
-            "klangkc.client._request_with_retry", return_value=mock_resp
+            "klangkc.client.request_with_retry", return_value=mock_resp
         ) as mock_req:
             result = client.get("/foo")
         assert result is mock_resp
@@ -2386,7 +2386,7 @@ class TestHTTPMethodWrappers:
         client = self._make_client()
         mock_resp = MagicMock()
         with patch(
-            "klangkc.client._request_with_retry", return_value=mock_resp
+            "klangkc.client.request_with_retry", return_value=mock_resp
         ) as mock_req:
             result = client.post("/bar", json={"a": 1})
         assert result is mock_resp
@@ -2401,7 +2401,7 @@ class TestHTTPMethodWrappers:
         client = self._make_client()
         mock_resp = MagicMock()
         with patch(
-            "klangkc.client._request_with_retry", return_value=mock_resp
+            "klangkc.client.request_with_retry", return_value=mock_resp
         ) as mock_req:
             result = client.put("/baz")
         assert result is mock_resp
@@ -2415,7 +2415,7 @@ class TestHTTPMethodWrappers:
         client = self._make_client()
         mock_resp = MagicMock()
         with patch(
-            "klangkc.client._request_with_retry", return_value=mock_resp
+            "klangkc.client.request_with_retry", return_value=mock_resp
         ) as mock_req:
             result = client.patch("/qux", json={"b": 2})
         assert result is mock_resp
@@ -2430,7 +2430,7 @@ class TestHTTPMethodWrappers:
         client = self._make_client()
         mock_resp = MagicMock()
         with patch(
-            "klangkc.client._request_with_retry", return_value=mock_resp
+            "klangkc.client.request_with_retry", return_value=mock_resp
         ) as mock_req:
             result = client.delete("/del")
         assert result is mock_resp
@@ -2551,36 +2551,36 @@ class TestListImagesClient:
 
 class TestSendIgnoreClosed:
     async def test_sends_message(self):
-        from klangkc.client import _send_ignore_closed
+        from klangkc.client import send_ignore_closed
 
         ws = AsyncMock()
-        await _send_ignore_closed(ws, "hello")
+        await send_ignore_closed(ws, "hello")
         ws.send.assert_awaited_once_with("hello")
 
     async def test_ignores_connection_closed(self):
         import websockets
-        from klangkc.client import _send_ignore_closed
+        from klangkc.client import send_ignore_closed
 
         ws = AsyncMock()
         ws.send = AsyncMock(
             side_effect=websockets.ConnectionClosed(None, None)
         )
         # Should not raise
-        await _send_ignore_closed(ws, "hello")
+        await send_ignore_closed(ws, "hello")
 
     async def test_ignores_oserror(self):
-        from klangkc.client import _send_ignore_closed
+        from klangkc.client import send_ignore_closed
 
         ws = AsyncMock()
         ws.send = AsyncMock(side_effect=OSError("broken"))
         # Should not raise
-        await _send_ignore_closed(ws, "hello")
+        await send_ignore_closed(ws, "hello")
 
 
 class TestTerminalSessionRunCancellation:
     async def test_run_cancels_all_tasks_on_failure(self):
         """Tasks must be cancelled when one raises, not left orphaned."""
-        from klangkc.client import _TerminalSession
+        from klangkc.client import TerminalSession
 
         ws = AsyncMock()
 
@@ -2591,7 +2591,7 @@ class TestTerminalSessionRunCancellation:
             def flush(self):
                 pass
 
-        session = _TerminalSession(ws, 80, 24, stdout=DummyWriter())
+        session = TerminalSession(ws, 80, 24, stdout=DummyWriter())
 
         boom = RuntimeError("stdin exploded")
         cancelled = []
@@ -2633,9 +2633,9 @@ class TestTerminalSessionRunCancellation:
 
 class TestExecSessionRunClosedWs:
     async def test_run_tolerates_closed_ws_on_exec_stop(self):
-        """_ExecSession.run() must not crash when the WS is closed at cleanup."""
+        """ExecSession.run() must not crash when the WS is closed at cleanup."""
         import websockets
-        from klangkc.client import _ExecSession
+        from klangkc.client import ExecSession
 
         ws = AsyncMock()
         call_count = 0
@@ -2654,7 +2654,7 @@ class TestExecSessionRunClosedWs:
             return_value=json.dumps({"type": "exec_exit", "code": 0})
         )
 
-        session = _ExecSession(ws, command=["echo", "hi"], stdin=None)
+        session = ExecSession(ws, command=["echo", "hi"], stdin=None)
         exit_code = await session.run()
         assert exit_code == 0
 
@@ -2697,7 +2697,7 @@ class _FakeMonitorCM:
 class TestMonitor:
     @pytest.mark.asyncio
     async def test_no_command_streams_json(self, capsys):
-        from klangkc.main import _monitor_connection
+        from klangkc.main import monitor_connection
 
         messages = [
             json.dumps(
@@ -2721,7 +2721,7 @@ class TestMonitor:
             "klangkc.main.websockets.connect",
             return_value=_FakeMonitorCM(conn),
         ):
-            await _monitor_connection(
+            await monitor_connection(
                 "ws://x/ws", "tok", 1024, command=[], types=[], workspaces=[]
             )
         out = capsys.readouterr().out.strip().splitlines()
@@ -2731,7 +2731,7 @@ class TestMonitor:
 
     @pytest.mark.asyncio
     async def test_type_filter(self, capsys):
-        from klangkc.main import _monitor_connection
+        from klangkc.main import monitor_connection
 
         messages = [
             json.dumps(
@@ -2754,7 +2754,7 @@ class TestMonitor:
             "klangkc.main.websockets.connect",
             return_value=_FakeMonitorCM(conn),
         ):
-            await _monitor_connection(
+            await monitor_connection(
                 "ws://x/ws",
                 "tok",
                 1024,
@@ -2768,7 +2768,7 @@ class TestMonitor:
 
     @pytest.mark.asyncio
     async def test_workspace_filter_skips_others(self, capsys):
-        from klangkc.main import _monitor_connection
+        from klangkc.main import monitor_connection
 
         messages = [
             json.dumps(
@@ -2791,7 +2791,7 @@ class TestMonitor:
             "klangkc.main.websockets.connect",
             return_value=_FakeMonitorCM(conn),
         ):
-            await _monitor_connection(
+            await monitor_connection(
                 "ws://x/ws",
                 "tok",
                 1024,
@@ -2805,7 +2805,7 @@ class TestMonitor:
 
     @pytest.mark.asyncio
     async def test_runs_command_with_payload_and_env(self):
-        from klangkc.main import _monitor_connection
+        from klangkc.main import monitor_connection
 
         event = {
             "type": "service_health",
@@ -2818,7 +2818,7 @@ class TestMonitor:
             return_value=_FakeMonitorCM(conn),
         ):
             with patch("klangkc.main.subprocess.run") as run_mock:
-                await _monitor_connection(
+                await monitor_connection(
                     "ws://x/ws",
                     "tok",
                     1024,
@@ -2839,7 +2839,7 @@ class TestMonitor:
     async def test_health_message_env_set_when_present(self):
         # The failure reason is exposed as KLANGK_HEALTH_MESSAGE so a
         # monitor command can act on / report *why* it's unhealthy (#1088).
-        from klangkc.main import _monitor_connection
+        from klangkc.main import monitor_connection
 
         event = {
             "type": "service_health",
@@ -2853,7 +2853,7 @@ class TestMonitor:
             return_value=_FakeMonitorCM(conn),
         ):
             with patch("klangkc.main.subprocess.run") as run_mock:
-                await _monitor_connection(
+                await monitor_connection(
                     "ws://x/ws",
                     "tok",
                     1024,
@@ -2869,7 +2869,7 @@ class TestMonitor:
     async def test_command_not_found_propagates(self, monkeypatch):
         # A missing command binary propagates FileNotFoundError out of
         # the single-connection loop (the runner turns it into an exit).
-        from klangkc.main import _monitor_connection
+        from klangkc.main import monitor_connection
 
         event = {
             "type": "service_health",
@@ -2886,7 +2886,7 @@ class TestMonitor:
                 MagicMock(side_effect=FileNotFoundError()),
             )
             with pytest.raises(FileNotFoundError):
-                await _monitor_connection(
+                await monitor_connection(
                     "ws://x/ws",
                     "tok",
                     1024,
@@ -2897,7 +2897,7 @@ class TestMonitor:
 
     @pytest.mark.asyncio
     async def test_reconnects_after_disconnect(self):
-        # Two clean closes → _monitor_connection called twice, with a
+        # Two clean closes → monitor_connection called twice, with a
         # backoff sleep in between.
         from klangkc import main as main_mod
 
@@ -2914,12 +2914,12 @@ class TestMonitor:
             assert delay > 0
 
         with (
-            patch.object(main_mod, "_monitor_connection", fake_conn),
+            patch.object(main_mod, "monitor_connection", fake_conn),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(main_mod, "_monitor_backoff", lambda a, m: 0.01),
+            patch.object(main_mod, "monitor_backoff", lambda a, m: 0.01),
         ):
             with pytest.raises(typer.Exit) as exc_info:
-                await main_mod._monitor_run(
+                await main_mod.monitor_run(
                     "http://x",
                     "ws://x/ws",
                     "tok",
@@ -2947,12 +2947,12 @@ class TestMonitor:
             sleeps.append(delay)
 
         with (
-            patch.object(main_mod, "_monitor_connection", fake_conn),
+            patch.object(main_mod, "monitor_connection", fake_conn),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(main_mod, "_monitor_backoff", lambda a, m: 0.0),
+            patch.object(main_mod, "monitor_backoff", lambda a, m: 0.0),
         ):
             with pytest.raises(typer.Exit) as exc_info:
-                await main_mod._monitor_run(
+                await main_mod.monitor_run(
                     "http://x",
                     "ws://x/ws",
                     "tok",
@@ -2978,11 +2978,11 @@ class TestMonitor:
             pytest.fail("should not sleep before giving up")
 
         with (
-            patch.object(main_mod, "_monitor_connection", fake_conn),
+            patch.object(main_mod, "monitor_connection", fake_conn),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
         ):
             with pytest.raises(typer.Exit) as exc_info:
-                await main_mod._monitor_run(
+                await main_mod.monitor_run(
                     "http://x",
                     "ws://x/ws",
                     "tok",
@@ -3015,14 +3015,14 @@ class TestMonitor:
             pass
 
         with (
-            patch.object(main_mod, "_monitor_connection", fake_conn),
-            patch.object(main_mod, "_refresh_token_threaded", fake_refresh),
+            patch.object(main_mod, "monitor_connection", fake_conn),
+            patch.object(main_mod, "refresh_token_threaded", fake_refresh),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(main_mod, "_monitor_backoff", lambda a, m: 0.0),
+            patch.object(main_mod, "monitor_backoff", lambda a, m: 0.0),
         ):
             # Stop the loop after the second connect via max_reconnects.
             with pytest.raises(typer.Exit):
-                await main_mod._monitor_run(
+                await main_mod.monitor_run(
                     "http://x",
                     "ws://x/ws",
                     "OLD_TOKEN",
@@ -3053,13 +3053,13 @@ class TestMonitor:
             pass
 
         with (
-            patch.object(main_mod, "_monitor_connection", fake_conn),
-            patch.object(main_mod, "_refresh_token_threaded", fake_refresh),
+            patch.object(main_mod, "monitor_connection", fake_conn),
+            patch.object(main_mod, "refresh_token_threaded", fake_refresh),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(main_mod, "_monitor_backoff", lambda a, m: 0.0),
+            patch.object(main_mod, "monitor_backoff", lambda a, m: 0.0),
         ):
             with pytest.raises(typer.Exit):
-                await main_mod._monitor_run(
+                await main_mod.monitor_run(
                     "http://x",
                     "ws://x/ws",
                     "OLD_TOKEN",
@@ -3075,17 +3075,17 @@ class TestMonitor:
         assert seen_tokens[1] == "OLD_TOKEN"
 
     def test_backoff_is_capped(self):
-        from klangkc.main import _monitor_backoff
+        from klangkc.main import monitor_backoff
 
         # Small attempts grow; large attempts never exceed the cap.
         for attempt in range(1, 20):
-            delay = _monitor_backoff(attempt, max_delay=30.0)
+            delay = monitor_backoff(attempt, max_delay=30.0)
             assert 0 < delay <= 30.0
 
     @pytest.mark.asyncio
     async def test_connection_skips_invalid_json(self, capsys):
         # Malformed frames are ignored rather than crashing the monitor.
-        from klangkc.main import _monitor_connection
+        from klangkc.main import monitor_connection
 
         messages = [
             "this is not json",
@@ -3102,7 +3102,7 @@ class TestMonitor:
             "klangkc.main.websockets.connect",
             return_value=_FakeMonitorCM(conn),
         ):
-            await _monitor_connection(
+            await monitor_connection(
                 "ws://x/ws", "tok", 1024, command=[], types=[], workspaces=[]
             )
         out = capsys.readouterr().out.strip().splitlines()
@@ -3111,14 +3111,14 @@ class TestMonitor:
 
     @pytest.mark.asyncio
     async def test_refresh_token_threaded_delegates(self):
-        # _refresh_token_threaded runs the sync refresh_token off-loop
+        # refresh_token_threaded runs the sync refresh_token off-loop
         # and returns whatever it yields.
         from klangkc import main as main_mod
 
         with patch.object(
             main_mod, "refresh_token", return_value="FRESH"
         ) as mock_refresh:
-            result = await main_mod._refresh_token_threaded("http://x", "OLD")
+            result = await main_mod.refresh_token_threaded("http://x", "OLD")
         assert result == "FRESH"
         mock_refresh.assert_called_once_with("http://x", "OLD")
 
@@ -3141,13 +3141,13 @@ class TestMonitor:
             pass
 
         with (
-            patch.object(main_mod, "_monitor_connection", fake_conn),
-            patch.object(main_mod, "_refresh_token_threaded", fake_refresh),
+            patch.object(main_mod, "monitor_connection", fake_conn),
+            patch.object(main_mod, "refresh_token_threaded", fake_refresh),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(main_mod, "_monitor_backoff", lambda a, m: 0.0),
+            patch.object(main_mod, "monitor_backoff", lambda a, m: 0.0),
         ):
             with pytest.raises(typer.Exit):
-                await main_mod._monitor_run(
+                await main_mod.monitor_run(
                     "http://x",
                     "ws://x/ws",
                     "OLD_TOKEN",

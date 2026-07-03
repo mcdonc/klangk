@@ -25,7 +25,7 @@ from ..util import (
 )
 from ._common import (
     FILE_UPLOAD_SIZE_MAX,
-    _workspace_resource,
+    workspace_resource,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ def _require_container(workspace_id: str) -> str:
 async def list_files(
     workspace_id: str,
     path: str = "/",
-    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
+    user: dict = Depends(acl.has_permission("files", workspace_resource)),
 ):
     cid = _require_container(workspace_id)
     try:
@@ -59,7 +59,7 @@ async def list_files(
 async def read_file(
     workspace_id: str,
     path: str,
-    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
+    user: dict = Depends(acl.has_permission("files", workspace_resource)),
 ):
     cid = _require_container(workspace_id)
     try:
@@ -77,7 +77,7 @@ async def read_file(
 async def delete_file(
     workspace_id: str,
     path: str,
-    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
+    user: dict = Depends(acl.has_permission("files", workspace_resource)),
 ):
     cid = _require_container(workspace_id)
     try:
@@ -100,7 +100,7 @@ class RenameFileRequest(BaseModel):
 async def rename_file(
     workspace_id: str,
     body: RenameFileRequest,
-    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
+    user: dict = Depends(acl.has_permission("files", workspace_resource)),
 ):
     cid = _require_container(workspace_id)
     try:
@@ -122,7 +122,7 @@ async def rename_file(
 async def download_file(
     workspace_id: str,
     path: str,
-    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
+    user: dict = Depends(acl.has_permission("files", workspace_resource)),
 ):
     cid = _require_container(workspace_id)
     try:
@@ -154,7 +154,7 @@ async def upload_file(
     workspace_id: str,
     file: UploadFile,
     path: str = "",
-    user: dict = Depends(acl.has_permission("files", _workspace_resource)),
+    user: dict = Depends(acl.has_permission("files", workspace_resource)),
 ):
     cid = _require_container(workspace_id)
 

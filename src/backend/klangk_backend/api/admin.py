@@ -33,8 +33,8 @@ from ..util import (
 )
 from ._common import (
     WorkspaceAclEntry,
-    _admin_resource,
-    _send_email,
+    admin_resource,
+    send_email,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ async def send_invitation(
         f"{proto}://{hostname}{base_path}/#/accept-invite?token={token}"
     )
 
-    await _send_email(
+    await send_email(
         emailsvc.send_invitation_email(req.email, invite_url, admin["email"]),
         req.email,
         "invitation email",
@@ -152,7 +152,7 @@ async def resend_invitation(
         f"{proto}://{hostname}{base_path}/#/accept-invite?token={token}"
     )
 
-    await _send_email(
+    await send_email(
         emailsvc.send_invitation_email(
             invitation["email"], invite_url, admin["email"]
         ),
@@ -222,7 +222,7 @@ async def admin_create_user(
                 " VALUES (?, ?, ?, 0)",
                 (user_id, req.email, password_hash),
             )
-            await _send_email(
+            await send_email(
                 emailsvc.send_verification_email(req.email, verification_url),
                 req.email,
                 "verification email",
@@ -602,7 +602,7 @@ async def get_acl_by_group(
 @router.get("/admin/acl/resource")
 async def get_resource_acl(
     resource: str,
-    admin: dict = Depends(acl.has_permission("admin", _admin_resource)),
+    admin: dict = Depends(acl.has_permission("admin", admin_resource)),
 ):
     """Get resolved ACL entries for any resource (admin only)."""
     return await model.get_acl_entries_resolved(resource)
@@ -612,7 +612,7 @@ async def get_resource_acl(
 async def replace_resource_acl(
     resource: str,
     entries: list[WorkspaceAclEntry],
-    admin: dict = Depends(acl.has_permission("admin", _admin_resource)),
+    admin: dict = Depends(acl.has_permission("admin", admin_resource)),
 ):
     """Replace ACL entries for any resource (admin only)."""
     # Validate: root ACL must keep Authenticated view access

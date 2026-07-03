@@ -50,7 +50,7 @@ class PodmanError(Exception):
         super().__init__(f"[{status}] {message}")
 
 
-def _classify(stderr: str) -> int:
+def classify(stderr: str) -> int:
     """Map podman stderr text to an HTTP-like status code."""
     low = stderr.lower()
     if "no such" in low or "not found" in low or "no container" in low:
@@ -60,7 +60,7 @@ def _classify(stderr: str) -> int:
     return 500
 
 
-async def _run(
+async def run(
     args: list[str],
     *,
     check: bool = True,
@@ -133,18 +133,18 @@ async def _run(
     if elapsed > 2.0 and err.strip():  # pragma: no cover
         logger.debug("podman-timing: %s stderr: %s", cmd_label, err.strip())
     if check and rc != 0:
-        raise PodmanError(_classify(err), err.strip() or f"podman {args[0]}")
+        raise PodmanError(classify(err), err.strip() or f"podman {args[0]}")
     return rc, out, err
 
 
-async def _run_raw(
+async def run_raw(
     args: list[str],
     *,
     check: bool = True,
     stdin_data: bytes | None = None,
     timeout: float | None = 30.0,
 ) -> tuple[int, bytes, str]:
-    """Like ``_run`` but returns raw stdout bytes (for binary data)."""
+    """Like ``run`` but returns raw stdout bytes (for binary data)."""
     cmd_label = f"podman {args[0]}" if args else "podman"
     t0 = time.monotonic()
     with (
@@ -200,7 +200,7 @@ async def _run_raw(
     if elapsed > 2.0 and err.strip():  # pragma: no cover
         logger.debug("podman-timing: %s stderr: %s", cmd_label, err.strip())
     if check and rc != 0:
-        raise PodmanError(_classify(err), err.strip() or f"podman {args[0]}")
+        raise PodmanError(classify(err), err.strip() or f"podman {args[0]}")
     return rc, out_bytes, err
 
 
@@ -209,7 +209,7 @@ async def _run_raw(
 
 async def inspect_container(container_id: str) -> dict | None:
     """Return the inspect dict for a container, or None if it is gone."""
-    rc, out, _err = await _run(
+    rc, out, _err = await run(
         ["container", "inspect", container_id], check=False
     )
     if rc != 0:
@@ -264,13 +264,13 @@ async def create_container(
     for entry in env or []:
         args += ["-e", entry]
     args.append(image)
-    _rc, out, _err = await _run(args, timeout=120.0)
+    _rc, out, _err = await run(args, timeout=120.0)
     return out.strip()
 
 
 async def start_container(container_id: str) -> None:
     """Start a created container."""
-    await _run(["start", container_id], timeout=120.0)
+    await run(["start", container_id], timeout=120.0)
 
 
 async def wait_for_container_ready(
@@ -356,9 +356,7 @@ async def exec_container(
         interactive=stdin_data is not None,
         extra_env=extra_env,
     )
-    return await _run(
-        args, check=False, stdin_data=stdin_data, timeout=timeout
-    )
+    return await run(args, check=False, stdin_data=stdin_data, timeout=timeout)
 
 
 async def exec_container_bytes(
@@ -371,7 +369,7 @@ async def exec_container_bytes(
 ) -> tuple[int, bytes, str]:
     """Like ``exec_container`` but returns raw stdout bytes (for binary data)."""
     args = _exec_args(container_id, cmd, user=user, extra_env=extra_env)
-    return await _run_raw(args, check=False, timeout=timeout)
+    return await run_raw(args, check=False, timeout=timeout)
 
 
 async def exec_container_stream(
@@ -431,14 +429,14 @@ async def remove_container(container_id: str, *, force: bool = True) -> None:
     if force:
         args.append("-f")
     args.append(container_id)
-    rc, _out, err = await _run(args, check=False)
-    if rc != 0 and _classify(err) != 404:
-        raise PodmanError(_classify(err), err.strip() or "podman rm")
+    rc, _out, err = await run(args, check=False)
+    if rc != 0 and classify(err) != 404:
+        raise PodmanError(classify(err), err.strip() or "podman rm")
 
 
 async def list_containers(label: str) -> list[dict]:
     """List containers matching ``label`` (``key=value``)."""
-    _rc, out, _err = await _run(
+    _rc, out, _err = await run(
         ["ps", "-a", "--filter", f"label={label}", "--format", "json"]
     )
     out = out.strip()
@@ -450,7 +448,7 @@ async def list_containers(label: str) -> list[dict]:
 
 async def inspect_volume(name: str) -> dict | None:
     """Return a volume's inspect dict, or None if it does not exist."""
-    rc, out, _err = await _run(["volume", "inspect", name], check=False)
+    rc, out, _err = await run(["volume", "inspect", name], check=False)
     if rc != 0:
         return None
     data = json.loads(out)
@@ -465,7 +463,7 @@ async def create_volume(
     for key, value in (labels or {}).items():
         args += ["--label", f"{key}={value}"]
     args.append(name)
-    await _run(args)
+    await run(args)
     info = await inspect_volume(name)
     if info is None:  # pragma: no cover
         raise PodmanError(500, f"volume {name!r} vanished after create")
@@ -474,7 +472,7 @@ async def create_volume(
 
 async def list_volumes(label: str) -> list[dict]:
     """List volumes matching ``label`` (``key=value``)."""
-    _rc, out, _err = await _run(
+    _rc, out, _err = await run(
         ["volume", "ls", "--filter", f"label={label}", "--format", "json"]
     )
     out = out.strip()
@@ -487,9 +485,9 @@ async def remove_volume(name: str) -> None:
     Raises :class:`PodmanError` with status 404 or 409 so callers can
     map them to HTTP responses.
     """
-    rc, _out, err = await _run(["volume", "rm", name], check=False)
+    rc, _out, err = await run(["volume", "rm", name], check=False)
     if rc != 0:
-        raise PodmanError(_classify(err), err.strip() or "podman volume rm")
+        raise PodmanError(classify(err), err.strip() or "podman volume rm")
 
 
 # --- Exec sessions ---

@@ -163,9 +163,9 @@ class TestPackagePublicSurface:
     @pytest.mark.parametrize(
         "attr",
         [
-            "_resend_timestamps",
-            "_reset_timestamps",
-            "_prune_timestamps",
+            "resend_timestamps",
+            "reset_timestamps",
+            "prune_timestamps",
             "RESEND_COOLDOWN_SECONDS",
             "RESET_COOLDOWN_SECONDS",
         ],
@@ -177,15 +177,15 @@ class TestPackagePublicSurface:
         assert getattr(api, attr) is not None
 
     def test_resend_timestamps_is_same_object_as_submodule(self):
-        """Mutating ``api._resend_timestamps`` must reach the handler, so
+        """Mutating ``api.resend_timestamps`` must reach the handler, so
         the re-export has to be the *same* dict the auth module uses."""
-        assert api._resend_timestamps is api_auth._resend_timestamps
+        assert api.resend_timestamps is api_auth.resend_timestamps
 
     def test_reset_timestamps_is_same_object_as_submodule(self):
-        assert api._reset_timestamps is api_auth._reset_timestamps
+        assert api.reset_timestamps is api_auth.reset_timestamps
 
     def test_prune_timestamps_is_same_object_as_submodule(self):
-        assert api._prune_timestamps is api_auth._prune_timestamps
+        assert api.prune_timestamps is api_auth.prune_timestamps
 
     def test_cooldown_constants_match_submodule(self):
         assert api.RESEND_COOLDOWN_SECONDS == api_auth.RESEND_COOLDOWN_SECONDS
@@ -268,10 +268,10 @@ class TestSubmoduleStructure:
 
         for name in (
             "FILE_UPLOAD_SIZE_MAX",
-            "_send_email",
-            "_workspace_resource",
-            "_admin_resource",
-            "_require_workspace_token",
+            "send_email",
+            "workspace_resource",
+            "admin_resource",
+            "require_workspace_token",
             "WorkspaceAclEntry",
         ):
             assert hasattr(_common, name), f"_common missing {name}"

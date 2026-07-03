@@ -17,10 +17,10 @@ from klangk_backend.terminal import (
     CONTAINER_USER,
     TerminalSession,
     set_workspace_token,
-    _build_environment,
-    _build_shell_command,
-    _make_shell_process,
-    _validate_window_name,
+    build_environment,
+    build_shell_command,
+    make_shell_process,
+    validate_window_name,
     attach_browser,
     close_window,
     kill_joiner_sessions,
@@ -35,7 +35,7 @@ from klangk_backend.terminal import (
     tmux_command,
 )
 
-SHELL_FACTORY = "klangk_backend.terminal._make_shell_process"
+SHELL_FACTORY = "klangk_backend.terminal.make_shell_process"
 
 
 class TestShellProcessFactory:
@@ -44,7 +44,7 @@ class TestShellProcessFactory:
     interactively."""
 
     def test_factory_returns_unstarted_shell(self):
-        shell = _make_shell_process()
+        shell = make_shell_process()
         assert shell._master_fd is None
         assert shell._proc is None
 
@@ -109,7 +109,7 @@ def _patch(fake):
     with (
         patch(SHELL_FACTORY, return_value=fake),
         patch(
-            "klangk_backend.terminal._ensure_base_session",
+            "klangk_backend.terminal.ensure_base_session",
             new_callable=AsyncMock,
         ),
     ):
@@ -166,7 +166,7 @@ class TestStart:
         argv = fake.argv
         assert argv[-2:] == ["bash", "-l"]
         assert "tmux" not in argv
-        assert s._tmux_session_name is None
+        assert s.tmux_session_name is None
         await s.stop()
 
     async def test_start_unsets_sensitive_env_vars(self, monkeypatch):
@@ -507,9 +507,9 @@ class TestStop:
                 "cid", session_name="uid", socket_path="/tmp/s.sock"
             )
             await s.start()
-        # Manually set tmux session name (normally set by _build_shell_command
+        # Manually set tmux session name (normally set by build_shell_command
         # when join_session is used with a socket path)
-        s._tmux_session_name = "uid-abc123"
+        s.tmux_session_name = "uid-abc123"
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
@@ -530,7 +530,7 @@ class TestStop:
                 "cid", session_name="uid", socket_path="/tmp/s.sock"
             )
             await s.start()
-        s._tmux_session_name = "uid-abc123"
+        s.tmux_session_name = "uid-abc123"
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
@@ -688,20 +688,20 @@ class TestListWindows:
 class TestValidateWindowName:
     def test_accepts_safe_names(self):
         for name in ["bash", "build-1", "my_window", "test.log", "A B C"]:
-            _validate_window_name(name)
+            validate_window_name(name)
 
     def test_rejects_empty(self):
         with pytest.raises(ValueError, match="1-64 characters"):
-            _validate_window_name("")
+            validate_window_name("")
 
     def test_rejects_too_long(self):
         with pytest.raises(ValueError, match="1-64 characters"):
-            _validate_window_name("a" * 65)
+            validate_window_name("a" * 65)
 
     def test_rejects_shell_metacharacters(self):
         for name in ["a'b", 'a"b', "a;b", "a|b", "a`b", "a$(cmd)", "a&b"]:
             with pytest.raises(ValueError, match="only contain"):
-                _validate_window_name(name)
+                validate_window_name(name)
 
 
 class TestNewWindow:
@@ -862,17 +862,17 @@ class TestRenameWindow:
 
 class TestBuildEnvironment:
     def test_ssh_agent_socket_included(self):
-        env = _build_environment(None, ssh_agent_socket="/tmp/agent.sock")
+        env = build_environment(None, ssh_agent_socket="/tmp/agent.sock")
         assert "SSH_AUTH_SOCK=/tmp/agent.sock" in env
 
     def test_ssh_agent_socket_omitted_when_none(self):
-        env = _build_environment(None)
+        env = build_environment(None)
         assert not any(e.startswith("SSH_AUTH_SOCK=") for e in env)
 
 
 class TestBuildShellCommandSshAgent:
     def test_ssh_agent_socket_adds_tmux_env(self):
-        cmd, _ = _build_shell_command(
+        cmd, _ = build_shell_command(
             session_name="uid",
             ssh_agent_socket="/tmp/agent.sock",
         )
@@ -884,7 +884,7 @@ class TestBuildShellCommandSshAgent:
 
 class TestBuildShellCommandSocketPath:
     def test_socket_path_sets_dash_s(self):
-        cmd, _ = _build_shell_command(
+        cmd, _ = build_shell_command(
             session_name="uid", socket_path="/tmp/test.sock"
         )
         assert "-S" in cmd
@@ -894,7 +894,7 @@ class TestBuildShellCommandSocketPath:
 class TestBuildShellCommandJoinSession:
     def test_join_session_no_socket(self):
         """Joining a session group on the default server (no -S)."""
-        cmd, unique = _build_shell_command(
+        cmd, unique = build_shell_command(
             session_name="joiner-uid",
             user_home="/home/bob",
             join_session="owner-uid",
@@ -908,7 +908,7 @@ class TestBuildShellCommandJoinSession:
         assert "-A" not in cmd
 
     def test_read_only_join(self):
-        cmd, unique = _build_shell_command(
+        cmd, unique = build_shell_command(
             session_name="joiner-uid",
             user_home="/home/ceo",
             join_session="owner-uid",
@@ -938,7 +938,7 @@ class TestTerminalTmuxEnabled:
 
 class TestBuildShellCommandTmuxDisabled:
     def test_plain_login_shell_when_disabled(self):
-        cmd, unique = _build_shell_command(
+        cmd, unique = build_shell_command(
             session_name="uid",
             user_home="/home/bob",
             tmux_enabled=False,
@@ -949,14 +949,14 @@ class TestBuildShellCommandTmuxDisabled:
 
     def test_plain_shell_still_unsets_sensitive_env(self, monkeypatch):
         monkeypatch.setenv("KLANGK_LLM_API_KEY", "secret")
-        cmd, _ = _build_shell_command(session_name="uid", tmux_enabled=False)
+        cmd, _ = build_shell_command(session_name="uid", tmux_enabled=False)
         unset = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-u"]
         assert "KLANGK_LLM_API_KEY" in unset
         assert "tmux" not in cmd
 
     def test_shared_socket_still_uses_tmux_when_disabled(self):
         """Sharing is built on tmux; the toggle must not break it."""
-        cmd, _ = _build_shell_command(
+        cmd, _ = build_shell_command(
             session_name="uid",
             socket_path="/tmp/test.sock",
             tmux_enabled=False,
@@ -965,7 +965,7 @@ class TestBuildShellCommandTmuxDisabled:
         assert "-S" in cmd
 
     def test_join_session_still_uses_tmux_when_disabled(self):
-        cmd, unique = _build_shell_command(
+        cmd, unique = build_shell_command(
             session_name="joiner-uid",
             join_session="owner-uid",
             tmux_enabled=False,
@@ -1154,28 +1154,28 @@ class TestTerminalSessionJoin:
 class TestEnsureBaseSession:
     async def test_session_already_exists(self):
         """Skip creation if tmux has-session succeeds."""
-        from klangk_backend.terminal import _ensure_base_session
+        from klangk_backend.terminal import ensure_base_session
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
             return_value=(0, "", ""),  # has-session succeeds
         ) as mock_exec:
-            created = await _ensure_base_session("cid", "my-session")
+            created = await ensure_base_session("cid", "my-session")
         assert created is False
         mock_exec.assert_awaited_once()
         assert "has-session" in mock_exec.call_args.args[1]
 
     async def test_session_does_not_exist(self):
         """Create detached session when has-session fails."""
-        from klangk_backend.terminal import _ensure_base_session
+        from klangk_backend.terminal import ensure_base_session
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
             side_effect=[(1, "", ""), (0, "", "")],  # has fail, new ok
         ) as mock_exec:
-            created = await _ensure_base_session(
+            created = await ensure_base_session(
                 "cid", "my-session", user_home="/home/u"
             )
         assert created is True
@@ -1187,39 +1187,39 @@ class TestEnsureBaseSession:
 
     async def test_has_session_exception(self):
         """Falls through to create if has-session raises."""
-        from klangk_backend.terminal import _ensure_base_session
+        from klangk_backend.terminal import ensure_base_session
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
             side_effect=[OSError("boom"), (0, "", "")],
         ) as mock_exec:
-            created = await _ensure_base_session("cid", "my-session")
+            created = await ensure_base_session("cid", "my-session")
         assert created is True
         assert mock_exec.await_count == 2
 
     async def test_create_failure_logs_warning(self):
         """Warning logged when new-session fails."""
-        from klangk_backend.terminal import _ensure_base_session
+        from klangk_backend.terminal import ensure_base_session
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
             side_effect=[(1, "", ""), OSError("create failed")],
         ):
-            created = await _ensure_base_session("cid", "my-session")
+            created = await ensure_base_session("cid", "my-session")
         assert created is False
 
     async def test_env_args_passed(self):
         """HOME and SSH_AUTH_SOCK are passed as tmux -e flags."""
-        from klangk_backend.terminal import _ensure_base_session
+        from klangk_backend.terminal import ensure_base_session
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
             side_effect=[(1, "", ""), (0, "", "")],
         ) as mock_exec:
-            await _ensure_base_session(
+            await ensure_base_session(
                 "cid",
                 "my-session",
                 user_home="/home/u",
@@ -1230,46 +1230,46 @@ class TestEnsureBaseSession:
         assert "SSH_AUTH_SOCK=/tmp/agent.sock" in new_cmd
 
     async def test_service_cmd_window_exists_exception_returns_false(self):
-        """_service_cmd_window_exists returns False if list-windows raises."""
-        from klangk_backend.terminal import _service_cmd_window_exists
+        """service_cmd_window_exists returns False if list-windows raises."""
+        from klangk_backend.terminal import service_cmd_window_exists
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
             side_effect=OSError("boom"),
         ):
-            result = await _service_cmd_window_exists("cid", "my-session")
+            result = await service_cmd_window_exists("cid", "my-session")
         assert result is False
 
     async def test_service_cmd_window_exists_rc_nonzero_returns_false(self):
-        """_service_cmd_window_exists returns False if list-windows fails."""
-        from klangk_backend.terminal import _service_cmd_window_exists
+        """service_cmd_window_exists returns False if list-windows fails."""
+        from klangk_backend.terminal import service_cmd_window_exists
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
             return_value=(1, "", ""),  # list-windows fails
         ):
-            result = await _service_cmd_window_exists("cid", "my-session")
+            result = await service_cmd_window_exists("cid", "my-session")
         assert result is False
 
     async def test_has_tmux_session_exception_returns_false(self):
-        """_has_tmux_session returns False if has-session raises."""
-        from klangk_backend.terminal import _has_tmux_session
+        """has_tmux_session returns False if has-session raises."""
+        from klangk_backend.terminal import has_tmux_session
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
             side_effect=OSError("boom"),
         ):
-            result = await _has_tmux_session("cid", "my-session")
+            result = await has_tmux_session("cid", "my-session")
         assert result is False
 
 
 class TestEnsureServiceSession:
     """Tests for ensure_service_session -- the standalone ``service`` tmux
     session that runs the workspace's service command, owned by the agent
-    identity (#1133 D6). _ensure_tmux_session and _service_cmd_window_exists
+    identity (#1133 D6). _ensure_tmux_session and service_cmd_window_exists
     are mocked to isolate the firing logic from tmux-session internals."""
 
     async def test_creates_window_and_sends_command(self):
@@ -1283,7 +1283,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
             patch(
@@ -1322,7 +1322,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ) as mock_ensure,
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=True),
             ),
         ):
@@ -1343,7 +1343,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=True),
             ),
             patch(
@@ -1368,7 +1368,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
             patch(
@@ -1396,7 +1396,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
             patch(
@@ -1418,7 +1418,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
             patch(
@@ -1448,7 +1448,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
             patch(
@@ -1475,7 +1475,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=True),
             ),
             patch(
@@ -1502,7 +1502,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
             patch(
@@ -1569,7 +1569,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 side_effect=fake_window_exists,
             ),
             patch(
@@ -1619,7 +1619,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 side_effect=fake_window_exists,
             ),
             patch(
@@ -1654,7 +1654,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
             patch(
@@ -1690,7 +1690,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
             patch(
@@ -1724,27 +1724,27 @@ class TestServiceSessionLock:
         terminal._service_session_locks.clear()
 
     def test_get_lock_returns_same_lock_for_same_container(self):
-        from klangk_backend.terminal import _get_service_session_lock
+        from klangk_backend.terminal import get_service_session_lock
 
-        lock_a = _get_service_session_lock("cid")
-        lock_b = _get_service_session_lock("cid")
+        lock_a = get_service_session_lock("cid")
+        lock_b = get_service_session_lock("cid")
         assert lock_a is lock_b
 
     def test_get_lock_returns_distinct_locks_per_container(self):
-        from klangk_backend.terminal import _get_service_session_lock
+        from klangk_backend.terminal import get_service_session_lock
 
-        lock_a = _get_service_session_lock("cid-a")
-        lock_b = _get_service_session_lock("cid-b")
+        lock_a = get_service_session_lock("cid-a")
+        lock_b = get_service_session_lock("cid-b")
         assert lock_a is not lock_b
 
     def test_clear_lock_removes_entry(self):
         from klangk_backend.terminal import (
-            _get_service_session_lock,
+            get_service_session_lock,
             _service_session_locks,
             clear_service_session_lock,
         )
 
-        _get_service_session_lock("cid")
+        get_service_session_lock("cid")
         assert "cid" in _service_session_locks
         clear_service_session_lock("cid")
         assert "cid" not in _service_session_locks
@@ -1761,27 +1761,27 @@ class TestServiceSessionHelpers:
     ensure_service_session."""
 
     async def test_service_cmd_window_exists_true_when_present(self):
-        from klangk_backend.terminal import _service_cmd_window_exists
+        from klangk_backend.terminal import service_cmd_window_exists
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
             return_value=(0, "bash\nservice-cmd\n", ""),
         ):
-            assert await _service_cmd_window_exists("cid", "service") is True
+            assert await service_cmd_window_exists("cid", "service") is True
 
     async def test_service_cmd_window_exists_false_when_absent(self):
-        from klangk_backend.terminal import _service_cmd_window_exists
+        from klangk_backend.terminal import service_cmd_window_exists
 
         with patch(
             "klangk_backend.terminal.podman.exec_container",
             new_callable=AsyncMock,
             return_value=(0, "bash\n", ""),
         ):
-            assert await _service_cmd_window_exists("cid", "service") is False
+            assert await service_cmd_window_exists("cid", "service") is False
 
     def test_should_fire_returns_false_without_service_command(self):
-        from klangk_backend.terminal import _should_fire_service_command
+        from klangk_backend.terminal import should_fire_service_command
 
-        assert _should_fire_service_command(None, "complete") is False
-        assert _should_fire_service_command("", "complete") is False
+        assert should_fire_service_command(None, "complete") is False
+        assert should_fire_service_command("", "complete") is False

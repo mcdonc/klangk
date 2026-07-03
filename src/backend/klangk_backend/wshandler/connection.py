@@ -11,24 +11,24 @@ from .. import agent, auth, container, model, terminal, workspaces
 from ..terminal import TerminalSession
 from ..podman import ExecSession
 from ..util import derive_hosting_info
-from ._constants import (
-    _agent_conversations,
-    _agent_tasks,
-    _cancel_agent_task,
+from .constants import (
+    agent_conversations,
+    agent_tasks,
+    cancel_agent_task,
 )
-from .safe_websocket import SafeWebSocket, _WS_ERRORS
+from .safe_websocket import SafeWebSocket, WS_ERRORS
 from .helpers import (
     send_error,
-    _send_event,
-    _format_idle_timeout,
-    _format_container_info,
-    _get_presence_list,
-    _get_shared_terminals,
+    send_event,
+    format_idle_timeout,
+    format_container_info,
+    get_presence_list,
+    get_shared_terminals,
 )
 from .agent_mention import (
-    _handle_agent_mention,
-    _mentions_agent,
-    _addresses_other_user,
+    handle_agent_mention,
+    mentions_agent,
+    addresses_other_user,
 )
 from .session import state, WorkspaceSession
 from .controllers import (
@@ -65,7 +65,7 @@ class Connection:
         self.workspace: dict | None = None
         self._idle_cb = None
         self.pending_status_msg: str | None = None
-        self._browser_id: str | None = None
+        self.browser_id: str | None = None
         self._user_home: str | None = None
         self._service_command: str | None = None
         self._home_created: bool = False
@@ -76,7 +76,7 @@ class Connection:
         # Shared-terminal state is owned by the
         # SharedTerminalController collaborator; Connection delegates
         # the share/unshare/join/list/create/delete commands to it.
-        # The ``_viewing_shared`` property below proxies to the
+        # The ``viewing_shared`` property below proxies to the
         # controller for backwards compatibility with code (and tests)
         # that read/write that field directly.
         self.shared = SharedTerminalController(self)
@@ -204,16 +204,16 @@ class Connection:
     async def handle_terminal_list_windows(self) -> None:
         await self.terminal.list_windows()
 
-    def _tmux_session_name(self) -> str:
+    def tmux_session_name(self) -> str:
         return self.terminal.tmux_session_name()
 
-    def _sync_terminal_windows(self, windows: list[dict]) -> None:
+    def sync_terminal_windows(self, windows: list[dict]) -> None:
         self.terminal.sync_terminal_windows(windows)
 
     def _notify_user_terminal_windows(self, windows: list[dict]) -> None:
         self.terminal.notify_user_terminal_windows(windows)
 
-    async def _activate_session(
+    async def activate_session(
         self, session: TerminalSession, cols: int, rows: int
     ) -> bool:
         return await self.terminal.activate_session(session, cols, rows)
@@ -338,8 +338,8 @@ class Connection:
 
         async def on_idle(wid: str) -> None:
             try:
-                _send_event(sock, "container_stopped", "idle timeout")
-            except _WS_ERRORS:
+                send_event(sock, "container_stopped", "idle timeout")
+            except WS_ERRORS:
                 pass
 
         self._idle_cb = on_idle
@@ -373,7 +373,7 @@ class Connection:
         self, workspace_id: str, rejoining: bool
     ) -> None:
         """Send presence list and broadcast join to other subscribers."""
-        presence = await _get_presence_list(workspace_id)
+        presence = await get_presence_list(workspace_id)
         self.sock.send_json({"type": "presence_list", "users": presence})
         session = state.get_session(workspace_id)
         if session and not rejoining:
@@ -438,7 +438,7 @@ class Connection:
         t_post = time.monotonic()
         ports = await container.registry.get_workspace_ports(workspace_id)
         status = getattr(self, "container_status", "created")
-        container_name, ports_str = _format_container_info(workspace_id, ports)
+        container_name, ports_str = format_container_info(workspace_id, ports)
         status_msg = {
             "connected": f"Connected to running container "
             f"{container_name}{ports_str}",
@@ -446,7 +446,7 @@ class Connection:
             f"{container_name}{ports_str}",
             "created": f"Created new container {container_name}{ports_str}",
         }.get(status, "Container ready")
-        status_msg += _format_idle_timeout(container.IDLE_TIMEOUT_SECONDS)
+        status_msg += format_idle_timeout(container.IDLE_TIMEOUT_SECONDS)
 
         self.sock.send_json(
             {
@@ -506,11 +506,11 @@ class Connection:
         user = self.user
         workspace = self.workspace
 
-        _send_event(self.sock, "container_restart", "Restarting container...")
+        send_event(self.sock, "container_restart", "Restarting container...")
 
         try:
             await self.cleanup()
-        except _WS_ERRORS as e:
+        except WS_ERRORS as e:
             logger.warning("Cleanup error during restart: %s", e)
 
         if workspace is None:
@@ -532,7 +532,7 @@ class Connection:
                 conn.container_id = new_cid
 
         ports = await container.registry.get_workspace_ports(workspace_id)
-        container_name, ports_str = _format_container_info(workspace_id, ports)
+        container_name, ports_str = format_container_info(workspace_id, ports)
         status_msg = f"Container restarted {container_name}{ports_str}"
 
         timeout_mins = container.IDLE_TIMEOUT_SECONDS / 60
@@ -541,7 +541,7 @@ class Connection:
         else:
             status_msg += f" — idle timeout: {timeout_mins:.1f}m"
 
-        _send_event(self.sock, "container_ready", status_msg)
+        send_event(self.sock, "container_ready", status_msg)
 
         logger.info(
             "Container restarted via restart_container command for workspace %s",
@@ -588,7 +588,7 @@ class Connection:
         except Exception as e:
             logger.warning("Error stopping container: %s", e)
 
-        await container.registry._notify_workspace_killed(workspace_id)
+        await container.registry.notify_workspace_killed(workspace_id)
 
         # Stop the Pi RPC subprocess now that its container is gone.
         await agent.stop_session(workspace_id)
@@ -623,11 +623,11 @@ class Connection:
     # --- Shared terminals (delegates to SharedTerminalController) ---
 
     @property
-    def _viewing_shared(self):
+    def viewing_shared(self):
         return self.shared.viewing_shared
 
-    @_viewing_shared.setter
-    def _viewing_shared(self, value):
+    @viewing_shared.setter
+    def viewing_shared(self, value):
         self.shared.viewing_shared = value
 
     def _find_window(
@@ -659,7 +659,7 @@ class Connection:
     async def handle_list_shared_terminals(self) -> None:
         await self.shared.list_shared_terminals()
 
-    def _broadcast_shared_terminals(self, ws_session) -> None:
+    def broadcast_shared_terminals(self, ws_session) -> None:
         self.shared.broadcast_shared_terminals(ws_session)
 
     def _save_state_snapshot(self, ws_session) -> None:
@@ -719,16 +719,16 @@ class Connection:
         # starting with @someone-else always break the conversation.
         should_route = False
         user_id = self.user["id"]
-        conv = _agent_conversations.get(workspace_id)
+        conv = agent_conversations.get(workspace_id)
 
-        if await _mentions_agent(text):
+        if await mentions_agent(text):
             should_route = True
-            _agent_conversations[workspace_id] = {
+            agent_conversations[workspace_id] = {
                 "user_id": user_id,
                 "time": time.monotonic(),
                 "interjected": False,
             }
-        elif conv and not await _addresses_other_user(text):
+        elif conv and not await addresses_other_user(text):
             if user_id == conv["user_id"]:
                 if not conv["interjected"]:
                     # No interjection — route indefinitely
@@ -740,22 +740,22 @@ class Connection:
                     conv["time"] = time.monotonic()
                 else:
                     # Window expired
-                    del _agent_conversations[workspace_id]
+                    del agent_conversations[workspace_id]
             else:
                 # Different human speaking — mark interjection
                 conv["interjected"] = True
         elif conv:
             # Addressed to someone else — break conversation
-            del _agent_conversations[workspace_id]
+            del agent_conversations[workspace_id]
 
         if should_route and self.container_id:
             # One agent-run slot per workspace: cancel any in-flight run
             # so concurrent @mentions don't orphan the earlier task.
             # Pass the asking user's identity so the agent can resolve
             # "my" (its process has no user identity of its own).
-            _cancel_agent_task(workspace_id)
-            _agent_tasks[workspace_id] = asyncio.create_task(
-                _handle_agent_mention(
+            cancel_agent_task(workspace_id)
+            agent_tasks[workspace_id] = asyncio.create_task(
+                handle_agent_mention(
                     workspace_id,
                     self.container_id,
                     text,
@@ -807,12 +807,12 @@ class Connection:
         """Start the Pi RPC agent so it shows in presence."""
         try:
             session = await agent.get_session(self.workspace_id)
-            await session._ensure_started()
+            await session.ensure_started()
             # Broadcast updated presence now that agent is alive
             if self.workspace_id:
                 ws_session = state.get_session(self.workspace_id)
                 if ws_session:
-                    presence = await _get_presence_list(self.workspace_id)
+                    presence = await get_presence_list(self.workspace_id)
                     ws_session.broadcast(
                         {"type": "presence_list", "users": presence}
                     )
@@ -823,7 +823,7 @@ class Connection:
         workspace_id = self.workspace_id
         if not workspace_id:
             return
-        _cancel_agent_task(workspace_id)
+        cancel_agent_task(workspace_id)
 
     async def handle_ui_ready(self) -> None:
         if self.workspace_id:
@@ -833,11 +833,11 @@ class Connection:
         status_msg = self.pending_status_msg
         self.pending_status_msg = None
         if status_msg:
-            _send_event(self.sock, "container_ready", status_msg)
+            send_event(self.sock, "container_ready", status_msg)
         # Send shared terminal list from in-memory state.
         ws_session = state.get_session(self.workspace_id)
         if ws_session:
-            terminals = _get_shared_terminals(ws_session)
+            terminals = get_shared_terminals(ws_session)
             self.sock.send_json(
                 {"type": "shared_terminals", "terminals": terminals}
             )
@@ -889,7 +889,7 @@ class Connection:
 
         # Revoke per-connection browser registrations
         container.registry.revoke_browser(self.sock)
-        self._browser_id = None
+        self.browser_id = None
 
         await self.stop_terminal()
         await self.stop_exec()

@@ -5,7 +5,7 @@ Storage only; the sliding-window *decision* lives in ``auth.py``.
 
 from datetime import datetime, timezone
 
-from ._core import _fetchone, transaction
+from .db import fetchone, transaction
 
 
 async def record_failed_login(email: str, *, reset: bool = False) -> None:
@@ -46,7 +46,7 @@ async def get_login_attempt_info(
     email: str,
 ) -> dict[str, int | str | None] | None:
     """Return login attempt info for an email, or None if no attempts tracked."""
-    row = await _fetchone(
+    row = await fetchone(
         "SELECT attempt_count, first_attempt_at, locked_until"
         " FROM login_attempts WHERE email = ?",
         (email,),

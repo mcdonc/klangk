@@ -45,8 +45,8 @@ from ..util import (
 from ._common import (
     FILE_UPLOAD_SIZE_MAX,
     WorkspaceAclEntry,
-    _admin_resource,
-    _workspace_resource,
+    admin_resource,
+    workspace_resource,
 )
 
 logger = logging.getLogger(__name__)
@@ -225,7 +225,7 @@ class UpdateWorkspaceRequest(BaseModel):
 async def update_workspace(
     workspace_id: str,
     body: UpdateWorkspaceRequest,
-    user: dict = Depends(acl.has_permission("edit", _workspace_resource)),
+    user: dict = Depends(acl.has_permission("edit", workspace_resource)),
 ):
     fields = body.model_dump(exclude_unset=True)
     if fields.get("auto_start") and not resolve_env_bool(
@@ -284,7 +284,7 @@ class DuplicateWorkspaceRequest(BaseModel):
 async def duplicate_workspace(
     workspace_id: str,
     body: DuplicateWorkspaceRequest,
-    user: dict = Depends(acl.has_permission("create", _workspace_resource)),
+    user: dict = Depends(acl.has_permission("create", workspace_resource)),
 ):
     source = await model.get_workspace(workspace_id)
     if source is None:  # pragma: no cover — race after ACL check
@@ -311,7 +311,7 @@ async def duplicate_workspace(
 @router.delete("/workspaces/{workspace_id}")
 async def delete_workspace(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("delete", _workspace_resource)),
+    user: dict = Depends(acl.has_permission("delete", workspace_resource)),
 ):
     workspace = await model.get_workspace(workspace_id)
     if workspace is None:
@@ -357,7 +357,7 @@ async def delete_workspace(
 @router.post("/workspaces/{workspace_id}/restart")
 async def restart_workspace(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("terminal", _workspace_resource)),
+    user: dict = Depends(acl.has_permission("terminal", workspace_resource)),
 ):
     """Restart a workspace container.
 
@@ -382,7 +382,7 @@ async def restart_workspace(
 @router.get("/workspaces/{workspace_id}/status")
 async def workspace_status(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("terminal", _workspace_resource)),
+    user: dict = Depends(acl.has_permission("terminal", workspace_resource)),
 ):
     """Return container status for a workspace.
 
@@ -443,7 +443,7 @@ async def workspace_status(
 @router.get("/workspaces/{workspace_id}/export")
 async def export_workspace(
     workspace_id: str,
-    admin: dict = Depends(acl.has_permission("admin", _admin_resource)),
+    admin: dict = Depends(acl.has_permission("admin", admin_resource)),
 ):
     """Export a workspace as a .tar.gz archive (admin only).
 
@@ -478,7 +478,7 @@ async def export_workspace(
             pass  # fall back to 0
 
     # Stream the tarball using GNU tar piped to stdout. Uses the shared
-    # _build_export_tar_args (workspaces.py), same as build_workspace_archive.
+    # build_export_tar_args (workspaces.py), same as build_workspace_archive.
     # Symlinks are stored as symlinks (not dereferenced).
     _CHUNK_SIZE = 256 * 1024  # 256 KB read chunks
 
@@ -490,7 +490,7 @@ async def export_workspace(
             with open(meta_file, "w") as f:
                 json.dump(metadata, f, indent=2)
 
-            tar_args = workspaces._build_export_tar_args("-", tmpdir, home_dir)
+            tar_args = workspaces.build_export_tar_args("-", tmpdir, home_dir)
 
             proc = await asyncio.create_subprocess_exec(
                 *tar_args,

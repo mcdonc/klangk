@@ -1,7 +1,7 @@
 """Shared core: async engine, connection wrappers, and transaction helpers.
 
 All DB access in the per-domain modules goes through :func:`transaction`
-and :func:`_fetchone` defined here.  The engine state (``_engine``,
+and :func:`fetchone` defined here.  The engine state (``engine``,
 ``DB_PATH``) also lives here so test fixtures that rebind it can target a
 single, obvious location.
 """
@@ -18,19 +18,19 @@ from ..util import resolve_env_value
 
 logger = logging.getLogger(__name__)
 
-_data_dir = Path(
+data_dir = Path(
     resolve_env_value("KLANGK_DATA_DIR", str(Path.home() / ".klangk" / "data"))
 )
-DB_PATH = _data_dir / "klangk.db"
+DB_PATH = data_dir / "klangk.db"
 
 # ---------------------------------------------------------------------------
 # SQLAlchemy async engine + compatibility wrappers
 # ---------------------------------------------------------------------------
 
-_engine = None
+engine = None
 
 
-class _Row:
+class Row:
     """Row wrapper supporting both row["col"] and row[int] access."""
 
     __slots__ = ("_row",)
@@ -47,7 +47,7 @@ class _Row:
         return self._row._mapping.keys()
 
 
-class _CursorResult:
+class CursorResult:
     """Wrap SQLAlchemy CursorResult to match the aiosqlite cursor API."""
 
     __slots__ = ("_result",)
@@ -57,10 +57,10 @@ class _CursorResult:
 
     async def fetchone(self):
         row = self._result.fetchone()
-        return None if row is None else _Row(row)
+        return None if row is None else Row(row)
 
     async def fetchall(self):
-        return [_Row(row) for row in self._result.fetchall()]
+        return [Row(row) for row in self._result.fetchall()]
 
     @property
     def rowcount(self):
@@ -71,7 +71,7 @@ class _CursorResult:
         return self._result.lastrowid
 
 
-class _Connection:
+class Connection:
     """Wrap SQLAlchemy AsyncConnection to match the aiosqlite API.
 
     Callers keep using ``db.execute(sql, params)``, ``db.commit()``,
@@ -90,7 +90,7 @@ class _Connection:
             result = await self._conn.exec_driver_sql(sql, params)
         else:
             result = await self._conn.exec_driver_sql(sql)
-        return _CursorResult(result)
+        return CursorResult(result)
 
     async def commit(self):
         await self._conn.commit()
@@ -102,7 +102,7 @@ class _Connection:
         await self._conn.close()
 
 
-def _make_engine(db_path: Path | str, **kwargs):
+def make_engine(db_path: Path | str, **kwargs):
     """Create a new async engine with PRAGMA listeners.
 
     Uses NullPool so every ``transaction()`` gets a fresh connection and
@@ -129,29 +129,29 @@ def _make_engine(db_path: Path | str, **kwargs):
     return engine
 
 
-def _ensure_engine():
-    global _engine
-    if _engine is None:
+def ensure_engine():
+    global engine
+    if engine is None:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _engine = _make_engine(DB_PATH)
-    return _engine
+        engine = make_engine(DB_PATH)
+    return engine
 
 
 async def dispose_engine() -> None:
     """Dispose the current engine (shutdown / test teardown)."""
-    global _engine
-    if _engine is not None:
-        await _engine.dispose()
-        _engine = None
+    global engine
+    if engine is not None:
+        await engine.dispose()
+        engine = None
 
 
-async def get_db() -> _Connection:
+async def get_db() -> Connection:
     """Acquire a raw database connection from the pool.
 
     Caller is responsible for commit/rollback/close.
     """
-    engine = _ensure_engine()
-    return _Connection(await engine.connect())
+    engine = ensure_engine()
+    return Connection(await engine.connect())
 
 
 @asynccontextmanager
@@ -168,7 +168,7 @@ async def transaction():
         await db.close()
 
 
-async def _fetchone(query: str, params: tuple = ()) -> _Row | None:
+async def fetchone(query: str, params: tuple = ()) -> Row | None:
     """Run a single-row SELECT and return the row, or ``None``."""
     async with transaction() as db:
         cursor = await db.execute(query, params)

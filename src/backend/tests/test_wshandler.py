@@ -25,7 +25,7 @@ from klangk_backend.util import (
     derive_hosting_info,
 )
 from klangk_backend.wshandler import (
-    _constants as _ws_constants,
+    constants as _ws_constants,
     controllers as _ws_controllers,
 )
 from klangk_backend.wshandler import (
@@ -43,9 +43,9 @@ from klangk_backend.wshandler import (
     send_error,
     handle_websocket,
     reset_workspace_state,
-    _log_ws_msg,
-    _SEND_QUEUE_SIZE,
-    _get_presence_list,
+    log_ws_msg,
+    SEND_QUEUE_SIZE,
+    get_presence_list,
 )
 
 
@@ -337,21 +337,21 @@ class TestDisconnectAll:
 class TestClearAgentMentionState:
     async def test_cancels_tasks_and_clears_conversations(self):
         task = asyncio.create_task(asyncio.sleep(100))
-        _ws_constants._agent_tasks["ws-m"] = task
-        _ws_constants._agent_conversations["ws-m"] = {"user_id": "u1"}
+        _ws_constants.agent_tasks["ws-m"] = task
+        _ws_constants.agent_conversations["ws-m"] = {"user_id": "u1"}
 
         clear_agent_mention_state()
 
-        assert _ws_constants._agent_tasks == {}
-        assert _ws_constants._agent_conversations == {}
+        assert _ws_constants.agent_tasks == {}
+        assert _ws_constants.agent_conversations == {}
         with pytest.raises(asyncio.CancelledError):
             await task
         assert task.cancelled()
 
     def test_empty_is_noop(self):
         clear_agent_mention_state()
-        assert _ws_constants._agent_tasks == {}
-        assert _ws_constants._agent_conversations == {}
+        assert _ws_constants.agent_tasks == {}
+        assert _ws_constants.agent_conversations == {}
 
 
 # --- send_error ---
@@ -376,7 +376,7 @@ class TestTrustedProxyCidrs:
         import klangk_backend.util as util
 
         monkeypatch.delenv("KLANGK_TRUSTED_PROXY_CIDRS", raising=False)
-        trusted = util._load_trusted_proxy_cidrs()
+        trusted = util.load_trusted_proxy_cidrs()
         assert ipaddress.ip_address("127.0.0.1") in trusted
         assert ipaddress.ip_address("::1") in trusted
 
@@ -388,7 +388,7 @@ class TestTrustedProxyCidrs:
         monkeypatch.setenv(
             "KLANGK_TRUSTED_PROXY_CIDRS", "10.0.0.0/8, 192.168.1.5"
         )
-        trusted = util._load_trusted_proxy_cidrs()
+        trusted = util.load_trusted_proxy_cidrs()
         assert ipaddress.ip_network("10.0.0.0/8") in trusted
         assert ipaddress.ip_address("192.168.1.5") in trusted
 
@@ -401,7 +401,7 @@ class TestTrustedProxyCidrs:
             "KLANGK_TRUSTED_PROXY_CIDRS", "not-an-ip, 127.0.0.1"
         )
         with caplog.at_level("WARNING", logger="klangk_backend.util"):
-            trusted = util._load_trusted_proxy_cidrs()
+            trusted = util.load_trusted_proxy_cidrs()
         assert ipaddress.ip_address("127.0.0.1") in trusted
         # The invalid entry is logged without echoing its value (env-var-
         # derived data is treated as potentially sensitive by CodeQL).
@@ -416,7 +416,7 @@ class TestTrustedProxyCidrs:
         import klangk_backend.util as util
 
         monkeypatch.setenv("KLANGK_TRUSTED_PROXY_CIDRS", "garbage")
-        trusted = util._load_trusted_proxy_cidrs()
+        trusted = util.load_trusted_proxy_cidrs()
         assert ipaddress.ip_address("127.0.0.1") in trusted
 
     def test_load_empty_value_falls_back_to_loopback(self, monkeypatch):
@@ -425,20 +425,20 @@ class TestTrustedProxyCidrs:
         import klangk_backend.util as util
 
         monkeypatch.setenv("KLANGK_TRUSTED_PROXY_CIDRS", "")
-        trusted = util._load_trusted_proxy_cidrs()
+        trusted = util.load_trusted_proxy_cidrs()
         assert ipaddress.ip_address("127.0.0.1") in trusted
 
     def test_peer_trusted_rejects_non_ip_string(self, monkeypatch):
         import klangk_backend.util as util
 
         monkeypatch.setattr(util, "_TRUSTED_PROXY_CIDRS", _trusted_default())
-        assert util._peer_trusted("not-an-ip") is False
+        assert util.peer_trusted("not-an-ip") is False
 
     def test_peer_trusted_rejects_none(self, monkeypatch):
         import klangk_backend.util as util
 
         monkeypatch.setattr(util, "_TRUSTED_PROXY_CIDRS", _trusted_default())
-        assert util._peer_trusted(None) is False
+        assert util.peer_trusted(None) is False
 
 
 class TestDeriveHostingInfo:
@@ -816,7 +816,7 @@ class TestHandleTerminalStart:
         )
 
         # browser_id should be registered and stored on the connection
-        assert conn._browser_id == "test-browser-id"
+        assert conn.browser_id == "test-browser-id"
         assert conn.terminal_session is mock_session
         assert conn.terminal_task is not None
         # Should have sent terminal_started ack (followed by terminal_windows)
@@ -825,7 +825,7 @@ class TestHandleTerminalStart:
             for m in sent
         )
 
-        # _sync_terminal_windows should have populated terminal_windows
+        # sync_terminal_windows should have populated terminal_windows
         ws_session = wshandler.state.sessions.get("ws")
         assert ws_session is not None
         assert "uid" in ws_session.terminal_windows
@@ -1250,7 +1250,7 @@ class TestHandleTerminalStart:
                 {"cols": 80, "rows": 24, "browser_id": "bid-1"}
             )
             await asyncio.sleep(0)
-            assert conn._browser_id == "bid-1"
+            assert conn.browser_id == "bid-1"
             assert container.registry.resolve_browser("bid-1") is not None
 
             conn.terminal_task.cancel()
@@ -1264,7 +1264,7 @@ class TestHandleTerminalStart:
                 {"cols": 80, "rows": 24, "browser_id": "bid-1"}
             )
             await asyncio.sleep(0)
-            assert conn._browser_id == "bid-1"
+            assert conn.browser_id == "bid-1"
             assert container.registry.resolve_browser("bid-1") is not None
 
             conn.terminal_task.cancel()
@@ -1283,12 +1283,12 @@ class TestHandleTerminalStart:
         conn.workspace_id = "ws"
 
         container.registry.register_browser("bid-old", "ws", sock)
-        conn._browser_id = "bid-old"
+        conn.browser_id = "bid-old"
 
         with patch.object(_ws_controllers, "attach_browser") as mock_attach:
             await conn.handle_browser_reattach({"browser_id": "bid-new"})
 
-        assert conn._browser_id == "bid-new"
+        assert conn.browser_id == "bid-new"
         assert container.registry.resolve_browser("bid-new") == ("ws", sock)
         assert container.registry.resolve_browser("bid-old") is None
         mock_attach.assert_awaited_once_with("cid", "bid-new")
@@ -1301,12 +1301,12 @@ class TestHandleTerminalStart:
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
         conn.workspace_id = "ws"
-        conn._browser_id = "bid-existing"
+        conn.browser_id = "bid-existing"
 
         with patch.object(_ws_controllers, "attach_browser") as mock_attach:
             await conn.handle_browser_reattach({})
 
-        assert conn._browser_id == "bid-existing"
+        assert conn.browser_id == "bid-existing"
         mock_attach.assert_not_awaited()
 
     async def test_browser_reattach_no_container_is_noop(self):
@@ -1319,7 +1319,7 @@ class TestHandleTerminalStart:
         with patch.object(_ws_controllers, "attach_browser") as mock_attach:
             await conn.handle_browser_reattach({"browser_id": "bid-new"})
 
-        assert conn._browser_id is None
+        assert conn.browser_id is None
         mock_attach.assert_not_awaited()
 
     async def test_passes_service_command(self):
@@ -1468,7 +1468,7 @@ class TestHandleTerminalStart:
 
         mock_session = AsyncMock()
         mock_session.start = AsyncMock(side_effect=ValueError("bad config"))
-        # send_json raises RuntimeError (a _WS_ERRORS member) when
+        # send_json raises RuntimeError (a WS_ERRORS member) when
         # trying to send the error message
         sock.send_json = MagicMock(side_effect=RuntimeError("ws gone"))
         MockTS = MagicMock(return_value=mock_session)
@@ -3132,7 +3132,7 @@ class TestSSHAgentHandlers:
         mock_session = AsyncMock()
         mock_session.start = AsyncMock()
         mock_session.session_name = "uid"
-        mock_session._tmux_session_name = "uid"
+        mock_session.tmux_session_name = "uid"
 
         async def empty_output():
             return
@@ -3939,7 +3939,7 @@ class TestCleanupRevokesBrowser:
 
         # Register a browser ID for this connection
         container.registry.register_browser("bid-revoke", "ws-revoke", sock)
-        conn._browser_id = "bid-revoke"
+        conn.browser_id = "bid-revoke"
 
         container.registry.track_activity("cid-revoke", "ws-revoke")
         session = WorkspaceSession("ws-revoke")
@@ -3949,7 +3949,7 @@ class TestCleanupRevokesBrowser:
         await conn.cleanup()
 
         assert container.registry.resolve_browser("bid-revoke") is None
-        assert conn._browser_id is None
+        assert conn.browser_id is None
 
         container.registry.revoke_workspace_browsers("ws-revoke")
         container.registry.states.pop("ws-revoke", None)
@@ -4088,17 +4088,17 @@ class TestResetWorkspaceState:
     async def test_reset_cleans_agent_state(self):
         """reset_workspace removes agent conversations and cancels agent tasks."""
         ws_id = "ws-agent-cleanup"
-        wshandler._agent_conversations[ws_id] = {"user_id": "u1"}
+        wshandler.agent_conversations[ws_id] = {"user_id": "u1"}
 
         async def noop():
             await asyncio.sleep(999)
 
         task = asyncio.create_task(noop())
-        wshandler._agent_tasks[ws_id] = task
+        wshandler.agent_tasks[ws_id] = task
         try:
             await reset_workspace_state(ws_id)
-            assert ws_id not in wshandler._agent_conversations
-            assert ws_id not in wshandler._agent_tasks
+            assert ws_id not in wshandler.agent_conversations
+            assert ws_id not in wshandler.agent_tasks
             # Let cancellation propagate
             try:
                 await task
@@ -4106,8 +4106,8 @@ class TestResetWorkspaceState:
                 pass
             assert task.cancelled()
         finally:
-            wshandler._agent_conversations.pop(ws_id, None)
-            wshandler._agent_tasks.pop(ws_id, None)
+            wshandler.agent_conversations.pop(ws_id, None)
+            wshandler.agent_tasks.pop(ws_id, None)
             if not task.done():
                 task.cancel()
 
@@ -4157,10 +4157,10 @@ class TestNotifyUserWorkspacesChanged:
         wshandler.state.notify_user_workspaces_changed("nobody")
 
     async def test_dead_socket_is_pruned(self):
-        from klangk_backend.wshandler import _WS_ERRORS
+        from klangk_backend.wshandler import WS_ERRORS
 
         sock = _mock_sock()
-        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
+        sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
             conn = self._register(sock, {"id": "uid-1", "email": "a@x"})
             with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
@@ -4219,10 +4219,10 @@ class TestNotifyContainerStatus:
         sock.send_json.assert_not_called()
 
     async def test_dead_socket_is_pruned(self):
-        from klangk_backend.wshandler import _WS_ERRORS
+        from klangk_backend.wshandler import WS_ERRORS
 
         sock = _mock_sock()
-        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
+        sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
             conn = self._register(sock, {"id": "uid-1", "email": "a@x"})
             with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
@@ -4287,10 +4287,10 @@ class TestNotifyServiceHealth:
         sock.send_json.assert_not_called()
 
     async def test_dead_socket_is_pruned(self):
-        from klangk_backend.wshandler import _WS_ERRORS
+        from klangk_backend.wshandler import WS_ERRORS
 
         sock = _mock_sock()
-        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
+        sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
             conn = self._register(sock, {"id": "uid-1", "email": "a@x"})
             with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
@@ -4378,11 +4378,11 @@ class TestServiceHealthSnapshot:
         other.send_json.assert_not_called()
 
     def test_dead_socket_breaks_cleanly(self):
-        from klangk_backend.wshandler import _WS_ERRORS
+        from klangk_backend.wshandler import WS_ERRORS
 
         saved = dict(container.registry.states)
         sock = _mock_sock()
-        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("dead"))
+        sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
             container.registry.states.clear()
             container.registry.states["ws-1"] = self._state(
@@ -4491,7 +4491,7 @@ class TestWsDebugLogging:
     async def test_recv_logged_when_debug(self, user, monkeypatch):
         from klangk_backend import auth as auth_mod
 
-        monkeypatch.setattr(wshandler, "_WS_DEBUG", True)
+        monkeypatch.setattr(wshandler, "WS_DEBUG", True)
         token = auth_mod.create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
@@ -4504,7 +4504,7 @@ class TestWsDebugLogging:
         websocket.accept.assert_awaited_once()
 
     def test_send_error_logged_when_debug(self, monkeypatch):
-        monkeypatch.setattr(wshandler, "_WS_DEBUG", True)
+        monkeypatch.setattr(wshandler, "WS_DEBUG", True)
         sock = _mock_sock()
         send_error(sock, "test error")
         sock.send_json.assert_called_once()
@@ -4532,35 +4532,35 @@ class TestWsDebugLogging:
 
 class TestLogWsMsg:
     def test_terminal_output_truncated(self):
-        with patch.object(_ws_constants, "_WS_DEBUG", True):
-            _log_ws_msg(
+        with patch.object(_ws_constants, "WS_DEBUG", True):
+            log_ws_msg(
                 "RECV",
                 {"type": "terminal_output", "data": "x" * 200},
                 {"email": "test@example.com"},
             )
 
     def test_terminal_input_truncated(self):
-        with patch.object(_ws_constants, "_WS_DEBUG", True):
-            _log_ws_msg(
+        with patch.object(_ws_constants, "WS_DEBUG", True):
+            log_ws_msg(
                 "SEND",
                 {"type": "terminal_input", "data": "y" * 50},
             )
 
     def test_other_message(self):
-        with patch.object(_ws_constants, "_WS_DEBUG", True):
-            _log_ws_msg("RECV", {"type": "heartbeat"})
+        with patch.object(_ws_constants, "WS_DEBUG", True):
+            log_ws_msg("RECV", {"type": "heartbeat"})
 
     def test_other_message_with_user(self):
-        with patch.object(_ws_constants, "_WS_DEBUG", True):
-            _log_ws_msg(
+        with patch.object(_ws_constants, "WS_DEBUG", True):
+            log_ws_msg(
                 "RECV",
                 {"cmd": "workspace_connect", "workspaceId": "ws-1"},
                 {"email": "test@example.com"},
             )
 
     def test_noop_when_debug_disabled(self):
-        with patch.object(_ws_constants, "_WS_DEBUG", False):
-            _log_ws_msg("RECV", {"type": "heartbeat"})
+        with patch.object(_ws_constants, "WS_DEBUG", False):
+            log_ws_msg("RECV", {"type": "heartbeat"})
 
 
 class TestBroadcastDeadSubscribers:
@@ -5459,13 +5459,13 @@ class TestTerminalController:
             workspace_id=workspace_id,
             _user_home=user_home,
             _ssh_agent_socket=None,
-            _browser_id=None,
-            _viewing_shared=None,
+            browser_id=None,
+            viewing_shared=None,
             _service_command=None,
             user=user,
             workspace=None,
             _has_perm=AsyncMock(return_value=has_perm),
-            _broadcast_shared_terminals=MagicMock(),
+            broadcast_shared_terminals=MagicMock(),
             _save_state_snapshot=MagicMock(),
         )
         return TerminalController(conn), sock, conn
@@ -5666,29 +5666,29 @@ class TestTerminalController:
         session.stop.assert_awaited_once()
 
     async def test_stop_cancels_task_and_clears_viewing(self):
-        """stop() clears the connection's _viewing_shared and resets debounce."""
+        """stop() clears the connection's viewing_shared and resets debounce."""
         ctrl, _, conn = self._controller()
         session = AsyncMock()
         ctrl.session = session
         ctrl.task = asyncio.create_task(asyncio.sleep(999))
-        conn._viewing_shared = {"user_id": "x", "window_id": "@0"}
+        conn.viewing_shared = {"user_id": "x", "window_id": "@0"}
         conn._last_terminal_start = 12345.0
         await ctrl.stop()
         assert ctrl.task is None
         assert ctrl.session is None
-        assert conn._viewing_shared is None
+        assert conn.viewing_shared is None
         assert conn._last_terminal_start == 0
 
     async def test_stop_broadcasts_when_was_viewing(self):
         ctrl, _, conn = self._controller()
         session = AsyncMock()
         ctrl.session = session
-        conn._viewing_shared = {"user_id": "x", "window_id": "@0"}
+        conn.viewing_shared = {"user_id": "x", "window_id": "@0"}
         with patch("klangk_backend.wshandler.state.get_session") as gs:
             ws_session = MagicMock()
             gs.return_value = ws_session
             await ctrl.stop()
-        conn._broadcast_shared_terminals.assert_called_once_with(ws_session)
+        conn.broadcast_shared_terminals.assert_called_once_with(ws_session)
 
     async def test_activate_session_superseded_returns_false(self):
         """If terminal_session changed, activate_session stops the stale one."""
@@ -5752,7 +5752,7 @@ class TestTerminalController:
         rec.assert_called_once_with("cid")
 
     async def test_forward_output_swallows_ws_error(self):
-        from klangk_backend.wshandler import _WS_ERRORS
+        from klangk_backend.wshandler import WS_ERRORS
 
         ctrl, sock, _ = self._controller()
         session = AsyncMock()
@@ -5762,8 +5762,8 @@ class TestTerminalController:
             yield "data"
 
         session.output = fake_output
-        sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("ws dead"))
-        with patch("klangk_backend.wshandler.controllers._send_event"):
+        sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("ws dead"))
+        with patch("klangk_backend.wshandler.controllers.send_event"):
             await ctrl.forward_output(session)
         session.stop.assert_awaited_once()
 
@@ -5835,7 +5835,7 @@ class TestTerminalController:
     async def test_select_window_uses_grouped_session_name(self):
         ctrl, _, _ = self._controller()
         session = MagicMock()
-        session._tmux_session_name = "grouped"
+        session.tmux_session_name = "grouped"
         ctrl.session = session
         with patch("klangk_backend.terminal.select_window") as sel:
             await ctrl.select_window({"window_id": "@2"})
@@ -5844,7 +5844,7 @@ class TestTerminalController:
     async def test_select_window_falls_back_to_tmux_session_name(self):
         ctrl, _, _ = self._controller()
         session = MagicMock()
-        session._tmux_session_name = None
+        session.tmux_session_name = None
         ctrl.session = session
         with patch("klangk_backend.terminal.select_window") as sel:
             await ctrl.select_window({"index": 1})
@@ -6026,7 +6026,7 @@ class TestTerminalController:
         agent) via the cached agent_handle, though the agent has no WS
         connection (#1133)."""
         from klangk_backend import model
-        from klangk_backend.wshandler.helpers import _get_shared_terminals
+        from klangk_backend.wshandler.helpers import get_shared_terminals
 
         ws_session = wshandler.state.get_or_create_session("ws-offline")
         try:
@@ -6035,7 +6035,7 @@ class TestTerminalController:
             ]
             ws_session.agent_handle = "clanker"
             # No active connection for the agent.
-            terminals = _get_shared_terminals(ws_session)
+            terminals = get_shared_terminals(ws_session)
             assert len(terminals) == 1
             assert terminals[0]["handle"] == "clanker"
             assert terminals[0]["window_name"] == "service-cmd"
@@ -6097,12 +6097,12 @@ class TestTerminalController:
     async def test_browser_reattach_no_browser_id(self):
         ctrl, _, _ = self._controller()
         await ctrl.browser_reattach({})
-        # No registration, no _browser_id set.
+        # No registration, no browser_id set.
 
     async def test_browser_reattach_no_container(self):
         ctrl, _, conn = self._controller(container_id=None)
         await ctrl.browser_reattach({"browser_id": "bid"})
-        assert conn._browser_id is None
+        assert conn.browser_id is None
 
     async def test_browser_reattach_registers_and_attaches(self):
         ctrl, _, conn = self._controller()
@@ -6118,7 +6118,7 @@ class TestTerminalController:
         rev.assert_called_once_with(conn.sock)
         reg.assert_called_once_with("bid", "ws-1", conn.sock)
         attach.assert_awaited_once_with("cid", "bid")
-        assert conn._browser_id == "bid"
+        assert conn.browser_id == "bid"
 
     # --- tmux_session_name ---
 
@@ -6140,7 +6140,7 @@ class TestTerminalController:
         conn = _base_conn()
         windows = [{"id": "@0", "name": "bash"}]
         with patch.object(conn.terminal, "sync_terminal_windows") as m:
-            conn._sync_terminal_windows(windows)
+            conn.sync_terminal_windows(windows)
         m.assert_called_once_with(windows)
 
     async def test_connection_tmux_session_name_delegate(self):
@@ -6148,7 +6148,7 @@ class TestTerminalController:
         with patch.object(
             conn.terminal, "tmux_session_name", return_value="uid"
         ) as m:
-            assert conn._tmux_session_name() == "uid"
+            assert conn.tmux_session_name() == "uid"
         m.assert_called_once_with()
 
     async def test_connection_activate_session_delegate(self):
@@ -6157,7 +6157,7 @@ class TestTerminalController:
         with patch.object(
             conn.terminal, "activate_session", new=AsyncMock(return_value=True)
         ) as m:
-            result = await conn._activate_session(session, 80, 24)
+            result = await conn.activate_session(session, 80, 24)
         assert result is True
         m.assert_awaited_once_with(session, 80, 24)
 
@@ -6323,7 +6323,7 @@ class TestShareWindowHandlers:
         viewer_sock = _mock_sock()
         viewer_conn = _base_conn(user=viewer_user, ws=viewer_sock)
         viewer_conn.workspace_id = "ws-v"
-        viewer_conn._viewing_shared = {
+        viewer_conn.viewing_shared = {
             "user_id": user["id"],
             "window_id": "@0",
         }
@@ -6358,9 +6358,9 @@ class TestShareWindowHandlers:
         async with _conn_in_workspace(
             user, "ws-sv", user_home="/home/admin"
         ) as (sock, conn, session):
-            conn._viewing_shared = {"user_id": "owner-1", "window_id": "@0"}
+            conn.viewing_shared = {"user_id": "owner-1", "window_id": "@0"}
             await conn.stop_terminal()
-            assert conn._viewing_shared is None
+            assert conn.viewing_shared is None
             calls = [c[0][0] for c in sock.send_json.call_args_list]
             shared = [c for c in calls if c.get("type") == "shared_terminals"]
             assert len(shared) == 1
@@ -6665,7 +6665,7 @@ class TestShareWindowHandlers:
         assert any("required" in c.get("message", "").lower() for c in calls)
 
     async def test_join_shared_terminal_superseded(self, user, temp_data_dir):
-        """If session is superseded during start, _activate_session returns False."""
+        """If session is superseded during start, activate_session returns False."""
         owner = await model.create_user(
             "owner-sup@test.com", "hash", verified=True
         )
@@ -6681,7 +6681,7 @@ class TestShareWindowHandlers:
         container.registry.track_activity("cid", "ws-1")
 
         async def fake_start(*a, **kw):
-            # Supersede the session before _activate_session runs
+            # Supersede the session before activate_session runs
             conn.terminal_session = None
 
         try:
@@ -6747,7 +6747,7 @@ class TestShareWindowHandlers:
                 ) as mock_select,
             ):
                 mock_sess = _mock_terminal()
-                mock_sess._tmux_session_name = "joiner-abc"
+                mock_sess.tmux_session_name = "joiner-abc"
 
                 async def fake_output():
                     return
@@ -6801,7 +6801,7 @@ class TestShareWindowHandlers:
             ):
                 mock_sess = _mock_terminal()
                 # No joiner session name
-                mock_sess._tmux_session_name = None
+                mock_sess.tmux_session_name = None
 
                 async def fake_output():
                     return
@@ -7197,9 +7197,9 @@ class TestSharedTerminalController:
                 self.user = user
                 self._has_perm = AsyncMock(return_value=has_perm)
                 self.stop_terminal = AsyncMock()
-                self._activate_session = AsyncMock(return_value=True)
-                self._tmux_session_name = MagicMock(return_value="uid")
-                self._sync_terminal_windows = MagicMock()
+                self.activate_session = AsyncMock(return_value=True)
+                self.tmux_session_name = MagicMock(return_value="uid")
+                self.sync_terminal_windows = MagicMock()
                 self._terminal_cols = 80
                 self._terminal_rows = 24
                 self.terminal = SimpleNamespace(
@@ -7448,10 +7448,10 @@ class TestSharedTerminalController:
                 return_value=[{"id": "@0", "index": 0, "name": "build"}],
             ):
                 await ctrl.create_shared_terminal({"name": "build"})
-            # _sync_terminal_windows is a delegate that Connection would
+            # sync_terminal_windows is a delegate that Connection would
             # route to TerminalController; on the fake conn it's a
             # MagicMock, so populate the windows manually as the real
-            # _sync_terminal_windows would.
+            # sync_terminal_windows would.
             ws.terminal_windows[user["id"]] = [
                 {"id": "@0", "index": 0, "name": "build", "shared": True}
             ]
@@ -7751,7 +7751,7 @@ class TestSharedTerminalController:
         ws = wshandler.state.get_or_create_session("ws-1")
         try:
             with patch.object(conn.shared, "broadcast_shared_terminals") as m:
-                conn._broadcast_shared_terminals(ws)
+                conn.broadcast_shared_terminals(ws)
             m.assert_called_once_with(ws)
         finally:
             wshandler.state.sessions.pop("ws-1", None)
@@ -7791,8 +7791,8 @@ class TestSharedTerminalController:
     async def test_viewing_shared_property_round_trip(self, user):
         conn = _base_conn(user=user)
         marker = {"user_id": "x", "window_id": "@0"}
-        conn._viewing_shared = marker
-        assert conn._viewing_shared is marker
+        conn.viewing_shared = marker
+        assert conn.viewing_shared is marker
         assert conn.shared.viewing_shared is marker
 
 
@@ -7984,7 +7984,7 @@ class TestSendQueueBehavior:
         websocket.send_json = AsyncMock(side_effect=blocking_send)
 
         # Client sends many messages that trigger send_json responses
-        msgs = [json.dumps({"cmd": "bogus"})] * (_SEND_QUEUE_SIZE + 5) + [
+        msgs = [json.dumps({"cmd": "bogus"})] * (SEND_QUEUE_SIZE + 5) + [
             WebSocketDisconnect()
         ]
         websocket.receive_text = AsyncMock(side_effect=msgs)
@@ -8054,19 +8054,19 @@ class TestSendQueueBehavior:
 
 class TestMentionsAgent:
     async def test_detects_mention(self, agent_user):
-        from klangk_backend.wshandler import _mentions_agent
+        from klangk_backend.wshandler import mentions_agent
 
-        assert await _mentions_agent("@clanker hello")
-        assert await _mentions_agent("hey @clanker what's up")
-        assert await _mentions_agent("@CLANKER help")
+        assert await mentions_agent("@clanker hello")
+        assert await mentions_agent("hey @clanker what's up")
+        assert await mentions_agent("@CLANKER help")
 
     async def test_no_false_positives(self, agent_user):
-        from klangk_backend.wshandler import _mentions_agent
+        from klangk_backend.wshandler import mentions_agent
 
-        assert not await _mentions_agent("hello everyone")
-        assert not await _mentions_agent("@someone else")
-        assert not await _mentions_agent("clanker without at sign")
-        assert not await _mentions_agent("@clankery partial match")
+        assert not await mentions_agent("hello everyone")
+        assert not await mentions_agent("@someone else")
+        assert not await mentions_agent("clanker without at sign")
+        assert not await mentions_agent("@clankery partial match")
 
     async def test_follows_agent_handle_rename(self, agent_user):
         """Detection must track a renamed agent handle, not a stale cache.
@@ -8076,10 +8076,10 @@ class TestMentionsAgent:
         the old handle forever.
         """
         import klangk_backend.model as us
-        from klangk_backend.wshandler import _mentions_agent
+        from klangk_backend.wshandler import mentions_agent
 
         # Sanity: original handle is detected before the rename.
-        assert await _mentions_agent("@clanker hello")
+        assert await mentions_agent("@clanker hello")
 
         # Rename the agent handle in the DB and drop the cached user.
         async with us.transaction() as db:
@@ -8090,35 +8090,33 @@ class TestMentionsAgent:
         us.clear_agent_cache()
 
         # New handle is now detected ...
-        assert await _mentions_agent("@RenamedBot hello")
+        assert await mentions_agent("@RenamedBot hello")
         # ... and the stale old handle no longer matches.
-        assert not await _mentions_agent("@clanker hello")
+        assert not await mentions_agent("@clanker hello")
 
 
 class TestAddressesOtherUser:
     async def test_starts_with_other_mention(self, agent_user):
-        from klangk_backend.wshandler import _addresses_other_user
+        from klangk_backend.wshandler import addresses_other_user
 
-        assert await _addresses_other_user("@bob hello")
-        assert await _addresses_other_user(
-            "@alice@test.com what do you think?"
-        )
+        assert await addresses_other_user("@bob hello")
+        assert await addresses_other_user("@alice@test.com what do you think?")
 
     async def test_starts_with_agent_mention(self, agent_user):
-        from klangk_backend.wshandler import _addresses_other_user
+        from klangk_backend.wshandler import addresses_other_user
 
-        assert not await _addresses_other_user("@clanker hello")
-        assert not await _addresses_other_user("@CLANKER help")
+        assert not await addresses_other_user("@clanker hello")
+        assert not await addresses_other_user("@CLANKER help")
 
     async def test_no_mention(self, agent_user):
-        from klangk_backend.wshandler import _addresses_other_user
+        from klangk_backend.wshandler import addresses_other_user
 
-        assert not await _addresses_other_user("hello everyone")
+        assert not await addresses_other_user("hello everyone")
 
     async def test_mention_in_middle(self, agent_user):
-        from klangk_backend.wshandler import _addresses_other_user
+        from klangk_backend.wshandler import addresses_other_user
 
-        assert not await _addresses_other_user("I think @bob is right")
+        assert not await addresses_other_user("I think @bob is right")
 
 
 class TestChatFollowUp:
@@ -8134,7 +8132,7 @@ class TestChatFollowUp:
         self, workspace, user, agent_user
     ):
         """Same user's follow-up routes without timer."""
-        from klangk_backend.wshandler import state, _agent_conversations
+        from klangk_backend.wshandler import state, agent_conversations
 
         mock_session = AsyncMock()
         mock_session.send_prompt = AsyncMock(return_value="reply")
@@ -8146,7 +8144,7 @@ class TestChatFollowUp:
         session = state.get_or_create_session(workspace["id"])
         await session.add_subscriber(sock, "cid")
         try:
-            _agent_conversations[workspace["id"]] = {
+            agent_conversations[workspace["id"]] = {
                 "user_id": user["id"],
                 "time": time.monotonic(),
                 "interjected": False,
@@ -8165,14 +8163,14 @@ class TestChatFollowUp:
             ]
             assert len(agent_msgs) == 1
         finally:
-            _agent_conversations.pop(workspace["id"], None)
+            agent_conversations.pop(workspace["id"], None)
             await session.remove_subscriber(sock)
 
     async def test_interjection_within_window(
         self, workspace, user, agent_user
     ):
         """After interjection, follow-up within 30s still routes."""
-        from klangk_backend.wshandler import state, _agent_conversations
+        from klangk_backend.wshandler import state, agent_conversations
 
         mock_session = AsyncMock()
         mock_session.send_prompt = AsyncMock(return_value="reply")
@@ -8184,7 +8182,7 @@ class TestChatFollowUp:
         session = state.get_or_create_session(workspace["id"])
         await session.add_subscriber(sock, "cid")
         try:
-            _agent_conversations[workspace["id"]] = {
+            agent_conversations[workspace["id"]] = {
                 "user_id": user["id"],
                 "time": time.monotonic(),
                 "interjected": True,
@@ -8203,12 +8201,12 @@ class TestChatFollowUp:
             ]
             assert len(agent_msgs) == 1
         finally:
-            _agent_conversations.pop(workspace["id"], None)
+            agent_conversations.pop(workspace["id"], None)
             await session.remove_subscriber(sock)
 
     async def test_interjection_expired(self, workspace, user, agent_user):
         """After interjection + 30s, follow-up does NOT route."""
-        from klangk_backend.wshandler import state, _agent_conversations
+        from klangk_backend.wshandler import state, agent_conversations
 
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
@@ -8217,7 +8215,7 @@ class TestChatFollowUp:
         session = state.get_or_create_session(workspace["id"])
         await session.add_subscriber(sock, "cid")
         try:
-            _agent_conversations[workspace["id"]] = {
+            agent_conversations[workspace["id"]] = {
                 "user_id": user["id"],
                 "time": time.monotonic() - 60,
                 "interjected": True,
@@ -8232,14 +8230,14 @@ class TestChatFollowUp:
             ]
             assert len(agent_msgs) == 0
         finally:
-            _agent_conversations.pop(workspace["id"], None)
+            agent_conversations.pop(workspace["id"], None)
             await session.remove_subscriber(sock)
 
     async def test_different_user_marks_interjection(
         self, workspace, user, agent_user
     ):
         """A different user's message marks interjection."""
-        from klangk_backend.wshandler import state, _agent_conversations
+        from klangk_backend.wshandler import state, agent_conversations
 
         sock = _mock_sock()
         other_user = {"id": "other-uid", "email": "other@test.com"}
@@ -8249,23 +8247,23 @@ class TestChatFollowUp:
         session = state.get_or_create_session(workspace["id"])
         await session.add_subscriber(sock, "cid")
         try:
-            _agent_conversations[workspace["id"]] = {
+            agent_conversations[workspace["id"]] = {
                 "user_id": user["id"],
                 "time": time.monotonic(),
                 "interjected": False,
             }
             await conn.handle_chat_send({"message": "hey everyone"})
             await asyncio.sleep(0.1)
-            assert _agent_conversations[workspace["id"]]["interjected"]
+            assert agent_conversations[workspace["id"]]["interjected"]
         finally:
-            _agent_conversations.pop(workspace["id"], None)
+            agent_conversations.pop(workspace["id"], None)
             await session.remove_subscriber(sock)
 
     async def test_addressed_to_other_breaks(
         self, workspace, user, agent_user
     ):
         """Message starting with @someone else breaks conversation."""
-        from klangk_backend.wshandler import state, _agent_conversations
+        from klangk_backend.wshandler import state, agent_conversations
 
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
@@ -8274,16 +8272,16 @@ class TestChatFollowUp:
         session = state.get_or_create_session(workspace["id"])
         await session.add_subscriber(sock, "cid")
         try:
-            _agent_conversations[workspace["id"]] = {
+            agent_conversations[workspace["id"]] = {
                 "user_id": user["id"],
                 "time": time.monotonic(),
                 "interjected": False,
             }
             await conn.handle_chat_send({"message": "@bob hey"})
             await asyncio.sleep(0.1)
-            assert workspace["id"] not in _agent_conversations
+            assert workspace["id"] not in agent_conversations
         finally:
-            _agent_conversations.pop(workspace["id"], None)
+            agent_conversations.pop(workspace["id"], None)
             await session.remove_subscriber(sock)
 
 
@@ -8609,31 +8607,31 @@ class TestChatSend:
 
         try:
             with patch(
-                "klangk_backend.wshandler.connection._handle_agent_mention",
+                "klangk_backend.wshandler.connection.handle_agent_mention",
                 new=slow_mention,
             ):
                 await conn1.handle_chat_send({"message": "@clanker first"})
-                task1 = wshandler._agent_tasks[workspace["id"]]
+                task1 = wshandler.agent_tasks[workspace["id"]]
                 # A second mention from a different user must supersede
                 # task1 rather than orphaning it.
                 await conn2.handle_chat_send({"message": "@clanker second"})
-                task2 = wshandler._agent_tasks[workspace["id"]]
+                task2 = wshandler.agent_tasks[workspace["id"]]
                 assert task2 is not task1
                 await asyncio.sleep(0)
                 assert task1.cancelled()
                 # abort reaches the now-current run.
                 await conn2.handle_chat_agent_abort()
-                assert workspace["id"] not in wshandler._agent_tasks
+                assert workspace["id"] not in wshandler.agent_tasks
                 await asyncio.sleep(0)
                 assert task2.cancelled()
         finally:
             await session.remove_subscriber(sock1)
             await session.remove_subscriber(sock2)
-            for t in list(wshandler._agent_tasks.values()):
+            for t in list(wshandler.agent_tasks.values()):
                 if not t.done():
                     t.cancel()
-            wshandler._agent_tasks.clear()
-            wshandler._agent_conversations.pop(workspace["id"], None)
+            wshandler.agent_tasks.clear()
+            wshandler.agent_conversations.pop(workspace["id"], None)
 
     async def test_chat_history_on_connect(self, user, agent_user):
         from klangk_backend import model
@@ -9645,7 +9643,7 @@ class TestStartAgentIfNeeded:
         await session.add_subscriber(sock, "cid")
 
         mock_agent_session = AsyncMock()
-        mock_agent_session._ensure_started = AsyncMock()
+        mock_agent_session.ensure_started = AsyncMock()
 
         try:
             with patch(
@@ -9653,7 +9651,7 @@ class TestStartAgentIfNeeded:
                 return_value=mock_agent_session,
             ):
                 await conn._start_agent_if_needed()
-            mock_agent_session._ensure_started.assert_awaited_once()
+            mock_agent_session.ensure_started.assert_awaited_once()
         finally:
             await session.remove_subscriber(sock)
             state.sessions.pop(workspace["id"], None)
@@ -9682,15 +9680,15 @@ class TestHandleChatAgentAbort:
             await asyncio.sleep(999)
 
         task = asyncio.create_task(slow())
-        wshandler._agent_tasks[workspace["id"]] = task
+        wshandler.agent_tasks[workspace["id"]] = task
         try:
             await conn.handle_chat_agent_abort()
             # Let cancellation propagate
             await asyncio.sleep(0)
-            assert workspace["id"] not in wshandler._agent_tasks
+            assert workspace["id"] not in wshandler.agent_tasks
             assert task.cancelled() or task.done()
         finally:
-            wshandler._agent_tasks.pop(workspace["id"], None)
+            wshandler.agent_tasks.pop(workspace["id"], None)
             if not task.done():
                 task.cancel()
                 try:
@@ -9709,18 +9707,18 @@ class TestHandleChatAgentAbort:
         conn = _base_conn(user=user, ws=sock)
         workspace = await ws_mod.create_workspace(user["id"], "abort-none")
         conn.workspace_id = workspace["id"]
-        wshandler._agent_tasks.pop(workspace["id"], None)
+        wshandler.agent_tasks.pop(workspace["id"], None)
         await conn.handle_chat_agent_abort()
 
     async def test_drop_if_current_removes_own_entry(self):
         """A finishing run drops the entry only when it is the current task."""
         ws_id = "ws-drop-self"
-        wshandler._agent_tasks[ws_id] = asyncio.current_task()
+        wshandler.agent_tasks[ws_id] = asyncio.current_task()
         try:
-            wshandler._drop_agent_task_if_current(ws_id)
-            assert ws_id not in wshandler._agent_tasks
+            wshandler.drop_agent_task_if_current(ws_id)
+            assert ws_id not in wshandler.agent_tasks
         finally:
-            wshandler._agent_tasks.pop(ws_id, None)
+            wshandler.agent_tasks.pop(ws_id, None)
 
     async def test_drop_if_current_keeps_other_entry(self):
         """A superseded (older) run must not pop a newer task's entry."""
@@ -9730,18 +9728,18 @@ class TestHandleChatAgentAbort:
             await asyncio.sleep(999)
 
         other_task = asyncio.create_task(other())
-        wshandler._agent_tasks[ws_id] = other_task
+        wshandler.agent_tasks[ws_id] = other_task
         try:
-            wshandler._drop_agent_task_if_current(ws_id)
+            wshandler.drop_agent_task_if_current(ws_id)
             # Entry belongs to a different task; left intact.
-            assert wshandler._agent_tasks[ws_id] is other_task
+            assert wshandler.agent_tasks[ws_id] is other_task
         finally:
             other_task.cancel()
             try:
                 await other_task
             except asyncio.CancelledError:
                 pass
-            wshandler._agent_tasks.pop(ws_id, None)
+            wshandler.agent_tasks.pop(ws_id, None)
 
 
 class TestPresenceIncludesAgent:
@@ -9756,7 +9754,7 @@ class TestPresenceIncludesAgent:
                 "klangk_backend.agent.is_running",
                 side_effect=lambda ws_id: ws_id == workspace["id"],
             ):
-                users = await _get_presence_list(workspace["id"])
+                users = await get_presence_list(workspace["id"])
             ids = [u["user_id"] for u in users]
             assert model.AGENT_USER_ID in ids
 
@@ -9775,7 +9773,7 @@ class TestPresenceIncludesAgent:
                 "klangk_backend.agent.is_running",
                 side_effect=lambda ws_id: ws_id == "other-workspace",
             ):
-                users = await _get_presence_list(workspace["id"])
+                users = await get_presence_list(workspace["id"])
             ids = [u["user_id"] for u in users]
             assert model.AGENT_USER_ID not in ids
 
@@ -9786,7 +9784,7 @@ class TestAgentMentionOtherMsgsContext:
     ):
         """When other users have spoken since the agent's last response,
         their messages are prepended to the prompt."""
-        from klangk_backend.wshandler import _handle_agent_mention
+        from klangk_backend.wshandler import handle_agent_mention
 
         workspace = await model.create_workspace(user["id"], "ctx-ws")
         ws_id = workspace["id"]
@@ -9832,7 +9830,7 @@ class TestAgentMentionOtherMsgsContext:
                 "klangk_backend.agent.get_session",
                 return_value=mock_session,
             ):
-                await _handle_agent_mention(ws_id, "cid", "@clanker what?")
+                await handle_agent_mention(ws_id, "cid", "@clanker what?")
 
             assert len(captured_prompt) == 1
             assert "user2@example.com" in captured_prompt[0]
@@ -9840,7 +9838,7 @@ class TestAgentMentionOtherMsgsContext:
         finally:
             await session.remove_subscriber(sock)
             state.sessions.pop(ws_id, None)
-            wshandler._agent_tasks.pop(ws_id, None)
+            wshandler.agent_tasks.pop(ws_id, None)
 
 
 class TestAgentMentionAskerIdentity:
@@ -9848,10 +9846,10 @@ class TestAgentMentionAskerIdentity:
 
     def test_header_includes_id_handle_home(self):
         from klangk_backend.wshandler.agent_mention import (
-            _asker_context_header,
+            asker_context_header,
         )
 
-        header = _asker_context_header("uid-123", "alice", "/home/alice")
+        header = asker_context_header("uid-123", "alice", "/home/alice")
 
         assert "id uid-123" in header
         assert "handle alice" in header
@@ -9862,14 +9860,14 @@ class TestAgentMentionAskerIdentity:
 
     def test_header_none_without_user_id(self):
         from klangk_backend.wshandler.agent_mention import (
-            _asker_context_header,
+            asker_context_header,
         )
 
-        assert _asker_context_header(None, "alice", "/home/alice") is None
+        assert asker_context_header(None, "alice", "/home/alice") is None
 
     async def test_identity_prepended_to_prompt(self, user, agent_user):
         """An @mention from a user injects that user's identity header."""
-        from klangk_backend.wshandler import _handle_agent_mention
+        from klangk_backend.wshandler import handle_agent_mention
 
         workspace = await model.create_workspace(user["id"], "id-ws")
         ws_id = workspace["id"]
@@ -9892,7 +9890,7 @@ class TestAgentMentionAskerIdentity:
                 "klangk_backend.agent.get_session",
                 return_value=mock_session,
             ):
-                await _handle_agent_mention(
+                await handle_agent_mention(
                     ws_id,
                     "cid",
                     "@clanker restart my service",
@@ -9911,7 +9909,7 @@ class TestAgentMentionAskerIdentity:
         finally:
             await session.remove_subscriber(sock)
             state.sessions.pop(ws_id, None)
-            wshandler._agent_tasks.pop(ws_id, None)
+            wshandler.agent_tasks.pop(ws_id, None)
 
 
 class TestTokenRenewalFailureLogged:

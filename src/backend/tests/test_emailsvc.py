@@ -23,21 +23,21 @@ def _reset_email_template_env():
 class TestResolvePassword:
     def test_plain_password(self, monkeypatch):
         monkeypatch.setenv("KLANGK_SMTP_PASSWORD", "secret123")
-        assert emailsvc._resolve_password() == "secret123"
+        assert emailsvc.resolve_password() == "secret123"
 
     def test_file_prefix_reads_file(self, monkeypatch, tmp_path):
         pw_file = tmp_path / "smtp_pass"
         pw_file.write_text("file-secret\n")
         monkeypatch.setenv("KLANGK_SMTP_PASSWORD", f"file:{pw_file}")
-        assert emailsvc._resolve_password() == "file-secret"
+        assert emailsvc.resolve_password() == "file-secret"
 
     def test_file_missing_returns_none(self, monkeypatch):
         monkeypatch.setenv("KLANGK_SMTP_PASSWORD", "file:/nonexistent/file")
-        assert emailsvc._resolve_password() is None
+        assert emailsvc.resolve_password() is None
 
     def test_no_password(self, monkeypatch):
         monkeypatch.delenv("KLANGK_SMTP_PASSWORD", raising=False)
-        assert emailsvc._resolve_password() is None
+        assert emailsvc.resolve_password() is None
 
 
 class TestUseSmtp:
@@ -452,7 +452,7 @@ class TestReplyTo:
         rendered = emailsvc.render_email(
             "verify", link="https://x", expiry_hours=72
         )
-        msg = emailsvc._build_multipart("to@e.com", rendered)
+        msg = emailsvc.build_multipart("to@e.com", rendered)
         assert msg["Reply-To"] == "support@example.com"
 
     def test_multipart_no_reply_to_when_unset(self, monkeypatch):
@@ -460,5 +460,5 @@ class TestReplyTo:
         rendered = emailsvc.render_email(
             "verify", link="https://x", expiry_hours=72
         )
-        msg = emailsvc._build_multipart("to@e.com", rendered)
+        msg = emailsvc.build_multipart("to@e.com", rendered)
         assert msg["Reply-To"] is None

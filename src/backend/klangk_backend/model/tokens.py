@@ -1,6 +1,6 @@
 """JWT token blocklist (revocation + refreshed-token handoff)."""
 
-from ._core import _fetchone, transaction
+from .db import fetchone, transaction
 
 
 async def blocklist_token(
@@ -15,7 +15,7 @@ async def blocklist_token(
 
 
 async def is_token_blocklisted(jti: str) -> bool:
-    row = await _fetchone(
+    row = await fetchone(
         "SELECT 1 FROM token_blocklist WHERE jti = ?",
         (jti,),
     )
@@ -28,7 +28,7 @@ async def get_refreshed_token(jti: str) -> str | None:
     The returned token is a full JWT whose own ``exp`` claim governs
     its validity — no additional expiry check is needed here.
     """
-    row = await _fetchone(
+    row = await fetchone(
         "SELECT new_token FROM token_blocklist"
         " WHERE jti = ? AND new_token IS NOT NULL",
         (jti,),

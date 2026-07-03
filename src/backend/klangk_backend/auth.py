@@ -25,7 +25,7 @@ LOGIN_LOCKOUT_DURATION = int(
 )
 
 
-def _is_locked_out(
+def is_locked_out(
     attempt_info: dict | None,
 ) -> tuple[bool, str | None]:
     """Check if an email is locked out.
@@ -49,7 +49,7 @@ def _is_locked_out(
     return False, None
 
 
-def _should_lockout(attempt_info: dict | None) -> bool:
+def should_lockout(attempt_info: dict | None) -> bool:
     """Return True if the attempt count exceeds the threshold."""
     if attempt_info is None:
         return False
@@ -58,7 +58,7 @@ def _should_lockout(attempt_info: dict | None) -> bool:
     )  # pragma: no cover
 
 
-def _window_elapsed(attempt_info: dict | None) -> bool:
+def window_elapsed(attempt_info: dict | None) -> bool:
     """Return True if the first failure in *attempt_info* predates the
     sliding lockout window.
 
@@ -256,7 +256,7 @@ async def login(req: LoginRequest) -> TokenResponse:
     # Check if locked out before doing any expensive work
     if LOGIN_LOCKOUT_FAILURES > 0:
         attempt_info = await model.get_login_attempt_info(req.email)
-        is_locked, msg = _is_locked_out(attempt_info)
+        is_locked, msg = is_locked_out(attempt_info)
         if is_locked:
             raise HTTPException(status_code=429, detail=msg)
 
@@ -273,11 +273,11 @@ async def login(req: LoginRequest) -> TokenResponse:
             # check to decide whether the sliding window has elapsed —
             # if so, reset the count instead of incrementing, so old
             # failures stop counting toward the threshold.
-            reset = _window_elapsed(attempt_info)
+            reset = window_elapsed(attempt_info)
             await model.record_failed_login(req.email, reset=reset)
             # Check if this attempt triggered a lockout
             updated_info = await model.get_login_attempt_info(req.email)
-            if _should_lockout(updated_info):
+            if should_lockout(updated_info):
                 locked_until = datetime.now(timezone.utc) + timedelta(
                     seconds=LOGIN_LOCKOUT_DURATION
                 )

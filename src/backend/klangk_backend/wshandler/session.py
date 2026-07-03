@@ -10,11 +10,11 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from .. import agent, auth, container, model, terminal
-from .safe_websocket import SafeWebSocket, _WS_ERRORS, _broadcast_to_set
-from ._constants import (
-    _agent_conversations,
-    _cancel_agent_task,
-    _log_ws_msg,
+from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
+from .constants import (
+    agent_conversations,
+    cancel_agent_task,
+    log_ws_msg,
 )
 
 if TYPE_CHECKING:
@@ -64,7 +64,7 @@ class WorkspaceSession:
         # "offline" the way the owner could be under the old model
         # (#1133). Populated by ``_sync_service_windows``.
         self.agent_handle: str | None = None
-        self._save_lock = asyncio.Lock()
+        self.save_lock = asyncio.Lock()
         # Workspace token renewal tracking.
         self.workspace_token_expiry: datetime | None = None
         self._token_renewal_task: asyncio.Task | None = None
@@ -106,7 +106,7 @@ class WorkspaceSession:
 
     def broadcast(self, message: dict) -> int:
         """Send message to all subscribers, removing dead ones."""
-        return _broadcast_to_set(self.subscribers, message)
+        return broadcast_to_set(self.subscribers, message)
 
     def start_token_renewal(self, expiry: datetime) -> None:
         """Schedule periodic workspace token renewal.
@@ -161,7 +161,7 @@ class WorkspaceSession:
 
     def broadcast_to_browsers(self, message: dict) -> int:
         """Send message to browser subscribers only, removing dead ones."""
-        return _broadcast_to_set(self.browser_subscribers, message)
+        return broadcast_to_set(self.browser_subscribers, message)
 
     async def dispatch_browser_request(
         self, request: dict, timeout: float = 30.0
@@ -181,7 +181,7 @@ class WorkspaceSession:
             return {"error": "No browser client connected to this workspace"}
 
         message = {**request, "type": "browser_request", "id": request_id}
-        _log_ws_msg("BCAST", message)
+        log_ws_msg("BCAST", message)
         delivered = self.broadcast_to_browsers(message)
         if delivered == 0:
             state.pending_browser_requests.pop(request_id, None)
@@ -212,10 +212,10 @@ class WorkspaceSession:
         state.pending_browser_requests[request_id] = (future, target_sock)
 
         message = {**request, "type": "browser_request", "id": request_id}
-        _log_ws_msg("BCAST", message)
+        log_ws_msg("BCAST", message)
         try:
             target_sock.send_json(message)
-        except _WS_ERRORS:
+        except WS_ERRORS:
             state.pending_browser_requests.pop(request_id, None)
             return {"error": "Browser connection not available"}
 
@@ -252,10 +252,10 @@ class WorkspaceSession:
             "id": request_id,
             "stream": True,
         }
-        _log_ws_msg("SEND", message)
+        log_ws_msg("SEND", message)
         try:
             target_sock.send_json(message)
-        except _WS_ERRORS:
+        except WS_ERRORS:
             state.streaming_browser_requests.pop(request_id, None)
             yield (
                 json.dumps(
@@ -495,8 +495,8 @@ class WebSocketState:
             logger.info("Reset workspace state for %s", workspace_id)
 
         # Clean up module-level agent state for this workspace.
-        _agent_conversations.pop(workspace_id, None)
-        _cancel_agent_task(workspace_id)
+        agent_conversations.pop(workspace_id, None)
+        cancel_agent_task(workspace_id)
         # Stop the Pi RPC subprocess so it doesn't outlive the container.
         await agent.stop_session(workspace_id)
 
@@ -542,7 +542,7 @@ class WebSocketState:
                 continue
             try:
                 sock.send_json(message)
-            except _WS_ERRORS:
+            except WS_ERRORS:
                 dead.append((sock, conn))
         for sock, conn in dead:
             self.connections.pop(sock, None)
@@ -571,7 +571,7 @@ class WebSocketState:
                 continue
             try:
                 sock.send_json(message_dict)
-            except _WS_ERRORS:
+            except WS_ERRORS:
                 dead.append((sock, conn))
         for sock, conn in dead:
             self.connections.pop(sock, None)
@@ -607,7 +607,7 @@ class WebSocketState:
                         cs.health_message,
                     )
                 )
-            except _WS_ERRORS:
+            except WS_ERRORS:
                 # The just-registered socket is already gone; nothing to
                 # snapshot to.  dispatch.py owns cleanup on disconnect.
                 break
@@ -627,7 +627,7 @@ class WebSocketState:
                 continue
             try:
                 sock.send_json(message)
-            except _WS_ERRORS:
+            except WS_ERRORS:
                 dead.append((sock, conn))
         for sock, conn in dead:
             self.connections.pop(sock, None)
@@ -702,4 +702,4 @@ state = WebSocketState()
 # Wire up the agent broadcast callback so agent.py can broadcast
 # to WebSocket sessions without importing wshandler (breaking the
 # agent ↔ wshandler circular dependency).
-agent._get_workspace_session = state.get_session
+agent.get_workspace_session = state.get_session

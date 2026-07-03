@@ -13,22 +13,22 @@ from .util import resolve_env_bool, resolve_env_value
 
 logger = logging.getLogger(__name__)
 
-_data_dir = Path(
+data_dir = Path(
     resolve_env_value("KLANGK_DATA_DIR", str(Path.home() / ".klangk" / "data"))
 )
-WORKSPACES_ROOT = _data_dir / "workspaces"
+WORKSPACES_ROOT = data_dir / "workspaces"
 
 # Characters allowed in sanitized filenames (alphanumeric, dash,
 # underscore, dot, @).  Everything else is replaced with underscore.
 _SAFE_FILENAME_RE = re.compile(r"[^a-zA-Z0-9._@-]")
 
 
-def _sanitize_filename(name: str) -> str:
+def sanitize_filename(name: str) -> str:
     """Replace unsafe characters in a filename component."""
     return _SAFE_FILENAME_RE.sub("_", name)
 
 
-def _safe_path(*segments: str) -> Path:
+def safe_path(*segments: str) -> Path:
     """Build a path under WORKSPACES_ROOT, raising ValueError on traversal."""
     path = WORKSPACES_ROOT.joinpath(*segments)
     if not path.resolve().is_relative_to(WORKSPACES_ROOT.resolve()):
@@ -36,7 +36,7 @@ def _safe_path(*segments: str) -> Path:
     return path
 
 
-def _rmtree(path: Path | str, label: str = "") -> None:
+def rmtree(path: Path | str, label: str = "") -> None:
     """Remove a directory tree, logging individual errors."""
 
     def _on_error(fn, fpath, exc):
@@ -53,7 +53,7 @@ def _rmtree(path: Path | str, label: str = "") -> None:
 
 async def _async_rmtree(path: Path | str, label: str = "") -> None:
     """Remove a directory tree in a thread, logging errors."""
-    await asyncio.to_thread(_rmtree, path, label)
+    await asyncio.to_thread(rmtree, path, label)
 
 
 def workspace_metadata(ws: dict) -> dict:
@@ -70,7 +70,7 @@ def workspace_metadata(ws: dict) -> dict:
     }
 
 
-def _build_export_tar_args(
+def build_export_tar_args(
     output: str,
     tmpdir: str,
     home_dir: Path | None,
@@ -131,7 +131,7 @@ async def build_workspace_archive(
         meta_file = Path(tmpdir) / "workspace.json"
         meta_file.write_text(json.dumps(metadata, indent=2))
 
-        tar_args = _build_export_tar_args(str(archive_path), tmpdir, home_dir)
+        tar_args = build_export_tar_args(str(archive_path), tmpdir, home_dir)
 
         proc = await asyncio.create_subprocess_exec(
             *tar_args,
@@ -165,10 +165,10 @@ async def archive_user_data(user_id: str, email: str) -> list[Path]:
     Returns the list of created archive paths (may be empty).
     After successful archival the user's data directory is removed.
     """
-    user_dir = _safe_path(user_id)  # lgtm[py/path-injection]
+    user_dir = safe_path(user_id)  # lgtm[py/path-injection]
     if not user_dir.exists():
         return []
-    safe_email = _sanitize_filename(email)
+    safe_email = sanitize_filename(email)
 
     # Page through every workspace (list_workspaces paginates).
     archives: list[Path] = []
@@ -179,10 +179,10 @@ async def archive_user_data(user_id: str, email: str) -> list[Path]:
         if not user_workspaces:
             break
         for ws in user_workspaces:
-            ws_name = _sanitize_filename(ws["name"])
+            ws_name = sanitize_filename(ws["name"])
             archive_name = f"{user_id}-{safe_email}-{ws_name}.tar.gz"
             try:
-                archive_path = _safe_path(
+                archive_path = safe_path(
                     archive_name
                 )  # lgtm[py/path-injection]
             except ValueError:
@@ -214,11 +214,11 @@ def workspace_path(user_id: str, workspace_id: str) -> Path:
 
 
 def home_path(user_id: str, workspace_id: str) -> Path:
-    return _safe_path(user_id, "home", workspace_id)
+    return safe_path(user_id, "home", workspace_id)
 
 
 def config_path(user_id: str, workspace_id: str) -> Path:
-    return _safe_path(user_id, "config", workspace_id)
+    return safe_path(user_id, "config", workspace_id)
 
 
 def get_config_host_path(user_id: str, workspace_id: str) -> Path:

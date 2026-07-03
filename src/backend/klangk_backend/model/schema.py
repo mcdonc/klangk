@@ -1,8 +1,8 @@
 """Database schema creation and in-place migrations (``init_db``)."""
 
-from ._core import get_db
+from .db import get_db
 from .acl import PRINCIPAL_USER
-from .users import AGENT_USER_ID, _backfill_handles
+from .users import AGENT_USER_ID, backfill_handles
 
 
 async def init_db() -> None:
@@ -71,7 +71,7 @@ async def init_db() -> None:
             await db.execute("DROP TABLE users")
             await db.execute("ALTER TABLE users_new RENAME TO users")
         # Backfill handles for existing users that don't have one.
-        await _backfill_handles(db)
+        await backfill_handles(db)
         # --- Data-model belt-and-suspenders for the system agent (#1135) ---
         # The function-layer AgentPrincipalError guards are the *friendly*
         # choke point (typed error, HTTP 400). These schema constraints are

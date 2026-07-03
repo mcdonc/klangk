@@ -503,7 +503,7 @@ class TestEagerStartWorkspace:
                     return_value=("cid-recon", "connected"),
                 ),
                 patch(
-                    "klangk_backend.terminal._ensure_base_session",
+                    "klangk_backend.terminal.ensure_base_session",
                     new_callable=AsyncMock,
                 ) as mock_session,
             ):
