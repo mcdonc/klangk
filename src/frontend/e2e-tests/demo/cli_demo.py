@@ -460,13 +460,13 @@ def scene_2(t: Term) -> None:
 
 
 def scene_3(t: Term) -> None:
-    """klangkc sandbox: dev env to always-on service in one command (~3 min).
+    """klangkc sandbox: one config, one command (~1.5 min).
 
-    The showcase scene — **CLI only** (no browser). Uses the ``openclaw``
-    sandbox to demonstrate the sandbox concept AND the service features
-    (service-command, auto-start, health) in one continuous flow. The
-    hosted-app payoff is deferred to the browser (Scene 4); here it is a
-    narration-only tease.
+    The sandbox-concept scene — **CLI only** (no browser). Shows that a
+    checked-in config file plus one command reproduces a full dev
+    environment: read the config, create the workspace, connect and see
+    the project mounted inside. Services, auto-start, and health checks
+    are Scene 3b; this scene stops at "connect."
 
     Requires a live server with ``KLANGK_ALLOW_AUTOSTART=1``, openclaw
     **pre-warmed** off-camera (so the on-camera setup.sh is fast — its
@@ -481,8 +481,9 @@ def scene_3(t: Term) -> None:
     t.pause(5)
 
     # step 1 — show the sandbox config. Narrate: mounts the project at a
-    # fixed path and runs a setup script; then point at the three
-    # ``workspace:`` service lines (service-command, auto-start, health-check).
+    # fixed path and runs a setup script. (The three ``workspace:`` service
+    # lines — service-command, auto-start, health-check — are pointed at
+    # briefly here but unpacked in Scene 3b.)
     t.type("cat sandboxes/openclaw/.klangk-sandbox.yaml", per_char=0.03)
     t.enter()
     # Wait for the health-check line near the end of the file.
@@ -491,7 +492,7 @@ def scene_3(t: Term) -> None:
 
     # step 2 — create the workspace from the sandbox config. Mounts
     # everything, runs setup (fast: pre-warmed + /openclaw is a mount),
-    # starts the container. The gateway auto-starts in its service session.
+    # starts the container.
     t.type("klangkc sandbox openclaw sandboxes/openclaw", per_char=0.03)
     t.enter()
     t.expect("Setup complete", timeout=180)
@@ -512,16 +513,45 @@ def scene_3(t: Term) -> None:
 
     _disconnect_ssh(t, hold=HOLD)
 
-    # steps 4 & 5 — narration holds:
-    #   sandbox idea: commit the config → any teammate runs the same
-    #     command and gets the exact same env (a Dockerfile for your dev
-    #     environment, lifecycle managed for you).
-    #   service-command: a per-workspace singleton — runs once in its own
-    #     session, shared with everyone who has access.
-    t.pause(HOLD)
+    # step 4 — narration hold: the sandbox idea — commit the config → any
+    # teammate runs the same command and gets the exact same env (a
+    # Dockerfile for your dev environment, lifecycle managed for you).
     t.pause(HOLD)
 
-    # step 6 — klangkc ls: the Status column shows openclaw as healthy
+
+def scene_3b(t: Term) -> None:
+    """Long Lived Services (~2.5 min).
+
+    The services scene — service-command, health checks, the **unhealthy
+    transition**, auto-start recovery, and the hosted-app tease —
+    continuing in the same terminal with the openclaw workspace from
+    Scene 3 now running. **CLI only** (no browser).
+
+    Two-pane beat: split the terminal, join the service command
+    (``clanker:service-cmd``) in the right pane to see the gateway's logs,
+    then watch live ``service_health`` events in the left pane. Ctrl+C the
+    gateway to trigger an ``unhealthy`` event, then recover via SIGHUP
+    (auto-start boots a fresh gateway). Narrate over the whole arc.
+
+    Carries the same preconditions as Scene 3 (live server, autostart on,
+    openclaw up and healthy). Expects ``KLANGK_HEALTH_CHECK_INTERVAL=10``
+    set (snappier unhealthy flip; product default 30s) — the expect
+    timeout covers the 30s case too. The recorder runs 3 and 3b
+    back-to-back in one terminal.
+    """
+    HOLD = float(os.environ.get("KLANGK_DEMO_HOLD", "5"))
+
+    # --- opening hold: same terminal continuing, prompt at rest ---
+    t.expect("host $")
+    t.pause(5)
+
+    # step 1 — narration hold: the service-command concept — a
+    # per-workspace singleton that runs once in its own session and is
+    # shared with everyone who has access. (Scroll back to the three
+    # ``workspace:`` lines while you say this.)
+    t.pause(HOLD)
+
+    # step 2 — klangkc ls: the Status column shows openclaw as healthy
     # (green). Narrate: the service command is running and its health
     # check is passing — everything the CLI knows, right here.
     t.type("klangkc ls", per_char=0.03)
@@ -529,13 +559,60 @@ def scene_3(t: Term) -> None:
     t.pause(3)  # let the table land
     t.pause(HOLD)
 
-    # step 7 — auto-start via SIGHUP runtime restart (#1212/#1213).
+    # step 3 — attach to the service command itself. Split side-by-side;
+    # the RIGHT pane joins the service-cmd window (the gateway), whose
+    # logs stream live. Narrate: "here's the gateway running live."
+    left = t.pane_id()
+    right = t.split()
+    t.pause(HOLD)
+    t.type("klangkc shell openclaw clanker:service-cmd", per_char=0.03)
+    t.enter()
+    t.expect("Escape: Enter", timeout=20)  # the "~." hint = joined
+    t.pause(HOLD)  # let the gateway logs stream
+
+    # step 4 — health checks: in the LEFT pane, watch live service_health
+    # events. Snapshot-on-connect (#1210) sends a healthy frame immediately.
+    # Narrate: exit 0 = healthy; you can wire a command (-- sh -c '...')
+    # to fire on change (e.g. a Slack alert). jq pretty-prints the JSON.
+    t.select_pane(left)
+    t.type("klangkc monitor --type service_health | jq .", per_char=0.03)
+    t.enter()
+    t.expect("service_health", timeout=30)
+    t.pause(HOLD)
+
+    # step 5 — break the service: in the RIGHT pane, Ctrl+C kills the
+    # gateway. Narrate: "what happens when the service breaks?"
+    t.select_pane(right)
+    t.interrupt()  # Ctrl+C -> gateway dies; its logs stop
+    t.pause(2)
+    t.pause(HOLD)
+
+    # step 6 — watch it go unhealthy: back in the LEFT pane, the monitor
+    # emits an unhealthy event on the next health check (<= interval).
+    # The healthy frame already shown carried "healthy": true, so matching
+    # the literal false value waits past it for the transition. Narrate:
+    # "there it went unhealthy — and I can see exactly why."
+    t.select_pane(left)
+    t.expect('"healthy": false', timeout=45)
+    t.pause(HOLD)
+
+    # Narrate the distinction: "the container is up" != "the service works".
+    # Stop the monitor (Ctrl+C the LEFT pane), then close the gateway pane.
+    # The monitor WS must be gone BEFORE the SIGHUP restart beat, or the
+    # restart's close-1012 would yank it uncleanly (#1212/#1213).
+    t.interrupt()  # Ctrl+C the monitor
+    t.expect("host $", timeout=10)
+    t.kill_pane(right)  # close the gateway view (connection + its shell)
+    t.select_pane(left)  # focus survives, but be explicit
+    t.pause(HOLD)
+
+    # step 7 — auto-start recovery via SIGHUP runtime restart (#1212/#1213).
     # The backend is bare uvicorn (``devenv processes restart backend`` is a
     # no-op); SIGHUP recycles the container layer while keeping the HTTP
     # listener up. openclaw has auto-start: true, so after the recycle it
-    # boots on its own — no one connects. We poll klangkc ls until the
-    # Status column is healthy again; each read is a clean ``clear`` + ls
-    # so scrollback never false-matches. (This window is trimmed in edit.)
+    # boots on its own — no one connects. Poll klangkc ls until the Status
+    # column is healthy again; each read is a clean ``clear`` + ls so
+    # scrollback never false-matches. (This window is trimmed in edit.)
     t.run("clear")
     pid_glob = "$XDG_RUNTIME_DIR/klangk-*.pid"
     t.type(f"kill -HUP $(cat {pid_glob})", per_char=0.03)
@@ -553,19 +630,7 @@ def scene_3(t: Term) -> None:
         t.pause(6)
     t.pause(HOLD)
 
-    # step 8 — health check: live service_health events. The
-    # snapshot-on-connect fix (#1210) sends a frame immediately, so we
-    # don't wait on a transition. Narrate: exit 0 = healthy, anything
-    # else = unhealthy and you see _why_; Ctrl+C to stop. jq pretty-prints.
-    t.type("klangkc monitor --type service_health | jq .", per_char=0.03)
-    t.enter()
-    t.expect("service_health", timeout=30)
-    t.pause(HOLD)
-    t.interrupt()  # Ctrl+C
-    t.expect("host $", timeout=10)
-    t.pause(HOLD)
-
-    # step 9 — hosted-app tease (NARRATION ONLY, no browser).
+    # step 8 — hosted-app tease (NARRATION ONLY, no browser).
     # The gateway is also exposed as a hosted app; once we switch to the
     # browser (Scene 4) we click straight through to openclaw's own web
     # UI, proxied through Klangk's single port. Do NOT open the browser.
@@ -586,6 +651,7 @@ SCENES: dict[str, Callable[[Term], None]] = {
     "demo": scene_demo,
     "scene_2": scene_2,
     "scene_3": scene_3,
+    "scene_3b": scene_3b,
     "scene_4": scene_4,
 }
 
