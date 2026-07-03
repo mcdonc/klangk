@@ -1436,6 +1436,127 @@ class TestEnsureServiceSession:
             await ensure_service_session("cid", "/home/clanker", "cmd")
         mock_logger.warning.assert_called()
 
+    async def test_concurrent_fires_create_window_exactly_once(self):
+        """#1188: two concurrent ensure_service_session calls for the SAME
+        container must not both create the service-cmd window.
+
+        The boot path (workspaces.eager_start_workspace) and the per-connection
+        path (wshandler _fire_service_command) are both unserialized callers.
+        Without the per-container lock, both can pass the window-exists check
+        before either's new-window lands, and since tmux allows duplicate
+        window names, both create a service-cmd window -- leaving later
+        send-keys ambiguous. The lock makes window-exists -> new-window ->
+        send-keys atomic per container.
+        """
+        from klangk_backend import terminal
+
+        # Shared tmux "state": both the existence check and new-window
+        # read/write this, so once the lock forces the second caller to
+        # wait, it genuinely observes the first caller's mutation.
+        windows: set[str] = set()
+        new_window_calls = 0
+        # Capture the real sleep BEFORE patching terminal.asyncio.sleep (which
+        # neutralizes the source's 1s settle delay). fake_exec uses this real
+        # sleep(0) as an explicit yield point so the race window is
+        # deterministic: without the lock the second caller interleaves its
+        # existence check during this yield; with the lock it cannot.
+        _real_sleep = asyncio.sleep
+
+        async def fake_window_exists(cid, session):
+            return terminal.SERVICE_CMD_WINDOW in windows
+
+        async def fake_exec(cid, argv, **kwargs):
+            nonlocal new_window_calls
+            if "new-window" in argv:
+                new_window_calls += 1
+                # Yield to the loop at the write step (before mutating
+                # `windows`). Without the lock this lets the second caller
+                # observe the empty pre-creation state and also create ->
+                # reproducing the #1188 duplicate-window race.
+                await _real_sleep(0)
+                windows.add(terminal.SERVICE_CMD_WINDOW)
+            return (0, "", "")
+
+        with (
+            patch(
+                "klangk_backend.terminal._ensure_tmux_session",
+                new=AsyncMock(),
+            ),
+            patch(
+                "klangk_backend.terminal._service_cmd_window_exists",
+                side_effect=fake_window_exists,
+            ),
+            patch(
+                "klangk_backend.terminal.podman.exec_container",
+                side_effect=fake_exec,
+            ),
+            patch("klangk_backend.terminal.asyncio.sleep", new=AsyncMock()),
+        ):
+            await asyncio.gather(
+                terminal.ensure_service_session(
+                    "cid", "/home/clanker", "openclaw gateway"
+                ),
+                terminal.ensure_service_session(
+                    "cid", "/home/clanker", "openclaw gateway"
+                ),
+            )
+
+        # Exactly-once: only one new-window landed despite concurrent calls.
+        assert new_window_calls == 1
+        assert windows == {terminal.SERVICE_CMD_WINDOW}
+
+    async def test_concurrent_fires_isolated_per_container(self):
+        """#1188: the firing lock is keyed by container, so concurrent fires
+        for DIFFERENT containers are not serialized -- each fires exactly
+        once, in parallel. Unrelated workspaces must not block each other."""
+        from klangk_backend import terminal
+
+        # Per-container tmux state so the two containers don't share a view.
+        windows: dict[str, set[str]] = {"cid-a": set(), "cid-b": set()}
+        new_window_calls = 0
+        _real_sleep = asyncio.sleep
+
+        async def fake_window_exists(cid, session):
+            return terminal.SERVICE_CMD_WINDOW in windows.get(cid, set())
+
+        async def fake_exec(cid, argv, **kwargs):
+            nonlocal new_window_calls
+            if "new-window" in argv:
+                new_window_calls += 1
+                await _real_sleep(0)
+                windows.setdefault(cid, set()).add(terminal.SERVICE_CMD_WINDOW)
+            return (0, "", "")
+
+        with (
+            patch(
+                "klangk_backend.terminal._ensure_tmux_session",
+                new=AsyncMock(),
+            ),
+            patch(
+                "klangk_backend.terminal._service_cmd_window_exists",
+                side_effect=fake_window_exists,
+            ),
+            patch(
+                "klangk_backend.terminal.podman.exec_container",
+                side_effect=fake_exec,
+            ),
+            patch("klangk_backend.terminal.asyncio.sleep", new=AsyncMock()),
+        ):
+            await asyncio.gather(
+                terminal.ensure_service_session(
+                    "cid-a", "/home/clanker", "cmd-a"
+                ),
+                terminal.ensure_service_session(
+                    "cid-b", "/home/clanker", "cmd-b"
+                ),
+            )
+
+        # Each container fired exactly once -- the per-container lock did not
+        # serialize unrelated containers.
+        assert new_window_calls == 2
+        assert windows["cid-a"] == {terminal.SERVICE_CMD_WINDOW}
+        assert windows["cid-b"] == {terminal.SERVICE_CMD_WINDOW}
+
     async def test_send_keys_failure_kills_half_created_window(self):
         """A send-keys failure kills the zombie window so the next fire
         re-runs the whole sequence instead of no-oping forever (#1186)."""
@@ -1501,6 +1622,52 @@ class TestEnsureServiceSession:
             await ensure_service_session("cid", "/home/clanker", "cmd")
         # Both the send-keys failure and the cleanup failure are warned.
         assert mock_logger.warning.call_count == 2
+
+
+class TestServiceSessionLock:
+    """Unit coverage for the per-container firing-lock helpers added in #1188."""
+
+    def setup_method(self):
+        from klangk_backend import terminal
+
+        terminal._service_session_locks.clear()
+
+    def teardown_method(self):
+        from klangk_backend import terminal
+
+        terminal._service_session_locks.clear()
+
+    def test_get_lock_returns_same_lock_for_same_container(self):
+        from klangk_backend.terminal import _get_service_session_lock
+
+        lock_a = _get_service_session_lock("cid")
+        lock_b = _get_service_session_lock("cid")
+        assert lock_a is lock_b
+
+    def test_get_lock_returns_distinct_locks_per_container(self):
+        from klangk_backend.terminal import _get_service_session_lock
+
+        lock_a = _get_service_session_lock("cid-a")
+        lock_b = _get_service_session_lock("cid-b")
+        assert lock_a is not lock_b
+
+    def test_clear_lock_removes_entry(self):
+        from klangk_backend.terminal import (
+            _get_service_session_lock,
+            _service_session_locks,
+            clear_service_session_lock,
+        )
+
+        _get_service_session_lock("cid")
+        assert "cid" in _service_session_locks
+        clear_service_session_lock("cid")
+        assert "cid" not in _service_session_locks
+
+    def test_clear_lock_is_noop_for_unknown_container(self):
+        from klangk_backend.terminal import clear_service_session_lock
+
+        # Must not raise for a container that never registered a lock.
+        clear_service_session_lock("never-seen")
 
 
 class TestServiceSessionHelpers:

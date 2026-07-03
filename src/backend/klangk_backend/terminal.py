@@ -105,6 +105,34 @@ SERVICE_CMD_WINDOW = "service-cmd"
 # dying because it is just a tmux session) (#1133 D6).
 SERVICE_SESSION = "service"
 
+# Per-container locks serializing the read-then-write firing sequence in
+# ensure_service_session (#1188). Two unserialized callers -- the boot path
+# (workspaces.eager_start_workspace) and the per-connection path
+# (wshandler _fire_service_command) -- could both observe
+# _service_cmd_window_exists -> False before either's new-window landed, and
+# since tmux permits duplicate window names, both would create a service-cmd
+# window. The lock makes the window-exists -> new-window -> send-keys sequence
+# atomic per container, so unrelated workspaces fire concurrently but the
+# same workspace fires exactly once. Entries are cleared on container teardown
+# via clear_service_session_lock().
+_service_session_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_service_session_lock(container_id: str) -> asyncio.Lock:
+    """Get or create the per-container lock for service-command firing."""
+    if container_id not in _service_session_locks:
+        _service_session_locks[container_id] = asyncio.Lock()
+    return _service_session_locks[container_id]
+
+
+def clear_service_session_lock(container_id: str) -> None:
+    """Drop the per-container firing lock for a torn-down container.
+
+    Called from container teardown so the lock dict does not grow unbounded
+    with container churn. Safe to call when no lock exists for the id.
+    """
+    _service_session_locks.pop(container_id, None)
+
 
 async def _has_tmux_session(container_id: str, session_name: str) -> bool:
     """Return True if a tmux session named *session_name* exists."""
@@ -251,75 +279,90 @@ async def ensure_service_session(
     (exactly-once-per-container). Idempotent: safe to call from every
     ``terminal_start`` (#1033) and the boot path alike -- the
     window-exists check makes it a no-op after the first fire.
+
+    The window-exists -> new-window -> send-keys sequence is serialized
+    per container via :func:`_get_service_session_lock` (#1188): without
+    it the boot path and the per-connection path could both pass the
+    existence check before either created the window, producing two
+    duplicate-named ``service-cmd`` windows (tmux allows duplicate
+    names), leaving later ``send-keys -t service:service-cmd`` ambiguous.
     """
-    await _ensure_tmux_session(container_id, SERVICE_SESSION, agent_home)
-    if not (
-        _should_fire_service_command(service_command, setup_state)
-    ) or await _service_cmd_window_exists(container_id, SERVICE_SESSION):
-        return
-    try:
-        await podman.exec_container(
-            container_id,
-            [
-                "tmux",
-                "new-window",
-                "-d",
-                "-t",
-                SERVICE_SESSION,
-                "-n",
-                SERVICE_CMD_WINDOW,
-            ],
-            user=CONTAINER_USER,
-            timeout=5,
-        )
-    except Exception:
-        logger.warning(
-            "Failed to create %s window in %s",
-            SERVICE_CMD_WINDOW,
-            SERVICE_SESSION,
-        )
-        return
-    # The new window's shell needs a moment to source .profile / .bashrc
-    # before it can resolve PATH-dependent commands (nvm, openclaw, ...).
-    # Same race as #1030.
-    await asyncio.sleep(1)
-    try:
-        await podman.exec_container(
-            container_id,
-            [
-                "tmux",
-                "send-keys",
-                "-t",
-                f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
-                service_command,
-                "Enter",
-            ],
-            user=CONTAINER_USER,
-            timeout=5,
-        )
-    except Exception:
-        logger.warning("Failed to send service command to %s", SERVICE_SESSION)
-        # The window was created above but we never typed the command
-        # into it. Kill it so the next fire re-runs the whole sequence
-        # instead of no-op'ing forever on the half-created window (#1186).
+    # Hold the per-container lock across the entire read-modify-write so
+    # a concurrent caller (boot vs first terminal_start, owner vs
+    # collaborator) cannot interleave: the second waits, then observes
+    # the window exists and no-ops. This also bounds the partial-failure
+    # window from #1186.
+    async with _get_service_session_lock(container_id):
+        await _ensure_tmux_session(container_id, SERVICE_SESSION, agent_home)
+        if not (
+            _should_fire_service_command(service_command, setup_state)
+        ) or await _service_cmd_window_exists(container_id, SERVICE_SESSION):
+            return
         try:
             await podman.exec_container(
                 container_id,
                 [
                     "tmux",
-                    "kill-window",
+                    "new-window",
+                    "-d",
                     "-t",
-                    f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
+                    SERVICE_SESSION,
+                    "-n",
+                    SERVICE_CMD_WINDOW,
                 ],
                 user=CONTAINER_USER,
                 timeout=5,
             )
         except Exception:
             logger.warning(
-                "Failed to clean up %s window in %s",
+                "Failed to create %s window in %s",
                 SERVICE_CMD_WINDOW,
                 SERVICE_SESSION,
             )
+            return
+        # The new window's shell needs a moment to source .profile / .bashrc
+        # before it can resolve PATH-dependent commands (nvm, openclaw, ...).
+        # Same race as #1030.
+        await asyncio.sleep(1)
+        try:
+            await podman.exec_container(
+                container_id,
+                [
+                    "tmux",
+                    "send-keys",
+                    "-t",
+                    f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
+                    service_command,
+                    "Enter",
+                ],
+                user=CONTAINER_USER,
+                timeout=5,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to send service command to %s", SERVICE_SESSION
+            )
+            # The window was created above but we never typed the command
+            # into it. Kill it so the next fire re-runs the whole sequence
+            # instead of no-op'ing forever on the half-created window (#1186).
+            try:
+                await podman.exec_container(
+                    container_id,
+                    [
+                        "tmux",
+                        "kill-window",
+                        "-t",
+                        f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
+                    ],
+                    user=CONTAINER_USER,
+                    timeout=5,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to clean up %s window in %s",
+                    SERVICE_CMD_WINDOW,
+                    SERVICE_SESSION,
+                )
 
 
 def _build_shell_command(
