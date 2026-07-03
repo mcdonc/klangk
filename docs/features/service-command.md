@@ -49,12 +49,14 @@ later in the workspace **Settings** tab.
 
 ### CLI
 
-`klangkc create` does not expose a flag for the service command — set it
-in the Web UI when creating the workspace, or via [sandbox config](#sandbox-config)
-for `klangkc sandbox`. On an existing workspace, use `klangkc edit`:
+`klangkc create` accepts `--command`/`-c` to set the service command at
+creation time. On an existing workspace, use `klangkc edit`:
 
 ```bash
-# Set or change it
+# Set it when creating the workspace
+klangkc create my-workspace --command 'npm run dev'
+
+# Set or change it on an existing workspace
 klangkc edit my-workspace --command 'npm run dev'
 
 # Clear it
