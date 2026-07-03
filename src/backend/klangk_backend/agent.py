@@ -148,7 +148,16 @@ class AgentSession:
     def __init__(self, workspace_id: str) -> None:
         self.workspace_id = workspace_id
         self._proc: asyncio.subprocess.Process | None = None
+        # Serializes prompt round-trips so two concurrent prompts can't
+        # interleave their stdin writes / stdout reads on one subprocess.
         self._lock = asyncio.Lock()
+        # Serializes the check-then-spawn in ``_ensure_started`` so the
+        # auto-restart path (``_monitor_process``) and the lazy-start
+        # path (``send_prompt``) can't both spawn a subprocess for the
+        # same dead process (#1189).  Separate from ``_lock`` because
+        # ``send_prompt`` already holds ``_lock`` when it calls
+        # ``_ensure_started``, and ``asyncio.Lock`` is not reentrant.
+        self._spawn_lock = asyncio.Lock()
         self._home_ready = False
         self._monitor_task: asyncio.Task | None = None
         self._restart_attempts = 0
@@ -204,44 +213,58 @@ class AgentSession:
                 "Agent gave up restarting for workspace %s" % self.workspace_id
             )
 
-        container_id = self._resolve_container_id()
-        container_home = await self._ensure_home(container_id)
-        agent_handle = await model.agent_handle()
-        system_prompt = _CHAT_SYSTEM_PROMPT.format(name=agent_handle)
-        argv = [
-            "exec",
-            "-i",
-            "-u",
-            "klangk",
-            "-e",
-            f"HOME={container_home}",
-            "-w",
-            container_home,
-            container_id,
-            "pi",
-            "--mode",
-            "rpc",
-            "--append-system-prompt",
-            system_prompt,
-        ]
-        logger.info(
-            "Starting Pi RPC for workspace %s (container %s)",
-            self.workspace_id,
-            container_id,
-        )
-        self._proc = await asyncio.create_subprocess_exec(
-            podman.PODMAN_BIN,
-            *argv,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
-            env=podman.subprocess_env(),
-        )
-        self._monitor_task = asyncio.create_task(
-            self._monitor_process(self._proc)
-        )
-        return self._proc
+        # Serialize the check-then-spawn.  ``_ensure_started`` has two
+        # concurrent callers on this singleton session: ``_monitor_process``
+        # (auto-restart, no other lock) and ``send_prompt`` (lazy start,
+        # under ``self._lock``).  Between the fast-path check above and the
+        # spawn below sits ``_ensure_home``, which does real podman work,
+        # so the race window is seconds wide — without this lock both
+        # callers observe ``self._proc is None`` and each spawns a
+        # ``pi --mode rpc`` subprocess, orphaning the loser (#1189).  The
+        # re-check inside the lock makes the spawn idempotent: the caller
+        # that lost the race finds the process the winner already started
+        # and returns it instead of spawning again.
+        async with self._spawn_lock:
+            if self._proc is not None and self._proc.returncode is None:
+                return self._proc
+            container_id = self._resolve_container_id()
+            container_home = await self._ensure_home(container_id)
+            agent_handle = await model.agent_handle()
+            system_prompt = _CHAT_SYSTEM_PROMPT.format(name=agent_handle)
+            argv = [
+                "exec",
+                "-i",
+                "-u",
+                "klangk",
+                "-e",
+                f"HOME={container_home}",
+                "-w",
+                container_home,
+                container_id,
+                "pi",
+                "--mode",
+                "rpc",
+                "--append-system-prompt",
+                system_prompt,
+            ]
+            logger.info(
+                "Starting Pi RPC for workspace %s (container %s)",
+                self.workspace_id,
+                container_id,
+            )
+            self._proc = await asyncio.create_subprocess_exec(
+                podman.PODMAN_BIN,
+                *argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+                env=podman.subprocess_env(),
+            )
+            self._monitor_task = asyncio.create_task(
+                self._monitor_process(self._proc)
+            )
+            return self._proc
 
     async def _monitor_process(self, proc: asyncio.subprocess.Process) -> None:
         """Wait for the agent subprocess to exit, broadcast disconnect, and restart."""
