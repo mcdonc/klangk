@@ -28,7 +28,9 @@ in
     venv.enable = true;
     uv = {
       enable = true;
-      sync.enable = true;
+      # sync.enable left off: its gate only fingerprints the root
+      # pyproject.toml (a bare [tool.uv.workspace] stub here), so it silently
+      # skips and the venv goes stale. klangk:uv-sync below owns dependency sync.
     };
     directory = ".";
   };
@@ -75,14 +77,23 @@ in
     # workspace members or captured in uv.lock never invalidate the checksum and
     # `uv sync` is silently skipped -- the venv goes stale (e.g.
     # "ModuleNotFoundError: No module named 'jinja2'" at backend startup).
-    # Re-sync into the devenv-managed venv when the lock or a member pyproject
-    # changes. Remove once devenv hashes uv.lock upstream (poetry/npm/pnpm/yarn/
-    # bun already hash their lock files; uv is the lone exception).
+    #
+    # Hooked into devenv:enterShell (runs before every shell, process, and test
+    # activation), so deps stay current for `devenv shell`, `devenv test`,
+    # pre-commit hooks, AND `devenv processes up` -- not just the backend process.
+    # `after` pins ordering: devenv must create the venv
+    # (devenv:python:virtualenv) first, or it would `rm -rf` our freshly-synced
+    # deps on a cold / interpreter-changed venv. execIfModified makes it a no-op
+    # when nothing changed. Remove once devenv hashes uv.lock upstream
+    # (poetry/npm/pnpm/yarn/bun already hash their lock files; uv is the lone
+    # exception).
     "klangk:uv-sync" = {
       exec = ''
         cd "$DEVENV_ROOT"
         uv sync -p "$UV_PYTHON"
       '';
+      after = [ "devenv:python:virtualenv" ];
+      before = [ "devenv:enterShell" ];
       execIfModified = [
         "uv.lock"
         "pyproject.toml"
@@ -155,7 +166,6 @@ in
         cd $DEVENV_ROOT/src/backend && exec ${uvicornCmd}
       '';
       after = [
-        "klangk:uv-sync"
         "klangk:flutter-build"
         "klangk:build-workspace-image"
         "klangk:kill-containers"
