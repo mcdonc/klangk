@@ -1013,6 +1013,58 @@ class TestAnyRunning:
         assert not any_running()
 
 
+class TestSpawnSerialization:
+    """``_ensure_started``'s check-then-spawn must be atomic (#1189).
+
+    ``_monitor_process`` (auto-restart) and ``send_prompt`` (lazy start)
+    call ``_ensure_started`` concurrently on the same singleton session
+    while ``self._proc`` is None.  ``_ensure_home`` does slow podman work
+    between the live-process check and the spawn, so without the spawn
+    lock both callers observe None and each spawn a ``pi --mode rpc``
+    subprocess — the loser is orphaned.  The lock plus the re-check must
+    guarantee exactly one spawn and that both callers share it.
+    """
+
+    async def test_concurrent_starts_spawn_once_and_share_proc(self):
+        session = _make_session("ws-race")
+
+        # Force the first caller to yield between its fast-path check
+        # and the spawn (where ``_ensure_home`` sits in real code),
+        # handing control to a second caller that has also observed
+        # ``self._proc is None``.  On unfixed code both then spawn.
+        async def slow_ensure_home(container_id):
+            await asyncio.sleep(0.05)
+            return "/home/clanker"
+
+        session._ensure_home = slow_ensure_home  # type: ignore[assignment]
+
+        spawns: list[tuple] = []
+
+        async def fake_exec(*args, **kwargs):
+            spawns.append(args)
+            proc = AsyncMock()
+            proc.returncode = None
+            proc.stdin = AsyncMock()
+            proc.stdout = asyncio.StreamReader()
+            proc.stderr = asyncio.StreamReader()
+            return proc
+
+        with (
+            patch("asyncio.create_subprocess_exec", side_effect=fake_exec),
+            # Avoid starting real monitor tasks: this test only exercises
+            # spawn serialization, not the monitor loop.
+            patch("asyncio.create_task", new=MagicMock()),
+        ):
+            proc_a, proc_b = await asyncio.gather(
+                session._ensure_started(),
+                session._ensure_started(),
+            )
+
+        assert len(spawns) == 1, f"expected one spawn, got {len(spawns)}"
+        # Both callers share the single spawned process (idempotent).
+        assert proc_a is proc_b
+
+
 class TestMonitorProcess:
     async def test_monitor_broadcasts_on_death(self):
         from klangk_backend import model
