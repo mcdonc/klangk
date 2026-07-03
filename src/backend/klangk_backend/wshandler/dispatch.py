@@ -7,7 +7,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from .. import auth
 from .safe_websocket import SafeWebSocket, SlowClientError
-from .helpers import send_error, _log_ws_msg
+from .helpers import send_error, log_ws_msg
 from .session import state
 from .connection import Connection
 
@@ -104,7 +104,7 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 send_error(safe_ws, "Invalid JSON")
                 continue
 
-            _log_ws_msg("RECV", msg, user)
+            log_ws_msg("RECV", msg, user)
 
             cmd = msg.get("cmd")
             entry = _WS_CONNECTION_COMMANDS.get(cmd)

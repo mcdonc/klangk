@@ -8,8 +8,8 @@ from .. import agent, model
 from ._constants import (
     _agent_conversations as _agent_conversations,
     _agent_tasks as _agent_tasks,
-    _cancel_agent_task as _cancel_agent_task,
-    _drop_agent_task_if_current as _drop_agent_task_if_current,
+    cancel_agent_task as cancel_agent_task,
+    drop_agent_task_if_current as drop_agent_task_if_current,
 )
 from .session import state
 
@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 # _ANY_MENTION_RE matches any @mention; the agent-specific regex is
-# compiled fresh per call (see _get_agent_mention_re).
+# compiled fresh per call (see get_agent_mention_re).
 _ANY_MENTION_RE = re.compile(r"(?:^|(?<=\s))@\S+")
 
 
-def _get_agent_mention_re(handle: str) -> re.Pattern:
+def get_agent_mention_re(handle: str) -> re.Pattern:
     """Return the compiled agent mention regex for *handle*.
 
     The agent's handle can change at runtime (DB update), so this is
@@ -34,13 +34,13 @@ def _get_agent_mention_re(handle: str) -> re.Pattern:
     )
 
 
-async def _mentions_agent(text: str) -> bool:
+async def mentions_agent(text: str) -> bool:
     """Return True if the message text mentions the agent."""
     handle = await model.agent_handle()
-    return bool(_get_agent_mention_re(handle).search(text))
+    return bool(get_agent_mention_re(handle).search(text))
 
 
-async def _addresses_other_user(text: str) -> bool:
+async def addresses_other_user(text: str) -> bool:
     """Return True if the message is directed at someone else.
 
     A message that *starts* with ``@someone`` (not the agent) is
@@ -55,7 +55,7 @@ async def _addresses_other_user(text: str) -> bool:
     return mention != handle.lower()
 
 
-def _asker_context_header(
+def asker_context_header(
     user_id: str | None,
     user_handle: str | None,
     user_home: str | None,
@@ -86,7 +86,7 @@ def _asker_context_header(
     )
 
 
-async def _handle_agent_mention(
+async def handle_agent_mention(
     workspace_id: str,
     container_id: str,
     user_text: str,
@@ -104,14 +104,14 @@ async def _handle_agent_mention(
     """
 
     agent_handle = await model.agent_handle()
-    agent_re = _get_agent_mention_re(agent_handle)
+    agent_re = get_agent_mention_re(agent_handle)
     prompt = agent_re.sub("", user_text).strip()
     if not prompt:
         prompt = "Hello!"
 
     # Inject the asking user's identity so the agent can target the
     # asker's own tmux session / home when they say "my".
-    asker_header = _asker_context_header(user_id, user_handle, user_home)
+    asker_header = asker_context_header(user_id, user_handle, user_home)
     if asker_header:
         prompt = f"{asker_header}\n\n{prompt}"
 
@@ -174,7 +174,7 @@ async def _handle_agent_mention(
         if session:
             session.broadcast({"type": "agent_thinking", "thinking": False})
             session.broadcast({"type": "chat_message", **sys_msg})
-        _drop_agent_task_if_current(workspace_id)
+        drop_agent_task_if_current(workspace_id)
         return
     except Exception:
         logger.exception("Agent error for workspace %s", workspace_id)
@@ -193,4 +193,4 @@ async def _handle_agent_mention(
     if session:
         session.broadcast({"type": "agent_thinking", "thinking": False})
         session.broadcast({"type": "chat_message", **agent_msg})
-    _drop_agent_task_if_current(workspace_id)
+    drop_agent_task_if_current(workspace_id)

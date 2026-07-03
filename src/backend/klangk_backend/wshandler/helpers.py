@@ -4,13 +4,13 @@ import logging
 
 from .. import agent, container, model
 from .safe_websocket import SafeWebSocket
-from ._constants import _log_ws_msg
+from ._constants import log_ws_msg
 from .session import state
 
 logger = logging.getLogger(__name__)
 
 
-async def _get_presence_list(workspace_id: str) -> list[dict]:
+async def get_presence_list(workspace_id: str) -> list[dict]:
     """Return deduplicated list of users connected to a workspace."""
     session = state.get_session(workspace_id)
     if not session:
@@ -42,7 +42,7 @@ async def _get_presence_list(workspace_id: str) -> list[dict]:
     return users
 
 
-def _get_shared_terminals(ws_session) -> list[dict]:
+def get_shared_terminals(ws_session) -> list[dict]:
     """Collect all shared windows across all users in a workspace."""
     # Build viewer map: (owner_user_id, window_id) -> [{user_id, email}]
     viewer_map: dict[tuple[str, str], list[dict]] = {}
@@ -128,7 +128,7 @@ async def refresh_user_handle(user_id: str, new_handle: str) -> None:
     for ws_id in affected_workspaces:
         session = state.get_session(ws_id)
         if session:
-            presence = await _get_presence_list(ws_id)
+            presence = await get_presence_list(ws_id)
             session.broadcast({"type": "presence_list", "users": presence})
             sys_msg = await model.add_chat_message(
                 ws_id,
@@ -140,7 +140,7 @@ async def refresh_user_handle(user_id: str, new_handle: str) -> None:
             session.broadcast({"type": "chat_message", **sys_msg})
 
 
-def _send_event(
+def send_event(
     sock: SafeWebSocket, name: str, reason: str | None = None
 ) -> None:
     """Send a CUSTOM event (container_ready, container_stopped, etc.)."""
@@ -153,7 +153,7 @@ def _send_event(
     )
 
 
-def _format_idle_timeout(seconds: int | float) -> str:
+def format_idle_timeout(seconds: int | float) -> str:
     """Format an idle timeout as a human-readable suffix."""
     mins = seconds / 60
     if mins == int(mins):
@@ -161,7 +161,7 @@ def _format_idle_timeout(seconds: int | float) -> str:
     return f" — idle timeout: {mins:.1f}m"
 
 
-def _format_container_info(workspace_id: str, ports: list) -> tuple[str, str]:
+def format_container_info(workspace_id: str, ports: list) -> tuple[str, str]:
     """Return (container_name, ports_str) for status messages."""
     name = f"klangk-{container.INSTANCE_ID}-{workspace_id[:12]}"
     ports_str = f" (ports {','.join(str(p) for p in ports)})" if ports else ""
@@ -170,5 +170,5 @@ def _format_container_info(workspace_id: str, ports: list) -> tuple[str, str]:
 
 def send_error(sock: SafeWebSocket, message: str) -> None:
     msg = {"type": "error", "message": message}
-    _log_ws_msg("SEND", msg)
+    log_ws_msg("SEND", msg)
     sock.send_json(msg)

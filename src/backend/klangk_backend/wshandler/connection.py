@@ -14,21 +14,21 @@ from ..util import derive_hosting_info
 from ._constants import (
     _agent_conversations,
     _agent_tasks,
-    _cancel_agent_task,
+    cancel_agent_task,
 )
 from .safe_websocket import SafeWebSocket, _WS_ERRORS
 from .helpers import (
     send_error,
-    _send_event,
-    _format_idle_timeout,
-    _format_container_info,
-    _get_presence_list,
-    _get_shared_terminals,
+    send_event,
+    format_idle_timeout,
+    format_container_info,
+    get_presence_list,
+    get_shared_terminals,
 )
 from .agent_mention import (
-    _handle_agent_mention,
-    _mentions_agent,
-    _addresses_other_user,
+    handle_agent_mention,
+    mentions_agent,
+    addresses_other_user,
 )
 from .session import state, WorkspaceSession
 from .controllers import (
@@ -338,7 +338,7 @@ class Connection:
 
         async def on_idle(wid: str) -> None:
             try:
-                _send_event(sock, "container_stopped", "idle timeout")
+                send_event(sock, "container_stopped", "idle timeout")
             except _WS_ERRORS:
                 pass
 
@@ -373,7 +373,7 @@ class Connection:
         self, workspace_id: str, rejoining: bool
     ) -> None:
         """Send presence list and broadcast join to other subscribers."""
-        presence = await _get_presence_list(workspace_id)
+        presence = await get_presence_list(workspace_id)
         self.sock.send_json({"type": "presence_list", "users": presence})
         session = state.get_session(workspace_id)
         if session and not rejoining:
@@ -438,7 +438,7 @@ class Connection:
         t_post = time.monotonic()
         ports = await container.registry.get_workspace_ports(workspace_id)
         status = getattr(self, "container_status", "created")
-        container_name, ports_str = _format_container_info(workspace_id, ports)
+        container_name, ports_str = format_container_info(workspace_id, ports)
         status_msg = {
             "connected": f"Connected to running container "
             f"{container_name}{ports_str}",
@@ -446,7 +446,7 @@ class Connection:
             f"{container_name}{ports_str}",
             "created": f"Created new container {container_name}{ports_str}",
         }.get(status, "Container ready")
-        status_msg += _format_idle_timeout(container.IDLE_TIMEOUT_SECONDS)
+        status_msg += format_idle_timeout(container.IDLE_TIMEOUT_SECONDS)
 
         self.sock.send_json(
             {
@@ -506,7 +506,7 @@ class Connection:
         user = self.user
         workspace = self.workspace
 
-        _send_event(self.sock, "container_restart", "Restarting container...")
+        send_event(self.sock, "container_restart", "Restarting container...")
 
         try:
             await self.cleanup()
@@ -532,7 +532,7 @@ class Connection:
                 conn.container_id = new_cid
 
         ports = await container.registry.get_workspace_ports(workspace_id)
-        container_name, ports_str = _format_container_info(workspace_id, ports)
+        container_name, ports_str = format_container_info(workspace_id, ports)
         status_msg = f"Container restarted {container_name}{ports_str}"
 
         timeout_mins = container.IDLE_TIMEOUT_SECONDS / 60
@@ -541,7 +541,7 @@ class Connection:
         else:
             status_msg += f" — idle timeout: {timeout_mins:.1f}m"
 
-        _send_event(self.sock, "container_ready", status_msg)
+        send_event(self.sock, "container_ready", status_msg)
 
         logger.info(
             "Container restarted via restart_container command for workspace %s",
@@ -721,14 +721,14 @@ class Connection:
         user_id = self.user["id"]
         conv = _agent_conversations.get(workspace_id)
 
-        if await _mentions_agent(text):
+        if await mentions_agent(text):
             should_route = True
             _agent_conversations[workspace_id] = {
                 "user_id": user_id,
                 "time": time.monotonic(),
                 "interjected": False,
             }
-        elif conv and not await _addresses_other_user(text):
+        elif conv and not await addresses_other_user(text):
             if user_id == conv["user_id"]:
                 if not conv["interjected"]:
                     # No interjection — route indefinitely
@@ -753,9 +753,9 @@ class Connection:
             # so concurrent @mentions don't orphan the earlier task.
             # Pass the asking user's identity so the agent can resolve
             # "my" (its process has no user identity of its own).
-            _cancel_agent_task(workspace_id)
+            cancel_agent_task(workspace_id)
             _agent_tasks[workspace_id] = asyncio.create_task(
-                _handle_agent_mention(
+                handle_agent_mention(
                     workspace_id,
                     self.container_id,
                     text,
@@ -812,7 +812,7 @@ class Connection:
             if self.workspace_id:
                 ws_session = state.get_session(self.workspace_id)
                 if ws_session:
-                    presence = await _get_presence_list(self.workspace_id)
+                    presence = await get_presence_list(self.workspace_id)
                     ws_session.broadcast(
                         {"type": "presence_list", "users": presence}
                     )
@@ -823,7 +823,7 @@ class Connection:
         workspace_id = self.workspace_id
         if not workspace_id:
             return
-        _cancel_agent_task(workspace_id)
+        cancel_agent_task(workspace_id)
 
     async def handle_ui_ready(self) -> None:
         if self.workspace_id:
@@ -833,11 +833,11 @@ class Connection:
         status_msg = self.pending_status_msg
         self.pending_status_msg = None
         if status_msg:
-            _send_event(self.sock, "container_ready", status_msg)
+            send_event(self.sock, "container_ready", status_msg)
         # Send shared terminal list from in-memory state.
         ws_session = state.get_session(self.workspace_id)
         if ws_session:
-            terminals = _get_shared_terminals(ws_session)
+            terminals = get_shared_terminals(ws_session)
             self.sock.send_json(
                 {"type": "shared_terminals", "terminals": terminals}
             )

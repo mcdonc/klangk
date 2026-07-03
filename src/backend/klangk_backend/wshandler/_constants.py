@@ -38,12 +38,12 @@ def bridge_idle_timeout() -> float:
 
 
 # ---------------------------------------------------------------------------
-# _log_ws_msg lives here (not in helpers) to break the
+# log_ws_msg lives here (not in helpers) to break the
 # helpers → session → helpers cycle.  It only needs _WS_DEBUG and logging.
 # ---------------------------------------------------------------------------
 
 
-def _log_ws_msg(direction: str, msg: dict, user: dict | None = None) -> None:
+def log_ws_msg(direction: str, msg: dict, user: dict | None = None) -> None:
     """Log a WebSocket message for debugging (KLANGK_WS_DEBUG=1)."""
     if not _WS_DEBUG:
         return
@@ -74,7 +74,7 @@ _agent_conversations: dict[str, dict] = {}
 _agent_tasks: dict[str, asyncio.Task] = {}
 
 
-def _cancel_agent_task(workspace_id: str) -> None:
+def cancel_agent_task(workspace_id: str) -> None:
     """Cancel and drop any in-flight agent run for a workspace.
 
     There is a single agent-run slot per workspace, so a new run must
@@ -86,7 +86,7 @@ def _cancel_agent_task(workspace_id: str) -> None:
         task.cancel()
 
 
-def _drop_agent_task_if_current(workspace_id: str) -> None:
+def drop_agent_task_if_current(workspace_id: str) -> None:
     """Remove the workspace's agent-task entry only if it is *this* run.
 
     A superseding mention cancels the prior run and installs a newer
@@ -106,5 +106,5 @@ def clear_agent_mention_state() -> None:
     every workspace at once.
     """
     for ws_id in list(_agent_tasks):
-        _cancel_agent_task(ws_id)
+        cancel_agent_task(ws_id)
     _agent_conversations.clear()

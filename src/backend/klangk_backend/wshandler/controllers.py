@@ -22,7 +22,7 @@ from ..terminal import (
 )
 from .safe_websocket import SlowClientError, _WS_ERRORS
 from ._constants import _MAX_INPUT_SIZE
-from .helpers import send_error, _send_event, _get_shared_terminals
+from .helpers import send_error, send_event, get_shared_terminals
 from .session import state
 
 if TYPE_CHECKING:
@@ -405,7 +405,7 @@ class TerminalController:
         """Send the current shared terminal list to the client."""
         ws_session = state.get_session(self._conn.workspace_id)
         if ws_session:
-            terminals = _get_shared_terminals(ws_session)
+            terminals = get_shared_terminals(ws_session)
             self._conn.sock.send_json(
                 {"type": "shared_terminals", "terminals": terminals}
             )
@@ -946,7 +946,7 @@ class TerminalController:
         except _WS_ERRORS as e:
             logger.error("Terminal output forwarding error: %s", e)
             try:
-                _send_event(self._conn.sock, "container_stopped")
+                send_event(self._conn.sock, "container_stopped")
             except _WS_ERRORS:
                 pass
         finally:
@@ -1224,14 +1224,14 @@ class SharedTerminalController:
         # was fired (e.g. auto-start) before anyone connected to discover
         # it (#1133).
         await self._conn.terminal._sync_service_windows(ws_session)
-        terminals = _get_shared_terminals(ws_session)
+        terminals = get_shared_terminals(ws_session)
         self._conn.sock.send_json(
             {"type": "shared_terminals", "terminals": terminals}
         )
 
     def broadcast_shared_terminals(self, ws_session) -> None:
         """Broadcast the current shared terminal list to all subscribers."""
-        terminals = _get_shared_terminals(ws_session)
+        terminals = get_shared_terminals(ws_session)
         ws_session.broadcast(
             {"type": "shared_terminals", "terminals": terminals}
         )

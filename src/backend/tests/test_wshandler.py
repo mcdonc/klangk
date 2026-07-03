@@ -43,9 +43,9 @@ from klangk_backend.wshandler import (
     send_error,
     handle_websocket,
     reset_workspace_state,
-    _log_ws_msg,
+    log_ws_msg,
     _SEND_QUEUE_SIZE,
-    _get_presence_list,
+    get_presence_list,
 )
 
 
@@ -4533,7 +4533,7 @@ class TestWsDebugLogging:
 class TestLogWsMsg:
     def test_terminal_output_truncated(self):
         with patch.object(_ws_constants, "_WS_DEBUG", True):
-            _log_ws_msg(
+            log_ws_msg(
                 "RECV",
                 {"type": "terminal_output", "data": "x" * 200},
                 {"email": "test@example.com"},
@@ -4541,18 +4541,18 @@ class TestLogWsMsg:
 
     def test_terminal_input_truncated(self):
         with patch.object(_ws_constants, "_WS_DEBUG", True):
-            _log_ws_msg(
+            log_ws_msg(
                 "SEND",
                 {"type": "terminal_input", "data": "y" * 50},
             )
 
     def test_other_message(self):
         with patch.object(_ws_constants, "_WS_DEBUG", True):
-            _log_ws_msg("RECV", {"type": "heartbeat"})
+            log_ws_msg("RECV", {"type": "heartbeat"})
 
     def test_other_message_with_user(self):
         with patch.object(_ws_constants, "_WS_DEBUG", True):
-            _log_ws_msg(
+            log_ws_msg(
                 "RECV",
                 {"cmd": "workspace_connect", "workspaceId": "ws-1"},
                 {"email": "test@example.com"},
@@ -4560,7 +4560,7 @@ class TestLogWsMsg:
 
     def test_noop_when_debug_disabled(self):
         with patch.object(_ws_constants, "_WS_DEBUG", False):
-            _log_ws_msg("RECV", {"type": "heartbeat"})
+            log_ws_msg("RECV", {"type": "heartbeat"})
 
 
 class TestBroadcastDeadSubscribers:
@@ -5763,7 +5763,7 @@ class TestTerminalController:
 
         session.output = fake_output
         sock.send_json = MagicMock(side_effect=_WS_ERRORS[0]("ws dead"))
-        with patch("klangk_backend.wshandler.controllers._send_event"):
+        with patch("klangk_backend.wshandler.controllers.send_event"):
             await ctrl.forward_output(session)
         session.stop.assert_awaited_once()
 
@@ -6026,7 +6026,7 @@ class TestTerminalController:
         agent) via the cached agent_handle, though the agent has no WS
         connection (#1133)."""
         from klangk_backend import model
-        from klangk_backend.wshandler.helpers import _get_shared_terminals
+        from klangk_backend.wshandler.helpers import get_shared_terminals
 
         ws_session = wshandler.state.get_or_create_session("ws-offline")
         try:
@@ -6035,7 +6035,7 @@ class TestTerminalController:
             ]
             ws_session.agent_handle = "clanker"
             # No active connection for the agent.
-            terminals = _get_shared_terminals(ws_session)
+            terminals = get_shared_terminals(ws_session)
             assert len(terminals) == 1
             assert terminals[0]["handle"] == "clanker"
             assert terminals[0]["window_name"] == "service-cmd"
@@ -8054,19 +8054,19 @@ class TestSendQueueBehavior:
 
 class TestMentionsAgent:
     async def test_detects_mention(self, agent_user):
-        from klangk_backend.wshandler import _mentions_agent
+        from klangk_backend.wshandler import mentions_agent
 
-        assert await _mentions_agent("@clanker hello")
-        assert await _mentions_agent("hey @clanker what's up")
-        assert await _mentions_agent("@CLANKER help")
+        assert await mentions_agent("@clanker hello")
+        assert await mentions_agent("hey @clanker what's up")
+        assert await mentions_agent("@CLANKER help")
 
     async def test_no_false_positives(self, agent_user):
-        from klangk_backend.wshandler import _mentions_agent
+        from klangk_backend.wshandler import mentions_agent
 
-        assert not await _mentions_agent("hello everyone")
-        assert not await _mentions_agent("@someone else")
-        assert not await _mentions_agent("clanker without at sign")
-        assert not await _mentions_agent("@clankery partial match")
+        assert not await mentions_agent("hello everyone")
+        assert not await mentions_agent("@someone else")
+        assert not await mentions_agent("clanker without at sign")
+        assert not await mentions_agent("@clankery partial match")
 
     async def test_follows_agent_handle_rename(self, agent_user):
         """Detection must track a renamed agent handle, not a stale cache.
@@ -8076,10 +8076,10 @@ class TestMentionsAgent:
         the old handle forever.
         """
         import klangk_backend.model as us
-        from klangk_backend.wshandler import _mentions_agent
+        from klangk_backend.wshandler import mentions_agent
 
         # Sanity: original handle is detected before the rename.
-        assert await _mentions_agent("@clanker hello")
+        assert await mentions_agent("@clanker hello")
 
         # Rename the agent handle in the DB and drop the cached user.
         async with us.transaction() as db:
@@ -8090,35 +8090,33 @@ class TestMentionsAgent:
         us.clear_agent_cache()
 
         # New handle is now detected ...
-        assert await _mentions_agent("@RenamedBot hello")
+        assert await mentions_agent("@RenamedBot hello")
         # ... and the stale old handle no longer matches.
-        assert not await _mentions_agent("@clanker hello")
+        assert not await mentions_agent("@clanker hello")
 
 
 class TestAddressesOtherUser:
     async def test_starts_with_other_mention(self, agent_user):
-        from klangk_backend.wshandler import _addresses_other_user
+        from klangk_backend.wshandler import addresses_other_user
 
-        assert await _addresses_other_user("@bob hello")
-        assert await _addresses_other_user(
-            "@alice@test.com what do you think?"
-        )
+        assert await addresses_other_user("@bob hello")
+        assert await addresses_other_user("@alice@test.com what do you think?")
 
     async def test_starts_with_agent_mention(self, agent_user):
-        from klangk_backend.wshandler import _addresses_other_user
+        from klangk_backend.wshandler import addresses_other_user
 
-        assert not await _addresses_other_user("@clanker hello")
-        assert not await _addresses_other_user("@CLANKER help")
+        assert not await addresses_other_user("@clanker hello")
+        assert not await addresses_other_user("@CLANKER help")
 
     async def test_no_mention(self, agent_user):
-        from klangk_backend.wshandler import _addresses_other_user
+        from klangk_backend.wshandler import addresses_other_user
 
-        assert not await _addresses_other_user("hello everyone")
+        assert not await addresses_other_user("hello everyone")
 
     async def test_mention_in_middle(self, agent_user):
-        from klangk_backend.wshandler import _addresses_other_user
+        from klangk_backend.wshandler import addresses_other_user
 
-        assert not await _addresses_other_user("I think @bob is right")
+        assert not await addresses_other_user("I think @bob is right")
 
 
 class TestChatFollowUp:
@@ -8609,7 +8607,7 @@ class TestChatSend:
 
         try:
             with patch(
-                "klangk_backend.wshandler.connection._handle_agent_mention",
+                "klangk_backend.wshandler.connection.handle_agent_mention",
                 new=slow_mention,
             ):
                 await conn1.handle_chat_send({"message": "@clanker first"})
@@ -9717,7 +9715,7 @@ class TestHandleChatAgentAbort:
         ws_id = "ws-drop-self"
         wshandler._agent_tasks[ws_id] = asyncio.current_task()
         try:
-            wshandler._drop_agent_task_if_current(ws_id)
+            wshandler.drop_agent_task_if_current(ws_id)
             assert ws_id not in wshandler._agent_tasks
         finally:
             wshandler._agent_tasks.pop(ws_id, None)
@@ -9732,7 +9730,7 @@ class TestHandleChatAgentAbort:
         other_task = asyncio.create_task(other())
         wshandler._agent_tasks[ws_id] = other_task
         try:
-            wshandler._drop_agent_task_if_current(ws_id)
+            wshandler.drop_agent_task_if_current(ws_id)
             # Entry belongs to a different task; left intact.
             assert wshandler._agent_tasks[ws_id] is other_task
         finally:
@@ -9756,7 +9754,7 @@ class TestPresenceIncludesAgent:
                 "klangk_backend.agent.is_running",
                 side_effect=lambda ws_id: ws_id == workspace["id"],
             ):
-                users = await _get_presence_list(workspace["id"])
+                users = await get_presence_list(workspace["id"])
             ids = [u["user_id"] for u in users]
             assert model.AGENT_USER_ID in ids
 
@@ -9775,7 +9773,7 @@ class TestPresenceIncludesAgent:
                 "klangk_backend.agent.is_running",
                 side_effect=lambda ws_id: ws_id == "other-workspace",
             ):
-                users = await _get_presence_list(workspace["id"])
+                users = await get_presence_list(workspace["id"])
             ids = [u["user_id"] for u in users]
             assert model.AGENT_USER_ID not in ids
 
@@ -9786,7 +9784,7 @@ class TestAgentMentionOtherMsgsContext:
     ):
         """When other users have spoken since the agent's last response,
         their messages are prepended to the prompt."""
-        from klangk_backend.wshandler import _handle_agent_mention
+        from klangk_backend.wshandler import handle_agent_mention
 
         workspace = await model.create_workspace(user["id"], "ctx-ws")
         ws_id = workspace["id"]
@@ -9832,7 +9830,7 @@ class TestAgentMentionOtherMsgsContext:
                 "klangk_backend.agent.get_session",
                 return_value=mock_session,
             ):
-                await _handle_agent_mention(ws_id, "cid", "@clanker what?")
+                await handle_agent_mention(ws_id, "cid", "@clanker what?")
 
             assert len(captured_prompt) == 1
             assert "user2@example.com" in captured_prompt[0]
@@ -9848,10 +9846,10 @@ class TestAgentMentionAskerIdentity:
 
     def test_header_includes_id_handle_home(self):
         from klangk_backend.wshandler.agent_mention import (
-            _asker_context_header,
+            asker_context_header,
         )
 
-        header = _asker_context_header("uid-123", "alice", "/home/alice")
+        header = asker_context_header("uid-123", "alice", "/home/alice")
 
         assert "id uid-123" in header
         assert "handle alice" in header
@@ -9862,14 +9860,14 @@ class TestAgentMentionAskerIdentity:
 
     def test_header_none_without_user_id(self):
         from klangk_backend.wshandler.agent_mention import (
-            _asker_context_header,
+            asker_context_header,
         )
 
-        assert _asker_context_header(None, "alice", "/home/alice") is None
+        assert asker_context_header(None, "alice", "/home/alice") is None
 
     async def test_identity_prepended_to_prompt(self, user, agent_user):
         """An @mention from a user injects that user's identity header."""
-        from klangk_backend.wshandler import _handle_agent_mention
+        from klangk_backend.wshandler import handle_agent_mention
 
         workspace = await model.create_workspace(user["id"], "id-ws")
         ws_id = workspace["id"]
@@ -9892,7 +9890,7 @@ class TestAgentMentionAskerIdentity:
                 "klangk_backend.agent.get_session",
                 return_value=mock_session,
             ):
-                await _handle_agent_mention(
+                await handle_agent_mention(
                     ws_id,
                     "cid",
                     "@clanker restart my service",

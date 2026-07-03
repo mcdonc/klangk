@@ -124,7 +124,7 @@ class SafeWebSocket:
         return self._sock
 
 
-def _broadcast_to_set(subscribers: set[SafeWebSocket], message: dict) -> int:
+def broadcast_to_set(subscribers: set[SafeWebSocket], message: dict) -> int:
     """Send *message* to each socket in *subscribers*, removing dead ones.
 
     Returns the number of live subscribers the message was delivered to.

@@ -10,11 +10,11 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from .. import agent, auth, container, model, terminal
-from .safe_websocket import SafeWebSocket, _WS_ERRORS, _broadcast_to_set
+from .safe_websocket import SafeWebSocket, _WS_ERRORS, broadcast_to_set
 from ._constants import (
     _agent_conversations,
-    _cancel_agent_task,
-    _log_ws_msg,
+    cancel_agent_task,
+    log_ws_msg,
 )
 
 if TYPE_CHECKING:
@@ -106,7 +106,7 @@ class WorkspaceSession:
 
     def broadcast(self, message: dict) -> int:
         """Send message to all subscribers, removing dead ones."""
-        return _broadcast_to_set(self.subscribers, message)
+        return broadcast_to_set(self.subscribers, message)
 
     def start_token_renewal(self, expiry: datetime) -> None:
         """Schedule periodic workspace token renewal.
@@ -161,7 +161,7 @@ class WorkspaceSession:
 
     def broadcast_to_browsers(self, message: dict) -> int:
         """Send message to browser subscribers only, removing dead ones."""
-        return _broadcast_to_set(self.browser_subscribers, message)
+        return broadcast_to_set(self.browser_subscribers, message)
 
     async def dispatch_browser_request(
         self, request: dict, timeout: float = 30.0
@@ -181,7 +181,7 @@ class WorkspaceSession:
             return {"error": "No browser client connected to this workspace"}
 
         message = {**request, "type": "browser_request", "id": request_id}
-        _log_ws_msg("BCAST", message)
+        log_ws_msg("BCAST", message)
         delivered = self.broadcast_to_browsers(message)
         if delivered == 0:
             state.pending_browser_requests.pop(request_id, None)
@@ -212,7 +212,7 @@ class WorkspaceSession:
         state.pending_browser_requests[request_id] = (future, target_sock)
 
         message = {**request, "type": "browser_request", "id": request_id}
-        _log_ws_msg("BCAST", message)
+        log_ws_msg("BCAST", message)
         try:
             target_sock.send_json(message)
         except _WS_ERRORS:
@@ -252,7 +252,7 @@ class WorkspaceSession:
             "id": request_id,
             "stream": True,
         }
-        _log_ws_msg("SEND", message)
+        log_ws_msg("SEND", message)
         try:
             target_sock.send_json(message)
         except _WS_ERRORS:
@@ -496,7 +496,7 @@ class WebSocketState:
 
         # Clean up module-level agent state for this workspace.
         _agent_conversations.pop(workspace_id, None)
-        _cancel_agent_task(workspace_id)
+        cancel_agent_task(workspace_id)
         # Stop the Pi RPC subprocess so it doesn't outlive the container.
         await agent.stop_session(workspace_id)
 
