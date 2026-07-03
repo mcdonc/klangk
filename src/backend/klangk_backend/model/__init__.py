@@ -3,7 +3,7 @@
 Historically all database access — users, workspaces, ACL, chat, ports,
 login attempts, and the schema — lived in a single ~2000-line
 ``model.py``.  That module has been split into per-domain submodules
-(``_core``, ``schema``, ``users``, ``acl``, ``workspaces``, ``ports``,
+(``db``, ``schema``, ``users``, ``acl``, ``workspaces``, ``ports``,
 ``chat``, ``login_attempts``, ``tokens``, ``invitations``).
 
 This package re-exports every public (and the few private) names from
@@ -14,17 +14,17 @@ those submodules so existing call sites keep working unchanged, e.g.::
     from .model import ACTION_ALLOW
 
 Only the handful of tests that poke at module-level globals need to
-target the owning submodule directly (``model._core`` for engine state,
+target the owning submodule directly (``model.db`` for engine state,
 ``model.ports`` for the port-in-use probe).
 """
 
-from ._core import (
+from .db import (
     DB_PATH,
     Connection,
     CursorResult,
     Row,
-    _data_dir,
-    _engine,
+    data_dir,
+    engine,
     ensure_engine,
     fetchone,
     make_engine,
@@ -37,11 +37,11 @@ from .schema import init_db
 from .users import (
     AGENT_USER_ID,
     AgentPrincipalError,
-    _ADMIN_USER_SORT_COLUMNS,
-    _HANDLE_RE,
-    _MAX_HANDLE_LEN,
-    _RESERVED_HANDLES,
-    _agent_user_cache,
+    ADMIN_USER_SORT_COLUMNS,
+    HANDLE_RE,
+    MAX_HANDLE_LEN,
+    RESERVED_HANDLES,
+    agent_user_cache,
     backfill_handles,
     hash_fallback_handle,
     unique_handle,
@@ -98,8 +98,8 @@ from .acl import (
     replace_acl_entries,
 )
 from .workspaces import (
-    _DEFAULT_PORTS_PER_WORKSPACE,
-    _SORT_COLUMNS,
+    DEFAULT_PORTS_PER_WORKSPACE,
+    SORT_COLUMNS,
     sort_order_clause,
     create_workspace,
     create_workspace_with_acl,
@@ -132,7 +132,7 @@ from .chat import (
     MSG_AGENT,
     MSG_SYSTEM,
     MSG_USER,
-    _MENTION_RE,
+    MENTION_RE,
     add_chat_message,
     delete_chat_message,
     get_chat_messages,
@@ -151,7 +151,7 @@ from .tokens import (
     is_token_blocklisted,
 )
 from .invitations import (
-    _ADMIN_INVITATION_SORT_COLUMNS,
+    ADMIN_INVITATION_SORT_COLUMNS,
     create_invitation,
     get_invitation,
     get_pending_invitation_by_email,
@@ -161,13 +161,13 @@ from .invitations import (
 )
 
 __all__ = (
-    # _core
+    # db
     "DB_PATH",
     "Connection",
     "CursorResult",
     "Row",
-    "_data_dir",
-    "_engine",
+    "data_dir",
+    "engine",
     "ensure_engine",
     "fetchone",
     "make_engine",
@@ -180,11 +180,11 @@ __all__ = (
     # users
     "AGENT_USER_ID",
     "AgentPrincipalError",
-    "_ADMIN_USER_SORT_COLUMNS",
-    "_HANDLE_RE",
-    "_MAX_HANDLE_LEN",
-    "_RESERVED_HANDLES",
-    "_agent_user_cache",
+    "ADMIN_USER_SORT_COLUMNS",
+    "HANDLE_RE",
+    "MAX_HANDLE_LEN",
+    "RESERVED_HANDLES",
+    "agent_user_cache",
     "backfill_handles",
     "hash_fallback_handle",
     "unique_handle",
@@ -239,8 +239,8 @@ __all__ = (
     "get_acl_tree_summary",
     "replace_acl_entries",
     # workspaces
-    "_DEFAULT_PORTS_PER_WORKSPACE",
-    "_SORT_COLUMNS",
+    "DEFAULT_PORTS_PER_WORKSPACE",
+    "SORT_COLUMNS",
     "sort_order_clause",
     "create_workspace",
     "create_workspace_with_acl",
@@ -272,7 +272,7 @@ __all__ = (
     "MSG_AGENT",
     "MSG_SYSTEM",
     "MSG_USER",
-    "_MENTION_RE",
+    "MENTION_RE",
     "add_chat_message",
     "delete_chat_message",
     "get_chat_messages",
@@ -288,7 +288,7 @@ __all__ = (
     "get_refreshed_token",
     "is_token_blocklisted",
     # invitations
-    "_ADMIN_INVITATION_SORT_COLUMNS",
+    "ADMIN_INVITATION_SORT_COLUMNS",
     "create_invitation",
     "get_invitation",
     "get_pending_invitation_by_email",

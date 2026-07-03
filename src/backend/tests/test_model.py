@@ -11,8 +11,8 @@ class TestMigration:
     async def test_migrate_old_schema(self, temp_data_dir):
         """Migrates a pre-OIDC database: password_hash NOT NULL, no
         provider/external_id columns."""
-        db = await aiosqlite.connect(str(model._core.DB_PATH))
-        model._core.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        db = await aiosqlite.connect(str(model.db.DB_PATH))
+        model.db.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         try:
             await db.execute("""
                 CREATE TABLE users (
@@ -52,8 +52,8 @@ class TestMigration:
 
     async def test_migrate_workspaces_adds_auto_start(self, temp_data_dir):
         """Migrates a workspaces table missing the auto_start column."""
-        db = await aiosqlite.connect(str(model._core.DB_PATH))
-        model._core.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        db = await aiosqlite.connect(str(model.db.DB_PATH))
+        model.db.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         try:
             await db.execute("""
                 CREATE TABLE users (
@@ -114,8 +114,8 @@ class TestMigration:
     ):
         """init_db renames the legacy default_command column to service_command
         (#1203), preserving existing data."""
-        db = await aiosqlite.connect(str(model._core.DB_PATH))
-        model._core.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        db = await aiosqlite.connect(str(model.db.DB_PATH))
+        model.db.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         try:
             await db.execute("""
                 CREATE TABLE users (
@@ -222,7 +222,7 @@ class TestHandles:
 
     async def test_create_user_long_email(self, db):
         user = await model.create_user("a" * 100 + "@foo.com", "hash")
-        assert len(user["handle"]) <= model._MAX_HANDLE_LEN
+        assert len(user["handle"]) <= model.MAX_HANDLE_LEN
 
     async def test_get_user_handle(self, user):
         handle = await model.get_user_handle(user["id"])
@@ -320,11 +320,11 @@ class TestHandles:
 
     async def test_handle_conflict_truncates_long_suffix(self, db):
         """When base handle is near max length, suffix is truncated."""
-        long = "a" * model._MAX_HANDLE_LEN
+        long = "a" * model.MAX_HANDLE_LEN
         u1 = await model.create_user(long + "@a.com", "hash")
         assert u1["handle"] == long
         u2 = await model.create_user(long + "@b.com", "hash")
-        assert len(u2["handle"]) <= model._MAX_HANDLE_LEN
+        assert len(u2["handle"]) <= model.MAX_HANDLE_LEN
         assert u2["handle"].endswith("-2")
 
     async def test_get_user_by_email_includes_handle(self, user):
@@ -1505,14 +1505,14 @@ class TestHashFallbackHandle:
 
         result = hash_fallback_handle("testbase")
         assert result.startswith("testbase-")
-        assert len(result) <= model._MAX_HANDLE_LEN
+        assert len(result) <= model.MAX_HANDLE_LEN
 
     def test_truncates_long_base(self):
         from klangk_backend.model import hash_fallback_handle
 
         long_base = "a" * 100
         result = hash_fallback_handle(long_base)
-        assert len(result) <= model._MAX_HANDLE_LEN
+        assert len(result) <= model.MAX_HANDLE_LEN
         # Should end with a hex suffix
         assert "-" in result
 
@@ -1532,7 +1532,7 @@ class TestUniqueHandleFallback:
         result = await unique_handle(mock_db, "taken")
         # Should fall through to hash_fallback_handle
         assert "-" in result
-        assert len(result) <= model._MAX_HANDLE_LEN
+        assert len(result) <= model.MAX_HANDLE_LEN
         # Should contain a hex suffix, not a numeric one
         parts = result.rsplit("-", 1)
         assert len(parts[1]) == 8  # sha256[:8]

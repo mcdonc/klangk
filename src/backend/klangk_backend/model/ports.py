@@ -3,7 +3,7 @@
 import asyncio
 import socket
 
-from ._core import transaction
+from .db import transaction
 
 
 async def add_port_allocations(workspace_id: str, ports: list[int]) -> None:

@@ -13,10 +13,10 @@ from .util import resolve_env_bool, resolve_env_value
 
 logger = logging.getLogger(__name__)
 
-_data_dir = Path(
+data_dir = Path(
     resolve_env_value("KLANGK_DATA_DIR", str(Path.home() / ".klangk" / "data"))
 )
-WORKSPACES_ROOT = _data_dir / "workspaces"
+WORKSPACES_ROOT = data_dir / "workspaces"
 
 # Characters allowed in sanitized filenames (alphanumeric, dash,
 # underscore, dot, @).  Everything else is replaced with underscore.

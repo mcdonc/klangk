@@ -1,6 +1,6 @@
 """Database schema creation and in-place migrations (``init_db``)."""
 
-from ._core import get_db
+from .db import get_db
 from .acl import PRINCIPAL_USER
 from .users import AGENT_USER_ID, backfill_handles
 

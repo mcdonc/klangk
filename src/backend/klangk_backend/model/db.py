@@ -1,7 +1,7 @@
 """Shared core: async engine, connection wrappers, and transaction helpers.
 
 All DB access in the per-domain modules goes through :func:`transaction`
-and :func:`fetchone` defined here.  The engine state (``_engine``,
+and :func:`fetchone` defined here.  The engine state (``engine``,
 ``DB_PATH``) also lives here so test fixtures that rebind it can target a
 single, obvious location.
 """
@@ -18,16 +18,16 @@ from ..util import resolve_env_value
 
 logger = logging.getLogger(__name__)
 
-_data_dir = Path(
+data_dir = Path(
     resolve_env_value("KLANGK_DATA_DIR", str(Path.home() / ".klangk" / "data"))
 )
-DB_PATH = _data_dir / "klangk.db"
+DB_PATH = data_dir / "klangk.db"
 
 # ---------------------------------------------------------------------------
 # SQLAlchemy async engine + compatibility wrappers
 # ---------------------------------------------------------------------------
 
-_engine = None
+engine = None
 
 
 class Row:
@@ -130,19 +130,19 @@ def make_engine(db_path: Path | str, **kwargs):
 
 
 def ensure_engine():
-    global _engine
-    if _engine is None:
+    global engine
+    if engine is None:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _engine = make_engine(DB_PATH)
-    return _engine
+        engine = make_engine(DB_PATH)
+    return engine
 
 
 async def dispose_engine() -> None:
     """Dispose the current engine (shutdown / test teardown)."""
-    global _engine
-    if _engine is not None:
-        await _engine.dispose()
-        _engine = None
+    global engine
+    if engine is not None:
+        await engine.dispose()
+        engine = None
 
 
 async def get_db() -> Connection:

@@ -3,7 +3,7 @@
 import re
 import uuid
 
-from ._core import Connection, transaction
+from .db import Connection, transaction
 from .acl import ACTION_ALLOW, PRINCIPAL_USER
 
 # Chat message types
@@ -11,7 +11,7 @@ MSG_USER = 0
 MSG_AGENT = 1
 MSG_SYSTEM = 2
 
-_MENTION_RE = re.compile(r"@([a-zA-Z0-9._-]+)")
+MENTION_RE = re.compile(r"@([a-zA-Z0-9._-]+)")
 
 
 async def parse_mentions(
@@ -22,7 +22,7 @@ async def parse_mentions(
     Returns a deduplicated list of user IDs for handles that belong to
     workspace members (including the owner).
     """
-    candidates = _MENTION_RE.findall(message)
+    candidates = MENTION_RE.findall(message)
     if not candidates:
         return []
     # Deduplicate while preserving order

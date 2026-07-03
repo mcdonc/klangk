@@ -1,6 +1,6 @@
 """JWT token blocklist (revocation + refreshed-token handoff)."""
 
-from ._core import fetchone, transaction
+from .db import fetchone, transaction
 
 
 async def blocklist_token(

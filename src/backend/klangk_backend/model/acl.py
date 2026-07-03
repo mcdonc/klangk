@@ -1,6 +1,6 @@
 """ACL entries (access-control list rows) and principal/action constants."""
 
-from ._core import transaction
+from .db import transaction
 from .users import AGENT_USER_ID, AgentPrincipalError
 
 # ACL constants

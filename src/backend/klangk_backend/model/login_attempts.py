@@ -5,7 +5,7 @@ Storage only; the sliding-window *decision* lives in ``auth.py``.
 
 from datetime import datetime, timezone
 
-from ._core import fetchone, transaction
+from .db import fetchone, transaction
 
 
 async def record_failed_login(email: str, *, reset: bool = False) -> None:

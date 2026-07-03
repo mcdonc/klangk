@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from ._core import fetchone, transaction
+from .db import fetchone, transaction
 
 
 async def create_invitation(email: str, invited_by: str) -> dict:
@@ -69,7 +69,7 @@ async def get_pending_invitation_by_email(email: str) -> dict | None:
 # Whitelisted sort columns for the admin invitations list. Values are the
 # SQL expressions to ORDER BY; the ``invited_by`` key sorts by the inviter's
 # email (the joined ``users.email``), which is the value the UI displays.
-_ADMIN_INVITATION_SORT_COLUMNS = {
+ADMIN_INVITATION_SORT_COLUMNS = {
     "email": "i.email",
     "invited_by": "u.email",
     "created": "i.created_at",
@@ -98,7 +98,7 @@ async def list_invitations(
     the invitee email. A trailing ``i.id`` tiebreaker keeps offset
     pagination deterministic when rows share the sort key.
     """
-    sort_col = _ADMIN_INVITATION_SORT_COLUMNS.get(sort, "i.created_at")
+    sort_col = ADMIN_INVITATION_SORT_COLUMNS.get(sort, "i.created_at")
     direction = "DESC" if order.lower() == "desc" else "ASC"
     page = max(1, page)
     page_size = max(1, min(page_size, 200))
