@@ -199,10 +199,14 @@ klangkc rm openclaw        # only if you want a truly fresh sandbox/service scen
   6. `klangkc ls` — the **Status** column shows `openclaw` as **healthy**
      (green). Narrate: the service command is running and its health check is
      passing — everything the CLI knows about the workspace, right here.
-  7. **auto-start:** in the host terminal run `devenv processes restart backend`,
-     then `klangkc ls` again — `openclaw`'s Status goes `starting` → `healthy`
-     without anyone connecting. Narrate: with `KLANGK_ALLOW_AUTOSTART` on, the
-     container and gateway boot on their own after a server restart.
+  7. **auto-start:** in the host terminal send SIGHUP to the backend
+     (`kill -HUP $(cat $XDG_RUNTIME_DIR/klangk-*.pid)`) — a graceful runtime
+     restart that keeps the HTTP listener up while recycling the container
+     layer (#1212/#1213; the backend is bare uvicorn, so `devenv processes
+restart backend` is a no-op). Then `klangkc ls` again — `openclaw`'s
+     Status goes `starting` → `healthy` without anyone connecting. Narrate:
+     with `KLANGK_ALLOW_AUTOSTART` on, the container and gateway boot on
+     their own after a server restart.
   8. **health check:** `klangkc monitor --type service_health | jq .` — show
      live events (a `service_health` frame arrives immediately on connect,
      thanks to the snapshot-on-connect fix #1210, so you don't wait on a
@@ -218,7 +222,8 @@ klangkc rm openclaw        # only if you want a truly fresh sandbox/service scen
     workspace and `klangkc restart openclaw` (restarts container + gateway).
     Only `klangkc rm openclaw && klangkc sandbox openclaw` if you need truly
     fresh.
-  - The server-restart beat (step 7) is its own clip — restart, trim in edit.
+  - The server-restart beat (step 7) is its own clip — SIGHUP, poll
+    `klangkc ls` until healthy, then trim the wait in edit.
 - **Gotchas:**
   - **Never record the first-run install live** — it downloads nvm + Node + the
     app and can stall. Pre-warm, or `--force`/restart.

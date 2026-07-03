@@ -216,6 +216,20 @@ class Term:
         """Close *pane_id*; the remaining pane resizes to fill the space."""
         subprocess.run(["tmux", "kill-pane", "-t", pane_id], check=True)
 
+    # -- control keys --------------------------------------------------
+    def send_key(self, key: str) -> None:
+        """Send a tmux key name (e.g. ``C-c``, ``C-d``) to the active pane.
+
+        Unlike :meth:`_send` (which is literal), this is interpreted by
+        tmux as a key name so modifiers like Ctrl work. Used for
+        interrupts (Ctrl+C on a long-running ``klangkc monitor``).
+        """
+        subprocess.run(["tmux", "send-keys", "-t", self.session, key], check=True)
+
+    def interrupt(self) -> None:
+        """Send Ctrl+C (SIGINT) to the active pane."""
+        self.send_key("C-c")
+
 
 # --------------------------------------------------------------------------
 # Scenes
@@ -441,14 +455,116 @@ def scene_2(t: Term) -> None:
 
 
 def scene_3(t: Term) -> None:
-    """klangkc sandbox: one command to rule them all (~1.5 min).
+    """klangkc sandbox: dev env to always-on service in one command (~3 min).
 
-    Requires a live server. Skeleton — point at a real project dir.
+    The showcase scene — **CLI only** (no browser). Uses the ``openclaw``
+    sandbox to demonstrate the sandbox concept AND the service features
+    (service-command, auto-start, health) in one continuous flow. The
+    hosted-app payoff is deferred to the browser (Scene 4); here it is a
+    narration-only tease.
+
+    Requires a live server with ``KLANGK_ALLOW_AUTOSTART=1``, openclaw
+    **pre-warmed** off-camera (so the on-camera setup.sh is fast — its
+    install guards fire because ``/openclaw`` is a mount), and ``jq`` on
+    PATH. The recorder starts at the worktree root, so the relative
+    sandbox path resolves.
     """
-    _intro(t, "klangkc sandbox — one command")
-    t.run("cd ~/projects/myproject", expect="$")
-    t.run("klangkc sandbox myproject -A", expect="$", timeout=120)
-    t.pause(1.0)
+    HOLD = float(os.environ.get("KLANGK_DEMO_HOLD", "5"))
+
+    # --- opening hold: let the clean host prompt sit before the action ---
+    t.expect("host $")
+    t.pause(5)
+
+    # step 1 — show the sandbox config. Narrate: mounts the project at a
+    # fixed path and runs a setup script; then point at the three
+    # ``workspace:`` service lines (service-command, auto-start, health-check).
+    t.type("cat sandboxes/openclaw/.klangk-sandbox.yaml", per_char=0.03)
+    t.enter()
+    # Wait for the health-check line near the end of the file.
+    t.expect("health-check", timeout=10)
+    t.pause(HOLD)
+
+    # step 2 — create the workspace from the sandbox config. Mounts
+    # everything, runs setup (fast: pre-warmed + /openclaw is a mount),
+    # starts the container. The gateway auto-starts in its service session.
+    t.type("klangkc sandbox openclaw sandboxes/openclaw", per_char=0.03)
+    t.enter()
+    t.expect("Setup complete", timeout=180)
+    t.pause(HOLD)
+
+    # step 3 — connect, show the project mounted inside, then disconnect.
+    t.type("klangkc shell openclaw", per_char=0.03)
+    t.enter()
+    t.expect("Escape: Enter", timeout=15)  # the "~." hint line
+    _wait_remote(t, timeout=20)
+    t.pause(HOLD)
+
+    # The sandbox mount appears at /openclaw — proving the project is
+    # live inside the container.
+    t.run("ls /openclaw", timeout=10)
+    _wait_remote(t, timeout=10)
+    t.pause(HOLD)
+
+    _disconnect_ssh(t, hold=HOLD)
+
+    # steps 4 & 5 — narration holds:
+    #   sandbox idea: commit the config → any teammate runs the same
+    #     command and gets the exact same env (a Dockerfile for your dev
+    #     environment, lifecycle managed for you).
+    #   service-command: a per-workspace singleton — runs once in its own
+    #     session, shared with everyone who has access.
+    t.pause(HOLD)
+    t.pause(HOLD)
+
+    # step 6 — klangkc ls: the Status column shows openclaw as healthy
+    # (green). Narrate: the service command is running and its health
+    # check is passing — everything the CLI knows, right here.
+    t.type("klangkc ls", per_char=0.03)
+    t.enter()
+    t.pause(3)  # let the table land
+    t.pause(HOLD)
+
+    # step 7 — auto-start via SIGHUP runtime restart (#1212/#1213).
+    # The backend is bare uvicorn (``devenv processes restart backend`` is a
+    # no-op); SIGHUP recycles the container layer while keeping the HTTP
+    # listener up. openclaw has auto-start: true, so after the recycle it
+    # boots on its own — no one connects. We poll klangkc ls until the
+    # Status column is healthy again; each read is a clean ``clear`` + ls
+    # so scrollback never false-matches. (This window is trimmed in edit.)
+    t.run("clear")
+    pid_glob = "$XDG_RUNTIME_DIR/klangk-*.pid"
+    t.type(f"kill -HUP $(cat {pid_glob})", per_char=0.03)
+    t.enter()
+    t.pause(6)  # let the shutdown + autostart kick off
+    deadline = time.monotonic() + 150
+    while time.monotonic() < deadline:
+        t.clear()
+        t.type("klangkc ls", per_char=0.03)
+        t.enter()
+        t.pause(4)
+        tail = "\n".join(t.pane().splitlines()[-12:])
+        if "openclaw" in tail and "healthy" in tail.lower():
+            break
+        t.pause(6)
+    t.pause(HOLD)
+
+    # step 8 — health check: live service_health events. The
+    # snapshot-on-connect fix (#1210) sends a frame immediately, so we
+    # don't wait on a transition. Narrate: exit 0 = healthy, anything
+    # else = unhealthy and you see _why_; Ctrl+C to stop. jq pretty-prints.
+    t.type("klangkc monitor --type service_health | jq .", per_char=0.03)
+    t.enter()
+    t.expect("service_health", timeout=30)
+    t.pause(HOLD)
+    t.interrupt()  # Ctrl+C
+    t.expect("host $", timeout=10)
+    t.pause(HOLD)
+
+    # step 9 — hosted-app tease (NARRATION ONLY, no browser).
+    # The gateway is also exposed as a hosted app; once we switch to the
+    # browser (Scene 4) we click straight through to openclaw's own web
+    # UI, proxied through Klangk's single port. Do NOT open the browser.
+    t.pause(HOLD)
 
 
 def scene_4(t: Term) -> None:

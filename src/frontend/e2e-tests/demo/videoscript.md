@@ -25,7 +25,10 @@ If you're a solo developer, you'll probably interact with Klangk mostly via its 
 
 Meanwhile, if you're on a team, you can use Klangk to share workspaces, pair-program in shared terminals, and chat alongside your AI through a web browser.
 
-I'll start by showing the solo workflow from the command line, then move to the web UI for the team features. Let me show you how it works.
+Klangk can be run as a Docker container or using raw hardware on MacOS or
+Linux.
+
+I'll start by showing a solo workflow from the command line, then move to the web UI for the team features. Let me show you how it works.
 
 ## The CLI — Creating Your First Workspace (2 minutes)
 
@@ -115,7 +118,7 @@ Now here's what turns this from "a process I left running" into an actual servic
 
 First, **auto-start**. I've got `KLANGK_ALLOW_AUTOSTART` enabled on the server, so if I restart the whole Klangk server — or it reboots — openclaw's container boots on its own and the gateway is running _before anyone connects_. I don't have to log in and kick it off.
 
-_[Host terminal: devenv processes restart backend. Then: klangkc ls — openclaw's Status goes starting → healthy again, all without anyone connecting]_
+_[Host terminal: kill -HUP $(cat $XDG_RUNTIME_DIR/klangk-*.pid) — a graceful runtime restart that keeps the HTTP listener up. Then: klangkc ls — openclaw's Status goes starting → healthy again, all without anyone connecting]_
 
 Second, **health checks**. A running container only proves the container is alive — it says nothing about the process inside it. So Klangk runs my health-check command inside the container every thirty seconds: exit zero means healthy, anything else is unhealthy — and that status is the very thing lighting up the Status column we just saw. Because it's all surfaced as events, I can watch it live from the command line with `klangkc monitor` — and even run a command on a change, like firing a Slack alert when the service goes down.
 
