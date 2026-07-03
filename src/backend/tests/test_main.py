@@ -1,6 +1,8 @@
 """Tests for main.py: lifespan, seed user, static files, logfire."""
 
+import asyncio
 import os
+import signal
 import sqlite3
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -236,6 +238,183 @@ class TestLifespan:
         ):
             async with main.lifespan(app):
                 pass  # pragma: no cover
+
+
+# --- SIGHUP runtime restart (#1212) ---
+
+
+class TestStartupShutdownRestart:
+    async def test_startup_calls_container_sequence(self):
+        with (
+            patch.object(
+                main.container.registry,
+                "prewarm_podman",
+                new_callable=AsyncMock,
+            ) as mock_prewarm,
+            patch.object(
+                main.container.registry,
+                "adopt_orphaned_containers",
+                new_callable=AsyncMock,
+            ) as mock_adopt,
+            patch.object(
+                main.container.registry, "start_cleanup_loop"
+            ) as mock_cleanup,
+            patch.object(
+                main.container.registry, "start_health_loop"
+            ) as mock_health,
+            patch(
+                "klangk_backend.main.workspaces.auto_start_workspaces",
+                new_callable=AsyncMock,
+                return_value=0,
+            ) as mock_autostart,
+        ):
+            await main._startup()
+        mock_prewarm.assert_awaited_once()
+        mock_adopt.assert_awaited_once()
+        mock_cleanup.assert_called_once()
+        mock_health.assert_called_once()
+        mock_autostart.assert_awaited_once()
+
+    async def test_runtime_shutdown_tears_down_layers(self):
+        with (
+            patch(
+                "klangk_backend.main.wshandler.disconnect_all_websockets",
+                new_callable=AsyncMock,
+            ) as mock_disc,
+            patch(
+                "klangk_backend.main.agent.stop_all_sessions",
+                new_callable=AsyncMock,
+            ) as mock_stop_agents,
+            patch(
+                "klangk_backend.main.wshandler.clear_agent_mention_state"
+            ) as mock_clear,
+            patch.object(
+                main.container.registry, "shutdown", new_callable=AsyncMock
+            ) as mock_shutdown,
+        ):
+            await main._runtime_shutdown()
+        mock_disc.assert_awaited_once()
+        mock_stop_agents.assert_awaited_once()
+        mock_clear.assert_called_once()
+        mock_shutdown.assert_awaited_once()
+
+    async def test_process_shutdown_disposes(self):
+        with (
+            patch("klangk_backend.main.remove_pid_file") as mock_remove,
+            patch(
+                "klangk_backend.main.model.dispose_engine",
+                new_callable=AsyncMock,
+            ) as mock_dispose,
+        ):
+            await main._process_shutdown()
+        mock_remove.assert_called_once()
+        mock_dispose.assert_awaited_once()
+
+    async def test_restart_runtime_runs_shutdown_then_startup(self):
+        main._restart_lock = None  # force fresh lock creation
+        with (
+            patch(
+                "klangk_backend.main._runtime_shutdown", new_callable=AsyncMock
+            ) as mock_down,
+            patch(
+                "klangk_backend.main._startup", new_callable=AsyncMock
+            ) as mock_up,
+        ):
+            await main._restart_runtime()
+        mock_down.assert_awaited_once()
+        mock_up.assert_awaited_once()
+        # Lock was created and is now held-free.
+        assert main._restart_lock is not None
+
+    async def test_restart_runtime_reuses_existing_lock(self):
+        existing = main._restart_lock
+        with (
+            patch(
+                "klangk_backend.main._runtime_shutdown", new_callable=AsyncMock
+            ),
+            patch("klangk_backend.main._startup", new_callable=AsyncMock),
+        ):
+            await main._restart_runtime()
+        # Same lock object reused, not replaced.
+        assert main._restart_lock is existing
+
+    async def test_restart_lock_serializes_concurrent_calls(self):
+        """Two restarts kicked off together run strictly one-after-another."""
+        main._restart_lock = None
+        order = []
+
+        async def fake_shutdown():
+            order.append("down-start")
+            await asyncio.sleep(0.01)
+            order.append("down-end")
+
+        async def fake_startup():
+            order.append("up")
+
+        with (
+            patch(
+                "klangk_backend.main._runtime_shutdown",
+                side_effect=fake_shutdown,
+            ),
+            patch("klangk_backend.main._startup", side_effect=fake_startup),
+        ):
+            await asyncio.gather(
+                main._restart_runtime(), main._restart_runtime()
+            )
+        # Two complete down-start...down-end...up cycles, never interleaved.
+        assert order == [
+            "down-start",
+            "down-end",
+            "up",
+            "down-start",
+            "down-end",
+            "up",
+        ]
+
+    async def test_on_sighup_schedules_restart(self):
+        """_on_sighup creates a task that runs _restart_runtime."""
+        with patch(
+            "klangk_backend.main._restart_runtime", new_callable=AsyncMock
+        ) as mock_restart:
+            main._on_sighup()
+            # Let the scheduled task run.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        mock_restart.assert_awaited_once()
+
+    async def test_lifespan_registers_sighup_handler(self, db, monkeypatch):
+        """The lifespan installs (and removes) a SIGHUP handler."""
+        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
+        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
+        app = FastAPI()
+        loop = asyncio.get_running_loop()
+        with (
+            patch.object(
+                loop, "add_signal_handler", new_callable=MagicMock
+            ) as mock_add,
+            patch.object(
+                loop, "remove_signal_handler", new_callable=MagicMock
+            ) as mock_remove,
+            patch.object(
+                main.container.registry,
+                "adopt_orphaned_containers",
+                new_callable=AsyncMock,
+            ),
+            patch.object(main.container.registry, "start_cleanup_loop"),
+            patch.object(
+                main.container.registry, "shutdown", new_callable=AsyncMock
+            ),
+            patch("klangk_backend.main.check_pid_file", return_value=None),
+            patch("klangk_backend.main.write_pid_file"),
+            patch("klangk_backend.main.remove_pid_file"),
+        ):
+            async with main.lifespan(app):
+                mock_add.assert_called_once()
+                # Handler is registered for SIGHUP pointing at _on_sighup.
+                registered_signal = mock_add.call_args.args[0]
+                assert registered_signal == signal.SIGHUP
+            mock_remove.assert_called_once_with(signal.SIGHUP)
 
 
 # --- Static files ---

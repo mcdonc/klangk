@@ -363,6 +363,50 @@ class WebSocketState:
         self.sessions.pop(session.workspace_id, None)
         await session.reset()
 
+    async def disconnect_all(self) -> None:
+        """Close every connection and clear all in-memory session state.
+
+        Used by the SIGHUP runtime-restart path.  Connected clients are
+        closed with code 1012 ("service restarted") so they reconnect
+        and rebuild state against the freshly-started containers.
+        Deliberately leaves ``container.registry`` untouched -- the
+        registry needs its container-id -> workspace map intact for the
+        subsequent ``registry.shutdown()`` to find containers to stop.
+
+        Each handler coroutine's own ``finally`` block then runs a
+        no-op cleanup once the event loop schedules it: by then
+        ``connections`` and ``sessions`` are empty, so there is nothing
+        left for it to do.
+        """
+        socks = list(self.connections.keys())
+        self.connections.clear()
+
+        # Cancel pending presence-leave broadcasts and abandoned
+        # browser-delegate requests so they don't fire against state
+        # we're about to drop.
+        for task in self._pending_leaves.values():
+            task.cancel()
+        self._pending_leaves.clear()
+        for fut, _sock in self.pending_browser_requests.values():
+            if not fut.done():
+                fut.cancel()
+        self.pending_browser_requests.clear()
+        self.streaming_browser_requests.clear()
+
+        # Reset each workspace session (cancels token-renewal tasks,
+        # clears subscriber sets) then drop the entries.
+        sessions = list(self.sessions.values())
+        self.sessions.clear()
+        for session in sessions:
+            await session.reset()
+
+        # Tell every client to reconnect (1012 = "service restart").
+        for sock in socks:
+            try:
+                await sock.close(code=1012)
+            except Exception:  # noqa: BLE001
+                logger.debug("Error closing socket during restart")
+
     def cancel_pending_leave(self, workspace_id: str, user_id: str) -> bool:
         """Cancel a pending presence_leave for *user_id* in *workspace_id*.
 

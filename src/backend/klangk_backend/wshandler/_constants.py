@@ -95,3 +95,16 @@ def _drop_agent_task_if_current(workspace_id: str) -> None:
     """
     if _agent_tasks.get(workspace_id) is asyncio.current_task():
         _agent_tasks.pop(workspace_id, None)
+
+
+def clear_agent_mention_state() -> None:
+    """Cancel all in-flight agent runs and drop conversation context.
+
+    Used by the SIGHUP runtime-restart path to avoid orphaned LLM
+    requests and stale conversation state outliving their containers.
+    Mirrors the per-workspace cleanup in ``reset_workspace`` but across
+    every workspace at once.
+    """
+    for ws_id in list(_agent_tasks):
+        _cancel_agent_task(ws_id)
+    _agent_conversations.clear()
