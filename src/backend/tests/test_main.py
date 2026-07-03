@@ -559,13 +559,28 @@ class TestCorsOrigins:
         monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
         monkeypatch.delenv("KLANGK_NGINX_PORT", raising=False)
-        assert main.cors_origins() == ["http://localhost:8995"]
+        # No override -> bare localhost; the port is NOT synthesized from
+        # KLANGK_NGINX_PORT (consistent with hosted-app URL construction).
+        assert main.cors_origins() == ["http://localhost"]
 
-    def test_custom_nginx_port(self, monkeypatch):
+    def test_nginx_port_not_synthesized(self, monkeypatch):
+        """KLANGK_NGINX_PORT does not leak into the CORS origin.
+
+        It is internal container wiring, not the browser origin; the port
+        must come from KLANGK_HOSTING_HOSTNAME. Setting the nginx port
+        therefore has no effect on the derived origin (#1240).
+        """
         monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
         monkeypatch.setenv("KLANGK_NGINX_PORT", "9000")
-        assert main.cors_origins() == ["http://localhost:9000"]
+        assert main.cors_origins() == ["http://localhost"]
+
+    def test_hosting_hostname_carries_port(self, monkeypatch):
+        """The port lives in KLANGK_HOSTING_HOSTNAME, not a separate var."""
+        monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
+        monkeypatch.setenv("KLANGK_HOSTING_HOSTNAME", "localhost:8996")
+        monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
+        assert main.cors_origins() == ["http://localhost:8996"]
 
     def test_hosting_hostname(self, monkeypatch):
         monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)

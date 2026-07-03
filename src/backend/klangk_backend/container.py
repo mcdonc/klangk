@@ -1007,9 +1007,15 @@ class ContainerRegistry:
             or hosting_base_path is None
         ):
             h, p, b = util.derive_hosting_info(None, None)
-            hosting_hostname = hosting_hostname or h
-            hosting_proto = hosting_proto or p
-            hosting_base_path = hosting_base_path or b
+            # Use ``is None`` (not ``or``): an explicit empty base_path
+            # (root deployment) is a legitimate value that must survive,
+            # not be clobbered by the resolved floor.
+            if hosting_hostname is None:
+                hosting_hostname = h
+            if hosting_proto is None:
+                hosting_proto = p
+            if hosting_base_path is None:
+                hosting_base_path = b
         env_vars: list[str] = []
         nginx_port = util.resolve_env_value("KLANGK_NGINX_PORT", "8995")
         proxy_url = f"http://host.containers.internal:{nginx_port}/llm-proxy"
