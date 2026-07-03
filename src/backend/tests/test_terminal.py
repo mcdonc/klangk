@@ -1448,7 +1448,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
             patch(
@@ -1475,7 +1475,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=True),
             ),
             patch(
@@ -1502,7 +1502,7 @@ class TestEnsureServiceSession:
                 new=AsyncMock(),
             ),
             patch(
-                "klangk_backend.terminal._service_cmd_window_exists",
+                "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
             patch(
