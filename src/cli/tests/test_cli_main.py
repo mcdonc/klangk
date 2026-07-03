@@ -2031,9 +2031,35 @@ class TestMainCLI:
         client.create_workspace.assert_called_once_with(
             "ws",
             image=None,
+            service_command=None,
             auto_start=False,
             mounts=None,
             env={"FOO": "bar", "X": "1"},
+            health_check=None,
+        )
+
+    def test_create_with_command_flag(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        ws = Workspace(
+            id="new-id", name="ws", created_at="2025-01-01T00:00:00Z"
+        )
+        client = MagicMock()
+        client.create_workspace.return_value = ws
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["create", "ws", "-c", "npm run dev"])
+        assert result.exit_code == 0
+        client.create_workspace.assert_called_once_with(
+            "ws",
+            image=None,
+            service_command="npm run dev",
+            auto_start=False,
+            mounts=None,
+            env=None,
             health_check=None,
         )
 

@@ -151,6 +151,8 @@ klangkc create my-project --mount ~/src:/home/klangk/work/src          # with bi
 klangkc create my-project --mount nix-store:/nix           # with named volume
 klangkc create my-project --env FOO=bar                      # with env vars
 klangkc create my-project --health-check 'curl -sf http://localhost:8080/health'  # with a service health check
+klangkc create my-project --command 'npm run dev'  # with a service command
+klangkc create my-project -c 'npm run dev'         # short form of --command
 klangkc edit my-project                  # interactive edit (name, image, command, health check, mounts, env)
 klangkc edit my-project --auto-start     # enable auto-start on server boot
 klangkc edit my-project --no-auto-start  # disable auto-start

@@ -358,6 +358,12 @@ def create(
             "health (exit 0 = healthy). See the Health Check docs."
         ),
     ),
+    command: str | None = typer.Option(
+        None,
+        "--command",
+        "-c",
+        help="Service shell command (see `klangkc edit --command`).",
+    ),
     mount: list[str] | None = typer.Option(
         None,
         "--mount",
@@ -382,6 +388,7 @@ def create(
         ws = _client().create_workspace(
             name,
             image=image,
+            service_command=command,
             auto_start=auto_start,
             mounts=mount or None,
             env=env_dict,
