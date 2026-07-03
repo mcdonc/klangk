@@ -273,7 +273,7 @@ async def test_containers_stopped_then_autostarted(server, auth):
 
     def status_value():
         r = httpx.get(
-            f"{url}/api/v1/workspaces/{workspace_id}",
+            f"{url}/api/v1/workspaces/{workspace_id}/status",
             headers=headers,
             timeout=30,
         )
