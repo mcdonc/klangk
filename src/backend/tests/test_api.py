@@ -537,14 +537,18 @@ class TestAuthRoutes:
 
     async def test_logout(self, client, user):
         headers = await _auth_headers(client)
+        # Logout must NOT stop the user's containers (#1235): the idle timeout
+        # is the only thing that stops containers (#301). Guard against a
+        # regression of the old logout_user holdover.
         with patch.object(
-            api.container.registry,
-            "stop_user_containers",
+            container.registry,
+            "stop_and_remove_container",
             new_callable=AsyncMock,
-        ):
+        ) as mock_stop:
             resp = await client.post("/api/v1/auth/logout", headers=headers)
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
+        mock_stop.assert_not_called()
 
     async def test_logout_no_auth(self, client):
         resp = await client.post("/api/v1/auth/logout")
