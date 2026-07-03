@@ -244,6 +244,17 @@ class TestLifespan:
 
 
 class TestStartupShutdownRestart:
+    @pytest.fixture(autouse=True)
+    def _reset_restart_lock(self):
+        # ``main._restart_lock`` is a module-global lazily created on first
+        # use. Without a reset, lock state leaks across tests, making them
+        # order-dependent (and breaking some tests in isolation or under
+        # pytest-randomly's shuffle). Reset to the pre-first-use floor before
+        # every test in this class so each one is self-contained (#1242).
+        main._restart_lock = None
+        yield
+        main._restart_lock = None
+
     async def test_startup_calls_container_sequence(self):
         with (
             patch.object(
@@ -327,6 +338,11 @@ class TestStartupShutdownRestart:
         assert main._restart_lock is not None
 
     async def test_restart_runtime_reuses_existing_lock(self):
+        # Seed a lock explicitly; ``restart_runtime`` must reuse it rather
+        # than create a new one. (Previously this relied on a prior test's
+        # side effect of populating the module-global, which made it
+        # order-dependent and broken in isolation — #1242.)
+        main._restart_lock = asyncio.Lock()
         existing = main._restart_lock
         with (
             patch(
