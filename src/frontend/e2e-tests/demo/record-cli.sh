@@ -18,11 +18,14 @@
 #   Scene 3b prep: ensure login + openclaw must be healthy (carried from 3;
 #                 NOT removed)
 #
-# Preconditions YOU manage (not this script): the klangk server must be up at
-# $SERVER with KLANGK_ALLOW_AUTOSTART=1 + KLANGK_HEALTH_CHECK_INTERVAL=10, the
-# bootstrap admin (admin@plope.com / admin) must exist (the seed uses it to
-# reset + recreate the hero), and the openclaw host install (nvm/Node) must
-# already be present in sandboxes/openclaw/ so the on-camera create is fast.
+# The demo backend is self-contained on a dedicated port pair + instance
+# ("video") so it never races the main repo's backend (:8997/:8995). This
+# script ensures it's UP before recording (starting it cold ~80s the first
+# time, ~19s warm thereafter) but does NOT stop it on exit: Scene 3b needs the
+# container created in Scene 3 to still be running, and warm reuse across takes
+# avoids the cold-start cost. Stop it manually when fully done:
+#   run-demo-backend.sh stop
+# KLANGK_ALLOW_AUTOSTART=1 + KLANGK_HEALTH_CHECK_INTERVAL=10 live in .env.
 set -uo pipefail
 
 WT=/home/chrism/projects/klangk/.worktrees/demo-video-scripts
@@ -30,7 +33,8 @@ cd "$WT" || exit 1
 DEMO_DIR="src/frontend/e2e-tests/demo"
 RECORDINGS_DIR="$DEMO_DIR/recordings"
 mkdir -p "$RECORDINGS_DIR"
-SERVER=http://localhost:8995
+# Demo backend's nginx port (run-demo-backend.sh / .env: KLANGK_NGINX_PORT=8996).
+SERVER="${KLANGK_DEMO_SERVER:-http://localhost:8996}"
 HERO=admin@example.com
 PASS=adminpass
 SCENE="${1:-}"
@@ -44,6 +48,15 @@ SCENE="${1:-}"
 quiet() { grep -vE "Validating|^•|Configuring|cachix|Evaluating|Loading|Running|✓ Running tasks|warning: Substituter|Using config|^✓ " || true; }
 
 kc() { devenv shell -- klangkc "$@" 2>&1 | quiet; }
+
+# Ensure the dedicated demo backend is up (start it if not). Idempotent.
+ensure_backend() {
+  echo "  [prep] ensure demo backend up on ${SERVER#http://}"
+  bash "$DEMO_DIR/run-demo-backend.sh" start >/dev/null || {
+    echo "  [prep] FATAL: demo backend failed to start" >&2
+    exit 1
+  }
+}
 
 ensure_logged_out() {
   echo "  [prep] logout"
@@ -121,6 +134,11 @@ do_scene() { # $1=label $2=prep_fn $3=cli_scene $4=filename
   return $rc
 }
 
+# The dedicated demo backend must be up before any prep that talks to it.
+# Started once here so `all` (2→3→3b) shares one warm backend + one openclaw
+# container across all three takes (3b needs 3's container still running).
+ensure_backend
+
 case "$SCENE" in
 2) do_scene 2 prep_2 scene_2 scene-02-cli.mp4 ;;
 3) do_scene 3 prep_3 scene_3 scene-03-sandbox.mp4 ;;
@@ -149,3 +167,6 @@ for f in "$RECORDINGS_DIR"/scene-0*.mp4; do
   sz=$(du -h "$f" | cut -f1)
   printf "  %-40s %s  %ss  %s\n" "$f" "$dim" "${dur%.*}" "$sz"
 done
+echo
+echo "demo backend still up at $SERVER (left running for warm reuse / 3→3b continuity)."
+echo "stop it when done:  bash $DEMO_DIR/run-demo-backend.sh stop"

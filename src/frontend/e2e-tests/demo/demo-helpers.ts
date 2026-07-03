@@ -9,7 +9,7 @@
  *   - pacing (`pace`) and human-feel typing (`slowType`) for narration room,
  *   - real-password login (`demoLogin`) — the e2e helpers hardcode a test pw,
  *   - API login / register / admin-create-user, so scenes can run against a
- *     REAL demo server (port 8995, real LLM key) via KLANGK_TEST_URL,
+ *     REAL demo server (port 8996, real LLM key) via KLANGK_TEST_URL,
  *   - tab openers for the 5 workspace tabs,
  *   - a tiny WS client for reliable chat-send / terminal-share when on-screen
  *     typing is flaky.
@@ -31,7 +31,7 @@ import {
 import WebSocket from "ws";
 
 /** The demo server. Default is the real klangk port; override with KLANGK_TEST_URL. */
-export const DEMO_URL = process.env.KLANGK_TEST_URL || "http://localhost:8995";
+export const DEMO_URL = process.env.KLANGK_TEST_URL || "http://localhost:8996";
 
 /** Password for freshly-registered demo accounts (scenes self-register). */
 export const DEMO_PASSWORD = process.env.KLANGK_DEMO_PASSWORD || "demopass123";

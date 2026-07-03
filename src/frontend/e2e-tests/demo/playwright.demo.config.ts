@@ -2,21 +2,21 @@
  * Playwright config for the demo video scene scripts.
  *
  * This is SEPARATE from the real e2e suite (playwright.config.ts) — it is NOT
- * picked up by CI. It runs against an already-started demo server (your real
- * klangk on :8995 with a real LLM key), records video for every scene, and uses
- * a single worker so scenes run in a deterministic order and don't fight over
- * containers.
+ * picked up by CI. It runs against an already-started demo server (the
+ * dedicated video backend on :8996, started by run-demo-backend.sh), records
+ * video for every scene, and uses a single worker so scenes run in a
+ * deterministic order and don't fight over containers.
  *
  * Run:  devenv shell -- npx playwright test --config=src/frontend/e2e-tests/demo/playwright.demo.config.ts
  * One:  ... -g "clanker chat"          (grep a scene title)
  *
- * Pre-reqs: demo server running on $KLANGK_TEST_URL (default :8995),
- * KLANGK_ALLOW_AUTOSTART=1, a working LLM key, and the demo seed
+ * Pre-reqs: demo backend up on $KLANGK_TEST_URL (default :8996 via
+ * run-demo-backend.sh), KLANGK_ALLOW_AUTOSTART=1, and the demo seed
  * (demo-seed.ts) run once. See README.md.
  */
 import { defineConfig } from "@playwright/test";
 
-const DEMO_URL = process.env.KLANGK_TEST_URL || "http://localhost:8995";
+const DEMO_URL = process.env.KLANGK_TEST_URL || "http://localhost:8996";
 const BROWSERS = process.env.PLAYWRIGHT_BROWSERS_PATH || "";
 // Logical viewport = the size Flutter lays out for = the Xvfb capture size in
 // record-demo.sh. Default native 1920x1080 (crisp, desktop-sized widgets). For

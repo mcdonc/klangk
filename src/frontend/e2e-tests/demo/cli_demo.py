@@ -349,7 +349,7 @@ def scene_2(t: Term) -> None:
     the browser scenes later operate on the same workspace. Requires a live
     klangk server reachable by ``klangkc`` (see README).
     """
-    server = os.environ.get("KLANGK_DEMO_SERVER", "http://localhost:8995")
+    server = os.environ.get("KLANGK_DEMO_SERVER", "http://localhost:8996")
     admin = os.environ.get("KLANGK_DEMO_ADMIN_EMAIL", "admin@example.com")
     password = os.environ.get("KLANGK_DEMO_ADMIN_PASSWORD", "adminpass")
     # Hold between commands so the voiceover has room to breathe.
@@ -641,8 +641,13 @@ def scene_3b(t: Term) -> None:
     # the repeated refresh for us — no re-typing klangkc ls. Ctrl+C once the
     # openclaw row reads healthy again. (This window is trimmed in edit.)
     t.run("clear")
-    pid_glob = "$XDG_RUNTIME_DIR/klangk-*.pid"
-    t.type(f"kill -HUP $(cat {pid_glob})", per_char=0.03)
+    # The backend writes its pid to klangk-{INSTANCE_ID}.pid. This repo's demo
+    # backend runs as INSTANCE_ID=video (set in .env) — target that pid file
+    # directly. Do NOT glob klangk-*.pid: the e2e suites run their own backends
+    # as klangk-<name>-e2e.pid and leave stale files, so the glob concatenates
+    # every pid into garbage that kill rejects.
+    pid_file = "$XDG_RUNTIME_DIR/klangk-video.pid"
+    t.type(f"kill -HUP $(cat {pid_file})", per_char=0.03)
     t.enter()
     t.pause(3)  # let the shutdown register before watching
     t.type("watch -n 3 klangkc ls", per_char=0.03)

@@ -28,7 +28,7 @@
  * KLANGK_DEFAULT_USER. Override anything with env vars: KLANGK_TEST_URL,
  * KLANGK_DEMO_PASSWORD, KLANGK_DEMO_ADMIN_PASSWORD, KLANGK_DEMO_*_EMAIL.
  */
-const DEMO_URL = process.env.KLANGK_TEST_URL || "http://localhost:8995";
+const DEMO_URL = process.env.KLANGK_TEST_URL || "http://localhost:8996";
 
 // Bootstrap admin = the server's KLANGK_DEFAULT_USER. Used for the destructive
 // reset and user/group management. MUST differ from the hero (you can't delete

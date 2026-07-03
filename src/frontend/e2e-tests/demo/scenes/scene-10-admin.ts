@@ -4,7 +4,7 @@
  * Tour the admin panel as the seeded admin: open the workspace, go to the
  * Settings tab (the admin panel for an admin user), and hold while narration
  * covers Users & Groups, Invitations, OIDC SSO (Google/GitHub/IdP), and the
- * single-port (8995) nginx setup. Pure mouse navigation; no state changes.
+ * single-port (8996) nginx setup. Pure mouse navigation; no state changes.
  *
  * Uses the seeded admin (KLANGK_DEMO_ADMIN_EMAIL / KLANGK_DEFAULT_USER), so the
  * Users list already shows the seeded virtual users (teammate/designer/reviewer)

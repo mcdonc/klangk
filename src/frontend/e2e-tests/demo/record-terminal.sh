@@ -195,7 +195,7 @@ echo "  xterm up (pid $XTerm_PID, window ${WIN:-?})"
 
 # --- 3. ffmpeg captures the whole virtual display --------------------------
 ffmpeg -y -hide_banner -loglevel error \
-  -f x11grab -draw_mouse 1 \
+  -f x11grab -draw_mouse 0 \
   -video_size "${WIDTH}x${HEIGHT}" \
   -framerate "$FPS" \
   -i "$DISPLAY+0,0" \
@@ -219,6 +219,26 @@ set -e
 # --- 5. finalize + report --------------------------------------------------
 echo
 echo "=== finalizing recording ==="
+
+# Dump every surviving pane's full scrollback to a text transcript next to the
+# recording. This is the cheap, vision-free way to QA a take: it shows exactly
+# what was typed and what came back, per pane, without extracting video frames.
+# (Panes a scene killed mid-take aren't captured -- only the survivors are.)
+TRANSCRIPT="${OUT%.*}.transcript.txt"
+{
+  echo "# transcript for: $OUT"
+  echo "# driver: $*"
+  echo "# generated: $(date -Iseconds)"
+  echo
+  mapfile -t PANES < <(tmux list-panes -t "$SESSION" -F '#{pane_id}' 2>/dev/null)
+  for pane in "${PANES[@]}"; do
+    echo "================ pane ${pane} ================"
+    tmux capture-pane -t "$pane" -p -S -100000 2>/dev/null
+    echo
+  done
+} >"$TRANSCRIPT"
+echo "  transcript: $TRANSCRIPT"
+
 # Give the last frame a beat to land, then 'q' ffmpeg for a clean mux.
 sleep 0.6
 kill -INT "$FFMPEG_PID" 2>/dev/null || true
