@@ -860,7 +860,7 @@ class TestSandboxAutoStartServiceCommand:
         )
         # setup.sh: slow "install", then drop a marker-writing script at
         # /tmp/myapp and record (epoch seconds) when setup finished.
-        # Must be executable: _sandbox_setup runs it directly
+        # Must be executable: sandbox_setup runs it directly
         # (``bash -c '/sandbox/setup.sh'``), not via ``bash <script>``.
         setup_sh = sandbox_root / "setup.sh"
         setup_sh.write_text(

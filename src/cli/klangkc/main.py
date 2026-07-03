@@ -33,13 +33,13 @@ from .client import (
     AuthError,
     KlangkClient,
     WorkspaceNotFoundError,
-    _drain_stdin,
-    _get_terminal_size,
-    _send_ignore_closed,
-    _exec_on_ws,
-    _wait_container_ready,
-    _ws_exec,
-    _ws_shell,
+    drain_stdin,
+    get_terminal_size,
+    send_ignore_closed,
+    exec_on_ws,
+    wait_container_ready,
+    ws_exec,
+    ws_shell,
     reset_terminal,
 )
 from .config import CLIConfig, CLIState
@@ -80,7 +80,7 @@ _server_override: str | None = None
 
 
 @app.callback()
-def _app_callback(
+def app_callback(
     server: str | None = typer.Option(
         None, "--server", help="Server alias or URL"
     ),
@@ -90,7 +90,7 @@ def _app_callback(
         _server_override = _cfg().resolve_server(server)
 
 
-def _server_url() -> str:
+def server_url() -> str:
     if _server_override is not None:
         return _server_override
     active = _state().active_server
@@ -105,18 +105,18 @@ def _server_url() -> str:
 
 
 def _client() -> KlangkClient:  # pragma: no cover
-    return KlangkClient(_server_url(), _state().get_token(_server_url()))
+    return KlangkClient(server_url(), _state().get_token(server_url()))
 
 
-def _ws_max_size() -> int:
-    return _cfg().get_ws_max_size(_server_url())
+def ws_max_size() -> int:
+    return _cfg().get_ws_max_size(server_url())
 
 
 _err = Console(stderr=True)
 
 
-def _require_auth() -> None:
-    if not _state().get_token(_server_url()):
+def require_auth() -> None:
+    if not _state().get_token(server_url()):
         _err.print(
             "[red]Not logged in[/red] — run [bold]klangkc login[/bold] first."
         )
@@ -197,7 +197,7 @@ def status(
     console.print(table)
 
 
-def _workspace_status(ws) -> tuple[str, str]:
+def workspace_status(ws) -> tuple[str, str]:
     """Return ``(label, rich_markup)`` describing a workspace's runtime state.
 
     The label is terminal-safe plain text; the markup is the colorized form
@@ -227,7 +227,7 @@ def _workspace_status(ws) -> tuple[str, str]:
     return "starting", "[yellow]starting[/yellow]"
 
 
-def _short_id(ws_id: str) -> str:
+def short_id(ws_id: str) -> str:
     """Shorten a workspace id to ``abc…xyz`` (first 3 + ellipsis + last 3).
 
     Long ids crowd the table; this keeps the column narrow while still
@@ -272,7 +272,7 @@ def list_workspaces(
     every workspace. Sort with --sort/--order and filter by name substring
     with --filter.
     """
-    _require_auth()
+    require_auth()
     client = _client()
     workspaces = client.list_workspaces(
         limit=limit,
@@ -297,18 +297,18 @@ def list_workspaces(
         return
     if plain:
         for ws in workspaces:
-            status, _ = _workspace_status(ws)
+            status, _ = workspace_status(ws)
             typer.echo(
-                f"  {ws.name}  ({_short_id(ws.id)})  "
+                f"  {ws.name}  ({short_id(ws.id)})  "
                 f"{status}  {ws.created_at[:10]}"
             )
         if shared_workspaces:
             typer.echo("Shared with me:")
             for ws in shared_workspaces:
-                status, _ = _workspace_status(ws)
+                status, _ = workspace_status(ws)
                 owner = f"  by {ws.owner_email}" if ws.owner_email else ""
                 typer.echo(
-                    f"  {ws.name}  ({_short_id(ws.id)})  "
+                    f"  {ws.name}  ({short_id(ws.id)})  "
                     f"{status}  {ws.created_at[:10]}{owner}"
                 )
         return
@@ -321,16 +321,16 @@ def list_workspaces(
     if shared:
         table.add_column("Owner")
     for ws in workspaces:
-        _, markup = _workspace_status(ws)
-        row = [ws.name, _short_id(ws.id), markup, ws.created_at[:10]]
+        _, markup = workspace_status(ws)
+        row = [ws.name, short_id(ws.id), markup, ws.created_at[:10]]
         if shared:
             row.append("")
         table.add_row(*row)
     for ws in shared_workspaces:
-        _, markup = _workspace_status(ws)
+        _, markup = workspace_status(ws)
         row = [
             ws.name,
-            _short_id(ws.id),
+            short_id(ws.id),
             markup,
             ws.created_at[:10],
             ws.owner_email or "",
@@ -376,7 +376,7 @@ def create(
     ),
 ) -> None:
     """Create a new workspace."""
-    _require_auth()
+    require_auth()
     if isinstance(mount, list):
         for m in mount:
             err = validate_mount_spec(m)
@@ -408,7 +408,7 @@ def dup(
     new_name: str = typer.Argument(..., help="New workspace name"),
 ) -> None:
     """Duplicate a workspace."""
-    _require_auth()
+    require_auth()
     client = _client()
     try:
         ws = client.resolve_workspace(source)
@@ -439,7 +439,7 @@ def rm(
     name: str = typer.Argument(..., help="Workspace name"),
 ) -> None:
     """Delete a workspace."""
-    _require_auth()
+    require_auth()
     try:
         _client().delete_workspace(name)
     except WorkspaceNotFoundError:
@@ -453,7 +453,7 @@ def members(
     workspace: str = typer.Argument(..., help="Workspace name"),
 ) -> None:
     """List members of a workspace by role."""
-    _require_auth()
+    require_auth()
     client = _client()
     try:
         ws = client.resolve_workspace(workspace)
@@ -482,7 +482,7 @@ def restart(
     name: str = typer.Argument(..., help="Workspace name"),
 ) -> None:
     """Restart the container for a workspace."""
-    _require_auth()
+    require_auth()
     try:
         _client().restart_workspace(name)
     except WorkspaceNotFoundError:
@@ -499,7 +499,7 @@ def export_workspace(
     ),
 ) -> None:
     """Export a workspace to a .tar.gz archive (admin only)."""
-    _require_auth()
+    require_auth()
     client = _client()
     try:
         ws = client.resolve_workspace(name)
@@ -571,7 +571,7 @@ def import_workspace(
     ),
 ) -> None:
     """Import a workspace from a .tar.gz archive."""
-    _require_auth()
+    require_auth()
     if not archive.exists():
         _err.print(f"[red]File not found:[/red] {archive}")
         raise typer.Exit(code=1)
@@ -668,7 +668,7 @@ def edit(
     Without flags, interactively prompts for each field.
     Press Enter to keep the current value.
     """
-    _require_auth()
+    require_auth()
     client = _client()
     try:
         ws = client.resolve_workspace(workspace)
@@ -829,7 +829,7 @@ def edit(
     typer.echo(f"Updated workspace {ws.name}")
 
 
-def _build_ws_url(server_url: str) -> str:
+def build_ws_url(server_url: str) -> str:
     """Convert an HTTP(S) server URL to a WebSocket URL."""
     if server_url.startswith("http://"):
         return server_url.replace("http://", "ws://") + "/ws"
@@ -838,7 +838,7 @@ def _build_ws_url(server_url: str) -> str:
     return f"ws://{server_url}/ws"
 
 
-def _resolve_forward_agent(
+def resolve_forward_agent(
     forward_agent: bool | None,
     config_default: bool = False,
 ) -> bool:
@@ -881,7 +881,7 @@ def shell(
     # typer.models.OptionInfo instead of bool/None.  Normalize to None.
     if not isinstance(forward_agent, bool):
         forward_agent = None
-    token = _state().get_token(_server_url())
+    token = _state().get_token(server_url())
     if not token:  # pragma: no cover
         _err.print(
             "[red]Not logged in[/red] — run [bold]klangkc login[/bold] first."
@@ -918,29 +918,29 @@ def shell(
             ws = workspaces[idx]
 
     # Build WebSocket URL
-    server_url = _server_url().rstrip("/")
-    ws_url = _build_ws_url(server_url)
+    base_url = server_url().rstrip("/")
+    ws_url = build_ws_url(base_url)
 
     _err.print(f"Connecting to [bold]{ws.name}[/bold]...")
     _err.print("[dim]Escape: Enter, then ~.[/dim]")
-    forward_agent = _resolve_forward_agent(
+    forward_agent = resolve_forward_agent(
         forward_agent,
-        config_default=_cfg().get_forward_agent(_server_url()) or False,
+        config_default=_cfg().get_forward_agent(server_url()) or False,
     )
     try:
         asyncio.run(
-            _ws_shell(
+            ws_shell(
                 ws_url,
                 token,
                 ws.id,
                 window=terminal,
                 forward_agent=forward_agent,
-                max_size=_ws_max_size(),
+                max_size=ws_max_size(),
             )
         )
     except websockets.InvalidStatus as e:
         reset_terminal()
-        _drain_stdin()
+        drain_stdin()
         if e.response.status_code in (4001, 4002):
             _err.print(
                 "[red]Session expired. Run `klangkc login`"
@@ -951,7 +951,7 @@ def shell(
         raise typer.Exit(code=1) from None
     except ConnectionError as e:
         reset_terminal()
-        _drain_stdin()
+        drain_stdin()
         _err.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1) from None
 
@@ -987,7 +987,7 @@ def _dispatch_monitor_event(msg: dict, command: list[str]) -> None:
     subprocess.run(command, input=payload.encode(), env=env, check=False)
 
 
-async def _monitor_connection(
+async def monitor_connection(
     ws_url: str,
     token: str,
     max_size: int,
@@ -997,7 +997,7 @@ async def _monitor_connection(
 ) -> None:
     """One connection: dispatch events until the socket closes.
 
-    Network/auth errors propagate to :func:`_monitor_run`, which owns
+    Network/auth errors propagate to :func:`monitor_run`, which owns
     reconnect + refresh. Filtering by event type and workspace id is
     applied here so the dispatcher only sees relevant events.
     """
@@ -1022,19 +1022,19 @@ async def _monitor_connection(
             _dispatch_monitor_event(msg, command)
 
 
-def _monitor_backoff(attempt: int, max_delay: float) -> float:
+def monitor_backoff(attempt: int, max_delay: float) -> float:
     """Capped exponential backoff with jitter (mirrors the web UI)."""
     base = min(1 << attempt, max_delay)
     jitter = random.random() * base
     return (base + jitter) / 2
 
 
-async def _refresh_token_threaded(server_url: str, token: str) -> str | None:
+async def refresh_token_threaded(server_url: str, token: str) -> str | None:
     """Refresh the JWT off-loop; returns the new token or None."""
     return await asyncio.to_thread(refresh_token, server_url, token)
 
 
-async def _monitor_run(
+async def monitor_run(
     server_url: str,
     ws_url: str,
     token: str,
@@ -1061,7 +1061,7 @@ async def _monitor_run(
     while True:
         auth_close = False
         try:
-            await _monitor_connection(
+            await monitor_connection(
                 ws_url, current_token, max_size, command, types, workspaces
             )
             reason = "connection closed"
@@ -1080,7 +1080,7 @@ async def _monitor_run(
         # refresh lets the next attempt authenticate cleanly; a failed
         # one still reconnects (the server/token may recover).
         if auth_close:
-            new = await _refresh_token_threaded(server_url, current_token)
+            new = await refresh_token_threaded(server_url, current_token)
             if new:
                 current_token = new
                 _err.print("[green]Token refreshed.[/green]")
@@ -1097,7 +1097,7 @@ async def _monitor_run(
             )
             raise typer.Exit(code=1)
         attempt += 1
-        delay = _monitor_backoff(attempt, max_delay)
+        delay = monitor_backoff(attempt, max_delay)
         _err.print(
             f"[yellow]{reason}; reconnecting in {delay:.1f}s"
             f" (attempt {attempt})...[/yellow]"
@@ -1170,21 +1170,21 @@ def monitor(
         '[ "$KLANGK_HEALTHY" = false ] && notify-send "Service unhealthy"'
       klangkc monitor --workspace <id> --type service_health
     """
-    _require_auth()
-    server_url = _server_url().rstrip("/")
-    ws_url = _build_ws_url(server_url)
-    token = _state().get_token(server_url)
-    if not token:  # pragma: no cover  # _require_auth already guards this
+    require_auth()
+    base_url = server_url().rstrip("/")
+    ws_url = build_ws_url(base_url)
+    token = _state().get_token(base_url)
+    if not token:  # pragma: no cover  # require_auth already guards this
         _err.print("[red]Not logged in. Run `klangkc login` first.[/red]")
         raise typer.Exit(code=1)
     effective_max = 0 if no_reconnect else max_reconnects
     try:
         asyncio.run(
-            _monitor_run(
-                server_url,
+            monitor_run(
+                base_url,
                 ws_url,
                 token,
-                max_size=_ws_max_size(),
+                max_size=ws_max_size(),
                 command=list(command) if command else [],
                 types=event_type,
                 workspaces=workspace,
@@ -1205,23 +1205,23 @@ def _resolve_workspace_and_url(
     workspace_name: str,
 ) -> tuple:
     """Resolve a workspace by name and return (ws, ws_url, token)."""
-    _require_auth()
+    require_auth()
     client = _client()
     try:
         ws = client.resolve_workspace(workspace_name)
     except WorkspaceNotFoundError:
         _err.print(f"[red]No workspace named[/red] '{workspace_name}'")
         raise typer.Exit(code=1) from None
-    server_url = _server_url().rstrip("/")
-    ws_url = _build_ws_url(server_url)
-    return ws, ws_url, _state().get_token(_server_url())
+    base_url = server_url().rstrip("/")
+    ws_url = build_ws_url(base_url)
+    return ws, ws_url, _state().get_token(server_url())
 
 
-async def _sandbox_setup(ws, config, sandbox_root, handle):
+async def sandbox_setup(ws, config, sandbox_root, handle):
     """Copy files and run setup script on an open WebSocket.
 
     Called once after workspace creation, before the shell starts.
-    The caller has already connected and called _wait_container_ready.
+    The caller has already connected and called wait_container_ready.
 
     Returns the setup script's exit code, or ``None`` if no setup
     command was configured (in which case there is nothing to fail).
@@ -1240,7 +1240,7 @@ async def _sandbox_setup(ws, config, sandbox_root, handle):
         _err.print(f"  [dim]copy:[/dim] {host_path} → {container_dest}")
         parent = str(Path(container_dest).parent)
         stdout_buf = io.BytesIO()
-        exit_code = await _exec_on_ws(
+        exit_code = await exec_on_ws(
             ws,
             ["sh", "-c", f"mkdir -p {parent} && cat > {container_dest}"],
             stdin=io.BytesIO(src.read_bytes()),
@@ -1267,7 +1267,7 @@ async def _sandbox_setup(ws, config, sandbox_root, handle):
             f" && cd {mount_at} && bash -c '{setup_cmd}'"
         )
         timeout = config.setup_timeout or None
-        exit_code = await _exec_on_ws(
+        exit_code = await exec_on_ws(
             ws,
             ["sh", "-c", shell_cmd],
             stdout=sys.stderr.buffer,
@@ -1300,7 +1300,7 @@ def sandbox(
     volumes, copies files, and runs the setup script.  Use
     ``klangkc shell`` afterwards to connect.
     """
-    token = _state().get_token(_server_url())
+    token = _state().get_token(server_url())
     if not token:  # pragma: no cover
         _err.print(
             "[red]Not logged in[/red] — run [bold]klangkc login[/bold] first."
@@ -1319,7 +1319,7 @@ def sandbox(
 
     client = _client()
     handle = client.get_handle()
-    ws_url = _build_ws_url(_server_url().rstrip("/"))
+    ws_url = build_ws_url(server_url().rstrip("/"))
     created = False
 
     # Check if workspace already exists.
@@ -1358,14 +1358,14 @@ def sandbox(
         _err.print(f"Connecting to [bold]{workspace}[/bold] for setup...")
         try:
             asyncio.run(
-                _sandbox_setup_only(
+                sandbox_setup_only(
                     ws_url,
                     token,
                     ws.id,
                     config,
                     sandbox_root,
                     handle,
-                    max_size=_ws_max_size(),
+                    max_size=ws_max_size(),
                     client=client,
                 )
             )
@@ -1387,7 +1387,7 @@ def sandbox(
     )
 
 
-async def _sandbox_setup_only(
+async def sandbox_setup_only(
     ws_url,
     token,
     workspace_id,
@@ -1412,7 +1412,7 @@ async def _sandbox_setup_only(
     if max_size is not None:
         kwargs["max_size"] = max_size
     async with websockets.connect(f"{ws_url}?token={token}", **kwargs) as ws:
-        await _wait_container_ready(ws, workspace_id)
+        await wait_container_ready(ws, workspace_id)
         # Re-enter 'pending' before running setup (#1033). On first
         # create the workspace is already 'pending', but on --force
         # re-setup it may be 'complete'/'failed'; either way this is
@@ -1428,7 +1428,7 @@ async def _sandbox_setup_only(
                     f"[yellow]Warning: could not mark setup_state"
                     f" = pending: {e}[/yellow]"
                 )
-        exit_code = await _sandbox_setup(ws, config, sandbox_root, handle)
+        exit_code = await sandbox_setup(ws, config, sandbox_root, handle)
 
         # Mark setup_state before anything else (#1033). 'complete'
         # when setup ran and returned 0, or when there was no setup
@@ -1485,7 +1485,7 @@ def terminals(
 ) -> None:
     """List all terminals (own + shared) in a workspace."""
     ws, ws_url, token = _resolve_workspace_and_url(workspace)
-    max_size = _ws_max_size()
+    max_size = ws_max_size()
 
     # We need to start a terminal to get the window list, then also
     # get shared terminals. Use _ws_command to get each.
@@ -1493,7 +1493,7 @@ def terminals(
         async with websockets.connect(
             f"{ws_url}?token={token}", max_size=max_size
         ) as conn:
-            await _wait_container_ready(conn, ws.id)
+            await wait_container_ready(conn, ws.id)
 
             await conn.send(json.dumps({"cmd": "ui_ready"}))
 
@@ -1519,7 +1519,7 @@ def terminals(
             # Start terminal to get own windows.
             # terminal_windows arrives after terminal_started — skip
             # terminal_output and other messages until we get it.
-            cols, rows = _get_terminal_size()
+            cols, rows = get_terminal_size()
             await conn.send(
                 json.dumps(
                     {"cmd": "terminal_start", "cols": cols, "rows": rows}
@@ -1552,7 +1552,7 @@ def terminals(
                 )
             _err.print(table)
 
-            await _send_ignore_closed(
+            await send_ignore_closed(
                 conn, json.dumps({"cmd": "terminal_stop"})
             )
 
@@ -1577,7 +1577,7 @@ def share_workspace(
     ),
 ) -> None:
     """Share a workspace with a user."""
-    _require_auth()
+    require_auth()
     if role not in _VALID_ROLES:
         _err.print(
             f"[red]Invalid role '{role}'[/red]."
@@ -1603,7 +1603,7 @@ def unshare_workspace(
     email: str = typer.Argument(help="Email of user to remove"),
 ) -> None:
     """Remove a user's access to a workspace."""
-    _require_auth()
+    require_auth()
     try:
         _client().remove_workspace_member(workspace, email)
     except WorkspaceNotFoundError as e:
@@ -1619,13 +1619,13 @@ def share_terminal(
 ) -> None:
     """Share a terminal with other workspace members."""
     ws, ws_url, token = _resolve_workspace_and_url(workspace)
-    max_size = _ws_max_size()
+    max_size = ws_max_size()
 
     async def _share() -> None:
         async with websockets.connect(
             f"{ws_url}?token={token}", max_size=max_size
         ) as conn:
-            await _wait_container_ready(conn, ws.id)
+            await wait_container_ready(conn, ws.id)
 
             await conn.send(json.dumps({"cmd": "ui_ready"}))
 
@@ -1645,7 +1645,7 @@ def share_terminal(
                     break
 
             # Start terminal to get window list
-            cols, rows = _get_terminal_size()
+            cols, rows = get_terminal_size()
             await conn.send(
                 json.dumps(
                     {"cmd": "terminal_start", "cols": cols, "rows": rows}
@@ -1686,7 +1686,7 @@ def share_terminal(
                     )
                     break
 
-            await _send_ignore_closed(
+            await send_ignore_closed(
                 conn, json.dumps({"cmd": "terminal_stop"})
             )
 
@@ -1700,13 +1700,13 @@ def unshare_terminal(
 ) -> None:
     """Stop sharing a terminal."""
     ws, ws_url, token = _resolve_workspace_and_url(workspace)
-    max_size = _ws_max_size()
+    max_size = ws_max_size()
 
     async def _unshare() -> None:
         async with websockets.connect(
             f"{ws_url}?token={token}", max_size=max_size
         ) as conn:
-            await _wait_container_ready(conn, ws.id)
+            await wait_container_ready(conn, ws.id)
 
             await conn.send(json.dumps({"cmd": "ui_ready"}))
 
@@ -1726,7 +1726,7 @@ def unshare_terminal(
                     break
 
             # Start terminal to get window list
-            cols, rows = _get_terminal_size()
+            cols, rows = get_terminal_size()
             await conn.send(
                 json.dumps(
                     {"cmd": "terminal_start", "cols": cols, "rows": rows}
@@ -1769,7 +1769,7 @@ def unshare_terminal(
                     )
                     break
 
-            await _send_ignore_closed(
+            await send_ignore_closed(
                 conn, json.dumps({"cmd": "terminal_stop"})
             )
 
@@ -1808,7 +1808,7 @@ def exec_cmd(
     Also usable as an rsync transport:
     rsync -avz -e "klangkc exec --raw" src/ ws:/dest/
     """
-    _require_auth()
+    require_auth()
 
     command = ctx.args
     # With allow_extra_args + allow_interspersed_args=False, Click does
@@ -1830,17 +1830,17 @@ def exec_cmd(
         _err.print(f"[red]No workspace named[/red] '{workspace}'")
         raise typer.Exit(code=1) from None
 
-    server_url = _server_url().rstrip("/")
-    ws_url = _build_ws_url(server_url)
-    token = _state().get_token(_server_url())
+    base_url = server_url().rstrip("/")
+    ws_url = build_ws_url(base_url)
+    token = _state().get_token(server_url())
 
     exit_code = asyncio.run(
-        _ws_exec(
+        ws_exec(
             ws_url,
             token,
             ws.id,
             command,
-            max_size=_ws_max_size(),
+            max_size=ws_max_size(),
             login=not raw,
         )
     )
@@ -1875,7 +1875,7 @@ def sync(
 
         klangkc sync ~/src ws:/work/src --delete --exclude .git
     """
-    _require_auth()
+    require_auth()
 
     klangkc_bin = shutil.which("klangkc")
     if not klangkc_bin:  # pragma: no cover
@@ -1909,7 +1909,7 @@ def sync(
 @app.command()
 def images() -> None:
     """List available container images for workspaces."""
-    _require_auth()
+    require_auth()
     try:
         data = _client().list_images()
     except httpx.HTTPStatusError as exc:  # pragma: no cover
@@ -1935,7 +1935,7 @@ def invite(
     email: str = typer.Argument(..., help="Email address to invite"),
 ) -> None:
     """Send an invitation email (admin only)."""
-    _require_auth()
+    require_auth()
     client = _client()
     resp = client.post("/api/v1/admin/invitations", json={"email": email})
     client._check_auth(resp)
@@ -1950,7 +1950,7 @@ def invite(
 @app.command("invitations")
 def list_invitations() -> None:
     """List all invitations (admin only)."""
-    _require_auth()
+    require_auth()
     client = _client()
     resp = client.get("/api/v1/admin/invitations?page_size=200")
     client._check_auth(resp)
@@ -1980,7 +1980,7 @@ def volumes_list(
     plain: bool = typer.Option(False, "--plain", help="Plain text output"),
 ) -> None:
     """List klangk-managed container volumes."""
-    _require_auth()
+    require_auth()
     client = _client()
     resp = client.get("/api/v1/volumes")
     client._check_auth(resp)
@@ -2007,7 +2007,7 @@ def volumes_create(
     name: str = typer.Argument(..., help="Volume name"),
 ) -> None:
     """Create a named container volume."""
-    _require_auth()
+    require_auth()
     client = _client()
     resp = client.post("/api/v1/volumes", json={"name": name})
     client._check_auth(resp)
@@ -2023,7 +2023,7 @@ def volumes_rm(
     name: str = typer.Argument(..., help="Volume name"),
 ) -> None:
     """Delete a named container volume."""
-    _require_auth()
+    require_auth()
     client = _client()
     resp = client.delete(f"/api/v1/volumes/{name}")
     client._check_auth(resp)

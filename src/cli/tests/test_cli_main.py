@@ -66,7 +66,7 @@ def reset_env():
 class TestMainCLI:
     @pytest.fixture(autouse=True)
     def no_oidc(self, monkeypatch):
-        monkeypatch.setattr("klangkc.auth._fetch_config", lambda _: {})
+        monkeypatch.setattr("klangkc.auth.fetch_config", lambda _: {})
 
     def test_login_cmd_stores_token(self, tmp_path, monkeypatch):
         from klangkc.main import login_cmd
@@ -209,15 +209,15 @@ class TestMainCLI:
         state.save()
 
         with pytest.raises(typer.Exit):
-            main._require_auth()
+            main.require_auth()
 
     def test_require_auth_passes_when_logged_in(self, logged_in_cfg):
         from klangkc import main
 
-        main._require_auth()  # Should not raise
+        main.require_auth()  # Should not raise
 
     def test_server_url_no_server_exits(self, tmp_path, monkeypatch):
-        """_server_url() exits when no active server and no --server."""
+        """server_url() exits when no active server and no --server."""
         from klangkc import main
 
         config_path = tmp_path / "cli.yaml"
@@ -228,18 +228,18 @@ class TestMainCLI:
         CLIState().save()
 
         with pytest.raises(typer.Exit):
-            main._server_url()
+            main.server_url()
 
     def test_server_url_uses_active_server(self, logged_in_cfg):
         from klangkc import main
 
-        assert main._server_url() == "http://localhost:8995"
+        assert main.server_url() == "http://localhost:8995"
 
     def test_server_url_override_wins(self, logged_in_cfg):
         from klangkc import main
 
         main._server_override = "http://override:9999"
-        assert main._server_url() == "http://override:9999"
+        assert main.server_url() == "http://override:9999"
 
     def test_app_callback_resolves_server_alias(self, tmp_path, monkeypatch):
         from klangkc import main
@@ -253,7 +253,7 @@ class TestMainCLI:
         )
         CLIState().save()
 
-        main._app_callback(server="prod")
+        main.app_callback(server="prod")
         assert main._server_override == "http://prod:8995"
 
     def test_list_workspaces_empty(self, logged_in_cfg, monkeypatch):
@@ -915,7 +915,7 @@ class TestMainCLI:
             pass
 
         with patch.object(main, "_client", return_value=client):
-            with patch.object(main, "_ws_shell", fake_shell):
+            with patch.object(main, "ws_shell", fake_shell):
                 os.environ["TERM"] = "xterm-256color"
                 with patch("termios.tcgetattr", return_value=None):
                     main.shell(None)
@@ -951,7 +951,7 @@ class TestMainCLI:
             pass
 
         with patch.object(main, "_client", return_value=client):
-            with patch.object(main, "_ws_shell", fake_shell):
+            with patch.object(main, "ws_shell", fake_shell):
                 with patch("builtins.input", return_value="1"):  # select first
                     with patch("termios.tcgetattr", return_value=None):
                         main.shell(None)
@@ -971,7 +971,7 @@ class TestMainCLI:
             pass
 
         with patch.object(main, "_client", return_value=client):
-            with patch.object(main, "_ws_shell", fake_shell):
+            with patch.object(main, "ws_shell", fake_shell):
                 os.environ["TERM"] = "xterm-256color"
                 with patch("termios.tcgetattr", return_value=None):
                     main.shell("target-ws")
@@ -997,7 +997,7 @@ class TestMainCLI:
             captured_kwargs.update(kwargs)
 
         with patch.object(main, "_client", return_value=client):
-            with patch.object(main, "_ws_shell", fake_shell):
+            with patch.object(main, "ws_shell", fake_shell):
                 os.environ["TERM"] = "xterm-256color"
                 with patch("termios.tcgetattr", return_value=None):
                     main.shell("target-ws", "build")
@@ -1028,7 +1028,7 @@ class TestMainCLI:
         with (
             patch.object(main, "_cfg", return_value=cfg),
             patch.object(main, "_client", return_value=client),
-            patch.object(main, "_ws_shell", fake_shell),
+            patch.object(main, "ws_shell", fake_shell),
         ):
             os.environ["TERM"] = "xterm-256color"
             os.environ["SSH_AUTH_SOCK"] = "/tmp/agent.sock"
@@ -1060,7 +1060,7 @@ class TestMainCLI:
         with (
             patch.object(main, "_cfg", return_value=cfg),
             patch.object(main, "_client", return_value=client),
-            patch.object(main, "_ws_shell", fake_shell),
+            patch.object(main, "ws_shell", fake_shell),
         ):
             os.environ["TERM"] = "xterm-256color"
             os.environ["SSH_AUTH_SOCK"] = "/tmp/agent.sock"
@@ -1099,7 +1099,7 @@ class TestMainCLI:
         with (
             patch.object(main, "_cfg", return_value=cfg),
             patch.object(main, "_client", return_value=client),
-            patch.object(main, "_ws_shell", fake_shell),
+            patch.object(main, "ws_shell", fake_shell),
         ):
             os.environ["TERM"] = "xterm-256color"
             os.environ["SSH_AUTH_SOCK"] = "/tmp/agent.sock"
@@ -1119,7 +1119,7 @@ class TestMainCLI:
             },
         )
         with patch.object(main, "_cfg", return_value=cfg):
-            assert main._ws_max_size() == 999
+            assert main.ws_max_size() == 999
 
     def test_terminals_command(self, logged_in_cfg, monkeypatch, reset_env):
         from klangkc import main
@@ -2302,7 +2302,7 @@ class TestMainCLI:
 
         with patch.object(main, "_client", return_value=client):
             with patch.object(
-                main, "_ws_exec", AsyncMock(return_value=0)
+                main, "ws_exec", AsyncMock(return_value=0)
             ) as mock_exec:
                 runner = CliRunner()
                 result = runner.invoke(
@@ -2331,7 +2331,7 @@ class TestMainCLI:
 
         with patch.object(main, "_client", return_value=client):
             with patch.object(
-                main, "_ws_exec", AsyncMock(return_value=0)
+                main, "ws_exec", AsyncMock(return_value=0)
             ) as mock_exec:
                 runner = CliRunner()
                 result = runner.invoke(
@@ -2361,7 +2361,7 @@ class TestMainCLI:
 
         with patch.object(main, "_client", return_value=client):
             with patch.object(
-                main, "_ws_exec", AsyncMock(return_value=0)
+                main, "ws_exec", AsyncMock(return_value=0)
             ) as mock_exec:
                 runner = CliRunner()
                 result = runner.invoke(
@@ -2858,46 +2858,46 @@ class TestInviteCLI:
 
 class TestBuildWsUrl:
     def test_http(self):
-        from klangkc.main import _build_ws_url
+        from klangkc.main import build_ws_url
 
         assert (
-            _build_ws_url("http://localhost:8995") == "ws://localhost:8995/ws"
+            build_ws_url("http://localhost:8995") == "ws://localhost:8995/ws"
         )
 
     def test_https(self):
-        from klangkc.main import _build_ws_url
+        from klangkc.main import build_ws_url
 
-        assert _build_ws_url("https://example.com") == "wss://example.com/ws"
+        assert build_ws_url("https://example.com") == "wss://example.com/ws"
 
     def test_bare(self):
-        from klangkc.main import _build_ws_url
+        from klangkc.main import build_ws_url
 
-        assert _build_ws_url("example.com") == "ws://example.com/ws"
+        assert build_ws_url("example.com") == "ws://example.com/ws"
 
 
 class TestWorkspaceStatus:
     def test_stopped_when_not_running(self):
-        from klangkc.main import _workspace_status
+        from klangkc.main import workspace_status
 
         ws = Workspace(id="x", name="n", created_at="2025-01-01T00:00:00Z")
-        label, markup = _workspace_status(ws)
+        label, markup = workspace_status(ws)
         assert label == "stopped"
         assert "dim" in markup
 
     def test_running_when_no_health_check_configured(self):
-        from klangkc.main import _workspace_status
+        from klangkc.main import workspace_status
 
         ws = Workspace(
             id="x", name="n", created_at="2025-01-01T00:00:00Z", running=True
         )
         # No health_check configured -> never probed -> must not show
         # "starting" (which would imply a pending poll that never comes).
-        label, markup = _workspace_status(ws)
+        label, markup = workspace_status(ws)
         assert label == "running"
         assert "green" in markup
 
     def test_healthy(self):
-        from klangkc.main import _workspace_status
+        from klangkc.main import workspace_status
 
         ws = Workspace(
             id="x",
@@ -2907,12 +2907,12 @@ class TestWorkspaceStatus:
             health_check="/path/to/check.sh",
             health="healthy",
         )
-        label, markup = _workspace_status(ws)
+        label, markup = workspace_status(ws)
         assert label == "healthy"
         assert "green" in markup
 
     def test_unhealthy(self):
-        from klangkc.main import _workspace_status
+        from klangkc.main import workspace_status
 
         ws = Workspace(
             id="x",
@@ -2922,12 +2922,12 @@ class TestWorkspaceStatus:
             health_check="/path/to/check.sh",
             health="unhealthy",
         )
-        label, markup = _workspace_status(ws)
+        label, markup = workspace_status(ws)
         assert label == "unhealthy"
         assert "red" in markup
 
     def test_starting_when_running_but_no_health(self):
-        from klangkc.main import _workspace_status
+        from klangkc.main import workspace_status
 
         ws = Workspace(
             id="x",
@@ -2936,61 +2936,61 @@ class TestWorkspaceStatus:
             running=True,
             health_check="/path/to/check.sh",
         )
-        label, markup = _workspace_status(ws)
+        label, markup = workspace_status(ws)
         assert label == "starting"
         assert "yellow" in markup
 
 
 class TestShortId:
     def test_long_id_is_truncated(self):
-        from klangkc.main import _short_id
+        from klangkc.main import short_id
 
-        assert _short_id("abcdefgh") == "abc…fgh"
+        assert short_id("abcdefgh") == "abc…fgh"
 
     def test_seven_char_id_returned_unchanged(self):
-        from klangkc.main import _short_id
+        from klangkc.main import short_id
 
-        assert _short_id("abcdefg") == "abcdefg"
+        assert short_id("abcdefg") == "abcdefg"
 
     def test_short_id_returned_unchanged(self):
-        from klangkc.main import _short_id
+        from klangkc.main import short_id
 
-        assert _short_id("abc") == "abc"
+        assert short_id("abc") == "abc"
 
 
 class TestResolveForwardAgent:
     def test_flag_true(self, monkeypatch):
-        from klangkc.main import _resolve_forward_agent
+        from klangkc.main import resolve_forward_agent
 
         monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
-        assert _resolve_forward_agent(True) is True
+        assert resolve_forward_agent(True) is True
 
     def test_flag_false_overrides_config(self):
-        from klangkc.main import _resolve_forward_agent
+        from klangkc.main import resolve_forward_agent
 
-        assert _resolve_forward_agent(False, config_default=True) is False
+        assert resolve_forward_agent(False, config_default=True) is False
 
     def test_none_uses_config_default_true(self, monkeypatch):
-        from klangkc.main import _resolve_forward_agent
+        from klangkc.main import resolve_forward_agent
 
         monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
-        assert _resolve_forward_agent(None, config_default=True) is True
+        assert resolve_forward_agent(None, config_default=True) is True
 
     def test_none_uses_config_default_false(self):
-        from klangkc.main import _resolve_forward_agent
+        from klangkc.main import resolve_forward_agent
 
-        assert _resolve_forward_agent(None, config_default=False) is False
+        assert resolve_forward_agent(None, config_default=False) is False
 
     def test_none_defaults_to_false(self):
-        from klangkc.main import _resolve_forward_agent
+        from klangkc.main import resolve_forward_agent
 
-        assert _resolve_forward_agent(None) is False
+        assert resolve_forward_agent(None) is False
 
     def test_warns_when_no_ssh_auth_sock(self, monkeypatch):
-        from klangkc.main import _resolve_forward_agent
+        from klangkc.main import resolve_forward_agent
 
         monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
-        result = _resolve_forward_agent(True)
+        result = resolve_forward_agent(True)
         assert result is True
 
 
@@ -3051,7 +3051,7 @@ class TestSandboxCommand:
 
         with (
             patch.object(main, "_client", return_value=client),
-            patch.object(main, "_sandbox_setup_only", fake_setup),
+            patch.object(main, "sandbox_setup_only", fake_setup),
         ):
             from typer.testing import CliRunner
 
@@ -3120,7 +3120,7 @@ class TestSandboxCommand:
 
         with (
             patch.object(main, "_client", return_value=client),
-            patch.object(main, "_sandbox_setup_only", fake_setup),
+            patch.object(main, "sandbox_setup_only", fake_setup),
         ):
             from typer.testing import CliRunner
 
@@ -3155,7 +3155,7 @@ class TestSandboxCommand:
 
         with (
             patch.object(main, "_client", return_value=client),
-            patch.object(main, "_sandbox_setup_only", failing_setup),
+            patch.object(main, "sandbox_setup_only", failing_setup),
         ):
             from typer.testing import CliRunner
 
@@ -3172,7 +3172,7 @@ class TestSandboxSetupOnly:
     async def test_connects_and_runs_setup(self):
         from pathlib import Path
 
-        from klangkc.main import _sandbox_setup_only
+        from klangkc.main import sandbox_setup_only
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(setup="setup.sh")
@@ -3184,14 +3184,14 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangkc.main.websockets.connect") as mock_connect,
-            patch("klangkc.main._sandbox_setup") as mock_setup,
+            patch("klangkc.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
             )
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_setup.return_value = 0
-            await _sandbox_setup_only(
+            await sandbox_setup_only(
                 "ws://test",
                 "token",
                 "ws-id",
@@ -3207,7 +3207,7 @@ class TestSandboxSetupOnly:
     async def test_starts_terminal_after_setup_when_service_command(self):
         from pathlib import Path
 
-        from klangkc.main import _sandbox_setup_only
+        from klangkc.main import sandbox_setup_only
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(
@@ -3224,14 +3224,14 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangkc.main.websockets.connect") as mock_connect,
-            patch("klangkc.main._sandbox_setup") as mock_setup,
+            patch("klangkc.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
             )
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_setup.return_value = 0
-            await _sandbox_setup_only(
+            await sandbox_setup_only(
                 "ws://test",
                 "token",
                 "ws-id",
@@ -3253,7 +3253,7 @@ class TestSandboxSetupOnly:
 
         import websockets
 
-        from klangkc.main import _sandbox_setup_only
+        from klangkc.main import sandbox_setup_only
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(
@@ -3270,7 +3270,7 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangkc.main.websockets.connect") as mock_connect,
-            patch("klangkc.main._sandbox_setup") as mock_setup,
+            patch("klangkc.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
@@ -3278,7 +3278,7 @@ class TestSandboxSetupOnly:
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_setup.return_value = 0
             # Must not raise / hang waiting for terminal_started.
-            await _sandbox_setup_only(
+            await sandbox_setup_only(
                 "ws://test",
                 "token",
                 "ws-id",
@@ -3288,10 +3288,10 @@ class TestSandboxSetupOnly:
             )
 
     async def test_marks_setup_state_pending_then_complete(self):
-        """With a client, _sandbox_setup_only marks pending then complete (#1033)."""
+        """With a client, sandbox_setup_only marks pending then complete (#1033)."""
         from pathlib import Path
 
-        from klangkc.main import _sandbox_setup_only
+        from klangkc.main import sandbox_setup_only
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(
@@ -3310,14 +3310,14 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangkc.main.websockets.connect") as mock_connect,
-            patch("klangkc.main._sandbox_setup") as mock_setup,
+            patch("klangkc.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
             )
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_setup.return_value = 0
-            await _sandbox_setup_only(
+            await sandbox_setup_only(
                 "ws://test",
                 "token",
                 "ws-id",
@@ -3337,7 +3337,7 @@ class TestSandboxSetupOnly:
         """A non-zero setup exit marks setup_state as 'failed' (#1033)."""
         from pathlib import Path
 
-        from klangkc.main import _sandbox_setup_only
+        from klangkc.main import sandbox_setup_only
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(
@@ -3353,14 +3353,14 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangkc.main.websockets.connect") as mock_connect,
-            patch("klangkc.main._sandbox_setup") as mock_setup,
+            patch("klangkc.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
             )
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_setup.return_value = 1  # setup failed
-            await _sandbox_setup_only(
+            await sandbox_setup_only(
                 "ws://test",
                 "token",
                 "ws-id",
@@ -3377,7 +3377,7 @@ class TestSandboxSetupOnly:
         assert not any(m.get("cmd") == "terminal_start" for m in sent)
 
     async def test_copies_files(self, tmp_path):
-        from klangkc.main import _sandbox_setup
+        from klangkc.main import sandbox_setup
         from klangkc.sandbox import SandboxConfig
 
         src_file = tmp_path / "myconf"
@@ -3396,14 +3396,14 @@ class TestSandboxSetupOnly:
             )
             return 0
 
-        with patch("klangkc.main._exec_on_ws", fake_exec):
-            await _sandbox_setup(ws, config, tmp_path, "admin")
+        with patch("klangkc.main.exec_on_ws", fake_exec):
+            await sandbox_setup(ws, config, tmp_path, "admin")
 
         assert len(exec_calls) == 1
         assert b"hello" in exec_calls[0]["stdin"]
 
     async def test_copy_failure_warns(self, tmp_path):
-        from klangkc.main import _sandbox_setup
+        from klangkc.main import sandbox_setup
         from klangkc.sandbox import SandboxConfig
 
         src_file = tmp_path / "myconf"
@@ -3418,11 +3418,11 @@ class TestSandboxSetupOnly:
         async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
             return 1  # failure
 
-        with patch("klangkc.main._exec_on_ws", fake_exec):
-            await _sandbox_setup(ws, config, tmp_path, "admin")
+        with patch("klangkc.main.exec_on_ws", fake_exec):
+            await sandbox_setup(ws, config, tmp_path, "admin")
 
     async def test_copy_missing_file_warns(self, tmp_path, capsys):
-        from klangkc.main import _sandbox_setup
+        from klangkc.main import sandbox_setup
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(
@@ -3431,13 +3431,13 @@ class TestSandboxSetupOnly:
 
         ws = AsyncMock()
 
-        with patch("klangkc.main._exec_on_ws", AsyncMock(return_value=0)):
-            await _sandbox_setup(ws, config, tmp_path, "admin")
+        with patch("klangkc.main.exec_on_ws", AsyncMock(return_value=0)):
+            await sandbox_setup(ws, config, tmp_path, "admin")
 
-        # _exec_on_ws should not have been called (file doesn't exist)
+        # exec_on_ws should not have been called (file doesn't exist)
 
     async def test_runs_setup_script(self, tmp_path):
-        from klangkc.main import _sandbox_setup
+        from klangkc.main import sandbox_setup
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(
@@ -3452,14 +3452,14 @@ class TestSandboxSetupOnly:
             exec_calls.append(cmd)
             return 0
 
-        with patch("klangkc.main._exec_on_ws", fake_exec):
-            await _sandbox_setup(ws, config, tmp_path, "admin")
+        with patch("klangkc.main.exec_on_ws", fake_exec):
+            await sandbox_setup(ws, config, tmp_path, "admin")
 
         assert len(exec_calls) == 1
         assert "/home/admin/project/setup.sh" in exec_calls[0][2]
 
     async def test_setup_sets_git_ssh_command(self, tmp_path):
-        from klangkc.main import _sandbox_setup
+        from klangkc.main import sandbox_setup
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(
@@ -3474,15 +3474,15 @@ class TestSandboxSetupOnly:
             exec_calls.append(cmd)
             return 0
 
-        with patch("klangkc.main._exec_on_ws", fake_exec):
-            await _sandbox_setup(ws, config, tmp_path, "admin")
+        with patch("klangkc.main.exec_on_ws", fake_exec):
+            await sandbox_setup(ws, config, tmp_path, "admin")
 
         shell_cmd = exec_calls[0][2]
         assert "GIT_SSH_COMMAND=" in shell_cmd
         assert "StrictHostKeyChecking=accept-new" in shell_cmd
 
     async def test_setup_passes_timeout(self, tmp_path):
-        from klangkc.main import _sandbox_setup
+        from klangkc.main import sandbox_setup
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(
@@ -3498,13 +3498,13 @@ class TestSandboxSetupOnly:
             captured_timeout.append(timeout)
             return 0
 
-        with patch("klangkc.main._exec_on_ws", fake_exec):
-            await _sandbox_setup(ws, config, tmp_path, "admin")
+        with patch("klangkc.main.exec_on_ws", fake_exec):
+            await sandbox_setup(ws, config, tmp_path, "admin")
 
         assert captured_timeout == [60]
 
     async def test_setup_timeout_warns(self, tmp_path, capsys):
-        from klangkc.main import _sandbox_setup
+        from klangkc.main import sandbox_setup
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(
@@ -3518,14 +3518,14 @@ class TestSandboxSetupOnly:
         async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
             return 124
 
-        with patch("klangkc.main._exec_on_ws", fake_exec):
-            await _sandbox_setup(ws, config, tmp_path, "admin")
+        with patch("klangkc.main.exec_on_ws", fake_exec):
+            await sandbox_setup(ws, config, tmp_path, "admin")
 
         err = capsys.readouterr().err
         assert "timed out after 10s" in err
 
     async def test_setup_failure_warns(self, tmp_path):
-        from klangkc.main import _sandbox_setup
+        from klangkc.main import sandbox_setup
         from klangkc.sandbox import SandboxConfig
 
         config = SandboxConfig(
@@ -3538,8 +3538,8 @@ class TestSandboxSetupOnly:
         async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
             return 1
 
-        with patch("klangkc.main._exec_on_ws", fake_exec):
-            await _sandbox_setup(ws, config, tmp_path, "admin")
+        with patch("klangkc.main.exec_on_ws", fake_exec):
+            await sandbox_setup(ws, config, tmp_path, "admin")
 
     def test_connection_error_exits_cleanly(self, logged_in_cfg, tmp_path):
         from klangkc import main
@@ -3572,7 +3572,7 @@ class TestSandboxSetupOnly:
                 ),
             ),
             patch.object(main, "reset_terminal"),
-            patch.object(main, "_drain_stdin"),
+            patch.object(main, "drain_stdin"),
         ):
             from typer.testing import CliRunner
 
@@ -3589,7 +3589,7 @@ class TestMonitorCommand:
         from klangkc import main
 
         mock_run = AsyncMock(return_value=None)
-        with patch.object(main, "_monitor_run", new=mock_run):
+        with patch.object(main, "monitor_run", new=mock_run):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -3607,7 +3607,7 @@ class TestMonitorCommand:
         from klangkc import main
 
         mock_run = AsyncMock(return_value=None)
-        with patch.object(main, "_monitor_run", new=mock_run):
+        with patch.object(main, "monitor_run", new=mock_run):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -3621,7 +3621,7 @@ class TestMonitorCommand:
         async def _raise(*a, **kw):
             raise websockets.InvalidStatus(MagicMock(status_code=4001))
 
-        with patch.object(main, "_monitor_run", new=_raise):
+        with patch.object(main, "monitor_run", new=_raise):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -3635,7 +3635,7 @@ class TestMonitorCommand:
         async def _kb(*a, **kw):
             raise KeyboardInterrupt
 
-        with patch.object(main, "_monitor_run", new=_kb):
+        with patch.object(main, "monitor_run", new=_kb):
             from typer.testing import CliRunner
 
             runner = CliRunner()
