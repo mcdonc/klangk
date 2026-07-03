@@ -63,10 +63,30 @@ ensure_logged_out() {
   kc logout "$SERVER" >/dev/null 2>&1 || true
 }
 
+# Echo the user currently logged in to $SERVER, or "" if not logged in.
+# Used by ensure_logged_in to decide whether a logout is safe.
+current_user() {
+  kc status 2>/dev/null | awk '/^User/ && $2 != "(none)" {print $2}'
+}
+
+# Ensure we're logged in as $HERO WITHOUT tearing down containers.
+#
+# IMPORTANT: `klangkc logout` makes the backend stop the logging-out user's
+# containers (api/auth.logout -> session.logout_user -> stop_and_remove).
+# So a naive "logout then login" here would kill the openclaw container that
+# Scene 3 created and that Scene 3b must inherit ALREADY healthy (to show
+# service-command auto-start, not a reconnect re-fire). Instead: if we're
+# already logged in as $HERO, do nothing (containers untouched); only log out
+# when logged in as a DIFFERENT user (clears a genuinely stale session).
 ensure_logged_in() {
-  echo "  [prep] login as $HERO"
-  # logout first so a stale session never short-circuits login
-  kc logout "$SERVER" >/dev/null 2>&1 || true
+  local cur
+  cur=$(current_user)
+  if [ "$cur" = "$HERO" ]; then
+    echo "  [prep] already logged in as $HERO (containers preserved)"
+    return 0
+  fi
+  echo "  [prep] login as $HERO (was: ${cur:-logged out})"
+  [ -n "$cur" ] && kc logout "$SERVER" >/dev/null 2>&1 || true
   printf "%s" "$PASS" | devenv shell -- klangkc login --password-file - "$SERVER" "$HERO" 2>&1 | quiet | tail -1
 }
 
