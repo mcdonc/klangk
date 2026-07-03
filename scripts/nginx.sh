@@ -153,6 +153,13 @@ http {
     "" close;
   }
 
+  # WebSocket upgrade specifically (not h2c/other Upgrade tokens); gates the
+  # slash-less hosted location's redirect-vs-proxy choice below.
+  map \$http_upgrade \$hosted_is_ws {
+    default 0;
+    "~*^websocket\$" 1;
+  }
+
   client_max_body_size ${KLANGK_NGINX_CLIENT_MAX_BODY_SIZE};
 
   server {
@@ -163,8 +170,25 @@ http {
     # hosted apps emit relative asset paths (./assets/...) that resolve against
     # the browser's base URL, so without the slash every asset 404s. Redirect to
     # the canonical trailing-slash form so the base URL is correct.
-    location ~ ^/hosted/[^/]+/\d+\$ {
-      return 308 \$uri/\$is_args\$args;
+    # Named capture (not \$1): the \$hosted_is_ws regex map clobbers positional
+    # captures, which would leave proxy_pass with an empty port.
+    location ~ ^/hosted/[^/]+/(?<hosted_port>\d+)\$ {
+      # Non-WebSocket: redirect to the trailing-slash form so relative assets
+      # (./assets/...) resolve. Only \`return\` inside \`if\` -> "if is evil" N/A.
+      if (\$hosted_is_ws = 0) {
+        return 308 \$uri/\$is_args\$args;
+      }
+      # WebSocket clients cannot follow a 308 (RFC 6455 4.1); some apps open
+      # their socket at this slash-less root. Proxy instead. \$is_args\$args:
+      # a variable in proxy_pass drops the query (e.g. auth token) otherwise.
+      proxy_pass http://127.0.0.1:\$hosted_port/\$is_args\$args;
+      proxy_set_header Host \$http_host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto \$scheme;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade \$http_upgrade;
+      proxy_set_header Connection \$connection_upgrade;
     }
 
     # Hosted app proxy: extract port from URL and proxy directly to container
