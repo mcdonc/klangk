@@ -45,6 +45,37 @@ accumulates shot to shot:
       flip on camera; product default is 30s). Needs a **full** backend restart
       (not SIGHUP) — set it off camera, before recording.
 
+### Interaction on camera (recording rules)
+
+These apply to **every** browser/web-UI scene. They keep the recording honest
+— the viewer should see a real user driving the UI with the mouse, not a
+script firing synthetic events.
+
+- **Every UI action is a mouse click / movement.** Buttons, tabs, cards, menu
+  items, dialog submission — all driven with visible mouse movement
+  (`mouseClick` / `mouseClickRight`, which glide the cursor to the target). The
+  viewer watches the cursor travel and click. This is the whole point of an
+  intro video.
+- **Keyboard is for typing text only** — terminal commands, a file name, the
+  word "scratch". It is **never** used to emulate an action: no `Ctrl+A` /
+  `Cmd+A` to select, no `Enter` / `Escape` to submit or dismiss a dialog, no
+  `Tab` to move focus. Those are actions; they get a mouse click. (Select-all
+  in a field is a **triple-click** — three rapid clicks with no move
+  between, else it doesn't register. Submit is a click on the OK button.)
+- **Don't add beats the script doesn't call for.** A scene shows exactly what
+  its narration describes — no extra clicking around to "fill time" or
+  "tour" UI the narration hasn't introduced. In particular: **do not click
+  through the nav tabs (Files/Chat/Sharing/Settings) in Scene 4.** The line
+  "the web UI has features beyond the terminal — files, chat, and
+  collaboration. Let me show those" is a **hand-off to Scenes 5/6/7**, not an
+  instruction to click through them here. (Scene 5 opens by clicking the Chat
+  tab — touring it in Sc 4 spoils that reveal.)
+- **Don't type commands just to produce output.** Where the script's point is
+  continuity (the terminal already shows prior state from the CLI), show the
+  existing scrollback — don't type a fresh `echo`/`ls` that overwrites or
+  crowds it. Type into the terminal only when the narration calls for a
+  command.
+
 ### Accounts & Potemkin workspaces (seed once, before recording)
 
 - [ ] **On-camera user:** `admin@example.com` (password `adminpass`). The hero
@@ -327,7 +358,12 @@ But the web UI has features beyond the terminal — files, chat, and collaborati
 > continuity lands hardest if the cloned repo / Pi scrollback are genuinely still
 > in `demo`'s terminal (record Sc 4 right after Sc 2's state is in place); wording
 > is "tabs created here **can be connected to from the CLI**", not "show up in the
-> CLI".
+> CLI". **Do NOT tour the nav tabs** (Files/Chat/Sharing/Settings) here, and **do
+> NOT type `echo`/`ls` to manufacture output** — the terminal-continuity beat is
+> **showing the existing CLI scrollback**, not adding to it. (See "Interaction on
+> camera" above.) The rename beat is right-click the new tab → "Rename" →
+> triple-click-select-all in the field → type "scratch" → click OK (all mouse;
+> no `Ctrl+A`, no `Enter`).
 
 ## Scene 5 — AI Agent — clanker (1.5 minutes)
 

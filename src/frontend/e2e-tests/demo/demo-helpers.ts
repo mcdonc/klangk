@@ -480,6 +480,26 @@ export async function mouseClickRight(
   await page.mouse.click(absX, absY, { button: "right" });
 }
 
+/** Triple-click at (x, y) relative to <flutter-view> → selects all text in a
+ *  Flutter TextField. CRITICAL: must be three RAPID clicks at one point with
+ *  no move between (a slow mouseClick×3 does NOT register as a triple-click —
+ *  Flutter/HTML need the clicks within ~500ms with minimal movement). Used for
+ *  the rename beat so the default name is replaced, not appended to.
+ *  (Keyboard `Ctrl+A` would also select-all but is a synthetic shortcut — the
+ *  recording rule is mouse for actions, keyboard only for typing text.) */
+export async function tripleClick(page: Page, x: number, y: number) {
+  const box = await fv(page).boundingBox();
+  const absX = (box?.x ?? 0) + x;
+  const absY = (box?.y ?? 0) + y;
+  await page.mouse.move(absX, absY);
+  await page.mouse.click(absX, absY);
+  await page.waitForTimeout(40);
+  await page.mouse.click(absX, absY);
+  await page.waitForTimeout(40);
+  await page.mouse.click(absX, absY);
+  await page.waitForTimeout(150);
+}
+
 /** Log in via the Flutter login form using coordinate clicks on the canvas.
  *  CRITICAL: do NOT enable Flutter semantics here. Semantics-on interferes
  *  with the terminal xterm widget's FocusNode, so typing into the terminal
