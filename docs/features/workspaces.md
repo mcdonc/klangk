@@ -122,6 +122,14 @@ flowing.
 When a container stops, the terminal shows an overlay with a restart
 button. Your files and home directory are preserved.
 
+The idle timeout is the only thing that automatically stops a container.
+**Logging out does not** — your containers (and any service-command
+processes, like an auto-started gateway) keep running after you log out,
+so they're immediately available when you or a collaborator reconnect.
+Only the idle timeout (or an explicit, admin-gated _Shutdown container_
+command) tears a container down. This lets long-lived services outlive
+any single user's session (#301, #1235).
+
 ## Export and import
 
 Workspaces can be exported as archives and imported to create new

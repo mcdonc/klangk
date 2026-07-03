@@ -500,29 +500,6 @@ class WebSocketState:
         # Stop the Pi RPC subprocess so it doesn't outlive the container.
         await agent.stop_session(workspace_id)
 
-    async def logout_user(self, user_id: str) -> None:
-        """Stop containers for a logging-out user, skipping any that
-        have active subscribers belonging to other users."""
-        user_workspaces = await model.get_user_workspaces_with_containers(
-            user_id
-        )
-        for ws in user_workspaces:
-            if not ws["container_id"]:
-                continue
-            session = self.get_session(ws["id"])
-            if session:
-                has_others = any(
-                    conn.user["id"] != user_id
-                    for sock, conn in self.connections.items()
-                    if sock in session.subscribers
-                )
-                if has_others:
-                    continue
-            await container.registry.stop_and_remove_container(
-                ws["container_id"]
-            )
-            await self.reset_workspace(ws["id"])
-
     def notify_container_status(
         self, workspace_id: str, running: bool
     ) -> None:

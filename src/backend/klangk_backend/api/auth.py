@@ -422,7 +422,12 @@ async def logout(
     request: Request,
     user: dict = Depends(auth.get_current_user),
 ):
-    await wshandler.state.logout_user(user["id"])
+    # Logout only invalidates credentials -- it deliberately does NOT stop the
+    # user's containers. Per #301/#1235 the idle timeout is the only thing
+    # that stops containers (plus the explicit, admin-gated
+    # ``shutdown_container`` command). Stopping on logout was a holdover from
+    # the per-user-container era and destroyed service sessions that should
+    # outlive any single user's login.
     # Blocklist the token so it can't be reused after logout
     authorization = request.headers.get("authorization", "")
     if authorization.startswith("Bearer "):
