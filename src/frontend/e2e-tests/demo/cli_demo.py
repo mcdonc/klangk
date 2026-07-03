@@ -285,18 +285,23 @@ def _wait_remote(t: Term, *, timeout: float = 120.0) -> None:
     A remote prompt starts with ``~`` and ends with ``$`` (e.g. ``~$``,
     ``~/klangk$``), so this is directory-agnostic. We wait until the last
     non-empty pane line IS such a prompt — which means the command we just ran
-    has finished and the shell is ready again. The ``Connecting`` banner from
-    ``klangkc shell`` is excluded so we don't match mid-handshake.
+    has finished and the shell is ready again. We only skip while the
+    ``Connecting`` banner is the *current* last line (mid-handshake) — NOT
+    when it lingers in scrollback, which would block the prompt match
+    forever (the banner stays in the capture window when the pane is short).
+    The prompt check itself already excludes the banner (it starts with
+    ``C``, not ``~``), so the guard only matters for readability of the
+    wait, not correctness.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        pane = t.pane()
-        if "Connecting" in pane:
-            time.sleep(0.5)
-            continue
-        lines = [ln for ln in pane.splitlines() if ln.strip()]
+        lines = [ln.rstrip() for ln in t.pane().splitlines() if ln.strip()]
         if lines:
-            last = lines[-1].rstrip()
+            last = lines[-1]
+            if last.startswith("Connecting"):
+                # mid-handshake; the prompt hasn't landed yet
+                time.sleep(0.5)
+                continue
             if last.startswith("~") and last.endswith("$"):
                 return
         time.sleep(0.5)
