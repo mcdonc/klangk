@@ -55,6 +55,27 @@ For each workspace with a health check configured:
    check's stderr/stdout), and the time of the last check are exposed
    via `GET /api/v1/workspaces/{id}/status`.
 
+### Startup grace period
+
+A service that was _just_ launched needs time to boot. To avoid the
+very first poll false-flagging a freshly-started service as unhealthy
+(e.g. "Gateway not yet ready to accept connections" while an AI gateway
+is still coming up), Klangk applies a **startup grace window** —
+modelled on Docker's `HEALTHCHECK --start-period`:
+
+- For `KLANGK_HEALTH_CHECK_STARTUP_GRACE` seconds (default 30) after
+  the service command fires, a **failing** check does _not_ transition
+  the workspace to unhealthy, broadcast, or log a failure — the blip is
+  treated as expected boot-up noise.
+- A **passing** check is still recorded immediately, so a fast-booting
+  service shows up healthy the moment it actually responds rather than
+  after the whole window.
+
+The window is anchored to when the service command actually launches
+(so it covers the real boot), and falls back to container start for
+health-checked workspaces that have no service command. After the
+window elapses, failures are reported normally.
+
 A failing check is **not a black box**: the tail of its output (stderr
 preferred) is logged when the status flips to unhealthy, retained on
 the workspace as `health_message`, and carried on the `service_health`
@@ -250,13 +271,14 @@ probe.
 
 ## Server tuning
 
-The polling interval and the per-check timeout are configurable via
-environment variables on the server:
+The polling interval, the per-check timeout, and the startup grace
+period are configurable via environment variables on the server:
 
-| Variable                       | Default | Description                                                                 |
-| ------------------------------ | ------- | --------------------------------------------------------------------------- |
-| `KLANGK_HEALTH_CHECK_INTERVAL` | `30`    | Seconds between polls for each workspace.                                   |
-| `KLANGK_HEALTH_CHECK_TIMEOUT`  | `10`    | Seconds before a single `podman exec` check is killed and marked unhealthy. |
+| Variable                            | Default | Description                                                                                   |
+| ----------------------------------- | ------- | --------------------------------------------------------------------------------------------- |
+| `KLANGK_HEALTH_CHECK_INTERVAL`      | `30`    | Seconds between polls for each workspace.                                                     |
+| `KLANGK_HEALTH_CHECK_TIMEOUT`       | `10`    | Seconds before a single `podman exec` check is killed and marked unhealthy.                   |
+| `KLANGK_HEALTH_CHECK_STARTUP_GRACE` | `30`    | Seconds after the service launches during which a failing check is not unhealthy (see below). |
 
 `podman exec` is a local Unix socket call to the Podman API, not a
 network round-trip, so running a check every 30 seconds per container

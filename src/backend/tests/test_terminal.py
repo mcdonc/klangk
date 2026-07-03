@@ -1436,6 +1436,92 @@ class TestEnsureServiceSession:
             await ensure_service_session("cid", "/home/clanker", "cmd")
         mock_logger.warning.assert_called()
 
+    async def test_firing_resets_health_grace_anchor(self):
+        """Firing the service command resets the health-check startup-grace
+        anchor so the monitor gives the freshly-launched service time to
+        boot before a failing poll can flag it unhealthy."""
+        from klangk_backend.terminal import ensure_service_session
+
+        with (
+            patch(
+                "klangk_backend.terminal._ensure_tmux_session",
+                new=AsyncMock(),
+            ),
+            patch(
+                "klangk_backend.terminal._service_cmd_window_exists",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "klangk_backend.terminal.podman.exec_container",
+                new=AsyncMock(side_effect=[(0, "", ""), (0, "", "")]),
+            ),
+            patch(
+                "klangk_backend.container.registry.mark_service_started"
+            ) as mock_mark,
+        ):
+            await ensure_service_session(
+                "cid", "/home/clanker", "openclaw gateway"
+            )
+        mock_mark.assert_called_once_with("cid")
+
+    async def test_existing_window_does_not_reset_grace_anchor(self):
+        """The no-op path (service-cmd window already exists) never
+        re-launched the service, so it must not restart the grace window."""
+        from klangk_backend.terminal import ensure_service_session
+
+        with (
+            patch(
+                "klangk_backend.terminal._ensure_tmux_session",
+                new=AsyncMock(),
+            ),
+            patch(
+                "klangk_backend.terminal._service_cmd_window_exists",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "klangk_backend.terminal.podman.exec_container",
+                new=AsyncMock(),
+            ),
+            patch(
+                "klangk_backend.container.registry.mark_service_started"
+            ) as mock_mark,
+        ):
+            await ensure_service_session(
+                "cid", "/home/clanker", "openclaw gateway"
+            )
+        mock_mark.assert_not_called()
+
+    async def test_send_keys_failure_does_not_reset_grace_anchor(self):
+        """If send-keys itself failed the command never launched, so the
+        grace anchor must not advance (no service is booting)."""
+        from klangk_backend.terminal import ensure_service_session
+
+        with (
+            patch(
+                "klangk_backend.terminal._ensure_tmux_session",
+                new=AsyncMock(),
+            ),
+            patch(
+                "klangk_backend.terminal._service_cmd_window_exists",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "klangk_backend.terminal.podman.exec_container",
+                new=AsyncMock(
+                    side_effect=[
+                        (0, "", ""),  # new-window succeeds
+                        RuntimeError("send broke"),  # send-keys fails
+                        (0, "", ""),  # kill-window cleanup
+                    ]
+                ),
+            ),
+            patch(
+                "klangk_backend.container.registry.mark_service_started"
+            ) as mock_mark,
+        ):
+            await ensure_service_session("cid", "/home/clanker", "cmd")
+        mock_mark.assert_not_called()
+
     async def test_concurrent_fires_create_window_exactly_once(self):
         """#1188: two concurrent ensure_service_session calls for the SAME
         container must not both create the service-cmd window.
