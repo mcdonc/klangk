@@ -64,6 +64,7 @@ _WS_CONNECTION_COMMANDS: dict[str, tuple[str, bool]] = {
 _WS_STATE_COMMANDS: dict[str, str] = {
     "browser_response": "handle_browser_response",
     "browser_chunk": "handle_browser_chunk",
+    "subscribe_health_heartbeat": "handle_subscribe_health_heartbeat",
 }
 
 

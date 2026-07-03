@@ -136,13 +136,22 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   void _onServiceHealth(Map<String, dynamic> msg) {
     if (!mounted) return;
     final wsId = msg['workspace_id'] as String?;
-    final healthy = msg['healthy'] as bool? ?? false;
     if (wsId == null) return;
+    // ``running`` (added in #1175 item 2) distinguishes a live
+    // container's check result from a terminal container-death frame:
+    // a death carries running=false (and healthy=false).  Defaults to
+    // true for older servers that don't send the field, and mirrors
+    // _onContainerStatus so both paths render a dead container grey.
+    final running = msg['running'] as bool? ?? true;
+    final healthy = msg['healthy'] as bool? ?? false;
     setState(() {
       for (final section in [_owned, _shared]) {
         for (final ws in section.workspaces) {
           if (ws['id'] == wsId) {
-            ws['health'] = healthy ? 'healthy' : 'unhealthy';
+            ws['running'] = running;
+            // A stopped container has no health status; a running one
+            // reflects the latest check.
+            ws['health'] = running ? (healthy ? 'healthy' : 'unhealthy') : null;
           }
         }
       }

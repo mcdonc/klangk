@@ -2296,9 +2296,7 @@ class TestHealthMonitorCheckWorkspace:
         assert st.health_status == "unhealthy"
         assert st.health_message == "connection refused"
         assert st.health_checked_at is not None
-        bcast.assert_called_once_with(
-            "ws-h", "unhealthy", "connection refused"
-        )
+        bcast.assert_called_once_with(st, "unhealthy", "connection refused")
 
     async def test_no_broadcast_when_status_unchanged(self):
         monitor = container.registry.health
@@ -2418,7 +2416,7 @@ class TestHealthMonitorStartupGrace:
             await monitor._check_workspace(st)
         assert st.health_status == "healthy"
         assert st.health_checked_at is not None
-        bcast.assert_called_once_with("ws-h", "healthy", None)
+        bcast.assert_called_once_with(st, "healthy", None)
 
     async def test_unhealthy_after_grace_is_recorded(self):
         # Once the grace window has elapsed, a failing check is a real
@@ -2436,9 +2434,7 @@ class TestHealthMonitorStartupGrace:
             await monitor._check_workspace(st)
         assert st.health_status == "unhealthy"
         assert st.health_message == "connection refused"
-        bcast.assert_called_once_with(
-            "ws-h", "unhealthy", "connection refused"
-        )
+        bcast.assert_called_once_with(st, "unhealthy", "connection refused")
 
     def test_in_startup_grace_uses_anchor_window(self):
         monitor = container.registry.health
@@ -2481,13 +2477,14 @@ class TestHealthMonitorStartupGrace:
 
         monitor = container.registry.health
         sock = _mock_sock_for_health()
+        st = _health_state(health_status="unhealthy")
         try:
             _ws_state.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             # No WorkspaceSession registered for this workspace — yet
             # the event must still reach the connection.
-            monitor._broadcast("ws-h", "unhealthy", "connection refused")
+            monitor._broadcast(st, "unhealthy", "connection refused")
         finally:
             _ws_state.connections.pop(sock, None)
         sock.send_json.assert_called_once_with(
@@ -2496,6 +2493,10 @@ class TestHealthMonitorStartupGrace:
                 "workspace_id": "ws-h",
                 "healthy": False,
                 "health_message": "connection refused",
+                "running": True,
+                "health_checked_at": None,
+                # _broadcast bumps the per-workspace seq on every emit.
+                "seq": 1,
             }
         )
 
@@ -2568,3 +2569,161 @@ class TestHealthMonitorLoopSkips:
             check.assert_called()
         finally:
             container.registry.states.pop(st.workspace_id, None)
+
+
+class TestHealthMonitorBroadcastSeq:
+    """_broadcast bumps per-workspace seq and forwards live fields."""
+
+    def test_bumps_seq_each_emit_and_forwards_fields(self):
+        from klangk_backend.wshandler import state as _ws_state
+
+        monitor = container.registry.health
+        sock = _mock_sock_for_health()
+        st = _health_state(health_status="unhealthy")
+        st.health_checked_at = 1_700_000_000.0
+        try:
+            _ws_state.connections[sock] = SimpleNamespace(
+                user={"id": "u1", "email": "a@x"}
+            )
+            monitor._broadcast(st, "unhealthy", "connection refused")
+            monitor._broadcast(st, "unhealthy", "connection refused")
+        finally:
+            _ws_state.connections.pop(sock, None)
+        frames = [c[0][0] for c in sock.send_json.call_args_list]
+        assert len(frames) == 2
+        # Monotonic seq across emits; live frames are running=True.
+        assert frames[0]["seq"] == 1
+        assert frames[1]["seq"] == 2
+        assert st.health_seq == 2
+        for f in frames:
+            assert f["running"] is True
+            assert f["health_checked_at"] == "2023-11-14T22:13:20+00:00"
+
+
+class TestHealthMonitorDeath:
+    """broadcast_death + notify_workspace_killed close the death hole.
+
+    A dying container otherwise looks like "healthy, then silence" on
+    the service_health stream (#1175 item 2)."""
+
+    def test_broadcast_death_emits_terminal_frame(self):
+        from klangk_backend.wshandler import state as _ws_state
+
+        monitor = container.registry.health
+        sock = _mock_sock_for_health()
+        st = _health_state(health_status="healthy")
+        st.health_checked_at = 1_700_000_000.0
+        st.health_seq = 4
+        try:
+            _ws_state.connections[sock] = SimpleNamespace(
+                user={"id": "u1", "email": "a@x"}
+            )
+            monitor.broadcast_death(st)
+        finally:
+            _ws_state.connections.pop(sock, None)
+        frame = sock.send_json.call_args[0][0]
+        assert frame["type"] == "service_health"
+        assert frame["healthy"] is False
+        assert frame["running"] is False
+        assert frame["health_checked_at"] == "2023-11-14T22:13:20+00:00"
+        # seq bumped from 4 -> 5.
+        assert frame["seq"] == 5
+        assert st.health_seq == 5
+
+    async def test_notify_workspace_killed_emits_death_for_health_checked(
+        self,
+    ):
+        # A container death fans a terminal service_health frame to
+        # subscribers BEFORE the on_workspace_killed callback drops state.
+        from klangk_backend.wshandler import state as _ws_state
+
+        sock = _mock_sock_for_health()
+        st = _health_state(health_status="healthy")
+        container.registry.states[st.workspace_id] = st
+        seen_state_present = []
+
+        async def on_killed(wid):
+            # The state must still be present when the callback runs --
+            # death emission happens first, before removal.
+            seen_state_present.append(wid in container.registry.states)
+
+        try:
+            _ws_state.connections[sock] = SimpleNamespace(
+                user={"id": "u1", "email": "a@x"}
+            )
+            container.registry.set_on_workspace_killed(on_killed)
+            await container.registry.notify_workspace_killed(st.workspace_id)
+        finally:
+            _ws_state.connections.pop(sock, None)
+            container.registry.states.pop(st.workspace_id, None)
+            container.registry.set_on_workspace_killed(None)
+        frame = sock.send_json.call_args[0][0]
+        assert frame["healthy"] is False
+        assert frame["running"] is False
+        assert seen_state_present == [True]
+
+    async def test_notify_workspace_killed_skips_non_health_checked(self):
+        # A workspace with no health_check never appeared on the stream,
+        # so its death emits no terminal frame.
+        from klangk_backend.wshandler import state as _ws_state
+
+        sock = _mock_sock_for_health()
+        st = _health_state(health_check=None)
+        container.registry.states[st.workspace_id] = st
+        try:
+            _ws_state.connections[sock] = SimpleNamespace(
+                user={"id": "u1", "email": "a@x"}
+            )
+            await container.registry.notify_workspace_killed(st.workspace_id)
+        finally:
+            _ws_state.connections.pop(sock, None)
+            container.registry.states.pop(st.workspace_id, None)
+        sock.send_json.assert_not_called()
+
+    async def test_notify_workspace_killed_no_state_no_emit(self):
+        # If the state is already gone (double-kill), nothing to emit.
+        from klangk_backend.wshandler import state as _ws_state
+
+        sock = _mock_sock_for_health()
+        try:
+            _ws_state.connections[sock] = SimpleNamespace(
+                user={"id": "u1", "email": "a@x"}
+            )
+            await container.registry.notify_workspace_killed("no-such-ws")
+        finally:
+            _ws_state.connections.pop(sock, None)
+        sock.send_json.assert_not_called()
+
+
+class TestHealthLoopHeartbeat:
+    """run_health_loop ticks a heartbeat each sweep (#1175 item 3b).
+
+    Emitting from the loop (not a standalone task) ties heartbeat
+    presence to the loop being alive."""
+
+    async def test_heartbeats_sent_each_tick_to_opted_in(self):
+        from klangk_backend.wshandler import state as _ws_state
+
+        monitor = container.registry.health
+        sock = _mock_sock_for_health()
+        try:
+            _ws_state.connections[sock] = SimpleNamespace(
+                user={"id": "u1", "email": "a@x"},
+                wants_health_heartbeat=True,
+            )
+            with (
+                patch.object(monitor, "_check_workspace", AsyncMock()),
+                patch.object(container, "HEALTH_CHECK_INTERVAL_SECONDS", 0.01),
+            ):
+                task = asyncio.create_task(monitor.run_health_loop())
+                await asyncio.sleep(0.05)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        finally:
+            _ws_state.connections.pop(sock, None)
+        frames = [c[0][0] for c in sock.send_json.call_args_list]
+        assert frames  # at least one heartbeat over ~5 ticks
+        assert all(f["type"] == "service_health_heartbeat" for f in frames)
