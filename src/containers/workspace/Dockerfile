@@ -1,4 +1,4 @@
-ARG WORKSPACE_BASE_IMAGE=ghcr.io/mcdonc/klangk/klangk-workspace-base:2026.06.24-fc6981c
+ARG WORKSPACE_BASE_IMAGE=ghcr.io/mcdonc/klangk/klangk-workspace-base:2026.07.03-7a5caf9
 FROM $WORKSPACE_BASE_IMAGE
 
 # Install Pi coding agent and npm-based extensions globally.
