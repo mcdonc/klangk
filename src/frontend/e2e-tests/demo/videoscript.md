@@ -172,15 +172,19 @@ _[Type: cd klangk, then: pi -p "In two sentences, what does this codebase do?"]_
 
 There it is. I can work on this project, run tests, use AI agents — all inside the sandbox. My host system is untouched.
 
-And I'm not limited to a single terminal — I can open more than one window into the same workspace. Let me split my screen and connect again, this time to a named window.
+And I'm not limited to a single terminal — I can open more than one window into the same workspace. But first, let me grab this container's identity so I can prove a point in a moment.
 
-_[Split the terminal into two side-by-side panes. In the new pane, type: klangkc shell demo logs]_
+_[Type: hostname — shows the container ID. Then: echo "$(hostname)" > ~/containername]_
 
-Now I've got two terminals open to the same workspace, side by side. The second one connected to a separate, named window — "logs". If I list the files here, it's the same workspace: the repo I cloned is right there.
+Now let me split my screen and connect again, this time to a named window.
 
-_[In the second pane, type: ls]_
+_[Split the terminal into two side-by-side panes. In the new pane, type: klangkc shell demo terminal2]_
 
-Each connection is its own independent shell, and a named window like this shows up as a tab in the web UI too. To disconnect either one, I use the SSH-style escape: Enter, tilde, dot.
+Now I've got two terminals open to the same workspace, side by side. The second one connected to a separate, named window — "terminal2". And here's the proof that it's the same container:
+
+_[In the second pane, type: cat containername — shows the same container ID]_
+
+Same hostname — because both terminals share one container. Each connection is its own independent shell, and a named window like this shows up as a tab in the web UI too. To disconnect either one, I use the SSH-style escape: Enter, tilde, dot.
 
 _[Disconnect the second pane with ~. , then the first]_
 

@@ -119,6 +119,18 @@ async function ensureWorkspace(
   return { id: JSON.parse(created.body).id, created: true };
 }
 
+/** Delete a workspace by name, acting as `token`. No-op if absent. */
+async function deleteWorkspace(name: string, token: string): Promise<boolean> {
+  const list = await get("/workspaces", token);
+  if (!list.ok) return false;
+  const items = JSON.parse(list.body);
+  const arr = Array.isArray(items) ? items : (items.items ?? []);
+  const found = arr.find((w: { name?: string }) => w && w.name === name);
+  if (!found) return false;
+  const del = await req("DELETE", `/workspaces/${found.id}`, undefined, token);
+  return del.ok;
+}
+
 /** Grant a role; ignore "already a member" style errors (idempotent). */
 async function grantRole(
   wsId: string,
@@ -156,6 +168,16 @@ async function seed() {
 
   const adminToken = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
   console.log("  ✓ admin login OK");
+
+  // 0. Reset the on-camera workspaces so the server is recording-ready:
+  //    `demo` (hero, created on camera in Sc 2) and `openclaw` (sandbox,
+  //    created on camera in Sc 3) must not survive from a prior recording.
+  for (const name of ["demo", "openclaw"]) {
+    const removed = await deleteWorkspace(name, adminToken);
+    console.log(
+      `  ${removed ? "✓ removed" : "· absent  "} workspace "${name}"`,
+    );
+  }
 
   // 1. Virtual users.
   for (const [label, email] of Object.entries(USERS)) {

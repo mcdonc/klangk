@@ -413,6 +413,18 @@ def scene_2(t: Term) -> None:
     _wait_remote(t, timeout=120)
     t.pause(HOLD)
 
+    # --- capture this container's identity, to prove below that the two
+    # panes share ONE container. ``hostname`` shows the container ID; we
+    # stash it in ~/containername (home, so the second pane's fresh shell
+    # — which starts in home — can read it with a bare ``cat``).
+    t.run("hostname", timeout=10)
+    _wait_remote(t, timeout=10)
+    t.pause(HOLD)
+    t.type('echo "$(hostname)" > ~/containername', per_char=0.03)
+    t.enter()
+    _wait_remote(t, timeout=10)
+    t.pause(HOLD)
+
     # --- split-pane beat: a second CLI window into the same workspace ---
     # The split is a tmux control call — it never appears as typed text in the
     # recording. The new pane runs the same rcfile shell (see
@@ -422,18 +434,19 @@ def scene_2(t: Term) -> None:
     new = t.split()
     t.pause(HOLD)
 
-    # Connect to a NAMED window ("logs") — a separate terminal in the same
-    # workspace (created if absent), not the active one. Shows that one
+    # Connect to a NAMED window ("terminal2") — a separate terminal in the
+    # same workspace (created if absent), not the active one. Shows that one
     # workspace can have several CLI terminals open at once.
-    t.type("klangkc shell demo logs", per_char=0.03)
+    t.type("klangkc shell demo terminal2", per_char=0.03)
     t.enter()
     t.expect("Escape: Enter", timeout=15)
     _wait_remote(t, timeout=20)
     t.pause(HOLD)
 
-    # `ls` proves it's the same workspace: the cloned `klangk` dir is right
-    # there in the home directory.
-    t.run("ls", timeout=10)
+    # `cat containername` proves it's the SAME container: the hostname we
+    # stashed in the other pane is right here, identical — because both
+    # terminals share one container filesystem.
+    t.run("cat containername", timeout=10)
     _wait_remote(t, timeout=10)
     t.pause(HOLD)
 
