@@ -575,7 +575,7 @@ class TestResendVerification:
         )
 
     def test_prune_timestamps_evicts_expired_keeps_recent(self):
-        """_prune_timestamps drops entries older than the cooldown only."""
+        """prune_timestamps drops entries older than the cooldown only."""
         import time
 
         now = time.time()
@@ -586,7 +586,7 @@ class TestResendVerification:
             "fresh@a.com": now - 10,  # within window
             "recent@a.com": now,  # within window
         }
-        api._prune_timestamps(ts, cooldown, now)
+        api.prune_timestamps(ts, cooldown, now)
         assert "old@a.com" not in ts
         assert "edge@a.com" not in ts
         assert "fresh@a.com" in ts
@@ -597,7 +597,7 @@ class TestResendVerification:
         import time
 
         ts: dict[str, float] = {}
-        api._prune_timestamps(ts, 60, time.time())
+        api.prune_timestamps(ts, 60, time.time())
         assert ts == {}
 
     async def test_resend_success(self, client, db):

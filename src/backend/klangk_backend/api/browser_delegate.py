@@ -17,7 +17,7 @@ from .. import (
     wshandler,
 )
 from ._common import (
-    _require_workspace_token,
+    require_workspace_token,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ def _resolve_bridge_target(body: BrowserDelegateRequest):
 @router.post("/browser-delegate")
 async def browser_delegate(
     body: BrowserDelegateRequest,
-    workspace_id: str = Depends(_require_workspace_token),
+    workspace_id: str = Depends(require_workspace_token),
 ):
     """Bridge endpoint for container processes to delegate actions to the browser.
 
@@ -89,7 +89,7 @@ async def browser_delegate(
 @router.post("/browser-delegate/stream")
 async def browser_delegate_stream(
     body: BrowserDelegateRequest,
-    workspace_id: str = Depends(_require_workspace_token),
+    workspace_id: str = Depends(require_workspace_token),
 ):
     """Streaming bridge: relay browser output chunks back as NDJSON.
 

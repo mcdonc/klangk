@@ -165,7 +165,7 @@ class TestPackagePublicSurface:
         [
             "_resend_timestamps",
             "_reset_timestamps",
-            "_prune_timestamps",
+            "prune_timestamps",
             "RESEND_COOLDOWN_SECONDS",
             "RESET_COOLDOWN_SECONDS",
         ],
@@ -185,7 +185,7 @@ class TestPackagePublicSurface:
         assert api._reset_timestamps is api_auth._reset_timestamps
 
     def test_prune_timestamps_is_same_object_as_submodule(self):
-        assert api._prune_timestamps is api_auth._prune_timestamps
+        assert api.prune_timestamps is api_auth.prune_timestamps
 
     def test_cooldown_constants_match_submodule(self):
         assert api.RESEND_COOLDOWN_SECONDS == api_auth.RESEND_COOLDOWN_SECONDS
@@ -268,10 +268,10 @@ class TestSubmoduleStructure:
 
         for name in (
             "FILE_UPLOAD_SIZE_MAX",
-            "_send_email",
-            "_workspace_resource",
-            "_admin_resource",
-            "_require_workspace_token",
+            "send_email",
+            "workspace_resource",
+            "admin_resource",
+            "require_workspace_token",
             "WorkspaceAclEntry",
         ):
             assert hasattr(_common, name), f"_common missing {name}"

@@ -27,7 +27,7 @@ from ..util import (
     resolve_env_value,
 )
 from ._common import (
-    _send_email,
+    send_email,
 )
 
 logger = logging.getLogger(__name__)
@@ -116,7 +116,7 @@ async def register(
             (user_id, req.email, password_hash),
         )
         logger.info("User inserted (uncommitted): %s", req.email)
-        await _send_email(
+        await send_email(
             emailsvc.send_verification_email(req.email, verification_url),
             req.email,
             "verification email",
@@ -142,7 +142,7 @@ async def verify_email(token: str):
     return {"status": "verified", "access_token": access_token}
 
 
-def _prune_timestamps(
+def prune_timestamps(
     timestamps: dict[str, float], cooldown_seconds: float, now: float
 ) -> None:
     """Evict rate-limit entries older than their cooldown window.
@@ -183,7 +183,7 @@ async def resend_verification(
 
     # Rate limit: one resend per email per minute
     now = time.time()
-    _prune_timestamps(_resend_timestamps, RESEND_COOLDOWN_SECONDS, now)
+    prune_timestamps(_resend_timestamps, RESEND_COOLDOWN_SECONDS, now)
     last = _resend_timestamps.get(req.email, 0)
     if now - last < RESEND_COOLDOWN_SECONDS:
         raise HTTPException(
@@ -199,7 +199,7 @@ async def resend_verification(
     verification_url = (
         f"{proto}://{hostname}{base_path}/#/verify?token={verification_token}"
     )
-    await _send_email(
+    await send_email(
         emailsvc.send_verification_email(req.email, verification_url),
         req.email,
         "verification email",
@@ -225,7 +225,7 @@ async def forgot_password(req: ForgotPasswordRequest, request: Request):
 
     # Rate limit: one reset email per address per minute
     now = time.time()
-    _prune_timestamps(_reset_timestamps, RESET_COOLDOWN_SECONDS, now)
+    prune_timestamps(_reset_timestamps, RESET_COOLDOWN_SECONDS, now)
     last = _reset_timestamps.get(req.email, 0)
     if now - last < RESET_COOLDOWN_SECONDS:
         raise HTTPException(
@@ -241,7 +241,7 @@ async def forgot_password(req: ForgotPasswordRequest, request: Request):
     reset_url = (
         f"{proto}://{hostname}{base_path}/#/reset-password?token={reset_token}"
     )
-    await _send_email(
+    await send_email(
         emailsvc.send_password_reset_email(req.email, reset_url),
         req.email,
         "password reset email",
@@ -369,7 +369,7 @@ async def change_email(
     )
     token = auth.create_verification_token(user["id"])
     url = f"{proto}://{hostname}{base_path}/#/verify?token={token}"
-    await _send_email(
+    await send_email(
         emailsvc.send_verification_email(req.email, url),
         req.email,
         "verification email",

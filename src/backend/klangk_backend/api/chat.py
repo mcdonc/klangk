@@ -14,7 +14,7 @@ from .. import (
     wshandler,
 )
 from ._common import (
-    _require_workspace_token,
+    require_workspace_token,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class WorkspaceChatRequest(BaseModel):
 @router.post("/workspaces/post-chat-message")
 async def workspace_chat(
     body: WorkspaceChatRequest,
-    workspace_id: str = Depends(_require_workspace_token),
+    workspace_id: str = Depends(require_workspace_token),
 ):
     """Post a chat message from a container using a workspace JWT.
 

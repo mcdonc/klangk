@@ -72,7 +72,7 @@ from . import (
 from .auth import (
     RESET_COOLDOWN_SECONDS,
     RESEND_COOLDOWN_SECONDS,
-    _prune_timestamps,
+    prune_timestamps,
     _reset_timestamps,
     _resend_timestamps,
 )
@@ -318,7 +318,7 @@ __all__ = (
     "container",
     "wshandler",
     # auth rate-limit state (see test_api.py)
-    "_prune_timestamps",
+    "prune_timestamps",
     "_resend_timestamps",
     "_reset_timestamps",
     "RESEND_COOLDOWN_SECONDS",
