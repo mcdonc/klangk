@@ -106,15 +106,15 @@ devenv shell -- playwright test \
 
 Knobs (env vars):
 
-| Var                          | Default                    | Effect                                                          |
-| ---------------------------- | -------------------------- | --------------------------------------------------------------- |
-| `KLANGK_TEST_URL`            | `http://localhost:8995`    | the demo server to point at                                     |
-| `KLANGK_DEMO_HEADLESS`       | unset                      | set `=1` for a quick headless dry check                         |
-| `KLANGK_DEMO_SLOWMO`         | `50`                       | ms slowMo between actions (bump for slower, readable clicks)    |
-| `KLANGK_DEMO_AGENT_WAIT`     | `60000`                    | how long to hold for clanker's live reply before the scene ends |
-| `KLANGK_DEMO_PASSWORD`       | `demopass123`              | password for freshly-registered demo accounts                   |
-| `KLANGK_DEMO_ADMIN_PASSWORD` | `$KLANGK_DEFAULT_PASSWORD` | the seeded admin's password (seed + admin scene)                |
-| `KLANGK_DEMO_TEAMMATE_EMAIL` | `teammate@example.com`     | the collaborator account                                        |
+| Var                          | Default                 | Effect                                                           |
+| ---------------------------- | ----------------------- | ---------------------------------------------------------------- |
+| `KLANGK_TEST_URL`            | `http://localhost:8995` | the demo server to point at                                      |
+| `KLANGK_DEMO_HEADLESS`       | unset                   | set `=1` for a quick headless dry check                          |
+| `KLANGK_DEMO_SLOWMO`         | `50`                    | ms slowMo between actions (bump for slower, readable clicks)     |
+| `KLANGK_DEMO_AGENT_WAIT`     | `60000`                 | how long to hold for clanker's live reply before the scene ends  |
+| `KLANGK_DEMO_PASSWORD`       | `demopass123`           | password for freshly-registered demo accounts                    |
+| `KLANGK_DEMO_ADMIN_PASSWORD` | `adminpass`             | the hero admin's password (admin@example.com; seed + all scenes) |
+| `KLANGK_DEMO_TEAMMATE_EMAIL` | `teammate@example.com`  | the collaborator account                                         |
 
 ## Output: web-UI video files
 
@@ -261,10 +261,15 @@ and `ws` resolve without a separate install.)
 
 - [x] scaffolding: config, helpers, seed (users + Potemkin workspaces)
 - [x] CLI recorder: `record-terminal.sh` + `cli_demo.py` (landed via #1204)
+- [x] CLI scenes 02, 03, 03b (Web UI tour, sandbox, services) — recorded + QA'd
 - [x] web-UI scenes 05, 06, 07, 08, 10 (Web UI, clanker, Files, Collab, Admin)
-- [ ] CLI scenes 02, 03, 04 — flesh out the `cli_demo.py` `scene_2/3/4` skeletons
-      against the demo server (and the continuity model in `shotlist.md`)
-- [ ] scene 6b — debug-with-Pi terminal scene (drives `pi` in a tab; agent-driven)
+- [x] **continuity refactor** — all web-UI scenes share one hero
+      (`admin@example.com`) operating one accumulating `demo` workspace
+      (find-or-create via `ensureSharedWorkspace`, never wiped), so clanker's
+      Sc-5 output survives into Sc 6's Files tab, the Sc-7 collaboration, etc.
+      Scene 7's collaborators are the seeded cast (teammate/designer/reviewer),
+      not throwaway users.
+- [ ] scene 5b — debug-with-Pi terminal scene (drives `pi` in a tab; agent-driven)
 - [ ] scene 09 — Plugins
-- [ ] continuity refactor — unify web-UI scenes onto one shared `demo` workspace
-      owned by `admin@plope.com`, seeding state forward (see `shotlist.md`)
+- [ ] scene 4 hosted-app beat — open openclaw's Service tab → proxied web UI
+      (requires CLI scenes 3/3b to have run first so openclaw's gateway is live)

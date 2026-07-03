@@ -1,5 +1,11 @@
 /**
- * Scene 08 — Multi-User Collaboration (~1.5–2 min)
+ * Scene 7 — Multi-User Collaboration (~1.5–2 min)
+ *
+ * CONTINUITY: the hero (admin@example.com) shares HER OWN `demo` workspace
+ * (the one accumulating state since Sc 2/4/5) with the SEEDED supporting cast
+ * (teammate/designer/reviewer @example.com — created by demo-seed.ts), not
+ * throwaway demo-collab-* users. So the Users panel and presence bar look
+ * lived-in, and the chat history from Sc 5 is still here.
  *
  * Four participants + the agent in ONE workspace, to show that talking to the
  * agent can itself be a collaborative process (not just solo Q&A):
@@ -10,10 +16,11 @@
  *   - reviewer  — WS-only participant (appears in owner's presence + chat)
  *   - clanker   — the AI agent, @-mentioned mid-conversation
  *
- * All four humans are added as Collaborators (can type in shared terminals +
- * chat). The owner's single recording carries the whole story: the presence bar
- * shows all four people, and the Chat tab shows interleaved authors discussing,
- * then the owner @mentions clanker, clanker responds, and the others react.
+ * All three cast humans are added as Collaborators (can type in shared
+ * terminals + chat). The owner's single recording carries the whole story: the
+ * presence bar shows all four people, and the Chat tab shows interleaved
+ * authors discussing, then the owner @mentions clanker, clanker responds, and
+ * the others react.
  *
  * The beat order:
  *   1. Owner shares a terminal; teammate joins — real pair-programming
@@ -34,14 +41,17 @@
  * (`share_window`) — proven reliable in the existing screenshot suite. The
  * visual result (broadcast icon, teammate's shared tab, viewer count) is
  * identical. Add a VO beat over it.
- *
- * No new REST API was needed: existing register/admin-create + role-grant +
- * WS chat_send already support N participants.
  */
 import { test } from "@playwright/test";
 import path from "path";
 import {
+  DEMO_HERO_EMAIL,
+  DEMO_HERO_PASSWORD,
   DEMO_PASSWORD,
+  SHARED_WORKSPACE,
+  DEMO_TEAMMATE_EMAIL,
+  DEMO_DESIGNER_EMAIL,
+  DEMO_REVIEWER_EMAIL,
   pace,
   slowType,
   vp,
@@ -49,20 +59,12 @@ import {
   terminalType,
   openChatTab,
   apiLogin,
-  ensureUser,
   addRole,
-  ensureFreshWorkspace,
+  ensureSharedWorkspace,
   openWorkspaceDemo,
   connectWs,
   DemoWs,
 } from "../demo-helpers";
-
-const OWNER = "demo-collab-owner@example.com";
-const TEAMMATE =
-  process.env.KLANGK_DEMO_TEAMMATE_EMAIL || "teammate@example.com";
-const DESIGNER = "demo-collab-designer@example.com";
-const REVIEWER = "demo-collab-reviewer@example.com";
-const WORKSPACE_NAME = "collab-demo";
 
 const CLANKER_PROMPT =
   "@clanker scaffold a simple Flask landing page with a headline and a button";
@@ -74,31 +76,48 @@ const VIDEO_DIR = path.resolve(__dirname, "..", "test-results", "demo-videos");
 test("collaboration", async ({ page, browser, request }) => {
   test.setTimeout(300_000);
 
-  // --- 1. Fresh workspace; add all three collaborators (can type + chat) ---
-  // Ensure the owner exists first (apiLogin alone 401s for a missing account).
-  await ensureUser(request, OWNER, DEMO_PASSWORD);
+  // --- 1. Shared `demo` workspace; add the three cast collaborators. They
+  //         already exist (demo-seed.ts), so ensureUser-style apiLogin works
+  //         directly. The owner is the hero. No workspace wipe (continuity). ---
   const { headers: ownerHeaders } = await apiLogin(
     request,
-    OWNER,
-    DEMO_PASSWORD,
+    DEMO_HERO_EMAIL,
+    DEMO_HERO_PASSWORD,
   );
-  const ws = await ensureFreshWorkspace(request, ownerHeaders, WORKSPACE_NAME);
-  await Promise.all([
-    ensureUser(request, TEAMMATE, DEMO_PASSWORD), // pre-seeded usually
-    ensureUser(request, DESIGNER, DEMO_PASSWORD),
-    ensureUser(request, REVIEWER, DEMO_PASSWORD),
-  ]);
-  await addRole(request, ownerHeaders, ws.id, "collaborators", TEAMMATE);
-  await addRole(request, ownerHeaders, ws.id, "collaborators", DESIGNER);
-  await addRole(request, ownerHeaders, ws.id, "collaborators", REVIEWER);
+  const ws = await ensureSharedWorkspace(
+    request,
+    ownerHeaders,
+    SHARED_WORKSPACE,
+  );
+  await addRole(
+    request,
+    ownerHeaders,
+    ws.id,
+    "collaborators",
+    DEMO_TEAMMATE_EMAIL,
+  );
+  await addRole(
+    request,
+    ownerHeaders,
+    ws.id,
+    "collaborators",
+    DEMO_DESIGNER_EMAIL,
+  );
+  await addRole(
+    request,
+    ownerHeaders,
+    ws.id,
+    "collaborators",
+    DEMO_REVIEWER_EMAIL,
+  );
 
   // --- 2. Owner opens the workspace (hero recording) ---
-  await openWorkspaceDemo(page, OWNER, ws.id, DEMO_PASSWORD);
+  await openWorkspaceDemo(page, DEMO_HERO_EMAIL, ws.id, DEMO_HERO_PASSWORD);
   await pace(1500);
 
   // --- 3. Share the owner's terminal via WS (reliable; see header note) ---
   const ownerWs = await connectWs(
-    (await apiLogin(request, OWNER, DEMO_PASSWORD)).token,
+    (await apiLogin(request, DEMO_HERO_EMAIL, DEMO_HERO_PASSWORD)).token,
     ws.id,
   );
   ownerWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
@@ -111,31 +130,35 @@ test("collaboration", async ({ page, browser, request }) => {
   // --- 4. Teammate opens in its own RECORDING context ---
   const teammateContext = await browser.newContext({
     recordVideo: { dir: VIDEO_DIR },
-    viewport: { width: 1920, height: 1080 },
+    viewport: { width: 960, height: 540 },
   });
   const teammatePage = await teammateContext.newPage();
   // The owner already booted this workspace's container, so it won't
   // re-emit `container_ready` — open without waiting for it (the
   // container is up; the teammate just attaches).
-  await openWorkspaceDemo(teammatePage, TEAMMATE, ws.id, DEMO_PASSWORD, {
-    waitForContainer: false,
-  });
+  await openWorkspaceDemo(
+    teammatePage,
+    DEMO_TEAMMATE_EMAIL,
+    ws.id,
+    DEMO_PASSWORD,
+    { waitForContainer: false },
+  );
   await pace(1500);
 
   // --- 5. designer + reviewer join via WS (presence, no browser pages) ---
   const designerWs = await connectWs(
-    (await apiLogin(request, DESIGNER, DEMO_PASSWORD)).token,
+    (await apiLogin(request, DEMO_DESIGNER_EMAIL, DEMO_PASSWORD)).token,
     ws.id,
   );
   const reviewerWs = await connectWs(
-    (await apiLogin(request, REVIEWER, DEMO_PASSWORD)).token,
+    (await apiLogin(request, DEMO_REVIEWER_EMAIL, DEMO_PASSWORD)).token,
     ws.id,
   );
   await pace(1500); // presence bar now shows all four people
 
   // --- 6. Teammate joins the shared terminal; pair-program beat ---
   const teammateWs = await connectWs(
-    (await apiLogin(request, TEAMMATE, DEMO_PASSWORD)).token,
+    (await apiLogin(request, DEMO_TEAMMATE_EMAIL, DEMO_PASSWORD)).token,
     ws.id,
   );
   teammateWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });

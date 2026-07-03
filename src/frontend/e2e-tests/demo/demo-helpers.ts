@@ -36,17 +36,47 @@ export const DEMO_URL = process.env.KLANGK_TEST_URL || "http://localhost:8996";
 /** Password for freshly-registered demo accounts (scenes self-register). */
 export const DEMO_PASSWORD = process.env.KLANGK_DEMO_PASSWORD || "demopass123";
 
-/** Seeded admin credentials. Falls back to KLANGK_DEFAULT_USER so the demo
- *  picks up whatever admin the server actually seeded. Override with
- *  KLANGK_DEMO_ADMIN_EMAIL / KLANGK_DEMO_ADMIN_PASSWORD. */
+/** Seeded admin credentials. The hero is admin@example.com (an admin-role
+ *  user), the SAME account the CLI scenes (cli_demo.py) and the seed
+ *  (demo-seed.ts) use — so the web-UI scenes are a CONTINUATION of the CLI
+ *  scenes, operating the same accumulating `demo` workspace, not a parallel
+ *  cast of throwaway users.
+ *
+ *  NOTE: the hero's password defaults to "adminpass" (matching demo-seed.ts
+ *  and cli_demo.py). Do NOT fall through to KLANGK_DEFAULT_PASSWORD — that's
+ *  the bootstrap admin (admin@plope.com), a DIFFERENT account. */
 export const DEMO_ADMIN_EMAIL =
   process.env.KLANGK_DEMO_ADMIN_EMAIL ||
   process.env.KLANGK_DEFAULT_USER ||
   "admin@example.com";
 export const DEMO_ADMIN_PASSWORD =
-  process.env.KLANGK_DEMO_ADMIN_PASSWORD ||
-  process.env.KLANGK_DEFAULT_PASSWORD ||
-  "admin";
+  process.env.KLANGK_DEMO_ADMIN_PASSWORD || "adminpass";
+
+/** The on-camera hero. Alias of the admin credentials above, used everywhere
+ *  a scene means "the protagonist" — so scenes read as "the hero logs in" not
+ *  "the admin logs in", and the continuity is explicit. */
+export const DEMO_HERO_EMAIL = DEMO_ADMIN_EMAIL;
+export const DEMO_HERO_PASSWORD = DEMO_ADMIN_PASSWORD;
+
+/** The single shared workspace every web-UI scene accumulates into. Created
+ *  on-camera by CLI Scene 2 (`klangkc create demo`) and carried forward: the
+ *  web-UI scenes operate this SAME workspace so clanker's app.py (Sc 5)
+ *  survives into the Files tab (Sc 6), the collaboration (Sc 7), etc. */
+export const SHARED_WORKSPACE = "demo";
+/** The service workspace from CLI Scenes 3/3b (openclaw + gateway). Scene 4
+ *  peeks at it for the hosted-app beat, so it must exist in the list. */
+export const SHARED_OPENCLAW = "openclaw";
+
+/** The seeded supporting cast (created by demo-seed.ts), used by the
+ *  collaboration scene (Sc 7). They share the demo password (DEMO_PASSWORD)
+ *  and are invited into the hero's `demo` workspace — NOT throwaway
+ *  demo-collab-* users, so the Users panel and presence bar look lived-in. */
+export const DEMO_TEAMMATE_EMAIL =
+  process.env.KLANGK_DEMO_TEAMMATE_EMAIL || "teammate@example.com";
+export const DEMO_DESIGNER_EMAIL =
+  process.env.KLANGK_DEMO_DESIGNER_EMAIL || "designer@example.com";
+export const DEMO_REVIEWER_EMAIL =
+  process.env.KLANGK_DEMO_REVIEWER_EMAIL || "reviewer@example.com";
 
 // Re-export the password-agnostic Flutter primitives scenes rely on.
 export {
@@ -318,7 +348,11 @@ export async function deleteWorkspace(
 
 /** Idempotent re-record helper: ensure a workspace named *name* is freshly
  *  created (any existing one is deleted first) so each take starts clean while
- *  keeping a STABLE name for on-screen continuity. Returns the new workspace. */
+ *  keeping a STABLE name for on-screen continuity. Returns the new workspace.
+ *
+ *  Use for ISOLATED scenes (each wipes its own scratch workspace). The web-UI
+ *  continuity scenes use `ensureSharedWorkspace` instead — they must NOT wipe,
+ *  since state accumulates across them. */
 export async function ensureFreshWorkspace(
   request: APIRequestContext,
   headers: Record<string, string>,
@@ -327,6 +361,29 @@ export async function ensureFreshWorkspace(
 ) {
   const existing = await findWorkspaceByName(request, headers, name);
   if (existing) await deleteWorkspace(request, headers, existing.id as string);
+  return postJson(
+    request,
+    `${DEMO_URL}/api/v1/workspaces`,
+    { name, ...extra },
+    headers,
+  );
+}
+
+/** Continuity helper: find-or-create a workspace by STABLE name, WITHOUT
+ *  deleting any existing one. This is the accumulating-workspace model the web-
+ *  UI scenes share: one hero `demo` workspace carries state forward across
+ *  sequentially-recorded scenes (clanker's app.py from Sc 5 is still there in
+ *  Sc 6's Files tab, etc.). Re-running a single scene is safe (it reuses the
+ *  existing workspace); a full clean re-take needs a manual reset (see the
+ *  videoscript's per-scene production notes), as the narrative intends. */
+export async function ensureSharedWorkspace(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  name: string,
+  extra: Record<string, unknown> = {},
+) {
+  const existing = await findWorkspaceByName(request, headers, name);
+  if (existing) return existing;
   return postJson(
     request,
     `${DEMO_URL}/api/v1/workspaces`,

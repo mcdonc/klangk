@@ -1,38 +1,47 @@
 /**
- * Scene 07 — File Browser (~30s)
+ * Scene 6 — File Browser (~30s)
  *
- * Shows the Files tab: open it with the mouse, browse, click a file row for a
- * highlighted preview, narrate drag-drop upload and right-click
- * download/rename/delete. The workspace home always has content (dotfiles,
- * default shell configs), so there's something to browse without seeding.
+ * CONTINUITY: the same hero `demo` workspace — clanker's app.py /
+ * requirements.txt from Sc 5 are still here for the viewer to browse. We
+ * find-or-create `demo`, never wipe. The workspace home always has content
+ * (dotfiles, default shell configs, plus whatever clanker wrote), so there's
+ * something to browse without extra seeding.
+ *
+ * TODO: seed the Pyramid PDF (assets/pyramid-docs.pdf) into demo's home via
+ * seedDemoFile (absolute container path /home/work/pyramid-docs.pdf) AFTER the
+ * container boots, for the PDF-rendering beat the videoscript describes.
+ *
  * Deterministic.
  */
 import { test } from "@playwright/test";
 import {
-  DEMO_PASSWORD,
+  DEMO_HERO_EMAIL,
+  DEMO_HERO_PASSWORD,
+  SHARED_WORKSPACE,
   pace,
   vp,
   mouseClick,
   openTab,
-  ensureUser,
-  ensureFreshWorkspace,
+  apiLogin,
+  ensureSharedWorkspace,
   openWorkspaceDemo,
 } from "../demo-helpers";
-
-const SCENE_USER = "demo-files@example.com";
-const WORKSPACE_NAME = "files-demo";
 
 test("file browser", async ({ page, request }) => {
   test.setTimeout(240_000);
 
-  // 1. Ensure user + workspace.
-  const { headers } = await ensureUser(request, SCENE_USER, DEMO_PASSWORD);
-  const ws = await ensureFreshWorkspace(request, headers, WORKSPACE_NAME);
+  // 1. Ensure the shared `demo` workspace exists (continuity with Sc 5).
+  const { headers } = await apiLogin(
+    request,
+    DEMO_HERO_EMAIL,
+    DEMO_HERO_PASSWORD,
+  );
+  const ws = await ensureSharedWorkspace(request, headers, SHARED_WORKSPACE);
 
   // 2. Open the workspace (single login, holds on the list, waits for the
   //    terminal to mount so the container is up before we touch the Files
   //    tab). holdOnListMs gives the viewer a beat on the workspace card.
-  await openWorkspaceDemo(page, SCENE_USER, ws.id, DEMO_PASSWORD, {
+  await openWorkspaceDemo(page, DEMO_HERO_EMAIL, ws.id, DEMO_HERO_PASSWORD, {
     waitForTerminal: true,
     holdOnListMs: 2000,
   });

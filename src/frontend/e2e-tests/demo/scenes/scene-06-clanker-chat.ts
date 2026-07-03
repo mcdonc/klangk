@@ -1,5 +1,9 @@
 /**
- * Scene 06 — AI Agent: clanker (~1.5 min)
+ * Scene 5 — AI Agent — clanker (~1.5 min)
+ *
+ * CONTINUITY: still in the hero's `demo` workspace (from Sc 2/4). The agent's
+ * output (app.py, requirements.txt) MUST persist into Sc 5b (debugging) and
+ * Sc 6 (Files) — so we find-or-create `demo`, NEVER wipe it.
  *
  * Opens the Chat tab, types an @clanker prompt ON SCREEN (so the viewer sees
  * the mention being composed), and lets the live agent respond. This is a
@@ -13,36 +17,36 @@
  */
 import { test } from "@playwright/test";
 import {
-  DEMO_PASSWORD,
+  DEMO_HERO_EMAIL,
+  DEMO_HERO_PASSWORD,
+  SHARED_WORKSPACE,
   pace,
   slowType,
   vp,
   mouseClick,
-  ensureUser,
-  ensureFreshWorkspace,
+  apiLogin,
+  ensureSharedWorkspace,
   openWorkspaceDemo,
   openChatTab,
 } from "../demo-helpers";
 
-const SCENE_USER = "demo-clanker@example.com";
-const WORKSPACE_NAME = "clanker-demo";
 const PROMPT =
   '@clanker create a simple Flask web app on port 8000 that shows "Hello from Klangk"';
 
 test("clanker chat", async ({ page, request }) => {
   test.setTimeout(300_000);
 
-  // 1. Ensure the demo user exists (create via admin if missing), then fresh
-  //    workspace (stable name for on-screen continuity).
-  const { token, headers } = await ensureUser(
+  // 1. Ensure the shared `demo` workspace exists (continuity). No wipe —
+  //    clanker's output must persist into Sc 5b/6.
+  const { headers } = await apiLogin(
     request,
-    SCENE_USER,
-    DEMO_PASSWORD,
+    DEMO_HERO_EMAIL,
+    DEMO_HERO_PASSWORD,
   );
-  const ws = await ensureFreshWorkspace(request, headers, WORKSPACE_NAME);
+  const ws = await ensureSharedWorkspace(request, headers, SHARED_WORKSPACE);
 
   // 2. Open it and wait for the container.
-  await openWorkspaceDemo(page, SCENE_USER, ws.id, DEMO_PASSWORD);
+  await openWorkspaceDemo(page, DEMO_HERO_EMAIL, ws.id, DEMO_HERO_PASSWORD);
   await pace(1200); // let the terminal settle on camera
 
   // 3. Chat tab (index 2 of 5).

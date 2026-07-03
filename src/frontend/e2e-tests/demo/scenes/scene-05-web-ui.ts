@@ -1,9 +1,17 @@
 /**
- * Scene 05 — Web UI: Workspaces and Terminal (~1 min)
+ * Scene 4 — The Web UI — Workspaces, Terminal, and Hosted Apps (~1 min)
  *
- * Pure navigation, on camera, as a clean FORWARD narrative: land on the
- * Workspaces LIST (the home view after login) → open a workspace → show the
- * terminal is live → add a second terminal tab.
+ * CONTINUITY: this is the bridge from the CLI scenes. The hero is
+ * admin@example.com (same account CLI Sc 2 uses), and the workspace is `demo`
+ * (created on-camera in Sc 2). We find-or-create both — never wipe — so a take
+ * works whether or not the CLI scenes ran first. The workspace list thus shows
+ * `demo` + the seeded Potemkin fixtures; if the CLI scenes ran, `openclaw`
+ * (Sc 3/3b) appears too with its health icon.
+ *
+ * The video's hosted-app beat opens `openclaw`'s Service tab. That requires
+ * the CLI scenes (3/3b) to have actually run (openclaw + its gateway). It's a
+ * TODO below — calibrated when recording the full arc in order. The terminal /
+ * tab-navigation beats here are the calibrated, deterministic core.
  *
  * NOTE on terminal typing: the terminal is a Flutter `xterm` widget whose
  * FocusNode gates keyboard input, and Playwright's canvas click doesn't
@@ -15,35 +23,49 @@
  */
 import { test } from "@playwright/test";
 import {
-  DEMO_PASSWORD,
+  DEMO_HERO_EMAIL,
+  DEMO_HERO_PASSWORD,
+  SHARED_WORKSPACE,
+  SHARED_OPENCLAW,
   pace,
-  ensureUser,
-  ensureFreshWorkspace,
+  ensureSharedWorkspace,
+  apiLogin,
   openWorkspaceDemo,
   openTab,
   addTerminalTab,
   terminalType,
 } from "../demo-helpers";
 
-const SCENE_USER = "demo-webui@example.com";
-const WORKSPACE_NAME = "webui-demo";
-
 test("web ui tour", async ({ page, request }) => {
   test.setTimeout(240_000);
 
-  // 1. Ensure user + a fresh workspace.
-  const { headers } = await ensureUser(request, SCENE_USER, DEMO_PASSWORD);
-  const ws = await ensureFreshWorkspace(request, headers, WORKSPACE_NAME);
+  // 1. Ensure the shared `demo` workspace exists (continuity with CLI Sc 2).
+  //    Find-or-create, no wipe — state from prior scenes survives.
+  const { headers } = await apiLogin(
+    request,
+    DEMO_HERO_EMAIL,
+    DEMO_HERO_PASSWORD,
+  );
+  const ws = await ensureSharedWorkspace(request, headers, SHARED_WORKSPACE);
+  // Also ensure openclaw exists so it shows in the list for the hosted-app
+  // beat (the gateway/service itself comes from CLI Sc 3/3b running first).
+  await ensureSharedWorkspace(request, headers, SHARED_OPENCLAW);
 
   // 2. Open the workspace via the helper: it logs in once (lands on the
   //    Workspaces list) and holds there `holdOnListMs` so the viewer sees the
   //    workspace card, then opens the workspace and waits for the terminal to
   //    mount. Single login avoids the terminal_started WS race.
-  await openWorkspaceDemo(page, SCENE_USER, ws.id, DEMO_PASSWORD, {
+  await openWorkspaceDemo(page, DEMO_HERO_EMAIL, ws.id, DEMO_HERO_PASSWORD, {
     waitForTerminal: true,
     holdOnListMs: 3000,
   });
   await pace(2500); // let the terminal settle on camera
+
+  // TODO (hosted-app beat): open openclaw from the list → Service tab →
+  //   "Open hosted app" button → its proxied web UI loads. Requires the CLI
+  //   scenes (3/3b) to have run first so openclaw's gateway is live. Calibrate
+  //   the Service-tab + hosted-app-button coordinates when recording the arc
+  //   in order. For now the list still shows openclaw (if present).
 
   // 3. Type two commands into the live terminal — clean canvas (semantics
   //    off) lets the xterm FocusNode receive keyboard input.
