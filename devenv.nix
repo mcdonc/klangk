@@ -200,10 +200,14 @@ in
     config.devenv.root + "/.devenv/state/klangk/plugins"
   );
   env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk-workspace";
-  # Rootless podman from nix (Linux) has no default policy.json; it is
-  # generated in enterShell. CONTAINERS_SIGNATURE_POLICY tells podman
-  # where to find it.  On macOS podman runs in *remote* mode against
-  # the VM, which has its own policy, so leave this empty there.
+  # Rootless podman from nix (Linux) ships no default policy.json, so a build/pull
+  # fails with "no policy.json file found". enterShell generates a permissive one
+  # at this path, and the build/pull scripts consume this var and pass it to podman
+  # via `--signature-policy`. NOTE: podman's build/pull/push path does NOT read an
+  # env var for the policy (the --signature-policy flag, which sets
+  # SystemContext.SignaturePolicyPath, is the only way to point it at a non-default
+  # file). On macOS podman runs in *remote* mode against the VM, which has its own
+  # policy, so leave this empty there.
   env.CONTAINERS_SIGNATURE_POLICY = lib.mkOverride 1500 (
     if pkgs.stdenv.hostPlatform.isDarwin then
       ""

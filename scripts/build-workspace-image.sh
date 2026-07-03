@@ -3,6 +3,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 PODMAN="${KLANGK_PODMAN_BIN:-podman}"
+# shellcheck source=_podman_common.sh disable=SC1091
+source "$SCRIPT_DIR/_podman_common.sh"
 
 STAMP="$DEVENV_STATE/klangk/.backend-image-hash"
 
@@ -64,6 +66,7 @@ for old_tag in $("$PODMAN" images --format '{{.Tag}}' --filter "reference=${KLAN
   esac
 done
 "$PODMAN" build \
+  "${SIG_POLICY_ARGS[@]}" \
   --pull=newer \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   --build-context plugins="$STAGING/plugins" \
