@@ -8,6 +8,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 PODMAN="${KLANGK_PODMAN_BIN:-podman}"
+# shellcheck source=_podman_common.sh disable=SC1091
+source "$SCRIPT_DIR/_podman_common.sh"
 
 COMMIT="$(git rev-parse --short HEAD)"
 CALVER="$(date -u +%Y.%m.%d)"
@@ -16,6 +18,7 @@ IMAGE="ghcr.io/mcdonc/klangk/klangk-workspace-base"
 
 echo "==> Building base image $VERSION (${KLANGK_PLATFORM:-linux/amd64})"
 "$PODMAN" build \
+  "${SIG_POLICY_ARGS[@]}" \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
   -f src/containers/workspace/Dockerfile.base \
   -t "$IMAGE:latest" \
