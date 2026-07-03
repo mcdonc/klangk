@@ -1424,13 +1424,53 @@ class TestEnsureServiceSession:
             patch(
                 "klangk_backend.terminal.podman.exec_container",
                 new=AsyncMock(
-                    side_effect=[(0, "", ""), RuntimeError("send broke")]
+                    side_effect=[
+                        (0, "", ""),  # new-window succeeds
+                        RuntimeError("send broke"),  # send-keys fails
+                        (0, "", ""),  # kill-window cleanup
+                    ]
                 ),
             ),
             patch("klangk_backend.terminal.logger") as mock_logger,
         ):
             await ensure_service_session("cid", "/home/clanker", "cmd")
         mock_logger.warning.assert_called()
+
+    async def test_send_keys_failure_kills_half_created_window(self):
+        """A send-keys failure kills the zombie window so the next fire
+        re-runs the whole sequence instead of no-oping forever (#1186)."""
+        from klangk_backend.terminal import ensure_service_session
+
+        with (
+            patch(
+                "klangk_backend.terminal._ensure_tmux_session",
+                new=AsyncMock(),
+            ),
+            patch(
+                "klangk_backend.terminal._service_cmd_window_exists",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "klangk_backend.terminal.podman.exec_container",
+                new=AsyncMock(
+                    side_effect=[
+                        (0, "", ""),  # new-window succeeds
+                        RuntimeError("send broke"),  # send-keys fails
+                        (0, "", ""),  # kill-window cleanup
+                    ]
+                ),
+            ) as mock_exec,
+            patch("klangk_backend.terminal.logger"),
+        ):
+            await ensure_service_session("cid", "/home/clanker", "cmd")
+
+        # The third exec call must be the kill-window cleanup targeting
+        # the service-cmd window we just created.
+        cleanup_call = mock_exec.call_args_list[2]
+        argv = cleanup_call.args[1]
+        assert "tmux" in argv
+        assert "kill-window" in argv
+        assert "service:service-cmd" in argv
 
 
 class TestServiceSessionHelpers:
