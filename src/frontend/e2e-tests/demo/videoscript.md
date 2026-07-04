@@ -524,7 +524,7 @@ _[In the Sharing panel, the teammate is already listed as a Collaborator]_
 
 I've already added my teammate as a Collaborator. Now let me share a terminal so we can pair-program.
 
-_[Click the scratch terminal tab, then click its share toggle — a share badge appears on the tab]_
+_[Right-click the scratch terminal tab → Share — a share badge (cell-tower icon) appears on the tab]_
 
 When I share a terminal tab, the other user sees it appear in their tab bar. They're looking at the same live terminal — this is real pair programming, not screen sharing. Both of us can type, and we both see the same output.
 
@@ -570,9 +570,9 @@ So you can collaborate with both humans and AI in the same space.
 > - **designer** WS: `chat_send` "hey, can we add a simple landing page?".
 > - **reviewer** WS: `chat_send` "yeah — minimal, just a headline and a button".
 >
-> _visible (owner, real mouse + keyboard):_ Sharing tab tour; share-toggle on
-> the scratch tab; type `echo 'owner typing here'`; open Chat; type the
-> `@clanker` prompt + click Send. _timing:_ the sidechannel beats must land at
+> _visible (owner, real mouse + keyboard):_ Sharing tab tour; right-click the
+> scratch tab → Share (badge appears); type `echo 'owner typing here'`; open
+> Chat; type the `@clanker` prompt + click Send. _timing:_ the sidechannel beats must land at
 > the _same cadence_ as Scene 7b's mirrored beats so the two clips intercut
 > cleanly — keep a shared beat sheet with offsets. _reset:_ unshare / re-share.
 > _gotchas:_ share the **scratch** tab (a plain shell), never the `bash` tab

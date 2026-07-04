@@ -37,10 +37,12 @@ import {
   slowType,
   vp,
   mouseClick,
+  mouseClickRight,
   apiLogin,
   addRole,
   ensureSharedWorkspace,
   openWorkspaceDemo,
+  openTab,
   openChatTab,
   openSharingTab,
   terminalTabCenterPx,
@@ -126,6 +128,19 @@ export type CollabCtx = {
 // ---------------------------------------------------------------------------
 
 export const CONVERSATION: Beat[] = [
+  // --- setup beat: owner clicks the Sharing nav tab and holds while the VO
+  //     describes the four roles (Owners / Coders / Collaborators /
+  //     Spectators). The teammate is already listed as a Collaborator
+  //     (setupCollab granted the role pre-roll). Teammate perspective: no-op
+  //     (collaborators have no Sharing tab — only Terminal/Files/Chat). ---
+  {
+    id: "sharing-tour",
+    actor: "owner",
+    medium: "system",
+    text: "",
+    afterPrevMs: 0,
+  },
+
   // --- setup beat: owner shares the scratch terminal. Not spoken; visible as
   //     a click on the scratch tab's share toggle (owner perspective) or a WS
   //     share_window sidechannel (teammate perspective, so the shared tab
@@ -285,18 +300,29 @@ export async function setupCollab({
     ),
   ]);
 
-  // --- find the scratch window name (owner's tmux window named "scratch").
-  //     We ask the owner WS to enumerate windows. terminal_start is SAFE on
-  //     ownerWs — it doesn't desync the browser (only terminal_select_window /
-  //     terminal_input on a sidechannel do). ---
-  ownerWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
-  const winMsg = await ownerWs.recvUntil((m) => m.type === "terminal_windows");
-  const allWindows = (winMsg.windows as Array<Record<string, unknown>>) ?? [];
-  const scratchWin =
-    allWindows.find((w) => w.name === "scratch") ??
-    allWindows.find((w) => w.name === "terminal2") ??
-    allWindows[allWindows.length - 1];
-  const scratchWindowName = String(scratchWin?.name ?? "scratch");
+  // --- find the scratch window name. CRITICAL: only enumerate via ownerWs
+  //     for the TEAMMATE perspective (no owner browser). For the OWNER
+  //     perspective, the owner's browser is the recorded window and the SOLE
+  //     driver of the owner's terminal — calling terminal_start on a second
+  //     owner WS connection reassigns window ids server-side, so the browser's
+  //     _selectedOwnWindowId falls back to windows[0] (bash) and the "scratch"
+  //     sub-tab then renders bash/pi content (verified: browser-only targets
+  //     scratch correctly; the sidechannel enumeration is what desyncs). So for
+  //     the owner we use the known continuity name and discover the id later
+  //     from the shared_terminals broadcast.
+  let scratchWindowName = "scratch";
+  if (perspective === "teammate") {
+    ownerWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
+    const winMsg = await ownerWs.recvUntil(
+      (m) => m.type === "terminal_windows",
+    );
+    const allWindows = (winMsg.windows as Array<Record<string, unknown>>) ?? [];
+    const scratchWin =
+      allWindows.find((w) => w.name === "scratch") ??
+      allWindows.find((w) => w.name === "terminal2") ??
+      allWindows[allWindows.length - 1];
+    scratchWindowName = String(scratchWin?.name ?? "scratch");
+  }
 
   // --- geometry from the recorded viewport ---
   const { width, height } = vp(page);
@@ -406,6 +432,11 @@ export async function runConversation(
       continue;
     }
 
+    if (beat.id === "sharing-tour") {
+      await performSharingTour(ctx, perspective);
+      continue;
+    }
+
     if (beat.id === "share") {
       await performShare(ctx, perspective);
       continue;
@@ -458,51 +489,99 @@ async function waitForClanker(ctx: CollabCtx, beat: Beat): Promise<void> {
   }
 }
 
-/** The "share" system beat. Owner perspective: click the scratch tab's share
- *  toggle on camera, then ensure the share took via ownerWs.share_window
- *  (authoritative). Teammate perspective: share via owner WS sidechannel,
- *  then the teammate joins. NOTE: terminal_start and share_window on ownerWs
- *  are SAFE — they don't touch per-session active-window tracking (only
- *  terminal_select_window / terminal_input do, which we never send on a
- *  sidechannel for the recorded user). */
+/** The "sharing-tour" system beat. Owner perspective: click the Sharing nav
+ *  tab (index 3 of 5) and hold while the VO describes the four roles and notes
+ *  the teammate is already a Collaborator. Then click back to the Terminal nav
+ *  tab so the subsequent share beat's scratch-tab click lands in the terminal
+ *  area. Teammate perspective: no-op (collaborators have no Sharing tab — only
+ *  Terminal/Files/Chat). */
+async function performSharingTour(
+  ctx: CollabCtx,
+  perspective: Actor,
+): Promise<void> {
+  if (perspective !== "owner") {
+    console.log(`[beat] SKIP sharing-tour (${perspective}: no Sharing tab)`);
+    return;
+  }
+  const { page, scale } = ctx;
+  // Sharing nav tab = index 3 of 5 (Terminal/Files/Chat/Sharing/Settings).
+  await openTab(page, 3, 5);
+  await pace(8000 * scale); // VO: describe roles, note teammate is a Collaborator
+  // Return to the Terminal nav tab. Clicking a nav tab swaps the shown pane;
+  // on returning to Terminal the pane re-mounts and may default to the bash
+  // sub-tab, so re-click the scratch sub-tab to re-establish it as the active
+  // terminal before the share beat runs (the share beat clicks scratch's
+  // share toggle and the owner types there). The settle lets the remount
+  // settle so the sub-tab click lands on the terminal strip, not Sharing UI.
+  await openTab(page, 0, 5);
+  await pace(1500 * scale);
+  await mouseClick(page, ctx.tab.scratch.x, ctx.tab.scratch.y);
+  await pace(1000 * scale);
+  console.log(`[beat] PASS sharing-tour (Sharing panel shown)`);
+}
+
+/** The "share" system beat.
+ *
+ *  Owner perspective: the share is performed ON CAMERA via the browser —
+ *  right-click the scratch sub-tab → pick "Share" from the context menu → a
+ *  share badge (cell-tower icon) appears on the tab. The owner's browser is
+ *  the SOLE driver of the owner's terminal, so we send NO terminal op over
+ *  the owner WS sidechannel (terminal_start reassigns window ids server-side
+ *  and desyncs the browser's sub-tab→window mapping; share_window would
+ *  short-circuit the on-camera action). We learn the shared window id from
+ *  the shared_terminals broadcast on a passive observer (designer WS).
+ *
+ *  Teammate perspective: there is no owner browser, so the owner WS
+ *  sidechannel IS the sole owner connection — safe to enumerate + share
+ *  there. Then the teammate joins the shared terminal. */
 async function performShare(ctx: CollabCtx, perspective: Actor): Promise<void> {
   const { ws, page } = ctx;
 
-  // Enumerate the owner's windows via ownerWs to find the scratch window id.
-  ws.owner.send({ cmd: "terminal_start", cols: 80, rows: 24 });
-  const winMsg = await ws.owner.recvUntil((m) => m.type === "terminal_windows");
-  const allWindows = (winMsg.windows as Array<Record<string, unknown>>) ?? [];
-  const scratchWin =
-    allWindows.find((w) => w.name === ctx.scratchWindowName) ??
-    allWindows[allWindows.length - 1];
-  const scratchWinId = String(scratchWin.id);
-  ctx.sharedWinId = scratchWinId;
-
   if (perspective === "owner") {
-    // VISIBLE: click the scratch tab to focus it, then its share toggle
-    // (~40px right of tab center) on camera.
+    // VISIBLE: right-click the scratch sub-tab → context menu → click Share.
+    // The menu renders at the click point; Share is row 2 (Rename, Share),
+    // each 48px → Share center = click point + (+56, +80) (measured via
+    // Flutter semantics). A share badge (cell-tower icon) appears on the tab.
     const target = ctx.tab.scratch;
-    await mouseClick(page, target.x, target.y);
+    await mouseClick(page, target.x, target.y); // focus scratch first
     await pace(800 * ctx.scale);
-    await mouseClick(page, target.x + 40, target.y);
-    await pace(800 * ctx.scale);
+    await mouseClickRight(page, target.x, target.y); // right-click → menu
+    await pace(900 * ctx.scale); // menu appears
+    await mouseClick(page, target.x + 56, target.y + 80); // Share menu item
+    await pace(1200 * ctx.scale); // share badge appears on the tab
+  } else {
+    // Teammate perspective: no owner browser — enumerate + share via ownerWs
+    // (the sole owner connection; safe).
+    ws.owner.send({ cmd: "terminal_start", cols: 80, rows: 24 });
+    const winMsg = await ws.owner.recvUntil(
+      (m) => m.type === "terminal_windows",
+    );
+    const allWindows = (winMsg.windows as Array<Record<string, unknown>>) ?? [];
+    const scratchWin =
+      allWindows.find((w) => w.name === ctx.scratchWindowName) ??
+      allWindows[allWindows.length - 1];
+    ws.owner.send({
+      cmd: "share_window",
+      window_id: String(scratchWin.id),
+    });
   }
 
-  // Ensure the share actually took (WS is authoritative). If the visible
-  // click missed or toggled off a stale share, this (re-)shares reliably.
-  ws.owner.send({ cmd: "share_window", window_id: scratchWinId });
-
-  // Confirm via a passive observer (designer WS) that shared_terminals is
-  // non-empty — the teammate's view sometimes lags.
+  // Discover the shared window id from the shared_terminals broadcast on a
+  // passive observer (designer WS). Avoids any ownerWs terminal op for the
+  // owner perspective and works for both perspectives.
   try {
-    await ws.designer.recvUntil(
+    const shared = await ws.designer.recvUntil(
       (m) =>
         m.type === "shared_terminals" &&
         ((m.terminals as Array<Record<string, unknown>>) ?? []).length > 0,
       10_000,
     );
+    const terms = (shared.terminals as Array<Record<string, unknown>>) ?? [];
+    const term = terms[0];
+    if (term?.window_id) ctx.sharedWinId = String(term.window_id);
   } catch {
-    // broadcast may have been drained; non-fatal (verified at join time)
+    // broadcast may have been drained; sharedWinId stays undefined (lazy
+    // discovery in teammateJoinShared covers it)
   }
   await pace(1500 * ctx.scale);
 
@@ -514,7 +593,7 @@ async function performShare(ctx: CollabCtx, perspective: Actor): Promise<void> {
   }
 
   console.log(
-    `[beat] PASS share (shared ${ctx.scratchWindowName}, win=${scratchWinId})`,
+    `[beat] PASS share (shared ${ctx.scratchWindowName}, win=${ctx.sharedWinId ?? "?"})`,
   );
 }
 
