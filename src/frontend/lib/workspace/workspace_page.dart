@@ -365,6 +365,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     setState(() => _connecting = true);
     final wsClient = context.read<WsClient>();
     await wsClient.connect();
+    if (!mounted) return;
     if (wsClient.connected) {
       wsClient.connectWorkspace(widget.workspaceId);
     } else {
