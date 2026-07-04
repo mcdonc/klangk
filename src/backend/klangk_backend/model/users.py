@@ -219,6 +219,27 @@ async def create_user(
         }
 
 
+async def insert_unverified_user(
+    db, user_id: str, email: str, password_hash: str
+) -> str:
+    """Insert an unverified user row with a generated handle.
+
+    Unlike :func:`create_user`, this runs on the **caller's** transaction
+    so it composes with a follow-up verification-email send: if the send
+    fails (raising 503), the insert is rolled back along with it. Used by
+    the self-service register and admin invite routes, which both need
+    the insert and email in one atomic unit. Returns the generated
+    handle.
+    """
+    handle = await generate_handle(db, email)
+    await db.execute(
+        "INSERT INTO users (id, email, password_hash, verified, handle)"
+        " VALUES (?, ?, ?, 0, ?)",
+        (user_id, email, password_hash, handle),
+    )
+    return handle
+
+
 async def get_user_handle(user_id: str) -> str | None:
     """Return the handle for a user, or None if not found."""
     async with transaction() as db:

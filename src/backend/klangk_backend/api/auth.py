@@ -111,11 +111,8 @@ async def register(
     # Insert user and send email in a transaction — if the email fails,
     # the user insert is rolled back so they can try again.
     async with model.transaction() as db:
-        handle = await model.generate_handle(db, req.email)
-        await db.execute(
-            "INSERT INTO users (id, email, password_hash, verified, handle)"
-            " VALUES (?, ?, ?, 0, ?)",
-            (user_id, req.email, password_hash, handle),
+        await model.insert_unverified_user(
+            db, user_id, req.email, password_hash
         )
         logger.info("User inserted (uncommitted): %s", req.email)
         await send_email(

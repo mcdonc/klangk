@@ -1,6 +1,7 @@
 """Tests for model: users, workspaces, messages, port allocations."""
 
 import asyncio
+import uuid
 
 import aiosqlite
 import pytest
@@ -334,6 +335,45 @@ class TestHandles:
             )
             # Garbage local part falls back to the "user" base.
             assert await model.generate_handle(conn, "@foo.com") == "user"
+
+    async def test_insert_unverified_user_derives_handle_and_marks_unverified(
+        self, db
+    ):
+        """insert_unverified_user inserts verified=0 + derived handle (#1256).
+
+        It runs on the caller's transaction so an email-send failure can
+        roll back the insert — verified here by checking that an exception
+        on the same transaction leaves no row.
+        """
+        user_id = str(uuid.uuid4())
+        # Committed happy path: insert, commit, then read back.
+        async with model.transaction() as conn:
+            handle = await model.insert_unverified_user(
+                conn, user_id, "carol@example.com", "somehash"
+            )
+        assert handle == "carol"
+        cursor = await model.fetchone(
+            "SELECT email, handle, verified, password_hash FROM users"
+            " WHERE id = ?",
+            (user_id,),
+        )
+        assert cursor is not None
+        assert cursor["email"] == "carol@example.com"
+        assert cursor["handle"] == "carol"  # derived, not NULL
+        assert cursor["verified"] == 0
+        assert cursor["password_hash"] == "somehash"
+
+        # Rollback path: an exception inside the transaction must leave
+        # no row — this is the guarantee the register/invite routes rely
+        # on when the verification email send fails.
+        bad_id = str(uuid.uuid4())
+        with pytest.raises(Exception):
+            async with model.transaction() as conn:
+                await model.insert_unverified_user(
+                    conn, bad_id, "dave@example.com", "h"
+                )
+                raise RuntimeError("simulate email-send failure")
+        assert await model.get_user_by_id(bad_id) is None
 
     async def test_validate_handle(self):
         assert model.validate_handle("alice") is None
