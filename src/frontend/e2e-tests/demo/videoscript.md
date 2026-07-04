@@ -518,9 +518,9 @@ Chat is shared too — everyone in the workspace sees messages in real time, inc
 
 ## Scene 8 — Plugins (45 seconds)
 
-Klangk has a plugin system. Plugins are git repos that can install system packages at image build time, add CLI tools to the container, extend Pi with new tools, or inject UI widgets into the browser.
+Klangk has a plugin system. Plugins are git repos that can install system packages at image build time, add CLI tools to the container, extend Pi with new tools, or inject UI widgets into the browser. Plugins can also extend the Flutter/Dart app that composes Klangk itself.
 
-_[Browser: in the demo workspace, type pi and wait for the pi interactive tool to come up. type boingball! → a bouncing ball animates over the UI (pi called the boingball tool the plugin registered)]_
+_[Browser: in the demo workspace, type pi and wait for the pi interactive tool to come up. type boingball! into pi → a bouncing ball animates over the UI (pi called the boingball tool the plugin registered). Hold on the animation for ~30 seconds]_
 
 For example, the "boingball" plugin lets Pi trigger a bouncing ball amimation. The "git-credential" plugin adds a browser-based Git authentication dialog. "claude-code" installs Anthropic's Claude Code agent alongside Pi. The "celebrate" plugin shows confetti.
 
@@ -530,12 +530,10 @@ How do plugins differ from the `klangkc sandbox` setup scripts we saw earlier? T
 
 The downside of plugins is that they require Klangk itself to be recompiled to pick them up — you can't just add one on the fly. But the payoff is that there's **no startup cost**: a plugin is baked into the image at build time, so every workspace that uses that image is ready to go instantly, with no setup script to run on first creation. The feature is available to all workspaces instantly.
 
-Plugins can also extend the Flutter/Dart app that composes Klangk itself.
-
 > **Production —** _on screen:_ plugins config + browser. _pre-roll:_ image built
-> with a visual plugin — **celebrate** (confetti) is the easy payoff;
+> with a visual plugin — **boingball** is the easy payoff;
 > `customize/plugins.yaml` declares it (plus beep, pig-latin, etc.); confirm the
-> image was rebuilt so `celebrate`'s Pi tool is live. _reset:_ re-trigger confetti.
+> image was rebuilt so `boingball`'s Pi tool is live. _reset:_ re-trigger boingball.
 > _gotchas:_ plugins are **compile-time** (image rebuild) — you can't add one
 > live; build it in ahead of time.
 
@@ -543,7 +541,7 @@ Plugins can also extend the Flutter/Dart app that composes Klangk itself.
 
 _[Browser: click the admin link → click through the Users, Groups, Invitations, and ACL tabs, 5 seconds shown apiece]_
 
-The admin panel lets you manage users and groups, send email invitations, and configure access control. Klangk supports OIDC single sign-on — Google, GitHub, whatever your identity provider is.
+The admin panel lets you manage users and groups, send email invitations, and configure global access control. Klangk supports OIDC single sign-on — Google, GitHub, whatever your identity provider is.
 
 > **Production —** _on screen:_ browser → admin panel. _pre-roll:_ admin logged
 > in; a couple seeded users/groups so it looks lived-in. _reset:_ none.

@@ -73,11 +73,13 @@ test("pi debug", async ({ page, context, request }) => {
 
   // Off-camera cleanup: kill any stale app from a prior take (a leftover
   // .venv python holds port 8000 and derails pi's debug). Remove the files so
-  // pi rebuilds fresh on camera.
+  // pi rebuilds fresh on camera. NB: fuser -k 8000/tcp kills whoever HOLDS
+  // the port (the stale flask app), never the cleanup shell itself -- a
+  // pkill/pgrep on "app.py" or "python" self-matches this very command line
+  // and exits 137 (SIGKILL). Each stage || true; the trailing echo fixes 0.
   klangkcExec(
     ws.name,
-    "pkill -9 -f 'python.*app.py' 2>/dev/null; " +
-      "pkill -9 -f '.venv/bin/python' 2>/dev/null; " +
+    "fuser -k 8000/tcp 2>/dev/null || true; " +
       "cd ~ && rm -f app.py requirements.txt && rm -rf .venv; " +
       "echo cleaned",
   );
@@ -165,7 +167,11 @@ test("pi debug", async ({ page, context, request }) => {
 
   const appTab = await context.newPage();
   await appTab.goto(hostedUrl, { waitUntil: "domcontentloaded" });
-  await pace(5000); // viewer sees the page: "Hello from Klangk"
+  // Bring the hosted-app tab to the front so ffmpeg (capturing the whole X
+  // display) actually sees it render. matchbox focuses the most-recently-
+  // focused window, so an explicit bringToFront is needed.
+  await appTab.bringToFront();
+  await pace(7000); // viewer sees the page render: "Hello from Klangk"
   await appTab.close();
   await page.bringToFront();
   await pace(2000);
