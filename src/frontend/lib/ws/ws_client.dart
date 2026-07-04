@@ -387,6 +387,9 @@ class WsClient extends ChangeNotifier {
         terminalWindows = [];
         sharedTerminals = [];
         final code = _channel?.closeCode;
+        // Drop the closed channel so _send can't write to a dead sink
+        // during the reconnect window (it also guards on _connected).
+        _channel = null;
         notifyListeners();
         if (code == 4001 || code == 4002) {
           _errorController.add('Session expired, please log in again');
@@ -404,8 +407,11 @@ class WsClient extends ChangeNotifier {
         presenceUsers = [];
         terminalWindows = [];
         sharedTerminals = [];
-        notifyListeners();
         final code = _channel?.closeCode;
+        // Drop the closed channel so _send can't write to a dead sink
+        // during the reconnect window (it also guards on _connected).
+        _channel = null;
+        notifyListeners();
         if (code == 4001 || code == 4002) {
           _auth?.logout();
         } else {
@@ -500,7 +506,10 @@ class WsClient extends ChangeNotifier {
   }
 
   void _send(Map<String, dynamic> msg) {
-    if (_channel == null) return;
+    // Guard against both a missing channel and a closed one: onDone/onError
+    // set _connected = false (and null _channel) but a send can land in that
+    // window, so check both to avoid writing to a closed sink.
+    if (!_connected || _channel == null) return;
     final cmd = msg['cmd'] as String? ?? '?';
     // Skip noisy terminal_input from debug log
     if (cmd != 'terminal_input') {

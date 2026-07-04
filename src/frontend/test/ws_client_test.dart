@@ -1283,6 +1283,49 @@ void main() {
       expect(client.currentWorkspaceId, isNull);
     });
 
+    test('_send no-ops after server close (no write to closed sink)', () async {
+      // Regression #1265: during the reconnect window _channel was left
+      // non-null while _connected was false, so _send wrote into the
+      // closed sink.
+      channel.serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
+      await Future.delayed(Duration.zero);
+
+      channel.serverClose();
+      await Future.delayed(Duration.zero);
+      expect(client.connected, isFalse);
+
+      final sentBefore = channel.sentMessages.length;
+
+      // Sends landing in the closed-sink window must be silently dropped.
+      client.sendHeartbeat();
+      client.sendTerminalInput('ls\n');
+      client.connectWorkspace('ws-1');
+
+      expect(channel.sentMessages.length, sentBefore,
+          reason: '_send must not write to a closed sink during reconnect');
+    });
+
+    test('_send no-ops after server error (no write to closed sink)', () async {
+      // Same regression as above, via the onError path.
+      final errors = <String>[];
+      client.errors.listen(errors.add);
+
+      channel.serverError(Exception('boom'));
+      await Future.delayed(Duration.zero);
+      expect(client.connected, isFalse);
+
+      final sentBefore = channel.sentMessages.length;
+
+      client.sendHeartbeat();
+      client.sendTerminalInput('ls\n');
+
+      expect(channel.sentMessages.length, sentBefore,
+          reason: '_send must not write to a closed sink after onError');
+    });
+
     test('server close clears stale presence and terminal data', () async {
       // Populate data first
       channel.serverSend({
