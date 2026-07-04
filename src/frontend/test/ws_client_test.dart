@@ -1123,6 +1123,21 @@ void main() {
       expect(client.terminalWindows[1]['name'], 'build');
     });
 
+    test('terminalWindows is an eager list, not a lazy cast', () async {
+      channel.serverSend({
+        'type': 'terminal_windows',
+        'windows': [
+          {'index': 0, 'name': 'bash', 'active': true},
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      // List.from produces a growable List, not a CastList lazy wrapper
+      expect(client.terminalWindows, isA<List<Map<String, dynamic>>>());
+      client.terminalWindows
+          .add({'index': 1, 'name': 'added', 'active': false});
+      expect(client.terminalWindows.length, 2);
+    });
+
     test('shared_terminals message updates sharedTerminals', () async {
       channel.serverSend({
         'type': 'shared_terminals',
@@ -1136,6 +1151,22 @@ void main() {
       await Future.delayed(Duration.zero);
       expect(client.sharedTerminals.length, 1);
       expect(client.sharedTerminals[0]['name'], 'dev');
+    });
+
+    test('sharedTerminals is an eager list, not a lazy cast', () async {
+      channel.serverSend({
+        'type': 'shared_terminals',
+        'terminals': [
+          {
+            'name': 'dev',
+            'sessions': ['alice']
+          },
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.sharedTerminals, isA<List<Map<String, dynamic>>>());
+      client.sharedTerminals.add({'name': 'added', 'sessions': []});
+      expect(client.sharedTerminals.length, 2);
     });
 
     test('shared_terminal_deleted fires stream', () async {
@@ -1492,6 +1523,19 @@ void main() {
 
       expect(client.presenceUsers.length, 2);
       expect(client.presenceUsers[0]['user_email'], 'alice@test.com');
+    });
+
+    test('presenceUsers is an eager list, not a lazy cast', () async {
+      channel.serverSend({
+        'type': 'presence_list',
+        'users': [
+          {'user_id': 'u1', 'user_email': 'alice@test.com'},
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.presenceUsers, isA<List<Map<String, dynamic>>>());
+      client.presenceUsers.add({'user_id': 'u2', 'user_email': 'bob@test.com'});
+      expect(client.presenceUsers.length, 2);
     });
 
     test('presence_join adds user', () async {

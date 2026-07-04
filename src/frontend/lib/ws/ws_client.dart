@@ -439,7 +439,7 @@ class WsClient extends ChangeNotifier {
 
   void _onPresenceList(Map<String, dynamic> json) {
     final users = json['users'] as List? ?? [];
-    presenceUsers = users.cast<Map<String, dynamic>>();
+    presenceUsers = List<Map<String, dynamic>>.from(users);
     notifyListeners();
   }
 
@@ -469,13 +469,13 @@ class WsClient extends ChangeNotifier {
   void _onTerminalWindows(Map<String, dynamic> json) {
     debugPrint('[WsClient] terminal_windows received: ${DateTime.now()}');
     final windows = json['windows'] as List? ?? [];
-    terminalWindows = windows.cast<Map<String, dynamic>>();
+    terminalWindows = List<Map<String, dynamic>>.from(windows);
     notifyListeners();
   }
 
   void _onSharedTerminals(Map<String, dynamic> json) {
     final terminals = json['terminals'] as List? ?? [];
-    sharedTerminals = terminals.cast<Map<String, dynamic>>();
+    sharedTerminals = List<Map<String, dynamic>>.from(terminals);
     notifyListeners();
   }
 
