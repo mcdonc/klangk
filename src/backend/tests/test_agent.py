@@ -748,7 +748,7 @@ class TestGetSession:
 class TestEnsureAgentHome:
     """Direct tests for the eager-provisioning function (#1157).
 
-    Called from eager_start_workspace at container bring-up (every exec
+    Called from start_workspace at container bring-up (every exec
     process inherits $KLANGK_AGENT_HOME) and again from chat-start, which
     caches the result per AgentSession (see TestEnsureHome).
     """

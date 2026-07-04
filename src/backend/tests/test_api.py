@@ -1285,7 +1285,7 @@ class TestWorkspaceRoutes:
         with (
             patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}),
             patch(
-                "klangk_backend.workspaces.eager_start_workspace",
+                "klangk_backend.workspaces.start_workspace",
                 new_callable=AsyncMock,
             ) as mock_start,
         ):
@@ -1303,7 +1303,7 @@ class TestWorkspaceRoutes:
         with (
             patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}),
             patch(
-                "klangk_backend.workspaces.eager_start_workspace",
+                "klangk_backend.workspaces.start_workspace",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("podman broke"),
             ),
@@ -1498,17 +1498,27 @@ class TestWorkspaceRoutes:
         # Simulate a running container so the stop path is exercised.
         api.container.registry.track_activity("cid-restart", ws_id)
 
-        with patch.object(
-            api.container.registry,
-            "stop_and_remove_container",
-            new_callable=AsyncMock,
-        ) as mock_stop:
+        with (
+            patch.object(
+                api.container.registry,
+                "stop_and_remove_container",
+                new_callable=AsyncMock,
+            ) as mock_stop,
+            patch(
+                "klangk_backend.workspaces.start_workspace",
+                new_callable=AsyncMock,
+            ) as mock_start,
+        ):
             resp = await client.post(
                 f"/api/v1/workspaces/{ws_id}/restart", headers=headers
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "restarted"
         mock_stop.assert_awaited_once_with("cid-restart")
+        # #1244: restart re-starts the container (not just stop+remove),
+        # so the service command re-fires at the create choke point and
+        # the workspace recovers.
+        mock_start.assert_awaited_once()
 
         # Clean up registry state.
         api.container.registry.states.pop(ws_id, None)

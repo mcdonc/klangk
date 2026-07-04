@@ -13,7 +13,7 @@ only *mock*:
    ``~/.pi/agent/``) is provisioned **eagerly at bring-up** via
    ``ensure_agent_home`` -- not lazily at the first chat mention.
 
-   Crucially, eager provisioning lives only in ``eager_start_workspace``
+   Crucially, eager provisioning lives only in ``start_workspace``
    (triggered by ``auto_start=True`` on workspace creation), *not* the
    normal WS connect path.  So the eager test creates a workspace with
    ``auto_start=True`` and inspects the filesystem via ``podman exec``
@@ -54,7 +54,7 @@ def server():
 
     KLANGK_ALLOW_AUTOSTART=1 is required so the eager-provisioning test
     can create a workspace with auto_start=True (which routes through
-    eager_start_workspace -> ensure_agent_home).
+    start_workspace -> ensure_agent_home).
     """
     data_dir = tempfile.mkdtemp(prefix="klangk-agent-home-e2e-")
     port = "18997"
@@ -301,24 +301,24 @@ class TestAgentHomeE2E:
     @pytest.mark.asyncio
     async def test_agent_home_provisioned_eagerly(self, server, auth):
         """The agent home exists immediately after a container is brought
-        up via eager_start_workspace -- with NO chat mention and NO WS
+        up via start_workspace -- with NO chat mention and NO WS
         connection preceding the check (#1157).
 
-        auto_start=True routes creation through eager_start_workspace,
+        auto_start=True routes creation through start_workspace,
         which calls ensure_agent_home on a freshly-created container
         (status == "created").  We then inspect the filesystem directly
         via podman exec, as root, so the check is independent of any
         user's read permissions.
         """
-        # auto_start triggers eager_start_workspace (run_service_command
-        # is False on the create path, but agent-home provisioning runs
-        # regardless -- it precedes the service-command block).
+        # auto_start triggers start_workspace. The service command fires
+        # at the create choke point (bringup), but only once setup_state
+        # is complete; agent-home provisioning always runs at create.
         workspace_id, cleanup = create_workspace(
             server, auth, auto_start=True, setup_state="complete"
         )
         try:
             # Wait for the eagerly-started container to be running.
-            # create_workspace awaits eager_start_workspace, so the
+            # create_workspace awaits start_workspace, so the
             # container is up by the time the POST returned; poll as a
             # belt-and-suspenders against scheduling latency.  Filter by
             # the deterministic container name so we target THIS

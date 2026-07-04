@@ -909,9 +909,9 @@ class TestSandboxAutoStartServiceCommand:
 
             # (3) The service command ran at/after setup completed.
             # setup-done is written last in setup.sh; service-cmd-when is
-            # written by myapp when the service command runs.  Under the
-            # run_service_command=True regression myapp wouldn't exist at
-            # eager-start, so service-cmd-when would never be written.
+            # written by myapp when the service command runs.  The service
+            # command only fires once setup is complete (it is gated on
+            # setup_state), so service-cmd-when is written after setup-done.
             ordering = _run(
                 [
                     "klangkc",

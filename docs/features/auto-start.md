@@ -57,13 +57,14 @@ workspace:
 When the Klangk server starts, after initializing the database and
 cleaning up orphaned containers, it queries all workspaces with
 auto-start enabled and starts their containers. If a workspace also
-has a [service command](service-command.md), the command is sent as
-keystrokes into tmux window 0 — so the service is already running
-by the time any user connects.
+has a [service command](service-command.md), the command runs in the
+workspace's `service-cmd` terminal window — so the service is already
+running by the time any user connects. Auto-started containers are
+pinned alive (they do not idle out between connections).
 
-Users connect later with `klangkc shell` and see the service
-output in tmux window 0. They can open a second window for a shell
-alongside the running service.
+Users connect later with `klangkc shell` and see the service output in
+the `service-cmd` tab. They can open another tab for a shell alongside
+the running service.
 
 ## Typical setup
 

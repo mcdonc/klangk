@@ -321,6 +321,7 @@ class Connection:
             user_id=self.user["id"],
             health_check=workspace.get("health_check"),
             setup_state=workspace.get("setup_state"),
+            service_command=workspace.get("service_command"),
         )
         self.container_status = container_status
         self.workspace_id = workspace_id

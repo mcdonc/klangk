@@ -233,7 +233,7 @@ def derive_hosting_info(
     verification/reset/OIDC links the backend generates.
 
     Both args are optional so the same resolver serves callers that have no
-    request in hand — chiefly ``eager_start_workspace`` (autostart/create,
+    request in hand — chiefly ``start_workspace`` (autostart/create,
     which runs at boot with no connection). With no headers the request
     branches are skipped and the env vars are the sole source, falling back
     to bare ``localhost`` / ``http`` / ``""``.

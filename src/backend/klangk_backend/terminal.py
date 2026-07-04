@@ -107,7 +107,7 @@ SERVICE_SESSION = "service"
 
 # Per-container locks serializing the read-then-write firing sequence in
 # ensure_service_session (#1188). Two unserialized callers -- the boot path
-# (workspaces.eager_start_workspace) and the per-connection path
+# (workspaces.start_workspace) and the per-connection path
 # (wshandler _fire_service_command) -- could both observe
 # service_cmd_window_exists -> False before either's new-window landed, and
 # since tmux permits duplicate window names, both would create a service-cmd

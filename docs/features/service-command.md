@@ -74,19 +74,20 @@ workspace:
 
 ## When does the command run?
 
-The service command runs when the terminal session is created —
-typically on the first connection to the workspace after the
-container starts. It does **not** re-run on reconnect; if you
-disconnect and reconnect, you pick up the tmux session exactly
-where you left off (the process may still be running, or you may
-be at a bash prompt if it exited).
+The service command runs whenever a **fresh container** is created
+for the workspace — at workspace creation, on `klangkc restart`, at
+server boot (for [auto-start](#auto-start-workspaces) workspaces), or
+on the first connection that starts the container. It does **not**
+re-run on reconnect; if you disconnect and reconnect, you pick up the
+tmux session exactly where you left off (the process may still be
+running, or you may be at a bash prompt if it exited).
 
 ### Auto-start workspaces
 
 If the workspace has [auto-start](workspaces.md#auto-start) enabled,
-the container starts when the Klangk server starts and the default
-command begins running immediately — before any user connects. When
-you later run `klangkc shell`, you walk up to the service already
+the container also starts when the Klangk server starts (boot), so
+the service is already running before any user connects. When you
+later run `klangkc shell`, you walk up to the service already
 running in the `service-cmd` tab. Visitors who open the workspace see
 it as a shared terminal without any action from the owner.
 
