@@ -100,14 +100,20 @@ class _WorkspacePageState extends State<WorkspacePage> {
         path: path,
         authToken: authToken,
       ),
-      openFile: (path) => context.go(
-        '/workspace/${widget.workspaceId}'
-        '?file=${Uri.encodeQueryComponent(path)}',
-      ),
-      openDirectory: (path) => context.go(
-        '/workspace/${widget.workspaceId}'
-        '?dir=${Uri.encodeQueryComponent(path)}',
-      ),
+      openFile: (path) {
+        if (!mounted) return;
+        context.go(
+          '/workspace/${widget.workspaceId}'
+          '?file=${Uri.encodeQueryComponent(path)}',
+        );
+      },
+      openDirectory: (path) {
+        if (!mounted) return;
+        context.go(
+          '/workspace/${widget.workspaceId}'
+          '?dir=${Uri.encodeQueryComponent(path)}',
+        );
+      },
     );
     unawaited(
       actions.handle(token: e.token, uri: e.uri, pwd: e.pwd, tail: e.tail),
