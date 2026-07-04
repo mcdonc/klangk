@@ -333,7 +333,7 @@ First, that hosted app I teased a moment ago. Let me click into `openclaw` and o
 
 _[Click the openclaw workspace, then the Service tab, show the output of the service running]_
 
-There's Openclaw running. We know it's running on port 800, so let's find out which hosted URL that translates to in klangk.
+There's Openclaw running. We know it's running on port 8000, so let's find out which hosted URL that translates to in klangk.
 
 -[Click the bash tab, type `klangk-hosted-url 8000` into it to display the URL that openclaw is istening on]\_
 
@@ -376,7 +376,7 @@ _[Click the Chat tab in the left rail]_
 
 Every workspace comes with a built-in AI agent. By default it's called clanker, and it's available **only through chat** — you talk to it by @mentioning it, not by running it in a terminal yourself.
 
-_[Type: @clanker "what is my hostname"]_
+_[Type: @clanker what is my hostname]_
 
 The agent runs Pi inside the container. It can read and write files, run shell commands, and answer questions — all confined to this workspace's sandbox.
 

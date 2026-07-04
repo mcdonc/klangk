@@ -174,6 +174,18 @@ all)
   ;;
 esac
 
+# --- post-pass: seed the Pyramid PDF into `demo` right after Sc 2 creates --
+# its container, so the File Browser scene (Sc 6) has a PDF to render inline.
+# Only after the `all` run (Sc 2 must have created `demo`); harmless to skip
+# for single-scene runs. Idempotent (overwrites).
+seed_pdf() {
+  echo "---------------- seed: pyramid-docs.pdf → demo ----------------"
+  devenv shell -- node --experimental-strip-types \
+    "$DEMO_DIR/seed-demo-pdf.ts" 2>&1 | quiet ||
+    echo "  [seed] WARNING: PDF seed failed (Sc 6 will browse code only)" >&2
+}
+[ "$SCENE" = "all" ] && seed_pdf
+
 # --- summary ---------------------------------------------------------------
 echo
 echo "================ SUMMARY ================"
