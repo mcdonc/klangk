@@ -174,6 +174,14 @@ async def init_db() -> None:
             await db.execute(
                 "ALTER TABLE workspaces ADD COLUMN health_check TEXT"
             )
+        # Migration: add mounts/env columns (#1264). These are in the
+        # CREATE TABLE above but had no ADD COLUMN migration, so DBs
+        # created before they shipped lacked them and errored on any
+        # read/write of mounts/env. NULL by default (no mounts/overrides).
+        if "mounts" not in ws_cols:
+            await db.execute("ALTER TABLE workspaces ADD COLUMN mounts TEXT")
+        if "env" not in ws_cols:
+            await db.execute("ALTER TABLE workspaces ADD COLUMN env TEXT")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS port_allocations (
                 port INTEGER PRIMARY KEY,
