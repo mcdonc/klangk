@@ -8,7 +8,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from . import agent, container, model, podman, terminal
+from . import container, model, podman
 from .util import resolve_env_bool, resolve_env_value
 
 logger = logging.getLogger(__name__)
@@ -397,23 +397,17 @@ async def populate_home_skel(
         )
 
 
-async def eager_start_workspace(
-    ws: dict, *, run_service_command: bool = True
-) -> tuple[str, str]:
+async def start_workspace(ws: dict) -> tuple[str, str]:
     """Start a container for a workspace immediately.
 
-    Sets ``idle_timeout = 0`` so the container does not idle out.
+    Thin wrapper around ``container.registry.start_container`` that
+    unpacks the workspace dict. The agent home provisioning and the
+    service command firing happen at the single create choke point
+    inside ``start_container`` (see ``bringup.bringup``, #1244), so
+    they no longer live here.
 
-    There are two callers with different needs:
-
-    * **Server boot** (``auto_start_workspaces``) leaves
-      *run_service_command* at its default ``True`` — the workspace's
-      software is already installed in the persisted volume, so the
-      service command is safe to run now.
-    * **Workspace creation** (``api/workspaces.create_workspace``)
-      passes ``run_service_command=False`` — ``setup.sh`` has not run
-      yet, so the service command would fail.  The CLI sandbox driver
-      sends ``terminal_start`` after setup completes to trigger it.
+    ``idle_timeout`` is left at its default; only
+    ``auto_start_workspaces`` (the boot path) pins it to 0.
 
     Returns ``(container_id, status)``.
     """
@@ -435,42 +429,8 @@ async def eager_start_workspace(
         user_id=owner_id,
         health_check=ws.get("health_check"),
         setup_state=ws.get("setup_state"),
+        service_command=ws.get("service_command"),
     )
-    state = container.registry.states.get(workspace_id)
-    if state:
-        state.idle_timeout = 0
-
-    # Eagerly provision the agent home at bring-up so $KLANGK_AGENT_HOME
-    # points at a populated directory for every process (#1157).  The
-    # home lives on the persisted bind-mount volume, so only provision
-    # for a freshly-created container; on re-attach/restart it already
-    # exists.  Capture the container path to target the service session.
-    agent_home: str | None = None
-    if status == "created":
-        agent_home = await agent.ensure_agent_home(workspace_id, cid)
-
-    # If the workspace has a service command, fire it in the standalone
-    # ``service`` tmux session owned by the agent identity -- not in the
-    # owner's session (#1133 D5/D6).  The session is decoupled from the
-    # ``pi --mode rpc`` subprocess and keyed by AGENT_USER_ID (constant
-    # name ``service``), so it survives the agent process dying and is
-    # always attributable.  Gated on a freshly-created container (the
-    # persisted service session survives restart) and run_service_command
-    # (fresh creates defer this -- setup.sh hasn't run yet).
-    service_command = ws.get("service_command")
-    if (
-        service_command
-        and status == "created"
-        and run_service_command
-        and agent_home is not None
-    ):
-        await terminal.ensure_service_session(
-            cid,
-            agent_home,
-            service_command,
-            setup_state=ws.get("setup_state"),
-        )
-
     return cid, status
 
 
@@ -489,7 +449,14 @@ async def auto_start_workspaces() -> int:
         if i > 0:
             await asyncio.sleep(random.uniform(0.5, 2.0))
         try:
-            cid, status = await eager_start_workspace(ws)
+            cid, status = await start_workspace(ws)
+            # Auto-started containers are boot services: pin them alive
+            # so they do not idle out between user connections. Only the
+            # boot path does this -- create/restart use the default idle
+            # timeout (#1244).
+            state = container.registry.states.get(ws["id"])
+            if state:
+                state.idle_timeout = 0
             logger.info(
                 "Auto-started workspace %s (%s): %s",
                 ws["name"],

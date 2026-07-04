@@ -5,7 +5,7 @@ import logging
 import os
 import time
 
-from . import auth, model, plugins, podman, terminal, util
+from . import auth, bringup, model, plugins, podman, terminal, util
 
 logger = logging.getLogger(__name__)
 
@@ -556,7 +556,7 @@ class HealthMonitor:
         box into a diagnosable failure instead of "good luck" (#1088).
 
         Resolves the owner's container home (same logic as
-        ``eager_start_workspace``) and invokes the check via
+        ``start_workspace``) and invokes the check via
         ``podman exec`` as the creating user with HOME set.  The check
         runs as a **non-login** bash shell (``bash -c``) on purpose: it
         is an operational probe, not a user session, so it deliberately
@@ -585,7 +585,7 @@ class HealthMonitor:
         if not handle:
             return "unhealthy", f"owner {owner_id} has no handle"
         # Resolve the owner's container home the same way
-        # eager_start_workspace does, so the check runs in the right
+        # start_workspace does, so the check runs in the right
         # HOME rather than as root in /.
         from . import workspaces as _wm  # noqa: allow-deferred-import
 
@@ -968,6 +968,7 @@ class ContainerRegistry:
         user_id: str | None = None,
         health_check: str | None = None,
         setup_state: str | None = None,
+        service_command: str | None = None,
     ) -> tuple[str, str]:
         """Start (or restart) a Pi container for a workspace.
 
@@ -994,6 +995,7 @@ class ContainerRegistry:
                 user_id=user_id,
                 health_check=health_check,
                 setup_state=setup_state,
+                service_command=service_command,
             )
 
     async def _handle_existing_container(
@@ -1093,7 +1095,7 @@ class ContainerRegistry:
         ``hosting_hostname``/``hosting_proto``/``hosting_base_path`` are
         optional: callers with a live request pass the values they derived
         from its headers (``wshandler.connection``), and callers without one
-        (``eager_start_workspace`` — autostart/create, no connection yet) pass
+        (``start_workspace`` — autostart/create, no connection yet) pass
         ``None``. Resolving the floor here, at the single choke point, means
         no start path can bypass the override: when a caller omits them we
         derive the env / bare-localhost floor via ``derive_hosting_info``
@@ -1352,6 +1354,7 @@ class ContainerRegistry:
         user_id: str | None = None,
         health_check: str | None = None,
         setup_state: str | None = None,
+        service_command: str | None = None,
     ) -> tuple[str, str]:
         """Inner implementation of start_container (called under lock)."""
         t_start = time.monotonic()
@@ -1463,6 +1466,19 @@ class ContainerRegistry:
             )
         )
 
+        # Fresh create: provision the agent home and fire the service
+        # command (#1244). This is the single choke point -- every
+        # start path (boot autostart, create, connect, klangkc restart)
+        # routes through start_container, so the bring-up runs once per
+        # fresh container regardless of caller. ensure_service_session
+        # is idempotent, and setup_state gates the create-time deferral
+        # for workspaces whose setup.sh has not run yet.
+        await bringup.bringup(
+            workspace_id,
+            container_id,
+            service_command,
+            setup_state,
+        )
         logger.info(
             "workspace-open: DONE — new container created and started: %.3fs",
             time.monotonic() - t_start,

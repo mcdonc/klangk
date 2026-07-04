@@ -409,107 +409,64 @@ class TestAutoStartWorkspaces:
         assert result == 0
 
 
-class TestEagerStartWorkspace:
-    async def test_starts_container_and_disables_idle(self, user):
-        ws = await ws_mod.create_workspace(
-            user["id"], "eager-ws", auto_start=True
-        )
-        from klangk_backend.container import ContainerState
+class TestStartWorkspace:
+    """Tests for start_workspace: the thin dict-unpacking wrapper.
 
-        container.registry.states[ws["id"]] = ContainerState(
-            ws["id"], "cid-eager"
-        )
-        try:
-            with (
-                patch.object(
-                    container.registry,
-                    "start_container",
-                    new_callable=AsyncMock,
-                    return_value=("cid-eager", "created"),
-                ) as mock_start,
-                patch(
-                    "klangk_backend.agent.ensure_agent_home",
-                    new_callable=AsyncMock,
-                ),
-            ):
-                cid, status = await ws_mod.eager_start_workspace(ws)
-            assert cid == "cid-eager"
-            assert status == "created"
-            mock_start.assert_awaited_once()
-            assert container.registry.states[ws["id"]].idle_timeout == 0
-        finally:
-            container.registry.states.pop(ws["id"], None)
+    The service-command firing and agent-home provisioning moved to
+    the create choke point inside start_container (see bringup.bringup,
+    #1244), and idle_timeout pinning moved to auto_start_workspaces
+    (boot path only). So start_workspace itself only unpacks the
+    workspace dict and delegates to registry.start_container.
+    """
 
-    async def test_runs_service_command_on_create(self, user):
+    async def test_unpacks_dict_and_starts_container(self, user):
         ws = await ws_mod.create_workspace(
             user["id"],
-            "eager-cmd-ws",
+            "start-ws",
             auto_start=True,
             service_command="openclaw gateway",
         )
-        from klangk_backend.container import ContainerState
-
-        container.registry.states[ws["id"]] = ContainerState(
-            ws["id"], "cid-cmd"
-        )
         try:
-            with (
-                patch.object(
-                    container.registry,
-                    "start_container",
-                    new_callable=AsyncMock,
-                    return_value=("cid-cmd", "created"),
-                ),
-                patch(
-                    "klangk_backend.terminal.ensure_service_session",
-                    new_callable=AsyncMock,
-                ) as mock_service,
-                patch(
-                    "klangk_backend.agent.ensure_agent_home",
-                    new_callable=AsyncMock,
-                    return_value="/home/clanker",
-                ),
-            ):
-                await ws_mod.eager_start_workspace(ws)
-            # The service command fires in the standalone service session
-            # owned by the agent identity, not the owner's (#1133).
-            mock_service.assert_awaited_once_with(
-                "cid-cmd",
-                "/home/clanker",
-                "openclaw gateway",
-                setup_state="complete",
+            with patch.object(
+                container.registry,
+                "start_container",
+                new_callable=AsyncMock,
+                return_value=("cid-x", "created"),
+            ) as mock_start:
+                cid, status = await ws_mod.start_workspace(ws)
+            assert cid == "cid-x"
+            assert status == "created"
+            mock_start.assert_awaited_once()
+            # The service_command is threaded through to start_container
+            # so the create choke point (bringup) can fire it.
+            assert mock_start.call_args.kwargs["service_command"] == (
+                "openclaw gateway"
             )
         finally:
             container.registry.states.pop(ws["id"], None)
 
-    async def test_skips_service_command_on_reconnect(self, user):
+    async def test_does_not_pin_idle_timeout(self, user):
+        """Only the boot path (auto_start_workspaces) pins idle_timeout."""
         ws = await ws_mod.create_workspace(
-            user["id"],
-            "eager-recon-ws",
-            auto_start=True,
-            service_command="openclaw gateway",
+            user["id"], "start-ws-no-idle", auto_start=True
         )
         from klangk_backend.container import ContainerState
 
-        container.registry.states[ws["id"]] = ContainerState(
-            ws["id"], "cid-recon"
-        )
+        # Registry default idle timeout is non-zero; start_workspace
+        # must not clobber it.
+        default_timeout = ContainerState(ws["id"], "cid-y").idle_timeout
+        container.registry.states[ws["id"]] = ContainerState(ws["id"], "cid-y")
         try:
-            with (
-                patch.object(
-                    container.registry,
-                    "start_container",
-                    new_callable=AsyncMock,
-                    return_value=("cid-recon", "connected"),
-                ),
-                patch(
-                    "klangk_backend.terminal.ensure_base_session",
-                    new_callable=AsyncMock,
-                ) as mock_session,
+            with patch.object(
+                container.registry,
+                "start_container",
+                new_callable=AsyncMock,
+                return_value=("cid-y", "created"),
             ):
-                await ws_mod.eager_start_workspace(ws)
-            # "connected" means container was already running —
-            # don't re-run the service command.
-            mock_session.assert_not_awaited()
+                await ws_mod.start_workspace(ws)
+            assert (
+                container.registry.states[ws["id"]].idle_timeout
+                == default_timeout
+            )
         finally:
             container.registry.states.pop(ws["id"], None)

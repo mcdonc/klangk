@@ -194,11 +194,12 @@ async def create_workspace(
 
     # Eagerly start the container so it's running by the time the
     # user connects.  Errors are logged but don't fail the create.
+    # The service command fires at the create choke point inside
+    # start_container (see bringup.bringup, #1244), gated on setup_state
+    # so workspaces whose setup.sh hasn't run yet defer until complete.
     if body.auto_start:
         try:
-            await workspaces.eager_start_workspace(
-                ws, run_service_command=False
-            )
+            await workspaces.start_workspace(ws)
         except Exception:
             logger.warning(
                 "Eager start failed for workspace %s",
@@ -361,8 +362,10 @@ async def restart_workspace(
 ):
     """Restart a workspace container.
 
-    Stops and removes the running container.  The next WebSocket
-    connect will start a fresh one with the same workspace config.
+    Stops and removes the running container, then eagerly starts a
+    fresh one with the same workspace config (#1244). The service
+    command re-fires at the create choke point, so a service workspace
+    recovers to healthy.
     """
     workspace = await model.get_workspace(workspace_id)
     if workspace is None:
@@ -376,6 +379,9 @@ async def restart_workspace(
     if cid:
         await container.registry.stop_and_remove_container(cid)
     await wshandler.reset_workspace_state(workspace_id)
+    # Start a fresh container; the service command fires via the
+    # create choke point in start_container.
+    await workspaces.start_workspace(workspace)
     return {"status": "restarted"}
 
 

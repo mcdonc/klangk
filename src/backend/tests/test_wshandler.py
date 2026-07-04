@@ -632,7 +632,7 @@ class TestDeriveHostingInfo:
         assert b == ""
 
     # --- no request in hand (eager start: autostart / workspace create) ---
-    # These exercise the path eager_start_workspace takes: no connection
+    # These exercise the path start_workspace takes: no connection
     # exists at boot, so derive_hosting_info is called with no headers and
     # must still return a port-correct floor (the bug was that the eager
     # path used to bypass this entirely and inject bare "localhost").

@@ -1285,7 +1285,7 @@ class TestWorkspaceRoutes:
         with (
             patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}),
             patch(
-                "klangk_backend.workspaces.eager_start_workspace",
+                "klangk_backend.workspaces.start_workspace",
                 new_callable=AsyncMock,
             ) as mock_start,
         ):
@@ -1303,7 +1303,7 @@ class TestWorkspaceRoutes:
         with (
             patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}),
             patch(
-                "klangk_backend.workspaces.eager_start_workspace",
+                "klangk_backend.workspaces.start_workspace",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("podman broke"),
             ),
