@@ -12,11 +12,11 @@ One continuous story across a single evolving workspace, **`demo`**, created
 on camera in Scene 2 and kept alive through every scene after. State
 accumulates shot to shot:
 
-| Workspace  | Born in                                    | Owner               | Role in the video                                                                                                                                                                                                                                                |
-| ---------- | ------------------------------------------ | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`demo`** | Scene 2 (`klangkc create demo`, on camera) | `admin@example.com` | **Hero.** Kept alive through every scene after. Accumulates: cloned klangk repo + Pi session (Sc 2) → clanker's Flask app `app.py`/`requirements.txt` (Sc 5) → debugged, running app (Sc 5b) → browsed files + Pyramid PDF (Sc 6) → shared with the team (Sc 7). |
-| `openclaw` | Scene 3 (`klangkc sandbox openclaw`)       | `admin@example.com` | Self-contained sandbox + service feature demo. Stays in the list (green health icon); its Service tab + hosted app are shown in Sc 3b/4.                                                                                                                         |
-| Potemkin   | Pre-seeded (see Accounts below)            | various             | Decorative — fill every account's list so it looks lived-in. Never opened on camera.                                                                                                                                                                             |
+| Workspace  | Born in                                    | Owner               | Role in the video                                                                                                                                                                                                                                                   |
+| ---------- | ------------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`demo`** | Scene 2 (`klangkc create demo`, on camera) | `admin@example.com` | **Hero.** Kept alive through every scene after. Accumulates: cloned klangk repo + Pi session (Sc 2) → clanker's Flask app `app.py`/`requirements.txt` (Sc 5) → debugged, running app (Sc 5b) → browsed files + Pyramid PDF (Sc 6) → shared with the team (Sc 7/7b). |
+| `openclaw` | Scene 3 (`klangkc sandbox openclaw`)       | `admin@example.com` | Self-contained sandbox + service feature demo. Stays in the list (green health icon); its Service tab + hosted app are shown in Sc 3b/4.                                                                                                                            |
+| Potemkin   | Pre-seeded (see Accounts below)            | various             | Decorative — fill every account's list so it looks lived-in. Never opened on camera.                                                                                                                                                                                |
 
 **Rules:**
 
@@ -24,7 +24,7 @@ accumulates shot to shot:
 - **Do not `klangkc rm demo` during the run** — it must survive into the next
   scene. `rm` is mentioned verbally in Sc 2 as the eventual cleanup, not
   executed on `demo`.
-- Record the browser arc (Sc 4→5→5b→6→7) **in order**, against the same live
+- Record the browser arc (Sc 4→5→5b→6→7→7b) **in order**, against the same live
   `demo` container, so clanker's files / chat history / running app carry
   forward.
 - **Code note:** the Playwright scenes currently each spin up their _own_ fresh
@@ -90,8 +90,10 @@ script firing synthetic events.
       src/frontend/e2e-tests/demo/demo-seed.ts
   ```
 
-- [ ] For Sc 7, log `teammate@` into a **second browser session** (incognito /
-      separate profile). `designer@`/`reviewer@` join via WS only.
+- [ ] For Sc 7/7b, the supporting cast (`teammate@`, `designer@`, `reviewer@`)
+      is seeded as Collaborators on `demo`; each scene records **one** browser
+      window and sidechannels the other party over WS (see Sc 7/7b production
+      notes). No second live browser window is needed during recording.
 
 ### Pre-warm the slow, network-dependent installs (do OFF camera)
 
@@ -492,36 +494,149 @@ Klangk renders common formats right in the browser — PDFs, images, spreadsheet
 > the PDF renders off-camera (`PdfRenderer` must handle it); seed after
 > `openWorkspaceDemo` (the upload API needs the running container).
 
-## Scene 7 — Multi-User Collaboration (1.5 minutes)
+## Scene 7 — Collaboration: The Owner's View (~1.5 minutes)
 
-I've been working solo in the `demo` workspace — the Flask app's there, the chat history's there. Now let me bring the team in.
+> **Two-scene collaboration arc.** Real multi-user collaboration is shot as
+> **two separate single-window recordings** — this scene (the owner,
+> `admin@example.com`) and **Scene 7b** (the teammate, `teammate@example.com`)
+> — that tell the **same conversation twice, each from one side**. The other
+> party's half is driven by a **WebSocket sidechannel** (terminal input into
+> the shared terminal; chat messages sent as the other user), so each recording
+> shows a coherent solo view. The two clips are then **intercut in the edit**
+> (DaVinci) — owner shares → cut to teammate seeing the shared tab appear;
+> owner types → cut to teammate watching it land; owner @mentions clanker → cut
+> to teammate's reaction. Combined edited length ~1.5–2 min (the two overlap,
+> they don't add).
+>
+> Recording one window at a time sidesteps the prior approach's failure: two
+> browser windows fighting for the foreground under the matchbox/Xvfb recorder,
+> so the wrong window (the teammate's) was captured instead of the owner's.
+
+_[Screen: browser, the `demo` workspace, the owner's single window. The Flask app from Sc 5b and the chat history from Sc 5 are still here.]_
+
+I've been working solo in the `demo` workspace. Now let me bring the team in.
 
 _[Click the Sharing tab in the left rail]_
 
-I can share this workspace with other users.
+I can share this workspace with other users. Klangk has four roles: **Owners** have full control; **Coders** get their own terminal and file access but can only watch shared terminals; **Collaborators** can type in shared terminals alongside the owner; and **Spectators** are read-only — they can watch shared terminals, but can't type or send chat.
 
-_[In the Sharing panel, type teammate@example.com in the add-user field → pick the Collaborator role (people icon) → click Add]_
+_[In the Sharing panel, the teammate is already listed as a Collaborator]_
 
-Klangk has four roles. Owners have full control. Coders get their own terminal and file access but can only watch shared terminals. Collaborators can type in shared terminals alongside the owner. And Spectators are read-only — they can watch shared terminals, but can't type in them or send chat.
+I've already added my teammate as a Collaborator. Now let me share a terminal so we can pair-program.
 
-_[Right-click a terminal tab → click "Share" — a share badge appears on the tab]_
+_[Click the scratch terminal tab, then click its share toggle — a share badge appears on the tab]_
 
-I can share any terminal tab. When I do, the other user sees it appear in their tab bar. They're looking at the same live terminal — this is real pair programming, not screen sharing. Both of us can type, and we both see the same output.
+When I share a terminal tab, the other user sees it appear in their tab bar. They're looking at the same live terminal — this is real pair programming, not screen sharing. Both of us can type, and we both see the same output.
 
-_[Mouse over the top presence bar and the shared-tab viewer count]_
+_[Type: echo 'owner typing here' — the line echoes back]_
 
-The UI shows who's connected to each workspace, and shared tabs show a viewer count so you know when someone's watching.
+I can type...
 
-Chat is shared too — everyone in the workspace sees messages in real time, including the AI agent's responses. So you can collaborate with both humans and AI in the same space.
+_[The teammate's line appears in the same shared terminal: echo 'teammate typing back' — echoed back]_
 
-> **Production —** _on screen:_ browser, two sessions side by side (owner +
-> teammate), in `demo`. _pre-roll:_ `teammate@` logged into a second browser
-> session (incognito/profile); `demo` shared with them as Collaborator; Flask app
+...and so can they. One terminal, both of us writing to it.
+
+_[Mouse over the shared-tab viewer count — shows 1 viewer]_
+
+The tab shows a viewer count so I know when someone's watching.
+
+Chat is shared too — everyone in the workspace sees messages in real time, including the AI agent's responses. Let me switch to the Chat tab.
+
+_[Click the Chat tab]_
+
+_[A message from designer@example.com appears: "hey, can we add a simple landing page?"]_
+
+_[A message from reviewer@example.com appears: "yeah — minimal, just a headline and a button"]_
+
+_[Type into the chat box: @clanker scaffold a simple Flask landing page with a headline and a button, then click Send]_
+
+_[Wait ~30–60s for clanker's reply — leave dead air, narrate over later]_
+
+_[A message from teammate@example.com appears: "nice — let's wire that button up next"]_
+
+So you can collaborate with both humans and AI in the same space.
+
+> **Production —** _on screen:_ browser, **single window** — the owner's view of
+> `demo`. _pre-roll:_ `demo` shared with `teammate@` as Collaborator (seeded);
+> Flask app + chat history from Sc 5/5b present; `designer@`/`reviewer@` seeded.
+> _sidechannels (the teammate + designer + reviewer halves of the conversation,
+> driven over WS so the owner's solo recording shows a live conversation):_
 >
-> - chat history from Sc 5/5b in `demo`. _reset:_ unshare / re-share. _gotchas:_
->   two live sessions needed (incognito + normal, or two profiles); "both type" is
->   awkward solo — type in one window, cut to the other reacting; keep the spectator
->   description consistent: read-only.
+> - **teammate** WS: `join_shared_terminal` (the scratch window the owner
+>   shared) → send `terminal_input` `echo 'teammate typing back'\r` (writes to
+>   the shared pty; appears in the owner's shared terminal) timed ~2s after the
+>   owner's line echoes; later send `chat_send` "nice — let's wire that button up
+>   next" ~3s after clanker's reply lands.
+> - **designer** WS: `chat_send` "hey, can we add a simple landing page?".
+> - **reviewer** WS: `chat_send` "yeah — minimal, just a headline and a button".
+>
+> _visible (owner, real mouse + keyboard):_ Sharing tab tour; share-toggle on
+> the scratch tab; type `echo 'owner typing here'`; open Chat; type the
+> `@clanker` prompt + click Send. _timing:_ the sidechannel beats must land at
+> the _same cadence_ as Scene 7b's mirrored beats so the two clips intercut
+> cleanly — keep a shared beat sheet with offsets. _reset:_ unshare / re-share.
+> _gotchas:_ share the **scratch** tab (a plain shell), never the `bash` tab
+> where pi is still alive from Sc 5b — typing into pi pollutes its context ahead
+> of Sc 8; the @-autocomplete must close before Send (trailing space, then click
+> the Send button — no `Enter`); verify off-camera that the `terminal_input`
+> sidechannel actually lands in the shared pty (the joiner's session must be
+> non-read-only — Collaborators satisfy this).
+
+## Scene 7b — Collaboration: The Teammate's View (~1.5 minutes)
+
+> **The mirror of Scene 7** — the same conversation, recorded from the
+> **teammate's** single window. The owner's half is sidechanneled. Cut this
+> against Scene 7 in the edit (see the arc note in Sc 7).
+
+_[Screen: browser, the `demo` workspace, the teammate's single window. The teammate logs in and opens the workspace the owner just shared with them.]_
+
+My teammate has shared this workspace with me. When I open it, I can see everything the owner's been working on.
+
+_[A shared terminal tab appears in the tab bar — click it to join]_
+
+Here's a terminal the owner shared. I'll join it.
+
+_[The owner's line appears in the shared terminal: echo 'owner typing here' — echoed back]_
+
+The owner's already typing — I can see it live.
+
+_[Type: echo 'teammate typing back' — echoed back]_
+
+And I can type right back. Same terminal, same output, both of us writing.
+
+_[Click the Chat tab]_
+
+_[designer@example.com: "hey, can we add a simple landing page?"]_
+_[reviewer@example.com: "yeah — minimal, just a headline and a button"]_
+_[owner@example.com: "@clanker scaffold a simple Flask landing page with a headline and a button"]_
+
+The whole team's in the chat — including the owner asking the AI to build something.
+
+_[Wait for clanker's reply]_
+
+_[Type into the chat box: nice — let's wire that button up next, then click Send]_
+
+So I'm pair-programming with the owner and talking to the team and the AI — all in one shared workspace.
+
+> **Production —** _on screen:_ browser, **single window** — the teammate's view
+> of `demo`. _pre-roll:_ the owner has shared the workspace + shared the scratch
+> terminal before this recording starts (via the Sc 7 setup, or a fresh
+> sidechannel setup). _sidechannels (the owner + designer + reviewer halves):_
+>
+> - **owner** WS: `share_window` (scratch) before the teammate's view loads;
+>   send `terminal_input` `echo 'owner typing here'\r` ~2s after the teammate
+>   joins the shared terminal; send `chat_send` "@clanker scaffold a simple Flask
+>   landing page with a headline and a button" timed with the beat.
+> - **designer** + **reviewer** WS: their `chat_send` lines, at the same cadence
+>   as Sc 7.
+>
+> _visible (teammate, real mouse + keyboard):_ log in + open `demo`; click the
+> shared tab to join; type `echo 'teammate typing back'`; open Chat; type the
+> reaction + click Send. _gotchas:_ the teammate is a **Collaborator** — 3 nav
+> tabs only (Terminal / Files / Chat; no Sharing, no Settings) — that is
+> correct, not a bug; clanker fires once per recording (each take triggers its
+> own reply — fine, you only keep one side's clanker beat in the cut); keep the
+> conversation text and cadence identical to Sc 7 so the intercut lines up.
 
 ## Scene 8 — Plugins (45 seconds)
 
