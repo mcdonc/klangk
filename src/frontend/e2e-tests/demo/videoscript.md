@@ -296,9 +296,9 @@ There it went **unhealthy** — and I can see exactly why. That's the difference
 
 _[Ctrl+C the monitor; close the bottom pane; back to a single terminal]_
 
-Second, **auto-start**. I've got `KLANGK_ALLOW_AUTOSTART` enabled on the server, so if I restart the whole Klangk server — or it reboots — openclaw's container boots on its own and the gateway is running _before anyone connects_. I just broke the gateway a moment ago, so let me restart the server and watch it come back:
+Second, **auto-start and recovery**. I've got `KLANGK_ALLOW_AUTOSTART` enabled on the server, so if the server reboots, openclaw's container boots on its own and the gateway is running _before anyone connects_. And the same thing happens any time the container is recreated — the service command re-fires on every fresh container create. So I can show you right now with a per-workspace restart, without taking the whole server down:
 
-_[Host terminal: kill -HUP $(cat $XDG_RUNTIME_DIR/klangk-\*.pid) — a graceful runtime restart that keeps the HTTP listener up. Then: klangkc ls — openclaw's Status goes starting → healthy again, all without anyone connecting]_
+_[Host terminal: klangkc restart openclaw — a per-workspace restart. Then: watch -n 3 klangkc ls — openclaw's Status goes starting → healthy again as the service command re-fires on the fresh container]_
 
 The gateway here is also exposed as a **hosted app** — once we switch to the browser I can click straight through to openclaw's own web UI, proxied through Klangk's single port. No separate port to open, no extra auth to wire up. We'll see that in a moment.
 
@@ -314,12 +314,14 @@ So the same sandbox idea — one config file, one command — scales from "my de
 service_health | jq .` (shows a healthy frame immediately via
 > snapshot-on-connect). Ctrl+C the **bottom** pane kills the gateway; the
 > **top** pane emits `"healthy": false` within ≤ interval (the next health
-> check). Then Ctrl+C the monitor, kill the bottom pane, and SIGHUP-recover
-> (auto-start boots a fresh gateway). _reset:_ to re-run, SIGHUP
-> again (or `klangkc restart openclaw`) to get back to healthy before re-breaking.
+> check). Then Ctrl+C the monitor, kill the bottom pane, and recover with
+> `klangkc restart openclaw` (the service command re-fires on the fresh
+> container — #1244/#1246). _reset:_ to re-run, `klangkc restart openclaw`
+> again to get back to healthy before re-breaking.
 > _gotchas:_ the unhealthy flip is silent dead air (≤10s at interval=10) — trim in
-> edit; the gateway binds a port, so **localhost only**; `klangkc monitor` does
-> NOT survive SIGHUP — Ctrl+C it **before** the restart beat; CLI-only.
+> edit; the gateway binds a port, so **localhost only**; per-workspace restart
+> (not a full-server SIGHUP), so the `demo` workspace and the rest of the
+> recording are untouched — scene 3b no longer needs to be recorded last; CLI-only.
 
 ## Scene 4 — The Web UI — Workspaces, Terminal, and Hosted Apps (1 minute)
 

@@ -562,8 +562,9 @@ def scene_3b(t: Term) -> None:
     Two-pane beat: split the terminal, join the service command
     (``clanker:service-cmd``) in the bottom pane to see the gateway's logs,
     then watch live ``service_health`` events in the top pane. Ctrl+C the
-    gateway to trigger an ``unhealthy`` event, then recover via SIGHUP
-    (auto-start boots a fresh gateway). Narrate over the whole arc.
+    gateway to trigger an ``unhealthy`` event, then recover via
+    ``klangkc restart openclaw`` (the service command re-fires on the fresh
+    container -- #1244/#1246). Narrate over the whole arc.
 
     Carries the same preconditions as Scene 3 (live server, autostart on,
     openclaw up and healthy). Expects ``KLANGK_HEALTH_CHECK_INTERVAL=10``
@@ -630,31 +631,32 @@ def scene_3b(t: Term) -> None:
     t.pause(HOLD)
 
     # Narrate the distinction: "the container is up" != "the service works".
-    # Stop the monitor (Ctrl+C the TOP pane), then close the gateway pane.
-    # The monitor WS must be gone BEFORE the SIGHUP restart beat, or the
-    # restart's close-1012 would yank it uncleanly (#1212/#1213).
+    # Stop the monitor (Ctrl+C the TOP pane), then close the gateway pane --
+    # back to a single pane for the recovery beat.
     t.interrupt()  # Ctrl+C the monitor
     t.expect("host $", timeout=10)
     t.kill_pane(bottom)  # close the gateway view (connection + its shell)
     t.select_pane(top)  # focus survives, but be explicit
     t.pause(HOLD)
 
-    # step 7 — auto-start recovery via SIGHUP runtime restart (#1212/#1213).
-    # Send SIGHUP (the backend is bare uvicorn; this recycles the container
-    # layer while keeping the HTTP listener up), then watch the Status column
-    # live as openclaw reboots: stopped → starting → healthy. ``watch`` does
-    # the repeated refresh for us — no re-typing klangkc ls. Ctrl+C once the
-    # openclaw row reads healthy again. (This window is trimmed in edit.)
+    # step 7 — recovery via `klangkc restart openclaw` (#1244/#1246).
+    # Restarting the workspace stops + removes the container, then creates a
+    # fresh one -- and the service command RE-FIRES on every fresh container
+    # create (the #1244/#1246 fix), so the gateway comes back on its own.
+    # Watch the Status column live: stopped -> starting -> healthy. ``watch``
+    # does the repeated refresh for us -- no re-typing klangkc ls. Ctrl+C once
+    # the openclaw row reads healthy again. (This window is trimmed in edit.)
+    # Per-workspace restart (not a full-server SIGHUP), so the `demo` workspace
+    # and the rest of the recording are untouched -- scene 3b no longer has to
+    # be recorded last.
     t.run("clear")
-    # The backend writes its pid to klangk-{INSTANCE_ID}.pid. This repo's demo
-    # backend runs as INSTANCE_ID=video (set in .env) — target that pid file
-    # directly. Do NOT glob klangk-*.pid: the e2e suites run their own backends
-    # as klangk-<name>-e2e.pid and leave stale files, so the glob concatenates
-    # every pid into garbage that kill rejects.
-    pid_file = "$XDG_RUNTIME_DIR/klangk-video.pid"
-    t.type(f"kill -HUP $(cat {pid_file})", per_char=0.03)
+    t.type("klangkc restart openclaw", per_char=0.03)
     t.enter()
-    t.pause(3)  # let the shutdown register before watching
+    # restart blocks until the fresh container is created (stop+remove+start
+    # is one synchronous request); wait for the host prompt to return before
+    # typing watch, then a brief beat.
+    t.expect("host $", timeout=30)
+    t.pause(1)
     t.type("watch -n 3 klangkc ls", per_char=0.03)
     t.enter()
     t.pause(4)  # let the first watch frame land
