@@ -3,24 +3,26 @@
  *
  * CONTINUITY: the same hero `demo` workspace — clanker's app.py /
  * requirements.txt from Sc 5b are still here, AND the Pyramid PDF seeded right
- * after the demo container was created (Scene 2) by seed-demo-pdf.ts. So the
- * file browser has code files AND a PDF to render inline. We find-or-create
- * `demo`, never wipe.
+ * after the demo container was created (Scene 2) by seed-demo-pdf.ts.
  *
- * Recording order note: record this BEFORE Sc 8 (plugins) — Sc 8 launches pi
- * in the bash tab and leaves it alive, which would interfere with this scene's
- * file clicks if recorded after. This scene (Sc 6) doesn't touch the terminal.
+ * The scene's unique payoff is the INLINE PDF RENDER — Klangk renders common
+ * formats (PDFs, images, spreadsheets, video) in-browser, no download needed.
+ * (Code-file preview is already shown in Sc 5b, where pi writes app.py.) So we
+ * scroll the file list to the PDF and click it for the inline render.
  *
- * Deterministic. The PDF seed lives in seed-demo-pdf.ts (called by
- * record-cli.sh after Scene 2 creates the container), NOT here — this scene is
- * a pure browse.
+ * File-viewer layout gotcha (file_viewer_panel.dart): clicking a file REPLACES
+ * the list with a full-width _FileViewer. To avoid the fragile back-arrow
+ * close (a 16px icon — too small to click reliably by coordinate), we click
+ * only ONE file (the PDF), keeping the flow to a single open.
  *
- * File-list geometry: the API sorts entries alphabetically, so dotfiles
- * (.bash_logout, .bashrc, ...) come first. At the 960px layout the list shows
- * ~9 rows before the fold, so `app.py` (index 6) is visible but
- * `pyramid-docs.pdf` (index 9) sits at/below the bottom edge and must be
- * scrolled into view before clicking. Rows are dense ListTiles (~48px)
- * starting at y≈110 (below the path bar).
+ * Geometry is MEASURED from recorded frames (recorder upscales 960×540 →
+ * 1920×1080, so PNG-Y / 2 = Flutter-Y). The API sorts alphabetically, so
+ * dotfiles fill the top; pyramid-docs.pdf (idx 9) is ~150px below the 540px
+ * fold and must be scrolled into view. After scrolling ~200px the PDF sits at
+ * screen-Y ≈379.
+ *
+ * Recording order: before Sc 8 (plugins) — this scene doesn't touch the
+ * terminal. Deterministic.
  */
 import { test } from "@playwright/test";
 import {
@@ -36,10 +38,6 @@ import {
   openWorkspaceDemo,
 } from "../demo-helpers";
 
-// File-list row geometry (dense ListTiles at the 960px layout).
-const ROW_TOP_Y = 110;
-const ROW_H = 48;
-
 test("file browser", async ({ page, request }) => {
   test.setTimeout(240_000);
 
@@ -51,36 +49,29 @@ test("file browser", async ({ page, request }) => {
   );
   const ws = await ensureSharedWorkspace(request, headers, SHARED_WORKSPACE);
 
-  // 2. Open the workspace (holds on the list, waits for the terminal to mount
-  //    so the container is up before we browse). holdOnListMs gives the viewer
-  //    a beat on the workspace card.
+  // 2. Open the workspace (holds on the list, waits for the terminal to mount).
   await openWorkspaceDemo(page, DEMO_HERO_EMAIL, ws.id, DEMO_HERO_PASSWORD, {
     waitForTerminal: true,
     holdOnListMs: 2000,
   });
   await pace(1500);
 
-  // 3. Files tab (index 1).
+  // 3. Files tab (index 1) — the directory list roots at the workspace home.
   await openTab(page, 1); // Files
   await pace(2500);
 
-  // 4. Click `app.py` (index 6, visible) for a syntax-highlighted code
-  //    preview — the file clanker/pi wrote in Sc 5b.
-  const { width, height } = vp(page);
-  const appPyY = ROW_TOP_Y + 6 * ROW_H;
-  await mouseClick(page, width / 2, appPyY);
-  await pace(3500);
+  const { width } = vp(page);
 
-  // 5. Scroll the file list down to reveal `pyramid-docs.pdf` (index 9, below
-  //    the fold). Hover the list center and wheel down ~3 row-heights, then
-  //    click the PDF row. The PDF renders inline in the viewer pane (the
-  //    scene's payoff — Klangk renders common formats in-browser).
-  const listCenterY = height * 0.55;
-  await page.mouse.move(width / 2, listCenterY);
-  await page.mouse.wheel(0, 3 * ROW_H);
-  await pace(1500);
-  // After scrolling down ~3 rows, app.py moves off-top; pyramid-docs.pdf
-  // (originally index 9) lands near the top of the visible area.
-  await mouseClick(page, width / 2, ROW_TOP_Y + 1.5 * ROW_H);
-  await pace(5000); // viewer sees the PDF render inline
+  // 4. Scroll the file list down ~200px to reveal `pyramid-docs.pdf` (idx 9,
+  //    below the fold). Move to the list center first so the wheel event lands
+  //    on the ListView's scrollable.
+  await page.mouse.move(width / 2, 300);
+  await pace(500);
+  await page.mouse.wheel(0, 200);
+  await pace(2000); // viewer sees the list scroll
+
+  // 5. Click the PDF (measured at screen-Y 395 after the scroll — the row
+  //    spans ~373-417, so ±20px margin) → the viewer renders it INLINE.
+  await mouseClick(page, width / 2, 395);
+  await pace(6000); // viewer sees the PDF render inline
 });
