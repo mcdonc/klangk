@@ -49,6 +49,7 @@ import {
   connectWs,
   getMeId,
   captureContainerPane,
+  klangkcExec,
   type DemoWs,
 } from "./demo-helpers";
 
@@ -691,7 +692,20 @@ async function performSidechannel(ctx: CollabCtx, beat: Beat): Promise<void> {
       // recording is live). Join now so terminal_input lands in the shared pty.
       await teammateJoinShared(ctx);
     }
-    conn.send({ cmd: "terminal_input", data: `${beat.text}\r` });
+    // Owner sidechannel (teammate perspective): terminal_input via the WS
+    // routes to the grouped session's active window, which defaults to 0
+    // (bash) after terminal_start.  Bypass the WS entirely and send keys
+    // directly to the correct tmux window via klangkc exec so the input
+    // lands in scratch (not pi in bash).
+    if (beat.actor === "owner" && ctx.perspective === "teammate") {
+      const escaped = beat.text.replace(/'/g, "'\\''");
+      klangkcExec(
+        ctx.workspaceName,
+        `tmux send-keys -t ${ctx.ownerUserId}:${ctx.scratchWindowName} '${escaped}' Enter`,
+      );
+    } else {
+      conn.send({ cmd: "terminal_input", data: `${beat.text}\r` });
+    }
     return;
   }
   if (beat.medium === "chat") {
