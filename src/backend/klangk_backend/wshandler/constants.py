@@ -17,7 +17,9 @@ logger = logging.getLogger(__name__)
 WS_DEBUG = bool(resolve_env_value("KLANGKWS_DEBUG"))
 
 # Max size for terminal/exec input data (base64-decoded bytes).
-MAX_INPUT_SIZE = 65536
+# Matches uvicorn's --ws-max-size (16 MB) so the app-level cap isn't
+# stricter than the transport cap — see #1257.
+MAX_INPUT_SIZE = 16777216
 
 # Max outbound messages before we declare the client too slow and close.
 SEND_QUEUE_SIZE = 256
