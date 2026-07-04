@@ -191,6 +191,36 @@ PORT_RANGE_START = int(
 CONTAINER_PORT_START = 8000
 DEFAULT_PORTS_PER_WORKSPACE = 5
 
+
+def ports_per_workspace_cap() -> int:
+    """Server-wide ceiling on hosted-app ports per workspace.
+
+    ``KLANGK_HOSTED_PORTS_PER_WORKSPACE`` (default
+    ``DEFAULT_PORTS_PER_WORKSPACE``, currently 5). ``0`` disables
+    hosted-app serving entirely: no ports are allocated, no hosting env
+    is injected into containers, and the ``/hosted/`` nginx locations
+    return 404. Per-workspace values (#1238) are clamped *down* to this
+    cap; they may never exceed it.
+
+    Resolved live (not cached at import) so changing the env and
+    restarting containers takes effect on the next reconcile without a
+    backend restart.
+    """
+    raw = util.resolve_env_value("KLANGK_HOSTED_PORTS_PER_WORKSPACE") or str(
+        DEFAULT_PORTS_PER_WORKSPACE
+    )
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        logger.warning(
+            "KLANGK_HOSTED_PORTS_PER_WORKSPACE=%r is not an int; "
+            "using default %d",
+            raw,
+            DEFAULT_PORTS_PER_WORKSPACE,
+        )
+        return DEFAULT_PORTS_PER_WORKSPACE
+
+
 # Health-check polling interval (seconds) for HealthMonitor.  See #1015.
 HEALTH_CHECK_INTERVAL_SECONDS = int(
     util.resolve_env_value("KLANGK_HEALTH_CHECK_INTERVAL") or "30"
@@ -289,6 +319,11 @@ class PortAllocator:
         self.port_lock: asyncio.Lock = asyncio.Lock()
 
     async def allocate_ports(self, workspace_id: str, count: int) -> list[int]:
+        # Clamp to the server-wide cap (KLANGK_HOSTED_PORTS_PER_WORKSPACE)
+        # so creation never allocates ports the deployer has disabled —
+        # otherwise a cap of 0 would still leave orphan allocations
+        # until the container's first start reconcile (#1237).
+        count = min(count, ports_per_workspace_cap())
         async with self.port_lock:
             return await model.find_and_allocate_ports(
                 workspace_id, count, PORT_RANGE_START
@@ -1019,7 +1054,14 @@ class ContainerRegistry:
     async def _reconcile_ports(
         self, workspace_id: str, num_ports: int
     ) -> list[int]:
-        """Allocate or trim host ports under the port lock."""
+        """Allocate or trim host ports under the port lock.
+
+        ``num_ports`` is clamped down to the server-wide cap
+        (``KLANGK_HOSTED_PORTS_PER_WORKSPACE``). At cap 0 every workspace
+        releases all of its allocations; the returned empty list then
+        suppresses the hosting env in :meth:`_build_env` (#1237).
+        """
+        num_ports = min(num_ports, ports_per_workspace_cap())
         async with self.port_lock:
             host_ports = await model.get_workspace_ports(workspace_id)
             if len(host_ports) < num_ports:
@@ -1087,19 +1129,25 @@ class ContainerRegistry:
             llm_model,
         )
 
-        mappings = [
-            f"{CONTAINER_PORT_START + i}:{hp}"
-            for i, hp in enumerate(host_ports)
-        ]
-        env_vars.append(f"KLANGK_PORT_MAPPINGS={','.join(mappings)}")
+        # Hosted-app serving env. Omit entirely when the workspace has
+        # no host ports (KLANGK_HOSTED_PORTS_PER_WORKSPACE=0, or a
+        # per-workspace value of 0): KLANGK_PORT_MAPPINGS absent makes
+        # klangk-hosted-url / get_hosted_url error out cleanly, and the
+        # KLANGK_HOSTING_* vars are meaningless without hosting. #1237
+        if host_ports:
+            mappings = [
+                f"{CONTAINER_PORT_START + i}:{hp}"
+                for i, hp in enumerate(host_ports)
+            ]
+            env_vars.append(f"KLANGK_PORT_MAPPINGS={','.join(mappings)}")
+            env_vars.append(f"KLANGK_HOSTING_HOSTNAME={hosting_hostname}")
+            env_vars.append(f"KLANGK_HOSTING_PROTO={hosting_proto}")
+            env_vars.append(f"KLANGK_HOSTING_BASE_PATH={hosting_base_path}")
         env_vars.append(f"KLANGK_WORKSPACE_ID={workspace_id}")
         env_vars.append(f"KLANGK_AGENT_HOME={agent_home}")
         env_vars.append(
             f"KLANGK_BRIDGE_URL=http://host.containers.internal:{nginx_port}"
         )
-        env_vars.append(f"KLANGK_HOSTING_HOSTNAME={hosting_hostname}")
-        env_vars.append(f"KLANGK_HOSTING_PROTO={hosting_proto}")
-        env_vars.append(f"KLANGK_HOSTING_BASE_PATH={hosting_base_path}")
         if TERMINAL_BANNER:
             env_vars.append(f"KLANGK_TERMINAL_BANNER={TERMINAL_BANNER}")
 

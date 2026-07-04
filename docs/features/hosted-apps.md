@@ -10,7 +10,7 @@ Hosted apps are accessible to anyone who can reach the Klangk server. Do not ser
 
 ## How it works
 
-1. Each workspace gets **5 ports** allocated from the host range starting at port 9000 (configurable via `KLANGK_PORT_RANGE_START`). These map to container ports 8000-8004.
+1. Each workspace gets up to **5 ports** (configurable via `KLANGK_HOSTED_PORTS_PER_WORKSPACE`; set to `0` to disable hosting entirely) allocated from the host range starting at port 9000 (configurable via `KLANGK_PORT_RANGE_START`). These map to container ports 8000-8004.
 2. When a container starts, the port mappings are injected as `KLANGK_PORT_MAPPINGS` (e.g., `8000:9000,8001:9001,...`).
 3. Nginx proxies requests from `/hosted/{workspace_id}/{port}/` directly to the container — no Python in the request path.
 
@@ -80,9 +80,27 @@ No manual configuration needed — the `KLANGK_HOSTING_*` environment variables 
 
 ## Configuration
 
-| Variable                  | Default | Description                                   |
-| ------------------------- | ------- | --------------------------------------------- |
-| `KLANGK_PORT_RANGE_START` | `9000`  | First host port for workspace app allocations |
-| `KLANGK_NGINX_PORT`       | `8995`  | Nginx port (used in URL derivation)           |
+| Variable                            | Default | Description                                                                                                                |
+| ----------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `KLANGK_PORT_RANGE_START`           | `9000`  | First host port for workspace app allocations                                                                              |
+| `KLANGK_HOSTED_PORTS_PER_WORKSPACE` | `5`     | Ceiling on ports per workspace. `0` disables hosted-app serving entirely (no allocation, no hosting env, `/hosted/` 404s). |
+| `KLANGK_NGINX_PORT`                 | `8995`  | Nginx port (used in URL derivation)                                                                                        |
 
 Ports are allocated atomically and cleaned up automatically when workspaces are deleted.
+
+## Disabling hosted apps
+
+Set `KLANGK_HOSTED_PORTS_PER_WORKSPACE=0` to turn hosted-app serving off
+server-wide. This is a single knob that doubles as the count configuration:
+
+- **No ports are allocated** — not at workspace creation, not on container
+  start. Existing workspaces release their allocations on their next start.
+- **No hosting env in containers** — `KLANGK_PORT_MAPPINGS` and the
+  `KLANGK_HOSTING_*` vars are not injected, so `klangk-hosted-url` and the
+  agent's `get_hosted_url` tool error out cleanly.
+- **`/hosted/<ws>/<port>/` returns 404** — the nginx proxy locations are
+  collapsed to a single `return 404` block.
+
+A positive value (e.g. `3`) caps each workspace at that many ports. Changing
+the value takes effect on each workspace's next container start (no backend
+restart needed). Per-workspace overrides are tracked separately in #1238.

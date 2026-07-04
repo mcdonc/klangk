@@ -135,6 +135,65 @@ case "${KLANGK_TRUST_OUTER_PROXY:-}" in
 1 | true | TRUE | yes | YES) TRUST_OUTER_PROXY=1 ;;
 esac
 
+# Hosted-app serving is disabled entirely when the per-workspace port cap
+# (KLANGK_HOSTED_PORTS_PER_WORKSPACE) is exactly 0 — mirrors the backend's
+# ports_per_workspace_cap(). Any other value leaves the proxy enabled; the
+# backend clamps non-int to the default 5, and the proxy only needs the
+# boolean "is hosting turned off". #1237
+HOSTED_PORTS_PER_WS="${KLANGK_HOSTED_PORTS_PER_WORKSPACE:-5}"
+HOSTED_BLOCK=""
+if [ "$HOSTED_PORTS_PER_WS" = "0" ]; then
+  HOSTED_BLOCK="
+    # Hosted-app serving is disabled (KLANGK_HOSTED_PORTS_PER_WORKSPACE=0).
+    location ^~ /hosted/ {
+      return 404;
+    }
+"
+else
+  HOSTED_BLOCK="
+    # A hosted URL without a trailing slash (e.g. .../9001) can't match the
+    # proxy location below. Proxying it to the app root wouldn't help either:
+    # hosted apps emit relative asset paths (./assets/...) that resolve against
+    # the browser's base URL, so without the slash every asset 404s. Redirect to
+    # the canonical trailing-slash form so the base URL is correct.
+    # Named capture (not \$1): the \$hosted_is_ws regex map clobbers positional
+    # captures, which would leave proxy_pass with an empty port.
+    location ~ ^/hosted/[^/]+/(?<hosted_port>\d+)\$ {
+      # Non-WebSocket: redirect to the trailing-slash form so relative assets
+      # (./assets/...) resolve. Only \`return\` inside \`if\` -> \"if is evil\" N/A.
+      if (\$hosted_is_ws = 0) {
+        return 308 \$uri/\$is_args\$args;
+      }
+      # WebSocket clients cannot follow a 308 (RFC 6455 4.1); some apps open
+      # their socket at this slash-less root. Proxy instead. \$is_args\$args:
+      # a variable in proxy_pass drops the query (e.g. auth token) otherwise.
+      proxy_pass http://127.0.0.1:\$hosted_port/\$is_args\$args;
+      proxy_set_header Host \$http_host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto \$scheme;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade \$http_upgrade;
+      proxy_set_header Connection \$connection_upgrade;
+    }
+
+    # Hosted app proxy: extract port from URL and proxy directly to container
+    location ~ ^/hosted/[^/]+/(\d+)/(.*)\$ {
+      proxy_pass http://127.0.0.1:\$1/\$2\$is_args\$args;
+      proxy_set_header Host \$http_host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto \$scheme;
+      proxy_http_version 1.1;
+      # Hosted apps (marimo, jupyter, vite, ...) talk to their backends over
+      # websockets. Without these the WS handshake never upgrades and the app
+      # reports things like \"kernel not found\".
+      proxy_set_header Upgrade \$http_upgrade;
+      proxy_set_header Connection \$connection_upgrade;
+    }
+"
+fi
+
 cat >"$NGINX_STATE/nginx.conf" <<EOF_SECURE
 daemon off;
 pid /tmp/nginx.pid;
@@ -165,46 +224,7 @@ http {
   server {
     listen ${KLANGK_NGINX_PORT};
 
-    # A hosted URL without a trailing slash (e.g. .../9001) can't match the
-    # proxy location below. Proxying it to the app root wouldn't help either:
-    # hosted apps emit relative asset paths (./assets/...) that resolve against
-    # the browser's base URL, so without the slash every asset 404s. Redirect to
-    # the canonical trailing-slash form so the base URL is correct.
-    # Named capture (not \$1): the \$hosted_is_ws regex map clobbers positional
-    # captures, which would leave proxy_pass with an empty port.
-    location ~ ^/hosted/[^/]+/(?<hosted_port>\d+)\$ {
-      # Non-WebSocket: redirect to the trailing-slash form so relative assets
-      # (./assets/...) resolve. Only \`return\` inside \`if\` -> "if is evil" N/A.
-      if (\$hosted_is_ws = 0) {
-        return 308 \$uri/\$is_args\$args;
-      }
-      # WebSocket clients cannot follow a 308 (RFC 6455 4.1); some apps open
-      # their socket at this slash-less root. Proxy instead. \$is_args\$args:
-      # a variable in proxy_pass drops the query (e.g. auth token) otherwise.
-      proxy_pass http://127.0.0.1:\$hosted_port/\$is_args\$args;
-      proxy_set_header Host \$http_host;
-      proxy_set_header X-Real-IP \$remote_addr;
-      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-      proxy_set_header X-Forwarded-Proto \$scheme;
-      proxy_http_version 1.1;
-      proxy_set_header Upgrade \$http_upgrade;
-      proxy_set_header Connection \$connection_upgrade;
-    }
-
-    # Hosted app proxy: extract port from URL and proxy directly to container
-    location ~ ^/hosted/[^/]+/(\d+)/(.*)\$ {
-      proxy_pass http://127.0.0.1:\$1/\$2\$is_args\$args;
-      proxy_set_header Host \$http_host;
-      proxy_set_header X-Real-IP \$remote_addr;
-      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-      proxy_set_header X-Forwarded-Proto \$scheme;
-      proxy_http_version 1.1;
-      # Hosted apps (marimo, jupyter, vite, ...) talk to their backends over
-      # websockets. Without these the WS handshake never upgrades and the app
-      # reports things like "kernel not found".
-      proxy_set_header Upgrade \$http_upgrade;
-      proxy_set_header Connection \$connection_upgrade;
-    }
+${HOSTED_BLOCK}
 ${LLM_BLOCK}
     # Browser-delegate bridge: Pi extensions delegate long-running actions
     # (soliplex RAG + LLM) through here. The read timeout must accommodate

@@ -195,6 +195,50 @@ class TestNginxAclConfig:
         assert "deny all;" in bd_block
 
 
+class TestNginxHostedBlock:
+    """KLANGK_HOSTED_PORTS_PER_WORKSPACE gates the /hosted/ proxy (#1237)."""
+
+    def test_default_emits_proxy_locations(self, tmp_path):
+        """Unset / non-zero: both hosted proxy locations are present."""
+        conf = _run_nginx_sh({}, str(tmp_path))
+        # slash-less WS-aware redirect-or-proxy location
+        assert "location ~ ^/hosted/[^/]+/(?<hosted_port>" in conf
+        # trailing-slash app-proxy location
+        assert "location ~ ^/hosted/[^/]+/(\\d+)/(.*)" in conf
+        # the disable block is NOT present
+        assert (
+            "return 404"
+            not in conf.split("server {")[1].split("browser-delegate")[0]
+        )
+
+    def test_explicit_nonzero_emits_proxy_locations(self, tmp_path):
+        """An explicit positive cap still emits the proxy locations."""
+        conf = _run_nginx_sh(
+            {"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "3"}, str(tmp_path)
+        )
+        assert "location ~ ^/hosted/[^/]+/(?<hosted_port>" in conf
+
+    def test_zero_replaces_proxy_with_404(self, tmp_path):
+        """cap=0 collapses the hosted locations to a single 404 location."""
+        conf = _run_nginx_sh(
+            {"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "0"}, str(tmp_path)
+        )
+        assert "location ^~ /hosted/ {" in conf
+        assert "return 404;" in conf
+        # Neither proxy location survives.
+        assert "?<hosted_port>" not in conf
+        assert "location ~ ^/hosted/[^/]+/(\\d+)/(.*)" not in conf
+
+    def test_non_int_does_not_disable(self, tmp_path):
+        """Garbage is not '0', so the proxy stays enabled (backend clamps
+        to the default 5; nginx only needs the boolean off-switch)."""
+        conf = _run_nginx_sh(
+            {"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "garbage"}, str(tmp_path)
+        )
+        assert "location ~ ^/hosted/[^/]+/(?<hosted_port>" in conf
+        assert "return 404;" not in conf
+
+
 class TestNginxAclEnforcement:
     """Start nginx + uvicorn and verify ACL enforcement at runtime."""
 
