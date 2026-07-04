@@ -98,16 +98,16 @@ class TestMigration:
         await model.init_db()
 
         # Verify column was added and old data survived
-        db = await model.get_db()
-        cursor = await db.execute("PRAGMA table_info(workspaces)")
-        cols = {row[1] for row in await cursor.fetchall()}
-        assert "auto_start" in cols
+        async with model.transaction() as db:
+            cursor = await db.execute("PRAGMA table_info(workspaces)")
+            cols = {row[1] for row in await cursor.fetchall()}
+            assert "auto_start" in cols
 
-        cursor = await db.execute(
-            "SELECT auto_start FROM workspaces WHERE id = 'ws1'"
-        )
-        row = await cursor.fetchone()
-        assert row[0] == 0  # default value
+            cursor = await db.execute(
+                "SELECT auto_start FROM workspaces WHERE id = 'ws1'"
+            )
+            row = await cursor.fetchone()
+            assert row[0] == 0  # default value
 
     async def test_migrate_workspaces_renames_default_command(
         self, temp_data_dir
@@ -163,17 +163,17 @@ class TestMigration:
         await model.init_db()
 
         # Column was renamed (old gone, new present) and data survived.
-        db = await model.get_db()
-        cursor = await db.execute("PRAGMA table_info(workspaces)")
-        cols = {row[1] for row in await cursor.fetchall()}
-        assert "service_command" in cols
-        assert "default_command" not in cols
+        async with model.transaction() as db:
+            cursor = await db.execute("PRAGMA table_info(workspaces)")
+            cols = {row[1] for row in await cursor.fetchall()}
+            assert "service_command" in cols
+            assert "default_command" not in cols
 
-        cursor = await db.execute(
-            "SELECT service_command FROM workspaces WHERE id = 'ws1'"
-        )
-        row = await cursor.fetchone()
-        assert row[0] == "echo hello"
+            cursor = await db.execute(
+                "SELECT service_command FROM workspaces WHERE id = 'ws1'"
+            )
+            row = await cursor.fetchone()
+            assert row[0] == "echo hello"
 
 
 class TestUsers:
