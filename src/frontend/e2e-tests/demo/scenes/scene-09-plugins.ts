@@ -1,13 +1,14 @@
 /**
  * Scene 8 — Plugins (~45s)
  *
- * CONTINUITY: still in the hero's `demo` workspace (from Sc 2/4/5/5b/6/7). A
- * BROWSER scene. pi is launched here for the first time since Sc 5b — Sc 6
- * (files) and Sc 7 (collaboration) don't touch the terminal, so recording
- * order 6 → 7 → 8 keeps pi from being alive during them.
+ * CONTINUITY: still in the hero's `demo` workspace. pi is STILL RUNNING in the
+ * bash tab from Sc 5b — this scene REUSES it (we do NOT launch a new pi; doing
+ * so would break the across-scene continuity of one live agent session). The
+ * browser tab must be open and WS-connected when pi fires the tool, so the
+ * workspace stays open the whole scene.
  *
- * The beat (see videoscript.md Scene 8): launch pi, ask it to trigger the
- * boingball plugin's bouncing-ball animation, hold on the animation. The
+ * The beat (see videoscript.md Scene 8): ask the already-running pi to trigger
+ * the boingball plugin's bouncing-ball animation, hold on the animation. The
  * boingball plugin is ALWAYS baked into klangk (every workspace image ships
  * with /opt/klangk/plugins/boingball + its pi extension at
  * /opt/klangk/pi-agent/extensions/boingball.ts), so there's no image-rebuild
@@ -19,28 +20,23 @@
  * boingball extension). The tool POSTs `{action:"boing", browser_id}` to the
  * host bridge (KLANGK_BRIDGE_URL), which fans the action out over the
  * workspace WebSocket; the Flutter app renders a bouncing-ball overlay above
- * the canvas. So the browser tab MUST be open and WS-connected when pi fires
- * the tool, or the animation never renders. We keep the workspace open the
- * whole scene (the WS connection from openWorkspaceDemo is live), and detect
- * pi's "Boing!" tool result via the tmux side channel (window 0, the bash
- * pane pi lives in).
+ * the canvas.
  *
  * Live/nondeterministic: re-run until pi obliges (it sometimes narrates
  * instead of calling the tool). Keep that take, trim dead air in DaVinci.
  *
- * PRE-ROLL: `demo` workspace present + running; boingball baked in (always).
+ * PRE-ROLL: `demo` workspace present + running; pi alive in the bash tab (from
+ * Sc 5b); boingball baked in (always).
  */
 import { test } from "@playwright/test";
 import {
   DEMO_HERO_EMAIL,
   DEMO_HERO_PASSWORD,
   SHARED_WORKSPACE,
-  DEMO_URL,
   pace,
   slowType,
   vp,
   mouseClick,
-  terminalType,
   terminalTabCenterPx,
   apiLogin,
   ensureSharedWorkspace,
@@ -51,7 +47,8 @@ import {
 } from "../demo-helpers";
 
 // Terminal tab strip geometry (shared with Sc 5b): vertical center, bash tab
-// (index 0) horizontal center.
+// (index 0) horizontal center. pi is ALREADY RUNNING in the bash tab — we just
+// switch to it and focus its input.
 const TAB_STRIP_Y = 0.2;
 const BASH_X = terminalTabCenterPx(0);
 // pi's input box sits near the bottom of its TUI.
@@ -83,15 +80,11 @@ test("plugins", async ({ page, request }) => {
   });
   await pace(1500); // let the terminal settle on camera
 
-  // Click the bash sub-tab (leftmost) and go home so pi's cwd is clean.
+  // --- 2. Switch to the bash sub-tab where pi is ALREADY RUNNING (continuity
+  //      from Sc 5b — we do NOT launch a new pi). Focus pi's input box and
+  //      type the prompt slowly so the viewer reads it. ---
   await mouseClick(page, BASH_X, TAB_STRIP_Y * 540);
-  await pace(1000);
-  await terminalType(page, "cd ~");
-  await pace(1500);
-
-  // --- 2. Launch pi (visible), ask it to trigger the bouncing ball. ---
-  await terminalType(page, "pi");
-  await pace(2500); // pi's TUI boots (registers llm-proxy models + plugins)
+  await pace(1500); // viewer sees the still-running pi
   const { width, height } = vp(page);
   await mouseClick(page, width / 2, height * PI_INPUT_Y);
   await pace(500);
