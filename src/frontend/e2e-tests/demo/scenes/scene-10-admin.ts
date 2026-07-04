@@ -1,49 +1,73 @@
 /**
  * Scene 9 — Administration (~25s)
  *
- * CONTINUITY: the hero (admin@example.com, an admin-role user) opens HER OWN
- * `demo` workspace and goes to its Settings tab — which, for an admin, IS the
- * admin panel. The Users list already shows the seeded cast
- * (teammate/designer/reviewer) plus the hero, so it looks lived-in without
- * on-camera setup. Same shared `demo` workspace as Sc 4–7.
+ * CONTINUITY: the hero (admin@example.com, a full admin) is logged in. She
+ * clicks the **admin icon** in the app bar (the manage-accounts person-gear,
+ * visible only for admins) → lands on the admin panel — a SEPARATE page
+ * (`/admin/users`), not a workspace's Settings tab. The Users list already
+ * shows the seeded cast (admin, reviewer, teammate, designer, clanker,
+ * bootstrap) so it looks lived-in without on-camera setup.
+ *
+ * BEAT ORDER (per videoscript — nothing extra):
+ *   1. Login → land on the Workspaces list (hold).
+ *   2. Click the admin icon → admin panel loads on the Users tab (hold 5s).
+ *   3. Click Groups (hold 5s) → Invitations (hold 5s) → Access Control (hold 5s).
  *
  * Pure mouse navigation; no state changes.
  *
- * TODO: the Users/Groups/Invitations sub-nav coordinates aren't measured yet,
- * so this scene opens Settings and holds. Measure them to extend the tour.
+ * Geometry (measured via Flutter semantics rects at 960×540, the recording
+ * logical viewport — semantics is an overlay and doesn't affect layout, so
+ * these coords are valid for the semantics-off recording too):
+ *   - Admin icon (manage_accounts): x=880..920, y=8..48 → center (900, 28).
+ *   - Admin tabs strip: 4 tabs × 240px, y=56..96 → center y=76.
+ *       Users(0)=120  Groups(1)=360  Invitations(2)=600  Access Control(3)=840.
  */
 import { test } from "@playwright/test";
 import {
   DEMO_HERO_EMAIL,
   DEMO_HERO_PASSWORD,
-  SHARED_WORKSPACE,
   pace,
-  apiLogin,
-  ensureSharedWorkspace,
-  openWorkspaceDemo,
-  openTab,
+  mouseClick,
+  demoLogin,
 } from "../demo-helpers";
 
-test("administration tour", async ({ page, request }) => {
-  test.setTimeout(180_000);
+// App-bar admin icon (manage_accounts) — admin-only, sits between the email
+// chip and the logout icon.
+const ADMIN_ICON_X = 900;
+const ADMIN_ICON_Y = 28;
 
-  // 1. Ensure the shared `demo` workspace exists (continuity).
-  const { headers } = await apiLogin(
-    request,
-    DEMO_HERO_EMAIL,
-    DEMO_HERO_PASSWORD,
+// Admin panel sub-tabs (Users / Groups / Invitations / Access Control). 4 tabs
+// evenly spaced across 960px; vertical center of the 40px-tall strip at y=56.
+const ADMIN_TAB_Y = 76;
+const adminTabX = (index: number) => (index + 0.5) * 240; // 120, 360, 600, 840
+
+test("administration tour", async ({ page }) => {
+  test.setTimeout(120_000);
+
+  // 1. Login → land on the Workspaces list. Hold so the viewer sees the list.
+  await demoLogin(page, DEMO_HERO_EMAIL, DEMO_HERO_PASSWORD);
+  await pace(3000);
+
+  // 2. Click the admin icon (app bar, top-right) → admin panel. Wait for
+  //    the route to mount via the hash (the admin page doesn't update
+  //    document.title, so we can't wait on the title like demoLogin does).
+  await mouseClick(page, ADMIN_ICON_X, ADMIN_ICON_Y);
+  await page.waitForFunction(
+    () => window.location.hash.includes("admin/users"),
+    { timeout: 15_000 },
   );
-  const ws = await ensureSharedWorkspace(request, headers, SHARED_WORKSPACE);
+  await pace(1500); // let the Users list render
+  await pace(5000); // Users tab (default) — viewer reads the seeded user list
 
-  // 2. Open the workspace (hero is an admin; the Settings tab is the admin
-  //    panel for admins). Wait for the terminal to mount so the container is up.
-  await openWorkspaceDemo(page, DEMO_HERO_EMAIL, ws.id, DEMO_HERO_PASSWORD, {
-    waitForTerminal: true,
-    holdOnListMs: 2500,
-  });
+  // 3. Groups tab.
+  await mouseClick(page, adminTabX(1), ADMIN_TAB_Y);
+  await pace(5000);
 
-  // 3. Settings tab (index 4) — the admin panel for an admin user. Hold while
-  //    narrating Users/Groups, Invitations, OIDC SSO, single-port nginx.
-  await openTab(page, 4); // Settings
-  await pace(4000);
+  // 4. Invitations tab.
+  await mouseClick(page, adminTabX(2), ADMIN_TAB_Y);
+  await pace(5000);
+
+  // 5. Access Control tab.
+  await mouseClick(page, adminTabX(3), ADMIN_TAB_Y);
+  await pace(5000);
 });
