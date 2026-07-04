@@ -110,9 +110,10 @@ test("web ui tour", async ({ page, context, request }) => {
   await demoLogin(page, DEMO_HERO_EMAIL, DEMO_HERO_PASSWORD);
   await pace(3500);
 
-  // 3. Open openclaw (navigate by hash — reliable; the list-hold above is the
-  //    visual beat). Wait for the container + service-cmd to mount.
-  await page.goto(`/#/workspace/${openclaw.id}`, { waitUntil: "load" });
+  // 3. Click the openclaw workspace card (1st in "Owned by Me", above demo)
+  //    to open it — a visible mouse movement + click, not a hash navigation.
+  //    Wait for the container + service-cmd to mount.
+  await mouseClick(page, 0.5 * 960, 0.4 * 540);
   await waitForFlutter(page);
   await pace(6000); // service-cmd (gateway) needs a moment to register its tab
 

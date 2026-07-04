@@ -376,7 +376,7 @@ _[Click the Chat tab in the left rail]_
 
 Every workspace comes with a built-in AI agent. By default it's called clanker, and it's available **only through chat** — you talk to it by @mentioning it, not by running it in a terminal yourself.
 
-_[Type: @clanker "how long has this container been up"]_
+_[Type: @clanker "what is my hostname"]_
 
 The agent runs Pi inside the container. It can read and write files, run shell commands, and answer questions — all confined to this workspace's sandbox.
 
@@ -384,7 +384,7 @@ _[Wait ~30s. clanker's reply appears]_
 
 There it is. Now here's something important about the security model. My LLM API key — the key that talks to the AI provider — never enters the container. Klangk runs an nginx reverse proxy on the host that injects the key into requests. Inside the container, Pi just talks to a local proxy URL. So even if the container were compromised, the API key isn't there.
 
-_[Click the Terminal tab in the left rail, then type: env]_
+_[Click the Terminal tab in the left rail, then type: env, wait for 10 seconds]_
 
 And I can prove it. Here's the full environment of the container — no API keys, no secrets, nothing to steal. The key only exists on the host, in the proxy.
 

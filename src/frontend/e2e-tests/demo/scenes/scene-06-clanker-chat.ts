@@ -29,9 +29,12 @@ import {
   ensureSharedWorkspace,
   openWorkspaceDemo,
   openChatTab,
+  openTab,
+  waitForTerminal,
+  terminalType,
 } from "../demo-helpers";
 
-const PROMPT = '@clanker "how long has this container been up"';
+const PROMPT = '@clanker "what is my hostname"';
 
 test("clanker chat", async ({ page, request }) => {
   test.setTimeout(300_000);
@@ -74,6 +77,13 @@ test("clanker chat", async ({ page, request }) => {
   const waitMs = Number(process.env.KLANGK_DEMO_AGENT_WAIT || 60_000);
   await pace(waitMs);
 
-  // 7. Final beat — the created files, on the Chat tab.
-  await pace(2000);
+  // 7. Security-model proof: switch to the Terminal nav tab and run `env`.
+  //    The container's full environment shows NO API keys / secrets — the
+  //    LLM key lives only in the host nginx proxy, never inside the container.
+  //    (Hold ~10s so the viewer can scan the output.)
+  await openTab(page, 0); // Terminal nav tab (index 0)
+  await waitForTerminal(page);
+  await pace(1200);
+  await terminalType(page, "env");
+  await pace(10_000); // viewer reads the env: no keys, nothing to steal
 });
