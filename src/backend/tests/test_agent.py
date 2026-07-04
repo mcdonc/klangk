@@ -66,6 +66,34 @@ def _make_session(workspace_id="ws-id"):
     return s
 
 
+def _fake_stdin() -> AsyncMock:
+    """A mocked subprocess stdin (``asyncio.StreamWriter``).
+
+    ``write`` and ``is_closing`` are *synchronous* on the real writer, so they
+    must be plain ``MagicMock``\ s.  A bare ``AsyncMock`` makes them return
+    coroutines that ``send_prompt``/``_send_abort`` never await, leaking
+    ``RuntimeWarning: coroutine ... was never awaited`` (#1251).  ``drain`` is a
+    real coroutine, so it stays an ``AsyncMock``.
+    """
+    stdin = AsyncMock()
+    stdin.write = MagicMock()
+    stdin.is_closing = MagicMock(return_value=False)
+    return stdin
+
+
+def _no_monitor_task(coro):
+    """Stand-in for ``asyncio.create_task`` that discards the coroutine.
+
+    Some tests stub out ``asyncio.create_task`` to avoid starting the real
+    monitor loop, but a bare ``MagicMock`` still *evaluates*
+    ``self._monitor_process(proc)`` (the argument) — creating a coroutine that
+    is then never awaited, leaking a ``RuntimeWarning`` (#1251).  Closing the
+    coroutine cleanly discards it without scheduling.
+    """
+    coro.close()
+    return MagicMock()
+
+
 _ACK = {"type": "response", "command": "prompt", "success": True}
 
 
@@ -134,7 +162,7 @@ class TestAgentSession:
 
         proc = AsyncMock()
         proc.returncode = None
-        proc.stdin = AsyncMock()
+        proc.stdin = _fake_stdin()
         proc.stdout = asyncio.StreamReader()
         proc.stdout.feed_data(stdout_data.encode())
         proc.stdout.feed_eof()
@@ -149,7 +177,7 @@ class TestAgentSession:
     async def test_send_prompt_timeout(self):
         proc = AsyncMock()
         proc.returncode = None
-        proc.stdin = AsyncMock()
+        proc.stdin = _fake_stdin()
         proc.kill = MagicMock()
         # Feed ack + agent_start so we get past the preamble, then
         # nothing — simulating a model that never responds.
@@ -181,7 +209,7 @@ class TestAgentSession:
         # Turn 1: ack + agent_start, then silence -> response timeout.
         proc1 = AsyncMock()
         proc1.returncode = None
-        proc1.stdin = AsyncMock()
+        proc1.stdin = _fake_stdin()
         proc1.kill = MagicMock()
         proc1.stdout = asyncio.StreamReader()
         proc1.stdout.feed_data(
@@ -195,7 +223,7 @@ class TestAgentSession:
         # Turn 2: a clean stream carrying the real answer.
         proc2 = AsyncMock()
         proc2.returncode = None
-        proc2.stdin = AsyncMock()
+        proc2.stdin = _fake_stdin()
         proc2.stdout = asyncio.StreamReader()
         turn2_events = [
             _ACK,
@@ -258,7 +286,7 @@ class TestAgentSession:
 
         proc = AsyncMock()
         proc.returncode = None
-        proc.stdin = AsyncMock()
+        proc.stdin = _fake_stdin()
         proc.stdout = asyncio.StreamReader()
         proc.stdout.feed_data(stdout_data.encode())
         proc.stdout.feed_eof()
@@ -304,7 +332,7 @@ class TestAgentSession:
 
         proc = AsyncMock()
         proc.returncode = None
-        proc.stdin = AsyncMock()
+        proc.stdin = _fake_stdin()
         proc.stdout = asyncio.StreamReader()
         proc.stdout.feed_data(stdout_data.encode())
         proc.stdout.feed_eof()
@@ -326,7 +354,7 @@ class TestAgentSession:
 
         proc = AsyncMock()
         proc.returncode = None
-        proc.stdin = AsyncMock()
+        proc.stdin = _fake_stdin()
         proc.stdout = asyncio.StreamReader()
         proc.stdout.feed_data(stdout_data.encode())
         proc.stdout.feed_eof()
@@ -368,7 +396,7 @@ class TestAgentSession:
 
         proc = AsyncMock()
         proc.returncode = None
-        proc.stdin = AsyncMock()
+        proc.stdin = _fake_stdin()
         proc.stdout = asyncio.StreamReader()
         proc.stdout.feed_data(stdout_data.encode())
         proc.stdout.feed_eof()
@@ -398,7 +426,7 @@ class TestAgentSession:
 
         proc = AsyncMock()
         proc.returncode = None
-        proc.stdin = AsyncMock()
+        proc.stdin = _fake_stdin()
         proc.stdout = asyncio.StreamReader()
         proc.stdout.feed_data(stdout_data.encode())
         proc.stdout.feed_eof()
@@ -432,7 +460,7 @@ class TestAgentSession:
 
         proc = AsyncMock()
         proc.returncode = None
-        proc.stdin = AsyncMock()
+        proc.stdin = _fake_stdin()
         proc.stdout = asyncio.StreamReader()
         proc.stdout.feed_data(stdout_data.encode())
         proc.stdout.feed_eof()
@@ -486,7 +514,7 @@ class TestAgentSession:
 
         proc = AsyncMock()
         proc.returncode = None
-        proc.stdin = AsyncMock()
+        proc.stdin = _fake_stdin()
         proc.stdout = asyncio.StreamReader()
         proc.stdout.feed_data(stdout_data.encode())
         proc.stdout.feed_eof()
@@ -508,7 +536,7 @@ class TestAgentSession:
         """Handles process exiting before agent_end."""
         proc = AsyncMock()
         proc.returncode = None
-        proc.stdin = AsyncMock()
+        proc.stdin = _fake_stdin()
         proc.stdout = asyncio.StreamReader()
         # Feed partial data then EOF
         proc.stdout.feed_data(
@@ -540,7 +568,7 @@ class TestAgentSession:
         stdout_data = "\n".join(json.dumps(e) for e in events) + "\n"
         proc = AsyncMock()
         proc.returncode = None
-        proc.stdin = AsyncMock()
+        proc.stdin = _fake_stdin()
         proc.stdout = asyncio.StreamReader()
         proc.stdout.feed_data(stdout_data.encode())
         proc.stdout.feed_eof()
@@ -634,7 +662,7 @@ class TestAgentSession:
 
         proc = AsyncMock()
         proc.returncode = None
-        proc.stdin = AsyncMock()
+        proc.stdin = _fake_stdin()
         proc.stdout = asyncio.StreamReader()
         proc.stdout.feed_data(stdout_data.encode())
         proc.stdout.feed_eof()
@@ -697,7 +725,7 @@ class TestAgentSession:
 
         proc = AsyncMock()
         proc.returncode = None
-        proc.stdin = AsyncMock()
+        proc.stdin = _fake_stdin()
         proc.stdout = asyncio.StreamReader()
         proc.stdout.feed_data(stdout_data.encode())
         proc.stdout.feed_eof()
@@ -1044,7 +1072,7 @@ class TestSpawnSerialization:
             spawns.append(args)
             proc = AsyncMock()
             proc.returncode = None
-            proc.stdin = AsyncMock()
+            proc.stdin = _fake_stdin()
             proc.stdout = asyncio.StreamReader()
             proc.stderr = asyncio.StreamReader()
             return proc
@@ -1052,8 +1080,9 @@ class TestSpawnSerialization:
         with (
             patch("asyncio.create_subprocess_exec", side_effect=fake_exec),
             # Avoid starting real monitor tasks: this test only exercises
-            # spawn serialization, not the monitor loop.
-            patch("asyncio.create_task", new=MagicMock()),
+            # spawn serialization, not the monitor loop. The side_effect
+            # closes the monitor coroutine instead of leaking it (#1251).
+            patch("asyncio.create_task", side_effect=_no_monitor_task),
         ):
             proc_a, proc_b = await asyncio.gather(
                 session.ensure_started(),
