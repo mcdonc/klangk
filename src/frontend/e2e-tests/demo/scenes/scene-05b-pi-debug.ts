@@ -55,7 +55,9 @@ const TAB_STRIP_Y = 0.2;
 const BASH_TAB_X = 0.065;
 
 const BUILD_PROMPT =
-  'please build me a Flask hello world app on port 8000 that shows "Hello from Klangk". Only write the files — do not install anything or run the app.';
+  'please build me a Flask hello world app on port 8000 that shows "Hello from Klangk". ' +
+  "Write two files: app.py (the app) and requirements.txt (listing flask). " +
+  "Do not install anything or run the app.";
 const DEBUG_PROMPT =
   "The Flask app in app.py won't run — I get ModuleNotFoundError. Figure out why and fix it.";
 
@@ -96,6 +98,12 @@ test("pi debug", async ({ page, request }) => {
   await waitForTerminal(page);
   await pace(1500);
 
+  // Go home (Sc 4 may have left the terminal in ~/klangk). pi writes app.py to
+  // its cwd, so this keeps the build + the off-camera cleanup (which also cds
+  // home) aligned.
+  await terminalType(page, "cd ~");
+  await pace(1500);
+
   // --- 2. Launch pi (visible), ask it to build the app. ---
   // Type `pi` via the visible terminal, then the build prompt. The prompt is
   // constrained to write-files-only so the ModuleNotFoundError is deterministic.
@@ -110,9 +118,12 @@ test("pi debug", async ({ page, request }) => {
   await pace(500);
   await page.keyboard.press("Enter");
 
-  // Wait for pi to finish: it writes requirements.txt + reports done. Detect
-  // via the side channel (the browser pane == the container tmux pane).
-  await waitForPaneText(ws.name, userId, "requirements.txt", {
+  // Wait for pi to finish: it writes app.py + requirements.txt (the prompt
+  // names both explicitly) then reports done. Detect via the side channel
+  // (the browser pane == the container tmux pane). Key on app.py (always
+  // written); the explicit two-files prompt makes requirements.txt reliable
+  // for the later ModuleNotFoundError + pip-install beats.
+  await waitForPaneText(ws.name, userId, "app.py", {
     timeoutMs: 120_000,
   });
   await waitForPiIdle(ws.name, userId, { timeoutMs: 60_000 });
