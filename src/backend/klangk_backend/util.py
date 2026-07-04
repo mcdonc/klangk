@@ -28,7 +28,8 @@ def read_file_value(value: str) -> tuple[str | None, OSError | None]:
     """
     path = value[5:]
     try:
-        return open(path).read().strip(), None
+        with open(path) as f:
+            return f.read().strip(), None
     except OSError as e:
         e.filename = e.filename or path
         return None, e
