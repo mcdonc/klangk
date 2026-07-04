@@ -90,7 +90,7 @@ async def ensure_agent_home(workspace_id: str, container_id: str) -> str:
     workspace_home = workspaces.home_path(owner_id, workspace_id)
 
     agent_handle = await model.agent_handle()
-    container_home, created = workspaces.ensure_home_symlink(
+    container_home, created = await workspaces.ensure_home_symlink(
         workspace_home, agent_handle, model.AGENT_USER_ID
     )
     if created:

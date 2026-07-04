@@ -797,6 +797,7 @@ class TestEnsureAgentHome:
             patch.object(
                 workspaces,
                 "ensure_home_symlink",
+                new_callable=AsyncMock,
                 return_value=("/home/clanker", True),
             ) as mock_symlink,
             patch.object(
@@ -848,6 +849,7 @@ class TestEnsureAgentHome:
             patch.object(
                 workspaces,
                 "ensure_home_symlink",
+                new_callable=AsyncMock,
                 return_value=("/home/clanker", True),
             ),
             patch.object(
@@ -872,6 +874,7 @@ class TestEnsureAgentHome:
             patch.object(
                 workspaces,
                 "ensure_home_symlink",
+                new_callable=AsyncMock,
                 return_value=("/home/clanker", False),
             ),
             patch.object(
@@ -928,6 +931,7 @@ class TestEnsureHome:
             patch.object(
                 workspaces,
                 "ensure_home_symlink",
+                new_callable=AsyncMock,
                 return_value=("/home/clanker", True),
             ) as mock_symlink,
             patch.object(
