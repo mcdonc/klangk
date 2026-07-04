@@ -653,9 +653,11 @@ def scene_3b(t: Term) -> None:
     t.type("klangkc restart openclaw", per_char=0.03)
     t.enter()
     # restart blocks until the fresh container is created (stop+remove+start
-    # is one synchronous request); wait for the host prompt to return before
-    # typing watch, then a brief beat.
-    t.expect("host $", timeout=30)
+    # is one synchronous request). Wait for its COMPLETION line -- NOT
+    # "host $", which is already in the pane as the echoed command's prompt
+    # prefix ("host $ klangkc restart openclaw") and would match instantly,
+    # typing watch into the still-running restart.
+    t.expect("Restarted workspace openclaw", timeout=60)
     t.pause(1)
     t.type("watch -n 3 klangkc ls", per_char=0.03)
     t.enter()

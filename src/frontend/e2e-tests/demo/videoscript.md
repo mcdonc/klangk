@@ -418,11 +418,11 @@ _[Screen: same workspace, Terminal tab]_
 
 Let's use pi to build us an application.
 
-_[Open "pi", type "please build me a Flask hello world application that listens on port 8080" within it]_
+_[Open "pi", type "please build me a Flask hello world application that listens on port 8000. Only write the files — don't install anything." within it]_
 
 Let's actually try to run it.
 
-_[Open a new terminal tab via "+" type "python app".py into it]_
+_[Open a new terminal tab via "+" type "python app.py" into it]_
 
 `ModuleNotFoundError: No module named 'flask'`. A classic agent mistake — the code is there, but the dependency was never installed. I could fix this by hand, but there's a faster way that shows off something important about Klangk.
 
@@ -446,20 +446,23 @@ _[Type, one at a time: ls — cat app.py — cat requirements.txt]_
 
 There's the app pi wrote, and there's `requirements.txt` — Flask was listed all along, it just never got installed. I can poke around the files myself, double-check Pi's work, run things — all alongside the agent, not instead of it.
 
-_[Browser: open the demo workspace → click the hosted-app button, or paste the URL from klangk-hosted-url 8000 (http://localhost:8995/hosted/<workspace_id>/<host_port>/) → the page renders "Hello from Klangk"]_
+_[Browser: open the demo workspace → click the hosted-app button, or paste the URL from klangk-hosted-url 8000 (http://localhost:8996/hosted/<workspace_id>/<host_port>/) → the page renders "Hello from Klangk"]_
 
-There it is. A real running app — broken by one agent, fixed by another, and now
-open in my browser — all without leaving the sandbox.
+There it is. A real running app — written by an agent, broken on first run,
+and fixed by the same agent once I pointed it at the error — now
+open in my browser, all without leaving the sandbox.
 
 > **Production —** _on screen:_ browser → Terminal tab (or `klangkc shell`), Pi
 > running in one tab + a plain bash tab alongside. _pre-roll:_ `demo` workspace
-> present; `pi` functional. The Flask app is built on-camera by Pi (which writes
-> `app.py` + `requirements.txt` but, as agents do, never pip-installs), so the
-> `ModuleNotFoundError` happens live.
+> present; `pi` functional. The Flask app is built on-camera by Pi (the prompt
+> constrains it to write files only, so it writes `app.py` + `requirements.txt`
+> but does not pip-install), so the `ModuleNotFoundError` happens live.
 > _reset:_ `rm app.py requirements.txt` for a clean rebuild, or re-run Sc 5b
 > from scratch (Pi rebuilds). _gotchas:_
 > **live/nondeterministic**; if the browser terminal typing is flaky, drive via
-> `klangkc shell` instead (more reliable); the hosted-app URL must be live
+> `klangkc shell` instead (more reliable); the app must listen on **8000**
+> (the first hosted port — `KLANGK_PORT_MAPPINGS=8000:9065,...`); the
+> hosted-app URL must be live
 > (verify off-camera — fall back to `curl localhost:8000`).
 
 ## Scene 6 — File Browser (30 seconds)
