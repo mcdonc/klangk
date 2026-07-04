@@ -170,18 +170,23 @@ class TestActivityTracking:
         finally:
             container.registry.on_container_status_changed = None
 
-    def test_remove_state_cleans_up_reverse_mapping(self):
+    async def test_remove_state_cleans_up_reverse_mapping(self):
         container.registry.track_activity("cid-rm", "ws-rm")
         assert "cid-rm" in container.registry._cid_to_wsid
-        container.registry.remove_state("ws-rm")
+        await container.registry.remove_state("ws-rm")
         assert "ws-rm" not in container.registry.states
         assert "cid-rm" not in container.registry._cid_to_wsid
 
-    def test_remove_state_cleans_up_workspace_lock(self):
-        container.registry._get_workspace_lock("ws-lock-rm")
+    async def test_remove_state_retains_workspace_lock(self):
+        # remove_state must NOT pop _workspace_locks[ws] (#1258): doing so
+        # would let a subsequent _get_workspace_lock hand out a fresh,
+        # non-mutually-exclusive lock object while a coroutine may still be
+        # waiting on the original. The lock entry is cheap to retain.
+        lock = container.registry._get_workspace_lock("ws-lock-rm")
         assert "ws-lock-rm" in container.registry._workspace_locks
-        container.registry.remove_state("ws-lock-rm")
-        assert "ws-lock-rm" not in container.registry._workspace_locks
+        await container.registry.remove_state("ws-lock-rm")
+        assert "ws-lock-rm" in container.registry._workspace_locks
+        assert container.registry._workspace_locks["ws-lock-rm"] is lock
 
     def test_get_state_returns_state(self):
         container.registry.track_activity("cid-1", "ws-1")
@@ -1617,23 +1622,30 @@ class TestExtraMountsVolumeCreation:
 class TestStopContainer:
     def setup_method(self):
         container.registry.states.clear()
+        container.registry._cid_to_wsid.clear()
+        container.registry._workspace_locks.clear()
 
     def teardown_method(self):
         container.registry.states.clear()
+        container.registry._cid_to_wsid.clear()
+        container.registry._workspace_locks.clear()
 
     async def test_stop_running(self):
         container.registry.track_activity("cid", "ws")
-        container.registry._workspace_locks["ws"] = asyncio.Lock()
+        lock = container.registry._get_workspace_lock("ws")
 
         with patch_podman() as p:
             await container.registry.stop_and_remove_container("cid")
         p.remove_container.assert_awaited_once_with("cid")
         assert "ws" not in container.registry.states
-        assert "ws" not in container.registry._workspace_locks
+        assert "cid" not in container.registry._cid_to_wsid
+        # The workspace lock entry is deliberately retained (#1258).
+        assert "ws" in container.registry._workspace_locks
+        assert container.registry._workspace_locks["ws"] is lock
 
     async def test_stop_podman_error(self):
         container.registry.track_activity("cid", "ws")
-        container.registry._workspace_locks["ws"] = asyncio.Lock()
+        container.registry._get_workspace_lock("ws")
 
         with patch_podman(
             remove_container=AsyncMock(
@@ -1643,29 +1655,119 @@ class TestStopContainer:
             await container.registry.stop_and_remove_container("cid")
         # Should still remove from tracking
         assert "ws" not in container.registry.states
-        assert "ws" not in container.registry._workspace_locks
+        assert "cid" not in container.registry._cid_to_wsid
+        # The workspace lock entry is deliberately retained (#1258).
+        assert "ws" in container.registry._workspace_locks
+
+    async def test_stop_serializes_under_workspace_lock(self):
+        # stop_and_remove_container must acquire the workspace lock before
+        # mutating state, so it cannot tear down a registry entry while a
+        # start_container holds the lock (#1258).
+        container.registry.track_activity("cid", "ws")
+        lock = container.registry._get_workspace_lock("ws")
+
+        with patch_podman():
+            async with lock:
+                # While the lock is held (as start_container would hold
+                # it), stop must not be able to remove state.
+                task = asyncio.create_task(
+                    container.registry.stop_and_remove_container("cid")
+                )
+                # Yield repeatedly so the stop task has a chance to run;
+                # it should be blocked on the lock.
+                for _ in range(5):
+                    await asyncio.sleep(0)
+                assert not task.done()
+                assert "ws" in container.registry.states
+                assert container.registry._cid_to_wsid.get("cid") == "ws"
+            # Releasing the lock lets stop proceed and clean up.
+            await task
+        assert "ws" not in container.registry.states
+        assert "cid" not in container.registry._cid_to_wsid
+
+    async def test_stop_skips_teardown_when_container_rebound(
+        self, monkeypatch
+    ):
+        # A racing start_container may re-bind the workspace to a new
+        # container while stop waits for the lock. When stop finally
+        # acquires the lock, container_id no longer maps to this ws, so it
+        # must NOT tear down the fresh state or revoke its browsers.
+        container.registry.track_activity("cid-old", "ws")
+        lock = container.registry._get_workspace_lock("ws")
+        revoked = []
+        monkeypatch.setattr(
+            container.registry,
+            "revoke_workspace_browsers",
+            lambda wid: revoked.append(wid),
+        )
+
+        with patch_podman():
+            async with lock:
+                # Start stop; it runs podman (instant), peeks cid-old->ws,
+                # then blocks on the lock we hold.
+                task = asyncio.create_task(
+                    container.registry.stop_and_remove_container("cid-old")
+                )
+                for _ in range(5):
+                    await asyncio.sleep(0)
+                # While stop is blocked, a racing start re-binds the
+                # workspace to a new container (track_activity drops the
+                # old cid reverse-mapping).
+                container.registry.track_activity("cid-new", "ws")
+            # Releasing the lock lets stop acquire it; under the lock the
+            # re-check sees cid-old no longer maps to ws, so it bails.
+            await task
+        # The new container's state survives untouched.
+        assert "ws" in container.registry.states
+        assert container.registry.states["ws"].container_id == "cid-new"
+        assert container.registry._cid_to_wsid.get("cid-new") == "ws"
+        assert "cid-old" not in container.registry._cid_to_wsid
+        # Browsers for the still-alive workspace were not revoked. (Without
+        # the under-lock re-check, stop would have already torn the old
+        # state down and revoked browsers before the rebind.)
+        assert revoked == []
+
+    async def test_stop_does_not_replace_workspace_lock(self):
+        # Regression for the lock-replacement race: even after stop tears
+        # down state, _get_workspace_lock must return the SAME lock object,
+        # so a subsequent start serializes against any in-flight acquirer.
+        container.registry.track_activity("cid", "ws")
+        lock_before = container.registry._get_workspace_lock("ws")
+
+        with patch_podman():
+            await container.registry.stop_and_remove_container("cid")
+        assert "ws" in container.registry._workspace_locks
+        lock_after = container.registry._get_workspace_lock("ws")
+        assert lock_after is lock_before
 
 
 class TestRemoveContainer:
     def setup_method(self):
         container.registry.states.clear()
+        container.registry._cid_to_wsid.clear()
+        container.registry._workspace_locks.clear()
 
     def teardown_method(self):
         container.registry.states.clear()
+        container.registry._cid_to_wsid.clear()
+        container.registry._workspace_locks.clear()
 
     async def test_remove(self):
         container.registry.track_activity("cid", "ws")
-        container.registry._workspace_locks["ws"] = asyncio.Lock()
+        lock = container.registry._get_workspace_lock("ws")
 
         with patch_podman() as p:
             await container.registry.stop_and_remove_container("cid")
         p.remove_container.assert_awaited_once_with("cid")
         assert "ws" not in container.registry.states
-        assert "ws" not in container.registry._workspace_locks
+        assert "cid" not in container.registry._cid_to_wsid
+        # The workspace lock entry is deliberately retained (#1258).
+        assert "ws" in container.registry._workspace_locks
+        assert container.registry._workspace_locks["ws"] is lock
 
     async def test_remove_podman_error(self):
         container.registry.track_activity("cid", "ws")
-        container.registry._workspace_locks["ws"] = asyncio.Lock()
+        container.registry._get_workspace_lock("ws")
 
         with patch_podman(
             remove_container=AsyncMock(
@@ -1674,7 +1776,9 @@ class TestRemoveContainer:
         ):
             await container.registry.stop_and_remove_container("cid")
         assert "ws" not in container.registry.states
-        assert "ws" not in container.registry._workspace_locks
+        assert "cid" not in container.registry._cid_to_wsid
+        # The workspace lock entry is deliberately retained (#1258).
+        assert "ws" in container.registry._workspace_locks
 
 
 class TestStopUserContainers:

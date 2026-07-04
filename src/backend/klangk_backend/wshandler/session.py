@@ -336,7 +336,7 @@ class WorkspaceSession:
         manual stop) so the next workspace_connect starts fresh.
         """
         await state.remove_session(self.workspace_id)
-        container.registry.remove_state(self.workspace_id)
+        await container.registry.remove_state(self.workspace_id)
         logger.info("Reset workspace state for %s", self.workspace_id)
 
 
@@ -528,7 +528,7 @@ class WebSocketState:
         if session:
             await session.full_reset()
         else:
-            container.registry.remove_state(workspace_id)
+            await container.registry.remove_state(workspace_id)
             logger.info("Reset workspace state for %s", workspace_id)
 
         # Clean up module-level agent state for this workspace.
