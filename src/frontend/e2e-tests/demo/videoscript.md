@@ -422,7 +422,7 @@ _[Open "pi", type "please build me a Flask hello world application that listens 
 
 Let's actually try to run it.
 
-_[Open a new terminal tab via "+" type "python app.py" into it]_
+_[Open a new terminal tab via "+" type "python3 app.py" into it]_
 
 `ModuleNotFoundError: No module named 'flask'`. A classic agent mistake — the code is there, but the dependency was never installed. I could fix this by hand, but there's a faster way that shows off something important about Klangk.
 
@@ -436,7 +436,7 @@ _[Type into pi: pi's Flask app in app.py won't run — figure out why and fix it
 
 Pi reads the traceback, sees Flask is missing, and installs it.
 
-_[Watch Pi: it reads app.py, runs pip install -r requirements.txt, then retries python app.py]_
+_[Watch Pi: it reads app.py, runs pip install -r requirements.txt, then retries python3 app.py]_
 
 And here's the part I want you to see. While Pi works in its tab, I can open a plain bash tab right next to it and inspect what pi actually produced.
 

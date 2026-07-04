@@ -275,6 +275,22 @@ export async function apiLogin(
   return { token, headers: { Authorization: `Bearer ${token}` } };
 }
 
+/** Fetch the logged-in user's id (the container tmux session name for their
+ *  workspaces). */
+export async function getMeId(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+): Promise<string> {
+  const resp = await request.get(`${DEMO_URL}/api/v1/auth/me`, {
+    headers,
+    timeout: 30_000,
+  });
+  if (!resp.ok()) {
+    throw new Error(`/auth/me failed: ${resp.status()}`);
+  }
+  return (await resp.json()).id;
+}
+
 /** Log in as the seeded admin. */
 export async function adminLogin(request: APIRequestContext) {
   return apiLogin(request, DEMO_ADMIN_EMAIL, DEMO_ADMIN_PASSWORD);
@@ -756,6 +772,137 @@ export async function waitForTerminal(
     );
   });
   await pace(500);
+}
+
+// ---------------------------------------------------------------------------
+// Container tmux introspection (side channel for live-agent scenes).
+// ---------------------------------------------------------------------------
+// The container's shell IS a tmux session (named <user-id>), so a side
+// `klangkc exec` can read the VERY SAME pane the browser Terminal tab renders.
+// Live-agent scenes (5b) use this to detect pi's completion deterministically
+// (e.g. "Successfully installed", the hosted URL, or an idle status line)
+// WITHOUT on-screen OCR or fixed timeouts -- the browser types the prompts
+// visibly for the camera, and this side channel tells the scene when pi is
+// done. Off-camera only; it never appears in the recording.
+
+import { execFileSync } from "node:child_process";
+
+/** Run `klangkc exec <workspace> bash -lc <cmd>` and return stdout. Points at
+ *  the demo server (KLANGK_DEMO_SERVER / KLANGK_TEST_URL). Throws on non-zero
+ *  exit so callers fail fast. */
+export function klangkcExec(
+  workspace: string,
+  cmd: string,
+  extraEnv: Record<string, string> = {},
+): string {
+  const server =
+    extraEnv.KLANGK_DEMO_SERVER || process.env.KLANGK_DEMO_SERVER || DEMO_URL;
+  return execFileSync(
+    "klangkc",
+    ["--server", server, "exec", workspace, "bash", "-lc", cmd],
+    {
+      env: { ...process.env, ...extraEnv },
+      encoding: "utf-8",
+      timeout: 60_000,
+    },
+  );
+}
+
+/** Capture the container tmux pane for a session (window 0 by default).
+ *  `lines` = lines of scrollback (tmux `-S -N`). The session name is the
+ *  connecting user's id (terminal.py: `tmux new-session -s <user_id>`). */
+export function captureContainerPane(
+  workspace: string,
+  session: string,
+  window = 0,
+  lines = 12,
+): string {
+  return klangkcExec(
+    workspace,
+    `tmux capture-pane -t ${session}:${window} -p -S -${lines}`,
+  );
+}
+
+/** Send a tmux key (e.g. "C-c", "C-d") to a container pane. Off-camera
+ *  control; the browser scene drives visible typing itself. */
+export function sendContainerKey(
+  workspace: string,
+  session: string,
+  key: string,
+  window = 0,
+): void {
+  klangkcExec(workspace, `tmux send-keys -t ${session}:${window} ${key}`);
+}
+
+/** Wait until the container pane contains `needle` (substring or RegExp),
+ *  polling every `intervalMs`. pi's turns are live, so `timeoutMs` is
+ *  generous. Returns the matching pane text. */
+export async function waitForPaneText(
+  workspace: string,
+  session: string,
+  needle: string | RegExp,
+  {
+    timeoutMs = 180_000,
+    intervalMs = 3_000,
+    window = 0,
+    lines = 14,
+  }: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    window?: number;
+    lines?: number;
+  } = {},
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const pane = captureContainerPane(workspace, session, window, lines);
+    const matched =
+      needle instanceof RegExp ? needle.test(pane) : pane.includes(needle);
+    if (matched) return pane;
+    await pace(intervalMs);
+  }
+  throw new Error(
+    `waitForPaneText: ${needle.toString()} not seen within ${timeoutMs}ms`,
+  );
+}
+
+/** Wait until pi's status line is idle. The status line (last non-empty pane
+ *  line) shows live token counters while working (`↑49 ↓4 R5.1k ...`) and
+ *  settles unchanged when the turn completes. We call it idle when it has been
+ *  byte-identical across samples for `stableMs` AND still shows the
+ *  `/128k` context marker. Keys on stability, NOT the `0.0%` marker (that
+ *  only appears at session start). */
+export async function waitForPiIdle(
+  workspace: string,
+  session: string,
+  {
+    timeoutMs = 180_000,
+    stableMs = 4_000,
+    window = 0,
+  }: { timeoutMs?: number; stableMs?: number; window?: number } = {},
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let prev = "";
+  let lastChange = Date.now();
+  while (Date.now() < deadline) {
+    const pane = captureContainerPane(workspace, session, window, 6);
+    const statusLines = pane
+      .split("\n")
+      .map((l) => l.replace(/\s+$/, ""))
+      .filter((l) => l.length > 0);
+    const status = statusLines[statusLines.length - 1] || "";
+    if (status !== prev) {
+      prev = status;
+      lastChange = Date.now();
+    } else if (
+      Date.now() - lastChange >= stableMs &&
+      status.includes("/128k")
+    ) {
+      return;
+    }
+    await pace(1_000);
+  }
+  throw new Error(`waitForPiIdle: not idle within ${timeoutMs}ms`);
 }
 
 // ---------------------------------------------------------------------------
