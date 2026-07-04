@@ -57,6 +57,7 @@ import {
   vp,
   mouseClick,
   terminalType,
+  terminalTabCenterPx,
   openChatTab,
   apiLogin,
   addRole,
@@ -115,15 +116,25 @@ test("collaboration", async ({ page, browser, request }) => {
   await openWorkspaceDemo(page, DEMO_HERO_EMAIL, ws.id, DEMO_HERO_PASSWORD);
   await pace(1500);
 
-  // --- 3. Share the owner's terminal via WS (reliable; see header note) ---
+  // --- 3. Share the owner's terminal via WS (reliable; see header note).
+  //      Share the SCRATCH tab (a plain bash shell) by NAME, NOT windows[0]
+  //      (which is the bash tab where pi lives from Sc 5b). Typing the
+  //      pair-programming beat into pi's tab would pollute pi's conversation
+  //      context ahead of Sc 8 (which reuses the running pi). Scratch is a
+  //      plain shell, so "owner typing here" lands harmlessly. ---
   const ownerWs = await connectWs(
     (await apiLogin(request, DEMO_HERO_EMAIL, DEMO_HERO_PASSWORD)).token,
     ws.id,
   );
   ownerWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
   const windows = await ownerWs.recvUntil((m) => m.type === "terminal_windows");
-  const firstWindow = (windows.windows as Array<Record<string, unknown>>)[0];
-  ownerWs.send({ cmd: "share_window", window_id: firstWindow.id as string });
+  const allWindows = windows.windows as Array<Record<string, unknown>>;
+  // Prefer "scratch" (plain shell); fall back to the last window (never the
+  // first, which is pi's bash tab).
+  const shareWin =
+    allWindows.find((w) => w.name === "scratch") ??
+    allWindows[allWindows.length - 1];
+  ownerWs.send({ cmd: "share_window", window_id: shareWin.id as string });
   await ownerWs.recvUntil((m) => m.type === "shared_terminals");
   await pace(1500); // broadcast icon appears on owner's tab
 
@@ -177,6 +188,12 @@ test("collaboration", async ({ page, browser, request }) => {
   await teammateWs.recvUntil((m) => m.type === "terminal_started");
   await pace(2000);
 
+  // Owner TYPES in the shared SCRATCH tab (visually switch to it first so the
+  // on-camera keystrokes land in the plain shell, not pi's bash tab where pi
+  // is still running from Sc 5b — typing into pi would pollute its context
+  // ahead of Sc 8). The teammate sees the same shared pane.
+  await mouseClick(page, terminalTabCenterPx(2), vp(page).height * 0.2);
+  await pace(1000);
   await terminalType(page, "echo 'owner typing here'"); // owner's window
   await pace(2500);
   await terminalType(teammatePage, "echo 'teammate typing back'"); // teammate's window
