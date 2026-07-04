@@ -731,7 +731,7 @@ class TestHandleTerminalInput:
         conn.container_id = "cid"
         container.registry.track_activity("cid", "ws")
 
-        big_data = "x" * 70000
+        big_data = "x" * (_ws_constants.MAX_INPUT_SIZE + 1)
         await conn.handle_terminal_input({"data": big_data})
         t.write.assert_not_awaited()
         container.registry.states.pop("ws", None)
@@ -2588,7 +2588,9 @@ class TestExecHandlers:
         conn = _base_conn()
         conn.container_id = "cid"
         conn.exec_session = session
-        big_data = base64.b64encode(b"x" * 70000).decode()
+        big_data = base64.b64encode(
+            b"x" * (_ws_constants.MAX_INPUT_SIZE + 1)
+        ).decode()
         await conn.handle_exec_input({"data": big_data})
         session.write.assert_not_awaited()
 
@@ -2853,7 +2855,9 @@ class TestExecController:
         session = AsyncMock()
         session.is_alive = True
         ctrl.session = session
-        big = base64.b64encode(b"x" * 70000).decode()
+        big = base64.b64encode(
+            b"x" * (_ws_constants.MAX_INPUT_SIZE + 1)
+        ).decode()
         with patch.object(container.registry, "record_activity"):
             await ctrl.input({"data": big})
         session.write.assert_not_awaited()
@@ -5749,7 +5753,7 @@ class TestTerminalController:
         session.is_alive = True
         session.read_only = False
         ctrl.session = session
-        await ctrl.input({"data": "x" * 70000})
+        await ctrl.input({"data": "x" * (_ws_constants.MAX_INPUT_SIZE + 1)})
         session.write.assert_not_awaited()
 
     async def test_input_writes_and_records_activity(self):
