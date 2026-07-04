@@ -314,21 +314,17 @@ def get_home_host_path(user_id: str, workspace_id: str) -> Path:
 # --- Handle management ---
 
 
-def ensure_home_symlink(
+def _ensure_home_symlink_sync(
     workspace_home: Path,
     handle: str,
     user_id: str,
 ) -> tuple[str, bool]:
-    """Ensure the ``/home/{handle} -> .users/{user_id}`` symlink exists.
+    """Synchronous ``ensure_home_symlink`` implementation.
 
-    Creates the ``.users/{user_id}`` directory and symlink if missing.
-    If the symlink exists and already points to the right target, no-op.
-    If the handle changed (old symlink for this user_id exists), removes
-    the old one and creates the new one.
-
-    Returns ``(container_home_path, created)`` where *created* is True
-    when a new user directory was created (caller should populate it
-    with skeleton files).
+    Performs blocking filesystem calls (``Path.exists``, ``readlink``,
+    ``symlink_to``, ``Path.iterdir``, …) and must not run on the event
+    loop — callers go through ``ensure_home_symlink``, which offloads
+    this to a worker thread via ``asyncio.to_thread`` (#1262).
     """
     users_dir = workspace_home / ".users"
     users_dir.mkdir(parents=True, exist_ok=True)
@@ -366,6 +362,31 @@ def ensure_home_symlink(
 
     symlink.symlink_to(target)
     return f"/home/{handle}", created
+
+
+async def ensure_home_symlink(
+    workspace_home: Path,
+    handle: str,
+    user_id: str,
+) -> tuple[str, bool]:
+    """Ensure the ``/home/{handle} -> .users/{user_id}`` symlink exists.
+
+    Creates the ``.users/{user_id}`` directory and symlink if missing.
+    If the symlink exists and already points to the right target, no-op.
+    If the handle changed (old symlink for this user_id exists), removes
+    the old one and creates the new one.
+
+    The blocking filesystem work runs in a worker thread via
+    ``asyncio.to_thread`` so connect / container-start paths do not
+    stall the event loop on disk latency (#1262).
+
+    Returns ``(container_home_path, created)`` where *created* is True
+    when a new user directory was created (caller should populate it
+    with skeleton files).
+    """
+    return await asyncio.to_thread(
+        _ensure_home_symlink_sync, workspace_home, handle, user_id
+    )
 
 
 async def populate_home_skel(

@@ -2275,6 +2275,7 @@ class TestHealthMonitorRunOne:
             patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
             patch(
                 "klangk_backend.workspaces.ensure_home_symlink",
+                new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
             ),
         ):
@@ -2312,6 +2313,7 @@ class TestHealthMonitorRunOne:
             patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
             patch(
                 "klangk_backend.workspaces.ensure_home_symlink",
+                new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
             ),
         ):
@@ -2336,6 +2338,7 @@ class TestHealthMonitorRunOne:
             patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
             patch(
                 "klangk_backend.workspaces.ensure_home_symlink",
+                new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
             ),
         ):
@@ -2360,6 +2363,7 @@ class TestHealthMonitorRunOne:
             patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
             patch(
                 "klangk_backend.workspaces.ensure_home_symlink",
+                new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
             ),
         ):
@@ -2394,6 +2398,7 @@ class TestHealthMonitorRunOne:
             patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
             patch(
                 "klangk_backend.workspaces.ensure_home_symlink",
+                new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
             ),
         ):

@@ -270,7 +270,9 @@ class TestEnsureHomeSymlink:
     async def test_creates_symlink(self, user):
         ws = await ws_mod.create_workspace(user["id"], "symlink-ws")
         home = ws_mod.home_path(user["id"], ws["id"])
-        result, created = ws_mod.ensure_home_symlink(home, "alice", "uid-1")
+        result, created = await ws_mod.ensure_home_symlink(
+            home, "alice", "uid-1"
+        )
         assert result == "/home/alice"
         assert created is True
         symlink = home / "alice"
@@ -281,16 +283,20 @@ class TestEnsureHomeSymlink:
     async def test_idempotent(self, user):
         ws = await ws_mod.create_workspace(user["id"], "symlink-ws2")
         home = ws_mod.home_path(user["id"], ws["id"])
-        ws_mod.ensure_home_symlink(home, "bob", "uid-1")
-        result, created = ws_mod.ensure_home_symlink(home, "bob", "uid-1")
+        await ws_mod.ensure_home_symlink(home, "bob", "uid-1")
+        result, created = await ws_mod.ensure_home_symlink(
+            home, "bob", "uid-1"
+        )
         assert result == "/home/bob"
         assert created is False
 
     async def test_rename_removes_old_symlink(self, user):
         ws = await ws_mod.create_workspace(user["id"], "symlink-ws3")
         home = ws_mod.home_path(user["id"], ws["id"])
-        ws_mod.ensure_home_symlink(home, "alice", "uid-1")
-        result, created = ws_mod.ensure_home_symlink(home, "alicia", "uid-1")
+        await ws_mod.ensure_home_symlink(home, "alice", "uid-1")
+        result, created = await ws_mod.ensure_home_symlink(
+            home, "alicia", "uid-1"
+        )
         assert result == "/home/alicia"
         assert created is False
         assert not (home / "alice").exists()
@@ -311,7 +317,9 @@ class TestEnsureHomeSymlink:
         (old_dir / ".profile").write_text("# old profile")
         (home / "admin").symlink_to(".users/old-uid")
         # New user connects — different user ID, same handle.
-        result, created = ws_mod.ensure_home_symlink(home, "admin", "new-uid")
+        result, created = await ws_mod.ensure_home_symlink(
+            home, "admin", "new-uid"
+        )
         assert result == "/home/admin"
         assert created is False  # content adopted, no skel needed
         assert (home / "admin").is_symlink()

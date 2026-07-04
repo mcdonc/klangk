@@ -290,7 +290,10 @@ class Connection:
         # symlink in place so podman doesn't auto-create a real dir.
         handle = await model.get_user_handle(self.user["id"])
         workspace_home = workspaces.home_path(owner_id, workspace_id)
-        self._user_home, self._home_created = workspaces.ensure_home_symlink(
+        (
+            self._user_home,
+            self._home_created,
+        ) = await workspaces.ensure_home_symlink(
             workspace_home, handle, self.user["id"]
         )
 
@@ -861,7 +864,7 @@ class Connection:
                 workspace_home = workspaces.home_path(
                     owner_id, self.workspace_id
                 )
-                container_home, created = workspaces.ensure_home_symlink(
+                container_home, created = await workspaces.ensure_home_symlink(
                     workspace_home, handle, self.user["id"]
                 )
                 if created and self.container_id:
