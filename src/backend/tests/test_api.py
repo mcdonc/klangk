@@ -1093,7 +1093,7 @@ class TestWorkspaceRoutes:
             ws = next(w for w in items if w["id"] == ws_id)
             assert ws["running"] is True
         finally:
-            container.registry.remove_state(ws_id)
+            await container.registry.remove_state(ws_id)
 
         # Also works for bare list (no pagination params)
         resp = await client.get("/api/v1/workspaces", headers=headers)
@@ -1145,7 +1145,7 @@ class TestWorkspaceRoutes:
             assert ws["health"] == "healthy"
             assert ws["health_message"] is None
         finally:
-            container.registry.remove_state(ws_id)
+            await container.registry.remove_state(ws_id)
 
         # Stopped workspace: no health fields beyond running=False.
         resp = await client.get("/api/v1/workspaces?limit=10", headers=headers)
@@ -1708,7 +1708,7 @@ class TestWorkspaceRoutes:
             assert live.health_checked_at is None
             assert live.health_message is None
         finally:
-            container.registry.remove_state(ws_id)
+            await container.registry.remove_state(ws_id)
 
     async def test_update_workspace_no_permission(self, client, user):
         headers = await _auth_headers(client)

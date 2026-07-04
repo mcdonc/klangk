@@ -859,13 +859,21 @@ class ContainerRegistry:
         if self.on_container_status_changed:
             self.on_container_status_changed(workspace_id, running)
 
-    def remove_state(self, workspace_id: str) -> None:
-        state = self.states.pop(workspace_id, None)
-        if state:
-            self._cid_to_wsid.pop(state.container_id, None)
-            # Drop the per-container service-firing lock (#1188).
-            terminal.clear_service_session_lock(state.container_id)
-        self._workspace_locks.pop(workspace_id, None)
+    async def remove_state(self, workspace_id: str) -> None:
+        """Remove tracked state for a workspace.
+
+        Serialized under the per-workspace lock (the same one
+        :meth:`start_container` holds) so a racing start cannot observe a
+        half-cleaned registry (#1258). The per-workspace lock entry is
+        deliberately *not* removed here -- see :meth:`stop_and_remove_container`
+        for why popping it would reopen the race.
+        """
+        async with self._get_workspace_lock(workspace_id):
+            state = self.states.pop(workspace_id, None)
+            if state:
+                self._cid_to_wsid.pop(state.container_id, None)
+                # Drop the per-container service-firing lock (#1188).
+                terminal.clear_service_session_lock(state.container_id)
 
     # --- Proxy: PortAllocator ---
 
@@ -1492,7 +1500,26 @@ class ContainerRegistry:
         return container_id, "created"
 
     async def stop_and_remove_container(self, container_id: str) -> None:
-        """Stop and remove a container."""
+        """Stop and remove a container.
+
+        The slow ``podman.remove_container`` call runs *outside* the
+        workspace lock; only the registry-state teardown is serialized --
+        under the same per-workspace lock :meth:`start_container` uses -- so
+        a concurrent start for the same workspace cannot observe a
+        half-cleaned registry (#1258). Under the lock we re-check that
+        ``container_id`` still maps to this workspace: a racing
+        ``start_container`` may already have re-bound the workspace to a
+        fresh container, in which case we must not tear down the new state
+        (or revoke its browsers).
+
+        The per-workspace lock entry is deliberately *not* popped. Popping
+        it while another coroutine is waiting on (or holding) that exact
+        ``asyncio.Lock`` would let a subsequent ``_get_workspace_lock``
+        create a brand-new lock object that does not serialize against the
+        in-flight one -- reopening the very race this method exists to
+        prevent. The retained entry is a single small object per workspace
+        ever seen and is cleared on process restart.
+        """
         try:
             await podman.remove_container(container_id)
             logger.info("Stopped container %s", container_id)
@@ -1502,11 +1529,16 @@ class ContainerRegistry:
                 container_id,
                 e,
             )
-        ws_id = self._cid_to_wsid.pop(container_id, None)
+        ws_id = self._cid_to_wsid.get(container_id)
         if ws_id:
-            self.revoke_workspace_browsers(ws_id)
-            self.states.pop(ws_id, None)
-            self._workspace_locks.pop(ws_id, None)
+            async with self._get_workspace_lock(ws_id):
+                # Re-verify under the lock: a racing start_container may
+                # have re-bound this workspace to a new container while we
+                # waited for the lock. Only tear down state we still own.
+                if self._cid_to_wsid.get(container_id) == ws_id:
+                    self._cid_to_wsid.pop(container_id, None)
+                    self.revoke_workspace_browsers(ws_id)
+                    self.states.pop(ws_id, None)
         # Drop the per-container service-firing lock (#1188).
         terminal.clear_service_session_lock(container_id)
 
