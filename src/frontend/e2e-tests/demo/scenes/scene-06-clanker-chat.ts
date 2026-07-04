@@ -32,9 +32,16 @@ import {
   openTab,
   waitForTerminal,
   terminalType,
+  terminalTabCenterPx,
 } from "../demo-helpers";
 
 const PROMPT = '@clanker "what is my hostname"';
+// Bash sub-tab center (leftmost, index 0) — clicked before the `env` beat so the
+// command lands in the clean bash shell, not whichever sub-tab was left active.
+// NB: this scene MUST be recorded BEFORE Sc 5b (viewing order 4→5→5b). Sc 5b
+// launches pi in the bash tab and never exits it; recording 5b first leaves pi
+// alive, so `env` here would be typed into pi (which tries to "answer" it)
+// instead of a plain shell.
 
 test("clanker chat", async ({ page, request }) => {
   test.setTimeout(300_000);
@@ -84,6 +91,10 @@ test("clanker chat", async ({ page, request }) => {
   await openTab(page, 0); // Terminal nav tab (index 0)
   await waitForTerminal(page);
   await pace(1200);
+  // Select the bash sub-tab (clean shell — pi isn't launched until Sc 5b) so
+  // `env` dumps the real container environment, not whatever was left active.
+  await mouseClick(page, terminalTabCenterPx(0), vp(page).height * 0.2);
+  await pace(1000);
   await terminalType(page, "env");
   await pace(10_000); // viewer reads the env: no keys, nothing to steal
 });
