@@ -320,6 +320,37 @@ void main() {
         expect(uploaded, isEmpty);
       });
 
+      testWidgets('skips setState and callback when unmounted during upload',
+          (tester) async {
+        bool completed = false;
+        final key = GlobalKey<FileDropZoneState>();
+        final completer = Completer<int>();
+
+        testUploadOverride = (url, headers, filename, bytes) async {
+          return completer.future;
+        };
+
+        await tester.pumpWidget(buildDropZone(
+          key: key,
+          onUploadComplete: () => completed = true,
+        ));
+
+        final file = makeFile('test.txt', [1]);
+        key.currentState!.uploadFiles(makeDropDetails([file]));
+        await tester.pump();
+
+        // Dispose the widget while upload is in progress
+        await tester.pumpWidget(const MaterialApp(home: Scaffold()));
+
+        // Complete the upload after widget is disposed
+        completer.complete(200);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 600));
+
+        // onUploadComplete should NOT have been called
+        expect(completed, isFalse);
+      });
+
       testWidgets('handles upload exception gracefully', (tester) async {
         bool completed = false;
         final key = GlobalKey<FileDropZoneState>();

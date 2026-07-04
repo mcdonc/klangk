@@ -122,9 +122,11 @@ class FileDropZoneState extends State<FileDropZone> {
       }
     }
 
-    setState(() => _uploading = false);
-    await Future.delayed(const Duration(milliseconds: 500));
-    widget.onUploadComplete();
+    if (mounted) {
+      setState(() => _uploading = false);
+      await Future.delayed(const Duration(milliseconds: 500));
+      widget.onUploadComplete();
+    }
   }
 
   @override
