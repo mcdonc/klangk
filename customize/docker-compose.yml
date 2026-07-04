@@ -1,6 +1,19 @@
+# Example runtime-customized Klangk deployment.
+#
+# Most customization — branding, legal links, email templates, CA certs,
+# OIDC login hooks — is done via env vars and bind mounts at runtime.
+# No custom image build is needed unless you have plugins.
+#
+# To use the stock image (no plugins):
+#   image: ghcr.io/mcdonc/klangk/klangk-host:latest
+#
+# To use a custom image (with plugins):
+#   image: ghcr.io/mcdonc/klangk/klangk-host-custom
+#   (build it first with ./build.sh)
+
 services:
   klangk:
-    image: ghcr.io/mcdonc/klangk/klangk-host-custom
+    image: ghcr.io/mcdonc/klangk/klangk-host:latest
     ports:
       - "8995:8995"
     devices:
@@ -14,39 +27,60 @@ services:
     cap_add:
       - SYS_ADMIN
     environment:
+      # --- Core ---
       KLANGK_NGINX_PORT: "${KLANGK_NGINX_PORT:-8995}"
+      KLANGK_PORT: "${KLANGK_PORT:-8997}"
       KLANGK_DEFAULT_USER: "${KLANGK_DEFAULT_USER:-admin@example.com}"
       KLANGK_DEFAULT_PASSWORD: "${KLANGK_DEFAULT_PASSWORD}"
-      KLANGK_PORT: "${KLANGK_PORT:-8997}"
-      KLANGK_LLM_BASE_URL: "${KLANGK_LLM_BASE_URL}"
-      KLANGK_LLM_API_KEY: "${KLANGK_LLM_API_KEY}"
-      KLANGK_LLM_MODEL: "${KLANGK_LLM_MODEL}"
-      KLANGK_DATA_DIR: /home/klangk/data
       KLANGK_JWT_SECRET: "${KLANGK_JWT_SECRET}"
       KLANGK_PREVENT_INSECURE_JWT_SECRET: "1"
-      LOGFIRE_BASE_URL: "${LOGFIRE_BASE_URL}"
-      LOGFIRE_TOKEN: "${LOGFIRE_TOKEN}"
-      LOGFIRE_ENVIRONMENT: "${LOGFIRE_ENVIRONMENT}"
+      KLANGK_DATA_DIR: /home/klangk/data
       KLANGK_INSTANCE_ID: "${KLANGK_INSTANCE_ID:-default}"
-      # Uncomment for OIDC authentication:
-      # KLANGK_OIDC_CONFIG: /home/klangk/oidc.yaml
-      # KLANGK_AUTH_MODES: "both"
-      # KLANGK_OIDC_LOGIN_HOOK: "login_hook.require_invitation"
-      # Uncomment to disable open registration:
-      # KLANGK_DISABLE_REGISTRATION: "1"
-      # Uncomment for Tailscale DNS in containers:
-      # KLANGK_DNS_SERVERS: "${KLANGK_DNS_SERVERS:-100.100.100.100,8.8.8.8}"
-      # Uncomment to restrict bind mount paths:
-      # KLANGK_ALLOWED_MOUNT_ROOTS: "${KLANGK_ALLOWED_MOUNT_ROOTS:-/home/klangk/mount}"
-      # Uncomment for SMTP email:
+
+      # --- Branding (runtime, no rebuild) ---
+      # KLANGK_PRODUCT_NAME: "Acme Labs"
+      # KLANGK_LOGO_URL: "/branding/logo.png"
+      # KLANGK_BRAND_COLOR: "#E65100"
+
+      # --- Legal & support links (runtime, no rebuild) ---
+      # KLANGK_TERMS_URL: "https://example.com/terms"
+      # KLANGK_PRIVACY_URL: "https://example.com/privacy"
+      # KLANGK_AUP_URL: "https://example.com/aup"
+      # KLANGK_SUPPORT_URL: "https://example.com/support"
+      # KLANGK_SUPPORT_EMAIL: "support@example.com"
+
+      # --- Email customization (runtime, no rebuild) ---
+      # KLANGK_EMAIL_TEMPLATES_DIR: /etc/klangk/email-templates
+      # KLANGK_SMTP_REPLY_TO: "support@example.com"
       # KLANGK_SMTP_HOST: "${KLANGK_SMTP_HOST}"
       # KLANGK_SMTP_USER: "${KLANGK_SMTP_USER}"
       # KLANGK_SMTP_PASSWORD: "${KLANGK_SMTP_PASSWORD}"
       # KLANGK_SMTP_FROM: "${KLANGK_SMTP_FROM}"
+
+      # --- Custom CA certs (runtime, no rebuild) ---
+      # KLANGK_SSL_CERT_DIR: /certs
+
+      # --- OIDC (runtime, no rebuild) ---
+      # KLANGK_OIDC_CONFIG: /home/klangk/oidc.yaml
+      # KLANGK_AUTH_MODES: "both"
+      # KLANGK_OIDC_LOGIN_HOOK: "login_hook.require_invitation"
+
+      # --- LLM ---
+      KLANGK_LLM_BASE_URL: "${KLANGK_LLM_BASE_URL}"
+      KLANGK_LLM_API_KEY: "${KLANGK_LLM_API_KEY}"
+      KLANGK_LLM_MODEL: "${KLANGK_LLM_MODEL}"
+
+      # --- Observability ---
+      LOGFIRE_BASE_URL: "${LOGFIRE_BASE_URL}"
+      LOGFIRE_TOKEN: "${LOGFIRE_TOKEN}"
+      LOGFIRE_ENVIRONMENT: "${LOGFIRE_ENVIRONMENT}"
+
+      # --- Other ---
+      # KLANGK_DISABLE_REGISTRATION: "1"
+      # KLANGK_DNS_SERVERS: "${KLANGK_DNS_SERVERS:-100.100.100.100,8.8.8.8}"
+      # KLANGK_ALLOWED_MOUNT_ROOTS: "${KLANGK_ALLOWED_MOUNT_ROOTS:-/home/klangk/mount}"
+
     volumes:
-      # Uncomment for OIDC:
-      # - ./oidc.yaml:/home/klangk/oidc.yaml:ro
-      # - ./cacert.pem:/home/klangk/cacert.pem:ro
       # Data volume (must exist and be owned by 1000:1000):
       - type: bind
         source: ./data
@@ -59,3 +93,16 @@ services:
         target: /home/klangk/mount
         bind:
           create_host_path: false
+      # Uncomment to serve a custom logo without an external URL.
+      # Put your logo file (e.g. logo.png) in a local directory, mount it
+      # here, and set KLANGK_LOGO_URL=/branding/logo.png above. The backend
+      # serves $KLANGK_DATA_DIR/branding/ at the /branding/ URL path.
+      # - ./my-logo-dir:/home/klangk/data/branding:ro
+      # Uncomment for custom email templates:
+      # - ./email-templates:/etc/klangk/email-templates:ro
+      # Uncomment for custom CA certs (runtime, no rebuild):
+      # - ./certs:/certs:ro
+      # Uncomment for OIDC login hook (bind-mount, no rebuild):
+      # - ./login_hook.py:/home/klangk/src/backend/login_hook.py:ro
+      # Uncomment for OIDC:
+      # - ./oidc.yaml:/home/klangk/oidc.yaml:ro

@@ -18,9 +18,7 @@ and both trust scopes consume them at runtime:
 the default trust store rather than augment it, so a custom-only bundle would
 break public-internet TLS (``npm``/``pip``/``git``, public OIDC, Gmail SMTP).
 ``NODE_EXTRA_CA_CERTS`` is additive, but pointing it at the merged bundle is
-harmless (Node de-duplicates).  The build-time path
-(``customize/ssl`` -> ``update-ca-certificates``) remains available; this is
-additive, for rotating trust roots without a rebuild.
+harmless (Node de-duplicates).
 """
 
 from __future__ import annotations
