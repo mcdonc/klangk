@@ -419,6 +419,30 @@ class TestAuthRoutes:
         assert data["status"] == "pending_verification"
         assert data["email"] == "new@example.com"
 
+    async def test_register_persists_handle(self, client, db):
+        """The register route must persist a derived handle, not NULL (#1256).
+
+        Regression: the email-verification register route did a raw
+        INSERT with no handle column, so users got NULL handles and
+        ``ensure_home_symlink`` failed on first workspace connect.
+        """
+        with patch.object(
+            api.emailsvc,
+            "send_verification_email",
+            new_callable=AsyncMock,
+        ):
+            resp = await client.post(
+                "/api/v1/auth/register",
+                json={
+                    "email": "handleme@example.com",
+                    "password": "newpass1",
+                },
+            )
+        assert resp.status_code == 200
+        user = await model.get_user_by_email("handleme@example.com")
+        assert user is not None
+        assert user["handle"] == "handleme"  # derived, not NULL
+
     async def test_register_test_mode(self, client, db, monkeypatch):
         """In test mode, unauthenticated registration is allowed and auto-verified."""
         monkeypatch.setenv("KLANGK_TEST_MODE", "1")
@@ -4467,10 +4491,12 @@ class TestAdminEndpoints:
         assert data["email"] == "verify@example.com"
         assert data["status"] == "pending_verification"
         mock_email.send_verification_email.assert_called_once()
-        # User should exist but not be verified
+        # User should exist but not be verified, with a derived handle
+        # (regression: #1256 — this branch used to INSERT without a handle).
         user = await model.get_user_by_email("verify@example.com")
         assert user is not None
         assert user["verified"] == 0
+        assert user["handle"] == "verify"  # derived, not NULL
 
     async def test_admin_create_user_no_password_no_verify(
         self, client, admin_user

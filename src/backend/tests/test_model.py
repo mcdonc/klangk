@@ -1,6 +1,7 @@
 """Tests for model: users, workspaces, messages, port allocations."""
 
 import asyncio
+import uuid
 
 import aiosqlite
 import pytest
@@ -311,6 +312,68 @@ class TestHandles:
         assert model.derive_handle("bob.smith@foo.com") == "bob.smith"
         assert model.derive_handle("@foo.com") == "user"
         assert model.derive_handle("admin") == "admin"
+
+    async def test_generate_handle_derives_and_uniquifies(self, db):
+        """generate_handle is the shared generator — derive + unique (#1256)."""
+        # Fresh email → derives the local part, no suffix.
+        async with model.transaction() as conn:
+            assert (
+                await model.generate_handle(conn, "alice@example.com")
+                == "alice"
+            )
+        # After alice exists, the same email gets a -2 suffix.
+        await model.create_user("alice@example.com", "hash", verified=True)
+        async with model.transaction() as conn:
+            assert (
+                await model.generate_handle(conn, "alice@example.com")
+                == "alice-2"
+            )
+            # Different local part still derives cleanly.
+            assert (
+                await model.generate_handle(conn, "bob.smith@foo.com")
+                == "bob.smith"
+            )
+            # Garbage local part falls back to the "user" base.
+            assert await model.generate_handle(conn, "@foo.com") == "user"
+
+    async def test_insert_unverified_user_derives_handle_and_marks_unverified(
+        self, db
+    ):
+        """insert_unverified_user inserts verified=0 + derived handle (#1256).
+
+        It runs on the caller's transaction so an email-send failure can
+        roll back the insert — verified here by checking that an exception
+        on the same transaction leaves no row.
+        """
+        user_id = str(uuid.uuid4())
+        # Committed happy path: insert, commit, then read back.
+        async with model.transaction() as conn:
+            handle = await model.insert_unverified_user(
+                conn, user_id, "carol@example.com", "somehash"
+            )
+        assert handle == "carol"
+        cursor = await model.fetchone(
+            "SELECT email, handle, verified, password_hash FROM users"
+            " WHERE id = ?",
+            (user_id,),
+        )
+        assert cursor is not None
+        assert cursor["email"] == "carol@example.com"
+        assert cursor["handle"] == "carol"  # derived, not NULL
+        assert cursor["verified"] == 0
+        assert cursor["password_hash"] == "somehash"
+
+        # Rollback path: an exception inside the transaction must leave
+        # no row — this is the guarantee the register/invite routes rely
+        # on when the verification email send fails.
+        bad_id = str(uuid.uuid4())
+        with pytest.raises(Exception):
+            async with model.transaction() as conn:
+                await model.insert_unverified_user(
+                    conn, bad_id, "dave@example.com", "h"
+                )
+                raise RuntimeError("simulate email-send failure")
+        assert await model.get_user_by_id(bad_id) is None
 
     async def test_validate_handle(self):
         assert model.validate_handle("alice") is None

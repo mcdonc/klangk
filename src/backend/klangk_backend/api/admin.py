@@ -217,10 +217,8 @@ async def admin_create_user(
         )
 
         async with model.transaction() as db:
-            await db.execute(
-                "INSERT INTO users (id, email, password_hash, verified)"
-                " VALUES (?, ?, ?, 0)",
-                (user_id, req.email, password_hash),
+            await model.insert_unverified_user(
+                db, user_id, req.email, password_hash
             )
             await send_email(
                 emailsvc.send_verification_email(req.email, verification_url),
