@@ -225,6 +225,24 @@ class _SettingsFormState extends State<_SettingsForm> {
       // coverage:ignore-start
       _autoStart = (widget.workspace['auto_start'] as bool?) ?? false;
     } // coverage:ignore-end
+    if (old.workspace['image'] != widget.workspace['image']) {
+      _selectedImage =
+          widget.workspace['image'] as String? ?? widget.defaultImage;
+      if (!widget.allowedImages.contains(_selectedImage)) {
+        _selectedImage = widget.defaultImage;
+      }
+    }
+    if (old.workspace['mounts'] != widget.workspace['mounts']) {
+      _mounts = List<String>.from(
+        (widget.workspace['mounts'] as List?)?.cast<String>() ?? <String>[],
+      );
+    }
+    if (old.workspace['env'] != widget.workspace['env']) {
+      _envVars = Map<String, String>.from(
+        (widget.workspace['env'] as Map?)?.cast<String, String>() ??
+            <String, String>{},
+      );
+    }
   }
 
   @override
