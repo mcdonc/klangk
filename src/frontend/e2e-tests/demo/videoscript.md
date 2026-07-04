@@ -422,48 +422,55 @@ _[Open "pi", type "please build me a Flask hello world application that listens 
 
 Let's actually try to run it.
 
-_[Open a new terminal tab via "+" type "python3 app.py" into it]_
+_[Open the "scratch" terminal tab by mousing to it and clicking it, then type "python3 app.py" into it]_
 
 `ModuleNotFoundError: No module named 'flask'`. A classic agent mistake — the code is there, but the dependency was never installed. I could fix this by hand, but there's a faster way that shows off something important about Klangk.
 
 This container has Pi as an agent — the same engine that powers clanker — but I can run it right here in the terminal, where I can watch it work and step in alongside it.
 
-_[Go back to the tab with pi in it]_
+_[Navigate back to the bash tab where pi is still running]_
 
-Now I'll ask it to debug.
-
-_[Type into pi: pi's Flask app in app.py won't run — figure out why and fix it]_
+_[Type into pi: the Flask app in app.py fails with ModuleNotFoundError when I run `python3 app.py` — install flask so the app runs. You don't need to run the app.]_
 
 Pi reads the traceback, sees Flask is missing, and installs it.
 
-_[Watch Pi: it reads app.py, runs pip install -r requirements.txt, then retries python3 app.py]_
+_[Watch Pi: it runs `pip install flask`]_
 
-And here's the part I want you to see. While Pi works in its tab, I can open a plain bash tab right next to it and inspect what pi actually produced.
+And here's the part I want you to see. While Pi works in its tab, I can open another bash tab right next to it and inspect what pi actually produced.
 
-_[Go back to the extra bash tab]_
+_[Go back to the scratch tab]_
 
 _[Type, one at a time: ls — cat app.py — cat requirements.txt]_
 
-There's the app pi wrote, and there's `requirements.txt` — Flask was listed all along, it just never got installed. I can poke around the files myself, double-check Pi's work, run things — all alongside the agent, not instead of it.
+There's the app pi wrote, and there's `requirements.txt` — Flask was listed all along, it just never got installed. I can poke around the files myself, double-check Pi's work — all alongside the agent, not instead of it.
 
-_[Browser: open the demo workspace → click the hosted-app button, or paste the URL from klangk-hosted-url 8000 (http://localhost:8996/hosted/<workspace_id>/<host_port>/) → the page renders "Hello from Klangk"]_
+Let's run the application now.
+
+_[Navigate to the terminal2 tab and type `python3 app.py`]_
+
+It serves. Now let me open it as a real app in the browser.
+
+_[Open a new browser tab at the hosted URL: the page renders "Hello from Klangk", then return to the workspace]_
 
 There it is. A real running app — written by an agent, broken on first run,
 and fixed by the same agent once I pointed it at the error — now
 open in my browser, all without leaving the sandbox.
 
-> **Production —** _on screen:_ browser → Terminal tab (or `klangkc shell`), Pi
-> running in one tab + a plain bash tab alongside. _pre-roll:_ `demo` workspace
-> present; `pi` functional. The Flask app is built on-camera by Pi (the prompt
-> constrains it to write files only, so it writes `app.py` + `requirements.txt`
-> but does not pip-install), so the `ModuleNotFoundError` happens live.
-> _reset:_ `rm app.py requirements.txt` for a clean rebuild, or re-run Sc 5b
-> from scratch (Pi rebuilds). _gotchas:_
-> **live/nondeterministic**; if the browser terminal typing is flaky, drive via
-> `klangkc shell` instead (more reliable); the app must listen on **8000**
-> (the first hosted port — `KLANGK_PORT_MAPPINGS=8000:9065,...`); the
-> hosted-app URL must be live
-> (verify off-camera — fall back to `curl localhost:8000`).
+> **Production —** _on screen:_ browser → Terminal tab. THREE terminal tabs
+> are open (from Sc 2 + Sc 4): `bash` (pi lives here the whole scene — it is
+> never exited), `terminal2` (where the fixed app is run for the reveal), and
+> `scratch` (first run attempt → ModuleNotFoundError, then file inspection).
+> _pre-roll:_ `demo` workspace present with those three tabs; `pi` functional.
+> The Flask app is built on-camera by Pi (the prompt constrains it to write
+> files only, so it writes `app.py` + `requirements.txt` but does not
+> pip-install), so the `ModuleNotFoundError` happens live in the scratch tab.
+> pi is then asked (still in its bash tab) to install flask. The reveal runs
+> the app in `terminal2` and opens the hosted URL in a temporary browser tab.
+> _reset:_ the scene cleans up a prior take off-camera (`fuser -k 8000/tcp`,
+> `rm app.py requirements.txt`, `rm -rf .venv`). _gotchas:_
+> **live/nondeterministic**; pi must not be exited between the build and debug
+> prompts (we tab away to scratch/terminal2 instead); the app must listen on
+> **8000** (the first hosted port — `KLANGK_PORT_MAPPINGS=8000:9065,...`).
 
 ## Scene 6 — File Browser (30 seconds)
 
