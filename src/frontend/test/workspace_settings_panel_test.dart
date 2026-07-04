@@ -608,6 +608,188 @@ void main() {
     });
   });
 
+  group('didUpdateWidget resync', () {
+    testWidgets('resyncs mounts, env, and image after save reloads data',
+        (tester) async {
+      // First load returns the default workspace; after save, the backend
+      // returns updated mounts/env/image so _loadData rebuilds the form
+      // with new props, triggering didUpdateWidget.
+      var loadCount = 0;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/workspaces') {
+          loadCount++;
+          if (loadCount <= 1) {
+            return http.Response(jsonEncode([_workspace]), 200);
+          }
+          // After save, return updated data.
+          return http.Response(
+            jsonEncode([
+              {
+                ..._workspace,
+                'mounts': ['/new:/path'],
+                'env': {'NEW_KEY': 'new_val'},
+                'image': 'other:latest',
+              }
+            ]),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi', 'other:latest'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('nf', 404);
+      });
+
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Verify initial data is shown.
+      expect(find.text('/host:/cont'), findsOneWidget);
+      expect(find.text('FOO=bar'), findsOneWidget);
+
+      // Save triggers _loadData which fetches updated data.
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+
+      // After reload, the form should show the new values.
+      expect(find.text('/new:/path'), findsOneWidget);
+      expect(find.text('NEW_KEY=new_val'), findsOneWidget);
+      expect(find.text('other:latest'), findsOneWidget);
+      // Old values should be gone.
+      expect(find.text('/host:/cont'), findsNothing);
+      expect(find.text('FOO=bar'), findsNothing);
+
+      // Drain the 2s auto-clear timer.
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+        'falls back to default image when reloaded image not in allowed',
+        (tester) async {
+      var loadCount = 0;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/workspaces') {
+          loadCount++;
+          if (loadCount <= 1) {
+            return http.Response(jsonEncode([_workspace]), 200);
+          }
+          // After save, return an image not in the allowed list.
+          return http.Response(
+            jsonEncode([
+              {..._workspace, 'image': 'unknown:latest'}
+            ]),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi', 'other:latest'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('nf', 404);
+      });
+
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+
+      // Should fall back to default image, not show the unknown one.
+      expect(find.text('klangk-pi'), findsOneWidget);
+      expect(find.text('unknown:latest'), findsNothing);
+
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('handles null env after save (falls back to empty map)',
+        (tester) async {
+      var loadCount = 0;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/workspaces') {
+          loadCount++;
+          if (loadCount <= 1) {
+            return http.Response(jsonEncode([_workspace]), 200);
+          }
+          // After save, env is null.
+          return http.Response(
+            jsonEncode([
+              {
+                ..._workspace,
+                'env': null,
+              }
+            ]),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi', 'other:latest'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('nf', 404);
+      });
+
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Initially has env vars.
+      expect(find.text('FOO=bar'), findsOneWidget);
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+
+      // Env vars should be gone after reload with null env.
+      expect(find.text('FOO=bar'), findsNothing);
+
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+  });
+
   group('save error detail parsing', () {
     testWidgets('save failure with non-JSON body falls back to status code',
         (tester) async {
