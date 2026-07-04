@@ -1987,6 +1987,37 @@ class TestWorkspaceSharingRoutes:
         # Backward-compatible: no pagination params -> bare list, not envelope.
         assert isinstance(resp.json(), list)
 
+    async def test_list_shared_bare_path_not_capped_at_default(
+        self, client, user
+    ):
+        """Shared bare-list path returns more than the default of 10 (#1266).
+
+        Mirrors the owned-list regression: the Settings panel also
+        fetches ``/api/v1/workspaces/shared`` with no params, so a user
+        with more than 10 shared workspaces must not be silently cut off.
+        """
+        headers = await _auth_headers(client)
+        await self._create_other_user()
+        other_headers = await self._other_headers(client)
+        for i in range(12):
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": f"shared-{i:02d}"},
+            )
+            await client.post(
+                f"/api/v1/workspaces/{resp.json()['id']}/members",
+                headers=headers,
+                json={"email": "other@example.com"},
+            )
+        resp = await client.get(
+            "/api/v1/workspaces/shared", headers=other_headers
+        )
+        assert resp.status_code == 200
+        items = resp.json()
+        assert isinstance(items, list)
+        assert len(items) == 12
+
     async def test_list_shared_pagination_returns_envelope(self, client, user):
         headers = await _auth_headers(client)
         await self._create_other_user()
