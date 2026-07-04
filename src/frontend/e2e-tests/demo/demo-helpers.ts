@@ -675,17 +675,17 @@ function tabFracY(height: number): number {
 
 /** Click a workspace nav tab by 0-based index (0=Terminal … 4=Settings) using
  *  the visible mouse cursor. */
-export async function openTab(page: Page, index: number) {
+export async function openTab(page: Page, index: number, count = 5) {
   const { width, height } = vp(page);
   await mouseClick(
     page,
-    width * ((index + 0.5) / 5),
+    width * ((index + 0.5) / count),
     height * tabFracY(height),
   );
   await pace(350);
 }
 
-export const openChatTab = (page: Page) => openTab(page, 2);
+export const openChatTab = (page: Page, count = 5) => openTab(page, 2, count);
 export const openSharingTab = (page: Page) => openTab(page, 3);
 export const openSettingsTab = (page: Page) => openTab(page, 4);
 
