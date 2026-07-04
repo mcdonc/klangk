@@ -333,6 +333,30 @@ class TestConstants:
         assert container.DEFAULT_PORTS_PER_WORKSPACE == 5
 
 
+class TestPortsPerWorkspaceCap:
+    """KLANGK_HOSTED_PORTS_PER_WORKSPACE resolver (#1237)."""
+
+    def test_default_when_unset(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", raising=False)
+        assert container.ports_per_workspace_cap() == 5
+
+    def test_override(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "3")
+        assert container.ports_per_workspace_cap() == 3
+
+    def test_zero_disables(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "0")
+        assert container.ports_per_workspace_cap() == 0
+
+    def test_garbage_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "abc")
+        assert container.ports_per_workspace_cap() == 5
+
+    def test_negative_clamped_to_zero(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "-2")
+        assert container.ports_per_workspace_cap() == 0
+
+
 # --- Container lifecycle tests (mocked) ---
 
 
@@ -816,6 +840,89 @@ class TestStartContainer:
             )
         ports = await container.registry.get_workspace_ports(workspace["id"])
         assert len(ports) == 2
+
+    async def test_cap_clamps_allocation_down(self, workspace, monkeypatch):
+        """KLANGK_HOSTED_PORTS_PER_WORKSPACE clamps num_ports down (#1237)."""
+        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "3")
+        with patch_podman():
+            await container.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                num_ports=5,  # DB default; cap is 3
+            )
+        ports = await container.registry.get_workspace_ports(workspace["id"])
+        assert len(ports) == 3
+
+    async def test_cap_zero_releases_existing_ports(
+        self, workspace, monkeypatch
+    ):
+        """cap=0 trims an existing workspace's allocations on next start."""
+        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "0")
+        await model.find_and_allocate_ports(
+            workspace["id"], 5, container.PORT_RANGE_START
+        )
+        with patch_podman():
+            await container.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                num_ports=5,
+            )
+        ports = await container.registry.get_workspace_ports(workspace["id"])
+        assert ports == []
+
+    async def test_cap_zero_omits_hosting_env(self, workspace, monkeypatch):
+        """cap=0 suppresses KLANGK_PORT_MAPPINGS / KLANGK_HOSTING_* (#1237)."""
+        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "0")
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                num_ports=5,
+            )
+        env = p.create_container.call_args.kwargs["env"]
+        assert not any(e.startswith("KLANGK_PORT_MAPPINGS=") for e in env)
+        assert not any(e.startswith("KLANGK_HOSTING_") for e in env)
+        # Non-hosting env is still present.
+        assert any(e.startswith("KLANGK_WORKSPACE_ID=") for e in env)
+        assert any(e.startswith("KLANGK_LLM_PROXY_URL=") for e in env)
+
+    async def test_cap_zero_blocks_creation_allocation(
+        self, workspace, monkeypatch
+    ):
+        """cap=0 means allocate_ports (creation path) inserts nothing (#1237).
+
+        Distinct from the reconcile/trim path: this is the entry point
+        ``workspaces.create_workspace`` uses at workspace-creation time,
+        so a cap of 0 must keep port_allocations empty from the start —
+        not just trim on the container's first start.
+        """
+        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "0")
+        await container.registry.allocate_ports(workspace["id"], 5)
+        assert (
+            await container.registry.get_workspace_ports(workspace["id"]) == []
+        )
+
+    async def test_hosting_env_present_when_enabled(
+        self, workspace, monkeypatch
+    ):
+        """Sanity: with the default cap, hosting env is injected as before."""
+        monkeypatch.delenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", raising=False)
+        with patch_podman() as p:
+            await container.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                num_ports=5,
+            )
+        env = p.create_container.call_args.kwargs["env"]
+        env_dict = dict(e.split("=", 1) for e in env)
+        assert env_dict["KLANGK_PORT_MAPPINGS"].count(",") == 4  # 5 mappings
+        assert "KLANGK_HOSTING_HOSTNAME" in env_dict
+        assert "KLANGK_HOSTING_PROTO" in env_dict
+        assert "KLANGK_HOSTING_BASE_PATH" in env_dict
 
     async def test_container_config_structure(self, workspace):
         with patch_podman() as p:
