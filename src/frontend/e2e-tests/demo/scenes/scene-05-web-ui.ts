@@ -31,8 +31,10 @@
  *   - bash terminal sub-tab (leftmost): fracX 0.065 / fracY 0.20.
  *   - demo workspace card (2nd in "Owned by Me"): fracX 0.50 / fracY 0.55
  *     (fracY 0.40 → openclaw, 0.55 → demo, 0.70 → Team Project).
- *   - "+" new-terminal button: fracX 0.145 / fracY 0.20.
- *   - New (2nd) tab center: fracX 0.195 / fracY 0.20.
+ *   - Tab-strip positions are DERIVED, not calibrated: tabs are fixed 122px
+ *     (see terminalTabCenterPx / addTerminalTab in demo-helpers). With the
+ *     2 continuity tabs (bash + terminal2), "+" is at fracX ≈ 0.272 and the
+ *     new 3rd tab it creates is at fracX ≈ 0.322.
  *   - Rename field (triple-click select-all): fracX 0.50 / fracY 0.48.
  *   - OK button (rightmost in the dialog's bottom-right actions): fracX 0.60
  *     / fracY 0.62.
@@ -55,6 +57,7 @@ import {
   waitForTerminal,
   clickBackToWorkspaces,
   addTerminalTab,
+  terminalTabCenterPx,
   terminalType,
   mouseClick,
   mouseClickRight,
@@ -67,8 +70,14 @@ const TAB_STRIP_Y = 0.2;
 const SERVICE_TAB_X = 0.2;
 // bash sub-tab (leftmost): 4px margin + 61px (half the 122px tab).
 const BASH_TAB_X = 0.065;
-// New (2nd) tab center: 4 + 122 (bash) + 61 ≈ 187px.
-const NEW_TAB_X = 0.195;
+// CONTINUITY: scene 2's `klangkc shell demo terminal2` created a second
+// terminal window — and the scene-2 narration explicitly says "a named
+// window like this shows up as a tab in the web UI too." So on open the
+// `demo` strip already has TWO tabs: bash (index 0) + terminal2 (index 1).
+// The "+" therefore lands after 2 tabs (fracX ≈ 0.272), and the NEW tab it
+// creates is index 2 (the 3rd, fracX ≈ 0.322) — NOT index 1. (The earlier
+// take renamed terminal2 because these positions assumed a single tab.)
+const EXISTING_TABS = 2;
 // Rename dialog field + OK button (see header calibration).
 const FIELD_X = 0.5;
 const FIELD_Y = 0.48;
@@ -148,16 +157,20 @@ test("web ui tour", async ({ page, context, request }) => {
   //    commands or tour the nav tabs — the narration hands those off to Sc 5+.
   await pace(5000);
 
-  // 9. Add a second terminal tab via "+", then right-click → Rename → "scratch".
-  //    All mouse except typing the literal name.
-  await addTerminalTab(page);
+  // 9. Add a NEW terminal tab via "+" (after the 2 continuity tabs), then
+  //    right-click THAT new tab → Rename → "scratch". All mouse except
+  //    typing the literal name.
+  await addTerminalTab(page, EXISTING_TABS);
   await pace(2000);
 
+  // The new tab is index EXISTING_TABS (the 3rd: bash, terminal2, <new>).
+  const newTabX = terminalTabCenterPx(EXISTING_TABS);
+
   // Right-click the new tab → context menu → "Rename".
-  await mouseClickRight(page, NEW_TAB_X * 960, TAB_STRIP_Y * 540);
+  await mouseClickRight(page, newTabX, TAB_STRIP_Y * 540);
   await pace(1500); // context menu appears
   // "Rename" is the first menu item, just below the cursor.
-  await mouseClick(page, NEW_TAB_X * 960, (TAB_STRIP_Y + 0.04) * 540);
+  await mouseClick(page, newTabX, (TAB_STRIP_Y + 0.04) * 540);
   await pace(1500); // rename dialog appears
 
   // Triple-click the field → select-all (replaces the default name, not

@@ -1,9 +1,10 @@
 /**
  * Scene 5 — AI Agent — clanker (~1.5 min)
  *
- * CONTINUITY: still in the hero's `demo` workspace (from Sc 2/4). The agent's
- * output (app.py, requirements.txt) MUST persist into Sc 5b (debugging) and
- * Sc 6 (Files) — so we find-or-create `demo`, NEVER wipe it.
+ * CONTINUITY: still in the hero's `demo` workspace (from Sc 2/4). This is a
+ * pure Q&A beat — clanker answers a question in chat; it creates NO files. The
+ * Flask app that Sc 5b/6 depend on is built by pi in Sc 5b, not here, so we
+ * leave `demo` untouched.
  *
  * Opens the Chat tab, types an @clanker prompt ON SCREEN (so the viewer sees
  * the mention being composed), and lets the live agent respond. This is a
@@ -30,14 +31,14 @@ import {
   openChatTab,
 } from "../demo-helpers";
 
-const PROMPT =
-  '@clanker create a simple Flask web app on port 8000 that shows "Hello from Klangk"';
+const PROMPT = '@clanker "how long has this container been up"';
 
 test("clanker chat", async ({ page, request }) => {
   test.setTimeout(300_000);
 
   // 1. Ensure the shared `demo` workspace exists (continuity). No wipe —
-  //    clanker's output must persist into Sc 5b/6.
+  //    this is a read-only Q&A that leaves the workspace untouched (the
+  //    Flask app for Sc 5b/6 is built by pi in Sc 5b).
   const { headers } = await apiLogin(
     request,
     DEMO_HERO_EMAIL,

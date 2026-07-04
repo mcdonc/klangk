@@ -178,12 +178,16 @@ class Term:
         return res.stdout.strip()
 
     def split(self) -> str:
-        """Split the window side-by-side; return the new pane's id.
+        """Split the window into stacked top/bottom panes; return the new
+        (bottom) pane's id.
 
         The new pane runs the same rcfile shell as the session (venv PATH, host
         prompt, steady cursor — see ``record-terminal.sh``), so it looks
-        identical to the first pane and becomes the active pane. The split is a
-        tmux control call, so it never appears as typed text in the recording.
+        identical to the first pane and becomes the active pane. ``-v`` stacks
+        the panes (horizontal divider) so each gets the full terminal width —
+        important for scene 3b's long ``klangkc monitor | jq .`` JSON lines.
+        The split is a tmux control call, so it never appears as typed text in
+        the recording.
         """
         rcfile = os.environ.get("KLANGK_DEMO_RCFILE", "")
         cmd = ["bash"]
@@ -194,7 +198,7 @@ class Term:
             [
                 "tmux",
                 "split-window",
-                "-h",
+                "-v",
                 "-t",
                 self.session,
                 "-P",
@@ -556,8 +560,8 @@ def scene_3b(t: Term) -> None:
     Scene 3 now running. **CLI only** (no browser).
 
     Two-pane beat: split the terminal, join the service command
-    (``clanker:service-cmd``) in the right pane to see the gateway's logs,
-    then watch live ``service_health`` events in the left pane. Ctrl+C the
+    (``clanker:service-cmd``) in the bottom pane to see the gateway's logs,
+    then watch live ``service_health`` events in the top pane. Ctrl+C the
     gateway to trigger an ``unhealthy`` event, then recover via SIGHUP
     (auto-start boots a fresh gateway). Narrate over the whole arc.
 
@@ -587,51 +591,52 @@ def scene_3b(t: Term) -> None:
     t.pause(3)  # let the table land
     t.pause(HOLD)
 
-    # step 3 — attach to the service command itself. Split side-by-side;
-    # the RIGHT pane joins the service-cmd window (the gateway), whose
-    # logs stream live. Narrate: "here's the gateway running live."
-    left = t.pane_id()
-    right = t.split()
+    # step 3 — attach to the service command itself. Split top/bottom
+    # (horizontal divider); the BOTTOM pane joins the service-cmd window
+    # (the gateway), whose logs stream live. Narrate: "here's the gateway
+    # running live."
+    top = t.pane_id()
+    bottom = t.split()
     t.pause(HOLD)
     t.type("klangkc shell openclaw clanker:service-cmd", per_char=0.03)
     t.enter()
     t.expect("Escape: Enter", timeout=20)  # the "~." hint = joined
     t.pause(HOLD)  # let the gateway logs stream
 
-    # step 4 — health checks: in the LEFT pane, watch live service_health
+    # step 4 — health checks: in the TOP pane, watch live service_health
     # events. Snapshot-on-connect (#1210) sends a healthy frame immediately.
     # Narrate: exit 0 = healthy; you can wire a command (-- sh -c '...')
     # to fire on change (e.g. a Slack alert). jq pretty-prints the JSON.
-    t.select_pane(left)
+    t.select_pane(top)
     t.type("klangkc monitor --type service_health | jq .", per_char=0.03)
     t.enter()
     t.expect("service_health", timeout=30)
     t.pause(HOLD)
 
-    # step 5 — break the service: in the RIGHT pane, Ctrl+C kills the
+    # step 5 — break the service: in the BOTTOM pane, Ctrl+C kills the
     # gateway. Narrate: "what happens when the service breaks?"
-    t.select_pane(right)
+    t.select_pane(bottom)
     t.interrupt()  # Ctrl+C -> gateway dies; its logs stop
     t.pause(2)
     t.pause(HOLD)
 
-    # step 6 — watch it go unhealthy: back in the LEFT pane, the monitor
+    # step 6 — watch it go unhealthy: back in the TOP pane, the monitor
     # emits an unhealthy event on the next health check (<= interval).
     # The healthy frame already shown carried "healthy": true, so matching
     # the literal false value waits past it for the transition. Narrate:
     # "there it went unhealthy — and I can see exactly why."
-    t.select_pane(left)
+    t.select_pane(top)
     t.expect('"healthy": false', timeout=45)
     t.pause(HOLD)
 
     # Narrate the distinction: "the container is up" != "the service works".
-    # Stop the monitor (Ctrl+C the LEFT pane), then close the gateway pane.
+    # Stop the monitor (Ctrl+C the TOP pane), then close the gateway pane.
     # The monitor WS must be gone BEFORE the SIGHUP restart beat, or the
     # restart's close-1012 would yank it uncleanly (#1212/#1213).
     t.interrupt()  # Ctrl+C the monitor
     t.expect("host $", timeout=10)
-    t.kill_pane(right)  # close the gateway view (connection + its shell)
-    t.select_pane(left)  # focus survives, but be explicit
+    t.kill_pane(bottom)  # close the gateway view (connection + its shell)
+    t.select_pane(top)  # focus survives, but be explicit
     t.pause(HOLD)
 
     # step 7 — auto-start recovery via SIGHUP runtime restart (#1212/#1213).

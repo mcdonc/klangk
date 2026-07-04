@@ -209,9 +209,9 @@ _[Type: hostname — shows the container ID. Then: echo "$(hostname)" > ~/contai
 
 Now let me split my screen and connect again, this time to a named window.
 
-_[Split the terminal into two side-by-side panes. In the new pane, type: klangkc shell demo terminal2]_
+_[Split the terminal into two horizontally split panes. In the new (bottom) pane, type: klangkc shell demo terminal2]_
 
-Now I've got two terminals open to the same workspace, side by side. The second one connected to a separate, named window — "terminal2". And here's the proof that it's the same container:
+Now I've got two terminals open to the same workspace, on top of each other. The second one connected to a separate, named window — "terminal2". And here's the proof that it's the same container:
 
 _[In the second pane, type: cat containername — shows the same container ID]_
 
@@ -280,25 +280,25 @@ The Status column shows `openclaw` as **healthy** — the service command is run
 
 I can even attach to the service command itself — here's the gateway running live.
 
-_[Split the terminal. In the new pane: klangkc shell openclaw clanker:service-cmd — joins the service command's session; gateway logs stream]_
+_[Split the terminal horizontally. In the new pane: klangkc shell openclaw clanker:service-cmd — joins the service command's session; gateway logs stream]_
 
 Now here's what turns this from "a process I left running" into an actual service. First, **health checks**. A running container only proves the container is alive — it says nothing about the process inside it. So Klangk runs my health-check command inside the container every ten seconds: exit zero means healthy, anything else is unhealthy — and that status is the very thing lighting up the Status column. Because it's all surfaced as events, I can watch it live from the command line with `klangkc monitor`:
 
-_[In the left pane: klangkc monitor --type service_health | jq . — a healthy frame arrives immediately on connect]_
+_[In the top pane: klangkc monitor --type service_health | jq . — a healthy frame arrives immediately on connect]_
 
 There — healthy. And I can even run a command on a change, like firing a Slack alert when the service goes down. So what happens when the service actually breaks?
 
-_[In the right pane: Ctrl+C — kills the gateway; its logs stop]_
+_[In the bottom pane: Ctrl+C — kills the gateway; its logs stop]_
 
-_[The left pane's monitor emits an unhealthy event within a few seconds]_
+_[The top pane's monitor emits an unhealthy event within a few seconds]_
 
 There it went **unhealthy** — and I can see exactly why. That's the difference between "the container is up" and "the service is working."
 
-_[Ctrl+C the monitor; close the second pane; back to a single terminal]_
+_[Ctrl+C the monitor; close the bottom pane; back to a single terminal]_
 
 Second, **auto-start**. I've got `KLANGK_ALLOW_AUTOSTART` enabled on the server, so if I restart the whole Klangk server — or it reboots — openclaw's container boots on its own and the gateway is running _before anyone connects_. I just broke the gateway a moment ago, so let me restart the server and watch it come back:
 
-_[Host terminal: kill -HUP $(cat $XDG_RUNTIME_DIR/klangk-*.pid) — a graceful runtime restart that keeps the HTTP listener up. Then: klangkc ls — openclaw's Status goes starting → healthy again, all without anyone connecting]_
+_[Host terminal: kill -HUP $(cat $XDG_RUNTIME_DIR/klangk-\*.pid) — a graceful runtime restart that keeps the HTTP listener up. Then: klangkc ls — openclaw's Status goes starting → healthy again, all without anyone connecting]_
 
 The gateway here is also exposed as a **hosted app** — once we switch to the browser I can click straight through to openclaw's own web UI, proxied through Klangk's single port. No separate port to open, no extra auth to wire up. We'll see that in a moment.
 
@@ -308,13 +308,14 @@ So the same sandbox idea — one config file, one command — scales from "my de
 > healthy. _pre-roll:_ carries over from Sc 3 (openclaw pre-warmed, autostart on,
 > `jq` + LLM proxy working); **`KLANGK_HEALTH_CHECK_INTERVAL=10`** set (snappier
 > unhealthy flip; product default 30s; needs a **full** backend restart, off
-> camera). _mechanic (the unhealthy beat):_ two-pane split — right pane
-> `klangkc shell openclaw clanker:service-cmd` (joins the service command; gateway
-> logs stream), left pane `klangkc monitor --type service_health | jq .` (shows a
-> healthy frame immediately via snapshot-on-connect). Ctrl+C the **right** pane
-> kills the gateway; the **left** pane emits `"healthy": false` within ≤ interval
-> (the next health check). Then Ctrl+C the monitor, kill the right pane, and
-> SIGHUP-recover (auto-start boots a fresh gateway). _reset:_ to re-run, SIGHUP
+> camera). _mechanic (the unhealthy beat):_ two-pane split (horizontal
+> divider) — bottom pane `klangkc shell openclaw clanker:service-cmd` (joins the
+> service command; gateway logs stream), top pane `klangkc monitor --type
+service_health | jq .` (shows a healthy frame immediately via
+> snapshot-on-connect). Ctrl+C the **bottom** pane kills the gateway; the
+> **top** pane emits `"healthy": false` within ≤ interval (the next health
+> check). Then Ctrl+C the monitor, kill the bottom pane, and SIGHUP-recover
+> (auto-start boots a fresh gateway). _reset:_ to re-run, SIGHUP
 > again (or `klangkc restart openclaw`) to get back to healthy before re-breaking.
 > _gotchas:_ the unhealthy flip is silent dead air (≤10s at interval=10) — trim in
 > edit; the gateway binds a port, so **localhost only**; `klangkc monitor` does
@@ -373,11 +374,11 @@ _[Click the Chat tab in the left rail]_
 
 Every workspace comes with a built-in AI agent. By default it's called clanker, and it's available **only through chat** — you talk to it by @mentioning it, not by running it in a terminal yourself.
 
-_[Type: @clanker create a simple Flask web app on port 8000 that shows "Hello from Klangk"]_
+_[Type: @clanker "how long has this container been up"]_
 
 The agent runs Pi inside the container. It can read and write files, run shell commands, and answer questions — all confined to this workspace's sandbox.
 
-_[Wait ~10s. clanker's reply appears, followed by tool-call lines as it creates app.py and requirements.txt]_
+_[Wait ~30s. clanker's reply appears]_
 
 There it is. Now here's something important about the security model. My LLM API key — the key that talks to the AI provider — never enters the container. Klangk runs an nginx reverse proxy on the host that injects the key into requests. Inside the container, Pi just talks to a local proxy URL. So even if the container were compromised, the API key isn't there.
 
@@ -385,58 +386,63 @@ _[Click the Terminal tab in the left rail, then type: env]_
 
 And I can prove it. Here's the full environment of the container — no API keys, no secrets, nothing to steal. The key only exists on the host, in the proxy.
 
-After an @mention, follow-up messages automatically route to the agent — I don't need to keep @mentioning it. The conversation continues until someone else speaks or I @mention a different user.
-
 One thing worth being clear about: clanker is a **chat agent**, not a coding-agent harness. It does no tool calling, and you can't add skills or prompts to it — it's a fixed, built-in assistant scoped to the workspace. If what you want is a full harness you can extend and drive yourself, that's the next section.
 
 > **Production —** _on screen:_ browser → Chat tab, still in `demo` (Sc 4).
-> _pre-roll:_ agent functional (LLM key working, `pi` set up); test the exact
-> prompt off-camera; clanker's output (`app.py`, `requirements.txt`) must persist
-> for Sc 5b/6 — don't wipe `demo`. _reset:_ hard — clanker mutated `demo`; for a
-> clean re-take, rm `app.py`/`requirements.txt` + `pip uninstall flask`; full
-> `rm && create` only for an arc re-run. _gotchas:_ **live/nondeterministic** —
-> one long take, leave dead air; needs a working key (proxy 401 kills the scene);
-> verify the container `env` genuinely has **no secrets** before the `env` beat.
+> _pre-roll:_ agent functional (LLM key working); test the exact prompt
+> off-camera. This is a read-only Q&A — clanker answers in chat, creates no
+> files, so `demo` is left untouched (the Flask app for Sc 5b/6 is built by pi
+> in Sc 5b). _reset:_ none — re-run freely. _gotchas:_ **live/nondeterministic**
+> — one long take, leave dead air; needs a working key (proxy 401 kills the
+> scene); clanker is a chat-only agent (no tool calling), so an uptime-style
+> question is answered from its training data, not by running a command —
+> verify the response is acceptable before keeping the take.
 
-## Scene 5b — Debugging with The Pi Harness (~1.5–2 minutes)
+## Scene 5b — Debugging with The Pi Harness (~2.5 minutes)
 
 > **Production note:** The Pi interaction here is nondeterministic — Pi's exact
 > steps vary take to take. This part is **driven by an agent that pretends to be
 > a human operating Pi**: it launches `pi`, sends the debug prompt, and reacts to
 > Pi's output as a person would (reading the traceback, watching the fix, then
-> inspecting files in the second bash tab). Its **goal is to get clanker's Flask
+> inspecting files in the second bash tab). Its **goal is to get pi's Flask
 > app into a state where it can be opened in a new browser tab** — i.e. installed
 > and running so the hosted-app URL serves the page. The scene culminates in
 > doing exactly that. Treat it like the live `pi` beats in Scenes 2 and 6 — one
 > long take, leave dead air while Pi works, narrate over later.
+>
+> Note that the pi session files are in ~/.pi within the container and those contain the conversation with Pi. While you're recording the session you can also use "podman exec" or "klangkc exec" and tmux to capture the conversation and respond interactively.
 
 _[Screen: same workspace, Terminal tab]_
 
-So clanker built us a Flask app. Let's actually try to run it.
+Let's use pi to build us an application.
 
-_[Terminal tab (or `klangkc shell demo`): type python app.py]_
+_[Open "pi", type "please build me a Flask hello world application that listens on port 8080" within it]_
+
+Let's actually try to run it.
+
+_[Open a new terminal tab via "+" type "python app".py into it]_
 
 `ModuleNotFoundError: No module named 'flask'`. A classic agent mistake — the code is there, but the dependency was never installed. I could fix this by hand, but there's a faster way that shows off something important about Klangk.
 
-This container has Pi as an agent — the same engine that powers clanker — but I can run it right here in the terminal, where I can watch it work and step in alongside it. And you're not limited to Pi — you can also bring your own harness, like Claude Code or Codex, and run it the same way.
+This container has Pi as an agent — the same engine that powers clanker — but I can run it right here in the terminal, where I can watch it work and step in alongside it.
 
-_[Click "+" to open a new terminal tab, then type: pi]_
+_[Go back to the tab with pi in it]_
 
-I'll start Pi in its own tab. Now I'll ask it to debug.
+Now I'll ask it to debug.
 
-_[Type into pi: clanker's Flask app in app.py won't run — figure out why and fix it]_
+_[Type into pi: pi's Flask app in app.py won't run — figure out why and fix it]_
 
 Pi reads the traceback, sees Flask is missing, and installs it.
 
 _[Watch Pi: it reads app.py, runs pip install -r requirements.txt, then retries python app.py]_
 
-And here's the part I want you to see. While Pi works in its tab, I can open a plain bash tab right next to it and inspect what clanker actually produced.
+And here's the part I want you to see. While Pi works in its tab, I can open a plain bash tab right next to it and inspect what pi actually produced.
 
-_[Click "+" to open a second terminal tab next to the Pi tab]_
+_[Go back to the extra bash tab]_
 
 _[Type, one at a time: ls — cat app.py — cat requirements.txt]_
 
-There's the app clanker wrote, and there's `requirements.txt` — Flask was listed all along, it just never got installed. I can poke around the files myself, double-check Pi's work, run things — all alongside the agent, not instead of it.
+There's the app pi wrote, and there's `requirements.txt` — Flask was listed all along, it just never got installed. I can poke around the files myself, double-check Pi's work, run things — all alongside the agent, not instead of it.
 
 _[Browser: open the demo workspace → click the hosted-app button, or paste the URL from klangk-hosted-url 8000 (http://localhost:8995/hosted/<workspace_id>/<host_port>/) → the page renders "Hello from Klangk"]_
 
@@ -444,10 +450,12 @@ There it is. A real running app — broken by one agent, fixed by another, and n
 open in my browser — all without leaving the sandbox.
 
 > **Production —** _on screen:_ browser → Terminal tab (or `klangkc shell`), Pi
-> running in one tab + a plain bash tab alongside. _pre-roll:_ Sc 5's `demo` with
-> `app.py` + `requirements.txt` (flask listed, never installed); verify off-camera
-> that `python app.py` fails with `ModuleNotFoundError`; `pi` functional.
-> _reset:_ `pip uninstall -y flask` to re-break, or re-run Sc 5. _gotchas:_
+> running in one tab + a plain bash tab alongside. _pre-roll:_ `demo` workspace
+> present; `pi` functional. The Flask app is built on-camera by Pi (which writes
+> `app.py` + `requirements.txt` but, as agents do, never pip-installs), so the
+> `ModuleNotFoundError` happens live.
+> _reset:_ `rm app.py requirements.txt` for a clean rebuild, or re-run Sc 5b
+> from scratch (Pi rebuilds). _gotchas:_
 > **live/nondeterministic**; if the browser terminal typing is flaky, drive via
 > `klangkc shell` instead (more reliable); the hosted-app URL must be live
 > (verify off-camera — fall back to `curl localhost:8000`).
@@ -505,13 +513,11 @@ Chat is shared too — everyone in the workspace sees messages in real time, inc
 
 ## Scene 8 — Plugins (45 seconds)
 
-_[Type: cat customize/plugins.yaml — point at one plugin entry (name, git, path, ref)]_
-
 Klangk has a plugin system. Plugins are git repos that can install system packages at image build time, add CLI tools to the container, extend Pi with new tools, or inject UI widgets into the browser.
 
-_[Browser: in the demo workspace, click the Chat tab → type: @clanker celebrate! → confetti animates over the UI (clanker called the celebrate tool the plugin registered)]_
+_[Browser: in the demo workspace, type pi and wait for the pi interactive tool to come up. type boingball! → a bouncing ball animates over the UI (pi called the boingball tool the plugin registered)]_
 
-For example, the "celebrate" plugin lets Pi trigger a confetti animation. The "git-credential" plugin adds a browser-based Git authentication dialog. "claude-code" installs Anthropic's Claude Code agent alongside Pi.
+For example, the "boingball" plugin lets Pi trigger a bouncing ball amimation. The "git-credential" plugin adds a browser-based Git authentication dialog. "claude-code" installs Anthropic's Claude Code agent alongside Pi. The "celebrate" plugin shows confetti.
 
 Plugins are declared in a YAML file and fetched automatically.
 
@@ -530,11 +536,9 @@ Plugins can also extend the Flutter/Dart app that composes Klangk itself.
 
 ## Scene 9 — Administration (30 seconds)
 
-_[Browser: click the admin link → click through the Users, Groups, Invitations, and ACL tabs]_
+_[Browser: click the admin link → click through the Users, Groups, Invitations, and ACL tabs, 5 seconds shown apiece]_
 
 The admin panel lets you manage users and groups, send email invitations, and configure access control. Klangk supports OIDC single sign-on — Google, GitHub, whatever your identity provider is.
-
-Everything runs through a single port — nginx reverse-proxies the API, the frontend, hosted apps, and the LLM proxy all on port 8995.
 
 > **Production —** _on screen:_ browser → admin panel. _pre-roll:_ admin logged
 > in; a couple seeded users/groups so it looks lived-in. _reset:_ none.
@@ -542,9 +546,9 @@ Everything runs through a single port — nginx reverse-proxies the API, the fro
 
 ## Scene 10 — Closing (30 seconds)
 
-So that's Klangk. For solo developers: sandboxed containers you manage from the CLI, one-command project setup with `klangkc sandbox`, SSH agent forwarding so your keys just work, and workspaces that can run always-on services with auto-start and health checks. For teams: shared workspaces, pair programming through shared terminals, real-time chat with an AI agent, and role-based access control. All self-hosted, all open source.
+So that's some of Klangk. For solo developers: sandboxed containers you manage from the CLI, one-command project setup with `klangkc sandbox`, SSH agent forwarding so your keys just work, and workspaces that can run always-on services with auto-start and health checks. For teams: shared workspaces, pair programming through shared terminals, real-time chat with an AI agent, and role-based access control. All self-hosted, all open source.
 
-Containers auto-stop after an idle timeout to save resources, but your files persist. You can get started with a single Docker command or clone the repo and use devenv for development.
+Most containers auto-stop after an idle timeout to save resources, but your files persist. You can get started with a single Docker command or clone the repo and use devenv for development.
 
 Check it out on GitHub — the link is in the description. Thanks for watching.
 

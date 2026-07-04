@@ -697,19 +697,41 @@ export async function seedDemoFile(
   }
 }
 
-/** Add a new terminal tab by clicking the "+" ("New terminal") button in
- *  the terminal tab strip with the visible mouse cursor.
+/** Terminal tab-strip geometry (terminal_tabs_view.dart), at the 960px
+ *  Flutter layout the recorder captures. The strip is a 32px-tall Row below
+ *  the 40px nav-tab bar; each _TerminalTab is a FIXED SizedBox(width:120)
+ *  wrapped in 1px horizontal padding → 122px each (the tab name does NOT
+ *  affect width — it ellipsizes), and the Row starts with a 4px left margin.
+ *  Vertically the strip center is at fracY ≈ 0.20 (56 AppBar + 40 nav + 4 pad
+ *  + 16 half-strip / 540).
  *
- *  Layout (at 960×540, Flutter logical): the terminal tab strip is a 32px-tall
- *  Row below the 40px nav-tab bar, inside the Terminal content pane. Each
- *  _TerminalTab is 120px wide (SizedBox) + 2px padding = 122px. The "+"
- *  button sits AFTER the first tab: 4px left margin + 122px (bash tab) +
- *  ~13px (half the 26px-wide icon button) ≈ 139px → fracX ≈ 0.145.
- *  Vertically the strip center is at fracY ≈ 0.20 (56px AppBar + 40px nav
- *  tabs + 4px content padding + 16px half-strip-height ≈ 116px / 540). */
-export const addTerminalTab = (page: Page) => {
+ *  Because tabs are fixed-width, tab/"+" centers are a pure function of
+ *  index/count — no vision calibration needed. tabCenterX(0)=0.068 (bash),
+ *  tabCenterX(1)=0.195, etc.; these match the live UI exactly. */
+const TAB_MARGIN_PX = 4;
+const TAB_W_PX = 122; // 120 (SizedBox) + 2 (1px padding each side)
+const PLUS_HALF_PX = 13; // half the ~26px "New terminal" icon button
+const LAYOUT_W = 960;
+
+/** Horizontal center (px) of the terminal tab at 0-based `tabIndex`. */
+export function terminalTabCenterPx(tabIndex: number): number {
+  return TAB_MARGIN_PX + tabIndex * TAB_W_PX + TAB_W_PX / 2;
+}
+
+/** Add a new terminal tab by clicking the "+" ("New terminal") button in the
+ *  terminal tab strip with the visible mouse cursor.
+ *
+ *  `existingTabs` = how many tabs are already open BEFORE this click (the
+ *  "+" sits right after the last one). A fresh single-terminal workspace
+ *  passes 1 ("+" at fracX ≈ 0.145); the hero `demo` workspace passes 2
+ *  because scene 2's `klangkc shell demo terminal2` left a second window
+ *  that shows up as a tab ("+" at fracX ≈ 0.272). */
+export const addTerminalTab = (page: Page, existingTabs = 1) => {
   const { width, height } = vp(page);
-  return mouseClick(page, width * 0.145, height * 0.2);
+  const x =
+    (terminalTabCenterPx(existingTabs) - TAB_W_PX / 2 + PLUS_HALF_PX) *
+    (width / LAYOUT_W);
+  return mouseClick(page, x, height * 0.2);
 };
 
 /** Wait until the workspace terminal is interactive. Semantics-independent:
