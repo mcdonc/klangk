@@ -5615,7 +5615,6 @@ class TestTerminalController:
             workspace=None,
             _has_perm=AsyncMock(return_value=has_perm),
             broadcast_shared_terminals=MagicMock(),
-            _save_state_snapshot=MagicMock(),
         )
         return TerminalController(conn), sock, conn
 
@@ -7312,8 +7311,8 @@ class TestSharedTerminalController:
     Connection-level tests reach only indirectly — notably the
     ``Connection._handle_list_error`` backward-compat delegate, the
     ``join_shared_terminal`` ``asyncio.CancelledError`` re-raise, and
-    the ``find_window``/``broadcast_shared_terminals``/
-    ``save_state_snapshot`` helpers as controller methods.
+    the ``find_window``/``broadcast_shared_terminals`` helpers as
+    controller methods.
     """
 
     def _controller(
@@ -7545,7 +7544,7 @@ class TestSharedTerminalController:
         finally:
             wshandler.state.sessions.pop("ws-1", None)
 
-    # --- broadcast_shared_terminals / save_state_snapshot ---
+    # --- broadcast_shared_terminals ---
 
     async def test_broadcast_shared_terminals_broadcasts(self, user):
         ctrl, sock, conn = self._controller(user=user)
@@ -7557,16 +7556,6 @@ class TestSharedTerminalController:
             assert any(s.get("type") == "shared_terminals" for s in sent)
         finally:
             await ws.remove_subscriber(sock)
-            wshandler.state.sessions.pop("ws-1", None)
-
-    async def test_save_state_snapshot_is_noop_when_disabled(self, user):
-        """The snapshot save is currently disabled (early return)."""
-        ctrl, _, _ = self._controller(user=user)
-        ws = self._ws_session()
-        try:
-            # Must not raise and must not schedule any task.
-            ctrl.save_state_snapshot(ws)
-        finally:
             wshandler.state.sessions.pop("ws-1", None)
 
     # --- create_shared_terminal (legacy) ---
@@ -7901,16 +7890,6 @@ class TestSharedTerminalController:
         try:
             with patch.object(conn.shared, "broadcast_shared_terminals") as m:
                 conn.broadcast_shared_terminals(ws)
-            m.assert_called_once_with(ws)
-        finally:
-            wshandler.state.sessions.pop("ws-1", None)
-
-    async def test_connection_save_state_snapshot_delegate(self, user):
-        conn = _base_conn(user=user)
-        ws = wshandler.state.get_or_create_session("ws-1")
-        try:
-            with patch.object(conn.shared, "save_state_snapshot") as m:
-                conn._save_state_snapshot(ws)
             m.assert_called_once_with(ws)
         finally:
             wshandler.state.sessions.pop("ws-1", None)

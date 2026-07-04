@@ -670,9 +670,6 @@ class Connection:
     def broadcast_shared_terminals(self, ws_session) -> None:
         self.shared.broadcast_shared_terminals(ws_session)
 
-    def _save_state_snapshot(self, ws_session) -> None:
-        self.shared.save_state_snapshot(ws_session)
-
     async def handle_create_shared_terminal(self, msg: dict) -> None:
         await self.shared.create_shared_terminal(msg)
 

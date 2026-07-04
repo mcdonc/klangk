@@ -724,7 +724,6 @@ class TerminalController:
         }
         if old_shared != new_shared or old_shared_names != new_shared_names:
             self._conn.broadcast_shared_terminals(ws_session)
-        self._conn._save_state_snapshot(ws_session)
 
     def _merge_service_windows(self, ws_session, windows: list[dict]) -> None:
         """Merge the agent's ``service`` session windows into the map.
@@ -1041,7 +1040,6 @@ class SharedTerminalController:
             return
         match["shared"] = True
         self.broadcast_shared_terminals(ws_session)
-        self.save_state_snapshot(ws_session)
 
     async def unshare_window(self, msg: dict) -> None:
         """Remove sharing from a window and kick joiners."""
@@ -1081,7 +1079,6 @@ class SharedTerminalController:
             }
         )
         self.broadcast_shared_terminals(ws_session)
-        self.save_state_snapshot(ws_session)
 
     @staticmethod
     async def _select_shared_window(
@@ -1250,27 +1247,6 @@ class SharedTerminalController:
             {"type": "shared_terminals", "terminals": terminals}
         )
 
-    def save_state_snapshot(self, ws_session) -> None:
-        """Schedule a serialized save of workspace state to the container.
-
-        Callers must ensure ``container_id`` is set.
-        Uses the session's save_lock so concurrent saves don't overlap.
-        """
-        return  # temporarily disabled for debugging
-
-        container_id = self._conn.container_id
-        # Snapshot the state now — the dict may mutate before the task runs.
-        snapshot = {
-            uid: [dict(w) for w in wins]
-            for uid, wins in ws_session.terminal_windows.items()
-        }
-
-        async def _do_save() -> None:
-            async with ws_session.save_lock:
-                await terminal.save_workspace_state(container_id, snapshot)
-
-        asyncio.create_task(_do_save())
-
     # Keep old handler name for backwards compat with existing E2E tests
     async def create_shared_terminal(self, msg: dict) -> None:
         """Create a new shared terminal (legacy API — creates a new window
@@ -1307,7 +1283,6 @@ class SharedTerminalController:
                 w["shared"] = True
                 break
         self.broadcast_shared_terminals(ws_session)
-        self.save_state_snapshot(ws_session)
 
     async def delete_shared_terminal(self, msg: dict) -> None:
         """Delete a shared terminal (legacy API — unshares and closes
@@ -1375,7 +1350,6 @@ class SharedTerminalController:
             }
         )
         self.broadcast_shared_terminals(ws_session)
-        self.save_state_snapshot(ws_session)
 
     # Legacy error handler kept for coverage
     async def handle_list_error(
