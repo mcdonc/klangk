@@ -198,7 +198,7 @@ cat >"$NGINX_STATE/nginx.conf" <<EOF_SECURE
 daemon off;
 pid /tmp/nginx.pid;
 error_log stderr;
-events { worker_connections 64; }
+events { worker_connections 1024; }
 http {
   access_log /dev/stdout;
   client_body_temp_path /tmp/nginx_client_body;
