@@ -93,8 +93,11 @@ services:
         target: /home/klangk/mount
         bind:
           create_host_path: false
-      # Uncomment for branding logo (served at /branding/logo.png):
-      # - ./branding:/home/klangk/data/branding:ro
+      # Uncomment to serve a custom logo without an external URL.
+      # Put your logo file (e.g. logo.png) in a local directory, mount it
+      # here, and set KLANGK_LOGO_URL=/branding/logo.png above. The backend
+      # serves $KLANGK_DATA_DIR/branding/ at the /branding/ URL path.
+      # - ./my-logo-dir:/home/klangk/data/branding:ro
       # Uncomment for custom email templates:
       # - ./email-templates:/etc/klangk/email-templates:ro
       # Uncomment for custom CA certs (runtime, no rebuild):
