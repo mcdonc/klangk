@@ -159,6 +159,19 @@ def hash_fallback_handle(base: str) -> str:
     return f"{base[: MAX_HANDLE_LEN - 9]}-{suffix}"
 
 
+async def generate_handle(db, email: str) -> str:
+    """Return a unique handle derived from *email* on connection *db*.
+
+    This is the single shared handle generator. Every codepath that
+    creates a user — :func:`create_user`, the email-verification
+    register route, the admin invite route, and :func:`backfill_handles`
+    — must go through here so handle derivation and uniqueness stay in
+    sync (regression: #1256, where the email-verification routes did a
+    raw ``INSERT`` with no handle and got ``NULL``).
+    """
+    return await unique_handle(db, derive_handle(email))
+
+
 async def backfill_handles(db) -> None:
     """Assign handles to any users that don't have one yet."""
     cursor = await db.execute(
@@ -166,8 +179,7 @@ async def backfill_handles(db) -> None:
     )
     rows = await cursor.fetchall()
     for row in rows:
-        base = derive_handle(row["email"])
-        handle = await unique_handle(db, base)
+        handle = await generate_handle(db, row["email"])
         await db.execute(
             "UPDATE users SET handle = ? WHERE id = ?",
             (handle, row["id"]),
@@ -185,8 +197,7 @@ async def create_user(
 ) -> dict:
     async with transaction() as db:
         user_id = str(uuid.uuid4())
-        base = derive_handle(email)
-        handle = await unique_handle(db, base)
+        handle = await generate_handle(db, email)
         await db.execute(
             "INSERT INTO users (id, email, password_hash, verified,"
             " provider, external_id, handle) VALUES (?, ?, ?, ?, ?, ?, ?)",

@@ -312,6 +312,29 @@ class TestHandles:
         assert model.derive_handle("@foo.com") == "user"
         assert model.derive_handle("admin") == "admin"
 
+    async def test_generate_handle_derives_and_uniquifies(self, db):
+        """generate_handle is the shared generator — derive + unique (#1256)."""
+        # Fresh email → derives the local part, no suffix.
+        async with model.transaction() as conn:
+            assert (
+                await model.generate_handle(conn, "alice@example.com")
+                == "alice"
+            )
+        # After alice exists, the same email gets a -2 suffix.
+        await model.create_user("alice@example.com", "hash", verified=True)
+        async with model.transaction() as conn:
+            assert (
+                await model.generate_handle(conn, "alice@example.com")
+                == "alice-2"
+            )
+            # Different local part still derives cleanly.
+            assert (
+                await model.generate_handle(conn, "bob.smith@foo.com")
+                == "bob.smith"
+            )
+            # Garbage local part falls back to the "user" base.
+            assert await model.generate_handle(conn, "@foo.com") == "user"
+
     async def test_validate_handle(self):
         assert model.validate_handle("alice") is None
         assert model.validate_handle("") is not None
