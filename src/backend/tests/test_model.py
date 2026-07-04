@@ -178,6 +178,75 @@ class TestMigration:
             row = await cursor.fetchone()
             assert row[0] == "echo hello"
 
+    async def test_migrate_workspaces_adds_mounts_and_env(self, temp_data_dir):
+        """init_db adds mounts/env columns to tables that predate them (#1264).
+
+        These columns exist in CREATE TABLE but had no ADD COLUMN migration,
+        so a DB created before they shipped lacked them. init_db must add
+        them on upgrade (NULL by default) without touching existing rows.
+        """
+        db = await aiosqlite.connect(str(model.db.DB_PATH))
+        model.db.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            await db.execute("""
+                CREATE TABLE users (
+                    id TEXT PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT,
+                    verified INTEGER NOT NULL DEFAULT 0,
+                    provider TEXT NOT NULL DEFAULT 'local',
+                    external_id TEXT,
+                    handle TEXT UNIQUE,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            await db.execute(
+                "INSERT INTO users (id, email, password_hash, verified)"
+                " VALUES ('u1', 'owner@example.com', 'hash', 1)"
+            )
+            # Pre-mounts/env workspaces table — has the columns that existed
+            # *before* mounts/env shipped, but NOT mounts/env themselves.
+            await db.execute("""
+                CREATE TABLE workspaces (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL REFERENCES users(id),
+                    name TEXT NOT NULL,
+                    container_id TEXT,
+                    num_ports INTEGER NOT NULL DEFAULT 5,
+                    image TEXT,
+                    service_command TEXT,
+                    auto_start INTEGER NOT NULL DEFAULT 0,
+                    setup_state TEXT NOT NULL DEFAULT 'complete',
+                    health_check TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(user_id, name)
+                )
+            """)
+            await db.execute(
+                "INSERT INTO workspaces (id, user_id, name)"
+                " VALUES ('ws1', 'u1', 'old-ws')"
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        await model.init_db()
+
+        # Both columns added; old row survived and reads back as NULL
+        # (no mounts, no env overrides).
+        async with model.transaction() as conn:
+            cursor = await conn.execute("PRAGMA table_info(workspaces)")
+            cols = {row[1] for row in await cursor.fetchall()}
+            assert "mounts" in cols
+            assert "env" in cols
+
+            cursor = await conn.execute(
+                "SELECT mounts, env FROM workspaces WHERE id = 'ws1'"
+            )
+            mounts, env = await cursor.fetchone()
+            assert mounts is None
+            assert env is None
+
 
 class TestUsers:
     async def test_create_user(self, db):
