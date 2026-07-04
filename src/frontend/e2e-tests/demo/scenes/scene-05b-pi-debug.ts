@@ -59,7 +59,7 @@ const BUILD_PROMPT =
 const DEBUG_PROMPT =
   "The Flask app in app.py won't run — I get ModuleNotFoundError. Figure out why and fix it.";
 
-test("pi debug", async ({ page, context, request }) => {
+test("pi debug", async ({ page, request }) => {
   test.setTimeout(420_000); // 7 min — two live pi turns + inspect + hosted URL
 
   // --- prep: ensure demo workspace + resolve the hero's tmux session name ---
@@ -158,21 +158,16 @@ test("pi debug", async ({ page, context, request }) => {
   await terminalType(page, "cat requirements.txt");
   await pace(3000);
 
-  // --- 6. Open the hosted URL in a NEW browser tab → "Hello from Klangk". ---
+  // --- 6. Open the hosted URL in the browser → "Hello from Klangk". ---
   // Resolve container port 8000 → host port from the workspace status, then
-  // build the hosted URL (the single-port proxy path).
+  // build the hosted URL (the single-port proxy path). Navigate the MAIN page
+  // to it (replacing the workspace view) so the render is guaranteed visible
+  // to ffmpeg — a new tab (context.newPage) in the single Chromium window
+  // isn't reliably foregrounded by matchbox, but a same-tab goto is.
   const status = await getWorkspaceStatus(request, headers, ws.id);
   const hostPort = (status.ports as number[])[0];
   const hostedUrl = `${DEMO_URL}/hosted/${ws.id}/${hostPort}/`;
 
-  const appTab = await context.newPage();
-  await appTab.goto(hostedUrl, { waitUntil: "domcontentloaded" });
-  // Bring the hosted-app tab to the front so ffmpeg (capturing the whole X
-  // display) actually sees it render. matchbox focuses the most-recently-
-  // focused window, so an explicit bringToFront is needed.
-  await appTab.bringToFront();
+  await page.goto(hostedUrl, { waitUntil: "domcontentloaded" });
   await pace(7000); // viewer sees the page render: "Hello from Klangk"
-  await appTab.close();
-  await page.bringToFront();
-  await pace(2000);
 });
