@@ -220,24 +220,26 @@ set -e
 echo
 echo "=== finalizing recording ==="
 
-# Dump every surviving pane's full scrollback to a text transcript next to the
-# recording. This is the cheap, vision-free way to QA a take: it shows exactly
-# what was typed and what came back, per pane, without extracting video frames.
-# (Panes a scene killed mid-take aren't captured -- only the survivors are.)
-TRANSCRIPT="${OUT%.*}.transcript.txt"
-{
-  echo "# transcript for: $OUT"
-  echo "# driver: $*"
-  echo "# generated: $(date -Iseconds)"
-  echo
-  mapfile -t PANES < <(tmux list-panes -t "$SESSION" -F '#{pane_id}' 2>/dev/null)
-  for pane in "${PANES[@]}"; do
-    echo "================ pane ${pane} ================"
-    tmux capture-pane -t "$pane" -p -S -100000 2>/dev/null
+# Optionally dump every surviving pane's full scrollback to a text transcript
+# next to the recording (the cheap, vision-free way to QA a take). OFF by
+# default -- set KLANGK_DEMO_TRANSCRIPT=1 to enable. (Panes a scene killed
+# mid-take aren't captured -- only the survivors are.)
+if [ "${KLANGK_DEMO_TRANSCRIPT:-0}" = "1" ]; then
+  TRANSCRIPT="${OUT%.*}.transcript.txt"
+  {
+    echo "# transcript for: $OUT"
+    echo "# driver: $*"
+    echo "# generated: $(date -Iseconds)"
     echo
-  done
-} >"$TRANSCRIPT"
-echo "  transcript: $TRANSCRIPT"
+    mapfile -t PANES < <(tmux list-panes -t "$SESSION" -F '#{pane_id}' 2>/dev/null)
+    for pane in "${PANES[@]}"; do
+      echo "================ pane ${pane} ================"
+      tmux capture-pane -t "$pane" -p -S -100000 2>/dev/null
+      echo
+    done
+  } >"$TRANSCRIPT"
+  echo "  transcript: $TRANSCRIPT"
+fi
 
 # Give the last frame a beat to land, then 'q' ffmpeg for a clean mux.
 sleep 0.6
