@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Build a custom klangk-host image with plugins baked in.
 #
+# A custom image is only needed for plugins.  All other customization
+# (branding, CA certs, email templates, OIDC hooks, legal links) is
+# handled at runtime via env vars and bind mounts — see the README.
+#
 # Prerequisites:
 #   - Nix with devenv installed (or run klangk's ./bootstrap)
 #   - Docker
@@ -20,12 +24,8 @@ cd "$SCRIPT_DIR"
 KLANGK_REF="${KLANGK_REF:-main}"
 KLANGK_REPO="${KLANGK_REPO:-https://github.com/mcdonc/klangk.git}"
 KLANGK_DIR="$SCRIPT_DIR/.klangk"
-SSL_CERT_DIR="${KLANGK_SSL_CERT_DIR:-$SCRIPT_DIR/ssl}"
 WORKSPACE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/klangk-ws-XXXXXX")
 trap 'rm -rf "$WORKSPACE_DIR"' EXIT
-
-# Ensure ssl/ dir exists for COPY (even if empty)
-mkdir -p "$SCRIPT_DIR/ssl"
 
 # 1. Clone or update klangk repo
 echo "=== Cloning klangk ($KLANGK_REF) ==="
@@ -56,7 +56,7 @@ DEVENV_CMD=(devenv --quiet -O dotenv.enable:bool false shell --)
 
 # Run everything inside devenv shell for access to flutter, podman, python, etc.
 "${DEVENV_CMD[@]}" bash "$SCRIPT_DIR/build-inner.sh" \
-  "$PLUGINS_DIR" "$WORKSPACE_DIR" "$SSL_CERT_DIR"
+  "$PLUGINS_DIR" "$WORKSPACE_DIR"
 
 # 4. Build host image from source (needs devenv for venv build context)
 echo "=== Building host image from source ==="
