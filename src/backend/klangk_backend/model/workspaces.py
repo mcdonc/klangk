@@ -284,7 +284,7 @@ async def list_workspaces(
     if q:
         where += " AND name LIKE '%' || ? || '%'"
         params.append(q)
-    params.extend([limit, offset])
+    params.extend([limit + 1, offset])
     async with transaction() as db:
         cursor = await db.execute(
             "SELECT id, name, container_id, image, service_command,"
@@ -311,7 +311,8 @@ async def list_workspaces(
             }
             for row in rows
         ]
-        has_more = len(items) == limit
+        has_more = len(items) > limit
+        items = items[:limit]
         return {
             "items": items,
             "has_more": has_more,
@@ -366,7 +367,7 @@ async def list_shared_workspaces(
                 user_id,
                 *group_ids,
                 *([q] if q else []),
-                limit,
+                limit + 1,
                 offset,
             ),
         )
@@ -388,7 +389,8 @@ async def list_shared_workspaces(
             }
             for row in rows
         ]
-        has_more = len(items) == limit
+        has_more = len(items) > limit
+        items = items[:limit]
         return {
             "items": items,
             "has_more": has_more,
