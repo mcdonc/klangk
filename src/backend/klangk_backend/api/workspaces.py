@@ -53,6 +53,17 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Page size used on the backward-compatible bare-list path (no
+# ``limit``/``offset``). Callers that pass no pagination params -- e.g.
+# the workspace Settings panel, which looks up a workspace by id with
+# ``firstWhere`` -- expect the *whole* list, not a silently truncated
+# one. The explicit ``limit`` Query is capped at 100 for real list views;
+# this larger ceiling keeps legacy clients from being cut off at the
+# model default of 10 ("Workspace not found" past 10, #1266). It is a
+# safety ceiling, not a hard contract -- a user with more workspaces
+# than this should use explicit pagination.
+BARE_LIST_LIMIT = 500
+
 
 def _annotate_running(items: list[dict]) -> list[dict]:
     """Annotate each workspace dict with live container/health state.
@@ -99,16 +110,17 @@ async def list_workspaces(
     ``sort`` (``name``/``created``), ``order`` (``asc``/``desc``) and ``q``
     (name substring) apply in both shapes.
     """
+    bare = limit is None and offset is None
     result = await workspaces.list_workspaces(
         user["id"],
-        limit=limit or 10,
+        limit=BARE_LIST_LIMIT if bare else limit,
         offset=offset or 0,
         sort=sort,
         order=order,
         q=q,
     )
     _annotate_running(result["items"])
-    if limit is None and offset is None:
+    if bare:
         return result["items"]
     return result
 
@@ -127,16 +139,17 @@ async def list_shared_workspaces(
     Without ``limit``/``offset`` (backward-compatible) returns a bare list.
     With pagination params returns an envelope (see ``list_workspaces``).
     """
+    bare = limit is None and offset is None
     result = await model.list_shared_workspaces(
         user["id"],
-        limit=limit or 10,
+        limit=BARE_LIST_LIMIT if bare else limit,
         offset=offset or 0,
         sort=sort,
         order=order,
         q=q,
     )
     _annotate_running(result["items"])
-    if limit is None and offset is None:
+    if bare:
         return result["items"]
     return result
 
