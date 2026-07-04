@@ -472,7 +472,8 @@ async def export_workspace(
     estimated_size = 0
     if home_dir.exists():
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 ["du", "-sb", str(home_dir)],
                 capture_output=True,
                 text=True,
@@ -556,9 +557,12 @@ async def _stream_upload_to_tempfile(file: UploadFile) -> str:
     return tmp.name
 
 
-def _extract_archive_metadata(archive_path: str, name: str | None) -> dict:
+async def _extract_archive_metadata(
+    archive_path: str, name: str | None
+) -> dict:
     """Read workspace.json from the archive and return sanitized metadata."""
-    result = subprocess.run(
+    result = await asyncio.to_thread(
+        subprocess.run,
         ["tar", "xzf", archive_path, "-O", "workspace.json"],
         capture_output=True,
         timeout=30,
@@ -613,7 +617,8 @@ async def _extract_home_directory(
     """Extract the ``home/`` tree from *archive_path* into the workspace home."""
     home_dir = workspaces.home_path(user_id, ws_id)
     home_dir.mkdir(parents=True, exist_ok=True)
-    check = subprocess.run(
+    check = await asyncio.to_thread(
+        subprocess.run,
         ["tar", "tzf", archive_path, "home/"],
         capture_output=True,
         timeout=30,
@@ -657,7 +662,7 @@ async def import_workspace(
     archive_path = await _stream_upload_to_tempfile(file)
     ws = None
     try:
-        meta = _extract_archive_metadata(archive_path, name)
+        meta = await _extract_archive_metadata(archive_path, name)
 
         try:
             ws = await workspaces.create_workspace(

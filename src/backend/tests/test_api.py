@@ -5751,6 +5751,93 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 200
         mock_notify.assert_called_once_with(user["id"])
 
+    async def test_import_runs_tar_off_event_loop(
+        self, client, admin_user, user
+    ):
+        """Import runs tar subprocesses off the event loop (regression #1261).
+
+        A blocking ``subprocess.run`` in the async import handler freezes the
+        whole server for up to the subprocess timeout. Every tar invocation
+        on the import path must execute in a worker thread, not on the loop.
+        """
+        import io
+        import json
+        import subprocess
+        import tarfile
+        import threading
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps({"name": "off-loop"}).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        loop_thread = threading.get_ident()
+        seen = []
+        real_run = subprocess.run
+
+        def spy(*args, **kwargs):
+            seen.append(threading.get_ident())
+            return real_run(*args, **kwargs)
+
+        headers = await self._user_headers(client)
+        with patch.object(subprocess, "run", spy):
+            resp = await client.post(
+                "/api/v1/workspaces/import",
+                headers=headers,
+                files={
+                    "file": (
+                        "archive.tar.gz",
+                        buf.getvalue(),
+                        "application/gzip",
+                    )
+                },
+            )
+        assert resp.status_code == 200
+        # tar ran at least once (metadata extraction)...
+        assert seen
+        # ...and every run was off the event loop's thread.
+        assert all(t != loop_thread for t in seen)
+
+    async def test_export_runs_size_estimate_off_event_loop(
+        self, client, admin_user, user
+    ):
+        """Export's ``du`` size-estimate runs off the event loop (#1261)."""
+        import subprocess
+        import threading
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "export-offloop"},
+        )
+        assert resp.status_code == 200
+        ws = resp.json()
+
+        home = ws_mod.home_path(user["id"], ws["id"])
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "f.txt").write_text("x")
+
+        loop_thread = threading.get_ident()
+        seen = []
+        real_run = subprocess.run
+
+        def spy(*args, **kwargs):
+            seen.append(threading.get_ident())
+            return real_run(*args, **kwargs)
+
+        admin_headers = await self._admin_headers(client)
+        with patch.object(subprocess, "run", spy):
+            resp = await client.get(
+                f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
+            )
+        assert resp.status_code == 200
+        assert seen
+        assert all(t != loop_thread for t in seen)
+
     async def test_import_duplicate_name(self, client, user):
         headers = await self._user_headers(client)
         await client.post(
