@@ -531,6 +531,15 @@ class TestWorkspaces:
         page2_ids = {ws["id"] for ws in page2["items"]}
         assert page1_ids.isdisjoint(page2_ids)
 
+    async def test_list_workspaces_exact_page_no_extra_fetch(self, user):
+        """When total items == limit, has_more must be False (no phantom page)."""
+        for i in range(2):
+            await model.create_workspace(user["id"], f"exact{i}")
+        result = await model.list_workspaces(user["id"], limit=2, offset=0)
+        assert len(result["items"]) == 2
+        assert result["has_more"] is False
+        assert result["next_offset"] is None
+
     async def test_list_workspaces_offset_beyond_end(self, user):
         await model.create_workspace(user["id"], "only")
         result = await model.list_workspaces(user["id"], offset=10)
@@ -706,6 +715,21 @@ class TestWorkspaceSharing:
         assert len(page2["items"]) == 1
         assert page2["has_more"] is False
         assert page2["next_offset"] is None
+
+    async def test_list_shared_workspaces_exact_page_no_extra_fetch(
+        self, user
+    ):
+        """When total shared items == limit, has_more must be False."""
+        other = await model.create_user("sharer2@example.com", "hash")
+        for i in range(2):
+            ws = await model.create_workspace(user["id"], f"exact_shared{i}")
+            await self._share(ws["id"], other["id"])
+        result = await model.list_shared_workspaces(
+            other["id"], limit=2, offset=0
+        )
+        assert len(result["items"]) == 2
+        assert result["has_more"] is False
+        assert result["next_offset"] is None
 
 
 class TestSearchUsers:
