@@ -124,9 +124,10 @@ export async function slowType(
 // pointer appears frozen even though the clicks land. The proven, framework-
 // agnostic fix (used by vercel-labs/open-agents, pagecast, amux, Assrt) is a
 // DOM overlay: a high-z-index, pointer-events:none SVG arrow that repositions
-// on every DOM `mousemove` (which synthetic CDP events DO fire) plus a ripple
-// on `mousedown`. Because it is a real DOM node it renders above Flutter's
-// <canvas> and is captured by ffmpeg natively — no CDP screencast needed.
+// on every DOM `mousemove` (which synthetic CDP events DO fire). Because it is
+// a real DOM node it renders above Flutter's <canvas> and is captured by
+// ffmpeg natively — no CDP screencast needed. (A click ripple was previously
+// fired on mousedown but was removed as a distracting "click animation".)
 const CURSOR_INJECT_SCRIPT = `
 (function () {
   if (window.__klangkCursor) return;
@@ -188,31 +189,6 @@ const CURSOR_INJECT_SCRIPT = `
       svg.style.transform =
         "translate(" + e.clientX + "px," + e.clientY + "px)";
       svg.style.opacity = "1";
-    },
-    { passive: true },
-  );
-
-  // Click ripple — injected style is created once on first click.
-  window.addEventListener(
-    "mousedown",
-    function (e) {
-      ensureRoot();
-      if (!document.getElementById("klangk-ripple-kf")) {
-        var st = document.createElement("style");
-        st.id = "klangk-ripple-kf";
-        st.textContent =
-          "@keyframes klangkRipple{0%{transform:scale(.5);opacity:.9}" +
-          "100%{transform:scale(2.4);opacity:0}}";
-        (document.head || document.documentElement).appendChild(st);
-      }
-      var r = document.createElement("div");
-      r.style.cssText =
-        "position:fixed;left:" + e.clientX + "px;top:" + e.clientY +
-        "px;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;" +
-        "border:2px solid rgba(86,156,214,.95);pointer-events:none;" +
-        "z-index:2147483646;animation:klangkRipple .5s ease-out forwards";
-      document.body.appendChild(r);
-      setTimeout(function () { r.remove(); }, 520);
     },
     { passive: true },
   );
