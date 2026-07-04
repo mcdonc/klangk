@@ -7227,10 +7227,10 @@ class TestOIDCCallback:
 
     async def test_callback_creates_user(self, client, monkeypatch, db):
         _, cookie_data = await self._setup_callback(client, monkeypatch, db)
+        client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "auth-code", "state": "test-state"},
-            cookies={"oidc_test": cookie_data},
             follow_redirects=False,
         )
         assert resp.status_code == 302
@@ -7268,10 +7268,10 @@ class TestOIDCCallback:
                 "roles": ["admin-role"],
             },
         )
+        client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "test-state"},
-            cookies={"oidc_test": cookie_data},
             follow_redirects=False,
         )
         assert resp.status_code == 302
@@ -7295,10 +7295,10 @@ class TestOIDCCallback:
             db,
             claims={"sub": "new-sub", "email": "testuser@example.com"},
         )
+        client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "test-state"},
-            cookies={"oidc_test": cookie_data},
             follow_redirects=False,
         )
         assert resp.status_code == 302
@@ -7310,10 +7310,10 @@ class TestOIDCCallback:
 
     async def test_callback_state_mismatch(self, client, monkeypatch, db):
         _, cookie_data = await self._setup_callback(client, monkeypatch, db)
+        client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "wrong-state"},
-            cookies={"oidc_test": cookie_data},
         )
         assert resp.status_code == 400
         assert "State mismatch" in resp.json()["detail"]
@@ -7378,10 +7378,10 @@ class TestOIDCCallback:
                 "cli_redirect": "http://localhost:12345/callback",
             }
         )
+        client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "s"},
-            cookies={"oidc_test": cookie_data},
             follow_redirects=False,
         )
         assert resp.status_code == 302
@@ -7432,10 +7432,10 @@ class TestOIDCCallback:
                 "cli_redirect": "https://evil.com/steal",
             }
         )
+        client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "s"},
-            cookies={"oidc_test": cookie_data},
             follow_redirects=False,
         )
         assert resp.status_code == 302
@@ -7481,10 +7481,10 @@ class TestOIDCCallback:
                 "cli_redirect": None,
             }
         )
+        client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "s"},
-            cookies={"oidc_test": cookie_data},
         )
         assert resp.status_code == 502
 
@@ -7512,10 +7512,10 @@ class TestOIDCCallback:
                 "cli_redirect": None,
             }
         )
+        client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "s"},
-            cookies={"oidc_test": cookie_data},
         )
         assert resp.status_code == 502
         assert "No ID token" in resp.json()["detail"]
@@ -7549,10 +7549,10 @@ class TestOIDCCallback:
                 "cli_redirect": None,
             }
         )
+        client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "s"},
-            cookies={"oidc_test": cookie_data},
         )
         assert resp.status_code == 502
         assert "validation failed" in resp.json()["detail"]
@@ -7586,10 +7586,10 @@ class TestOIDCCallback:
                 "cli_redirect": None,
             }
         )
+        client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "s"},
-            cookies={"oidc_test": cookie_data},
         )
         assert resp.status_code == 502
         assert "missing" in resp.json()["detail"].lower()
@@ -7608,10 +7608,10 @@ class TestOIDCCallback:
             oidc.example_require_verified_email,
         )
         monkeypatch.setattr(oidc, "_login_hook_is_async", False)
+        client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "auth-code", "state": "test-state"},
-            cookies={"oidc_test": cookie_data},
             follow_redirects=False,
         )
         assert resp.status_code == 403
@@ -7629,10 +7629,10 @@ class TestOIDCCallback:
             claims={"email_verified": False},
         )
         monkeypatch.setattr(oidc, "_login_hook", None)
+        client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "auth-code", "state": "test-state"},
-            cookies={"oidc_test": cookie_data},
             follow_redirects=False,
         )
         assert resp.status_code == 302
@@ -7645,10 +7645,10 @@ class TestOIDCCallback:
         JIT provisioning or email lookup."""
         _, cookie_data = await self._setup_callback(client, monkeypatch, db)
         # First callback — creates the user via JIT provisioning.
+        client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "auth-code", "state": "test-state"},
-            cookies={"oidc_test": cookie_data},
             follow_redirects=False,
         )
         assert resp.status_code == 302
@@ -7657,10 +7657,10 @@ class TestOIDCCallback:
 
         # Second callback — returning user, found by external ID.
         _, cookie_data2 = await self._setup_callback(client, monkeypatch, db)
+        client.cookies.set("oidc_test", cookie_data2)
         resp2 = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "auth-code", "state": "test-state"},
-            cookies={"oidc_test": cookie_data2},
             follow_redirects=False,
         )
         assert resp2.status_code == 302
@@ -7683,10 +7683,10 @@ class TestOIDCCallback:
             client_secret="s",
         )
         monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        client.cookies.set("oidc_test", "not-json")
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "s"},
-            cookies={"oidc_test": "not-json"},
         )
         assert resp.status_code == 400
 
