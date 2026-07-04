@@ -138,6 +138,41 @@ For the flaky bits (right-click → Share popup, chat mention autocomplete),
 scenes drive state via **WebSocket commands** instead of pixel clicks — the same
 reliable approach the existing `docs-*-screenshots.spec.ts` suite uses.
 
+## Full recording pass (2 → 5b)
+
+Before **every** full recording run — whether the whole arc (CLI + browser) or
+just re-running the browser half — you MUST first destroy the hero account so
+all its workspaces + containers cascade-delete with it. This is the only way to
+guarantee a clean slate: a prior run that was interrupted, or a browser-only
+re-run, leaves stale workspaces/tabs behind that corrupt the continuity the
+later scenes assume (bash + terminal2 tabs from Sc 2, the scratch tab from Sc
+4, etc.).
+
+`demo-seed.ts --reset` does exactly this (it deletes the hero + cast users via
+`DELETE /admin/users/<id>`, which cascades, then recreates the hero + Potemkin
+workspaces). Run it explicitly as **step 0**, before kicking off `record-cli.sh`:
+
+```bash
+devenv shell -- node --experimental-strip-types \
+  src/frontend/e2e-tests/demo/demo-seed.ts --reset
+```
+
+Note: `record-cli.sh`'s Scene 2 prep _also_ calls `--reset`, but relying on that
+alone is fragile — if the run is interrupted after prep but before recording,
+or you re-run only the browser scenes, stale state survives. Do the destroy as
+a conscious explicit step every time.
+
+Then record the two halves in order (CLI first — it creates the state the
+browser scenes inherit):
+
+```bash
+# CLI scenes 2 → 3 → 3b (establishes hero login + demo workspace + terminal2 tab)
+devenv shell -- src/frontend/e2e-tests/demo/record-cli.sh all
+
+# Browser scenes 4 (web UI + scratch tab), 5 (clanker chat), 5b (pi debug)
+devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh -g "web ui tour|clanker chat|pi debug"
+```
+
 ## Re-take workflow
 
 Each browser scene creates a **fresh workspace** with a stable name, so a re-take
