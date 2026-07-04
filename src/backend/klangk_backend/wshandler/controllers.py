@@ -348,6 +348,7 @@ class TerminalController:
         self._conn = conn
         self.session: TerminalSession | None = None
         self.task: asyncio.Task | None = None
+        self.output_task: asyncio.Task | None = None
         self.cols: int = 80
         self.rows: int = 24
 
@@ -891,7 +892,14 @@ class TerminalController:
         if self.session is not session:
             await session.stop()
             return False
-        self.task = asyncio.create_task(self.forward_output(session))
+        # Track the output-forwarding task separately from the start task
+        # (``self.task``). ``activate_session`` runs *from inside* the
+        # ``_start_terminal`` task; overwriting ``self.task`` here would
+        # orphan that task -- and if it is then cancelled/torn down while
+        # a DB op (e.g. ``_sync_service_windows``) is in flight, the
+        # orphaned transaction's connection leaks past event-loop
+        # teardown (#1250).
+        self.output_task = asyncio.create_task(self.forward_output(session))
         # Resize to force tmux to redraw at the client's terminal size.
         # Without this, reattaching shows a blank screen because tmux
         # skips the redraw when the PTY size matches the default.
@@ -903,14 +911,20 @@ class TerminalController:
 
         was_viewing = self._conn.viewing_shared
         self._conn.viewing_shared = None
-        task = self.task
-        if task:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            self.task = None
+        # Cancel both the start task and the output-forwarding task.
+        # They are tracked separately (see ``activate_session``) so that
+        # tearing the terminal down cancels the start task even after
+        # output forwarding took over ``self.output_task`` -- otherwise
+        # the start task could be orphaned mid-transaction (#1250).
+        for attr in ("task", "output_task"):
+            task = getattr(self, attr)
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                setattr(self, attr, None)
         await self.claim_and_stop()
         # Broadcast viewer change so other users see updated viewer list
         if was_viewing and self._conn.workspace_id:

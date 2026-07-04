@@ -1,5 +1,7 @@
 """Tests for model: users, workspaces, messages, port allocations."""
 
+import asyncio
+
 import aiosqlite
 import pytest
 import sqlalchemy.exc
@@ -1536,3 +1538,77 @@ class TestUniqueHandleFallback:
         # Should contain a hex suffix, not a numeric one
         parts = result.rsplit("-", 1)
         assert len(parts[1]) == 8  # sha256[:8]
+
+
+class TestTransactionCancelNoLeak:
+    """Regression: cancelling a task mid ``transaction()`` must not leak
+    the underlying aiosqlite connection (#1250).
+
+    ``engine.connect()`` opens the aiosqlite worker thread (and the real
+    sqlite3 connection) before its await returns. Before the fix, a
+    cancellation delivered during that window left the connection with no
+    handle to close it: its worker thread outlived the event loop
+    (``RuntimeError: Event loop is closed``) and the sqlite3 connection
+    leaked (``ResourceWarning: unclosed database``).
+    """
+
+    @staticmethod
+    def _track_aiosqlite(monkeypatch):
+        open_ids = set()
+        orig_init = aiosqlite.Connection.__init__
+        orig_close = aiosqlite.Connection.close
+
+        def init(self, *a, **kw):
+            orig_init(self, *a, **kw)
+            open_ids.add(id(self))
+
+        def close(self, *a, **kw):
+            open_ids.discard(id(self))
+            return orig_close(self, *a, **kw)
+
+        monkeypatch.setattr(aiosqlite.Connection, "__init__", init)
+        monkeypatch.setattr(aiosqlite.Connection, "close", close)
+        return open_ids
+
+    async def test_cancel_during_acquire_closes_connection(
+        self, temp_data_dir, monkeypatch
+    ):
+        await model.init_db()
+        open_ids = self._track_aiosqlite(monkeypatch)
+
+        async def bg():
+            # fetchone -> transaction -> get_db -> engine.connect().
+            await model.db.fetchone("SELECT 1")
+            await asyncio.sleep(30)  # keep the task alive to cancel
+
+        task = asyncio.create_task(bg())
+        # Let the task enter the DB op (open the connection) before cancel.
+        for _ in range(3):
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # Every aiosqlite connection that was opened must have been closed,
+        # even though the task was cancelled mid-acquisition.
+        import gc
+
+        gc.collect()
+        assert not open_ids, (
+            f"{len(open_ids)} aiosqlite connection(s) leaked after cancel"
+        )
+
+    async def test_normal_transaction_closes_connection(
+        self, temp_data_dir, monkeypatch
+    ):
+        """Sanity: a transaction that runs to completion closes its conn."""
+        await model.init_db()
+        open_ids = self._track_aiosqlite(monkeypatch)
+
+        async with model.db.transaction() as db:
+            await db.execute("CREATE TABLE IF NOT EXISTS t (x)")
+
+        import gc
+
+        gc.collect()
+        assert not open_ids

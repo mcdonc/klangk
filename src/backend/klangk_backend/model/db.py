@@ -6,6 +6,7 @@ and :func:`fetchone` defined here.  The engine state (``engine``,
 single, obvious location.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -149,9 +150,28 @@ async def get_db() -> Connection:
     """Acquire a raw database connection from the pool.
 
     Caller is responsible for commit/rollback/close.
+
+    The ``engine.connect()`` await is shielded so that a cancellation
+    delivered mid-acquisition cannot orphan the underlying connection:
+    aiosqlite opens its worker thread (and the real ``sqlite3.Connection``)
+    before the await returns, so interrupting it leaves those resources
+    with no handle to close them -- they then outlive the event loop and
+    surface as ``RuntimeError: Event loop is closed`` / ``ResourceWarning:
+    unclosed database`` (#1250). If we are cancelled, we drain the
+    shielded connect and close whatever it produced before propagating.
     """
     engine = ensure_engine()
-    return Connection(await engine.connect())
+    task = asyncio.ensure_future(engine.connect())
+    try:
+        conn = await asyncio.shield(task)
+    except asyncio.CancelledError:
+        try:
+            conn = await task
+            await conn.close()
+        except Exception:  # pragma: no cover - defensive; close best-effort
+            pass
+        raise
+    return Connection(conn)
 
 
 @asynccontextmanager

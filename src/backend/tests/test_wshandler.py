@@ -5852,12 +5852,12 @@ class TestTerminalController:
         with patch.object(container.registry, "record_activity") as rec:
             result = await ctrl.activate_session(session, 80, 24)
         assert result is True
-        assert ctrl.task is not None
+        assert ctrl.output_task is not None
         session.resize.assert_awaited_once_with(80, 24)
         rec.assert_called_once_with("cid")
-        ctrl.task.cancel()
+        ctrl.output_task.cancel()
         try:
-            await ctrl.task
+            await ctrl.output_task
         except asyncio.CancelledError:
             pass
 
