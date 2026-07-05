@@ -369,13 +369,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   Future<void> _reconnect() async {
     setState(() => _connecting = true);
-    final wsClient = context.read<WsClient>();
-    await wsClient.connect();
-    if (wsClient.connected) {
-      wsClient.connectWorkspace(widget.workspaceId);
-    } else {
-      setState(() => _connecting = false);
-    }
+    await _connector?.reconnect();
   }
 
   @override

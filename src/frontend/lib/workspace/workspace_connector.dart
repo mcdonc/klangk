@@ -48,7 +48,41 @@ class WorkspaceConnector {
   /// Whether [connect] has been called and subscriptions are active.
   bool get isActive => _browserDelegate != null;
 
+  /// Whether a connect/reconnect is currently in progress.
+  bool _inProgress = false;
+
   Future<void> connect() async {
+    if (_inProgress) {
+      debugPrint('[WorkspaceConnector] connect already in progress, skipping');
+      return;
+    }
+    _inProgress = true;
+    try {
+      await _doConnect();
+    } finally {
+      _inProgress = false;
+    }
+  }
+
+  /// Reconnect after a disconnect.  Tears down existing subscriptions
+  /// first so we don't end up with duplicate listeners.
+  Future<void> reconnect() async {
+    if (_inProgress) {
+      debugPrint(
+        '[WorkspaceConnector] reconnect already in progress, skipping',
+      );
+      return;
+    }
+    _inProgress = true;
+    try {
+      dispose();
+      await _doConnect();
+    } finally {
+      _inProgress = false;
+    }
+  }
+
+  Future<void> _doConnect() async {
     debugPrint(
       '[WorkspaceConnector] connect called: ${DateTime.now()}',
     );
