@@ -35,7 +35,6 @@ services:
       KLANGK_JWT_SECRET: "${KLANGK_JWT_SECRET}"
       KLANGK_PREVENT_INSECURE_JWT_SECRET: "1"
       KLANGK_DATA_DIR: /home/klangk/data
-      KLANGK_INSTANCE_ID: "${KLANGK_INSTANCE_ID:-default}"
 
       # --- Branding (runtime, no rebuild) ---
       # KLANGK_PRODUCT_NAME: "Acme Labs"

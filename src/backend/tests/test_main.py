@@ -716,10 +716,11 @@ class TestPidFile:
         # Should not raise
         main.remove_pid_file()
 
-    def test_pid_file_path_uses_runtime_dir(self):
+    async def test_pid_file_path_uses_runtime_dir(self, db):
         path = main.pid_file_path()
         assert path.parent == main.runtime_dir()
-        assert f"klangk-{main.container.INSTANCE_ID}" in path.name
+        iid = main.model.get_instance_id()
+        assert path.name == f"klangk-{iid}.pid"
 
     def test_runtime_dir_prefers_xdg(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))

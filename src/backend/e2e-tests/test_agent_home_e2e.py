@@ -45,7 +45,6 @@ import websockets
 # state, not the Python API.
 AGENT_HANDLE = "clanker"
 AGENT_HOME = f"/home/{AGENT_HANDLE}"
-INSTANCE_ID = "agent-home-e2e"
 
 
 @pytest.fixture(scope="module")
@@ -68,7 +67,6 @@ def server():
         "KLANGK_DEFAULT_USER": "test@example.com",
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",
-        "KLANGK_INSTANCE_ID": INSTANCE_ID,
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
         "KLANGK_PORT_RANGE_START": "9400",
         "KLANGK_ALLOW_AUTOSTART": "1",
@@ -104,7 +102,21 @@ def server():
         stdout = proc.stdout.read().decode() if proc.stdout else ""
         raise RuntimeError(f"Server failed to start:\n{stdout}")
 
-    yield {"url": base_url, "port": port, "data_dir": data_dir, "proc": proc}
+    # Fetch auto-generated instance ID from the running server.
+    config_resp = httpx.get(f"{base_url}/api/v1/config", timeout=10)
+    instance_id = (
+        config_resp.json().get("instance_id", "")
+        if config_resp.status_code == 200
+        else ""
+    )
+
+    yield {
+        "url": base_url,
+        "port": port,
+        "data_dir": data_dir,
+        "proc": proc,
+        "instance_id": instance_id,
+    }
 
     try:
         proc.kill()
@@ -117,19 +129,21 @@ def server():
             sys.stderr.write(
                 f"\n=== agent-home-e2e server log ===\n{server_log}\n===\n"
             )
-    _rm_containers()
+    _rm_containers(instance_id)
     shutil.rmtree(data_dir, ignore_errors=True)
 
 
-def _rm_containers():
+def _rm_containers(instance_id):
     """Remove any containers labeled with our instance id."""
+    if not instance_id:
+        return
     result = subprocess.run(
         [
             "podman",
             "ps",
             "-a",
             "--filter",
-            f"label=klangk.instance={INSTANCE_ID}",
+            f"label=klangk.instance={instance_id}",
             "-q",
         ],
         capture_output=True,
@@ -142,14 +156,14 @@ def _rm_containers():
         )
 
 
-def _container_id_for_workspace(workspace_id):
+def _container_id_for_workspace(workspace_id, instance_id):
     """Return the running container id for a specific workspace.
 
-    The container name is deterministic (``klangk-{INSTANCE_ID}-{ws[:12]}``),
+    The container name is deterministic (``klangk-{instance_id}-{ws[:12]}``),
     so filtering by name targets the exact workspace -- never a stale
     container left over from another test/run under the same instance.
     """
-    name = f"klangk-{INSTANCE_ID}-{workspace_id[:12]}"
+    name = f"klangk-{instance_id}-{workspace_id[:12]}"
     result = subprocess.run(
         [
             "podman",
@@ -326,7 +340,9 @@ class TestAgentHomeE2E:
             cids = []
             deadline = time.monotonic() + 60
             while time.monotonic() < deadline:
-                cids = _container_id_for_workspace(workspace_id)
+                cids = _container_id_for_workspace(
+                    workspace_id, server["instance_id"]
+                )
                 if cids:
                     break
                 time.sleep(0.5)
