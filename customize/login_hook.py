@@ -3,14 +3,17 @@
 Login is allowed if the user already has an account, or if their email
 has a 'pending' or 'accepted' invitation.  Revoked invitations do not count.
 
-Usage:
-    KLANGK_OIDC_LOGIN_HOOK=login_hook.require_invitation
+Usage (mount the file anywhere, point the env var at it):
+
+    docker run -v ./login_hook.py:/etc/klangk/login_hook.py:ro \\
+               -e KLANGK_OIDC_LOGIN_HOOK=/etc/klangk/login_hook.py \\
+               ...
 """
 
 from klangk_backend.model import get_db
 
 
-async def require_invitation(provider, claims, email, tokens):
+async def on_login(provider, claims, email, tokens):
     """Reject login unless the user has an account or an invitation.
 
     If the most recent invitation is revoked, login is blocked even if

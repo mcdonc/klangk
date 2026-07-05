@@ -98,16 +98,16 @@ Rotating a cert is just a file change plus a workspace/backend restart — no im
 
 ### OIDC Login Hook
 
-The `customize/` directory includes a sample `login_hook.py` that restricts OIDC logins to invited users. Bind-mount it into the container and set the env var:
+The `customize/` directory includes a sample `login_hook.py` that restricts OIDC logins to invited users. Bind-mount it anywhere in the container and point the env var at it:
 
 ```bash
 docker run -d \
-  -v ./login_hook.py:/home/klangk/src/backend/login_hook.py:ro \
-  -e KLANGK_OIDC_LOGIN_HOOK=login_hook.require_invitation \
+  -v ./login_hook.py:/etc/klangk/login_hook.py:ro \
+  -e KLANGK_OIDC_LOGIN_HOOK=/etc/klangk/login_hook.py \
   ...
 ```
 
-The hook is importable because it is mounted into the backend's Python path (`/home/klangk/src/backend/`). No image rebuild is needed.
+The file is loaded directly by path — it does not need to be on `PYTHONPATH`. No image rebuild is needed. To call a function other than the default `on_login`, append `:func_name` to the path.
 
 The example hook's logic:
 

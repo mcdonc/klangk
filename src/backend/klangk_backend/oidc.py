@@ -3,7 +3,7 @@
 import asyncio
 import base64
 import hashlib
-import importlib
+import importlib.util
 import logging
 import os
 import secrets
@@ -338,38 +338,28 @@ _login_hook: Callable | None = None
 _login_hook_is_async: bool = False
 
 
-def example_admin_hook(
-    provider: OIDCProvider,  # noqa: ARG001
-    claims: dict,
-    email: str,  # noqa: ARG001
-    tokens: dict,  # noqa: ARG001
-) -> set[str]:
-    """Example hook: map a Keycloak realm role to the admin group.
+def _parse_hook_value(raw: str) -> tuple[str, str]:
+    """Parse KLANGK_OIDC_LOGIN_HOOK into (file_path, func_name).
 
-    To use: KLANGK_OIDC_LOGIN_HOOK=klangk_backend.oidc.example_admin_hook
-
-    Customize the claim_path and claim_value for your IdP.
+    Accepted formats:
+    - ``/path/to/hook.py:func_name``
+    - ``/path/to/hook.py``  (defaults to ``on_login``)
     """
-    claim_path = "realm_access.roles"
-    claim_value = "klangk-admin"
-
-    value: object = claims
-    for key in claim_path.split("."):
-        if isinstance(value, dict):
-            value = value.get(key)
-        else:
-            return set()
-    if isinstance(value, list) and claim_value in value:
-        return {"admin"}
-    if isinstance(value, str) and value == claim_value:
-        return {"admin"}
-    return set()
+    if ":" in raw:
+        path, func_name = raw.rsplit(":", 1)
+    else:
+        path = raw
+        func_name = "on_login"
+    return path, func_name
 
 
 def load_login_hook() -> None:
     """Load the OIDC login hook from KLANGK_OIDC_LOGIN_HOOK.
 
-    Format: ``module.path.func_name`` (last dot separates function).
+    The value is a file path to a Python script, optionally followed
+    by ``:func_name``.  If the function name is omitted it defaults
+    to ``on_login``.  The file is loaded directly via
+    ``importlib.util`` — it does **not** need to be on ``PYTHONPATH``.
 
     The hook is called after ID token validation and before user
     provisioning.  It combines login validation and group mapping:
@@ -388,19 +378,23 @@ def load_login_hook() -> None:
         _login_hook = None
         _login_hook_is_async = False
         return
-    dot = raw.rfind(".")
-    if dot <= 0:
+    path, func_name = _parse_hook_value(raw)
+    if not os.path.isfile(path):
         raise ConfigurationError(
-            f"KLANGK_OIDC_LOGIN_HOOK must be module.path.func_name, "
-            f"got: {raw!r}"
+            f"KLANGK_OIDC_LOGIN_HOOK: file not found: {path!r}"
         )
-    module_path = raw[:dot]
-    func_name = raw[dot + 1 :]
-    mod = importlib.import_module(module_path)
-    hook = getattr(mod, func_name)
-    if not callable(hook):
+    spec = importlib.util.spec_from_file_location("_klangk_login_hook", path)
+    if spec is None or spec.loader is None:  # pragma: no cover
         raise ConfigurationError(
-            f"KLANGK_OIDC_LOGIN_HOOK: {raw!r} is not callable"
+            f"KLANGK_OIDC_LOGIN_HOOK: could not load: {path!r}"
+        )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    hook = getattr(mod, func_name, None)
+    if hook is None or not callable(hook):
+        raise ConfigurationError(
+            f"KLANGK_OIDC_LOGIN_HOOK: {func_name!r} not found or not "
+            f"callable in {path!r}"
         )
     _login_hook = hook
     _login_hook_is_async = asyncio.iscoroutinefunction(hook)

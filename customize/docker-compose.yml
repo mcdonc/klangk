@@ -62,7 +62,7 @@ services:
       # --- OIDC (runtime, no rebuild) ---
       # KLANGK_OIDC_CONFIG: /home/klangk/oidc.yaml
       # KLANGK_AUTH_MODES: "both"
-      # KLANGK_OIDC_LOGIN_HOOK: "login_hook.require_invitation"
+      # KLANGK_OIDC_LOGIN_HOOK: "/etc/klangk/login_hook.py"
 
       # --- LLM ---
       KLANGK_LLM_BASE_URL: "${KLANGK_LLM_BASE_URL}"
@@ -102,6 +102,6 @@ services:
       # Uncomment for custom CA certs (runtime, no rebuild):
       # - ./certs:/certs:ro
       # Uncomment for OIDC login hook (bind-mount, no rebuild):
-      # - ./login_hook.py:/home/klangk/src/backend/login_hook.py:ro
+      # - ./login_hook.py:/etc/klangk/login_hook.py:ro
       # Uncomment for OIDC:
       # - ./oidc.yaml:/home/klangk/oidc.yaml:ro

@@ -70,7 +70,7 @@ This is configured per provider, so a deployment with multiple IdPs can trust so
 
 - **Web**: Login page shows one button per provider. Clicking redirects to the IdP via Authorization Code flow with PKCE. After authentication, the IdP redirects back to Klangk which exchanges the code for tokens, validates the ID token, and issues a Klangk JWT.
 - **CLI**: `klangkc login` detects OIDC from the server config, opens a browser for authentication, and receives the token via a temporary localhost callback server.
-- **Login hook**: A single Python hook (`KLANGK_OIDC_LOGIN_HOOK`) handles both login validation and group mapping. See [OIDC Login Hook](#oidc-login-hook) below.
+- **Login hook**: A Python script (`KLANGK_OIDC_LOGIN_HOOK`) can handle login validation and group mapping. See [OIDC Login Hook](#oidc-login-hook) below.
 - **User provisioning**: On first OIDC login, a user is created automatically (verified, no password). If a local user with the same email already exists, the OIDC identity is linked to it.
 - **OIDC users** cannot use forgot-password, change-password, or change-email.
 - **Logout**: By default, logout only kills the Klangk session. With `logout-redirect: true`, the user is also redirected to the IdP's logout endpoint to end the SSO session (requires full re-authentication on next login).
@@ -87,15 +87,21 @@ This is configured per provider, so a deployment with multiple IdPs can trust so
 
 ## OIDC Login Hook
 
-A single Python hook handles both login validation and group mapping on every OIDC login. The hook runs after the `email_verified` check (see [Email Verification](#email-verification)), so it only sees logins that have already passed that gate.
+A Python script can handle login validation and group mapping on every OIDC login. The hook runs after the `email_verified` check (see [Email Verification](#email-verification)), so it only sees logins that have already passed that gate.
 
 **Configuration:**
 
 ```bash
-KLANGK_OIDC_LOGIN_HOOK=my_module.on_login
+KLANGK_OIDC_LOGIN_HOOK=/etc/klangk/login_hook.py
 ```
 
-The value is a dotted Python path where the last component is the function name. If not set, all OIDC logins that pass the `email_verified` check are accepted with no group sync.
+The value is a file path to a Python script. The file is loaded directly — it does **not** need to be on `PYTHONPATH`. Optionally append `:func_name` to specify the function; if omitted it defaults to `on_login`:
+
+```bash
+KLANGK_OIDC_LOGIN_HOOK=/etc/klangk/login_hook.py:require_invitation
+```
+
+If not set, all OIDC logins that pass the `email_verified` check are accepted with no group sync.
 
 **Hook signature:**
 
@@ -124,7 +130,7 @@ def on_login(provider, claims, email, tokens):
     return groups or None
 ```
 
-Async hooks are also supported (`async def`).
+Async hooks are also supported (`async def`). The hook script can import from `klangk_backend` (e.g. `from klangk_backend.model import get_db`) since the backend packages are on `sys.path` at runtime.
 
 **Behavior:**
 
@@ -136,9 +142,4 @@ Async hooks are also supported (`async def`).
 - Memberships are tracked with `source='oidc_sync'` — only these are added/removed
 - Manual group memberships (`source='manual'`) are never touched
 
-**Built-in example hook:**
-
-```bash
-# Map Keycloak klangk-admin role to the admin group
-KLANGK_OIDC_LOGIN_HOOK=klangk_backend.oidc.example_admin_hook
-```
+**Example:** see `customize/login_hook.py` for a hook that restricts logins to invited users.
