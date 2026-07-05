@@ -556,6 +556,42 @@ void main() {
       expect(find.text('Drop files or folders to upload'), findsNothing);
     });
 
+    testWidgets('drag done ignored while upload in progress', (tester) async {
+      final completer = Completer<int>();
+      var uploadCalls = 0;
+
+      testUploadOverride = (url, headers, name, bytes) async {
+        uploadCalls++;
+        return completer.future;
+      };
+
+      final key = GlobalKey<FileDropZoneState>();
+      await tester.pumpWidget(buildDropZone(key: key));
+      await tester.pumpAndSettle();
+
+      final dropTarget = tester.widget<DropTarget>(find.byType(DropTarget));
+
+      // First drop starts an upload
+      dropTarget.onDragDone!(makeDropDetails([
+        makeFile('a.txt', [1]),
+      ]));
+      await tester.pump();
+
+      // Upload is in progress — second drop should be ignored
+      dropTarget.onDragDone!(makeDropDetails([
+        makeFile('b.txt', [2]),
+      ]));
+      await tester.pump();
+
+      // Only one upload call should have been made
+      expect(uploadCalls, 1);
+
+      // Complete so the test finishes cleanly
+      completer.complete(200);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+    });
+
     testWidgets('drag done triggers upload', (tester) async {
       testUploadOverride = (url, headers, name, bytes) async => 200;
       final key = GlobalKey<FileDropZoneState>();
