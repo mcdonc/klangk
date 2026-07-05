@@ -33,7 +33,7 @@ def _run(args, timeout=120, input=None, **kwargs):
     )
 
 
-def _start_server(data_dir, port, instance_id, extra_env=None):
+def _start_server(data_dir, port, extra_env=None):
     """Start a Klangk server and wait for it to be ready.
 
     Returns (proc, base_url).
@@ -49,7 +49,6 @@ def _start_server(data_dir, port, instance_id, extra_env=None):
         "KLANGK_DEFAULT_USER": "test@example.com",
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",
-        "KLANGK_INSTANCE_ID": instance_id,
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
         "KLANGK_PORT_RANGE_START": "9000",
         "LOGFIRE_TOKEN": "",
@@ -98,7 +97,7 @@ def _start_server(data_dir, port, instance_id, extra_env=None):
     return proc, base_url
 
 
-def _stop_server(proc, data_dir, instance_id):
+def _stop_server(proc, data_dir):
     """Stop a server, clean up containers and data."""
     if hasattr(proc, "_log_file"):
         proc._log_file.close()
@@ -113,7 +112,7 @@ def _stop_server(proc, data_dir, instance_id):
             "ps",
             "-a",
             "--filter",
-            f"label=klangk.instance={instance_id}",
+            "label=klangk.managed=true",
             "-q",
         ],
         capture_output=True,
@@ -131,14 +130,14 @@ def _stop_server(proc, data_dir, instance_id):
 def server():
     """Start a real Klangk server for the test session."""
     data_dir = tempfile.mkdtemp(prefix="klangk-cli-e2e-")
-    proc, base_url = _start_server(data_dir, "18995", "cli-e2e")
+    proc, base_url = _start_server(data_dir, "18995")
     yield {
         "url": base_url,
         "port": "18995",
         "data_dir": data_dir,
         "proc": proc,
     }
-    _stop_server(proc, data_dir, "cli-e2e")
+    _stop_server(proc, data_dir)
 
 
 @pytest.fixture(scope="session")
@@ -696,7 +695,6 @@ class TestAutoStart:
         proc, base_url = _start_server(
             data_dir,
             "18996",
-            "autostart-e2e",
             extra_env={"KLANGK_ALLOW_AUTOSTART": "1"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-autostart-config")
@@ -718,7 +716,7 @@ class TestAutoStart:
         request.cls._env = env
         request.cls._base_url = base_url
         yield
-        _stop_server(proc, data_dir, "autostart-e2e")
+        _stop_server(proc, data_dir)
 
     def test_create_with_auto_start(self):
         env = self._env
@@ -815,7 +813,6 @@ class TestSandboxAutoStartServiceCommand:
         proc, base_url = _start_server(
             data_dir,
             TestSandboxAutoStartServiceCommand.PORT,
-            "sandbox-defcmd-e2e",
             extra_env={"KLANGK_ALLOW_AUTOSTART": "1"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-sandbox-defcmd-config")
@@ -836,7 +833,7 @@ class TestSandboxAutoStartServiceCommand:
         )
         request.cls._env = env
         yield
-        _stop_server(proc, data_dir, "sandbox-defcmd-e2e")
+        _stop_server(proc, data_dir)
 
     def test_service_command_runs_only_after_setup(self, tmp_path):
         """service_command (installed by setup.sh) runs post-setup.
@@ -1486,7 +1483,6 @@ class TestAllowedMountRoots:
         proc, base_url = _start_server(
             data_dir,
             "18998",
-            "mount-roots-e2e",
             extra_env={"KLANGK_ALLOWED_MOUNT_ROOTS": "/tmp,/home"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-mount-roots-config")
@@ -1508,7 +1504,7 @@ class TestAllowedMountRoots:
         request.cls._env = env
         request.cls._base_url = base_url
         yield
-        _stop_server(proc, data_dir, "mount-roots-e2e")
+        _stop_server(proc, data_dir)
 
     def test_allowed_mount_succeeds(self):
         env = self._env
@@ -1556,11 +1552,7 @@ class TestVolumeUserIsolation:
         import httpx
 
         data_dir = tempfile.mkdtemp(prefix="klangk-vol-iso-")
-        proc, base_url = _start_server(
-            data_dir,
-            "18999",
-            "vol-iso-e2e",
-        )
+        proc, base_url = _start_server(data_dir, "18999")
 
         # Register a second user via the API
         httpx.post(
@@ -1595,7 +1587,7 @@ class TestVolumeUserIsolation:
 
         request.cls._base_url = base_url
         yield
-        _stop_server(proc, data_dir, "vol-iso-e2e")
+        _stop_server(proc, data_dir)
 
     def test_cross_user_volume_rejected(self):
         env_a = self._env_a
@@ -1711,9 +1703,7 @@ class TestTerminalSharing:
     @staticmethod
     def _dedicated_server(tmp_path_factory, request):
         data_dir = tempfile.mkdtemp(prefix="klangk-terminal-sharing-")
-        proc, base_url = _start_server(
-            data_dir, "18997", "terminal-sharing-e2e"
-        )
+        proc, base_url = _start_server(data_dir, "18997")
         config_dir = tmp_path_factory.mktemp("klangk-terminal-sharing-config")
         env = {**os.environ, "HOME": str(config_dir)}
         (config_dir / ".config" / "klangk").mkdir(parents=True)
@@ -1739,7 +1729,7 @@ class TestTerminalSharing:
         request.cls._env = env
         yield
         _run(["klangkc", "rm", "e2e-share"], env=env)
-        _stop_server(proc, data_dir, "terminal-sharing-e2e")
+        _stop_server(proc, data_dir)
 
     def test_terminals_lists_windows(self):
         result = _run(
@@ -2005,11 +1995,10 @@ def short_token_server():
     proc, base_url = _start_server(
         data_dir,
         "18997",
-        "cli-refresh-e2e",
         extra_env={"KLANGK_ACCESS_TOKEN_HOURS": "0.002"},
     )
     yield {"url": base_url, "data_dir": data_dir, "proc": proc}
-    _stop_server(proc, data_dir, "cli-refresh-e2e")
+    _stop_server(proc, data_dir)
 
 
 @pytest.fixture(scope="module")

@@ -36,7 +36,7 @@ def _clean_env():
     return env
 
 
-def _start_server(data_dir, port, instance_id):
+def _start_server(data_dir, port):
     """Start a Klangk server and wait for it to be ready."""
     env = {
         **_clean_env(),
@@ -46,7 +46,6 @@ def _start_server(data_dir, port, instance_id):
         "KLANGK_DEFAULT_USER": "admin@example.com",
         "KLANGK_DEFAULT_PASSWORD": "adminpass",
         "KLANGK_TEST_MODE": "1",
-        "KLANGK_INSTANCE_ID": instance_id,
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
         "KLANGK_PORT_RANGE_START": "9200",
         "LOGFIRE_TOKEN": "",
@@ -82,13 +81,19 @@ def _start_server(data_dir, port, instance_id):
     return proc, base_url
 
 
-def _stop_server(proc, data_dir, instance_id):
+def _stop_server(proc, data_dir):
     """Stop a server and clean up."""
     try:
         proc.kill()
         proc.wait(timeout=5)
     except (ProcessLookupError, subprocess.TimeoutExpired):
         pass
+    instance_id = subprocess.run(
+        ["klangk-instance-id"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "KLANGK_DATA_DIR": data_dir},
+    ).stdout.strip()
     result = subprocess.run(
         [
             "podman",
@@ -113,9 +118,9 @@ def _stop_server(proc, data_dir, instance_id):
 def server():
     """Start a real Klangk server for the test module."""
     data_dir = tempfile.mkdtemp(prefix="klangk-acl-e2e-")
-    proc, base_url = _start_server(data_dir, "18993", "acl-e2e")
+    proc, base_url = _start_server(data_dir, "18993")
     yield {"url": base_url, "data_dir": data_dir, "proc": proc}
-    _stop_server(proc, data_dir, "acl-e2e")
+    _stop_server(proc, data_dir)
 
 
 def _ws_name(prefix: str) -> str:
@@ -183,7 +188,7 @@ class TestConfig:
         resp = api.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["instance_id"] == "acl-e2e"
+        assert data["instance_id"]
 
 
 # --- Group management ---
@@ -1038,7 +1043,6 @@ class TestAutoStartWithServiceCommand:
             "KLANGK_DEFAULT_USER": "admin@example.com",
             "KLANGK_DEFAULT_PASSWORD": "adminpass",
             "KLANGK_TEST_MODE": "1",
-            "KLANGK_INSTANCE_ID": "autostart-e2e",
             "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
             "KLANGK_PORT_RANGE_START": "9300",
             "KLANGK_ALLOW_AUTOSTART": "1",
@@ -1079,7 +1083,7 @@ class TestAutoStartWithServiceCommand:
         request.cls._proc = proc
         request.cls._data_dir = data_dir
         yield
-        _stop_server(proc, data_dir, "autostart-e2e")
+        _stop_server(proc, data_dir)
 
     @pytest.fixture()
     def api(self):

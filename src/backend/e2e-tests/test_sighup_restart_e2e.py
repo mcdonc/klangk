@@ -48,7 +48,6 @@ def server():
         "KLANGK_DEFAULT_USER": "test@example.com",
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",
-        "KLANGK_INSTANCE_ID": "sighup-e2e",
         # Short idle timeout so a workspace with no subscribers stops
         # quickly; we mainly care that SIGHUP stops *all* of them.
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",

@@ -126,10 +126,11 @@ in
     "klangk:kill-containers" = {
       exec = ''
         if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
-          ''${KLANGK_PODMAN_BIN:-podman} ps -a --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" -q \
+          ''${KLANGK_PODMAN_BIN:-podman} ps -a --filter "label=klangk.instance=$(klangk-instance-id)" -q \
             | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
         fi
       '';
+      after = [ "klangk:uv-sync" ];
     };
     "klangk:kill-port-holders" = {
       exec = ''
@@ -214,7 +215,6 @@ in
     else
       config.devenv.state + "/klangk/podman/policy.json"
   );
-  env.KLANGK_INSTANCE_ID = lib.mkOverride 1500 "default";
   env.KLANGK_VERSION_FILE = config.devenv.state + "/klangk/version.json";
   # Docker build platform for klangk images. On Linux, default to the host
   # architecture so arm64 machines build/run natively instead of under amd64
@@ -247,7 +247,7 @@ in
 
   scripts.kill-containers.exec = ''
     ''${KLANGK_PODMAN_BIN:-podman} ps -a \
-      --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" \
+      --filter "label=klangk.instance=$(klangk-instance-id)" \
       -q | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
   '';
 
