@@ -22,6 +22,7 @@ def container_dns_config() -> list[str]:
 
 
 IMAGE_NAME = util.resolve_env_value("KLANGK_IMAGE_NAME", "klangk-workspace")
+INSTANCE_ID = util.resolve_env_value("KLANGK_INSTANCE_ID", "default")
 
 TERMINAL_BANNER = util.resolve_env_value("KLANGK_TERMINAL_BANNER", "")
 
@@ -475,7 +476,7 @@ class IdleMonitor:
     def start_cleanup_loop(self) -> None:
         logger.info(
             "Instance: %s, idle timeout: %ds, check interval: %ds",
-            model.get_instance_id(),
+            INSTANCE_ID,
             IDLE_TIMEOUT_SECONDS,
             CHECK_INTERVAL_SECONDS,
         )
@@ -1190,17 +1191,14 @@ class ContainerRegistry:
                 if info is None:
                     labels = {
                         "klangk.managed": "true",
-                        "klangk.instance": model.get_instance_id(),
+                        "klangk.instance": INSTANCE_ID,
                     }
                     if user_id:
                         labels["klangk.user-id"] = user_id
                     await podman.create_volume(source, labels)
                 else:
                     vol_labels = info.get("Labels") or {}
-                    if (
-                        vol_labels.get("klangk.instance")
-                        != model.get_instance_id()
-                    ):
+                    if vol_labels.get("klangk.instance") != INSTANCE_ID:
                         raise ValueError(
                             f"Volume {source!r} is not managed "
                             "by this klangk instance"
@@ -1316,9 +1314,7 @@ class ContainerRegistry:
             container_name,
         )
         wanted_ports = {hp for hp, _cp in publish}
-        stale = await podman.list_containers(
-            f"klangk.instance={model.get_instance_id()}"
-        )
+        stale = await podman.list_containers(f"klangk.instance={INSTANCE_ID}")
         for c in stale:
             stale_id = c.get("Id") or c.get("ID", "")
             if stale_id == cid:
@@ -1429,14 +1425,13 @@ class ContainerRegistry:
             (host_port, CONTAINER_PORT_START + i)
             for i, host_port in enumerate(host_ports)
         ]
-        iid = model.get_instance_id()
-        container_name = f"klangk-{iid}-{workspace_id[:12]}"
+        container_name = f"klangk-{INSTANCE_ID}-{workspace_id[:12]}"
         allow_sudo = util.resolve_env_bool("KLANGK_ALLOW_SUDO")
 
         create_kwargs = dict(
             labels={
                 "klangk.managed": "true",
-                "klangk.instance": iid,
+                "klangk.instance": INSTANCE_ID,
                 "klangk.workspace-id": workspace_id,
             },
             binds=binds,
@@ -1612,7 +1607,7 @@ class ContainerRegistry:
     async def adopt_orphaned_containers(self) -> None:
         try:
             containers = await podman.list_containers(
-                f"klangk.instance={model.get_instance_id()}"
+                f"klangk.instance={INSTANCE_ID}"
             )
             for c in containers:
                 cid = c.get("Id") or c.get("ID", "")
@@ -1663,7 +1658,7 @@ class ContainerRegistry:
         tasks = [self.stop_and_remove_container(cid) for cid in tracked_ids]
         try:
             containers = await podman.list_containers(
-                f"klangk.instance={model.get_instance_id()}"
+                f"klangk.instance={INSTANCE_ID}"
             )
             for c in containers:
                 cid = c.get("Id") or c.get("ID", "")

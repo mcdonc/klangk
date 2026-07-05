@@ -2,7 +2,7 @@
 
 import logging
 
-from .. import agent, model
+from .. import agent, container, model
 from .safe_websocket import SafeWebSocket
 from .constants import log_ws_msg
 from .session import state
@@ -163,7 +163,7 @@ def format_idle_timeout(seconds: int | float) -> str:
 
 def format_container_info(workspace_id: str, ports: list) -> tuple[str, str]:
     """Return (container_name, ports_str) for status messages."""
-    name = f"klangk-{model.get_instance_id()}-{workspace_id[:12]}"
+    name = f"klangk-{container.INSTANCE_ID}-{workspace_id[:12]}"
     ports_str = f" (ports {','.join(str(p) for p in ports)})" if ports else ""
     return name, ports_str
 

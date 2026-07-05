@@ -55,9 +55,10 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", 
 SANDBOX_DIR = os.path.join(REPO_ROOT, "sandboxes", "hermes")
 
 WS = "e2e-hermes-setup"
-# Own port so it never collides with other e2e suites
+# Own port + instance id so it never collides with other e2e suites
 # (cli-e2e 18995, autostart 18996/18997, openclaw 18998).
 PORT = "18999"
+INSTANCE = "hermes-setup-e2e"
 EMAIL = "test@example.com"
 PASSWORD = "testpass"
 # The agent's user id (klangk_backend.model.AGENT_USER_ID). setup.sh
@@ -98,7 +99,7 @@ def _login(base_url):
     return token, user_id
 
 
-def _start_server(data_dir, port, extra_env=None):
+def _start_server(data_dir, port, instance_id, extra_env=None):
     env = {
         **os.environ,
         "KLANGK_PORT": port,
@@ -108,6 +109,7 @@ def _start_server(data_dir, port, extra_env=None):
         "KLANGK_DEFAULT_USER": EMAIL,
         "KLANGK_DEFAULT_PASSWORD": PASSWORD,
         "KLANGK_TEST_MODE": "1",
+        "KLANGK_INSTANCE_ID": instance_id,
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
         # Poll health every 3s so the health-check test sees the healthy
         # transition quickly (the gateway takes a few seconds to start after
@@ -152,7 +154,7 @@ def _start_server(data_dir, port, extra_env=None):
     raise RuntimeError(f"Server failed to start:\n{stdout}")
 
 
-def _stop_server(proc, data_dir):
+def _stop_server(proc, data_dir, instance_id):
     if hasattr(proc, "_log_file"):
         proc._log_file.close()
     try:
@@ -169,7 +171,7 @@ def _stop_server(proc, data_dir):
             "ps",
             "-a",
             "--filter",
-            "label=klangk.managed=true",
+            f"label=klangk.instance={instance_id}",
             "-q",
         ],
         capture_output=True,
@@ -269,7 +271,7 @@ class TestHermesSetup:
     @staticmethod
     def server(tmp_path_factory, request):
         data_dir = tempfile.mkdtemp(prefix="klangk-hermes-e2e-")
-        proc, base_url = _start_server(data_dir, PORT)
+        proc, base_url = _start_server(data_dir, PORT, INSTANCE)
         config_dir = tmp_path_factory.mktemp("klangk-hermes-config")
         env = {**os.environ, "HOME": str(config_dir)}
         os.makedirs(config_dir / ".config" / "klangk", exist_ok=True)
@@ -303,7 +305,7 @@ class TestHermesSetup:
             elif os.path.exists(p):
                 os.remove(p)
         yield
-        _stop_server(proc, data_dir)
+        _stop_server(proc, data_dir, INSTANCE)
         _force_kill_port(PORT)
 
     def _server_log_tail(self, n=40):

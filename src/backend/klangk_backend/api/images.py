@@ -12,7 +12,6 @@ from pydantic import BaseModel
 from .. import (
     auth,
     container,
-    model,
     podman,
 )
 
@@ -35,7 +34,7 @@ async def list_images(_user: dict = Depends(auth.get_current_user)):
 @router.get("/volumes")
 async def list_volumes(user: dict = Depends(auth.get_current_user)):
     volumes = await podman.list_volumes(
-        f"klangk.instance={model.get_instance_id()}"
+        f"klangk.instance={container.INSTANCE_ID}"
     )
     uid = user["id"]
     return [
@@ -65,7 +64,7 @@ async def create_volume(
         body.name,
         {
             "klangk.managed": "true",
-            "klangk.instance": model.get_instance_id(),
+            "klangk.instance": container.INSTANCE_ID,
             "klangk.user-id": user["id"],
         },
     )
@@ -80,7 +79,7 @@ async def delete_volume(
     if info is None:
         raise HTTPException(status_code=404, detail="Volume not found")
     labels = info.get("Labels") or {}
-    if labels.get("klangk.instance") != model.get_instance_id():
+    if labels.get("klangk.instance") != container.INSTANCE_ID:
         raise HTTPException(
             status_code=404,
             detail="Volume not managed by this Klangk instance",

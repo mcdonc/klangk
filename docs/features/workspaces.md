@@ -108,7 +108,7 @@ even if they fall under an allowed root:
 **Volume isolation** — named volumes (e.g., `nix-store:/nix`) are
 labelled with `klangk.instance` and `klangk.user-id` at creation
 time. A workspace cannot mount a volume created by a different
-klangk instance or a different user. This prevents both
+`KLANGK_INSTANCE_ID` or a different user. This prevents both
 cross-tenant and cross-user data access on shared hosts.
 
 ## Idle timeout

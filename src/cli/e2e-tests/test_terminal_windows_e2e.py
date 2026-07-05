@@ -28,6 +28,7 @@ import websockets
 logger = logging.getLogger(__name__)
 
 PORT = "18998"
+INSTANCE_ID = "terminal-windows-e2e"
 WS_NAME = "e2e-twintest"
 
 
@@ -52,6 +53,7 @@ def _start_server(data_dir):
         "KLANGK_DEFAULT_USER": "test@example.com",
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",
+        "KLANGK_INSTANCE_ID": INSTANCE_ID,
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
         "KLANGK_PORT_RANGE_START": "9020",
         "LOGFIRE_TOKEN": "",
@@ -110,7 +112,7 @@ def _stop_server(proc, data_dir):
             "ps",
             "-a",
             "--filter",
-            "label=klangk.managed=true",
+            f"label=klangk.instance={INSTANCE_ID}",
             "-q",
         ],
         capture_output=True,

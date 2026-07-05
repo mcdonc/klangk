@@ -40,7 +40,7 @@ import websockets
 # --- server / auth / cli-config fixtures (self-contained, per repo convention) ---
 
 
-def _start_server(data_dir, port, health_interval="2"):
+def _start_server(data_dir, port, instance_id, health_interval="2"):
     """Start a Klangk server with a fast health-check poll interval.
 
     Returns (proc, base_url).  Mirrors the server fixture in
@@ -57,6 +57,7 @@ def _start_server(data_dir, port, health_interval="2"):
         "KLANGK_DEFAULT_USER": "test@example.com",
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",
+        "KLANGK_INSTANCE_ID": instance_id,
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
         "KLANGK_PORT_RANGE_START": "9300",
         # Poll every 2s so transitions show up in the monitor quickly.
@@ -106,7 +107,7 @@ def _start_server(data_dir, port, health_interval="2"):
     return proc, base_url
 
 
-def _stop_server(proc, data_dir):
+def _stop_server(proc, data_dir, instance_id):
     """Stop a server, clean up containers and data."""
     if hasattr(proc, "_log_file"):
         proc._log_file.close()
@@ -121,7 +122,7 @@ def _stop_server(proc, data_dir):
             "ps",
             "-a",
             "--filter",
-            "label=klangk.managed=true",
+            f"label=klangk.instance={instance_id}",
             "-q",
         ],
         capture_output=True,
@@ -139,9 +140,9 @@ def _stop_server(proc, data_dir):
 def server():
     """Start a real Klangk server with a fast health-check interval."""
     data_dir = tempfile.mkdtemp(prefix="klangk-monitor-e2e-")
-    proc, base_url = _start_server(data_dir, "18997")
-    yield {"url": base_url, "data_dir": data_dir}
-    _stop_server(proc, data_dir)
+    proc, base_url = _start_server(data_dir, "18997", "monitor-e2e")
+    yield {"url": base_url, "data_dir": data_dir, "instance_id": "monitor-e2e"}
+    _stop_server(proc, data_dir, "monitor-e2e")
 
 
 @pytest.fixture(scope="module")

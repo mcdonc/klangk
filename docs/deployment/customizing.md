@@ -240,6 +240,7 @@ docker run -d \
   -e KLANGK_JWT_SECRET=change-this-to-a-random-secret \
   -e KLANGK_PREVENT_INSECURE_JWT_SECRET=1 \
   -e KLANGK_DATA_DIR=/home/klangk/data \
+  -e KLANGK_INSTANCE_ID=default \
   -e KLANGK_PRODUCT_NAME="Acme Labs" \
   -e KLANGK_LOGO_URL="/branding/logo.png" \
   -e KLANGK_LLM_BASE_URL=https://ollama.com/v1 \

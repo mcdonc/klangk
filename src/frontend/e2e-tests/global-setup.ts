@@ -128,6 +128,7 @@ async function globalSetup() {
         KLANGK_DEFAULT_USER: "admin@example.com",
         KLANGK_DEFAULT_PASSWORD: "admin",
         KLANGK_TEST_MODE: "1",
+        KLANGK_INSTANCE_ID: "e2e-test",
         KLANGK_PORT_RANGE_START: "19200",
         LOGFIRE_TOKEN: "", // Disable Logfire tracing during E2E tests
         KLANGK_LOGIN_BANNER_TITLE: "", // No consent banner in E2E tests

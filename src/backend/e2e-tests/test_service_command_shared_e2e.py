@@ -51,6 +51,7 @@ def server():
         "KLANGK_DEFAULT_USER": "test@example.com",
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",
+        "KLANGK_INSTANCE_ID": "dcmd-shared-e2e",
         "KLANGK_IDLE_TIMEOUT_SECONDS": "0",
         "KLANGK_PORT_RANGE_START": "9500",
         "LOGFIRE_TOKEN": "",

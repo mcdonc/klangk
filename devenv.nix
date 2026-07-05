@@ -126,14 +126,8 @@ in
     "klangk:kill-containers" = {
       exec = ''
         if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
-          INSTANCE_ID=$(klangk-instance-id 2>/dev/null || true)
-          if [ -n "''${INSTANCE_ID:-}" ]; then
-            ''${KLANGK_PODMAN_BIN:-podman} ps -a --filter "label=klangk.instance=''${INSTANCE_ID}" -q \
-              | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
-          else
-            ''${KLANGK_PODMAN_BIN:-podman} ps -a --filter "label=klangk.managed=true" -q \
-              | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
-          fi
+          ''${KLANGK_PODMAN_BIN:-podman} ps -a --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" -q \
+            | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
         fi
       '';
     };
@@ -220,6 +214,7 @@ in
     else
       config.devenv.state + "/klangk/podman/policy.json"
   );
+  env.KLANGK_INSTANCE_ID = lib.mkOverride 1500 "default";
   env.KLANGK_VERSION_FILE = config.devenv.state + "/klangk/version.json";
   # Docker build platform for klangk images. On Linux, default to the host
   # architecture so arm64 machines build/run natively instead of under amd64
@@ -251,16 +246,9 @@ in
   scripts.run-host-container.exec = ''exec bash "$DEVENV_ROOT/scripts/run-host-container.sh" "$@"'';
 
   scripts.kill-containers.exec = ''
-    INSTANCE_ID=$(klangk-instance-id 2>/dev/null || true)
-    if [ -n "''${INSTANCE_ID:-}" ]; then
-      ''${KLANGK_PODMAN_BIN:-podman} ps -a \
-        --filter "label=klangk.instance=''${INSTANCE_ID}" \
-        -q | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
-    else
-      ''${KLANGK_PODMAN_BIN:-podman} ps -a \
-        --filter "label=klangk.managed=true" \
-        -q | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
-    fi
+    ''${KLANGK_PODMAN_BIN:-podman} ps -a \
+      --filter "label=klangk.instance=''${KLANGK_INSTANCE_ID}" \
+      -q | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
   '';
 
   scripts.update-plugins.exec = ''

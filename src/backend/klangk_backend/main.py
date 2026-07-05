@@ -226,7 +226,7 @@ def runtime_dir() -> Path:
 
 def pid_file_path() -> Path:
     """Return the PID file path for this instance."""
-    return runtime_dir() / f"klangk-{model.get_instance_id()}.pid"
+    return runtime_dir() / f"klangk-{container.INSTANCE_ID}.pid"
 
 
 def check_pid_file() -> int | None:
@@ -354,16 +354,13 @@ def on_sighup() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await model.init_db()
-    await model.resolve_instance_id()
-
     existing_pid = check_pid_file()
     if existing_pid is not None:
         logger.error(
             "Another klangk instance (PID %d) is already running "
             "for instance %s — refusing to start",
             existing_pid,
-            model.get_instance_id(),
+            container.INSTANCE_ID,
         )
         raise SystemExit(1)
     write_pid_file()
@@ -375,6 +372,7 @@ async def lifespan(app: FastAPI):
 
     auth.require_secure_jwt_secret()
     plugins.load()
+    await model.init_db()
     oidc.init_providers()
     oidc.load_login_hook()
     await seed_default_user()

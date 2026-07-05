@@ -47,21 +47,15 @@ def temp_data_dir(tmp_path, monkeypatch):
     wm.WORKSPACES_ROOT = tmp_path / "workspaces"
     # Clear agent caches so each test starts fresh.
     us.clear_agent_cache()
-    # Set a deterministic instance ID for tests that don't use the db
-    # fixture.  The db fixture overwrites this with a DB-resolved value.
-    import klangk_backend.model.instance as inst
-
-    inst._cache = "test"
     return tmp_path
 
 
 @pytest.fixture
 async def db(temp_data_dir):
-    """Initialize a fresh database and resolve instance ID."""
+    """Initialize a fresh database."""
     import klangk_backend.model as us
 
     await us.init_db()
-    await us.resolve_instance_id()
     return temp_data_dir
 
 

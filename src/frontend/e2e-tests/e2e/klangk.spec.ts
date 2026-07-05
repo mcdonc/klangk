@@ -597,6 +597,7 @@ test.describe("Klangk E2E", () => {
               KLANGK_DEFAULT_USER: "admin@example.com",
               KLANGK_DEFAULT_PASSWORD: "admin",
               KLANGK_TEST_MODE: "1",
+              KLANGK_INSTANCE_ID: "e2e-test",
               KLANGK_PORT_RANGE_START: "19200",
               LOGFIRE_TOKEN: "",
               KLANGK_LOGIN_BANNER_TITLE: "",

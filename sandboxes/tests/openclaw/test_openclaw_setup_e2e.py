@@ -87,9 +87,10 @@ WS2 = "e2e-openclaw-setup-2"
 # path (config -> monitor -> status endpoint) against a real gateway, not
 # to re-run the install.
 WS3 = "e2e-openclaw-setup-3"
-# Own port so it never collides with other e2e suites
+# Own port + instance id so it never collides with other e2e suites
 # (cli-e2e 18995, autostart 18996/18997).
 PORT = "18998"
+INSTANCE = "openclaw-setup-e2e"
 EMAIL = "test@example.com"
 PASSWORD = "testpass"
 # The agent's user id (klangk_backend.model.AGENT_USER_ID). setup.sh
@@ -131,7 +132,7 @@ def _login(base_url):
     return token, user_id
 
 
-def _start_server(data_dir, port, extra_env=None):
+def _start_server(data_dir, port, instance_id, extra_env=None):
     env = {
         **os.environ,
         "KLANGK_PORT": port,
@@ -141,6 +142,7 @@ def _start_server(data_dir, port, extra_env=None):
         "KLANGK_DEFAULT_USER": EMAIL,
         "KLANGK_DEFAULT_PASSWORD": PASSWORD,
         "KLANGK_TEST_MODE": "1",
+        "KLANGK_INSTANCE_ID": instance_id,
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
         # Poll health every 3s instead of the 30s default so the
         # #1089 health-check test sees the healthy transition quickly
@@ -187,7 +189,7 @@ def _start_server(data_dir, port, extra_env=None):
     raise RuntimeError(f"Server failed to start:\n{stdout}")
 
 
-def _stop_server(proc, data_dir):
+def _stop_server(proc, data_dir, instance_id):
     if hasattr(proc, "_log_file"):
         proc._log_file.close()
     # SIGKILL children too (uvicorn spawns a worker); TERM alone can
@@ -206,7 +208,7 @@ def _stop_server(proc, data_dir):
             "ps",
             "-a",
             "--filter",
-            "label=klangk.managed=true",
+            f"label=klangk.instance={instance_id}",
             "-q",
         ],
         capture_output=True,
@@ -312,7 +314,7 @@ class TestOpenclawSetupProfileExports:
     @staticmethod
     def server(tmp_path_factory, request):
         data_dir = tempfile.mkdtemp(prefix="klangk-openclaw-e2e-")
-        proc, base_url = _start_server(data_dir, PORT)
+        proc, base_url = _start_server(data_dir, PORT, INSTANCE)
         config_dir = tmp_path_factory.mktemp("klangk-openclaw-config")
         env = {**os.environ, "HOME": str(config_dir)}
         os.makedirs(config_dir / ".config" / "klangk", exist_ok=True)
@@ -343,7 +345,7 @@ class TestOpenclawSetupProfileExports:
         # enough when a podman/uvicorn child is mid-syscall).
         if os.path.exists(SENTINEL):
             os.remove(SENTINEL)
-        _stop_server(proc, data_dir)
+        _stop_server(proc, data_dir, INSTANCE)
         _force_kill_port(PORT)
 
     def _capture_sandbox(self, sandbox_proc):

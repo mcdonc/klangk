@@ -33,7 +33,7 @@ def _run(args, timeout=120, input=None, **kwargs):
     )
 
 
-def _start_server(data_dir, port, extra_env=None):
+def _start_server(data_dir, port, instance_id, extra_env=None):
     """Start a Klangk server and wait for it to be ready.
 
     Returns (proc, base_url).
@@ -49,6 +49,7 @@ def _start_server(data_dir, port, extra_env=None):
         "KLANGK_DEFAULT_USER": "test@example.com",
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",
+        "KLANGK_INSTANCE_ID": instance_id,
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
         "KLANGK_PORT_RANGE_START": "9000",
         "LOGFIRE_TOKEN": "",
@@ -97,7 +98,7 @@ def _start_server(data_dir, port, extra_env=None):
     return proc, base_url
 
 
-def _stop_server(proc, data_dir):
+def _stop_server(proc, data_dir, instance_id):
     """Stop a server, clean up containers and data."""
     if hasattr(proc, "_log_file"):
         proc._log_file.close()
@@ -112,7 +113,7 @@ def _stop_server(proc, data_dir):
             "ps",
             "-a",
             "--filter",
-            "label=klangk.managed=true",
+            f"label=klangk.instance={instance_id}",
             "-q",
         ],
         capture_output=True,
@@ -130,14 +131,14 @@ def _stop_server(proc, data_dir):
 def server():
     """Start a real Klangk server for the test session."""
     data_dir = tempfile.mkdtemp(prefix="klangk-cli-e2e-")
-    proc, base_url = _start_server(data_dir, "18995")
+    proc, base_url = _start_server(data_dir, "18995", "cli-e2e")
     yield {
         "url": base_url,
         "port": "18995",
         "data_dir": data_dir,
         "proc": proc,
     }
-    _stop_server(proc, data_dir)
+    _stop_server(proc, data_dir, "cli-e2e")
 
 
 @pytest.fixture(scope="session")
