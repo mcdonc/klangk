@@ -75,8 +75,7 @@ class _Section {
   /// sort/order/filter query params.
   String path(int offset) {
     final base = isShared ? '/api/v1/workspaces/shared' : '/api/v1/workspaces';
-    var p =
-        '$base?limit=${_WorkspaceListPageState._pageSize}&offset=$offset'
+    var p = '$base?limit=${_WorkspaceListPageState._pageSize}&offset=$offset'
         '&sort=$sort&order=$order';
     if (query.isNotEmpty) p += '&q=${Uri.encodeQueryComponent(query)}';
     return p;
@@ -172,22 +171,21 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
 
   /// Parse a paginated envelope response into its items + cursors.
   static ({List<Map<String, dynamic>> items, bool hasMore, int? nextOffset})
-  _parseEnvelope(String body) {
+      _parseEnvelope(String body) {
     final json = jsonDecode(body) as Map<String, dynamic>;
     final items = (json['items'] as List).cast<Map<String, dynamic>>();
     return (
       items: items,
       hasMore: json['has_more'] == true,
-      nextOffset: json['next_offset'] is int
-          ? json['next_offset'] as int
-          : null,
+      nextOffset:
+          json['next_offset'] is int ? json['next_offset'] as int : null,
     );
   }
 
   /// Fetch one page for [section] at [offset]. Returns the parsed page or
   /// null on failure. Caller handles members + state.
   Future<({List<Map<String, dynamic>> items, bool hasMore, int? nextOffset})?>
-  _fetchPage(_Section section, int offset) async {
+      _fetchPage(_Section section, int offset) async {
     try {
       final resp = await _auth.authGet(section.path(offset));
       if (resp.statusCode != 200) return null;
@@ -304,6 +302,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   /// Change sort column/direction for [section]. Resets that section to
   /// page 1 because a different sort reorders every row.
   Future<void> _changeSort(_Section section, String sort) async {
+    section.queryDebounce?.cancel();
     if (section.sort == sort) {
       // Same column -> toggle direction.
       setState(() => section.order = section.order == 'asc' ? 'desc' : 'asc');
@@ -480,9 +479,8 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     return ActionChip(
       label: Text(active ? '$label $arrow' : label),
       onPressed: () => _changeSort(section, sortKey),
-      backgroundColor: active
-          ? KColors.accentBlue.withValues(alpha: 0.2)
-          : null,
+      backgroundColor:
+          active ? KColors.accentBlue.withValues(alpha: 0.2) : null,
     );
   }
 
@@ -527,92 +525,95 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ...section.workspaces.asMap().entries.map(
-            (e) => Material(
-              color: e.key.isEven
-                  ? Colors.white.withValues(alpha: 0.03)
-                  : Colors.transparent,
-              child: ListTile(
-                leading: Icon(
-                  Icons.terminal,
-                  size: 20,
-                  // The icon signals container/health state: green
-                  // when healthy (or running with no health check),
-                  // amber when running but the health check failed,
-                  // grey when stopped.
-                  color: () {
-                    final running = (e.value['running'] as bool? ?? false);
-                    if (!running) return KColors.textSecondary;
-                    final health = e.value['health'] as String?;
-                    if (health == 'unhealthy') {
-                      return Colors.orange;
-                    }
-                    return KColors.accentGreen;
-                  }(),
-                ),
-                title: Text(e.value['name'] as String),
-                subtitle: section.isShared
-                    ? Text(
-                        '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}',
-                      )
-                    : Builder(
-                        builder: (context) {
-                          final wsMembers =
-                              _workspaceMembers[e.value['id'] as String] ?? [];
-                          return Row(
-                            children: [
-                              Text(
-                                _formatCreatedAt(
-                                  e.value['created_at'] as String?,
-                                ),
-                              ),
-                              if (wsMembers.isNotEmpty) ...[
-                                const SizedBox(width: 8),
-                                ...wsMembers.map((m) {
-                                  final email = m['email'] as String;
-                                  final letter = email.isNotEmpty
-                                      ? email[0].toUpperCase()
-                                      : '?';
-                                  return Padding(
-                                    padding: const EdgeInsets.only(right: 2),
-                                    child: Tooltip(
-                                      message: email,
-                                      child: CircleAvatar(
-                                        radius: 10,
-                                        backgroundColor: KColors.colorForString(
-                                          email,
-                                        ),
-                                        child: Text(
-                                          letter,
-                                          style: const TextStyle(
-                                            fontSize: 10,
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
+                (e) => Material(
+                  color: e.key.isEven
+                      ? Colors.white.withValues(alpha: 0.03)
+                      : Colors.transparent,
+                  child: ListTile(
+                    leading: Icon(
+                      Icons.terminal,
+                      size: 20,
+                      // The icon signals container/health state: green
+                      // when healthy (or running with no health check),
+                      // amber when running but the health check failed,
+                      // grey when stopped.
+                      color: () {
+                        final running = (e.value['running'] as bool? ?? false);
+                        if (!running) return KColors.textSecondary;
+                        final health = e.value['health'] as String?;
+                        if (health == 'unhealthy') {
+                          return Colors.orange;
+                        }
+                        return KColors.accentGreen;
+                      }(),
+                    ),
+                    title: Text(e.value['name'] as String),
+                    subtitle: section.isShared
+                        ? Text(
+                            '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}',
+                          )
+                        : Builder(
+                            builder: (context) {
+                              final wsMembers =
+                                  _workspaceMembers[e.value['id'] as String] ??
+                                      [];
+                              return Row(
+                                children: [
+                                  Text(
+                                    _formatCreatedAt(
+                                      e.value['created_at'] as String?,
+                                    ),
+                                  ),
+                                  if (wsMembers.isNotEmpty) ...[
+                                    const SizedBox(width: 8),
+                                    ...wsMembers.map((m) {
+                                      final email = m['email'] as String;
+                                      final letter = email.isNotEmpty
+                                          ? email[0].toUpperCase()
+                                          : '?';
+                                      return Padding(
+                                        padding:
+                                            const EdgeInsets.only(right: 2),
+                                        child: Tooltip(
+                                          message: email,
+                                          child: CircleAvatar(
+                                            radius: 10,
+                                            backgroundColor:
+                                                KColors.colorForString(
+                                              email,
+                                            ),
+                                            child: Text(
+                                              letter,
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                    ),
-                                  );
-                                }),
-                              ],
-                            ],
-                          );
-                        },
-                      ),
-                trailing: section.isShared
-                    ? null
-                    : IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        tooltip: 'Delete workspace',
-                        onPressed: () =>
-                            _deleteWorkspace(e.value['id'] as String),
-                      ),
-                onTap: () =>
-                    // coverage:ignore-start
-                    context.go('/workspace/${e.value['id']}'),
-                // coverage:ignore-end
+                                      );
+                                    }),
+                                  ],
+                                ],
+                              );
+                            },
+                          ),
+                    trailing: section.isShared
+                        ? null
+                        : IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            tooltip: 'Delete workspace',
+                            onPressed: () =>
+                                _deleteWorkspace(e.value['id'] as String),
+                          ),
+                    onTap: () =>
+                        // coverage:ignore-start
+                        context.go('/workspace/${e.value['id']}'),
+                    // coverage:ignore-end
+                  ),
+                ),
               ),
-            ),
-          ),
           _loadMoreButton(
             section.isShared
                 ? 'Load more shared workspaces'
@@ -639,8 +640,8 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
               child: Text(
                 section.query.isEmpty
                     ? (section.isShared
-                          ? 'No workspaces shared with you.'
-                          : 'No workspaces yet. Create one to get started.')
+                        ? 'No workspaces shared with you.'
+                        : 'No workspaces yet. Create one to get started.')
                     : 'No workspaces match.',
               ),
             ),
@@ -687,25 +688,25 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       ),
       floatingActionButton:
           context.watch<AuthService>().hasPermission('/workspaces', 'create')
-          ? Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                FloatingActionButton.small(
-                  heroTag: 'import',
-                  onPressed: _showImportDialog,
-                  tooltip: 'Import Workspace',
-                  child: const Icon(Icons.upload),
-                ),
-                const SizedBox(height: 12),
-                FloatingActionButton(
-                  heroTag: 'create',
-                  onPressed: _createWorkspace,
-                  tooltip: 'New Workspace',
-                  child: const Icon(Icons.add),
-                ),
-              ],
-            )
-          : null,
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    FloatingActionButton.small(
+                      heroTag: 'import',
+                      onPressed: _showImportDialog,
+                      tooltip: 'Import Workspace',
+                      child: const Icon(Icons.upload),
+                    ),
+                    const SizedBox(height: 12),
+                    FloatingActionButton(
+                      heroTag: 'create',
+                      onPressed: _createWorkspace,
+                      tooltip: 'New Workspace',
+                      child: const Icon(Icons.add),
+                    ),
+                  ],
+                )
+              : null,
       body: _buildWorkspacesList(),
     );
   }

@@ -604,6 +604,56 @@ void main() {
       expect(lastSort, 'name');
     });
 
+    testWidgets('sort change cancels pending filter debounce', (tester) async {
+      var fetchCount = 0;
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces') {
+          fetchCount++;
+          return http.Response(
+            jsonEncode({
+              'items': [
+                {
+                  'id': 'ws-1',
+                  'name': 'Alpha',
+                  'container_id': null,
+                  'created_at': ''
+                },
+              ],
+              'has_more': false,
+              'next_offset': null,
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode(_envelope([])), 200);
+        }
+        if (request.url.path == '/api/v1/workspaces/ws-1/members') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+      final baseCount = fetchCount;
+
+      // Type into filter (starts 300ms debounce timer)
+      await tester.enterText(find.byType(TextField).first, 'alp');
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Change sort before debounce fires — should cancel the timer
+      await tester.tap(find.text('Name'));
+      await tester.pumpAndSettle();
+
+      // Wait past the debounce window
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+
+      // Only one fetch from the sort change, not two (sort + debounce)
+      expect(fetchCount - baseCount, 1);
+    });
+
     testWidgets('sort state is independent per tab', (tester) async {
       String? ownedSort;
       String? sharedSort;
