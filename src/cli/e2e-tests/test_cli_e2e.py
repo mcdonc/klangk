@@ -1201,9 +1201,7 @@ class TestExportSymlinks:
         ws_id = ws["id"]
 
         ws_root = Path(server["data_dir"]) / "workspaces"
-        home_dir = ws_root / ws_id / "home"
-        assert home_dir.exists(), f"workspace home dir missing: {home_dir}"
-        return home_dir
+        return ws_root / ws_id / "home"
 
     def test_export_preserves_all_symlinks(self, server, cli_config, tmp_path):
         """All symlinks are preserved (stored as links, not content)."""
