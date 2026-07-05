@@ -244,20 +244,20 @@ def _health_status(base_url, token, ws_id):
     return body.get("health"), body.get("health_checked_at")
 
 
-def _agent_profile(data_dir, owner_user_id, ws_id):
+def _agent_profile(data_dir, ws_id):
     """Path to the AGENT's ~/.profile on the host for *ws_id*.
 
     setup.sh repoints HOME at the agent's home (#1171), so the
     HERMES_HOME / PATH exports it writes land in the agent's home
-    (``.users/<AGENT_USER_ID>``), not the owner's. The per-workspace
-    home tree is ``<data>/workspaces/<owner_uid>/home/<ws_id>/.users/``.
+    (``.users/<AGENT_USER_ID>``), not the owner's. Since #1295
+    workspace storage is keyed by workspace_id, so the home tree
+    is ``<data>/workspaces/<ws_id>/home/.users/``.
     """
     return os.path.join(
         data_dir,
         "workspaces",
-        owner_user_id,
-        "home",
         ws_id,
+        "home",
         ".users",
         AGENT_USER_ID,
         ".profile",
@@ -402,7 +402,7 @@ class TestHermesSetup:
             )
             # setup.sh wrote ~/.profile exports up front (into the AGENT's
             # home: it repoints HOME at $KLANGK_AGENT_HOME, #1171).
-            profile_path = _agent_profile(self._data_dir, self._user_id, ws_id)
+            profile_path = _agent_profile(self._data_dir, ws_id)
             assert os.path.exists(profile_path), (
                 f"agent ~/.profile not found at {profile_path}"
             )
