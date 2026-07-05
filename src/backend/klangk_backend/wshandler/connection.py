@@ -278,18 +278,15 @@ class Connection:
         self, workspace_id: str, workspace: dict
     ) -> None:
         """Start/restart container for a workspace."""
-        owner_id = workspace.get("user_id", self.user["id"])
-        host_path = str(
-            workspaces.get_workspace_host_path(owner_id, workspace_id)
-        )
-        home_path = str(workspaces.get_home_host_path(owner_id, workspace_id))
-        cfg_path = str(workspaces.get_config_host_path(owner_id, workspace_id))
+        host_path = str(workspaces.get_workspace_host_path(workspace_id))
+        home_path = str(workspaces.get_home_host_path(workspace_id))
+        cfg_path = str(workspaces.get_config_host_path(workspace_id))
 
         # Ensure the per-user home symlink exists BEFORE starting the
         # container, because mounts under /home/{handle}/ need the
         # symlink in place so podman doesn't auto-create a real dir.
         handle = await model.get_user_handle(self.user["id"])
-        workspace_home = workspaces.home_path(owner_id, workspace_id)
+        workspace_home = workspaces.home_path(workspace_id)
         (
             self._user_home,
             self._home_created,
@@ -857,10 +854,7 @@ class Connection:
             # Update the per-workspace symlink.
             workspace = self.workspace
             if workspace:
-                owner_id = workspace.get("user_id", self.user["id"])
-                workspace_home = workspaces.home_path(
-                    owner_id, self.workspace_id
-                )
+                workspace_home = workspaces.home_path(self.workspace_id)
                 container_home, created = await workspaces.ensure_home_symlink(
                     workspace_home, handle, self.user["id"]
                 )

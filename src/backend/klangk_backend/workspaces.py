@@ -163,15 +163,13 @@ async def archive_user_data(user_id: str, email: str) -> list[Path]:
     re-imported via ``POST /workspaces/import``.
 
     Returns the list of created archive paths (may be empty).
-    After successful archival the user's data directory is removed.
+    After successful archival each workspace's data directory is removed.
     """
-    user_dir = safe_path(user_id)  # lgtm[py/path-injection]
-    if not user_dir.exists():
-        return []
     safe_email = sanitize_filename(email)
 
     # Page through every workspace (list_workspaces paginates).
     archives: list[Path] = []
+    archived_ws_ids: list[str] = []
     offset = 0
     while True:
         page = await model.list_workspaces(user_id, offset=offset)
@@ -191,7 +189,7 @@ async def archive_user_data(user_id: str, email: str) -> list[Path]:
                     ws["name"],
                 )
                 continue
-            home_dir = home_path(user_id, ws["id"])
+            home_dir = home_path(ws["id"])
             metadata = workspace_metadata(ws)
             if await build_workspace_archive(metadata, home_dir, archive_path):
                 # lgtm[py/clear-text-logging-sensitive-data]
@@ -199,30 +197,36 @@ async def archive_user_data(user_id: str, email: str) -> list[Path]:
                     "Archived workspace %s to %s", ws["name"], archive_path
                 )
                 archives.append(archive_path)
+                archived_ws_ids.append(ws["id"])
         if not page["has_more"]:
             break
         offset = page["next_offset"]
 
-    # Remove the user's data directory after all archives are created.
-    if archives:
-        await _async_rmtree(user_dir, f"user data {user_id}")
+    # Remove each archived workspace's data directory.
+    for ws_id in archived_ws_ids:
+        ws_dir = safe_path(ws_id)
+        if ws_dir.exists():
+            await _async_rmtree(ws_dir, f"workspace data {ws_id}")
     return archives
 
 
-def workspace_path(user_id: str, workspace_id: str) -> Path:
-    return home_path(user_id, workspace_id) / "work"
+def workspace_path(workspace_id: str) -> Path:
+    """Build path to /WORKSPACES_ROOT/{workspace_id}/home/work"""
+    return home_path(workspace_id) / "work"
 
 
-def home_path(user_id: str, workspace_id: str) -> Path:
-    return safe_path(user_id, "home", workspace_id)
+def home_path(workspace_id: str) -> Path:
+    """Build path to /WORKSPACES_ROOT/{workspace_id}/home"""
+    return safe_path(workspace_id, "home")
 
 
-def config_path(user_id: str, workspace_id: str) -> Path:
-    return safe_path(user_id, "config", workspace_id)
+def config_path(workspace_id: str) -> Path:
+    """Build path to /WORKSPACES_ROOT/{workspace_id}/config"""
+    return safe_path(workspace_id, "config")
 
 
-def get_config_host_path(user_id: str, workspace_id: str) -> Path:
-    path = config_path(user_id, workspace_id)
+def get_config_host_path(workspace_id: str) -> Path:
+    path = config_path(workspace_id)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -249,9 +253,9 @@ async def create_workspace(
         setup_state=setup_state or model.SETUP_STATE_COMPLETE,
         health_check=health_check,
     )
-    home = home_path(user_id, workspace["id"])
+    home = home_path(workspace["id"])
     home.mkdir(parents=True, exist_ok=True)
-    work = workspace_path(user_id, workspace["id"])
+    work = workspace_path(workspace["id"])
     work.mkdir(parents=True, exist_ok=True)
     users_dir = home / ".users"
     users_dir.mkdir(exist_ok=True)
@@ -294,19 +298,19 @@ async def delete_workspace(workspace_id: str, user_id: str) -> bool:
 
     deleted = await model.delete_workspace(workspace_id, user_id)
     if deleted:
-        p = home_path(user_id, workspace_id)
-        await _async_rmtree(p, f"workspace {workspace_id}")
+        ws_dir = safe_path(workspace_id)
+        await _async_rmtree(ws_dir, f"workspace {workspace_id}")
     return deleted
 
 
-def get_workspace_host_path(user_id: str, workspace_id: str) -> Path:
-    path = workspace_path(user_id, workspace_id)
+def get_workspace_host_path(workspace_id: str) -> Path:
+    path = workspace_path(workspace_id)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def get_home_host_path(user_id: str, workspace_id: str) -> Path:
-    path = home_path(user_id, workspace_id)
+def get_home_host_path(workspace_id: str) -> Path:
+    path = home_path(workspace_id)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -434,9 +438,9 @@ async def start_workspace(ws: dict) -> tuple[str, str]:
     """
     owner_id = ws["user_id"]
     workspace_id = ws["id"]
-    host_path = str(get_workspace_host_path(owner_id, workspace_id))
-    h_path = str(get_home_host_path(owner_id, workspace_id))
-    cfg_path = str(get_config_host_path(owner_id, workspace_id))
+    host_path = str(get_workspace_host_path(workspace_id))
+    h_path = str(get_home_host_path(workspace_id))
+    cfg_path = str(get_config_host_path(workspace_id))
     cid, status = await container.registry.start_container(
         workspace_id,
         host_path,

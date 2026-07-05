@@ -5503,19 +5503,19 @@ class TestArchiveUserData:
         import subprocess
 
         # Put a file in the workspace home directory
-        home_dir = ws_mod.home_path(user["id"], workspace["id"])
+        home_dir = ws_mod.home_path(workspace["id"])
         home_dir.mkdir(parents=True, exist_ok=True)
         (home_dir / "hello.txt").write_text("test content")
 
-        user_dir = ws_mod.WORKSPACES_ROOT / user["id"]
+        ws_dir = ws_mod.WORKSPACES_ROOT / workspace["id"]
         result = await ws_mod.archive_user_data(user["id"], user["email"])
         assert len(result) == 1
         archive = result[0]
         assert archive.exists()
         assert archive.name.endswith(".tar.gz")
         assert user["email"].replace("@", "_") in archive.name or True
-        # Original directory should be removed
-        assert not user_dir.exists()
+        # Workspace directory should be removed
+        assert not ws_dir.exists()
 
         # Verify it's in export format (workspace.json + home/)
         meta_out = subprocess.run(
@@ -5540,7 +5540,7 @@ class TestArchiveUserData:
         ws2 = await model.create_workspace(user["id"], "ws-two")
 
         for ws in [ws1, ws2]:
-            home = ws_mod.home_path(user["id"], ws["id"])
+            home = ws_mod.home_path(ws["id"])
             home.mkdir(parents=True, exist_ok=True)
             (home / "file.txt").write_text("data")
 
@@ -5554,7 +5554,7 @@ class TestArchiveUserData:
         """Archival pages through every workspace when there are >10."""
         for i in range(12):
             ws = await model.create_workspace(user["id"], f"ws-{i:02d}")
-            home = ws_mod.home_path(user["id"], ws["id"])
+            home = ws_mod.home_path(ws["id"])
             home.mkdir(parents=True, exist_ok=True)
             (home / "file.txt").write_text("data")
 
@@ -5567,15 +5567,13 @@ class TestArchiveUserData:
         assert result == []
 
     async def test_archive_no_workspaces(self, user):
-        """Returns empty list if user has data dir but no workspaces."""
-        user_dir = ws_mod.WORKSPACES_ROOT / user["id"]
-        user_dir.mkdir(parents=True)
+        """Returns empty list if user has no workspaces."""
         result = await ws_mod.archive_user_data(user["id"], user["email"])
         assert result == []
 
     async def test_archive_tar_failure_skips_workspace(self, user, workspace):
-        """Skips workspaces where tar fails, doesn't remove user dir."""
-        home_dir = ws_mod.home_path(user["id"], workspace["id"])
+        """Skips workspaces where tar fails, doesn't remove workspace dir."""
+        home_dir = ws_mod.home_path(workspace["id"])
         home_dir.mkdir(parents=True, exist_ok=True)
 
         mock_proc = AsyncMock()
@@ -5585,12 +5583,13 @@ class TestArchiveUserData:
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
             result = await ws_mod.archive_user_data(user["id"], user["email"])
         assert result == []
-        # User dir not removed since no archives were created
-        assert (ws_mod.WORKSPACES_ROOT / user["id"]).exists()
+        # Workspace dir not removed since no archives were created
+        ws_dir = ws_mod.WORKSPACES_ROOT / workspace["id"]
+        assert ws_dir.exists()
 
     async def test_archive_sanitizes_email(self, user, workspace):
         """Email with path separators is sanitized in archive filename."""
-        home_dir = ws_mod.home_path(user["id"], workspace["id"])
+        home_dir = ws_mod.home_path(workspace["id"])
         home_dir.mkdir(parents=True, exist_ok=True)
 
         result = await ws_mod.archive_user_data(
@@ -5609,7 +5608,7 @@ class TestArchiveUserData:
         """Skips workspace if archive path would escape WORKSPACES_ROOT."""
         from pathlib import PosixPath
 
-        home_dir = ws_mod.home_path(user["id"], workspace["id"])
+        home_dir = ws_mod.home_path(workspace["id"])
         home_dir.mkdir(parents=True, exist_ok=True)
 
         orig_is_relative_to = PosixPath.is_relative_to
@@ -5654,7 +5653,7 @@ class TestWorkspaceExportImport:
         # Write a file into the workspace home dir
         import klangk_backend.workspaces as ws_mod
 
-        home = ws_mod.home_path(user["id"], ws["id"])
+        home = ws_mod.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
         (home / "work").mkdir(exist_ok=True)
         (home / "work" / "hello.txt").write_text("hello world")
@@ -5719,7 +5718,7 @@ class TestWorkspaceExportImport:
 
         import klangk_backend.workspaces as ws_mod
 
-        home = ws_mod.home_path(user["id"], ws["id"])
+        home = ws_mod.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
         (home / "work").mkdir(exist_ok=True)
         (home / "work" / "data.txt").write_text("test data")
@@ -5748,7 +5747,7 @@ class TestWorkspaceExportImport:
         assert imported["name"] == "imported-ws"
 
         # Verify the home dir was extracted
-        new_home = ws_mod.home_path(user["id"], imported["id"])
+        new_home = ws_mod.home_path(imported["id"])
         assert (new_home / "work" / "data.txt").exists()
         assert (new_home / "work" / "data.txt").read_text() == "test data"
 
@@ -5874,7 +5873,7 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 200
         ws = resp.json()
 
-        home = ws_mod.home_path(user["id"], ws["id"])
+        home = ws_mod.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
         (home / "f.txt").write_text("x")
 
@@ -6073,7 +6072,7 @@ class TestWorkspaceExportImport:
         import klangk_backend.workspaces as ws_mod
 
         ws = resp.json()
-        home = ws_mod.home_path(user["id"], ws["id"])
+        home = ws_mod.home_path(ws["id"])
         assert (home / "test.txt").exists()
 
     async def test_export_streams_valid_tarball(
@@ -6088,7 +6087,7 @@ class TestWorkspaceExportImport:
 
         import klangk_backend.workspaces as ws_mod
 
-        home = ws_mod.home_path(user["id"], ws["id"])
+        home = ws_mod.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
         (home / "work").mkdir(exist_ok=True)
         (home / "work" / "file.txt").write_text("streamed content")
@@ -6123,7 +6122,7 @@ class TestWorkspaceExportImport:
 
         import klangk_backend.workspaces as ws_mod
 
-        home = ws_mod.home_path(user["id"], ws["id"])
+        home = ws_mod.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
         (home / "work").mkdir(exist_ok=True)
         # Write a large file with random data (incompressible, so gzip
@@ -6159,7 +6158,7 @@ class TestWorkspaceExportImport:
 
         import klangk_backend.workspaces as ws_mod
 
-        home = ws_mod.home_path(user["id"], ws["id"])
+        home = ws_mod.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
         (home / "work").mkdir(exist_ok=True)
         (home / "work" / "f.txt").write_text("data")
@@ -6256,7 +6255,7 @@ class TestWorkspaceExportImport:
 
         import klangk_backend.workspaces as ws_mod
 
-        home = ws_mod.home_path(user["id"], ws["id"])
+        home = ws_mod.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
         (home / "work").mkdir(exist_ok=True)
         (home / "work" / "real.txt").write_text("real file")
@@ -6296,7 +6295,7 @@ class TestWorkspaceExportImport:
 
         import klangk_backend.workspaces as ws_mod
 
-        home = ws_mod.home_path(user["id"], ws["id"])
+        home = ws_mod.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
 
         # Create a deep directory structure with files at various depths
@@ -6368,7 +6367,7 @@ class TestWorkspaceExportImport:
         assert imported["name"] == "deep-imported"
 
         # Verify all files survived
-        imported_home = ws_mod.home_path(user["id"], imported["id"])
+        imported_home = ws_mod.home_path(imported["id"])
         for rel, content in expected_files.items():
             file_path = imported_home / rel
             assert file_path.exists(), f"Missing after import: {rel}"
