@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
@@ -64,7 +65,11 @@ class BrowserDelegate {
       result = {'error': 'action failed: $e'};
     }
 
-    _client.sendBrowserResponse(id, result);
+    try {
+      _client.sendBrowserResponse(id, result);
+    } catch (e) {
+      debugPrint('[BrowserDelegate] sendBrowserResponse failed for $id: $e');
+    }
   }
 
   Future<Map<String, dynamic>> _handleClipboardWrite(
