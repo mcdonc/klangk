@@ -658,7 +658,14 @@ async def delete_user(user_id: str) -> bool:
 
 
 async def update_email(user_id: str, email: str) -> None:
-    """Update a user's email."""
+    """Update a user's email.
+
+    Raises ``AgentPrincipalError`` if the target is the system agent.
+    """
+    if user_id == AGENT_USER_ID:
+        raise AgentPrincipalError(
+            "Cannot change the email of the system agent user"
+        )
     async with transaction() as db:
         await db.execute(
             "UPDATE users SET email = ? WHERE id = ?", (email, user_id)

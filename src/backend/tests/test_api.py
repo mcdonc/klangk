@@ -8056,6 +8056,87 @@ class TestOIDCCallback:
         assert resp.status_code == 400
 
 
+class TestOIDCCallbackAgentGuard:
+    """OIDC callback must never mint a session as the system agent (#1225)."""
+
+    async def _setup_callback(self, client, monkeypatch, db, claims=None):
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(
+            api.oidc,
+            "exchange_code",
+            AsyncMock(
+                return_value={
+                    "id_token": "fake-id-token",
+                    "access_token": "at",
+                }
+            ),
+        )
+        default_claims = {
+            "sub": "agent-oidc-sub",
+            "email": "clanker@example.com",
+            "email_verified": True,
+        }
+        if claims:
+            default_claims.update(claims)
+        monkeypatch.setattr(
+            api.oidc,
+            "validate_id_token",
+            AsyncMock(return_value=default_claims),
+        )
+        cookie_data = json_mod.dumps(
+            {
+                "state": "test-state",
+                "verifier": "test-verifier",
+                "redirect_uri": "https://klangk.example.com/auth/oidc/test/callback",
+                "cli_redirect": None,
+            }
+        )
+        return provider, cookie_data
+
+    async def test_oidc_rejects_agent_email(
+        self, client, monkeypatch, db, agent_user
+    ):
+        """OIDC login with the agent's email is rejected with 403."""
+        _, cookie_data = await self._setup_callback(client, monkeypatch, db)
+        client.cookies.set("oidc_test", cookie_data)
+        resp = await client.get(
+            "/api/v1/auth/oidc/test/callback",
+            params={"code": "auth-code", "state": "test-state"},
+        )
+        assert resp.status_code == 403
+        assert "system agent" in resp.json()["detail"]
+
+    async def test_oidc_rejects_agent_by_external_id(
+        self, client, monkeypatch, db, agent_user
+    ):
+        """OIDC login resolving the agent by external_id is rejected."""
+        # The DB trigger blocks linking OIDC identity to the agent, so
+        # mock get_user_by_external_id to simulate a pre-linked agent.
+        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+        monkeypatch.setattr(
+            model,
+            "get_user_by_external_id",
+            AsyncMock(return_value=agent),
+        )
+        _, cookie_data = await self._setup_callback(client, monkeypatch, db)
+        client.cookies.set("oidc_test", cookie_data)
+        resp = await client.get(
+            "/api/v1/auth/oidc/test/callback",
+            params={"code": "auth-code", "state": "test-state"},
+        )
+        assert resp.status_code == 403
+        assert "system agent" in resp.json()["detail"]
+
+
 class TestOIDCLogout:
     async def test_logout_returns_oidc_logout_url(self, client, db):
         """OIDC user with logout_redirect gets IdP logout URL in response."""
