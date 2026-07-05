@@ -112,12 +112,12 @@ def _validate_state_cookie(
 
     try:
         cookie_data = json.loads(cookie_raw)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         raise HTTPException(
             status_code=400, detail="Invalid OIDC state cookie"
         )
 
-    if cookie_data.get("state") != state:
+    if not isinstance(cookie_data, dict) or cookie_data.get("state") != state:
         raise HTTPException(status_code=400, detail="State mismatch")
 
     return cookie_data

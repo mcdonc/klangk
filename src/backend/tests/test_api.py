@@ -7988,6 +7988,25 @@ class TestOIDCCallback:
         )
         assert resp.status_code == 400
 
+    async def test_callback_non_dict_cookie_json(
+        self, client, monkeypatch, db
+    ):
+        """Non-dict JSON in the state cookie returns 400, not 500 (#1334)."""
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        client.cookies.set("oidc_test", "[1, 2, 3]")
+        resp = await client.get(
+            "/api/v1/auth/oidc/test/callback",
+            params={"code": "code", "state": "s"},
+        )
+        assert resp.status_code == 400
+
 
 class TestOIDCLogout:
     async def test_logout_returns_oidc_logout_url(self, client, db):
