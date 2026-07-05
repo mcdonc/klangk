@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 from . import container, model, podman
+from .model.instance import get_instance_id
 from .util import resolve_env_bool, resolve_env_value
 
 logger = logging.getLogger(__name__)
@@ -57,9 +58,14 @@ async def _async_rmtree(path: Path | str, label: str = "") -> None:
 
 
 def workspace_metadata(ws: dict) -> dict:
-    """Extract export metadata from a workspace dict."""
+    """Extract export metadata from a workspace dict.
+
+    Includes the instance ID so that imports can verify the archive
+    came from the same Klangk instance.
+    """
     return {
         "name": ws["name"],
+        "instance_id": get_instance_id(),
         "image": ws.get("image"),
         "service_command": ws.get("service_command"),
         "auto_start": ws.get("auto_start", False),
