@@ -13,6 +13,6 @@ Export is admin-only. `klangkc export <workspace>` downloads the archive via `GE
 
 `klangkc import <archive>` uploads the archive via `POST /api/v1/workspaces/import`. The server streams the upload to a temp file, extracts metadata, creates the workspace, and extracts the home directory. Invalid images or mounts from the archive are silently dropped. Use `--name` to override the workspace name from the archive.
 
-> **Same-instance only:** Archives include the exporting instance's unique ID. Import rejects archives whose instance ID does not match the importing server. This prevents foreign workspace imports from planting home directory symlinks that reference user IDs that don't exist on the destination instance. Archives exported before this check was added (with no `instance_id` in `workspace.json`) are still accepted.
+> **Same-instance only:** Archives include the exporting instance's unique ID. Import rejects archives that are missing an instance ID or whose instance ID does not match the importing server. This prevents foreign workspace imports from planting home directory symlinks that reference user IDs that don't exist on the destination instance.
 
 System-level packages (apt installs, etc.) are not included — those belong in custom workspace images.

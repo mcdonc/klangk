@@ -609,13 +609,16 @@ async def _extract_archive_metadata(
     if mounts and container.validate_mounts(mounts):
         mounts = None
 
-    # Validate provenance: reject archives from a different instance.
+    # Validate provenance: reject archives without instance_id or from a
+    # different instance.
     archive_instance_id = metadata.get("instance_id")
+    if archive_instance_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Archive is missing instance_id",
+        )
     local_instance_id = get_instance_id()
-    if (
-        archive_instance_id is not None
-        and archive_instance_id != local_instance_id
-    ):
+    if archive_instance_id != local_instance_id:
         raise HTTPException(
             status_code=400,
             detail="Archive was exported from a different Klangk instance",

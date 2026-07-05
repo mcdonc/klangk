@@ -5805,6 +5805,14 @@ class TestWorkspaceExportImport:
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
+    def _meta(self, **overrides):
+        """Build workspace metadata dict with instance_id included."""
+        from klangk_backend.model.instance import get_instance_id
+
+        d = {"instance_id": get_instance_id()}
+        d.update(overrides)
+        return d
+
     async def test_export_workspace(self, client, admin_user, user):
         # Create a workspace as regular user
         headers = await self._user_headers(client)
@@ -5924,7 +5932,7 @@ class TestWorkspaceExportImport:
 
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            meta = json.dumps({"name": "from-archive"}).encode()
+            meta = json.dumps(self._meta(name="from-archive")).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
             tar.addfile(info, io.BytesIO(meta))
@@ -5995,8 +6003,8 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 200
         assert resp.json()["name"] == "same-inst"
 
-    async def test_import_accepts_legacy_no_instance_id(self, client, user):
-        """Archives without instance_id (pre-provenance) are still accepted."""
+    async def test_import_rejects_missing_instance_id(self, client, user):
+        """Archives without instance_id are rejected."""
         import io
         import json
         import tarfile
@@ -6017,8 +6025,8 @@ class TestWorkspaceExportImport:
                 "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
             },
         )
-        assert resp.status_code == 200
-        assert resp.json()["name"] == "legacy-import"
+        assert resp.status_code == 400
+        assert "missing instance_id" in resp.json()["detail"]
 
     async def test_import_notifies_importer(self, client, user):
         import io
@@ -6027,7 +6035,7 @@ class TestWorkspaceExportImport:
 
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            meta = json.dumps({"name": "notify-import"}).encode()
+            meta = json.dumps(self._meta(name="notify-import")).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
             tar.addfile(info, io.BytesIO(meta))
@@ -6068,7 +6076,7 @@ class TestWorkspaceExportImport:
 
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            meta = json.dumps({"name": "off-loop"}).encode()
+            meta = json.dumps(self._meta(name="off-loop")).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
             tar.addfile(info, io.BytesIO(meta))
@@ -6150,7 +6158,7 @@ class TestWorkspaceExportImport:
 
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            meta = json.dumps({"name": "taken"}).encode()
+            meta = json.dumps(self._meta(name="taken")).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
             tar.addfile(info, io.BytesIO(meta))
@@ -6207,7 +6215,7 @@ class TestWorkspaceExportImport:
 
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            meta = json.dumps({}).encode()
+            meta = json.dumps(self._meta()).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
             tar.addfile(info, io.BytesIO(meta))
@@ -6233,7 +6241,7 @@ class TestWorkspaceExportImport:
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             meta = json.dumps(
-                {"name": "img-fallback", "image": "evil:latest"}
+                self._meta(name="img-fallback", image="evil:latest")
             ).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
@@ -6260,7 +6268,7 @@ class TestWorkspaceExportImport:
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             meta = json.dumps(
-                {"name": "mount-drop", "mounts": ["bad-mount-spec"]}
+                self._meta(name="mount-drop", mounts=["bad-mount-spec"])
             ).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
@@ -6286,7 +6294,7 @@ class TestWorkspaceExportImport:
 
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            meta = json.dumps({"name": "home-root-skip"}).encode()
+            meta = json.dumps(self._meta(name="home-root-skip")).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
             tar.addfile(info, io.BytesIO(meta))
@@ -6653,16 +6661,16 @@ class TestWorkspaceExportImport:
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             meta = json.dumps(
-                {
-                    "name": "env-sanitize",
-                    "env": {
+                self._meta(
+                    name="env-sanitize",
+                    env={
                         "MY_VAR": "safe",
                         "KLANGK_BRIDGE_TOKEN": "stolen",
                         "LD_PRELOAD": "/evil.so",
                         "PATH": "/bad",
                         "NORMAL_VAR": "ok",
                     },
-                }
+                )
             ).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
@@ -6700,7 +6708,7 @@ class TestWorkspaceExportImport:
 
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            meta = json.dumps({"name": "fail-extract"}).encode()
+            meta = json.dumps(self._meta(name="fail-extract")).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
             tar.addfile(info, io.BytesIO(meta))
@@ -6776,7 +6784,7 @@ class TestWorkspaceExportImport:
 
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            meta = json.dumps({"name": "timeout-test"}).encode()
+            meta = json.dumps(self._meta(name="timeout-test")).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
             tar.addfile(info, io.BytesIO(meta))
@@ -6817,7 +6825,7 @@ class TestWorkspaceExportImport:
 
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            meta = json.dumps({"name": "traversal-test"}).encode()
+            meta = json.dumps(self._meta(name="traversal-test")).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
             tar.addfile(info, io.BytesIO(meta))
@@ -6850,7 +6858,7 @@ class TestWorkspaceExportImport:
 
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            meta = json.dumps({"name": "import-roles-test"}).encode()
+            meta = json.dumps(self._meta(name="import-roles-test")).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
             tar.addfile(info, io.BytesIO(meta))
