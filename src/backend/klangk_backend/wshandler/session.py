@@ -573,9 +573,8 @@ class WebSocketState:
                 sock.send_json(message)
             except WS_ERRORS:
                 dead.append((sock, conn))
-        for sock, conn in dead:
+        for sock, _ in dead:
             self.connections.pop(sock, None)
-            asyncio.create_task(conn.cleanup())
 
     def notify_service_health(
         self,
@@ -622,9 +621,8 @@ class WebSocketState:
                 sock.send_json(message_dict)
             except WS_ERRORS:
                 dead.append((sock, conn))
-        for sock, conn in dead:
+        for sock, _ in dead:
             self.connections.pop(sock, None)
-            asyncio.create_task(conn.cleanup())
 
     def send_service_health_snapshot(self, sock: SafeWebSocket) -> None:
         """Send the current health of every health-checked workspace.
@@ -694,9 +692,8 @@ class WebSocketState:
                 sock.send_json(frame)
             except WS_ERRORS:
                 dead.append((sock, conn))
-        for sock, conn in dead:
+        for sock, _ in dead:
             self.connections.pop(sock, None)
-            asyncio.create_task(conn.cleanup())
 
     def handle_subscribe_health_heartbeat(
         self, msg: dict, sock: SafeWebSocket
@@ -730,9 +727,8 @@ class WebSocketState:
                 sock.send_json(message)
             except WS_ERRORS:
                 dead.append((sock, conn))
-        for sock, conn in dead:
+        for sock, _ in dead:
             self.connections.pop(sock, None)
-            asyncio.create_task(conn.cleanup())
 
     def handle_browser_response(
         self, msg: dict, sender: SafeWebSocket | None = None

@@ -4013,17 +4013,14 @@ class TestNotifyUserWorkspacesChanged:
         # Should not raise when the user has no active connections.
         wshandler.state.notify_user_workspaces_changed("nobody")
 
-    async def test_dead_socket_is_pruned(self):
+    def test_dead_socket_is_pruned(self):
         from klangk_backend.wshandler import WS_ERRORS
 
         sock = _mock_sock()
         sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
-            conn = self._register(sock, {"id": "uid-1", "email": "a@x"})
-            with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
-                wshandler.state.notify_user_workspaces_changed("uid-1")
-                await asyncio.sleep(0)
-                mock.assert_awaited_once()
+            self._register(sock, {"id": "uid-1", "email": "a@x"})
+            wshandler.state.notify_user_workspaces_changed("uid-1")
             assert sock not in wshandler.state.connections
         finally:
             wshandler.state.connections.pop(sock, None)
@@ -4075,17 +4072,14 @@ class TestNotifyContainerStatus:
             wshandler.state.connections.pop(sock, None)
         sock.send_json.assert_not_called()
 
-    async def test_dead_socket_is_pruned(self):
+    def test_dead_socket_is_pruned(self):
         from klangk_backend.wshandler import WS_ERRORS
 
         sock = _mock_sock()
         sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
-            conn = self._register(sock, {"id": "uid-1", "email": "a@x"})
-            with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
-                wshandler.state.notify_container_status("ws-1", True)
-                await asyncio.sleep(0)
-                mock.assert_awaited_once()
+            self._register(sock, {"id": "uid-1", "email": "a@x"})
+            wshandler.state.notify_container_status("ws-1", True)
             assert sock not in wshandler.state.connections
         finally:
             wshandler.state.connections.pop(sock, None)
@@ -4146,17 +4140,14 @@ class TestNotifyServiceHealth:
             wshandler.state.connections.pop(sock, None)
         sock.send_json.assert_not_called()
 
-    async def test_dead_socket_is_pruned(self):
+    def test_dead_socket_is_pruned(self):
         from klangk_backend.wshandler import WS_ERRORS
 
         sock = _mock_sock()
         sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
-            conn = self._register(sock, {"id": "uid-1", "email": "a@x"})
-            with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
-                wshandler.state.notify_service_health("ws-1", healthy=True)
-                await asyncio.sleep(0)
-                mock.assert_awaited_once()
+            self._register(sock, {"id": "uid-1", "email": "a@x"})
+            wshandler.state.notify_service_health("ws-1", healthy=True)
             assert sock not in wshandler.state.connections
         finally:
             wshandler.state.connections.pop(sock, None)
@@ -4419,19 +4410,14 @@ class TestHealthHeartbeat:
             wshandler.state.connections.pop(sock, None)
         sock.send_json.assert_not_called()
 
-    async def test_dead_opted_in_socket_is_pruned(self):
+    def test_dead_opted_in_socket_is_pruned(self):
         from klangk_backend.wshandler import WS_ERRORS
 
         sock = _mock_sock()
         sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
-            conn = self._register(
-                sock, {"id": "u1", "email": "a@x"}, wants=True
-            )
-            with patch.object(conn, "cleanup", new_callable=AsyncMock) as mock:
-                wshandler.state.send_health_heartbeats()
-                await asyncio.sleep(0)
-                mock.assert_awaited_once()
+            self._register(sock, {"id": "u1", "email": "a@x"}, wants=True)
+            wshandler.state.send_health_heartbeats()
             assert sock not in wshandler.state.connections
         finally:
             wshandler.state.connections.pop(sock, None)
