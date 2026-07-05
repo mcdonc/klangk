@@ -126,14 +126,8 @@ in
     "klangk:kill-containers" = {
       exec = ''
         if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
-          INSTANCE_ID=$(klangk-instance-id 2>/dev/null || true)
-          if [ -n "''${INSTANCE_ID:-}" ]; then
-            ''${KLANGK_PODMAN_BIN:-podman} ps -a --filter "label=klangk.instance=''${INSTANCE_ID}" -q \
-              | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
-          else
-            ''${KLANGK_PODMAN_BIN:-podman} ps -a --filter "label=klangk.managed=true" -q \
-              | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
-          fi
+          ''${KLANGK_PODMAN_BIN:-podman} ps -a --filter "label=klangk.instance=$(klangk-instance-id)" -q \
+            | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
         fi
       '';
     };
@@ -251,16 +245,9 @@ in
   scripts.run-host-container.exec = ''exec bash "$DEVENV_ROOT/scripts/run-host-container.sh" "$@"'';
 
   scripts.kill-containers.exec = ''
-    INSTANCE_ID=$(klangk-instance-id 2>/dev/null || true)
-    if [ -n "''${INSTANCE_ID:-}" ]; then
-      ''${KLANGK_PODMAN_BIN:-podman} ps -a \
-        --filter "label=klangk.instance=''${INSTANCE_ID}" \
-        -q | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
-    else
-      ''${KLANGK_PODMAN_BIN:-podman} ps -a \
-        --filter "label=klangk.managed=true" \
-        -q | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
-    fi
+    ''${KLANGK_PODMAN_BIN:-podman} ps -a \
+      --filter "label=klangk.instance=$(klangk-instance-id)" \
+      -q | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
   '';
 
   scripts.update-plugins.exec = ''

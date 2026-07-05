@@ -94,24 +94,23 @@ def _stop_server(proc, data_dir):
         text=True,
         env={**os.environ, "KLANGK_DATA_DIR": data_dir},
     ).stdout.strip()
-    if instance_id:
-        result = subprocess.run(
-            [
-                "podman",
-                "ps",
-                "-a",
-                "--filter",
-                f"label=klangk.instance={instance_id}",
-                "-q",
-            ],
+    result = subprocess.run(
+        [
+            "podman",
+            "ps",
+            "-a",
+            "--filter",
+            f"label=klangk.instance={instance_id}",
+            "-q",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout.strip():
+        subprocess.run(
+            ["podman", "rm", "-f", *result.stdout.strip().split()],
             capture_output=True,
-            text=True,
         )
-        if result.stdout.strip():
-            subprocess.run(
-                ["podman", "rm", "-f", *result.stdout.strip().split()],
-                capture_output=True,
-            )
     shutil.rmtree(data_dir, ignore_errors=True)
 
 
