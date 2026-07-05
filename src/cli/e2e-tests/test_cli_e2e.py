@@ -1200,11 +1200,8 @@ class TestExportSymlinks:
         ws = [w for w in resp.json() if w["name"] == "e2e-symlink"][0]
         ws_id = ws["id"]
 
-        # Find the user directory — it's the only subdirectory of workspaces/
         ws_root = Path(server["data_dir"]) / "workspaces"
-        user_dirs = [d for d in ws_root.iterdir() if d.is_dir()]
-        assert len(user_dirs) == 1
-        return user_dirs[0] / "home" / ws_id
+        return ws_root / ws_id / "home"
 
     def test_export_preserves_all_symlinks(self, server, cli_config, tmp_path):
         """All symlinks are preserved (stored as links, not content)."""
@@ -1368,9 +1365,7 @@ class TestExportImport:
             ws = [w for w in resp.json() if w["name"] == "export-symlink"][0]
             ws_id = ws["id"]
             ws_root = Path(server["data_dir"]) / "workspaces"
-            user_dirs = [d for d in ws_root.iterdir() if d.is_dir()]
-            assert len(user_dirs) >= 1
-            home_dir = user_dirs[0] / "home" / ws_id
+            home_dir = ws_root / ws_id / "home"
 
             # Create files and symlinks
             home_dir.mkdir(parents=True, exist_ok=True)
@@ -1444,7 +1439,7 @@ class TestExportImport:
                 for w in resp.json()
                 if w["name"] == "export-symlink-imported"
             ][0]
-            imported_home = user_dirs[0] / "home" / imported["id"]
+            imported_home = ws_root / imported["id"] / "home"
 
             # Verify files and symlinks survived
             assert (

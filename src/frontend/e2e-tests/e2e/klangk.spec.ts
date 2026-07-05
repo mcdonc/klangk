@@ -933,15 +933,9 @@ test.describe("Klangk E2E", () => {
       "host-home",
     );
 
-    // Decode user ID from JWT
-    const payload = JSON.parse(
-      Buffer.from(token.split(".")[1], "base64url").toString(),
-    );
-    const userId = payload.sub;
-
     // Write a file to the host home directory before starting the container
     const dataDir = process.env.KLANGK_E2E_DATA_DIR!;
-    const homePath = `${dataDir}/workspaces/${userId}/home/${workspaceId}`;
+    const homePath = `${dataDir}/workspaces/${workspaceId}/home`;
     const { mkdirSync, writeFileSync } = await import("fs");
     mkdirSync(homePath, { recursive: true });
     writeFileSync(`${homePath}/.host-created-file`, "hello-from-host\n");
