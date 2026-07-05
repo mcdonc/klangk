@@ -168,13 +168,27 @@ async def _exchange_and_validate_token(provider, code, cookie_data):
 
 
 async def _find_or_create_user(provider_id, sub, email):
-    """Locate an existing user by OIDC identity or create one via JIT provisioning."""
+    """Locate an existing user by OIDC identity or create one via JIT provisioning.
+
+    Raises ``HTTPException(403)`` if the resolved user is the system agent —
+    OIDC must never mint a session as the agent (#1225).
+    """
     user = await model.get_user_by_external_id(provider_id, sub)
     if user is not None:
+        if user["id"] == model.AGENT_USER_ID:
+            raise HTTPException(
+                status_code=403,
+                detail="Cannot log in as the system agent",
+            )
         return user
 
     existing = await model.get_user_by_email(email)
     if existing is not None:
+        if existing["id"] == model.AGENT_USER_ID:
+            raise HTTPException(
+                status_code=403,
+                detail="Cannot log in as the system agent",
+            )
         await model.link_oidc_identity(existing["id"], provider_id, sub)
         return existing
 
