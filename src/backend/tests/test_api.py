@@ -7894,18 +7894,17 @@ class TestOIDCCallback:
 
     async def test_callback_login_hook_rejects(self, client, monkeypatch, db):
         """A login validation hook can reject an OIDC login."""
+
+        def reject_hook(provider, claims, email, tokens):
+            raise ValueError("Denied by hook")
+
+        monkeypatch.setattr(oidc, "_login_hook", reject_hook)
+        monkeypatch.setattr(oidc, "_login_hook_is_async", False)
         _, cookie_data = await self._setup_callback(
             client,
             monkeypatch,
             db,
-            claims={"email_verified": False},
         )
-        monkeypatch.setattr(
-            oidc,
-            "_login_hook",
-            oidc.example_require_verified_email,
-        )
-        monkeypatch.setattr(oidc, "_login_hook_is_async", False)
         client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
@@ -7916,17 +7915,66 @@ class TestOIDCCallback:
         assert resp.json()["detail"] == "Login denied by server policy"
         assert await model.get_user_by_email("oidcuser@example.com") is None
 
-    async def test_callback_no_login_hook_allows_unverified(
+    async def test_callback_rejects_unverified_email_by_default(
         self, client, monkeypatch, db
     ):
-        """Without a login hook, unverified emails are accepted."""
+        """Unverified email is rejected when trust-email is false (default)."""
         _, cookie_data = await self._setup_callback(
             client,
             monkeypatch,
             db,
             claims={"email_verified": False},
         )
-        monkeypatch.setattr(oidc, "_login_hook", None)
+        client.cookies.set("oidc_test", cookie_data)
+        resp = await client.get(
+            "/api/v1/auth/oidc/test/callback",
+            params={"code": "auth-code", "state": "test-state"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 403
+        assert "not verified" in resp.json()["detail"]
+        assert await model.get_user_by_email("oidcuser@example.com") is None
+
+    async def test_callback_rejects_missing_email_verified(
+        self, client, monkeypatch, db
+    ):
+        """Missing email_verified claim is rejected (same as False)."""
+        _, cookie_data = await self._setup_callback(
+            client,
+            monkeypatch,
+            db,
+            claims={"sub": "no-ev-sub", "email": "noev@example.com"},
+        )
+        # Override claims to omit email_verified entirely
+        monkeypatch.setattr(
+            api.oidc,
+            "validate_id_token",
+            AsyncMock(
+                return_value={
+                    "sub": "no-ev-sub",
+                    "email": "noev@example.com",
+                }
+            ),
+        )
+        client.cookies.set("oidc_test", cookie_data)
+        resp = await client.get(
+            "/api/v1/auth/oidc/test/callback",
+            params={"code": "auth-code", "state": "test-state"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 403
+
+    async def test_callback_trust_email_allows_unverified(
+        self, client, monkeypatch, db
+    ):
+        """With trust-email: true, unverified emails are accepted."""
+        provider, cookie_data = await self._setup_callback(
+            client,
+            monkeypatch,
+            db,
+            claims={"email_verified": False},
+        )
+        provider.trust_email = True
         client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",

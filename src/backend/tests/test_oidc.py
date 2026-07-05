@@ -177,6 +177,45 @@ class TestLoadConfig:
         providers = oidc.load_config()
         assert providers[0].ca_cert is None
 
+    def test_trust_email(self, monkeypatch, tmp_path):
+        cfg = tmp_path / "oidc.yaml"
+        cfg.write_text(
+            yaml.dump(
+                [
+                    {
+                        "id": "trusted",
+                        "display-name": "Trusted",
+                        "issuer": "https://idp.example.com",
+                        "client-id": "klangk",
+                        "client-secret": "s",
+                        "trust-email": True,
+                    }
+                ]
+            )
+        )
+        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
+        providers = oidc.load_config()
+        assert providers[0].trust_email is True
+
+    def test_trust_email_defaults_false(self, monkeypatch, tmp_path):
+        cfg = tmp_path / "oidc.yaml"
+        cfg.write_text(
+            yaml.dump(
+                [
+                    {
+                        "id": "default",
+                        "display-name": "Default",
+                        "issuer": "https://idp.example.com",
+                        "client-id": "klangk",
+                        "client-secret": "s",
+                    }
+                ]
+            )
+        )
+        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
+        providers = oidc.load_config()
+        assert providers[0].trust_email is False
+
     def test_multiple_providers(self, monkeypatch, tmp_path):
         cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
@@ -693,22 +732,6 @@ class TestCallLoginHook:
         oidc._login_hook_is_async = True
         with pytest.raises(ValueError, match="async denied"):
             await oidc.call_login_hook(_provider(), {}, "x@example.com", {})
-
-    async def test_example_require_verified_email_rejects(self):
-        oidc._login_hook = oidc.example_require_verified_email
-        oidc._login_hook_is_async = False
-        with pytest.raises(ValueError, match="not verified"):
-            await oidc.call_login_hook(
-                _provider(), {"email_verified": False}, "a@b.com", {}
-            )
-
-    async def test_example_require_verified_email_allows(self):
-        oidc._login_hook = oidc.example_require_verified_email
-        oidc._login_hook_is_async = False
-        result = await oidc.call_login_hook(
-            _provider(), {"email_verified": True}, "a@b.com", {}
-        )
-        assert result is None
 
 
 class TestSyncOidcGroups:
