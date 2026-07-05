@@ -772,6 +772,46 @@ class TestGetSession:
         s2 = await get_session("ws-1")
         assert s1 is s2
 
+    async def test_get_session_blocked_during_stop(self):
+        """get_session must not install a session while stop_session is
+        tearing one down for the same workspace (#1298)."""
+        session = await get_session("ws-race")
+        session._proc = AsyncMock()
+        session._proc.returncode = None
+        session._proc.kill = MagicMock()
+        session._proc.wait = AsyncMock()
+
+        # Record the order of operations.
+        order: list[str] = []
+
+        async def slow_stop():
+            """Simulate session.stop() taking time (real stop awaits
+            proc.wait)."""
+            order.append("stop_begin")
+            await asyncio.sleep(0.05)
+            order.append("stop_end")
+
+        session.stop = slow_stop  # type: ignore[assignment]
+
+        async def do_get():
+            s = await get_session("ws-race")
+            order.append("get_done")
+            return s
+
+        # Launch stop and get concurrently.  Without the lock, get_session
+        # would see the workspace missing from _agents (already popped) and
+        # install a brand-new session before stop finishes.
+        _, new_session = await asyncio.gather(
+            stop_session("ws-race"),
+            do_get(),
+        )
+
+        # stop must fully complete before get_session creates a new entry.
+        assert order == ["stop_begin", "stop_end", "get_done"]
+        # The returned session is a fresh one (not the stopped one).
+        assert new_session is not session
+        assert "ws-race" in _agents
+
 
 class TestEnsureAgentHome:
     """Direct tests for the eager-provisioning function (#1157).

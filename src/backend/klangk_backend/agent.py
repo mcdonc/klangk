@@ -49,6 +49,7 @@ class AgentSetupError(AgentError):
 
 # Registry of active agent sessions keyed by workspace ID.
 _agents: dict[str, "AgentSession"] = {}
+_agents_lock = asyncio.Lock()
 
 # Callback to get a workspace session for broadcasting.
 # Set by wshandler at import time to break the circular dependency.
@@ -555,12 +556,17 @@ async def get_session(workspace_id: str) -> AgentSession:
     The session resolves the current container ID from the container
     registry on each startup, so it automatically picks up container
     restarts without needing to be told the new ID.
+
+    Serialized with ``stop_session`` via ``_agents_lock`` so that a new
+    session is never installed for a container that ``stop_session`` has
+    already torn down (#1298).
     """
-    session = _agents.get(workspace_id)
-    if session is None:
-        session = AgentSession(workspace_id)
-        _agents[workspace_id] = session
-    return session
+    async with _agents_lock:
+        session = _agents.get(workspace_id)
+        if session is None:
+            session = AgentSession(workspace_id)
+            _agents[workspace_id] = session
+        return session
 
 
 def is_running(workspace_id: str) -> bool:
@@ -580,10 +586,16 @@ def any_running() -> bool:
 
 
 async def stop_session(workspace_id: str) -> None:
-    """Stop and remove the agent session for a workspace."""
-    session = _agents.pop(workspace_id, None)
-    if session:
-        await session.stop()
+    """Stop and remove the agent session for a workspace.
+
+    Serialized with ``get_session`` via ``_agents_lock`` so that a
+    concurrent ``get_session`` cannot install a new session for a
+    container that is being torn down (#1298).
+    """
+    async with _agents_lock:
+        session = _agents.pop(workspace_id, None)
+        if session:
+            await session.stop()
 
 
 async def stop_all_sessions() -> None:
