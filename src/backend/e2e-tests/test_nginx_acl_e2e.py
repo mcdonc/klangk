@@ -269,7 +269,6 @@ class TestNginxAclEnforcement:
             "KLANGK_DEFAULT_USER": "test@example.com",
             "KLANGK_DEFAULT_PASSWORD": "testpass",
             "KLANGK_TEST_MODE": "1",
-            "KLANGK_INSTANCE_ID": "nginx-acl-e2e",
             "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
             "KLANGK_PORT_RANGE_START": "9200",
             "LOGFIRE_TOKEN": "",

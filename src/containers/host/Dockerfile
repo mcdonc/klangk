@@ -78,7 +78,6 @@ ENV KLANGK_NGINX_PORT=8995
 ENV KLANGK_DATA_DIR=/home/klangk/data
 ENV KLANGK_PLUGINS_DIR=/home/klangk/plugins
 ENV KLANGK_IMAGE_NAME=klangk-workspace
-ENV KLANGK_INSTANCE_ID=default
 ENV KLANGK_VERSION_FILE=/home/klangk/version.json
 # Used by nginx.sh to write nginx.conf at runtime
 ENV KLANGK_STATE_DIR=/tmp/klangk-state
