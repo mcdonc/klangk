@@ -5625,6 +5625,8 @@ class TestBuildWorkspaceArchive:
 
 class TestWorkspaceMetadata:
     def test_extracts_metadata(self):
+        from klangk_backend.model.instance import get_instance_id
+
         ws = {
             "name": "myws",
             "image": "ubuntu",
@@ -5637,6 +5639,7 @@ class TestWorkspaceMetadata:
         meta = ws_mod.workspace_metadata(ws)
         assert meta == {
             "name": "myws",
+            "instance_id": get_instance_id(),
             "image": "ubuntu",
             "service_command": "bash",
             "auto_start": True,
@@ -5649,6 +5652,12 @@ class TestWorkspaceMetadata:
     def test_defaults_num_ports(self):
         meta = ws_mod.workspace_metadata({"name": "x"})
         assert meta["num_ports"] == 5
+
+    def test_includes_instance_id(self):
+        from klangk_backend.model.instance import get_instance_id
+
+        meta = ws_mod.workspace_metadata({"name": "x"})
+        assert meta["instance_id"] == get_instance_id()
 
 
 class TestArchiveUserData:
@@ -5836,6 +5845,7 @@ class TestWorkspaceExportImport:
             meta_file = tar.extractfile("workspace.json")
             metadata = json.loads(meta_file.read())
             assert metadata["name"] == "export-test"
+            assert "instance_id" in metadata
 
     async def test_export_requires_admin(self, client, user):
         headers = await self._user_headers(client)
@@ -5930,6 +5940,85 @@ class TestWorkspaceExportImport:
         )
         assert resp.status_code == 200
         assert resp.json()["name"] == "from-archive"
+
+    async def test_import_rejects_foreign_instance(self, client, user):
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(
+                {"name": "foreign", "instance_id": "foreign-instance-uuid"}
+            ).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 400
+        assert "different Klangk instance" in resp.json()["detail"]
+
+    async def test_import_accepts_same_instance(self, client, user):
+        import io
+        import json
+        import tarfile
+
+        from klangk_backend.model.instance import get_instance_id
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(
+                {"name": "same-inst", "instance_id": get_instance_id()}
+            ).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "same-inst"
+
+    async def test_import_accepts_legacy_no_instance_id(self, client, user):
+        """Archives without instance_id (pre-provenance) are still accepted."""
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps({"name": "legacy-import"}).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "legacy-import"
 
     async def test_import_notifies_importer(self, client, user):
         import io
