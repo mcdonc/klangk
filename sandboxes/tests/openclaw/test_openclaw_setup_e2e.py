@@ -286,21 +286,20 @@ def _health_status(base_url, token, ws_id):
     return body.get("health"), body.get("health_checked_at")
 
 
-def _agent_profile(data_dir, owner_user_id, ws_id):
+def _agent_profile(data_dir, ws_id):
     """Path to the AGENT's ~/.profile on the host for *ws_id*.
 
     setup.sh repoints HOME at the agent's home (#1171), so the
     OPENCLAW_HOME / PATH / NVM_DIR exports it writes land in the agent's
-    home (``.users/<AGENT_USER_ID>``), not the owner's. The per-workspace
-    home tree is ``<data>/workspaces/<owner_uid>/home/<ws_id>/.users/``
-    (home_path is keyed by workspace id, so this resolves directly).
+    home (``.users/<AGENT_USER_ID>``), not the owner's. Since #1295
+    workspace storage is keyed by workspace_id, so the home tree
+    is ``<data>/workspaces/<ws_id>/home/.users/``.
     """
     return os.path.join(
         data_dir,
         "workspaces",
-        owner_user_id,
-        "home",
         ws_id,
+        "home",
         ".users",
         AGENT_USER_ID,
         ".profile",
@@ -487,7 +486,7 @@ class TestOpenclawSetupProfileExports:
             # WS2's container is up; read ITS agent ~/.profile
             # (a different ws_id from WS).
             ws2_id = self._await_container(name=WS2)
-            profile_path = _agent_profile(self._data_dir, self._user_id, ws2_id)
+            profile_path = _agent_profile(self._data_dir, ws2_id)
             with open(profile_path) as f:
                 profile = f.read()
 
@@ -628,7 +627,7 @@ class TestOpenclawSetupProfileExports:
         """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            path = _agent_profile(self._data_dir, self._user_id, ws_id)
+            path = _agent_profile(self._data_dir, ws_id)
             if path and os.path.exists(path):
                 with open(path) as f:
                     if "export NVM_DIR" in f.read():
