@@ -375,9 +375,11 @@ class WebSocketState:
         return self.sessions.get(workspace_id)
 
     def get_or_create_session(self, workspace_id: str) -> WorkspaceSession:
-        if workspace_id not in self.sessions:
-            self.sessions[workspace_id] = WorkspaceSession(workspace_id)
-        return self.sessions[workspace_id]
+        try:
+            return self.sessions[workspace_id]
+        except KeyError:
+            session = WorkspaceSession(workspace_id)
+            return self.sessions.setdefault(workspace_id, session)
 
     async def remove_session(self, workspace_id: str) -> None:
         """Remove workspace session (acquires session lock).
