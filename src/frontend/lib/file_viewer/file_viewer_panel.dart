@@ -491,6 +491,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         ),
       ],
     ).then((action) {
+      if (!mounted || action == null) return;
       if (action == 'download') {
         _downloadPath(path, name, isDir);
       } else if (action == 'rename') {
