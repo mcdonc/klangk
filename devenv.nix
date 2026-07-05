@@ -130,6 +130,7 @@ in
             | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
         fi
       '';
+      after = [ "klangk:uv-sync" ];
     };
     "klangk:kill-port-holders" = {
       exec = ''
