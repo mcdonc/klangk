@@ -5273,6 +5273,44 @@ class TestHandleShutdownContainer:
         assert user["id"] in saved_snapshot
         wshandler.state.sessions.pop(ws["id"], None)
 
+    async def test_shutdown_acquires_save_lock(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        ws = await _create_workspace_with_acl(user["id"], "shutdown-lock")
+        conn.workspace_id = ws["id"]
+        conn.container_id = "cid"
+
+        session = wshandler.state.get_or_create_session(ws["id"])
+        session.terminal_windows[user["id"]] = [
+            {"name": "bash", "index": 0, "id": "@0", "shared": False},
+        ]
+        await session.add_subscriber(sock, "cid")
+
+        lock_was_held = False
+        original_save = AsyncMock()
+
+        async def check_lock(*args, **kwargs):
+            nonlocal lock_was_held
+            lock_was_held = session.save_lock.locked()
+            return await original_save(*args, **kwargs)
+
+        with (
+            patch.object(
+                container.registry,
+                "stop_and_remove_container",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "klangk_backend.terminal.save_workspace_state",
+                new_callable=AsyncMock,
+                side_effect=check_lock,
+            ),
+        ):
+            await conn.handle_shutdown_container()
+
+        assert lock_was_held
+        wshandler.state.sessions.pop(ws["id"], None)
+
     async def test_shutdown_state_save_failure_does_not_block(self, user):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)

@@ -578,10 +578,15 @@ class Connection:
                 for uid, wins in session.terminal_windows.items()
             }
             if snapshot:
-                try:
-                    await terminal.save_workspace_state(container_id, snapshot)
-                except Exception as e:
-                    logger.warning("State save before shutdown failed: %s", e)
+                async with session.save_lock:
+                    try:
+                        await terminal.save_workspace_state(
+                            container_id, snapshot
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "State save before shutdown failed: %s", e
+                        )
 
         # Clear container_id on ALL connections to prevent stale exec attempts.
         for sock, conn_obj in list(state.connections.items()):
