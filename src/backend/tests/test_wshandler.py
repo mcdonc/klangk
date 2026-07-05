@@ -822,11 +822,6 @@ class TestHandleTerminalStart:
                     {"id": "@0", "index": 0, "name": "bash", "active": True}
                 ],
             ),
-            patch(
-                "klangk_backend.terminal.load_workspace_state",
-                return_value={},
-            ),
-            patch("klangk_backend.terminal.restore_windows"),
             patch.object(_ws_controllers, "attach_browser"),
             patch.object(
                 _ws_controllers.TerminalController,
@@ -924,11 +919,6 @@ class TestHandleTerminalStart:
                     {"id": "@0", "index": 0, "name": "bash", "active": True}
                 ],
             ),
-            patch(
-                "klangk_backend.terminal.load_workspace_state",
-                return_value={},
-            ),
-            patch("klangk_backend.terminal.restore_windows"),
             patch.object(_ws_controllers, "attach_browser"),
             patch(
                 "klangk_backend.wshandler.controllers.model.get_workspace",
@@ -970,96 +960,6 @@ class TestHandleTerminalStart:
             await conn.terminal_task
         except asyncio.CancelledError:
             pass
-        container.registry.revoke_workspace_browsers("ws")
-        container.registry.states.pop("ws", None)
-
-    async def test_starts_session_restores_saved_state(self):
-        """On first terminal_start, saved state is loaded and restored."""
-        sock = _mock_sock()
-        conn = _base_conn(ws=sock)
-        conn.container_id = "cid"
-        conn.workspace_id = "ws"
-        conn._user_home = "/home/testuser"
-
-        async def _perm(*a):
-            return True
-
-        conn._has_perm = _perm  # type: ignore[method-assign]
-        container.registry.track_activity("cid", "ws")
-
-        session = wshandler.state.get_or_create_session("ws")
-        # Do NOT pre-populate terminal_windows — simulates restart
-        await session.add_subscriber(sock, "cid")
-        wshandler.state.connections[sock] = conn
-
-        saved_state = {
-            "uid": [
-                {"name": "1", "index": 0, "id": "@0", "shared": False},
-                {"name": "build", "index": 1, "id": "@1", "shared": True},
-            ],
-            "other-uid": [
-                {"name": "1", "shared": False},
-                {"name": "dev", "shared": True},
-            ],
-        }
-
-        with (
-            patch.object(_ws_controllers, "TerminalSession") as MockTS,
-            patch(
-                "klangk_backend.terminal.list_windows",
-                return_value=[
-                    {"id": "@0", "index": 0, "name": "1", "active": True},
-                    {"id": "@1", "index": 1, "name": "build", "active": False},
-                ],
-            ),
-            patch("klangk_backend.terminal.tmux_command", return_value=""),
-            patch(
-                "klangk_backend.terminal.load_workspace_state",
-                return_value=saved_state,
-            ),
-            patch("klangk_backend.terminal.restore_windows") as mock_restore,
-            patch("klangk_backend.terminal.save_workspace_state"),
-        ):
-            mock_session = _mock_terminal()
-            MockTS.return_value = mock_session
-
-            async def fake_output():
-                return
-                yield
-
-            mock_session.output = fake_output
-
-            await conn.handle_terminal_start({"cols": 80, "rows": 24})
-            await asyncio.sleep(0)
-
-        # restore_windows called with saved windows
-        mock_restore.assert_awaited_once_with(
-            "cid",
-            "uid",
-            saved_state["uid"],
-        )
-        # terminal_windows populated from saved state
-        ws_session = wshandler.state.sessions["ws"]
-        assert "uid" in ws_session.terminal_windows
-        # "build" should retain shared=True from saved state
-        build_win = [
-            w
-            for w in ws_session.terminal_windows["uid"]
-            if w["name"] == "build"
-        ]
-        assert len(build_win) == 1
-        assert build_win[0]["shared"] is True
-        # Other user's state also restored
-        assert "other-uid" in ws_session.terminal_windows
-        assert ws_session.terminal_windows["other-uid"][1]["shared"] is True
-
-        conn.terminal_task.cancel()
-        try:
-            await conn.terminal_task
-        except asyncio.CancelledError:
-            pass
-        wshandler.state.sessions.pop("ws", None)
-        wshandler.state.connections.pop(sock, None)
         container.registry.revoke_workspace_browsers("ws")
         container.registry.states.pop("ws", None)
 
@@ -3210,10 +3110,6 @@ class TestSSHAgentHandlers:
                 "klangk_backend.terminal.list_windows",
                 return_value=[],
             ),
-            patch(
-                "klangk_backend.terminal.load_workspace_state",
-                return_value=None,
-            ),
             patch.object(
                 conn,
                 "_has_perm",
@@ -5240,73 +5136,6 @@ class TestHandleShutdownContainer:
 
         wshandler.state.connections.pop(sock1, None)
         wshandler.state.connections.pop(sock2, None)
-        wshandler.state.sessions.pop(ws["id"], None)
-
-    async def test_shutdown_saves_terminal_state(self, user):
-        sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
-        ws = await _create_workspace_with_acl(user["id"], "shutdown-save")
-        conn.workspace_id = ws["id"]
-        conn.container_id = "cid"
-
-        session = wshandler.state.get_or_create_session(ws["id"])
-        session.terminal_windows[user["id"]] = [
-            {"name": "bash", "index": 0, "id": "@0", "shared": False},
-        ]
-        await session.add_subscriber(sock, "cid")
-
-        with (
-            patch.object(
-                container.registry,
-                "stop_and_remove_container",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "klangk_backend.terminal.save_workspace_state",
-                new_callable=AsyncMock,
-            ) as mock_save,
-        ):
-            await conn.handle_shutdown_container()
-
-        mock_save.assert_awaited_once()
-        saved_snapshot = mock_save.call_args[0][1]
-        assert user["id"] in saved_snapshot
-        wshandler.state.sessions.pop(ws["id"], None)
-
-    async def test_shutdown_state_save_failure_does_not_block(self, user):
-        sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
-        ws = await _create_workspace_with_acl(user["id"], "shutdown-savefail")
-        conn.workspace_id = ws["id"]
-        conn.container_id = "cid"
-
-        session = wshandler.state.get_or_create_session(ws["id"])
-        session.terminal_windows[user["id"]] = [
-            {"name": "bash", "index": 0, "id": "@0", "shared": False},
-        ]
-        await session.add_subscriber(sock, "cid")
-
-        with (
-            patch.object(
-                container.registry,
-                "stop_and_remove_container",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "klangk_backend.terminal.save_workspace_state",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("write failed"),
-            ),
-        ):
-            await conn.handle_shutdown_container()
-
-        # Should not raise; container_stopped event still sent
-        sent = [c[0][0] for c in sock.send_json.call_args_list]
-        assert any(
-            isinstance(m, dict)
-            and m.get("event", {}).get("name") == "container_stopped"
-            for m in sent
-        )
         wshandler.state.sessions.pop(ws["id"], None)
 
     async def test_shutdown_handles_stop_error(self, user):

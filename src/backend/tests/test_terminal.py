@@ -7,7 +7,6 @@ lifecycle/queue logic against an injected fake shell.
 
 import asyncio
 import contextlib
-import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -25,11 +24,8 @@ from klangk_backend.terminal import (
     close_window,
     kill_joiner_sessions,
     list_windows,
-    load_workspace_state,
     new_window,
     rename_window,
-    restore_windows,
-    save_workspace_state,
     select_window,
     terminal_tmux_enabled,
     tmux_command,
@@ -972,105 +968,6 @@ class TestBuildShellCommandTmuxDisabled:
         )
         assert "tmux" in cmd
         assert unique is not None
-
-
-class TestLoadWorkspaceState:
-    async def test_loads_state(self):
-        state = {"admin": [{"name": "1", "shared": False}]}
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
-            new_callable=AsyncMock,
-            return_value=(0, json.dumps(state), ""),
-        ) as mock_exec:
-            result = await load_workspace_state("cid")
-        assert result == state
-        mock_exec.assert_awaited_once_with(
-            "cid",
-            ["cat", "/home/.workspace-state.json"],
-            user=CONTAINER_USER,
-            timeout=10,
-        )
-
-    async def test_missing_file(self):
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
-            new_callable=AsyncMock,
-            return_value=(1, "", "No such file"),
-        ):
-            result = await load_workspace_state("cid")
-        assert result == {}
-
-    async def test_corrupt_json(self):
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
-            new_callable=AsyncMock,
-            return_value=(0, "not json{", ""),
-        ):
-            result = await load_workspace_state("cid")
-        assert result == {}
-
-
-class TestSaveWorkspaceState:
-    async def test_saves_state(self):
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
-            new_callable=AsyncMock,
-            return_value=(0, "", ""),
-        ) as mock_exec:
-            await save_workspace_state(
-                "cid", {"admin": [{"name": "1", "shared": False}]}
-            )
-        mock_exec.assert_awaited_once()
-        cmd = mock_exec.call_args.args[1]
-        assert cmd == [
-            "klangk-save-workspace-state",
-            "/home/.workspace-state.json",
-        ]
-        assert mock_exec.call_args.kwargs["user"] == CONTAINER_USER
-        assert b'"admin"' in mock_exec.call_args.kwargs["stdin_data"]
-
-
-class TestRestoreWindows:
-    async def test_creates_missing_windows(self):
-        with patch(
-            "klangk_backend.terminal.list_windows",
-            return_value=[{"name": "1", "index": 0, "active": True}],
-        ):
-            with patch(
-                "klangk_backend.terminal.new_window",
-                return_value=[],
-            ) as mock_new:
-                await restore_windows(
-                    "cid",
-                    "admin",
-                    [
-                        {"name": "1", "shared": False},
-                        {"name": "build", "shared": True},
-                    ],
-                )
-        # Only "build" should be created (1 already exists)
-        mock_new.assert_called_once_with("cid", "admin", name="build")
-
-    async def test_no_missing_windows(self):
-        with patch(
-            "klangk_backend.terminal.list_windows",
-            return_value=[
-                {"name": "1", "index": 0, "active": True},
-                {"name": "build", "index": 1, "active": False},
-            ],
-        ):
-            with patch(
-                "klangk_backend.terminal.new_window",
-            ) as mock_new:
-                await restore_windows(
-                    "cid",
-                    "admin",
-                    [
-                        {"name": "1", "shared": False},
-                        {"name": "build", "shared": True},
-                    ],
-                )
-        mock_new.assert_not_called()
 
 
 class TestKillJoinerSessions:

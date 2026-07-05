@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 
 from .. import acl as _acl
-from .. import agent, auth, container, model, terminal, workspaces
+from .. import agent, auth, container, model, workspaces
 from ..terminal import TerminalSession
 from ..podman import ExecSession
 from ..util import derive_hosting_info
@@ -566,20 +566,7 @@ class Connection:
 
         workspace_id = self.workspace_id
         container_id = self.container_id
-
-        # Save terminal state before shutting down so it can be restored
-        # when the container restarts.
         session = state.get_session(workspace_id)
-        if session:
-            snapshot = {
-                uid: [dict(w) for w in wins]
-                for uid, wins in session.terminal_windows.items()
-            }
-            if snapshot:
-                try:
-                    await terminal.save_workspace_state(container_id, snapshot)
-                except Exception as e:
-                    logger.warning("State save before shutdown failed: %s", e)
 
         # Clear container_id on ALL connections to prevent stale exec attempts.
         for sock, conn_obj in list(state.connections.items()):
