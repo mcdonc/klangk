@@ -161,6 +161,11 @@ from .invitations import (
     mark_invitation_accepted,
     revoke_invitation,
 )
+from .instance import (
+    get_instance_id,
+    resolve_instance_id,
+    resolve_instance_id_sync,
+)
 
 __all__ = (
     # db
@@ -299,4 +304,8 @@ __all__ = (
     "list_invitations",
     "mark_invitation_accepted",
     "revoke_invitation",
+    # instance
+    "get_instance_id",
+    "resolve_instance_id",
+    "resolve_instance_id_sync",
 )
