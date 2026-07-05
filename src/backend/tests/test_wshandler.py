@@ -9577,6 +9577,39 @@ class TestTokenRenewal:
         finally:
             wshandler.state.sessions.pop(workspace["id"], None)
 
+    async def test_concurrent_add_subscriber_no_duplicate_renewal(self, user):
+        """Two concurrent add_subscriber calls must not create duplicate
+        renewal tasks (#1299)."""
+        workspace = await _create_workspace_with_acl(user["id"], "race-ws")
+        session = wshandler.state.get_or_create_session(workspace["id"])
+
+        try:
+            with patch(
+                "klangk_backend.terminal.set_workspace_token",
+                new_callable=AsyncMock,
+            ):
+                expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+                sock1 = _mock_sock()
+                sock2 = _mock_sock()
+
+                await asyncio.gather(
+                    session.add_subscriber(sock1, "cid", token_expiry=expiry),
+                    session.add_subscriber(sock2, "cid", token_expiry=expiry),
+                )
+
+                assert session.workspace_token_expiry is not None
+                assert session._token_renewal_task is not None
+                # Only one task should be created, not two.
+                task = session._token_renewal_task
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        finally:
+            await session.reset()
+            wshandler.state.sessions.pop(workspace["id"], None)
+
 
 class TestSSHAgentDispatch:
     async def test_dispatch_ssh_agent_start(self, user):
