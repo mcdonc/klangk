@@ -558,7 +558,7 @@ class WebSocketState:
                 sock.send_json(message)
             except WS_ERRORS:
                 dead.append((sock, conn))
-        for sock, _conn in dead:
+        for sock, _ in dead:
             self.connections.pop(sock, None)
 
     def notify_service_health(
@@ -606,7 +606,7 @@ class WebSocketState:
                 sock.send_json(message_dict)
             except WS_ERRORS:
                 dead.append((sock, conn))
-        for sock, _conn in dead:
+        for sock, _ in dead:
             self.connections.pop(sock, None)
 
     def send_service_health_snapshot(self, sock: SafeWebSocket) -> None:
@@ -677,7 +677,7 @@ class WebSocketState:
                 sock.send_json(frame)
             except WS_ERRORS:
                 dead.append((sock, conn))
-        for sock, _conn in dead:
+        for sock, _ in dead:
             self.connections.pop(sock, None)
 
     def handle_subscribe_health_heartbeat(
@@ -712,7 +712,7 @@ class WebSocketState:
                 sock.send_json(message)
             except WS_ERRORS:
                 dead.append((sock, conn))
-        for sock, _conn in dead:
+        for sock, _ in dead:
             self.connections.pop(sock, None)
 
     def handle_browser_response(
