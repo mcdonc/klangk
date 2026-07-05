@@ -79,6 +79,20 @@ class _ThrowingPlugin extends ToolPlugin {
       };
 }
 
+/// A WsClient that throws when sendBrowserResponse is called, simulating
+/// a closed WebSocket between request receipt and response send.
+class _ThrowingResponseClient extends WsClient {
+  bool throwOnResponse = true;
+
+  @override
+  void sendBrowserResponse(String id, Map<String, dynamic> result) {
+    if (throwOnResponse) {
+      throw StateError('WebSocket closed');
+    }
+    super.sendBrowserResponse(id, result);
+  }
+}
+
 List<Map<String, dynamic>> _browserResponses(_FakeWebSocketChannel channel) {
   return channel.sentMessages
       .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
@@ -452,6 +466,37 @@ void main() {
       final responses = _browserResponses(channel);
       expect(responses.length, 1);
       expect(responses[0]['error'], contains('fetch failed'));
+    });
+
+    test('sendBrowserResponse throwing does not propagate to stream', () async {
+      delegate.stop();
+
+      final throwingClient = _ThrowingResponseClient();
+      final throwingChannel = _FakeWebSocketChannel();
+      throwingClient.connectForTest(throwingChannel);
+
+      final throwingDelegate = BrowserDelegate(
+        throwingClient,
+        httpClient: mockHttp,
+        registry: registry,
+      );
+      throwingDelegate.start();
+
+      // Send a request; sendBrowserResponse will throw StateError.
+      // Before the fix this would propagate as an uncaught future error.
+      throwingChannel.serverSend({
+        'type': 'browser_request',
+        'id': 'req-throw',
+        'action': 'celebrate',
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // No response sent (the throw prevented it), but no uncaught error.
+      expect(_browserResponses(throwingChannel), isEmpty);
+
+      throwingDelegate.stop();
+      throwingClient.disconnect();
+      throwingClient.dispose();
     });
   });
 
