@@ -75,6 +75,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   late String _currentPath = widget.userHome ?? '/';
   String? _selectedFile;
   bool _loading = false;
+  int _loadGeneration = 0;
   late final FileRendererRegistry _registry;
 
   /// Refresh the file list for the current directory, bypassing the cache
@@ -152,6 +153,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
 
   Future<void> _loadFiles({bool force = false}) async {
     if (!mounted) return;
+    final generation = ++_loadGeneration;
     // Read-through cache: a fresh-enough hit renders instantly and skips
     // the listing round-trip (~250-440ms), so navigating back to a recently
     // viewed directory feels instantaneous. `force` (manual refresh, or a
@@ -166,26 +168,31 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         return;
       }
     }
+    final requestedPath = _currentPath;
     setState(() => _loading = true);
     try {
       final response = await _client.get(
         Uri.parse(
-          '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(_currentPath)}',
+          '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(requestedPath)}',
         ),
         headers: _headers,
       );
+      if (generation != _loadGeneration) return;
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as List;
         final entries = data.cast<Map<String, dynamic>>();
-        _fileListCache.put(widget.workspaceId, _currentPath, entries);
+        _fileListCache.put(widget.workspaceId, requestedPath, entries);
         if (mounted) setState(() => _entries = entries);
       } else {
         debugPrint('File listing failed: ${response.statusCode}');
       }
     } catch (e) {
+      if (generation != _loadGeneration) return;
       debugPrint('File listing error: $e');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (generation == _loadGeneration && mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
