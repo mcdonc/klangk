@@ -106,7 +106,19 @@ class WorkspaceChatState extends State<WorkspaceChat> {
       return;
     }
 
-    // Regular chat_message or chat_history item
+    // Full history replacement (reconnect / initial load) — clear and replace
+    // to avoid duplicating messages already seeded from the buffer.
+    if (type == 'chat_history_replace') {
+      final messages = msg['messages'] as List? ?? [];
+      setState(() {
+        _messages.clear();
+        _messages.addAll(messages.cast<Map<String, dynamic>>());
+      });
+      _scrollToBottom();
+      return;
+    }
+
+    // Regular chat_message
     setState(() => _messages.add(msg));
 
     // Don't count system messages (join/leave) as unread.
