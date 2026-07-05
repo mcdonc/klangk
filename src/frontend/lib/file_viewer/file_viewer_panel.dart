@@ -339,10 +339,13 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         }
       }
     } catch (e) {
+      debugPrint('Delete error: $e');
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Delete error: $e')));
+        ).showSnackBar(
+          const SnackBar(content: Text('Could not delete. Please try again.')),
+        );
       }
     }
   }
@@ -411,10 +414,13 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         }
       }
     } catch (e) {
+      debugPrint('Rename error: $e');
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Rename error: $e')));
+        ).showSnackBar(
+          const SnackBar(content: Text('Could not rename. Please try again.')),
+        );
       }
     }
   }
@@ -447,10 +453,15 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       final filename = isDir ? '$name.tar.gz' : name;
       downloadBytes(response.bodyBytes, filename);
     } catch (e) {
+      debugPrint('Download error: $e');
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Download error: $e')));
+        ).showSnackBar(
+          const SnackBar(
+            content: Text('Could not download. Please try again.'),
+          ),
+        );
       }
     }
   }

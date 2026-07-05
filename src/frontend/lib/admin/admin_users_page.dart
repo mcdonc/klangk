@@ -118,8 +118,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         });
       }
     } catch (e) {
+      debugPrint('Load users error: $e');
       setState(() {
-        _error = 'Error: $e';
+        _error = 'Could not load users. Please try again.';
         _loading = false;
       });
     }

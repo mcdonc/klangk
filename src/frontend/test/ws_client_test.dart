@@ -313,7 +313,7 @@ void main() {
       await Future.delayed(Duration.zero);
       expect(client.connected, isFalse);
       expect(errors.length, 1);
-      expect(errors[0], startsWith('Connection failed:'));
+      expect(errors[0], 'Connection failed. Please try again.');
       client.dispose();
     });
 

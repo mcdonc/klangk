@@ -306,7 +306,8 @@ class WsClient extends ChangeNotifier {
         _errorController.add('Session expired, please log in again');
         _auth?.logout();
       } else {
-        _errorController.add('Connection failed: $e');
+        debugPrint('WebSocket connection failed: $e');
+        _errorController.add('Connection failed. Please try again.');
       }
       return;
     }

@@ -61,7 +61,8 @@ class _CodeEditorViewState extends State<_CodeEditorView> {
       await save(_controller.text);
       if (mounted) setState(() => _status = 'Saved');
     } catch (e) {
-      if (mounted) setState(() => _status = 'Save failed: $e');
+      debugPrint('Save failed: $e');
+      if (mounted) setState(() => _status = 'Save failed. Please try again.');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
