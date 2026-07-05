@@ -695,7 +695,6 @@ class TestAutoStart:
         proc, base_url = _start_server(
             data_dir,
             "18996",
-            "autostart-e2e",
             extra_env={"KLANGK_ALLOW_AUTOSTART": "1"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-autostart-config")
@@ -814,7 +813,6 @@ class TestSandboxAutoStartServiceCommand:
         proc, base_url = _start_server(
             data_dir,
             TestSandboxAutoStartServiceCommand.PORT,
-            "sandbox-defcmd-e2e",
             extra_env={"KLANGK_ALLOW_AUTOSTART": "1"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-sandbox-defcmd-config")
@@ -1485,7 +1483,6 @@ class TestAllowedMountRoots:
         proc, base_url = _start_server(
             data_dir,
             "18998",
-            "mount-roots-e2e",
             extra_env={"KLANGK_ALLOWED_MOUNT_ROOTS": "/tmp,/home"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-mount-roots-config")
@@ -1555,11 +1552,7 @@ class TestVolumeUserIsolation:
         import httpx
 
         data_dir = tempfile.mkdtemp(prefix="klangk-vol-iso-")
-        proc, base_url = _start_server(
-            data_dir,
-            "18999",
-            "vol-iso-e2e",
-        )
+        proc, base_url = _start_server(data_dir, "18999")
 
         # Register a second user via the API
         httpx.post(
@@ -1710,9 +1703,7 @@ class TestTerminalSharing:
     @staticmethod
     def _dedicated_server(tmp_path_factory, request):
         data_dir = tempfile.mkdtemp(prefix="klangk-terminal-sharing-")
-        proc, base_url = _start_server(
-            data_dir, "18997", "terminal-sharing-e2e"
-        )
+        proc, base_url = _start_server(data_dir, "18997")
         config_dir = tmp_path_factory.mktemp("klangk-terminal-sharing-config")
         env = {**os.environ, "HOME": str(config_dir)}
         (config_dir / ".config" / "klangk").mkdir(parents=True)
@@ -2004,7 +1995,6 @@ def short_token_server():
     proc, base_url = _start_server(
         data_dir,
         "18997",
-        "cli-refresh-e2e",
         extra_env={"KLANGK_ACCESS_TOKEN_HOURS": "0.002"},
     )
     yield {"url": base_url, "data_dir": data_dir, "proc": proc}
