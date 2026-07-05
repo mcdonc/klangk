@@ -136,6 +136,7 @@ class FileDropZoneState extends State<FileDropZone> {
       onDragExited: (_) => setState(() => _dragging = false),
       onDragDone: (details) {
         setState(() => _dragging = false);
+        if (_uploading) return;
         uploadFiles(details);
       },
       child: Stack(
