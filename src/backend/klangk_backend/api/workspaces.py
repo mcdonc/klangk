@@ -476,7 +476,7 @@ async def export_workspace(
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    home_dir = workspaces.home_path(workspace["user_id"], workspace_id)
+    home_dir = workspaces.home_path(workspace_id)
     ws_name = workspace["name"]
 
     metadata = workspaces.workspace_metadata(workspace)
@@ -628,7 +628,7 @@ async def _extract_home_directory(
     archive_path: str, user_id: int, ws_id: int
 ) -> None:
     """Extract the ``home/`` tree from *archive_path* into the workspace home."""
-    home_dir = workspaces.home_path(user_id, ws_id)
+    home_dir = workspaces.home_path(ws_id)
     home_dir.mkdir(parents=True, exist_ok=True)
     check = await asyncio.to_thread(
         subprocess.run,

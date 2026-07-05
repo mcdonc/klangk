@@ -589,7 +589,7 @@ class HealthMonitor:
         # HOME rather than as root in /.
         from . import workspaces as _wm  # noqa: allow-deferred-import
 
-        ws_home = _wm.home_path(owner_id, state.workspace_id)
+        ws_home = _wm.home_path(state.workspace_id)
         user_home, _created = await _wm.ensure_home_symlink(
             ws_home, handle, owner_id
         )

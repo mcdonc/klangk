@@ -86,8 +86,7 @@ async def ensure_agent_home(workspace_id: str, container_id: str) -> str:
         raise AgentSetupError(
             f"Workspace {workspace_id} not found in database"
         )
-    owner_id = ws["user_id"]
-    workspace_home = workspaces.home_path(owner_id, workspace_id)
+    workspace_home = workspaces.home_path(workspace_id)
 
     agent_handle = await model.agent_handle()
     container_home, created = await workspaces.ensure_home_symlink(

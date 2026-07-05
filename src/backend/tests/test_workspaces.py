@@ -15,11 +15,11 @@ class TestCreateWorkspace:
         assert ws["user_id"] == user["id"]
         assert "id" in ws
 
-        data_path = ws_mod.workspace_path(user["id"], ws["id"])
+        data_path = ws_mod.workspace_path(ws["id"])
         assert data_path.exists()
         assert data_path.is_dir()
 
-        home_dir = ws_mod.home_path(user["id"], ws["id"])
+        home_dir = ws_mod.home_path(ws["id"])
         assert home_dir.exists()
         assert home_dir.is_dir()
 
@@ -207,8 +207,8 @@ class TestGetWorkspace:
 class TestDeleteWorkspace:
     async def test_delete_removes_db_and_dirs(self, user):
         ws = await ws_mod.create_workspace(user["id"], "doomed")
-        data_path = ws_mod.workspace_path(user["id"], ws["id"])
-        home_dir = ws_mod.home_path(user["id"], ws["id"])
+        data_path = ws_mod.workspace_path(ws["id"])
+        home_dir = ws_mod.home_path(ws["id"])
         (data_path / "file.txt").write_text("hello")
         (home_dir / ".bashrc").write_text("# custom")
 
@@ -233,7 +233,7 @@ class TestDeleteWorkspace:
 
     async def test_delete_missing_dirs_ok(self, user):
         ws = await ws_mod.create_workspace(user["id"], "no-dirs")
-        home_dir = ws_mod.home_path(user["id"], ws["id"])
+        home_dir = ws_mod.home_path(ws["id"])
         import shutil
 
         shutil.rmtree(home_dir)
@@ -244,32 +244,32 @@ class TestDeleteWorkspace:
 
 class TestHostPaths:
     def test_workspace_host_path_creates_dir(self, user, temp_data_dir):
-        path = ws_mod.get_workspace_host_path(user["id"], "ws-1")
+        path = ws_mod.get_workspace_host_path("ws-1")
         assert path.exists()
         assert path.is_dir()
 
     def test_home_host_path_creates_dir(self, user, temp_data_dir):
-        path = ws_mod.get_home_host_path(user["id"], "ws-1")
+        path = ws_mod.get_home_host_path("ws-1")
         assert path.exists()
         assert path.is_dir()
 
     def test_workspace_host_path_idempotent(self, user, temp_data_dir):
-        path1 = ws_mod.get_workspace_host_path(user["id"], "ws-1")
-        path2 = ws_mod.get_workspace_host_path(user["id"], "ws-1")
+        path1 = ws_mod.get_workspace_host_path("ws-1")
+        path2 = ws_mod.get_workspace_host_path("ws-1")
         assert path1 == path2
 
     def test_paths_are_under_data_dir(self, user, temp_data_dir):
-        path = ws_mod.get_workspace_host_path(user["id"], "ws-1")
+        path = ws_mod.get_workspace_host_path("ws-1")
         assert str(path).startswith(str(temp_data_dir))
 
-        home = ws_mod.get_home_host_path(user["id"], "ws-1")
+        home = ws_mod.get_home_host_path("ws-1")
         assert str(home).startswith(str(temp_data_dir))
 
 
 class TestEnsureHomeSymlink:
     async def test_creates_symlink(self, user):
         ws = await ws_mod.create_workspace(user["id"], "symlink-ws")
-        home = ws_mod.home_path(user["id"], ws["id"])
+        home = ws_mod.home_path(ws["id"])
         result, created = await ws_mod.ensure_home_symlink(
             home, "alice", "uid-1"
         )
@@ -282,7 +282,7 @@ class TestEnsureHomeSymlink:
 
     async def test_idempotent(self, user):
         ws = await ws_mod.create_workspace(user["id"], "symlink-ws2")
-        home = ws_mod.home_path(user["id"], ws["id"])
+        home = ws_mod.home_path(ws["id"])
         await ws_mod.ensure_home_symlink(home, "bob", "uid-1")
         result, created = await ws_mod.ensure_home_symlink(
             home, "bob", "uid-1"
@@ -292,7 +292,7 @@ class TestEnsureHomeSymlink:
 
     async def test_rename_removes_old_symlink(self, user):
         ws = await ws_mod.create_workspace(user["id"], "symlink-ws3")
-        home = ws_mod.home_path(user["id"], ws["id"])
+        home = ws_mod.home_path(ws["id"])
         await ws_mod.ensure_home_symlink(home, "alice", "uid-1")
         result, created = await ws_mod.ensure_home_symlink(
             home, "alicia", "uid-1"
@@ -308,7 +308,7 @@ class TestEnsureHomeSymlink:
         The old user's files should be adopted into the new user dir.
         """
         ws = await ws_mod.create_workspace(user["id"], "symlink-ws4")
-        home = ws_mod.home_path(user["id"], ws["id"])
+        home = ws_mod.home_path(ws["id"])
         # Simulate imported workspace: symlink for old user ID with files.
         (home / ".users").mkdir(parents=True, exist_ok=True)
         old_dir = home / ".users" / "old-uid"
