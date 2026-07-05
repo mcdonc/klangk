@@ -1029,6 +1029,37 @@ async def replace_workspace_acl(
     return await model.get_acl_entries_resolved(resource)
 
 
+# --- Ownership transfer ---
+
+
+class TransferOwnershipRequest(BaseModel):
+    email: str
+
+
+@router.post("/workspaces/{workspace_id}/transfer")
+async def transfer_workspace_ownership(
+    workspace_id: str,
+    body: TransferOwnershipRequest,
+    user: dict = Depends(acl.has_permission("admin", workspace_resource)),
+):
+    """Transfer workspace ownership to another user."""
+    target = await model.get_user_by_email(body.email)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    try:
+        ws = await model.transfer_workspace(workspace_id, target["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if ws is None:  # pragma: no cover — ACL check rejects first
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    wshandler.state.notify_user_workspaces_changed(user["id"])
+    wshandler.state.notify_user_workspaces_changed(target["id"])
+    return ws
+
+
 # --- User search endpoint ---
 
 

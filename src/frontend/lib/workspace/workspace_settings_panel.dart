@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -329,6 +330,8 @@ class _SettingsFormState extends State<_SettingsForm> {
               const SizedBox(height: 16),
               _buildExportCard(),
               const SizedBox(height: 16),
+              _buildTransferCard(),
+              const SizedBox(height: 16),
               _buildDangerZoneCard(),
             ],
           ),
@@ -623,6 +626,181 @@ class _SettingsFormState extends State<_SettingsForm> {
         ),
       ],
     );
+  }
+
+  Widget _buildTransferCard() {
+    return _card(
+      icon: Icons.swap_horiz,
+      title: 'Transfer Ownership',
+      children: [
+        const SizedBox(height: 4),
+        const Text(
+          'Transfer this workspace to another user. '
+          'You will lose owner access.',
+          style: TextStyle(fontSize: 13),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () => _showTransferDialog(context),
+          icon: const Icon(Icons.swap_horiz, size: 18),
+          label: const Text('Transfer Ownership'),
+        ),
+      ],
+    );
+  }
+
+  void _showTransferDialog(BuildContext context) {
+    final controller = TextEditingController();
+    final searchResults = ValueNotifier<List<Map<String, dynamic>>>([]);
+    Timer? debounce;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Transfer Ownership'),
+        content: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Search for the user to transfer this workspace to:',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: 'Type email...',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.person, size: 18),
+                ),
+                onChanged: (q) {
+                  debounce?.cancel();
+                  if (q.trim().isEmpty) {
+                    searchResults.value = [];
+                    return;
+                  }
+                  debounce = Timer(const Duration(milliseconds: 300), () async {
+                    final auth = context.read<AuthService>();
+                    try {
+                      final resp = await auth.authGet(
+                        '/api/v1/users/search?q=${Uri.encodeQueryComponent(q.trim())}',
+                      );
+                      if (resp.statusCode == 200) {
+                        searchResults.value = List<Map<String, dynamic>>.from(
+                          jsonDecode(resp.body) as List,
+                        );
+                      }
+                    } catch (e) {
+                      // coverage:ignore-start
+                      debugPrint(
+                        '[WorkspaceSettingsPanel] user search failed: $e',
+                      );
+                    } // coverage:ignore-end
+                  });
+                },
+                onSubmitted: (value) {
+                  final email = value.trim();
+                  if (email.isNotEmpty) {
+                    Navigator.of(ctx).pop();
+                    _confirmTransfer(context, email);
+                  }
+                },
+              ),
+              const SizedBox(height: 8),
+              ValueListenableBuilder<List<Map<String, dynamic>>>(
+                valueListenable: searchResults,
+                builder: (_, results, __) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: results
+                      .map(
+                        (r) => ListTile(
+                          dense: true,
+                          title: Text(
+                            r['email'] as String,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                          onTap: () {
+                            Navigator.of(ctx).pop();
+                            _confirmTransfer(
+                              context,
+                              r['email'] as String,
+                            );
+                          },
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              debounce?.cancel();
+              Navigator.of(ctx).pop();
+            },
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmTransfer(BuildContext context, String email) {
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirm Transfer'),
+        content: Text(
+          'Transfer this workspace to $email? '
+          'You will lose owner access.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _executeTransfer(email);
+            },
+            style: FilledButton.styleFrom(backgroundColor: Colors.orange),
+            child: const Text('Transfer'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _executeTransfer(String email) async {
+    final auth = context.read<AuthService>();
+    final resp = await auth.authPost(
+      '/api/v1/workspaces/${widget.workspaceId}/transfer',
+      body: jsonEncode({'email': email}),
+    );
+    if (!mounted) return;
+    if (resp.statusCode == 200) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Workspace transferred to $email')),
+      );
+    } else {
+      String detail;
+      try {
+        detail = (jsonDecode(resp.body) as Map)['detail'] ?? resp.body;
+      } catch (e) {
+        debugPrint('[WorkspaceSettingsPanel] parse transfer error: $e');
+        detail = 'Error: ${resp.statusCode}';
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Transfer failed: $detail')),
+      );
+    }
   }
 
   Widget _buildDangerZoneCard() {

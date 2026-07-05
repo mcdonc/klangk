@@ -65,6 +65,9 @@ http.Client _client({
   int saveStatus = 200,
   int exportStatus = 200,
   bool imagesFail = false,
+  int transferStatus = 200,
+  Map<String, dynamic>? transferResponse,
+  List<Map<String, dynamic>>? searchResults,
 }) {
   final ws = (workspace ?? _workspace);
   return MockClient((request) async {
@@ -94,6 +97,18 @@ http.Client _client({
     if (p == '/api/v1/workspaces/$_wsId/export' && request.method == 'GET') {
       if (exportStatus != 200) return http.Response('err', exportStatus);
       return http.Response.bytes([1, 2, 3], 200);
+    }
+    if (p == '/api/v1/workspaces/$_wsId/transfer' && request.method == 'POST') {
+      return http.Response(
+        jsonEncode(transferResponse ?? {'id': _wsId, 'user_id': 'new-owner'}),
+        transferStatus,
+      );
+    }
+    if (p == '/api/v1/users/search') {
+      return http.Response(
+        jsonEncode(searchResults ?? []),
+        200,
+      );
     }
     return http.Response('not found', 404);
   });
@@ -830,6 +845,302 @@ void main() {
 
       expect(find.textContaining('Failed'), findsOneWidget);
       expect(find.textContaining('400'), findsOneWidget);
+    });
+  });
+
+  group('transfer ownership', () {
+    testWidgets('renders the transfer card', (tester) async {
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Transfer Ownership').first);
+      await tester.pump();
+      expect(find.text('Transfer Ownership'), findsNWidgets(2));
+      expect(find.textContaining('lose owner access'), findsOneWidget);
+    });
+
+    testWidgets('opens search dialog on button tap', (tester) async {
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(
+        tester,
+        find.widgetWithText(OutlinedButton, 'Transfer Ownership'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Search for the user'), findsOneWidget);
+      expect(find.text('Cancel'), findsOneWidget);
+    });
+
+    testWidgets('cancel dismisses the search dialog', (tester) async {
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(
+        tester,
+        find.widgetWithText(OutlinedButton, 'Transfer Ownership'),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Search for the user'), findsNothing);
+    });
+
+    testWidgets('search shows results and tapping opens confirm dialog',
+        (tester) async {
+      testAuthHttpClientOverride = _client(
+        searchResults: [
+          {'id': 'u2', 'email': 'target@test.com', 'handle': 'target'},
+        ],
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(
+        tester,
+        find.widgetWithText(OutlinedButton, 'Transfer Ownership'),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byType(TextField).last,
+        'target',
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+
+      expect(find.text('target@test.com'), findsOneWidget);
+
+      await tester.tap(find.text('target@test.com'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Confirm Transfer'), findsOneWidget);
+      expect(find.textContaining('target@test.com'), findsOneWidget);
+    });
+
+    testWidgets('confirm executes transfer successfully', (tester) async {
+      testAuthHttpClientOverride = _client(
+        searchResults: [
+          {'id': 'u2', 'email': 'target@test.com', 'handle': 'target'},
+        ],
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(
+        tester,
+        find.widgetWithText(OutlinedButton, 'Transfer Ownership'),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).last, 'target');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('target@test.com'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Transfer'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('transferred to target@test.com'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('transfer failure shows error snackbar', (tester) async {
+      testAuthHttpClientOverride = _client(
+        searchResults: [
+          {'id': 'u2', 'email': 'target@test.com', 'handle': 'target'},
+        ],
+        transferStatus: 409,
+        transferResponse: {'detail': 'already the owner'},
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(
+        tester,
+        find.widgetWithText(OutlinedButton, 'Transfer Ownership'),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).last, 'target');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('target@test.com'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Transfer'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('Transfer failed'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('transfer failure with non-JSON body shows status code',
+        (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/workspaces') {
+          return http.Response(jsonEncode([_workspace]), 200);
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi', 'other:latest'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/users/search') {
+          return http.Response(
+            jsonEncode([
+              {'id': 'u2', 'email': 'target@test.com', 'handle': 'target'},
+            ]),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId/transfer' &&
+            request.method == 'POST') {
+          return http.Response('plain text error', 500);
+        }
+        return http.Response('nf', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(
+        tester,
+        find.widgetWithText(OutlinedButton, 'Transfer Ownership'),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).last, 'target');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('target@test.com'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Transfer'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('500'), findsOneWidget);
+    });
+
+    testWidgets('submitting email directly opens confirm dialog',
+        (tester) async {
+      testAuthHttpClientOverride = _client();
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(
+        tester,
+        find.widgetWithText(OutlinedButton, 'Transfer Ownership'),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byType(TextField).last,
+        'direct@test.com',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Confirm Transfer'), findsOneWidget);
+      expect(find.textContaining('direct@test.com'), findsOneWidget);
+    });
+
+    testWidgets('clearing the search field clears results', (tester) async {
+      testAuthHttpClientOverride = _client(
+        searchResults: [
+          {'id': 'u2', 'email': 'target@test.com', 'handle': 'target'},
+        ],
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(
+        tester,
+        find.widgetWithText(OutlinedButton, 'Transfer Ownership'),
+      );
+      await tester.pumpAndSettle();
+
+      // Type to get results.
+      await tester.enterText(find.byType(TextField).last, 'target');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      expect(find.text('target@test.com'), findsOneWidget);
+
+      // Clear the field to trigger the empty-query branch.
+      await tester.enterText(find.byType(TextField).last, '');
+      await tester.pump();
+
+      // Results should be cleared.
+      expect(find.text('target@test.com'), findsNothing);
+    });
+
+    testWidgets('cancel with pending debounce cancels timer', (tester) async {
+      testAuthHttpClientOverride = _client(
+        searchResults: [
+          {'id': 'u2', 'email': 'target@test.com', 'handle': 'target'},
+        ],
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(
+        tester,
+        find.widgetWithText(OutlinedButton, 'Transfer Ownership'),
+      );
+      await tester.pumpAndSettle();
+
+      // Type to trigger debounce timer (don't wait for it to fire).
+      await tester.enterText(find.byType(TextField).last, 'target');
+      await tester.pump();
+
+      // Cancel while the debounce timer is still pending.
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Search for the user'), findsNothing);
+    });
+
+    testWidgets('cancel on confirm dialog dismisses without transferring',
+        (tester) async {
+      testAuthHttpClientOverride = _client();
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(
+        tester,
+        find.widgetWithText(OutlinedButton, 'Transfer Ownership'),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byType(TextField).last,
+        'cancel@test.com',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Confirm Transfer'), findsNothing);
     });
   });
 }

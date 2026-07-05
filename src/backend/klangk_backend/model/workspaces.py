@@ -594,6 +594,88 @@ async def update_workspace(
         return cursor.rowcount > 0
 
 
+async def transfer_workspace(
+    workspace_id: str,
+    new_owner_id: str,
+) -> dict | None:
+    """Transfer workspace ownership to a different user.
+
+    Updates the workspace ``user_id``, the owner ACE (position 0), and
+    the ``owners`` role group membership atomically.  Returns the
+    updated workspace dict, or ``None`` if the workspace does not exist.
+
+    Raises ``ValueError`` if the new owner already owns a workspace
+    with the same name (violating the UNIQUE constraint) or if the
+    target is the system agent.
+    """
+    if new_owner_id == AGENT_USER_ID:
+        raise AgentPrincipalError(
+            "Cannot transfer a workspace to the system agent"
+        )
+
+    async with transaction() as db:
+        cursor = await db.execute(
+            "SELECT id, user_id, name FROM workspaces WHERE id = ?",
+            (workspace_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+
+        old_owner_id = row["user_id"]
+        ws_name = row["name"]
+
+        if old_owner_id == new_owner_id:
+            raise ValueError("Target user is already the owner")
+
+        # Check UNIQUE(user_id, name) won't be violated.
+        dup = await db.execute(
+            "SELECT 1 FROM workspaces"
+            " WHERE user_id = ? AND name = ? AND id != ?",
+            (new_owner_id, ws_name, workspace_id),
+        )
+        if await dup.fetchone():
+            raise ValueError(
+                f"Target user already owns a workspace named {ws_name!r}"
+            )
+
+        # 1. Update workspace owner.
+        await db.execute(
+            "UPDATE workspaces SET user_id = ? WHERE id = ?",
+            (new_owner_id, workspace_id),
+        )
+
+        # 2. Update the owner ACE (position 0) to point at the new owner.
+        resource = f"/workspaces/{workspace_id}"
+        await db.execute(
+            "UPDATE acl_entries SET user_id = ?"
+            " WHERE resource = ? AND position = 0"
+            " AND principal_type = ?",
+            (new_owner_id, resource, PRINCIPAL_USER),
+        )
+
+        # 3. Swap owners-group membership: remove old owner, add new.
+        owners_group_name = f"owners-{workspace_id}"
+        g_cursor = await db.execute(
+            "SELECT id FROM groups WHERE name = ?",
+            (owners_group_name,),
+        )
+        g_row = await g_cursor.fetchone()
+        if g_row:
+            group_id = g_row["id"]
+            await db.execute(
+                "DELETE FROM user_groups WHERE user_id = ? AND group_id = ?",
+                (old_owner_id, group_id),
+            )
+            await db.execute(
+                "INSERT OR IGNORE INTO user_groups"
+                " (user_id, group_id, source) VALUES (?, ?, ?)",
+                (new_owner_id, group_id, "manual"),
+            )
+
+    return await get_workspace_by_id(workspace_id)
+
+
 async def get_user_workspaces_with_containers(user_id: str) -> list[dict]:
     async with transaction() as db:
         cursor = await db.execute(

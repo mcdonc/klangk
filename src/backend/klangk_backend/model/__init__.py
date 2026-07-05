@@ -113,6 +113,7 @@ from .workspaces import (
     list_auto_start_workspaces,
     list_shared_workspaces,
     list_workspaces,
+    transfer_workspace,
     update_workspace,
     update_workspace_container,
     SETUP_STATE_COMPLETE,
@@ -256,6 +257,7 @@ __all__ = (
     "list_auto_start_workspaces",
     "list_shared_workspaces",
     "list_workspaces",
+    "transfer_workspace",
     "update_workspace",
     "update_workspace_container",
     # setup_state lifecycle (#1033)
