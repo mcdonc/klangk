@@ -585,7 +585,13 @@ async def _extract_archive_metadata(
             status_code=400,
             detail="Archive missing workspace.json or is corrupt",
         )
-    metadata = json.loads(result.stdout)
+    try:
+        metadata = json.loads(result.stdout)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="workspace.json is corrupt or contains invalid JSON",
+        )
 
     ws_name = name or metadata.get("name")
     if not ws_name:
