@@ -2839,6 +2839,161 @@ class TestChangeWorkspaceRole:
         assert resp.status_code == 200
 
 
+class TestTransferOwnership:
+    async def test_transfer_ownership(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "transfer-ws"},
+        )
+        assert resp.status_code == 200
+        ws_id = resp.json()["id"]
+
+        target = await model.create_user("xfer-target@test.com", "pass")
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/transfer",
+            headers=headers,
+            json={"email": "xfer-target@test.com"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["user_id"] == target["id"]
+
+    async def test_transfer_user_not_found(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "xfer-nf-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/transfer",
+            headers=headers,
+            json={"email": "nobody@test.com"},
+        )
+        assert resp.status_code == 404
+        assert "User not found" in resp.json()["detail"]
+
+    async def test_transfer_to_self(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "xfer-self-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/transfer",
+            headers=headers,
+            json={"email": "testuser@example.com"},
+        )
+        assert resp.status_code == 409
+        assert "already the owner" in resp.json()["detail"]
+
+    async def test_transfer_duplicate_name(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "dup-name-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        target = await model.create_user("xfer-dup@test.com", "pass")
+        # Create a workspace with the same name owned by the target
+        await model.create_workspace_with_acl(target["id"], "dup-name-ws")
+
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/transfer",
+            headers=headers,
+            json={"email": "xfer-dup@test.com"},
+        )
+        assert resp.status_code == 409
+        assert "dup-name-ws" in resp.json()["detail"]
+
+    async def test_transfer_non_owner_forbidden(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "xfer-forbid-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        other = await model.create_user("xfer-other@test.com", "pass")
+        other_token = auth.create_token(other["id"], other["email"])
+        other_headers = {"Authorization": f"Bearer {other_token}"}
+
+        await model.create_user("xfer-target2@test.com", "pass")
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/transfer",
+            headers=other_headers,
+            json={"email": "xfer-target2@test.com"},
+        )
+        assert resp.status_code == 403
+
+    async def test_transfer_to_agent_rejected(self, client, user):
+        from klangk_backend.main import seed_agent_user
+
+        await seed_agent_user()
+        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "xfer-agent-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/transfer",
+            headers=headers,
+            json={"email": agent["email"]},
+        )
+        assert resp.status_code == 409
+        assert "agent" in resp.json()["detail"].lower()
+
+    async def test_transfer_workspace_not_found(self, client, user):
+        result = await model.transfer_workspace(
+            "nonexistent-ws-id", user["id"]
+        )
+        assert result is None
+
+    async def test_transfer_updates_acl(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "xfer-acl-ws"},
+        )
+        ws_id = resp.json()["id"]
+
+        target = await model.create_user("xfer-acl@test.com", "pass")
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/transfer",
+            headers=headers,
+            json={"email": "xfer-acl@test.com"},
+        )
+        assert resp.status_code == 200
+
+        # New owner should be in the owners role group
+        target_token = auth.create_token(target["id"], target["email"])
+        target_headers = {"Authorization": f"Bearer {target_token}"}
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/roles",
+            headers=target_headers,
+        )
+        assert resp.status_code == 200
+        roles = {r["role"]: r for r in resp.json()}
+        owner_ids = [m["id"] for m in roles["owners"]["members"]]
+        assert target["id"] in owner_ids
+        assert user["id"] not in owner_ids
+
+
 class TestWorkspaceGroupSharing:
     async def test_share_with_group(self, client, admin_user, user):
         headers = await _auth_headers(client)
