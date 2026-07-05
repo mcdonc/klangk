@@ -207,7 +207,7 @@ export const CONVERSATION: Beat[] = [
     medium: "chat",
     text: "",
     afterPrevMs: 1000,
-    waitMs: Number(process.env.KLANGK_DEMO_AGENT_WAIT || 60_000),
+    waitMs: Number(process.env.KLANGK_DEMO_AGENT_WAIT || 120_000),
   },
 
   {
@@ -397,14 +397,19 @@ export async function resetCollabState(ctx: CollabCtx): Promise<void> {
     // No shared_terminals message in flight — nothing to unshare.
   }
 
-  // NOTE: we do NOT clear the scratch pane via the owner WS sidechannel. The
-  // recorded user's browser is the SOLE driver of their terminal — sending
-  // terminal_select_window/terminal_input over a second WS connection for the
-  // same user desyncs the browser's active-window tracking (keystrokes then
-  // land in the wrong window). Stale echo lines from prior takes are cosmetic
-  // and don't affect substring verification; clear off-camera before a real
-  // recording if needed. Workspace-level ops (share/unshare) above are safe —
-  // they don't touch per-session active-window state.
+  // Clear the scratch pane so the second take (teammate perspective) starts
+  // from a clean prompt instead of showing stale echo lines from the owner's
+  // take.  This is safe: tmux send-keys targets the base session's named
+  // window directly, bypassing the grouped-session / WS routing that causes
+  // desync.
+  try {
+    klangkcExec(
+      ctx.workspaceName,
+      `tmux send-keys -t ${ctx.ownerUserId}:${ctx.scratchWindowName} C-l`,
+    );
+  } catch {
+    // Best effort — window may not exist on the first take.
+  }
 
   // Settle so the unshare propagates before the conversation starts.
   await pace(1000 * scale);

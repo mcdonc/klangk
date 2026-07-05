@@ -550,7 +550,7 @@ _[A message from reviewer@example.com appears: "yeah — minimal, just a headlin
 
 _[Type into the chat box: @clanker scaffold a simple Flask landing page with a headline and a button, then click Send]_
 
-_[Wait ~30–60s for clanker's reply — leave dead air, narrate over later]_
+_[Wait up to ~120s for clanker's reply — leave dead air, narrate over later]_
 
 _[A message from teammate@example.com appears: "nice — let's wire that button up next"]_
 
