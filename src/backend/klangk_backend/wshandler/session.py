@@ -124,12 +124,27 @@ class WorkspaceSession:
         self.workspace_token_expiry = None
 
     async def add_subscriber(
-        self, sock: SafeWebSocket, container_id: str
+        self,
+        sock: SafeWebSocket,
+        container_id: str,
+        *,
+        token_expiry: datetime | None = None,
     ) -> None:
-        """Register a connection as a subscriber (acquires lock)."""
+        """Register a connection as a subscriber (acquires lock).
+
+        When *token_expiry* is provided and no renewal loop is running
+        yet, ``start_token_renewal`` is called under the session lock so
+        two concurrent callers cannot both observe ``expiry is None``
+        and create duplicate renewal tasks.
+        """
         async with self.lock:
             self.container_id = container_id
             self.subscribers.add(sock)
+            if (
+                token_expiry is not None
+                and self.workspace_token_expiry is None
+            ):
+                self.start_token_renewal(token_expiry)
 
     async def remove_subscriber(self, sock: SafeWebSocket) -> bool:
         """Unregister a connection (acquires lock).

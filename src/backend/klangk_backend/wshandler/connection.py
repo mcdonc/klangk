@@ -329,14 +329,12 @@ class Connection:
         self._service_command = workspace.get("service_command")
 
         session = state.get_or_create_session(workspace_id)
-        await session.add_subscriber(self.sock, container_id)
-
-        # Start token renewal if not already running for this session.
-        if session.workspace_token_expiry is None:
-            token_expiry = datetime.now(timezone.utc) + timedelta(
-                hours=auth.WORKSPACE_TOKEN_EXPIRE_HOURS
-            )
-            session.start_token_renewal(token_expiry)
+        token_expiry = datetime.now(timezone.utc) + timedelta(
+            hours=auth.WORKSPACE_TOKEN_EXPIRE_HOURS
+        )
+        await session.add_subscriber(
+            self.sock, container_id, token_expiry=token_expiry
+        )
 
         # Register idle timeout notification (per-connection)
         sock = self.sock
