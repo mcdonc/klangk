@@ -139,7 +139,10 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
         });
       }
     } catch (e) {
-      setState(() => _errorMessage = 'Error: $e');
+      debugPrint('Create workspace error: $e');
+      setState(
+        () => _errorMessage = 'Could not create workspace. Please try again.',
+      );
     }
   }
 

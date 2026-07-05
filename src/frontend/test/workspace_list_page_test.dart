@@ -1659,7 +1659,10 @@ void main() {
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('Error:'), findsOneWidget);
+      expect(
+        find.textContaining('Could not create workspace'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('delete workspace exception shows error snackbar',
@@ -1695,7 +1698,10 @@ void main() {
       await tester.tap(find.text('Delete'));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('Error:'), findsOneWidget);
+      expect(
+        find.textContaining('Could not delete workspace'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('logout button calls logout and navigates', (tester) async {

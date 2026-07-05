@@ -403,12 +403,13 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       await _auth.authDelete('/api/v1/workspaces/$id');
       await _loadWorkspaces();
     } catch (e) {
+      debugPrint('Workspace delete error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(days: 1),
+          const SnackBar(
+            duration: Duration(days: 1),
             showCloseIcon: true,
-            content: Text('Error: $e'),
+            content: Text('Could not delete workspace. Please try again.'),
           ),
         );
       }

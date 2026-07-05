@@ -951,7 +951,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
       await tester.pumpAndSettle();
-      expect(find.textContaining('Delete error'), findsOneWidget);
+      expect(find.textContaining('Could not delete'), findsOneWidget);
       client.close();
     });
 
@@ -994,7 +994,7 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
-      expect(find.textContaining('Rename error'), findsOneWidget);
+      expect(find.textContaining('Could not rename'), findsOneWidget);
       client.close();
     });
 
@@ -1031,7 +1031,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Download'));
       await tester.pumpAndSettle();
-      expect(find.textContaining('Download error'), findsOneWidget);
+      expect(find.textContaining('Could not download'), findsOneWidget);
       client.close();
     });
 
