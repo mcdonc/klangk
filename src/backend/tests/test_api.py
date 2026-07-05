@@ -3419,7 +3419,7 @@ def _managed_volume(user_id="test-user"):
     return {
         "Labels": {
             "klangk.managed": "true",
-            "klangk.instance": container.INSTANCE_ID,
+            "klangk.instance": model.get_instance_id(),
             "klangk.user-id": user_id,
         }
     }
@@ -3437,7 +3437,7 @@ class TestVolumeRoutes:
                         "Name": "my-vol",
                         "CreatedAt": "2026-01-01T00:00:00Z",
                         "Labels": {
-                            "klangk.instance": container.INSTANCE_ID,
+                            "klangk.instance": model.get_instance_id(),
                             "klangk.user-id": user["id"],
                         },
                     },
@@ -3445,7 +3445,7 @@ class TestVolumeRoutes:
                         "Name": "other-vol",
                         "CreatedAt": "2026-01-01T00:00:00Z",
                         "Labels": {
-                            "klangk.instance": container.INSTANCE_ID,
+                            "klangk.instance": model.get_instance_id(),
                             "klangk.user-id": "someone-else",
                         },
                     },

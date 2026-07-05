@@ -1406,7 +1406,7 @@ class TestExtraMountsVolumeCreation:
         name, labels = p.create_volume.call_args.args
         assert name == "nix-store"
         assert labels["klangk.managed"] == "true"
-        assert labels["klangk.instance"] == container.INSTANCE_ID
+        assert labels["klangk.instance"] == model.get_instance_id()
         assert labels["klangk.user-id"] == "user-123"
 
     async def test_existing_volume_not_recreated(self, workspace):
@@ -1416,7 +1416,7 @@ class TestExtraMountsVolumeCreation:
                 return_value={
                     "Name": "existing",
                     "Labels": {
-                        "klangk.instance": container.INSTANCE_ID,
+                        "klangk.instance": model.get_instance_id(),
                         "klangk.user-id": "user-123",
                     },
                 }
@@ -1469,7 +1469,7 @@ class TestExtraMountsVolumeCreation:
                 return_value={
                     "Name": "private",
                     "Labels": {
-                        "klangk.instance": container.INSTANCE_ID,
+                        "klangk.instance": model.get_instance_id(),
                         "klangk.user-id": "user-other",
                     },
                 }
@@ -1491,7 +1491,7 @@ class TestExtraMountsVolumeCreation:
                 return_value={
                     "Name": "legacy",
                     "Labels": {
-                        "klangk.instance": container.INSTANCE_ID,
+                        "klangk.instance": model.get_instance_id(),
                     },
                 }
             )

@@ -43,7 +43,12 @@ done
 # Remove old containers before rebuilding so they get recreated from the new image.
 # Skip when running inside a container (developing klangk in klangk).
 if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
-  "$PODMAN" ps -a --filter "label=klangk.instance=${KLANGK_INSTANCE_ID}" -q | xargs -r "$PODMAN" rm -f
+  INSTANCE_ID=$(sqlite3 "$KLANGK_DATA_DIR/klangk.db" "SELECT value FROM instance_metadata WHERE key='instance_id'" 2>/dev/null || true)
+  if [ -n "$INSTANCE_ID" ]; then
+    "$PODMAN" ps -a --filter "label=klangk.instance=$INSTANCE_ID" -q | xargs -r "$PODMAN" rm -f
+  else
+    "$PODMAN" ps -a --filter "label=klangk.managed=true" -q | xargs -r "$PODMAN" rm -f
+  fi
 fi
 
 # Build workspace image on top of the base
