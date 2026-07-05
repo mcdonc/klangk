@@ -240,6 +240,14 @@ async def oidc_callback(
     email = claims["email"]
     auth.validate_email(email)
 
+    # Require email_verified unless the operator trusts this IdP's
+    # email claims (trust-email: true in the provider config).
+    if not provider.trust_email and claims.get("email_verified") is not True:
+        raise HTTPException(
+            status_code=403,
+            detail="Email not verified by identity provider",
+        )
+
     # Call the OIDC login hook (if configured).
     try:
         hook_groups = await oidc.call_login_hook(

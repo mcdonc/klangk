@@ -36,17 +36,35 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
 
 ## Provider Config Fields
 
-| Field                  | Required | Description                                                                                                                 |
-| ---------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `id`                   | Yes      | URL-safe slug, used in endpoint paths (`/api/v1/auth/oidc/{id}/login`) and stored as `provider` on users                    |
-| `display-name`         | Yes      | Button label on the login page (e.g., "CAC Login", "Google")                                                                |
-| `issuer`               | Yes      | OIDC issuer URL. Discovery via `{issuer}/.well-known/openid-configuration`                                                  |
-| `client-id`            | Yes      | OIDC client ID registered with the IdP                                                                                      |
-| `client-secret`        | Yes      | OIDC client secret. Supports `file:`/`cmd:` prefix for secret management                                                    |
-| `scopes`               | No       | Space-separated scopes (default: `openid email profile`)                                                                    |
-| `ca-cert`              | No       | Path to a CA certificate PEM file for IdPs with custom/private CAs                                                          |
-| `token-validation-pem` | No       | Inline RSA/EC public key PEM for static token validation (skips JWKS discovery)                                             |
-| `logout-redirect`      | No       | If `true`, logout redirects to the IdP's `end_session_endpoint` (RP-Initiated Logout). Default: `false` (local-only logout) |
+| Field                  | Required | Description                                                                                                                                                                           |
+| ---------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                   | Yes      | URL-safe slug, used in endpoint paths (`/api/v1/auth/oidc/{id}/login`) and stored as `provider` on users                                                                              |
+| `display-name`         | Yes      | Button label on the login page (e.g., "CAC Login", "Google")                                                                                                                          |
+| `issuer`               | Yes      | OIDC issuer URL. Discovery via `{issuer}/.well-known/openid-configuration`                                                                                                            |
+| `client-id`            | Yes      | OIDC client ID registered with the IdP                                                                                                                                                |
+| `client-secret`        | Yes      | OIDC client secret. Supports `file:`/`cmd:` prefix for secret management                                                                                                              |
+| `scopes`               | No       | Space-separated scopes (default: `openid email profile`)                                                                                                                              |
+| `ca-cert`              | No       | Path to a CA certificate PEM file for IdPs with custom/private CAs                                                                                                                    |
+| `token-validation-pem` | No       | Inline RSA/EC public key PEM for static token validation (skips JWKS discovery)                                                                                                       |
+| `logout-redirect`      | No       | If `true`, logout redirects to the IdP's `end_session_endpoint` (RP-Initiated Logout). Default: `false` (local-only logout)                                                           |
+| `trust-email`          | No       | If `true`, skip the `email_verified` check for this provider. Default: `false` (require `email_verified: true` in the ID token). See [Email Verification](#email-verification) below. |
+
+## Email Verification
+
+By default, Klangk requires the OIDC ID token to contain `email_verified: true`. If the claim is missing or `false`, the login is rejected with HTTP 403. This prevents an IdP that asserts an unverified email from being used to take over an existing account.
+
+Not all IdPs include the `email_verified` claim. If your IdP does not emit it, or you trust it to only return verified emails, set `trust-email: true` on that provider entry:
+
+```yaml
+- id: company-idp
+  display-name: Company SSO
+  issuer: https://sso.company.com
+  client-id: klangk
+  client-secret: "file:/run/secrets/oidc-secret"
+  trust-email: true # skip email_verified check — we trust this IdP
+```
+
+This is configured per provider, so a deployment with multiple IdPs can trust some and not others.
 
 ## How It Works
 
@@ -69,7 +87,7 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
 
 ## OIDC Login Hook
 
-A single Python hook handles both login validation and group mapping on every OIDC login.
+A single Python hook handles both login validation and group mapping on every OIDC login. The hook runs after the `email_verified` check (see [Email Verification](#email-verification)), so it only sees logins that have already passed that gate.
 
 **Configuration:**
 
@@ -77,7 +95,7 @@ A single Python hook handles both login validation and group mapping on every OI
 KLANGK_OIDC_LOGIN_HOOK=my_module.on_login
 ```
 
-The value is a dotted Python path where the last component is the function name. If not set, all OIDC logins are accepted with no group sync.
+The value is a dotted Python path where the last component is the function name. If not set, all OIDC logins that pass the `email_verified` check are accepted with no group sync.
 
 **Hook signature:**
 
@@ -98,10 +116,6 @@ def on_login(provider, claims, email, tokens):
     Raises:
         Any exception — login rejected (message shown to user)
     """
-    # Example: reject unverified emails
-    if claims.get("email_verified") is not True:
-        raise ValueError("Email not verified by identity provider")
-
     # Example: map IdP roles to groups
     groups = set()
     roles = claims.get("realm_access", {}).get("roles", [])
@@ -114,7 +128,7 @@ Async hooks are also supported (`async def`).
 
 **Behavior:**
 
-- Called after ID token validation, before user provisioning
+- Called after ID token validation and `email_verified` check, before user provisioning
 - **Raise** an exception — login rejected (HTTP 403, exception message shown)
 - **Return** `None` — login allowed, no group sync
 - **Return** a `set[str]` — login allowed, memberships synced to those groups
@@ -122,14 +136,9 @@ Async hooks are also supported (`async def`).
 - Memberships are tracked with `source='oidc_sync'` — only these are added/removed
 - Manual group memberships (`source='manual'`) are never touched
 
-**Security note:** The hook is entirely responsible for login validation and group mapping. There is no default hook — the hook is written by the deploying organization, and it is their responsibility to validate IdP claims as appropriate. Without a hook, all OIDC logins are accepted (including those with unverified emails).
-
-**Built-in example hooks:**
+**Built-in example hook:**
 
 ```bash
-# Reject logins with unverified emails
-KLANGK_OIDC_LOGIN_HOOK=klangk_backend.oidc.example_require_verified_email
-
 # Map Keycloak klangk-admin role to the admin group
 KLANGK_OIDC_LOGIN_HOOK=klangk_backend.oidc.example_admin_hook
 ```

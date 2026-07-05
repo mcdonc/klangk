@@ -39,6 +39,7 @@ class OIDCProvider:
     ca_cert: str | None = None  # path to CA cert PEM for custom trust
     token_validation_pem: str | None = None  # static RSA/EC public key PEM
     logout_redirect: bool = False  # redirect to IdP logout on user logout
+    trust_email: bool = False  # skip email_verified check for this IdP
 
 
 @dataclass
@@ -113,6 +114,7 @@ def load_config() -> list[OIDCProvider]:
                 ca_cert=ca_cert,
                 token_validation_pem=get(entry, "token-validation-pem", None),
                 logout_redirect=get(entry, "logout-redirect", False),
+                trust_email=get(entry, "trust-email", False),
             )
         )
     return providers
@@ -362,24 +364,6 @@ def example_admin_hook(
     if isinstance(value, str) and value == claim_value:
         return {"admin"}
     return set()
-
-
-def example_require_verified_email(
-    provider: OIDCProvider,  # noqa: ARG001
-    claims: dict,
-    email: str,  # noqa: ARG001
-    tokens: dict,  # noqa: ARG001
-) -> None:
-    """Example hook: reject logins where email_verified is not true.
-
-    To use: KLANGK_OIDC_LOGIN_HOOK=klangk_backend.oidc.example_require_verified_email
-
-    Raise an exception to reject the login. The exception message is
-    returned as the HTTP 403 detail.  Return None to allow the login
-    without group sync, or return a set of group names to sync.
-    """
-    if claims.get("email_verified") is not True:
-        raise ValueError("Email not verified by identity provider")
 
 
 def load_login_hook() -> None:
