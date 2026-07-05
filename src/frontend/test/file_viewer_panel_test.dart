@@ -1678,4 +1678,98 @@ void main() {
       expect(err.toString(), contains('Failed to download'));
     });
   });
+
+  group('load-generation guard', () {
+    testWidgets('stale response from superseded _loadFiles is discarded',
+        (tester) async {
+      // Two completers let us control when each listing response arrives.
+      final completers = <String, Completer<http.Response>>{};
+      testHttpClientOverride = MockClient((request) async {
+        if (request.method == 'GET' &&
+            request.url.path.contains('/files') &&
+            !request.url.path.contains('/content') &&
+            !request.url.path.contains('/download')) {
+          final path = request.url.queryParameters['path'] ?? '';
+          final c = Completer<http.Response>();
+          completers[path] = c;
+          return c.future;
+        }
+        return http.Response('Not found', 404);
+      });
+      clearFileListCacheForTest();
+
+      final client = _MockWsClient();
+      final key = GlobalKey<FileViewerPanelState>();
+      await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+              body: SizedBox(
+                  width: 800,
+                  height: 600,
+                  child: buildPanel(wsClient: client, key: key)))));
+      // Don't pumpAndSettle — the initial load is blocked on the completer.
+      await tester.pump();
+
+      // Complete the initial load for /home/tester so the panel is ready.
+      completers['/home/tester']!.complete(http.Response(
+        jsonEncode([
+          {
+            'name': 'sub',
+            'path': '/home/tester/sub',
+            'is_dir': true,
+            'size': null,
+          },
+        ]),
+        200,
+      ));
+      await tester.pumpAndSettle();
+      expect(key.currentState!.currentPathForTest, '/home/tester');
+
+      // Navigate to /home/tester/sub — fires request A.
+      key.currentState!.openDir('/home/tester/sub');
+      await tester.pump();
+
+      // Before A resolves, navigate to /etc — fires request B, superseding A.
+      key.currentState!.openDir('/etc');
+      await tester.pump();
+
+      // Complete request A (the stale one) first.
+      completers['/home/tester/sub']!.complete(http.Response(
+        jsonEncode([
+          {
+            'name': 'stale.txt',
+            'path': '/home/tester/sub/stale.txt',
+            'is_dir': false,
+            'size': 1,
+          },
+        ]),
+        200,
+      ));
+      await tester.pump();
+
+      // The stale response must be discarded — path should still be /etc,
+      // and the stale file should not appear.
+      expect(key.currentState!.currentPathForTest, '/etc');
+      expect(find.text('stale.txt'), findsNothing);
+
+      // Now complete request B (the current one).
+      completers['/etc']!.complete(http.Response(
+        jsonEncode([
+          {
+            'name': 'fresh.txt',
+            'path': '/etc/fresh.txt',
+            'is_dir': false,
+            'size': 2,
+          },
+        ]),
+        200,
+      ));
+      await tester.pumpAndSettle();
+
+      // The current response should be applied.
+      expect(key.currentState!.currentPathForTest, '/etc');
+      expect(find.text('fresh.txt'), findsOneWidget);
+
+      client.close();
+    });
+  });
 }
