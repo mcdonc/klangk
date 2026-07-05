@@ -486,6 +486,54 @@ void main() {
       expect(field.focusNode!.hasFocus, isTrue);
     });
 
+    testWidgets('chat_history_replace clears and replaces messages',
+        (tester) async {
+      await tester.pumpWidget(buildChat());
+
+      // Seed an initial message via chat_message
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_message',
+          'id': 'msg-1',
+          'user_email': 'alice@test.com',
+          'message': 'first',
+          'created_at': '2026-01-01 00:00:00',
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+      expect(find.byType(MarkdownBody), findsOneWidget);
+
+      // Simulate reconnect: server sends chat_history which becomes
+      // chat_history_replace containing the same message plus a new one.
+      await tester.runAsync(() async {
+        channel.serverSend({
+          'type': 'chat_history',
+          'messages': [
+            {
+              'id': 'msg-1',
+              'user_email': 'alice@test.com',
+              'message': 'first',
+              'created_at': '2026-01-01 00:00:00',
+            },
+            {
+              'id': 'msg-2',
+              'user_email': 'bob@test.com',
+              'message': 'second',
+              'created_at': '2026-01-01 00:01:00',
+            },
+          ],
+        });
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      });
+      await tester.pump();
+
+      // Should have exactly 2 messages, not 3 (no duplicate of msg-1)
+      expect(find.byType(MarkdownBody), findsNWidgets(2));
+    });
+
     testWidgets('loads buffered chat history on init', (tester) async {
       // Pre-populate the buffer before building the widget
       client.chatHistory.addAll([

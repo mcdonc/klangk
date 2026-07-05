@@ -430,11 +430,18 @@ class WsClient extends ChangeNotifier {
   void _onChatHistory(Map<String, dynamic> json) {
     chatHistory.clear();
     final messages = json['messages'] as List? ?? [];
+    final typed = <Map<String, dynamic>>[];
     for (final m in messages) {
       final msg = m as Map<String, dynamic>;
       chatHistory.add(msg);
-      _chatController.add(msg);
+      typed.add(msg);
     }
+    // Emit a single replacement event so listeners can clear-and-replace
+    // instead of appending (which would duplicate buffered messages).
+    _chatController.add({
+      'type': 'chat_history_replace',
+      'messages': typed,
+    });
   }
 
   void _onPresenceList(Map<String, dynamic> json) {

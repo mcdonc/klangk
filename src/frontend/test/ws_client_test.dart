@@ -1418,7 +1418,7 @@ void main() {
       expect(messages[0]['user_email'], 'alice@test.com');
     });
 
-    test('chat_history messages routed individually', () async {
+    test('chat_history emits single replacement event', () async {
       final messages = <Map<String, dynamic>>[];
       client.chatMessages.listen(messages.add);
 
@@ -1441,9 +1441,12 @@ void main() {
       });
       await Future.delayed(Duration.zero);
 
-      expect(messages.length, 2);
-      expect(messages[0]['message'], 'first');
-      expect(messages[1]['message'], 'second');
+      expect(messages.length, 1);
+      expect(messages[0]['type'], 'chat_history_replace');
+      final inner = messages[0]['messages'] as List<Map<String, dynamic>>;
+      expect(inner.length, 2);
+      expect(inner[0]['message'], 'first');
+      expect(inner[1]['message'], 'second');
     });
 
     test('chat_history clears existing messages before appending', () async {
