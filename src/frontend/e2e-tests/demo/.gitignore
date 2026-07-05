@@ -14,3 +14,4 @@ node_modules
 # Python (cli_demo.py)
 __pycache__/
 *.pyc
+text.txt
