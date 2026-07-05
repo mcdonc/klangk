@@ -4573,6 +4573,36 @@ class TestRemoveSessionLocked:
             wshandler.state.sessions.pop("ws-locked-rm", None)
 
 
+class TestGetOrCreateSessionAtomicity:
+    async def test_returns_same_session_for_same_workspace(self):
+        """Concurrent calls return the same WorkspaceSession, not duplicates."""
+        wshandler.state.sessions.pop("ws-atomic", None)
+        try:
+            s1 = wshandler.state.get_or_create_session("ws-atomic")
+            s2 = wshandler.state.get_or_create_session("ws-atomic")
+            assert s1 is s2
+        finally:
+            wshandler.state.sessions.pop("ws-atomic", None)
+
+    async def test_concurrent_get_or_create_via_gather(self):
+        """Two coroutines that both call get_or_create_session end up
+        with the identical session object (no orphaned duplicates)."""
+        wshandler.state.sessions.pop("ws-gather", None)
+        sessions = []
+
+        async def grab():
+            s = wshandler.state.get_or_create_session("ws-gather")
+            await asyncio.sleep(0)  # yield to let the other coroutine run
+            sessions.append(s)
+
+        try:
+            await asyncio.gather(grab(), grab())
+            assert len(sessions) == 2
+            assert sessions[0] is sessions[1]
+        finally:
+            wshandler.state.sessions.pop("ws-gather", None)
+
+
 class TestCleanupSubscriberRace:
     async def test_new_subscriber_not_lost_during_cleanup(self):
         """A subscriber added under the lock while cleanup runs is not lost."""
