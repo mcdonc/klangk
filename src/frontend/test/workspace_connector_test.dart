@@ -243,6 +243,102 @@ void main() {
       ws.close();
     });
 
+    test('reconnect disposes old subscriptions and reconnects', () async {
+      final ws = _MockWsClient();
+      int connectedCount = 0;
+
+      final connector = WorkspaceConnector(
+        wsClient: ws,
+        workspaceId: 'ws-1',
+        pluginRegistry: ToolPluginRegistry(),
+        onConnected: ({required connected, error}) {
+          if (connected) connectedCount++;
+        },
+        onContainerEvent: (_, __) {},
+        onSharedTerminalDeleted: (_) {},
+        onPermissionError: (_) {},
+      );
+
+      await connector.connect();
+      expect(connectedCount, 1);
+      expect(connector.isActive, isTrue);
+
+      // Simulate disconnect
+      ws._connected = false;
+      ws.connectCalled = false;
+      ws.connectedWorkspaceId = null;
+
+      await connector.reconnect();
+      expect(connectedCount, 2);
+      expect(ws.connectCalled, isTrue);
+      expect(ws.connectedWorkspaceId, 'ws-1');
+      expect(connector.isActive, isTrue);
+
+      connector.dispose();
+      ws.close();
+    });
+
+    test('concurrent connect calls are deduplicated', () async {
+      final ws = _MockWsClient();
+      int connectedCount = 0;
+
+      final connector = WorkspaceConnector(
+        wsClient: ws,
+        workspaceId: 'ws-1',
+        pluginRegistry: ToolPluginRegistry(),
+        onConnected: ({required connected, error}) {
+          if (connected) connectedCount++;
+        },
+        onContainerEvent: (_, __) {},
+        onSharedTerminalDeleted: (_) {},
+        onPermissionError: (_) {},
+      );
+
+      // Fire two connects concurrently
+      final f1 = connector.connect();
+      final f2 = connector.connect();
+      await Future.wait([f1, f2]);
+
+      // Only one should have executed
+      expect(connectedCount, 1);
+
+      connector.dispose();
+      ws.close();
+    });
+
+    test('concurrent reconnect calls are deduplicated', () async {
+      final ws = _MockWsClient();
+      int connectedCount = 0;
+
+      final connector = WorkspaceConnector(
+        wsClient: ws,
+        workspaceId: 'ws-1',
+        pluginRegistry: ToolPluginRegistry(),
+        onConnected: ({required connected, error}) {
+          if (connected) connectedCount++;
+        },
+        onContainerEvent: (_, __) {},
+        onSharedTerminalDeleted: (_) {},
+        onPermissionError: (_) {},
+      );
+
+      await connector.connect();
+      expect(connectedCount, 1);
+
+      ws._connected = false;
+      ws.connectCalled = false;
+
+      final f1 = connector.reconnect();
+      final f2 = connector.reconnect();
+      await Future.wait([f1, f2]);
+
+      // Only one reconnect should have executed
+      expect(connectedCount, 2);
+
+      connector.dispose();
+      ws.close();
+    });
+
     test('dispose cancels subscriptions', () async {
       final ws = _MockWsClient();
 
