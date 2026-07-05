@@ -1,6 +1,5 @@
 """Tests for OIDC client module."""
 
-import os
 import time
 from unittest.mock import AsyncMock, patch
 
@@ -617,29 +616,21 @@ class TestBuildLogoutUrl:
         assert "post_logout_redirect_uri=" in result
 
 
-class TestExampleAdminHook:
-    def test_matching_role(self):
-        provider = _provider()
-        claims = {"realm_access": {"roles": ["klangk-admin", "user"]}}
-        result = oidc.example_admin_hook(provider, claims, "x@example.com", {})
-        assert result == {"admin"}
+class TestParseHookValue:
+    def test_path_with_func(self):
+        path, func = oidc._parse_hook_value("/etc/klangk/hook.py:my_func")
+        assert path == "/etc/klangk/hook.py"
+        assert func == "my_func"
 
-    def test_no_match(self):
-        provider = _provider()
-        claims = {"realm_access": {"roles": ["user"]}}
-        result = oidc.example_admin_hook(provider, claims, "x@example.com", {})
-        assert result == set()
+    def test_path_without_func(self):
+        path, func = oidc._parse_hook_value("/etc/klangk/hook.py")
+        assert path == "/etc/klangk/hook.py"
+        assert func == "on_login"
 
-    def test_missing_claim(self):
-        provider = _provider()
-        result = oidc.example_admin_hook(provider, {}, "x@example.com", {})
-        assert result == set()
-
-    def test_string_claim(self):
-        provider = _provider()
-        claims = {"realm_access": {"roles": "klangk-admin"}}
-        result = oidc.example_admin_hook(provider, claims, "x@example.com", {})
-        assert result == {"admin"}
+    def test_colon_in_path(self):
+        path, func = oidc._parse_hook_value("/a/b:c/hook.py:check")
+        assert path == "/a/b:c/hook.py"
+        assert func == "check"
 
 
 class TestLoadLoginHook:
@@ -648,29 +639,59 @@ class TestLoadLoginHook:
         oidc.load_login_hook()
         assert oidc._login_hook is None
 
-    def test_custom_hook_loaded(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", "os.path.exists")
+    def test_hook_loaded_from_file(self, monkeypatch, tmp_path):
+        hook_file = tmp_path / "myhook.py"
+        hook_file.write_text(
+            "def on_login(provider, claims, email, tokens):\n"
+            "    return {'testers'}\n"
+        )
+        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", str(hook_file))
         oidc.load_login_hook()
-        assert oidc._login_hook is os.path.exists
+        assert oidc._login_hook is not None
+        assert oidc._login_hook(None, {}, "", {}) == {"testers"}
 
-    def test_bad_format_no_dot(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", "nofunc")
-        with pytest.raises(ConfigurationError, match="module.path.func_name"):
+    def test_hook_loaded_with_custom_func_name(self, monkeypatch, tmp_path):
+        hook_file = tmp_path / "myhook.py"
+        hook_file.write_text(
+            "def check(provider, claims, email, tokens):\n"
+            "    return {'admins'}\n"
+        )
+        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", f"{hook_file}:check")
+        oidc.load_login_hook()
+        assert oidc._login_hook is not None
+        assert oidc._login_hook(None, {}, "", {}) == {"admins"}
+
+    def test_async_hook_detected(self, monkeypatch, tmp_path):
+        hook_file = tmp_path / "myhook.py"
+        hook_file.write_text(
+            "async def on_login(provider, claims, email, tokens):\n"
+            "    return None\n"
+        )
+        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", str(hook_file))
+        oidc.load_login_hook()
+        assert oidc._login_hook_is_async is True
+
+    def test_file_not_found(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", "/nonexistent/hook.py")
+        with pytest.raises(ConfigurationError, match="file not found"):
             oidc.load_login_hook()
 
-    def test_bad_module(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", "nonexistent_module.func")
-        with pytest.raises(ModuleNotFoundError):
+    def test_func_not_found(self, monkeypatch, tmp_path):
+        hook_file = tmp_path / "myhook.py"
+        hook_file.write_text("x = 1\n")
+        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", f"{hook_file}:missing")
+        with pytest.raises(
+            ConfigurationError, match="not found or not callable"
+        ):
             oidc.load_login_hook()
 
-    def test_bad_function(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", "os.nonexistent_func_xyz")
-        with pytest.raises(AttributeError):
-            oidc.load_login_hook()
-
-    def test_not_callable(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", "os.sep")
-        with pytest.raises(ConfigurationError, match="not callable"):
+    def test_not_callable(self, monkeypatch, tmp_path):
+        hook_file = tmp_path / "myhook.py"
+        hook_file.write_text("on_login = 42\n")
+        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", str(hook_file))
+        with pytest.raises(
+            ConfigurationError, match="not found or not callable"
+        ):
             oidc.load_login_hook()
 
 
