@@ -16,7 +16,8 @@ exposes this to non-Python callers (shell scripts, TypeScript tests).
 import sqlite3
 import uuid
 
-from .db import DB_PATH, get_db
+from . import db as _db
+from .db import get_db
 
 _cache: str | None = None
 
@@ -75,8 +76,8 @@ def resolve_instance_id_sync() -> str:
     """
     global _cache
 
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
+    _db.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(_db.DB_PATH))
     try:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA foreign_keys = ON")

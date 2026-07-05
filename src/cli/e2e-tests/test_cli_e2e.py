@@ -716,7 +716,7 @@ class TestAutoStart:
         request.cls._env = env
         request.cls._base_url = base_url
         yield
-        _stop_server(proc, data_dir, "autostart-e2e")
+        _stop_server(proc, data_dir)
 
     def test_create_with_auto_start(self):
         env = self._env
@@ -833,7 +833,7 @@ class TestSandboxAutoStartServiceCommand:
         )
         request.cls._env = env
         yield
-        _stop_server(proc, data_dir, "sandbox-defcmd-e2e")
+        _stop_server(proc, data_dir)
 
     def test_service_command_runs_only_after_setup(self, tmp_path):
         """service_command (installed by setup.sh) runs post-setup.
@@ -1504,7 +1504,7 @@ class TestAllowedMountRoots:
         request.cls._env = env
         request.cls._base_url = base_url
         yield
-        _stop_server(proc, data_dir, "mount-roots-e2e")
+        _stop_server(proc, data_dir)
 
     def test_allowed_mount_succeeds(self):
         env = self._env
@@ -1587,7 +1587,7 @@ class TestVolumeUserIsolation:
 
         request.cls._base_url = base_url
         yield
-        _stop_server(proc, data_dir, "vol-iso-e2e")
+        _stop_server(proc, data_dir)
 
     def test_cross_user_volume_rejected(self):
         env_a = self._env_a
@@ -1729,7 +1729,7 @@ class TestTerminalSharing:
         request.cls._env = env
         yield
         _run(["klangkc", "rm", "e2e-share"], env=env)
-        _stop_server(proc, data_dir, "terminal-sharing-e2e")
+        _stop_server(proc, data_dir)
 
     def test_terminals_lists_windows(self):
         result = _run(
@@ -1998,7 +1998,7 @@ def short_token_server():
         extra_env={"KLANGK_ACCESS_TOKEN_HOURS": "0.002"},
     )
     yield {"url": base_url, "data_dir": data_dir, "proc": proc}
-    _stop_server(proc, data_dir, "cli-refresh-e2e")
+    _stop_server(proc, data_dir)
 
 
 @pytest.fixture(scope="module")
