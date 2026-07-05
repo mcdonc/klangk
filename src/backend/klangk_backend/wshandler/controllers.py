@@ -367,30 +367,12 @@ class TerminalController:
             )
         self._conn.browser_id = browser_id
 
-    async def _restore_and_sync_windows(self) -> None:
-        """Restore saved window state and sync with tmux.
-
-        On first terminal_start after restart, loads the saved
-        snapshot from the container.  Then lists current tmux
-        windows, syncs in-memory state, and sends the window list
-        and shared terminals to the client.
-        """
+    async def _sync_windows(self) -> None:
+        """List current tmux windows, sync in-memory state, and send
+        the window list and shared terminals to the client."""
         conn = self._conn
         sname = conn.tmux_session_name()
-        user_id = conn.user["id"]
         ws_session = state.get_session(conn.workspace_id)
-
-        if ws_session and user_id not in ws_session.terminal_windows:
-            saved = await terminal.load_workspace_state(conn.container_id)
-            if user_id in saved:
-                saved_windows = saved[user_id]
-                await terminal.restore_windows(
-                    conn.container_id, sname, saved_windows
-                )
-                ws_session.terminal_windows[user_id] = saved_windows
-                for uid, wins in saved.items():
-                    if uid != user_id:
-                        ws_session.terminal_windows.setdefault(uid, wins)
 
         windows = await terminal.list_windows(conn.container_id, sname)
         conn.sync_terminal_windows(windows)
@@ -593,7 +575,7 @@ class TerminalController:
                     return
                 conn.sock.send_json({"type": "terminal_started"})
                 try:
-                    await ctrl._restore_and_sync_windows()
+                    await ctrl._sync_windows()
                 except (TerminalError, OSError):
                     logger.exception("_start_terminal: window list failed")
                 ctrl._send_shared_terminals()

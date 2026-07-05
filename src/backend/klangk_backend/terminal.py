@@ -11,7 +11,6 @@ import asyncio
 import codecs
 import fcntl
 import re
-import json
 import logging
 import os
 import pty
@@ -90,8 +89,6 @@ def build_environment(
         env.append(f"SSH_AUTH_SOCK={ssh_agent_socket}")
     return env
 
-
-_WORKSPACE_STATE_FILE = ".workspace-state.json"
 
 # Name of the dedicated tmux window that runs a workspace's
 # service_command, leaving the user's interactive window 0 free.
@@ -681,64 +678,6 @@ async def close_window(
         ["kill-window", "-t", t],
     )
     return await list_windows(container_id, session_name)
-
-
-_STATE_PATH = f"/home/{_WORKSPACE_STATE_FILE}"
-
-
-async def load_workspace_state(container_id: str) -> dict:
-    """Read per-user workspace state from /home/.workspace-state.json.
-
-    Returns a dict keyed by handle, e.g.
-    ``{"admin": {"terminal_windows": [...], ...}, ...}``.
-    Returns empty dict if the file doesn't exist or is corrupt.
-    Used for restoring state after container restart.
-    """
-    rc, stdout, _ = await podman.exec_container(
-        container_id,
-        ["cat", _STATE_PATH],
-        user=CONTAINER_USER,
-        timeout=10,
-    )
-    if rc != 0:
-        return {}
-    try:
-        return json.loads(stdout)
-    except (json.JSONDecodeError, ValueError):
-        return {}
-
-
-async def save_workspace_state(container_id: str, state: dict) -> None:
-    """Snapshot per-user workspace state.
-
-    Delegates to ``klangk-save-workspace-state`` inside the container,
-    which atomically writes stdin to the target path via mktemp + rename.
-    Callers should serialize access via WorkspaceSession.save_lock.
-    """
-    data = json.dumps(state, indent=2)
-    await podman.exec_container(
-        container_id,
-        ["klangk-save-workspace-state", _STATE_PATH],
-        user=CONTAINER_USER,
-        stdin_data=data.encode(),
-        timeout=10,
-    )
-
-
-async def restore_windows(
-    container_id: str, session_name: str, saved_windows: list[dict]
-) -> None:
-    """Create any missing tmux windows from saved state.
-
-    Compares saved window names against existing windows and creates
-    any that are missing.
-    """
-    existing = await list_windows(container_id, session_name)
-    existing_names = {w["name"] for w in existing}
-    for win in saved_windows:
-        name = win.get("name", "")
-        if name and name not in existing_names:
-            await new_window(container_id, session_name, name=name)
 
 
 async def kill_joiner_sessions(container_id: str, owner_handle: str) -> None:

@@ -91,9 +91,8 @@ class WorkspaceSession:
         self.lock = asyncio.Lock()
         # Per-user terminal window state, keyed by user_id.
         # Each value is a list of {"name": str, "shared": bool}.
-        # This is the in-memory authority; snapshots are persisted
-        # to /home/.workspace-state.json for crash recovery. The agent's
-        # ``service`` session windows are keyed by AGENT_USER_ID (#1133).
+        # The agent's ``service`` session windows are keyed by
+        # AGENT_USER_ID (#1133).
         self.terminal_windows: dict[str, list[dict]] = {}
         # Cached agent handle so the ``service:service-cmd`` window stays
         # attributable (and visible in the shared list) even though the
@@ -101,7 +100,6 @@ class WorkspaceSession:
         # "offline" the way the owner could be under the old model
         # (#1133). Populated by ``_sync_service_windows``.
         self.agent_handle: str | None = None
-        self.save_lock = asyncio.Lock()
         # Workspace token renewal tracking.
         self.workspace_token_expiry: datetime | None = None
         self._token_renewal_task: asyncio.Task | None = None

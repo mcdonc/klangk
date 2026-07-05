@@ -50,7 +50,6 @@ COPY klangk-browser-id.sh /opt/klangk/bin/klangk-browser-id
 COPY klangk-copy-to-clipboard.py /opt/klangk/bin/klangk-copy-to-clipboard
 COPY klangk-configure-sudo.sh /opt/klangk/bin/klangk-configure-sudo
 COPY klangk-hosted-url.sh /opt/klangk/bin/klangk-hosted-url
-COPY klangk-save-workspace-state.sh /opt/klangk/bin/klangk-save-workspace-state
 COPY klangk-set-workspace-token.sh /opt/klangk/bin/klangk-set-workspace-token
 COPY klangk-workspace-token.sh /opt/klangk/bin/klangk-workspace-token
 RUN chmod +x /opt/klangk/entrypoint.sh \
@@ -61,7 +60,6 @@ RUN chmod +x /opt/klangk/entrypoint.sh \
       /opt/klangk/bin/klangk-configure-sudo \
       /opt/klangk/bin/klangk-copy-to-clipboard \
       /opt/klangk/bin/klangk-hosted-url \
-      /opt/klangk/bin/klangk-save-workspace-state \
       /opt/klangk/bin/klangk-set-workspace-token \
       /opt/klangk/bin/klangk-workspace-token
 # System-wide environment exports for ALL login shells (interactive AND
