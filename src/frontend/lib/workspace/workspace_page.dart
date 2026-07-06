@@ -134,18 +134,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
   Future<void> _fetchWorkspaceName() async {
     final auth = context.read<AuthService>();
     try {
-      final response = await auth.authGet('/api/v1/workspaces');
-      if (response.statusCode == 200) {
-        final workspaces = jsonDecode(response.body) as List;
-        for (final ws in workspaces) {
-          if (ws['id'] == widget.workspaceId) {
-            if (mounted) {
-              setState(() => _workspaceName = ws['name'] as String);
-              setPageTitle(_workspaceName);
-            }
-            break;
-          }
-        }
+      final name =
+          await _findWorkspaceName(auth, '/api/v1/workspaces') ??
+          await _findWorkspaceName(auth, '/api/v1/workspaces/shared');
+      if (name != null && mounted) {
+        setState(() => _workspaceName = name);
+        setPageTitle(_workspaceName);
       }
     } catch (e) {
       debugPrint('[WorkspacePage] fetch workspace name failed: $e');
@@ -168,6 +162,19 @@ class _WorkspacePageState extends State<WorkspacePage> {
     } catch (e) {
       debugPrint('[WorkspacePage] fetch permissions failed: $e');
     }
+  }
+
+  Future<String?> _findWorkspaceName(AuthService auth, String url) async {
+    final response = await auth.authGet(url);
+    if (response.statusCode == 200) {
+      final workspaces = jsonDecode(response.body) as List;
+      for (final ws in workspaces) {
+        if (ws['id'] == widget.workspaceId) {
+          return ws['name'] as String;
+        }
+      }
+    }
+    return null;
   }
 
   bool _hasPerm(String perm) =>
@@ -214,7 +221,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
         final deletedUserId = msg['user_id'] as String? ?? '';
         final deletedWindow = msg['window_name'] as String? ?? '';
         final deletedWid = msg['window_id'] as String? ?? '';
-        final wasViewing = _activeSharedTerminal != null &&
+        final wasViewing =
+            _activeSharedTerminal != null &&
             _activeSharedTerminal!['user_id'] == deletedUserId &&
             _activeSharedTerminal!['window_id'] == deletedWid;
         if (wasViewing) {
@@ -293,8 +301,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
       // Track selected own-window: initialize on first message, or
       // reset if the selected window was closed.
       if (wsClient.terminalWindows.isNotEmpty) {
-        final ids =
-            wsClient.terminalWindows.map((w) => w['id'] as String?).toSet();
+        final ids = wsClient.terminalWindows
+            .map((w) => w['id'] as String?)
+            .toSet();
         if (_selectedOwnWindowId == null) {
           // First load — select window 0 (grouped sessions start there).
           _selectedOwnWindowId = wsClient.terminalWindows[0]['id'] as String?;
@@ -312,10 +321,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
         final userId = first['user_id'] as String?;
         final windowId = first['window_id'] as String?;
         if (userId != null && windowId != null) {
-          _activeSharedTerminal = {
-            'user_id': userId,
-            'window_id': windowId,
-          };
+          _activeSharedTerminal = {'user_id': userId, 'window_id': windowId};
           wsClient.sendJoinSharedTerminal(userId, windowId);
         }
       }
@@ -356,10 +362,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   void _joinShared(WsClient wsClient, String userId, String windowId) {
     setState(
-      () => _activeSharedTerminal = {
-        'user_id': userId,
-        'window_id': windowId,
-      },
+      () => _activeSharedTerminal = {'user_id': userId, 'window_id': windowId},
     );
     // Clear the terminal so stale content from the previous session
     // doesn't linger while the join is in progress.
