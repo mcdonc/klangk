@@ -10,6 +10,7 @@ let
        --host 0.0.0.0 \
        --port $KLANGK_PORT \
        --no-access-log \
+       --no-proxy-headers \
        --ws-max-size ''${KLANGK_WS_MSG_SIZE_MAX:-16777216} \
        --ws-ping-interval 20 \
        --ws-ping-timeout 20'';
