@@ -62,6 +62,7 @@ in
           iproute2
           su
           util-linux
+          matchbox # kiosk WM for the demo video recorder (record-demo.sh)
         ]
     );
 
@@ -294,6 +295,23 @@ in
     cd src/frontend/e2e-tests
     npm install --silent
     exec npx playwright test --reporter=list "$@"
+  '';
+
+  # Bare `playwright` command that always uses the LOCAL binary pinned in
+  # src/frontend/e2e-tests/package.json (@playwright/test 1.59.1). Use this
+  # instead of `npx playwright`, which resolves to a newer cached version
+  # (1.61.x) and fails with "two different versions of @playwright/test".
+  # All extra args are forwarded. e.g.
+  #   devenv shell -- playwright test \
+  #     --config=src/frontend/e2e-tests/demo/playwright.demo.config.ts -g clanker
+  scripts.playwright.exec = ''
+    local_pw="$DEVENV_ROOT/src/frontend/e2e-tests/node_modules/.bin/playwright"
+    if [ ! -x "$local_pw" ]; then
+      echo "error: local Playwright not found at $local_pw" >&2
+      echo "       run 'cd src/frontend/e2e-tests && npm install' first" >&2
+      exit 1
+    fi
+    exec "$local_pw" "$@"
   '';
 
   # API fuzz test: start an isolated server, send random requests

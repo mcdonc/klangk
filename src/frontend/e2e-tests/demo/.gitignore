@@ -1,0 +1,17 @@
+# Recording / re-take artifacts (never committed). recordings/ is THE single
+# dir for finished captures (.mp4) from record-cli.sh / record-demo.sh.
+# Playwright's downscaled .webm fallback is redirected to a temp dir and
+# discarded; test-results/ stays ignored for direct `playwright test` runs.
+recordings/
+test-results/
+*.mp4
+*.webm
+*.png
+
+# node_modules is a symlink to ../node_modules; never commit it
+node_modules
+
+# Python (cli_demo.py)
+__pycache__/
+*.pyc
+text.txt

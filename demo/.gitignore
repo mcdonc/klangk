@@ -1,5 +1,0 @@
-# Output recordings (re-take artifacts, never committed).
-recordings/
-# Python bytecode.
-__pycache__/
-*.pyc
