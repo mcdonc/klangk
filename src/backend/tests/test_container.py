@@ -2952,6 +2952,54 @@ class TestHealthMonitorDeath:
             _ws_state.connections.pop(sock, None)
         sock.send_json.assert_not_called()
 
+    async def test_idle_cleanup_emits_death_frame(self):
+        """Idle-timeout kills must emit the death frame before removing state.
+
+        Regression test for #1343: cleanup_idle_containers called
+        stop_and_remove_container (which pops state) before
+        notify_workspace_killed (which reads state for the death frame),
+        so the frame was silently skipped.
+        """
+        from klangk_backend.wshandler import state as _ws_state
+
+        sock = _mock_sock_for_health()
+        st = _health_state(
+            workspace_id="ws-idle-death",
+            container_id="cid-idle-death",
+            health_status="healthy",
+        )
+        container.registry.states[st.workspace_id] = st
+        container.registry._cid_to_wsid[st.container_id] = st.workspace_id
+        st.last_activity = time.time() - container.IDLE_TIMEOUT_SECONDS - 100
+
+        try:
+            _ws_state.connections[sock] = SimpleNamespace(
+                user={"id": "u1", "email": "a@x"}
+            )
+            with patch_podman():
+                task = asyncio.create_task(
+                    container.registry.cleanup_idle_containers()
+                )
+                await asyncio.sleep(0.05)
+                container.registry.get_cleanup_wake().set()
+                await asyncio.sleep(0.05)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        finally:
+            _ws_state.connections.pop(sock, None)
+            container.registry.states.pop(st.workspace_id, None)
+            container.registry._cid_to_wsid.pop(st.container_id, None)
+
+        # The death frame must have been emitted.
+        sock.send_json.assert_called()
+        frame = sock.send_json.call_args[0][0]
+        assert frame["type"] == "service_health"
+        assert frame["healthy"] is False
+        assert frame["running"] is False
+
 
 class TestHealthLoopHeartbeat:
     """run_health_loop ticks a heartbeat each sweep (#1175 item 3b).
