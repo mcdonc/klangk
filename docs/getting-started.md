@@ -24,7 +24,7 @@ docker run -d \
   -e KLANGK_LLM_BASE_URL=https://ollama.com/v1 \
   -e KLANGK_LLM_API_KEY=your-api-key \
   -e KLANGK_LLM_MODEL=gemma4:31b \
-  ghcr.io/mcdonc/klangk/klangk-host:v2026.06.10
+  ghcr.io/mcdonc/klangk/klangk-host:v1.0
 ```
 
 Open <http://localhost:8995> and log in with the email and password

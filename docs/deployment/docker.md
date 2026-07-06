@@ -28,7 +28,7 @@ docker run -d \
   -e KLANGK_LLM_BASE_URL=https://ollama.com/v1 \
   -e KLANGK_LLM_API_KEY=your-api-key \
   -e KLANGK_LLM_MODEL=gemma4:31b \
-  ghcr.io/mcdonc/klangk/klangk-host:v2026.06.10
+  ghcr.io/mcdonc/klangk/klangk-host:v1.0
 ```
 
 Open <http://localhost:8995> and log in with the email and password
@@ -79,7 +79,7 @@ Create a `docker-compose.yml`:
 ```yaml
 services:
   klangk:
-    image: ghcr.io/mcdonc/klangk/klangk-host:v2026.06.10
+    image: ghcr.io/mcdonc/klangk/klangk-host:v1.0
     ports:
       - "8995:8995"
     volumes:
@@ -109,7 +109,7 @@ Then: `docker compose up -d`
 ## Updating
 
 ```bash
-docker pull ghcr.io/mcdonc/klangk/klangk-host:v2026.06.15
+docker pull ghcr.io/mcdonc/klangk/klangk-host:v1.0
 docker stop klangk
 docker rm klangk
 # Run the same docker run command with the new version tag
