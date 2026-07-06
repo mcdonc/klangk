@@ -85,6 +85,7 @@ export default defineConfig({
         "per-user-home.spec.ts",
         "terminal-tabs.spec.ts",
         "shared-terminals.spec.ts",
+        "shared-workspace-name.spec.ts",
         "tab-speed.spec.ts",
         "sudo.spec.ts",
         "ws-connect-speed.spec.ts",
