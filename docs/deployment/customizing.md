@@ -177,7 +177,7 @@ cd customize
 ./build.sh
 
 # Or pin to a specific Klangk release:
-KLANGK_REF=v2026.06.10-1 ./build.sh
+KLANGK_REF=v1.0 ./build.sh
 ```
 
 The resulting image is tagged `ghcr.io/mcdonc/klangk/klangk-host-custom:latest` by default. Override with `KLANGK_HOST_IMAGE`.
