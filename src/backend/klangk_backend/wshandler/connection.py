@@ -573,12 +573,12 @@ class Connection:
             if conn_obj.workspace_id == workspace_id:
                 conn_obj.container_id = None
 
+        await container.registry.notify_workspace_killed(workspace_id)
+
         try:
             await container.registry.stop_and_remove_container(container_id)
         except Exception as e:
             logger.warning("Error stopping container: %s", e)
-
-        await container.registry.notify_workspace_killed(workspace_id)
 
         # Stop the Pi RPC subprocess now that its container is gone.
         await agent.stop_session(workspace_id)

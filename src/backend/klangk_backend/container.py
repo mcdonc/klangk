@@ -469,8 +469,8 @@ class IdleMonitor:
                             await cb(wid)
                         except Exception as e:
                             logger.error("Idle callback error: %s", e)
-                await self._registry.stop_and_remove_container(cid)
                 await self._registry.notify_workspace_killed(wid)
+                await self._registry.stop_and_remove_container(cid)
 
     def start_cleanup_loop(self) -> None:
         logger.info(
@@ -1548,16 +1548,17 @@ class ContainerRegistry:
         terminal.clear_service_session_lock(container_id)
 
     async def notify_workspace_killed(self, workspace_id: str) -> None:
-        """Call the on_workspace_killed callback, logging any errors."""
+        """Call the on_workspace_killed callback, logging any errors.
+
+        Must be called **before** ``stop_and_remove_container`` so that
+        ``self.states`` still contains the workspace state needed to emit
+        the terminal ``service_health`` death frame.
+        """
         self._notify_status_changed(workspace_id, False)
-        # Close the container-death hole (#1175 item 2): without this,
-        # a dying container looks like "healthy, then silence" on the
-        # service_health stream because the health loop only polls
-        # ``registry.states`` and the on_workspace_killed callback below
-        # drops the state.  Emit one terminal frame with ``running=False``
-        # first, so a consumer watching only service_health learns the
-        # service is down.  Only health-checked workspaces ever appeared
-        # on the stream, so only those get a terminal frame.
+        # Close the container-death hole (#1175 item 2): emit a terminal
+        # ``running=False`` frame so consumers watching only service_health
+        # learn the service is down.  Only health-checked workspaces ever
+        # appeared on the stream, so only those get a terminal frame.
         state = self.states.get(workspace_id)
         if state is not None and state.health_check is not None:
             self.health.broadcast_death(state)
@@ -1576,8 +1577,8 @@ class ContainerRegistry:
         workspaces = await model.get_user_workspaces_with_containers(user_id)
         for ws in workspaces:
             if ws["container_id"]:
-                await self.stop_and_remove_container(ws["container_id"])
                 await self.notify_workspace_killed(ws["id"])
+                await self.stop_and_remove_container(ws["container_id"])
 
     # --- Pre-warm ---
 
