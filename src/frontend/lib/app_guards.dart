@@ -82,7 +82,9 @@ String? guardLoggedInPublicRoute({
   required Set<String> pluginPaths,
 }) {
   if (isLoggedIn && publicRoutes.contains(loc) && !pluginPaths.contains(loc)) {
-    return pendingRedirect ?? '/workspaces';
+    final target = pendingRedirect ?? '/workspaces';
+    pendingRedirect = null;
+    return target;
   }
   return null;
 }

@@ -128,6 +128,17 @@ void main() {
       );
     });
 
+    test('clears pendingRedirect after consuming it', () {
+      pendingRedirect = '/workspace/abc';
+      guardLoggedInPublicRoute(
+        isLoggedIn: true,
+        loc: '/login',
+        publicRoutes: routes,
+        pluginPaths: pluginPaths,
+      );
+      expect(pendingRedirect, isNull);
+    });
+
     test('falls back to /workspaces with no pending redirect', () {
       expect(
         guardLoggedInPublicRoute(
