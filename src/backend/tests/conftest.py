@@ -28,8 +28,9 @@ _TEST_PASSWORD_HASH = bcrypt.hashpw(
 
 @pytest.fixture(autouse=True)
 def temp_data_dir(tmp_path, monkeypatch):
-    """Point KLANGK_DATA_DIR to a temp directory for each test."""
+    """Point KLANGK_DATA_DIR / KLANGK_BRANDING_DIR at temp dirs per test."""
     monkeypatch.setenv("KLANGK_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("KLANGK_BRANDING_DIR", str(tmp_path / "branding"))
     monkeypatch.delenv("KLANGK_IMAGE_PULL_POLICY", raising=False)
     # Re-import to pick up the new env var.  The engine state lives on
     # ``model.db`` (where ``ensure_engine`` reads it), so the globals

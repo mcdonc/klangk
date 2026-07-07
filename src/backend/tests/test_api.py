@@ -253,6 +253,43 @@ class TestVersion:
         assert plugins[0]["version"] == "1.2.3"
         assert plugins[0]["description"] == "A test plugin"
 
+    async def test_version_includes_variant_when_present(
+        self, client, tmp_path, monkeypatch
+    ):
+        # When version.json carries a "variant" field (a downstream product
+        # identity string, set via KLANGK_VARIANT in generate-version.sh), the
+        # /api/v1/version endpoint surfaces it verbatim (see #1358).
+        version_file = tmp_path / "version.json"
+        version_file.write_text(
+            '{"version": "2026.01.01+abc1234",'
+            ' "variant": "Custom 1.0.0",'
+            ' "commit": "abc1234",'
+            ' "built_at": "2026-01-01T00:00:00Z"}'
+        )
+        monkeypatch.setenv("KLANGK_VERSION_FILE", str(version_file))
+        resp = await client.get("/api/v1/version")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["variant"] == "Custom 1.0.0"
+
+    async def test_version_omits_variant_when_absent(
+        self, client, tmp_path, monkeypatch
+    ):
+        # Stock klangk builds omit the variant field entirely (it is absent
+        # from version.json, not null). The endpoint must not synthesize one —
+        # downstream UIs key off its presence (see #1358).
+        version_file = tmp_path / "version.json"
+        version_file.write_text(
+            '{"version": "2026.01.01+abc1234",'
+            ' "commit": "abc1234",'
+            ' "built_at": "2026-01-01T00:00:00Z"}'
+        )
+        monkeypatch.setenv("KLANGK_VERSION_FILE", str(version_file))
+        resp = await client.get("/api/v1/version")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "variant" not in data
+
 
 # --- Config ---
 
