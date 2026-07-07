@@ -41,7 +41,7 @@ services:
       # --- Customization directory (runtime, no rebuild) ---
       # Single directory for branding, certs, and email templates.
       # Subdirectories: branding/, certs/, email-templates/
-      KLANGK_CUSTOMIZE_DIR: /home/klangk/customize
+      KLANGK_CUSTOMIZE_DIR: /home/klangk/custom
 
       # --- Branding (runtime, no rebuild) ---
       # Product name across the tab title, app-bar wordmark, and emails.
@@ -71,9 +71,9 @@ services:
 
       # --- OIDC (runtime, no rebuild) ---
       # Uncomment to enable. Edit custom/oidc/oidc.yaml with your provider details.
-      # KLANGK_OIDC_CONFIG: /home/klangk/customize/oidc/oidc.yaml
+      # KLANGK_OIDC_CONFIG: /home/klangk/custom/oidc/oidc.yaml
       # KLANGK_AUTH_MODES: "both"
-      # KLANGK_OIDC_LOGIN_HOOK: /home/klangk/customize/oidc/login_hook.py
+      # KLANGK_OIDC_LOGIN_HOOK: /home/klangk/custom/oidc/login_hook.py
 
       # --- LLM ---
       KLANGK_LLM_BASE_URL: "${KLANGK_LLM_BASE_URL}"
@@ -104,4 +104,4 @@ services:
         bind:
           create_host_path: false
       # Customization directory — branding/, certs/, email-templates/, oidc/ subdirs:
-      - ./custom:/home/klangk/customize:ro
+      - ./custom:/home/klangk/custom:ro

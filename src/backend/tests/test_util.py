@@ -169,9 +169,7 @@ class TestCustomizeDir:
         monkeypatch.delenv("KLANGK_CUSTOMIZE_DIR", raising=False)
         import os
 
-        expected = os.path.join(
-            os.path.expanduser("~"), ".klangk", "customize"
-        )
+        expected = os.path.join(os.path.expanduser("~"), ".klangk", "custom")
         assert customize_dir() == expected
 
 

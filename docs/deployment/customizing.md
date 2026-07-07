@@ -21,12 +21,12 @@ Set `KLANGK_CUSTOMIZE_DIR` to a single directory containing all your customizati
 
 If a subdirectory doesn't exist, that subsystem simply isn't customized — no error, no special handling needed. Deployers only populate the subdirs they care about.
 
-Default: `~/.klangk/customize` (or `/home/klangk/customize` in the container image).
+Default: `~/.klangk/custom` (or `/home/klangk/custom` in the container image).
 
 ```bash
 docker run -d \
-  -v ./my-customization:/home/klangk/customize:ro \
-  -e KLANGK_CUSTOMIZE_DIR=/home/klangk/customize \
+  -v ./my-customization:/home/klangk/custom:ro \
+  -e KLANGK_CUSTOMIZE_DIR=/home/klangk/custom \
   ...
 ```
 
@@ -97,8 +97,8 @@ docker run -d \
   -e KLANGK_PRODUCT_NAME="Acme Labs" \
   -e KLANGK_LOGO_URL="/branding/logo.png" \
   -e KLANGK_SMTP_REPLY_TO="support@acme.example.com" \
-  -e KLANGK_CUSTOMIZE_DIR=/home/klangk/customize \
-  -v ./my-customization:/home/klangk/customize:ro \
+  -e KLANGK_CUSTOMIZE_DIR=/home/klangk/custom \
+  -v ./my-customization:/home/klangk/custom:ro \
   ...
 ```
 
@@ -114,8 +114,8 @@ Place your `.pem`/`.crt` CA certificate files in `<KLANGK_CUSTOMIZE_DIR>/certs/`
 ```bash
 # Using KLANGK_CUSTOMIZE_DIR (recommended):
 docker run -d \
-  -e KLANGK_CUSTOMIZE_DIR=/home/klangk/customize \
-  -v ./my-customization:/home/klangk/customize:ro \
+  -e KLANGK_CUSTOMIZE_DIR=/home/klangk/custom \
+  -v ./my-customization:/home/klangk/custom:ro \
   ...
 # Place your .pem/.crt files in my-customization/certs/
 ```
