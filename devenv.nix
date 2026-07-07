@@ -202,8 +202,8 @@ in
   env.KLANGK_PLUGINS_DIR = lib.mkOverride 1500 (
     config.devenv.root + "/.devenv/state/klangk/plugins"
   );
-  env.KLANGK_BRANDING_DIR = lib.mkOverride 1500 (
-    config.devenv.root + "/.devenv/state/klangk/branding"
+  env.KLANGK_CUSTOMIZE_DIR = lib.mkOverride 1500 (
+    config.devenv.root + "/.devenv/state/klangk/customize"
   );
   env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk-workspace";
   # Rootless podman from nix (Linux) ships no default policy.json, so a build/pull

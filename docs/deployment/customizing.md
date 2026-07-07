@@ -8,6 +8,30 @@ The [`customize/`](https://github.com/mcdonc/klangk/tree/main/customize) directo
 
 ## Runtime Customization
 
+### Customization Directory
+
+Set `KLANGK_CUSTOMIZE_DIR` to a single directory containing all your customization files. Klangk looks for well-known subdirectories under this path:
+
+```text
+<KLANGK_CUSTOMIZE_DIR>/
+  certs/           ← CA .pem/.crt files (custom CA certificates)
+  branding/        ← logos and other static assets served at /branding
+  email-templates/ ← Jinja2 email template overrides
+```
+
+If a subdirectory doesn't exist, that subsystem simply isn't customized — no error, no special handling needed. Deployers only populate the subdirs they care about.
+
+Default: `~/.klangk/customize` (or `/home/klangk/customize` in the container image).
+
+```bash
+docker run -d \
+  -v ./my-customization:/home/klangk/customize:ro \
+  -e KLANGK_CUSTOMIZE_DIR=/home/klangk/customize \
+  ...
+```
+
+One env var and one `-v` mount replaces three. The per-feature env vars `KLANGK_SSL_CERT_DIR` and `KLANGK_EMAIL_TEMPLATES_DIR` still work as overrides but are **deprecated** — prefer the unified directory. `KLANGK_BRANDING_DIR` has been removed; branding assets are resolved from `<KLANGK_CUSTOMIZE_DIR>/branding/` or `<KLANGK_DATA_DIR>/branding/`.
+
 ### Product Name
 
 Set `KLANGK_PRODUCT_NAME` to rename the product across the browser tab title, the app-bar logo wordmark, and all outgoing emails. Defaults to `Klangk`. Supports the `file:`/`cmd:` prefix.
@@ -24,7 +48,7 @@ The value is published to the frontend through `GET /api/v1/config` (`product_na
 
 Set `KLANGK_LOGO_URL` to an absolute image URL. The value is published to the UI through the unauthenticated `/api/v1/config` endpoint (`logo_url`), so it renders on the login page before login. Supports `file:`/`cmd:` secret resolution.
 
-To serve a local file without a CDN, drop your logo into the directory named by `KLANGK_BRANDING_DIR` (the container image defaults this to `/home/klangk/branding`) and set `KLANGK_LOGO_URL=/branding/logo.png`. Klangk serves that directory at `/branding/`.
+To serve a local file without a CDN, drop your logo into `<KLANGK_CUSTOMIZE_DIR>/branding/` and set `KLANGK_LOGO_URL=/branding/logo.png`. Both steps are needed: placing the file makes it servable (Klangk mounts the branding directory at `/branding/`), while `KLANGK_LOGO_URL` tells the frontend which image to render — this could equally be an external CDN URL like `https://cdn.example.com/logo.png`. When `<KLANGK_CUSTOMIZE_DIR>/branding/` doesn't exist, branding falls back to `<KLANGK_DATA_DIR>/branding/`.
 
 When unset (or if the image fails to load), the default `KlangkLogo` widget is rendered. The logo also flows into email headers when emails are rendered through the templating system.
 
@@ -42,7 +66,7 @@ These env vars add links to the login/registration screens and email footers. Al
 
 ### Email Templating
 
-Outgoing auth emails (registration verification, password reset, invitation) are rendered from Jinja2 templates. Customize them by pointing `KLANGK_EMAIL_TEMPLATES_DIR` at a directory of your own templates, bind-mounted into the container.
+Outgoing auth emails (registration verification, password reset, invitation) are rendered from Jinja2 templates. Place your template overrides in `<KLANGK_CUSTOMIZE_DIR>/email-templates/`.
 
 Two approaches:
 
@@ -73,27 +97,33 @@ docker run -d \
   -e KLANGK_PRODUCT_NAME="Acme Labs" \
   -e KLANGK_LOGO_URL="/branding/logo.png" \
   -e KLANGK_SMTP_REPLY_TO="support@acme.example.com" \
-  -e KLANGK_EMAIL_TEMPLATES_DIR=/etc/klangk/email-templates \
-  -v /etc/klangk/email-templates:/etc/klangk/email-templates:ro \
+  -e KLANGK_CUSTOMIZE_DIR=/home/klangk/customize \
+  -v ./my-customization:/home/klangk/customize:ro \
   ...
 ```
 
+> **Deprecated:** `KLANGK_EMAIL_TEMPLATES_DIR` still works as an override but prefer using `<KLANGK_CUSTOMIZE_DIR>/email-templates/` instead.
+
 ### Custom CA Certificates
 
-Point `KLANGK_SSL_CERT_DIR` at a directory of `.pem`/`.crt` files on the host and **restart** workspaces (or the backend). Klangk makes those CAs trusted at startup without rebuilding any image:
+Place your `.pem`/`.crt` CA certificate files in `<KLANGK_CUSTOMIZE_DIR>/certs/` and **restart** workspaces (or the backend). Klangk makes those CAs trusted at startup without rebuilding any image:
 
 - **Workspace containers** — the directory is bind-mounted read-only into each container, and the entrypoint builds a merged CA bundle (system CAs plus your custom certs) on the writable `/tmp` tmpfs. The toolchain trust env vars (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`) are set to point at it, so OpenSSL, Python, `curl`, and Node all honor your CAs. The bundle is merged with system CAs so public-internet TLS keeps working.
 - **Backend process** — at startup the backend concatenates your certs with its own system bundle and sets the same trust env vars, so outbound TLS (OIDC discovery, SMTP relay, LLM proxy) trusts your private CAs too.
 
 ```bash
+# Using KLANGK_CUSTOMIZE_DIR (recommended):
 docker run -d \
-  -e KLANGK_SSL_CERT_DIR=/certs \
-  -v ./my-corporate-cas:/certs:ro \
+  -e KLANGK_CUSTOMIZE_DIR=/home/klangk/customize \
+  -v ./my-customization:/home/klangk/customize:ro \
   ...
+# Place your .pem/.crt files in my-customization/certs/
 ```
 
 Rotating a cert is just a file change plus a workspace/backend restart — no image rebuild.
 
+> **Deprecated:** `KLANGK_SSL_CERT_DIR` still works as an override but prefer using `<KLANGK_CUSTOMIZE_DIR>/certs/` instead.
+>
 > **Why a merged bundle?** `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE` _replace_ the default trust store rather than add to it. Klangk therefore prepends the system CAs before your custom certs. (`NODE_EXTRA_CA_CERTS` is additive, but pointing it at the same merged bundle is harmless.)
 
 ### OIDC Login Hook

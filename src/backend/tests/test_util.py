@@ -1,6 +1,7 @@
 """Tests for util: file- and command-backed secret resolution."""
 
 from klangk_backend.util import (
+    customize_dir,
     read_file_value,
     run_cmd_value,
     resolve_env_bool,
@@ -157,6 +158,21 @@ class TestResolveFileValue:
 
     def test_cmd_failure_returns_empty(self):
         assert resolve_file_value("cmd:false") == ""
+
+
+class TestCustomizeDir:
+    def test_returns_env_value(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", "/opt/custom")
+        assert customize_dir() == "/opt/custom"
+
+    def test_default_under_home(self, monkeypatch):
+        monkeypatch.delenv("KLANGK_CUSTOMIZE_DIR", raising=False)
+        import os
+
+        expected = os.path.join(
+            os.path.expanduser("~"), ".klangk", "customize"
+        )
+        assert customize_dir() == expected
 
 
 class TestSanitizeDispositionName:
