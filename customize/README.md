@@ -1,12 +1,66 @@
 # Customizing Klangk
 
-Most deployment customization — branding, legal links, email templates, CA certs, OIDC login hooks — is done at **runtime** via env vars and bind mounts. No custom image build is needed.
+This directory is a **ready-to-adapt template** for a downstream klangk
+deployment. Copy it, edit the two files that define your build, and you're done.
 
-**The only reason to build a custom host image is plugins** (Dart UI plugins require a Flutter web rebuild; TypeScript workspace plugins require a workspace image rebuild).
+Most klangk customization — branding, legal links, email templates, CA certs,
+OIDC login hooks — happens at **runtime** via env vars and bind mounts, using
+the stock image with no rebuild.
 
-See the [Customizing a Deployment](https://mcdonc.github.io/klangk/deployment/customizing/) documentation for full details.
+**The only reason to build a custom image is plugins** (Dart UI plugins need a
+Flutter web rebuild; TypeScript workspace plugins need a workspace image
+rebuild).
 
-- `docker-compose.yml` — example runtime configuration (uses the stock image)
-- `build.sh` / `build-inner.sh` / `Dockerfile` — plugin-only custom image build
-- `plugins.yaml` — plugin list for the build
-- `login_hook.py` — example OIDC login hook (bind-mounted at runtime, no rebuild)
+See the [Customizing a Deployment](https://mcdonc.github.io/klangk/deployment/customizing/)
+docs for full details.
+
+## Directory Layout
+
+```text
+customize/
+  docker-compose.yml   # Runtime config — all the runtime knobs in one place
+  build/
+    build.sh           # The build script (run this to build a custom image)
+    plugins.yaml       # ← EDIT THIS: the plugin list for your build
+  oidc/                # OIDC config + login hook (bind-mounted at runtime)
+    oidc.yaml          # ← EDIT THIS: your identity-provider config
+    login_hook.py      # Example login hook (restricts logins to invited users)
+  certs/               # Custom CA certificates (bind-mounted at runtime)
+    cacert.pem         # ← EDIT THIS: your private CA cert (example provided)
+  branding/            # Logo + assets served at /branding (no Flutter rebuild)
+    logo.png           # ← EDIT THIS: your logo (example provided)
+  data/                # Persistent database/state (bind-mounted, gitignored)
+  mount/               # Workspace bind-mount root (bind-mounted, gitignored)
+```
+
+## The Two-File Workflow
+
+For a plugin build, you edit exactly two files:
+
+1. **`build/plugins.yaml`** — your plugin list.
+2. **`build/build.sh`** — one default to set: `VARIANT` (the build identity
+   string surfaced in `version.json` and the debug pane; defaults to `custom`).
+
+Everything else is runtime config in `docker-compose.yml`.
+
+### Building
+
+```bash
+cd customize
+./build/build.sh
+
+# Pin to a specific klangk release:
+KLANGK_REF=v1.0.1 ./build/build.sh
+
+# Set a variant name for your build:
+KLANGK_VARIANT="Acme 1.0.0" ./build/build.sh
+```
+
+### Runtime
+
+```bash
+docker compose up
+```
+
+Edit `docker-compose.yml` for branding, product name, CA certs, OIDC, and the
+LLM backend. The runtime mounts pull from `branding/`, `certs/`, and `oidc/`.

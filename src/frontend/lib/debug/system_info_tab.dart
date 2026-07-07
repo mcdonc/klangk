@@ -69,11 +69,13 @@ class _SystemInfoTabState extends State<SystemInfoTab> {
     }
     final info = _info!;
     final plugins = (info['plugins'] as List<dynamic>?) ?? [];
+    final variant = info['variant']?.toString() ?? '';
 
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
         _row('Version', info['version'] ?? 'unknown'),
+        if (variant.isNotEmpty) _row('Variant', variant),
         _row('Commit', info['commit'] ?? 'unknown'),
         _row('Built', info['built_at'] ?? 'n/a'),
         const SizedBox(height: 12),

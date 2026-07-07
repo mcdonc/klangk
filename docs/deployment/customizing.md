@@ -24,7 +24,7 @@ The value is published to the frontend through `GET /api/v1/config` (`product_na
 
 Set `KLANGK_LOGO_URL` to an absolute image URL. The value is published to the UI through the unauthenticated `/api/v1/config` endpoint (`logo_url`), so it renders on the login page before login. Supports `file:`/`cmd:` secret resolution.
 
-To serve a local file without a CDN, drop your logo into `$KLANGK_DATA_DIR/branding/` (created at startup) and set `KLANGK_LOGO_URL=/branding/logo.png`. Klangk serves that directory at `/branding/`.
+To serve a local file without a CDN, drop your logo into the directory named by `KLANGK_BRANDING_DIR` (the container image defaults this to `/home/klangk/branding`) and set `KLANGK_LOGO_URL=/branding/logo.png`. Klangk serves that directory at `/branding/`.
 
 When unset (or if the image fails to load), the default `KlangkLogo` widget is rendered. The logo also flows into email headers when emails are rendered through the templating system.
 
@@ -98,11 +98,11 @@ Rotating a cert is just a file change plus a workspace/backend restart — no im
 
 ### OIDC Login Hook
 
-The `customize/` directory includes a sample `login_hook.py` that restricts OIDC logins to invited users. Bind-mount it anywhere in the container and point the env var at it:
+The `customize/oidc/` directory includes a sample `login_hook.py` that restricts OIDC logins to invited users. Bind-mount it anywhere in the container and point the env var at it:
 
 ```bash
 docker run -d \
-  -v ./login_hook.py:/etc/klangk/login_hook.py:ro \
+  -v ./oidc/login_hook.py:/etc/klangk/login_hook.py:ro \
   -e KLANGK_OIDC_LOGIN_HOOK=/etc/klangk/login_hook.py \
   ...
 ```
@@ -120,12 +120,12 @@ Re-inviting after a revocation creates a new pending invitation that overrides t
 
 ### OIDC Authentication
 
-To enable OIDC login, create an `oidc.yaml` and mount it at runtime:
+To enable OIDC login, create an `oidc.yaml` and mount it at runtime. The `customize/oidc/oidc.yaml` template has the schema and placeholder values:
 
 ```bash
 docker run -d \
-  -v ./oidc.yaml:/home/klangk/oidc.yaml:ro \
-  -e KLANGK_OIDC_CONFIG=/home/klangk/oidc.yaml \
+  -v ./oidc/oidc.yaml:/home/klangk/oidc/oidc.yaml:ro \
+  -e KLANGK_OIDC_CONFIG=/home/klangk/oidc/oidc.yaml \
   -e KLANGK_AUTH_MODES=both \
   ...
 ```
@@ -146,14 +146,24 @@ A custom image build is needed **only for plugins**. If you don't need plugins, 
 
 ```text
 customize/
-  build.sh            # Main build script (run this)
-  build-inner.sh      # Devenv-side build (called by build.sh)
-  Dockerfile          # Custom image layer on top of klangk-host
-  docker-compose.yml  # Example runtime configuration
-  plugins.yaml        # Plugin list for the build
-  login_hook.py       # Example OIDC login hook (bind-mounted, not baked)
-  mount/              # Mount directory for workspace bind mounts
+  docker-compose.yml  # Example runtime configuration (all runtime knobs)
+  build/
+    build.sh          # Main build script (run this)
+    plugins.yaml      # Plugin list for the build
+  oidc/
+    oidc.yaml         # Example OIDC provider config (runtime-mounted)
+    login_hook.py     # Example OIDC login hook (runtime-mounted, not baked)
+  certs/
+    cacert.pem        # Example custom CA certificate (runtime-mounted)
+  branding/
+    logo.png          # Example logo served at /branding (runtime-mounted)
+  data/               # Persistent state (bind-mounted, gitignored)
+  mount/              # Workspace bind-mount root (bind-mounted, gitignored)
 ```
+
+Runtime customization files (`oidc/`, `certs/`, `branding/`) are bind-mounted
+into the container by `docker-compose.yml` — no image rebuild needed. Only
+`build/` is involved in the image build.
 
 ### Plugins
 
@@ -174,50 +184,69 @@ See the [Creating Plugins](../development/creating-plugins.md) reference for plu
 
 ```bash
 cd customize
-./build.sh
+./build/build.sh
 
 # Or pin to a specific Klangk release:
-KLANGK_REF=v1.0 ./build.sh
+KLANGK_REF=v1.0.1 ./build/build.sh
+
+# Tag the build with a variant identity (surfaced in version.json + debug pane):
+KLANGK_VARIANT="Acme 1.0.0" ./build/build.sh
 ```
 
 The resulting image is tagged `ghcr.io/mcdonc/klangk/klangk-host-custom:latest` by default. Override with `KLANGK_HOST_IMAGE`.
 
 ### How the Build Works
 
-The build is split into two scripts: `build.sh` handles orchestration (git, Docker), and `build-inner.sh` runs inside the devenv shell where Flutter, podman, and Python are available.
+The build is a single source build: `build/build.sh` clones klangk at the
+pinned ref, stages `plugins.yaml`, then runs klangk's own
+`scripts/build-host-image.sh` inside a devenv shell. That upstream script
+already embeds the Flutter web build, the workspace tarball, **and** the
+plugin directories — so one build produces the final image with plugins
+baked in. There is no separate overlay, `Dockerfile`, or base-image pass.
 
-**`build.sh`** (outer script):
-
-1. Clones (or updates) the Klangk repo at `KLANGK_REF` into `.klangk/`
-1. Copies `plugins.yaml` into a staging directory (`.plugins/`)
-1. Enters the devenv shell and runs `build-inner.sh`
-1. Builds the standard `klangk-host` image from source via `scripts/build-host-image.sh`
-1. Copies the rebuilt Flutter web output into the Docker build context
-1. Runs `docker build` with the `Dockerfile`, which layers the rebuilt web frontend and workspace image tarball on top of `klangk-host:latest`
-1. Cleans up temporary build artifacts
-
-**`build-inner.sh`** (runs inside devenv shell):
-
-1. Fetches plugins listed in `plugins.yaml` via `update_plugins.py`
-1. Rebuilds the Flutter web frontend with Dart plugin UI via `flutterbuildweb.sh`
-1. Rebuilds the workspace container image with plugin extensions and tools via `build-workspace-image.sh`
-1. Exports the final workspace image as `workspace.tar` via `podman save`
-
-**`Dockerfile`** (custom image layer):
-
-Extends `klangk-host:latest` and replaces two things:
-
-- The Flutter web build with the plugin-enabled version
-- The workspace image tarball with the plugin-enabled version
+The variant string (`KLANGK_VARIANT`, default `custom`) is exported into the
+devenv shell so `generate-version.sh` writes it into the image's
+`version.json` (see [Build Variant](#build-variant) below).
 
 ### Build Options
 
-| Variable            | Default                                    | Description                                        |
-| ------------------- | ------------------------------------------ | -------------------------------------------------- |
-| `KLANGK_REF`        | `main`                                     | Klangk branch, tag, or commit SHA to build against |
-| `KLANGK_REPO`       | `https://github.com/mcdonc/klangk.git`     | Klangk repo URL                                    |
-| `KLANGK_HOST_IMAGE` | `ghcr.io/mcdonc/klangk/klangk-host-custom` | Output image name                                  |
-| `KLANGK_PLATFORM`   | `linux/amd64`                              | Target platform                                    |
+| Variable            | Default                                    | Description                                                                           |
+| ------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `KLANGK_REF`        | `main`                                     | Klangk branch, tag, or commit SHA to build against                                    |
+| `KLANGK_REPO`       | `https://github.com/mcdonc/klangk.git`     | Klangk repo URL                                                                       |
+| `KLANGK_HOST_IMAGE` | `ghcr.io/mcdonc/klangk/klangk-host-custom` | Output image name                                                                     |
+| `KLANGK_VARIANT`    | `custom`                                   | Build identity string written to `version.json` (see [Build Variant](#build-variant)) |
+| `KLANGK_PLATFORM`   | `linux/amd64`                              | Target platform                                                                       |
+
+### Build Variant
+
+`KLANGK_VARIANT` stamps a **product-identity string** into the built image's
+`version.json`. It is surfaced in three places:
+
+- **`GET /api/v1/version`** — a `variant` field (between `version` and `commit`)
+- **The debug pane** — a "Variant" row (shown only when the field is present)
+- **`version.json`** on disk — the source of truth, written by
+  `scripts/generate-version.sh` at build time
+
+It is **independent of the upstream klangk version** — `version` always reports
+the klangk release (tag/branch/SHA), while `variant` names _this_ downstream
+build. Set it to your product name and release, e.g. `"Acme 1.0.0"`:
+
+```bash
+KLANGK_VARIANT="Acme 1.0.0" ./build/build.sh
+```
+
+Or edit the `VARIANT` default at the top of `customize/build/build.sh`.
+
+When empty (or unset), the `variant` field is **omitted entirely** from
+`version.json` and the API/debug output — stock klangk builds are byte-identical
+whether the feature exists or not. The `customize/build.sh` template defaults
+it to `"custom"` so a copied template never impersonates upstream klangk; clear
+that default only if you want stock output.
+
+> The variant is a single free-form string (e.g. `"Acme 1.0.0"`). A split into
+> separate name + version fields is a non-goal for now — keep them together in
+> one human-readable string.
 
 ## Running
 

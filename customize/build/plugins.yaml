@@ -3,24 +3,24 @@ plugins:
   - name: celebrate
     git: https://github.com/mcdonc/klangk.git
     path: plugins/celebrate
-    ref: main
+    ref: v1.0.1
   - name: beep
     git: https://github.com/mcdonc/klangk.git
     path: plugins/beep
-    ref: main
+    ref: v1.0.1
   - name: pig-latin
     git: https://github.com/mcdonc/klangk.git
     path: plugins/pig-latin
-    ref: main
+    ref: v1.0.1
   - name: word-count
     git: https://github.com/mcdonc/klangk.git
     path: plugins/word-count
-    ref: main
+    ref: v1.0.1
   - name: browser-fetch
     git: https://github.com/mcdonc/klangk.git
     path: plugins/browser-fetch
-    ref: main
+    ref: v1.0.1
   - name: bobdobbs
     git: https://github.com/mcdonc/klangk.git
     path: plugins/bobdobbs
-    ref: main
+    ref: v1.0.1

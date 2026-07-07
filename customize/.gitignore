@@ -1,9 +1,11 @@
-.klangk/
-.plugins/
-web/
-oidc.yaml
+# Build artifacts (the cloned klangk source + staged plugins; created by
+# build/build.sh). Tracked templates live alongside them in build/.
+build/.klangk/
+build/.plugins/
+
+# Local secrets / overrides
 .env
+
+# Persistent data volume contents (the empty dir itself is tracked via .gitkeep)
 data/*
-certs/
-branding/
-email-templates/
+!data/.gitkeep
