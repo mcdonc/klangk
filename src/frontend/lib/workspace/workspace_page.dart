@@ -405,7 +405,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
         title: AppBarTitle(
           title: _workspaceName.isNotEmpty ? _workspaceName : 'Workspace',
         ),
-        actions: const [AppBarActions()],
+        actions: [
+          for (final plugin in _plugins)
+            if (plugin.buildAppBarAction(context) != null)
+              plugin.buildAppBarAction(context)!,
+          const AppBarActions(),
+        ],
       ),
       body: Stack(
         children: [
