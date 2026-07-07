@@ -22,13 +22,15 @@ customize/
   build/
     build.sh           # The build script (run this to build a custom image)
     plugins.yaml       # ← EDIT THIS: the plugin list for your build
-  oidc/                # OIDC config + login hook (bind-mounted at runtime)
-    oidc.yaml          # ← EDIT THIS: your identity-provider config
-    login_hook.py      # Example login hook (restricts logins to invited users)
-  certs/               # Custom CA certificates (bind-mounted at runtime)
-    cacert.pem         # ← EDIT THIS: your private CA cert (example provided)
-  branding/            # Logo + assets served at /branding (no Flutter rebuild)
-    logo.png           # ← EDIT THIS: your logo (example provided)
+  custom/              # Mounted as KLANGK_CUSTOMIZE_DIR at runtime
+    oidc/              # OIDC config + login hook
+      oidc.yaml        # ← EDIT THIS: your identity-provider config
+      login_hook.py    # Example login hook (restricts logins to invited users)
+    certs/             # Custom CA certificates
+      cacert.pem       # ← EDIT THIS: your private CA cert (example provided)
+    branding/          # Logo + assets served at /branding (no Flutter rebuild)
+      logo.png         # ← EDIT THIS: your logo (example provided)
+    email-templates/   # Jinja2 email template overrides
   data/                # Persistent database/state (bind-mounted, gitignored)
   mount/               # Workspace bind-mount root (bind-mounted, gitignored)
 ```
@@ -63,4 +65,5 @@ docker compose up
 ```
 
 Edit `docker-compose.yml` for branding, product name, CA certs, OIDC, and the
-LLM backend. The runtime mounts pull from `branding/`, `certs/`, and `oidc/`.
+LLM backend. The `custom/` directory is mounted as `KLANGK_CUSTOMIZE_DIR` and
+contains `branding/`, `certs/`, `email-templates/`, and `oidc/`.

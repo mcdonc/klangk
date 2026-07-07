@@ -513,6 +513,7 @@ def setup_static_files(app: FastAPI, frontend_dir: Path) -> None:
         fallback = model.db.data_dir / "branding"
         branding_dir = fallback if fallback.is_dir() else None
     if branding_dir is not None:
+        logger.info("Branding served from %s", branding_dir)
         app.mount(
             "/branding",
             StaticFiles(directory=str(branding_dir)),

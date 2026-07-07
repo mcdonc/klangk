@@ -41,12 +41,12 @@ services:
       # --- Customization directory (runtime, no rebuild) ---
       # Single directory for branding, certs, and email templates.
       # Subdirectories: branding/, certs/, email-templates/
-      KLANGK_CUSTOMIZE_DIR: /home/klangk/customize
+      KLANGK_CUSTOMIZE_DIR: /home/klangk/custom
 
       # --- Branding (runtime, no rebuild) ---
       # Product name across the tab title, app-bar wordmark, and emails.
       # KLANGK_PRODUCT_NAME: "Acme Labs"
-      # Serve the logo from branding/logo.png (place in customize/branding/):
+      # Serve the logo from branding/logo.png (place in custom/branding/):
       KLANGK_LOGO_URL: "/branding/logo.png"
       # KLANGK_BRAND_COLOR: "#E65100"
 
@@ -58,7 +58,7 @@ services:
       # KLANGK_SUPPORT_EMAIL: "support@example.com"
 
       # --- Email customization (runtime, no rebuild) ---
-      # Place templates in customize/email-templates/ (see docs)
+      # Place templates in custom/email-templates/ (see docs)
       # KLANGK_SMTP_REPLY_TO: "support@example.com"
       # KLANGK_SMTP_HOST: "${KLANGK_SMTP_HOST}"
       # KLANGK_SMTP_USER: "${KLANGK_SMTP_USER}"
@@ -66,14 +66,14 @@ services:
       # KLANGK_SMTP_FROM: "${KLANGK_SMTP_FROM}"
 
       # --- Custom CA certs (runtime, no rebuild) ---
-      # Trusts every *.pem/*.crt in certs/ for outbound TLS (OIDC, SMTP, LLM).
-      KLANGK_SSL_CERT_DIR: /home/klangk/certs
+      # Place *.pem/*.crt files in custom/certs/ — trusted for outbound TLS
+      # (OIDC, SMTP, LLM). Resolved via KLANGK_CUSTOMIZE_DIR/certs/.
 
       # --- OIDC (runtime, no rebuild) ---
-      # Uncomment to enable. Edit oidc/oidc.yaml with your provider details.
-      # KLANGK_OIDC_CONFIG: /home/klangk/oidc/oidc.yaml
+      # Uncomment to enable. Edit custom/oidc/oidc.yaml with your provider details.
+      # KLANGK_OIDC_CONFIG: /home/klangk/custom/oidc/oidc.yaml
       # KLANGK_AUTH_MODES: "both"
-      # KLANGK_OIDC_LOGIN_HOOK: /home/klangk/oidc/login_hook.py
+      # KLANGK_OIDC_LOGIN_HOOK: /home/klangk/custom/oidc/login_hook.py
 
       # --- LLM ---
       KLANGK_LLM_BASE_URL: "${KLANGK_LLM_BASE_URL}"
@@ -103,7 +103,5 @@ services:
         target: /home/klangk/mount
         bind:
           create_host_path: false
-      # Customization directory — branding/, certs/, email-templates/ subdirs:
-      - ./customize:/home/klangk/customize:ro
-      # OIDC provider config + login hook (uncomment the env vars above to enable):
-      - ./oidc:/home/klangk/oidc:ro
+      # Customization directory — branding/, certs/, email-templates/, oidc/ subdirs:
+      - ./custom:/home/klangk/custom:ro

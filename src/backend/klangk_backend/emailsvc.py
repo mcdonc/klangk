@@ -179,6 +179,7 @@ def _template_env() -> Environment:
         if user_dir:
             path = Path(user_dir)
             if path.is_dir():
+                logger.info("Email templates loaded from %s", path)
                 loaders.append(FileSystemLoader(str(path)))
         loaders.append(PackageLoader("klangk_backend", "email_templates"))
         _env = Environment(

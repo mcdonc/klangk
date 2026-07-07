@@ -203,7 +203,7 @@ in
     config.devenv.root + "/.devenv/state/klangk/plugins"
   );
   env.KLANGK_CUSTOMIZE_DIR = lib.mkOverride 1500 (
-    config.devenv.root + "/.devenv/state/klangk/customize"
+    config.devenv.root + "/.devenv/state/klangk/custom"
   );
   env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk-workspace";
   # Rootless podman from nix (Linux) ships no default policy.json, so a build/pull
@@ -413,7 +413,7 @@ in
         # corrupts them (breaks expressions across lines). See #1165.
         "email_templates/"
         # Deployer copies of the above (customize/ template tree).
-        "customize/email-templates/"
+        "customize/custom/email-templates/"
       ];
     };
     # Nix
@@ -493,7 +493,7 @@ in
     # Jinja2 email templates — prettier corrupts {% %}/{{ }} syntax. See #1165.
     email_templates/
     # Deployer copies of the above (customize/ template tree).
-    customize/email-templates/
+    customize/custom/email-templates/
     PRETTIER
 
     # Generate yamllint config (not committed)
