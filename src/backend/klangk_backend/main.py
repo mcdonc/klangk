@@ -37,7 +37,7 @@ from .model import (
     SYSTEM_EVERYONE,
 )
 from .model import AGENT_USER_ID
-from .util import resolve_env_value
+from .util import customize_dir, resolve_env_value
 from .wshandler import handle_websocket
 
 _LIGHT_BLUE = "\033[94m"
@@ -496,28 +496,28 @@ async def websocket_endpoint(ws: WebSocket):  # pragma: no cover
 def setup_static_files(app: FastAPI, frontend_dir: Path) -> None:
     """Mount Flutter Web static files and add no-cache middleware.
 
-    Also mounts a deployer-writable branding directory at ``/branding``
-    so a custom logo / assets can be served without a Flutter rebuild.
-    The directory is ``KLANGK_BRANDING_DIR`` (set by the container image
-    and devenv to a standalone path; falls back to
-    ``~/.klangk/branding`` if unset). Created if missing so a deployer
-    can just drop files in. Mounted before the catch-all ``/`` frontend
-    mount so it takes priority, and without ``html=True`` (no directory
-    listing). See #1152.
+    Optionally mounts a branding directory at ``/branding`` so a custom
+    logo / assets can be served without a Flutter rebuild.  Prefers
+    ``<KLANGK_CUSTOMIZE_DIR>/branding`` when it exists; falls back to
+    ``<KLANGK_DATA_DIR>/branding`` if that exists.  If neither directory
+    exists, the ``/branding`` mount is skipped entirely.  Mounted before
+    the catch-all ``/`` frontend mount so it takes priority, and without
+    ``html=True`` (no directory listing). See #1152, #1360.
     """
     static_app = StaticFiles(directory=str(frontend_dir), html=True)
 
-    branding_override = resolve_env_value("KLANGK_BRANDING_DIR", "")
-    if branding_override:
-        branding_dir = Path(branding_override)
+    candidate = Path(customize_dir()) / "branding"
+    if candidate.is_dir():
+        branding_dir = candidate
     else:
-        branding_dir = Path(Path.home() / ".klangk" / "branding")
-    branding_dir.mkdir(parents=True, exist_ok=True)
-    app.mount(
-        "/branding",
-        StaticFiles(directory=str(branding_dir)),
-        name="branding",
-    )
+        fallback = model.db.data_dir / "branding"
+        branding_dir = fallback if fallback.is_dir() else None
+    if branding_dir is not None:
+        app.mount(
+            "/branding",
+            StaticFiles(directory=str(branding_dir)),
+            name="branding",
+        )
 
     @app.middleware("http")
     async def add_no_cache_headers(request, call_next):

@@ -74,7 +74,7 @@ export default defineConfig({
     {
       // API-only and simple-UI tests — no cross-browser behavior, run once.
       name: "chromium-api",
-      testMatch: ["api.spec.ts", "token-expiry.spec.ts"],
+      testMatch: ["api.spec.ts", "branding.spec.ts", "token-expiry.spec.ts"],
       use: chromiumUse,
     },
     {

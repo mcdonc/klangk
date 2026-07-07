@@ -499,12 +499,9 @@ class TestSetupStaticFiles:
             resp = await client.get("/image.png")
         assert "Cache-Control" not in resp.headers
 
-    async def test_mounts_branding_dir(self, tmp_path):
-        # setup_static_files serves KLANGK_BRANDING_DIR at /branding so a
-        # deployer can drop a logo in with no Flutter rebuild. The autouse
-        # temp_data_dir fixture points KLANGK_BRANDING_DIR at tmp_path/branding.
-        # See #1152.
-        (tmp_path / "index.html").write_text("<html></html>")  # frontend dir
+    async def test_mounts_branding_from_data_dir(self, tmp_path):
+        # When <data_dir>/branding exists, it is served at /branding.
+        (tmp_path / "index.html").write_text("<html></html>")
         branding = tmp_path / "branding" / "logo.png"
         branding.parent.mkdir(parents=True, exist_ok=True)
         branding.write_bytes(b"\x89PNG\r\n\x1a\n")
@@ -520,51 +517,40 @@ class TestSetupStaticFiles:
         assert resp.status_code == 200
         assert resp.content.startswith(b"\x89PNG")
 
-    async def test_branding_dir_resolves_from_env_var(
-        self, tmp_path, monkeypatch
-    ):
-        # KLANGK_BRANDING_DIR points at a directory independent of
-        # KLANGK_DATA_DIR (#1358). Branding is served from that path even
-        # when it is not nested under the data dir.
-        (tmp_path / "index.html").write_text("<html></html>")  # frontend dir
-        branding_root = tmp_path / "custom-branding"  # NOT under data dir
-        logo = branding_root / "logo.png"
-        logo.parent.mkdir(parents=True, exist_ok=True)
-        logo.write_bytes(b"\x89PNG\r\n\x1a\n")
-        monkeypatch.setenv("KLANGK_BRANDING_DIR", str(branding_root))
-
-        test_app = FastAPI()
-        main.setup_static_files(test_app, tmp_path)
-
-        transport = ASGITransport(app=test_app)
-        async with AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
-            resp = await client.get("/branding/logo.png")
-        assert resp.status_code == 200
-        assert resp.content.startswith(b"\x89PNG")
-
-    async def test_branding_dir_defaults_to_home_dot_klangk(
-        self, tmp_path, monkeypatch
-    ):
-        # When KLANGK_BRANDING_DIR is unset the default
-        # ~/.klangk/branding is used.
+    async def test_branding_prefers_customize_dir(self, tmp_path, monkeypatch):
+        # When <KLANGK_CUSTOMIZE_DIR>/branding exists, it is preferred
+        # over <data_dir>/branding.  See #1360.
         (tmp_path / "index.html").write_text("<html></html>")
-        monkeypatch.delenv("KLANGK_BRANDING_DIR", raising=False)
-        expected = Path(Path.home() / ".klangk" / "branding")
+        custom = tmp_path / "cust"
+        branding = custom / "branding"
+        branding.mkdir(parents=True)
+        monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", str(custom))
 
         test_app = FastAPI()
         main.setup_static_files(test_app, tmp_path)
 
-        # The branding mount should point at the default directory.
         branding_route = [
             r for r in test_app.routes if getattr(r, "path", "") == "/branding"
         ]
         assert branding_route
-        assert Path(branding_route[0].app.directory) == expected
+        assert Path(branding_route[0].app.directory) == branding
+
+    async def test_branding_skipped_when_no_dir_exists(self, tmp_path):
+        # When neither customize_dir/branding nor data_dir/branding
+        # exists, the /branding mount is skipped entirely.
+        (tmp_path / "index.html").write_text("<html></html>")
+
+        test_app = FastAPI()
+        main.setup_static_files(test_app, tmp_path)
+
+        branding_route = [
+            r for r in test_app.routes if getattr(r, "path", "") == "/branding"
+        ]
+        assert not branding_route
 
     async def test_branding_mount_404_for_missing_file(self, tmp_path):
         (tmp_path / "index.html").write_text("<html></html>")
+        (tmp_path / "branding").mkdir()
         test_app = FastAPI()
         main.setup_static_files(test_app, tmp_path)
         transport = ASGITransport(app=test_app)

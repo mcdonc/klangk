@@ -425,6 +425,20 @@ class TestTemplateOverlay:
         r = emailsvc.render_email("verify", link="https://x", expiry_hours=72)
         assert r.subject == "Verify your Klangk account"
 
+    def test_customize_dir_email_templates_fallback(
+        self, tmp_path, monkeypatch
+    ):
+        # When KLANGK_EMAIL_TEMPLATES_DIR is unset but
+        # <customize_dir>/email-templates exists, it is used.  See #1360.
+        monkeypatch.delenv("KLANGK_EMAIL_TEMPLATES_DIR", raising=False)
+        custom = tmp_path / "cust"
+        tdir = custom / "email-templates"
+        (tdir / "verify").mkdir(parents=True)
+        (tdir / "verify" / "subject.txt").write_text("CUSTOM SUBJECT\n")
+        monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", str(custom))
+        r = emailsvc.render_email("verify", link="https://x", expiry_hours=72)
+        assert r.subject == "CUSTOM SUBJECT"
+
     def test_html_autoescape_on_html_off_text(self, monkeypatch):
         # .html is autoescaped (closes the str.format XSS gap); .txt is not.
         r = emailsvc.render_email(

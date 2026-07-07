@@ -70,12 +70,18 @@ def iter_cert_files(ssl_dir: str):
 def ssl_cert_dir() -> str | None:
     """Return the deployer SSL cert dir if it should be trusted, else ``None``.
 
-    Resolves ``KLANGK_SSL_CERT_DIR``.  Returns the absolute path when the
-    directory exists and contains at least one ``.pem``/``.crt`` file;
-    ``None`` otherwise (unset, missing, or empty of certs).  Never raises —
-    a misconfigured path simply disables runtime trust.
+    Resolves ``KLANGK_SSL_CERT_DIR`` first (deprecated, backwards-compat);
+    falls back to ``<KLANGK_CUSTOMIZE_DIR>/certs`` (#1360).  Returns the
+    absolute path when the directory exists and contains at least one
+    ``.pem``/``.crt`` file; ``None`` otherwise (unset, missing, or empty
+    of certs).  Never raises — a misconfigured path simply disables
+    runtime trust.
     """
     raw = util.resolve_env_value("KLANGK_SSL_CERT_DIR")
+    if not raw:
+        candidate = os.path.join(util.customize_dir(), "certs")
+        if os.path.isdir(candidate):
+            raw = candidate
     if not raw:
         return None
     path = os.path.realpath(raw)

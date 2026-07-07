@@ -53,6 +53,28 @@ class TestSslCertDir:
         monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(tmp_path))
         assert ssl_trust.ssl_cert_dir() == str(tmp_path.resolve())
 
+    def test_falls_back_to_customize_dir_certs(self, monkeypatch, tmp_path):
+        # When KLANGK_SSL_CERT_DIR is unset but <customize_dir>/certs
+        # exists with cert files, it is used.  See #1360.
+        monkeypatch.delenv("KLANGK_SSL_CERT_DIR", raising=False)
+        custom = tmp_path / "cust"
+        certs = custom / "certs"
+        certs.mkdir(parents=True)
+        (certs / "ca.pem").write_text("CERT")
+        monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", str(custom))
+        assert ssl_trust.ssl_cert_dir() == str(certs.resolve())
+
+    def test_customize_dir_certs_ignored_when_empty(
+        self, monkeypatch, tmp_path
+    ):
+        # An empty certs/ subdir is treated the same as missing.
+        monkeypatch.delenv("KLANGK_SSL_CERT_DIR", raising=False)
+        custom = tmp_path / "cust"
+        certs = custom / "certs"
+        certs.mkdir(parents=True)
+        monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", str(custom))
+        assert ssl_trust.ssl_cert_dir() is None
+
 
 class TestSslEnvVars:
     def test_empty_without_dir(self):

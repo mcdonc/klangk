@@ -137,6 +137,20 @@ def resolve_file_value(value: str) -> str:
     return value
 
 
+def customize_dir() -> str:
+    """Return the root customization directory.
+
+    Resolves ``KLANGK_CUSTOMIZE_DIR`` (default ``~/.klangk/customize``).
+    Subsystems look for well-known subdirectories (``certs/``,
+    ``branding/``, ``email-templates/``) under this path when their
+    per-feature env var is unset.  See #1360.
+    """
+    return resolve_env_value(
+        "KLANGK_CUSTOMIZE_DIR",
+        str(os.path.join(os.path.expanduser("~"), ".klangk", "customize")),
+    )
+
+
 def sanitize_disposition_name(name: str) -> str:
     """Sanitize a filename for use in a Content-Disposition header.
 

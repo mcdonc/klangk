@@ -28,6 +28,11 @@ async function globalSetup() {
   const dataDir = mkdtempSync(join(tmpdir(), "klangk-e2e-"));
   process.env.KLANGK_E2E_DATA_DIR = dataDir;
 
+  // Create a branding dir so setup_static_files mounts /branding.
+  const customizeDir = join(dataDir, "customize");
+  const brandingDir = join(customizeDir, "branding");
+  mkdirSync(brandingDir, { recursive: true });
+
   const projectRoot = join(__dirname, "..", "..", "..");
   const backendPort = process.env.KLANGK_E2E_PORT || "18997";
 
@@ -123,6 +128,7 @@ async function globalSetup() {
         KLANGK_PORT: backendPort,
         KLANGK_NGINX_PORT: nginxPort,
         KLANGK_DATA_DIR: dataDir,
+        KLANGK_CUSTOMIZE_DIR: join(dataDir, "customize"),
         KLANGK_LOGIN_LOCKOUT_FAILURES: "5",
         KLANGK_JWT_SECRET: "e2e-test-secret",
         KLANGK_DEFAULT_USER: "admin@example.com",

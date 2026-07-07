@@ -38,11 +38,15 @@ services:
       KLANGK_PREVENT_INSECURE_JWT_SECRET: "1"
       KLANGK_DATA_DIR: /home/klangk/data
 
+      # --- Customization directory (runtime, no rebuild) ---
+      # Single directory for branding, certs, and email templates.
+      # Subdirectories: branding/, certs/, email-templates/
+      KLANGK_CUSTOMIZE_DIR: /home/klangk/customize
+
       # --- Branding (runtime, no rebuild) ---
       # Product name across the tab title, app-bar wordmark, and emails.
       # KLANGK_PRODUCT_NAME: "Acme Labs"
-      # Serve the logo from branding/logo.png (mounted at /home/klangk/branding
-      # below; the image defaults KLANGK_BRANDING_DIR there):
+      # Serve the logo from branding/logo.png (place in customize/branding/):
       KLANGK_LOGO_URL: "/branding/logo.png"
       # KLANGK_BRAND_COLOR: "#E65100"
 
@@ -54,7 +58,7 @@ services:
       # KLANGK_SUPPORT_EMAIL: "support@example.com"
 
       # --- Email customization (runtime, no rebuild) ---
-      # KLANGK_EMAIL_TEMPLATES_DIR: /home/klangk/email-templates
+      # Place templates in customize/email-templates/ (see docs)
       # KLANGK_SMTP_REPLY_TO: "support@example.com"
       # KLANGK_SMTP_HOST: "${KLANGK_SMTP_HOST}"
       # KLANGK_SMTP_USER: "${KLANGK_SMTP_USER}"
@@ -99,12 +103,7 @@ services:
         target: /home/klangk/mount
         bind:
           create_host_path: false
-      # Custom logo — served at /branding/ (KLANGK_LOGO_URL above; the image
-      # defaults KLANGK_BRANDING_DIR to /home/klangk/branding):
-      - ./branding:/home/klangk/branding:ro
-      # Custom CA certs (consumed by KLANGK_SSL_CERT_DIR above):
-      - ./certs:/home/klangk/certs:ro
+      # Customization directory — branding/, certs/, email-templates/ subdirs:
+      - ./customize:/home/klangk/customize:ro
       # OIDC provider config + login hook (uncomment the env vars above to enable):
       - ./oidc:/home/klangk/oidc:ro
-      # Custom email templates (uncomment KLANGK_EMAIL_TEMPLATES_DIR to enable):
-      # - ./email-templates:/home/klangk/email-templates:ro

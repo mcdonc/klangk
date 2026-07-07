@@ -19,7 +19,7 @@ from jinja2 import (
 
 from . import auth
 from .exceptions import SendmailError
-from .util import resolve_env_value
+from .util import customize_dir, resolve_env_value
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +172,10 @@ def _template_env() -> Environment:
     if _env is None:
         loaders = []
         user_dir = resolve_env_value("KLANGK_EMAIL_TEMPLATES_DIR", "")
+        if not user_dir:
+            candidate = Path(customize_dir()) / "email-templates"
+            if candidate.is_dir():
+                user_dir = str(candidate)
         if user_dir:
             path = Path(user_dir)
             if path.is_dir():
