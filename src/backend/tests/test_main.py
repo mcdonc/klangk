@@ -544,6 +544,25 @@ class TestSetupStaticFiles:
         assert resp.status_code == 200
         assert resp.content.startswith(b"\x89PNG")
 
+    async def test_branding_dir_defaults_to_home_dot_klangk(
+        self, tmp_path, monkeypatch
+    ):
+        # When KLANGK_BRANDING_DIR is unset the default
+        # ~/.klangk/branding is used.
+        (tmp_path / "index.html").write_text("<html></html>")
+        monkeypatch.delenv("KLANGK_BRANDING_DIR", raising=False)
+        expected = Path(Path.home() / ".klangk" / "branding")
+
+        test_app = FastAPI()
+        main.setup_static_files(test_app, tmp_path)
+
+        # The branding mount should point at the default directory.
+        branding_route = [
+            r for r in test_app.routes if getattr(r, "path", "") == "/branding"
+        ]
+        assert branding_route
+        assert Path(branding_route[0].app.directory) == expected
+
     async def test_branding_mount_404_for_missing_file(self, tmp_path):
         (tmp_path / "index.html").write_text("<html></html>")
         test_app = FastAPI()
