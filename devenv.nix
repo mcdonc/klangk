@@ -412,6 +412,8 @@ in
         # Jinja2 email templates: prettier doesn't understand {% %}/{{ }} and
         # corrupts them (breaks expressions across lines). See #1165.
         "email_templates/"
+        # Deployer copies of the above (customize/ template tree).
+        "customize/email-templates/"
       ];
     };
     # Nix
@@ -490,6 +492,8 @@ in
     *.lock
     # Jinja2 email templates — prettier corrupts {% %}/{{ }} syntax. See #1165.
     email_templates/
+    # Deployer copies of the above (customize/ template tree).
+    customize/email-templates/
     PRETTIER
 
     # Generate yamllint config (not committed)

@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block content %}<p>Click the link below to reset your password:</p>
+<p><a href="{{ link }}">Reset my password</a></p>
+<p>This link expires in {{ expiry_hours }} hour{{ '' if expiry_hours == 1 else 's' }}.</p>
+{% endblock %}
