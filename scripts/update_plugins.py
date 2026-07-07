@@ -40,7 +40,10 @@ _DEFAULT_PLUGINS = [
 
 
 def _detect_ref():
-    """Determine the plugin ref from KLANGK_VERSION_FILE, falling back to main."""
+    """Determine the plugin ref from KLANGK_VERSION_FILE, the current git
+    branch, or falling back to main.  Using the current branch means CI
+    builds on a feature branch fetch bundled plugins from that branch (so
+    their pubspec refs stay in sync with the frontend's)."""
     version_file = os.environ.get("KLANGK_VERSION_FILE", "")
     if version_file and os.path.isfile(version_file):
         try:
@@ -51,6 +54,21 @@ def _detect_ref():
                 return version
         except (json.JSONDecodeError, OSError):
             pass
+    # In CI the repo is checked out at the PR's head; use that branch so
+    # bundled-plugin pubspecs match the frontend's dependency refs.
+    # GITHUB_HEAD_REF is set on pull_request events; fall back to git.
+    ci_ref = os.environ.get("GITHUB_HEAD_REF", "").strip()
+    if ci_ref:
+        return ci_ref
+    try:
+        branch = subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+        if branch and branch != "HEAD":
+            return branch
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
     return "main"
 
 
