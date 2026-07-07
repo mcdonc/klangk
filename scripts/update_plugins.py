@@ -10,6 +10,7 @@ without git: key).  Local-path plugins are symlinked into the plugins directory.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -108,12 +109,63 @@ def resolve_ref(git_url, ref):
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
 
-    # If ls-remote didn't match, assume ref is already a SHA
-    return ref
+    # Not resolvable on the remote (unknown branch/tag/SHA, or a synthesized
+    # commit such as a GitHub PR merge ref that exists only in a CI checkout).
+    return None
+
+
+def _normalize_git_url(url):
+    """Canonicalize a git URL so equivalent forms compare equal.
+
+    Handles ssh/git/https variants, embedded credentials, and trailing .git.
+    """
+    u = (url or "").strip()
+    if not u:
+        return ""
+    if u.startswith("git@"):
+        u = u.replace(":", "/", 1).replace("git@", "https://", 1)
+    u = re.sub(r"^(ssh|git)://", "https://", u)
+    # drop embedded credentials: https://user:pass@host/... -> https://host/...
+    u = re.sub(r"^(https?://)[^/@]+@", r"\1", u)
+    u = re.sub(r"\.git$", "", u)
+    return u.rstrip("/").lower()
+
+
+def _repo_origin_url():
+    """Normalized origin URL of the repo update_plugins.py runs inside (or "")."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", ROOT, "config", "--get", "remote.origin.url"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return _normalize_git_url(result.stdout)
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return ""
+
+
+def _copy_plugin_tree(source, dest):
+    """Copy a plugin directory tree into dest, dropping any .git inside."""
+    if os.path.islink(dest) or os.path.exists(dest):
+        if os.path.islink(dest):
+            os.unlink(dest)
+        else:
+            shutil.rmtree(dest)
+    shutil.copytree(source, dest)
+    git_dir = os.path.join(dest, ".git")
+    if os.path.exists(git_dir):
+        shutil.rmtree(git_dir)
 
 
 def fetch_plugin(plugin, plugins_dir):
-    """Fetch a single plugin from a git repo into plugins_dir."""
+    """Fetch a single plugin from a git repo into plugins_dir.
+
+    Never silently degrades to the remote's default branch. If the requested
+    ref can't be resolved on the remote, we either copy the plugin from the
+    local working tree (when the source repo *is* this repo -- e.g. a CI PR
+    checkout whose synthesized merge-commit SHA isn't on the remote) or fail.
+    """
     git_url = plugin["git"]
     ref = plugin.get("ref", "main")
     subpath = plugin.get("path", "")
@@ -121,16 +173,40 @@ def fetch_plugin(plugin, plugins_dir):
     name = plugin["name"]
 
     dest = os.path.join(plugins_dir, name)
+    local_origin = _repo_origin_url()
 
-    # Resolve ref to SHA
+    # None means the ref isn't on the remote at all.
     sha = resolve_ref(git_url, ref)
-    if not sha:
+
+    # GitHub PR builds check out a synthesized merge commit whose SHA exists
+    # only on the runner, so `git ls-remote` can never resolve it. For plugins
+    # that live in *this* repo, fall back to the already-checked-out working
+    # tree (which has the exact content being built) instead of cloning.
+    if sha is None:
+        local_path = os.path.join(ROOT, subpath) if subpath else ROOT
+        if (
+            local_origin
+            and _normalize_git_url(git_url) == local_origin
+            and os.path.isdir(local_path)
+        ):
+            print(
+                f"  {name}: ref '{ref}' not on remote; "
+                f"using local working tree {subpath or '.'}/"
+            )
+            _copy_plugin_tree(local_path, dest)
+            return {
+                "name": name,
+                "git": git_url,
+                "path": subpath,
+                "ref": ref,
+                "sha": "local",
+            }
         print(f"  ERROR: Could not resolve ref '{ref}' for {git_url}", file=sys.stderr)
         return None
 
     print(f"  {name}: {git_url} @ {ref} -> {sha[:12]}")
 
-    # Clone into temp dir, then copy the subpath
+    # Clone into temp dir, then check out the resolved ref.
     with tempfile.TemporaryDirectory() as tmpdir:
         clone_dir = os.path.join(tmpdir, "repo")
         result = subprocess.run(
@@ -140,7 +216,7 @@ def fetch_plugin(plugin, plugins_dir):
             timeout=120,
         )
         if result.returncode != 0:
-            # ref might be a SHA, try full clone
+            # ref might be a SHA (not a branch name); full clone + checkout.
             result = subprocess.run(
                 ["git", "clone", git_url, clone_dir],
                 capture_output=True,
@@ -153,12 +229,34 @@ def fetch_plugin(plugin, plugins_dir):
                     file=sys.stderr,
                 )
                 return None
-            subprocess.run(
+            checkout = subprocess.run(
                 ["git", "checkout", ref],
                 cwd=clone_dir,
                 capture_output=True,
                 text=True,
             )
+            if checkout.returncode != 0:
+                print(
+                    f"  ERROR: git checkout '{ref}' failed: {checkout.stderr.strip()}",
+                    file=sys.stderr,
+                )
+                return None
+
+        # Guard against silently landing on the default branch: the checked-out
+        # HEAD must match the ref we resolved on the remote.
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=clone_dir,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if head != sha:
+            print(
+                f"  ERROR: checked-out HEAD {head[:12]} != resolved {sha[:12]} "
+                f"for '{ref}'; refusing to use default-branch content",
+                file=sys.stderr,
+            )
+            return None
 
         source = os.path.join(clone_dir, subpath) if subpath else clone_dir
 
@@ -166,15 +264,7 @@ def fetch_plugin(plugin, plugins_dir):
             print(f"  ERROR: path '{subpath}' not found in {git_url}", file=sys.stderr)
             return None
 
-        # Remove old version and copy
-        if os.path.exists(dest):
-            shutil.rmtree(dest)
-        shutil.copytree(source, dest)
-
-        # Remove .git if it was copied
-        git_dir = os.path.join(dest, ".git")
-        if os.path.exists(git_dir):
-            shutil.rmtree(git_dir)
+        _copy_plugin_tree(source, dest)
 
     return {"name": name, "git": git_url, "path": subpath, "ref": ref, "sha": sha}
 
