@@ -128,7 +128,7 @@ Rotating a cert is just a file change plus a workspace/backend restart — no im
 
 ### OIDC Login Hook
 
-The `customize/oidc/` directory includes a sample `login_hook.py` that restricts OIDC logins to invited users. Bind-mount it anywhere in the container and point the env var at it:
+The `customize/custom/oidc/` directory includes a sample `login_hook.py` that restricts OIDC logins to invited users. Bind-mount it anywhere in the container and point the env var at it:
 
 ```bash
 docker run -d \
@@ -150,7 +150,7 @@ Re-inviting after a revocation creates a new pending invitation that overrides t
 
 ### OIDC Authentication
 
-To enable OIDC login, create an `oidc.yaml` and mount it at runtime. The `customize/oidc/oidc.yaml` template has the schema and placeholder values:
+To enable OIDC login, create an `oidc.yaml` and mount it at runtime. The `customize/custom/oidc/oidc.yaml` template has the schema and placeholder values:
 
 ```bash
 docker run -d \
@@ -180,20 +180,22 @@ customize/
   build/
     build.sh          # Main build script (run this)
     plugins.yaml      # Plugin list for the build
-  oidc/
-    oidc.yaml         # Example OIDC provider config (runtime-mounted)
-    login_hook.py     # Example OIDC login hook (runtime-mounted, not baked)
-  certs/
-    cacert.pem        # Example custom CA certificate (runtime-mounted)
-  branding/
-    logo.png          # Example logo served at /branding (runtime-mounted)
+  custom/             # Mounted as KLANGK_CUSTOMIZE_DIR at runtime
+    oidc/
+      oidc.yaml       # Example OIDC provider config (runtime-mounted)
+      login_hook.py   # Example OIDC login hook (runtime-mounted, not baked)
+    certs/
+      cacert.pem      # Example custom CA certificate (runtime-mounted)
+    branding/
+      logo.png        # Example logo served at /branding (runtime-mounted)
+    email-templates/  # Jinja2 email template overrides (runtime-mounted)
   data/               # Persistent state (bind-mounted, gitignored)
   mount/              # Workspace bind-mount root (bind-mounted, gitignored)
 ```
 
-Runtime customization files (`oidc/`, `certs/`, `branding/`) are bind-mounted
-into the container by `docker-compose.yml` — no image rebuild needed. Only
-`build/` is involved in the image build.
+The `custom/` directory is bind-mounted as `KLANGK_CUSTOMIZE_DIR` by
+`docker-compose.yml` — no image rebuild needed. Only `build/` is involved
+in the image build.
 
 ### Plugins
 

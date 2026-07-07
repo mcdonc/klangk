@@ -413,7 +413,7 @@ in
         # corrupts them (breaks expressions across lines). See #1165.
         "email_templates/"
         # Deployer copies of the above (customize/ template tree).
-        "customize/email-templates/"
+        "customize/custom/email-templates/"
       ];
     };
     # Nix
@@ -493,7 +493,7 @@ in
     # Jinja2 email templates — prettier corrupts {% %}/{{ }} syntax. See #1165.
     email_templates/
     # Deployer copies of the above (customize/ template tree).
-    customize/email-templates/
+    customize/custom/email-templates/
     PRETTIER
 
     # Generate yamllint config (not committed)
