@@ -15,6 +15,23 @@ devenv shell -- pytest
 
 A long-running interactive `devenv up` (backend + nginx + workspace image build) is a human-facing workflow; agents generally don't run it. If you need the backend up for something, ask.
 
+## Process manager: devenv 2.x native (not process-compose)
+
+`devenv processes up` / `devenv up` use **devenv 2.x's built-in process manager**,
+not process-compose. Consequences when debugging a managed stack:
+
+- `devenv processes list|status|logs|restart <NAME>` work without a separate
+  `process-compose` daemon running — there is no `process-compose` binary or
+  socket to look for. `ps` will **not** show a `process-compose` process; the
+  manager is devenv itself.
+- A crashed process is restarted by devenv's own supervisor (the journal shows
+  `Process exited (Failure), restarting` / `Restarted (attempt N)`), and after
+  enough attempts the whole `devenv processes up` invocation exits.
+- On hosts that run the stack under systemd, the unit's `ExecStart` is
+  `devenv processes up` (foreground, `DEVENV_TUI=false`); a crash loop in one
+  process takes the unit down. Debug by running the suspect process directly
+  under the devenv shell (bypassing the supervisor) to see its real stderr.
+
 ## Changelog (`docs/changes.md`)
 
 `docs/changes.md` is the single source of truth for human-authored release notes,
