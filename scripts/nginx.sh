@@ -32,47 +32,83 @@ else
   DNS_RESOLVERS="${DNS_RESOLVERS:-8.8.8.8}"
 fi
 
-# Shared allow/deny rules for container-only endpoints (LLM proxy,
-# browser-delegate bridge). Restricts access so that only our own
-# containers can reach the LLM API key and browser-delegate bridge.
-# The backend also validates tokens, but rejecting at the network
-# level avoids unnecessary round-trips.
+# Container source-IP set and the two ACLs derived from it.
 #
-# Podman uses pasta networking (rootless default): containers share
-# the host's network via userspace NAT, so traffic to
-# host.containers.internal arrives from the host's own IP (e.g.,
-# 192.168.1.112), not from a virtual bridge subnet. We auto-detect
-# the host's IPv4 addresses and allow those.
+# Podman uses pasta networking (rootless default): containers share the
+# host's network via userspace NAT, so traffic to host.containers.internal
+# arrives from the host's own IP (e.g. 192.168.1.112), not a virtual bridge
+# subnet. We auto-detect the host's IPv4 addresses as the "container source
+# set". Override with KLANGK_CONTAINER_SUBNETS (comma-separated CIDRs).
 #
-# Override: set KLANGK_CONTAINER_SUBNETS (comma-separated CIDRs) to
-# bypass auto-detection entirely. 127.0.0.1 is NOT added implicitly
-# with an explicit override; include it in the list if needed.
+# Two complementary ACLs are built from this one set (#1376):
 #
+#   CONTAINER_ACL  — allowlist on the three explicit container endpoints
+#     (^/llm-proxy/, /api/v1/browser-delegate, post-chat-message). Allows the
+#     container source IPs; denies everyone else. Container traffic still has
+#     to pass the workspace-token auth_request after the ACL.
+#
+#   CONTAINER_DENY  — blocklist on the catch-all `location /`. Denies the
+#     container source IPs so a container can reach ONLY the three explicit
+#     endpoints, not the whole /api/v1/* tree. This inverts nginx's container
+#     model to deny-by-default: safety no longer relies on every backend
+#     endpoint remembering its Depends(auth) — a forgotten dependency is
+#     refused at nginx before the backend sees it. The realistic container
+#     escalation path is API brute-forcing for an endpoint that forgot its
+#     auth dependency; this caps that surface structurally.
+#
+# Loopback (127.0.0.0/8, ::1) is ALWAYS excluded from CONTAINER_DENY: local
+# browsers connect via loopback and must reach the full UI/API. Container NAT
+# traffic appears as the host's *non-loopback* IP, which is what we deny here.
+# (A browser running on the server host that connects via the host's LAN IP
+# rather than loopback would share the container source IP and be denied —
+# use loopback for local browsing.)
+#
+# 127.0.0.1 is NOT implicitly added to CONTAINER_ACL with an explicit
+# KLANGK_CONTAINER_SUBNETS override; include it in the list if needed.
 
 _explicit_override=false
 if [ -n "${KLANGK_CONTAINER_SUBNETS:-}" ]; then
   # Explicit override — use exactly what the operator specified.
-  # 127.0.0.1 is NOT added implicitly; include it in the list if needed.
   IFS=',' read -ra _subnets <<<"$KLANGK_CONTAINER_SUBNETS"
   _explicit_override=true
 else
-  # Auto-detect: podman uses pasta networking (rootless default), so
-  # containers share the host's network via userspace NAT. Traffic to
-  # host.containers.internal arrives from the host's own IP (e.g.,
-  # 192.168.1.112), not from a virtual bridge subnet. We allow the
-  # host's own IPv4 addresses.
+  # Auto-detect: pasta NAT makes container traffic appear as the host's own
+  # IPv4 addresses. `ip -4` includes 127.0.0.1 (the lo interface); that's
+  # wanted for CONTAINER_ACL (loopback reaches container endpoints in dev)
+  # but is filtered out of CONTAINER_DENY below so local browsers are not
+  # blocked from the catch-all.
   _subnets=()
   while IFS= read -r addr; do
     [ -n "$addr" ] && _subnets+=("$addr")
   done < <(ip -4 addr show 2>/dev/null | awk '/inet /{sub(/\/.*/, "", $2); print $2}')
 fi
 
+# is_loopback — true for any address in 127.0.0.0/8 or ::1. Used to keep
+# loopback out of CONTAINER_DENY (local browsers depend on the catch-all).
+_is_loopback() {
+  case "$1" in
+  127.* | ::1*) return 0 ;;
+  *) return 1 ;;
+  esac
+}
+
 if [ ${#_subnets[@]} -gt 0 ]; then
   CONTAINER_ACL=$'\n'
+  CONTAINER_DENY=$'\n'
+  _deny_count=0
   for cidr in "${_subnets[@]}"; do
     CONTAINER_ACL+="      allow ${cidr};"$'\n'
+    # Never deny loopback on the catch-all — local browsers rely on it.
+    if ! _is_loopback "$cidr"; then
+      CONTAINER_DENY+="      deny ${cidr};"$'\n'
+      _deny_count=$((_deny_count + 1))
+    fi
   done
   CONTAINER_ACL+="      deny all;"
+  CONTAINER_DENY+="      allow all;"
+  if [ "$_deny_count" -eq 0 ]; then
+    echo "nginx: WARNING: container source set has no non-loopback entries — catch-all location / denies nothing (deny-by-default inactive)" >&2
+  fi
   echo "nginx container ACL: ${_subnets[*]}${_explicit_override:+ (explicit)}" >&2
 else
   # Fallback: broad RFC1918 ranges covering typical container subnets.
@@ -83,6 +119,12 @@ else
       allow 10.0.0.0/8;
       allow 127.0.0.1;
       deny all;"
+  # Inverse of the allowlist minus loopback (127.0.0.1 stays allowed so
+  # local browsers reach the full UI/API).
+  CONTAINER_DENY="
+      deny 172.16.0.0/12;
+      deny 10.0.0.0/8;
+      allow all;"
   echo "nginx container ACL: subnet detection failed, using fallback RFC1918 ranges" >&2
 fi
 
@@ -278,6 +320,7 @@ ${CONTAINER_ACL}
     }
 
     location / {
+${CONTAINER_DENY}
       proxy_pass http://127.0.0.1:${KLANGK_PORT}/;
       proxy_set_header Host \$http_host;
       proxy_set_header X-Real-IP \$remote_addr;
