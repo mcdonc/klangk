@@ -75,6 +75,9 @@ ENV PYTHONPATH=/home/klangk/src/backend:/home/klangk/venv/lib/python3.13/site-pa
 ENV PATH=/home/klangk/bin:/home/klangk/venv/bin:$PATH
 ENV KLANGK_PORT=8997
 ENV KLANGK_NGINX_PORT=8995
+# uvicorn bind address — loopback so workspace containers can't bypass
+# nginx's ACLs via host.containers.internal:8997 (#1375).
+ENV KLANGK_LISTEN=127.0.0.1
 ENV KLANGK_DATA_DIR=/home/klangk/data
 ENV KLANGK_PLUGINS_DIR=/home/klangk/plugins
 ENV KLANGK_CUSTOMIZE_DIR=/home/klangk/custom

@@ -7,7 +7,7 @@
 let
   uvicornCmd = ''
     python3 -m uvicorn klangk_backend.main:app \
-       --host 0.0.0.0 \
+       --host $KLANGK_LISTEN \
        --port $KLANGK_PORT \
        --no-access-log \
        --no-proxy-headers \
@@ -196,6 +196,12 @@ in
   # devenv.local.nix (mkForce/50) > .env (1000) > these (1500)
   env.KLANGK_PORT = lib.mkOverride 1500 "8997";
   env.KLANGK_NGINX_PORT = lib.mkOverride 1500 "8995";
+  # uvicorn bind address. Defaults to loopback so workspace containers
+  # can't reach the backend directly via host.containers.internal:$KLANGK_PORT
+  # and bypass nginx's per-location ACLs (#1375). nginx stays 0.0.0.0
+  # (container-reachable) and proxies to this address. Set 0.0.0.0 to restore
+  # the old direct-reach behavior.
+  env.KLANGK_LISTEN = lib.mkOverride 1500 "127.0.0.1";
   env.KLANGK_DATA_DIR = lib.mkOverride 1500 (
     config.devenv.root + "/.devenv/state/klangk/data"
   );
