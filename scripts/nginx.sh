@@ -73,14 +73,23 @@ if [ -n "${KLANGK_CONTAINER_SUBNETS:-}" ]; then
   _explicit_override=true
 else
   # Auto-detect: pasta NAT makes container traffic appear as the host's own
-  # IPv4 addresses. `ip -4` includes 127.0.0.1 (the lo interface); that's
-  # wanted for CONTAINER_ACL (loopback reaches container endpoints in dev)
-  # but is filtered out of CONTAINER_DENY below so local browsers are not
-  # blocked from the catch-all.
+  # addresses. Collect both IPv4 and IPv6 so a container that reaches nginx
+  # over IPv6 (podman configured for IPv6) is allowed on the container
+  # endpoints instead of hitting deny all (#1385).
+  #
+  # `ip -4` includes 127.0.0.1 and `ip -6` includes ::1 (the lo interface);
+  # loopback is wanted for CONTAINER_ACL (loopback reaches container
+  # endpoints in dev) but is filtered out of CONTAINER_DENY below so local
+  # browsers are not blocked from the catch-all. IPv6 link-local (fe80::/10)
+  # is skipped — it needs a zone id nginx can't express and isn't how
+  # container traffic sources.
   _subnets=()
   while IFS= read -r addr; do
     [ -n "$addr" ] && _subnets+=("$addr")
   done < <(ip -4 addr show 2>/dev/null | awk '/inet /{sub(/\/.*/, "", $2); print $2}')
+  while IFS= read -r addr; do
+    [ -n "$addr" ] && _subnets+=("$addr")
+  done < <(ip -6 addr show 2>/dev/null | awk '/inet6/{sub(/\/.*/, "", $2); print $2}' | grep -v '^fe80')
 fi
 
 # is_loopback — true for any address in 127.0.0.0/8 or ::1. Used to keep
@@ -118,6 +127,7 @@ else
       allow 172.16.0.0/12;
       allow 10.0.0.0/8;
       allow 127.0.0.1;
+      allow ::1;
       deny all;"
   # Inverse of the allowlist minus loopback (127.0.0.1 stays allowed so
   # local browsers reach the full UI/API).
@@ -236,6 +246,21 @@ else
 "
 fi
 
+# IPv6 ingress listener (opt-in). Disabled by default: a `listen [::]:`
+# directive crashes nginx at startup on kernels with IPv6 compiled out
+# (ipv6.disable=1 on the kernel cmdline makes socket() return EAFNOSUPPORT —
+# see nginx trac #1320), which would take the whole app down. Set
+# KLANGK_NGINX_ENABLE_IPV6=1 to add `listen [::]:${KLANGK_NGINX_PORT}` for
+# dual-stack ingress (nginx sets ipv6only=on by default, so the IPv4 and
+# IPv6 listens don't conflict). This is the primary IPv6 win: an IPv6-only
+# client can reach the app. nginx->uvicorn stays IPv4 loopback internally
+# (clients never see that hop), so this works independently of the backend
+# bind address (#1385).
+IPV6_LISTEN_LINE=""
+if [ "${KLANGK_NGINX_ENABLE_IPV6:-}" = "1" ]; then
+  IPV6_LISTEN_LINE="    listen [::]:${KLANGK_NGINX_PORT};"
+fi
+
 cat >"$NGINX_STATE/nginx.conf" <<EOF_SECURE
 daemon off;
 pid /tmp/nginx.pid;
@@ -265,6 +290,7 @@ http {
 
   server {
     listen ${KLANGK_NGINX_PORT};
+${IPV6_LISTEN_LINE}
 
 ${HOSTED_BLOCK}
 ${LLM_BLOCK}

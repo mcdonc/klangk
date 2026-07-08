@@ -244,6 +244,87 @@ class TestNginxAclConfig:
         assert "allow all;" in catch_all
 
 
+class TestNginxIPv6:
+    """IPv6 ingress listener + ACL support (#1385).
+
+    Two properties:
+      - `listen [::]:` is opt-in (KLANGK_NGINX_ENABLE_IPV6=1). Unconditional
+        IPv6 listen crashes nginx on kernels with IPv6 compiled out
+        (ipv6.disable=1 cmdline -> socket() returns EAFNOSUPPORT; nginx
+        trac #1320), so it must never be the default.
+      - When IPv6 container traffic is possible, ::1 is auto-detected into
+        CONTAINER_ACL and (like 127.0.0.1) never denied on the catch-all.
+    """
+
+    def test_ipv6_listen_disabled_by_default(self, tmp_path):
+        """No listen [::] unless the flag is set — the safe default."""
+        conf = _run_nginx_sh({}, str(tmp_path))
+        assert "listen [::]" not in conf
+        # IPv4 listen is always present.
+        assert "listen 19999;" in conf
+
+    def test_ipv6_listen_enabled_with_flag(self, tmp_path):
+        """KLANGK_NGINX_ENABLE_IPV6=1 adds the dual-stack listen [::]."""
+        conf = _run_nginx_sh({"KLANGK_NGINX_ENABLE_IPV6": "1"}, str(tmp_path))
+        assert "listen 19999;" in conf
+        assert "listen [::]:19999;" in conf
+
+    def test_ipv6_listen_flag_independent_of_subnets(self, tmp_path):
+        """The IPv6 listen is gated on its own flag, not the subnet set."""
+        conf = _run_nginx_sh(
+            {
+                "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
+                "KLANGK_NGINX_ENABLE_IPV6": "1",
+            },
+            str(tmp_path),
+        )
+        assert "listen [::]:19999;" in conf
+
+    def test_ipv6_loopback_never_denied_on_catchall(self, tmp_path):
+        """::1 is never denied on the catch-all even when listed in
+        KLANGK_CONTAINER_SUBNETS — mirrors the 127.0.0.1 treatment so local
+        IPv6 browsers keep full access."""
+        conf = _run_nginx_sh(
+            {"KLANGK_CONTAINER_SUBNETS": "::1,10.89.0.0/24"}, str(tmp_path)
+        )
+        catch_all = re.search(r"location / \{(.*?)\}", conf, re.DOTALL).group(
+            1
+        )
+        assert "deny 10.89.0.0/24;" in catch_all
+        assert "deny ::1;" not in catch_all
+        assert "allow all;" in catch_all
+        # ::1 IS allowed on the container endpoints (it's in the operator's
+        # explicit list).
+        bd = re.search(
+            r"location /api/v1/browser-delegate \{(.*?)\}", conf, re.DOTALL
+        ).group(1)
+        assert "allow ::1;" in bd
+
+    def test_ipv6_loopback_auto_detected_when_available(self, tmp_path):
+        """When the host has IPv6, ::1 is auto-detected into CONTAINER_ACL
+        (loopback reaches container endpoints in dev) and kept out of the
+        catch-all deny. Link-local fe80:: is excluded from auto-detect."""
+        try:
+            out = subprocess.check_output(
+                ["ip", "-6", "addr", "show", "lo"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pytest.skip("ip -6 unavailable")
+        if "::1" not in out:
+            pytest.skip("no IPv6 loopback on this host")
+        conf = _run_nginx_sh({}, str(tmp_path))
+        assert "allow ::1;" in conf
+        catch_all = re.search(r"location / \{(.*?)\}", conf, re.DOTALL).group(
+            1
+        )
+        assert "deny ::1;" not in catch_all
+        # Link-local must never leak into the generated ACL.
+        assert "allow fe80" not in conf
+        assert "deny fe80" not in conf
+
+
 class TestNginxHostedBlock:
     """KLANGK_HOSTED_PORTS_PER_WORKSPACE gates the /hosted/ proxy (#1237)."""
 
@@ -428,6 +509,25 @@ class TestNginxAclEnforcement:
         assert r.status_code == 403
 
 
+def _ipv6_loopback_available():
+    """True if this host can bind an AF_INET6 socket on ::1.
+
+    Guards the IPv6 runtime tests: some CI sandboxes and hardened hosts have
+    IPv6 compiled out (ipv6.disable=1), where `listen [::]:` would fail — the
+    opt-in flag means those hosts simply don't enable it.
+    """
+    import socket
+
+    s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    try:
+        s.bind(("::1", 0))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
 def _host_nonloopback_ipv4():
     """A non-loopback IPv4 of this host — the source IP pasta NAT traffic
     appears as (and thus the IP the catch-all denies). Returns None when there
@@ -602,3 +702,122 @@ class TestNginxDenyByDefault:
         )
         assert r.status_code == 401
         assert r.status_code != 403
+
+
+class TestNginxIPv6Runtime:
+    """Runtime: KLANGK_NGINX_ENABLE_IPV6=1 makes nginx serve IPv6 clients (#1385).
+
+    The acceptance criterion — "an IPv6-only client can load the app" — is
+    exercised by hitting /health over [::1]. nginx->uvicorn stays IPv4
+    loopback internally (clients never see that hop), so this needs no change
+    to the backend bind.
+    """
+
+    @pytest.fixture(scope="class")
+    def stack(self, tmp_path_factory):
+        if not _ipv6_loopback_available():
+            pytest.skip("IPv6 loopback not available on this host")
+
+        tmpdir = str(tmp_path_factory.mktemp("nginx-ipv6"))
+        data_dir = os.path.join(tmpdir, "data")
+        os.makedirs(data_dir)
+        backend_port = _find_free_port()
+        nginx_port = _find_free_port()
+
+        backend_env = {
+            **os.environ,
+            "KLANGK_PORT": backend_port,
+            "KLANGK_DATA_DIR": data_dir,
+            "KLANGK_JWT_SECRET": "nginx-ipv6-test-secret",
+            "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
+            "KLANGK_DEFAULT_USER": "test@example.com",
+            "KLANGK_DEFAULT_PASSWORD": "testpass",
+            "KLANGK_TEST_MODE": "1",
+            "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
+            "KLANGK_PORT_RANGE_START": "9200",
+            "LOGFIRE_TOKEN": "",
+        }
+        backend_proc = subprocess.Popen(
+            [
+                "uvicorn",
+                "klangk_backend.main:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                backend_port,
+                "--ws-max-size",
+                "16777216",
+            ],
+            cwd=BACKEND_DIR,
+            env=backend_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                r = httpx.get(
+                    f"http://localhost:{backend_port}/health", timeout=2
+                )
+                if r.status_code == 200:
+                    break
+            except httpx.ConnectError:
+                pass
+            time.sleep(0.3)
+        else:
+            backend_proc.kill()
+            raise RuntimeError("Backend did not start")
+
+        nginx_env = {
+            "HOME": tmpdir,
+            "PATH": os.environ["PATH"],
+            "DEVENV_STATE": tmpdir,
+            "KLANGK_NGINX_PORT": nginx_port,
+            "KLANGK_PORT": backend_port,
+            "KLANGK_NGINX_ENABLE_IPV6": "1",
+        }
+        nginx_proc = subprocess.Popen(
+            ["bash", NGINX_SH],
+            env=nginx_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+
+        # Wait for nginx via IPv4 loopback (always bound).
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            try:
+                r = httpx.get(
+                    f"http://127.0.0.1:{nginx_port}/health", timeout=2
+                )
+                if r.status_code == 200:
+                    break
+            except httpx.ConnectError:
+                pass
+            time.sleep(0.3)
+        else:
+            nginx_proc.kill()
+            backend_proc.kill()
+            raise RuntimeError("Nginx did not start")
+
+        yield {"nginx_port": nginx_port}
+
+        nginx_proc.kill()
+        nginx_proc.wait(timeout=5)
+        backend_proc.kill()
+        backend_proc.wait(timeout=5)
+
+    def test_ipv6_client_reaches_app(self, stack):
+        """An IPv6-only client (connecting via [::1]) can load the app — the
+        primary IPv6 win. nginx must have bound listen [::]: when the flag
+        was set, else this connect would be refused."""
+        port = stack["nginx_port"]
+        r = httpx.get(f"http://[::1]:{port}/health", timeout=5)
+        assert r.status_code == 200
+
+    def test_ipv4_still_works_dual_stack(self, stack):
+        """Enabling IPv6 does not break IPv4 — the two listens coexist."""
+        port = stack["nginx_port"]
+        r = httpx.get(f"http://127.0.0.1:{port}/health", timeout=5)
+        assert r.status_code == 200

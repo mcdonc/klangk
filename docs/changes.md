@@ -37,6 +37,19 @@ operators or integrators to act when upgrading.
   behavior. Applies to both the devenv dev server and the host container.
   (#1375)
 
+### Added
+
+- **Optional IPv6 ingress** (`KLANGK_NGINX_ENABLE_IPV6`, new). Set to `1` to
+  add `listen [::]:${KLANGK_NGINX_PORT}` for dual-stack ingress, so IPv6-only
+  clients can reach the app. Off by default: an unconditional IPv6 listen
+  crashes nginx on kernels with IPv6 compiled out (`ipv6.disable=1` on the
+  kernel cmdline). nginx→uvicorn stays IPv4 loopback internally (clients never
+  see that hop), so this works independently of the backend bind address. The
+  container ACL also now auto-detects IPv6 host addresses (in addition to
+  IPv4), so a container reaching nginx over IPv6 is allowed on the container
+  endpoints instead of hitting `deny all`; `::1` is never denied on the
+  catch-all, mirroring the `127.0.0.1` treatment. (#1385)
+
 ### Security
 
 - **nginx now denies container source IPs by default on the catch-all
