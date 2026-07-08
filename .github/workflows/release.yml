@@ -45,8 +45,34 @@ jobs:
 
       - name: Create GitHub Release
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          # Release body = GitHub's auto-generated notes, with this version's
+          # section from docs/changes.md prepended (when present).
+          # `gh release create --generate-notes --notes "..."` prepends the
+          # --notes content to the auto-generated notes (per `gh release create --help`).
+          # docs/changes.md is the source of truth; see it and
+          # docs/development/releasing.md.
+          VERSION="$GITHUB_REF_NAME"
+          SECTION=""
+          if [ -f docs/changes.md ]; then
+            # Extract the body of the `## [<version>]` section. Matched as a
+            # prefix so an optional trailing date (`## [v1.0.5] - 2026-07-07`)
+            # still matches. Captured up to the next `## [` heading or EOF.
+            SECTION="$(awk -v ver="$VERSION" '
+              $0 ~ "^## \\[" ver "]" { found=1; next }
+              found && /^## \[/ { exit }
+              found { print }
+            ' docs/changes.md)"
+          fi
+          if [ -n "$SECTION" ]; then
+            gh release create "$VERSION" \
+              --title "$VERSION" \
+              --generate-notes \
+              --notes "$SECTION"
+          else
+            # No changelog section for this version — pure auto-generated notes.
+            gh release create "$VERSION" \
+              --title "$VERSION" \
+              --generate-notes
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

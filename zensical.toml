@@ -63,6 +63,7 @@ nav = [
     { "Creating Plugins" = "development/creating-plugins.md" },
     { "Stable Branches" = "development/stable-branches.md" },
   ]},
+  { "Changelog" = "changes.md" },
   { "Architecture" = [
     { "Overview" = "architecture/index.md" },
     { "LLM Proxy" = "architecture/llm-proxy.md" },
