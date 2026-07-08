@@ -36,3 +36,18 @@ operators or integrators to act when upgrading.
   bypassing nginx — must set `KLANGK_LISTEN=0.0.0.0` to restore the old
   behavior. Applies to both the devenv dev server and the host container.
   (#1375)
+
+### Security
+
+- **nginx now denies container source IPs by default on the catch-all
+  `location /`** (#1376). Previously the catch-all was open to container
+  source IPs (the host's own IP via pasta NAT), so safety relied on every
+  backend endpoint remembering its `Depends(auth)` — a single forgotten
+  dependency silently exposed that endpoint to a workspace container's API
+  brute-force sweep. nginx now denies the container source subnets on the
+  catch-all, so a container can reach only the three endpoints it is known to
+  need (`/llm-proxy/`, `/api/v1/browser-delegate`,
+  `/api/v1/workspaces/post-chat-message`); every other path is refused at
+  nginx with 403. Loopback (local browsers) and other IPs (remote browsers)
+  are unaffected. The three container endpoints keep their existing allowlist +
+  workspace-token `auth_request`.

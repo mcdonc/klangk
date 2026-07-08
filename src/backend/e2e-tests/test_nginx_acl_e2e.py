@@ -194,6 +194,55 @@ class TestNginxAclConfig:
         assert "allow 10.89.0.0/24;" in bd_block
         assert "deny all;" in bd_block
 
+    # --- deny-by-default on the catch-all `location /` (#1376) ---
+    # The catch-all denies the container source IPs so a container can
+    # reach ONLY the three explicit container endpoints, not the whole
+    # /api/v1/* tree. Safety no longer relies on every backend endpoint
+    # remembering its Depends(auth).
+
+    def test_catch_all_denies_container_subnets(self, tmp_path):
+        """Catch-all `location /` denies the explicit container subnets."""
+        conf = _run_nginx_sh(
+            {
+                "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16",
+                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
+            },
+            str(tmp_path),
+        )
+        catch_all = re.search(r"location / \{(.*?)\}", conf, re.DOTALL).group(
+            1
+        )
+        assert "deny 10.89.0.0/24;" in catch_all
+        assert "deny 172.30.0.0/16;" in catch_all
+        assert "allow all;" in catch_all
+
+    def test_catch_all_never_denies_loopback(self, tmp_path):
+        """Loopback is never denied on the catch-all even when it appears in
+        KLANGK_CONTAINER_SUBNETS — local browsers connect via loopback and
+        must reach the full UI/API."""
+        conf = _run_nginx_sh(
+            {"KLANGK_CONTAINER_SUBNETS": "127.0.0.1,10.89.0.0/24"},
+            str(tmp_path),
+        )
+        catch_all = re.search(r"location / \{(.*?)\}", conf, re.DOTALL).group(
+            1
+        )
+        assert "deny 10.89.0.0/24;" in catch_all
+        assert "deny 127.0.0.1;" not in catch_all
+        assert "allow all;" in catch_all
+
+    def test_catch_all_deny_present_when_containers_configured(self, tmp_path):
+        """The deny-by-default ACL is always present on the catch-all whenever
+        container subnets are configured — there is no way to opt out of it."""
+        conf = _run_nginx_sh(
+            {"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"}, str(tmp_path)
+        )
+        catch_all = re.search(r"location / \{(.*?)\}", conf, re.DOTALL).group(
+            1
+        )
+        assert "deny 10.89.0.0/24;" in catch_all
+        assert "allow all;" in catch_all
+
 
 class TestNginxHostedBlock:
     """KLANGK_HOSTED_PORTS_PER_WORKSPACE gates the /hosted/ proxy (#1237)."""
@@ -377,3 +426,179 @@ class TestNginxAclEnforcement:
             timeout=5,
         )
         assert r.status_code == 403
+
+
+def _host_nonloopback_ipv4():
+    """A non-loopback IPv4 of this host — the source IP pasta NAT traffic
+    appears as (and thus the IP the catch-all denies). Returns None when there
+    is no suitable address (some CI sandboxes), in which case the
+    deny-by-default runtime tests skip."""
+    import subprocess
+
+    try:
+        out = subprocess.check_output(
+            ["ip", "-4", "addr", "show"], text=True, stderr=subprocess.DEVNULL
+        )
+    except Exception:
+        return None
+    for line in out.splitlines():
+        m = re.match(r"\s*inet (\d+\.\d+\.\d+\.\d+)/", line)
+        if not m:
+            continue
+        ip = m.group(1)
+        # Skip loopback (127/8) and link-local (169.254/16).
+        if ip.startswith("127.") or ip.startswith("169.254."):
+            continue
+        return ip
+    return None
+
+
+class TestNginxDenyByDefault:
+    """Runtime enforcement of deny-by-default from container source IPs (#1376).
+
+    The catch-all `location /` denies the container source IPs while allowing
+    loopback (local browsers) and other IPs (remote browsers). We simulate a
+    container source by connecting to nginx via the host's own non-loopback
+    IPv4 — exactly the address pasta NAT traffic appears as — and assert the
+    catch-all 403s it (capping the API brute-force surface) while the container
+    endpoints' own ACLs still let it through to auth_request.
+    """
+
+    @pytest.fixture(scope="class")
+    def stack(self, tmp_path_factory):
+        host_ip = _host_nonloopback_ipv4()
+        if not host_ip:
+            pytest.skip("no non-loopback IPv4 to simulate a container source")
+
+        tmpdir = str(tmp_path_factory.mktemp("nginx-deny-default"))
+        data_dir = os.path.join(tmpdir, "data")
+        os.makedirs(data_dir)
+        backend_port = _find_free_port()
+        nginx_port = _find_free_port()
+
+        # Start uvicorn (loopback only; nginx reaches it via 127.0.0.1).
+        backend_env = {
+            **os.environ,
+            "KLANGK_PORT": backend_port,
+            "KLANGK_DATA_DIR": data_dir,
+            "KLANGK_JWT_SECRET": "nginx-deny-test-secret",
+            "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
+            "KLANGK_DEFAULT_USER": "test@example.com",
+            "KLANGK_DEFAULT_PASSWORD": "testpass",
+            "KLANGK_TEST_MODE": "1",
+            "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
+            "KLANGK_PORT_RANGE_START": "9200",
+            "LOGFIRE_TOKEN": "",
+        }
+        backend_proc = subprocess.Popen(
+            [
+                "uvicorn",
+                "klangk_backend.main:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                backend_port,
+                "--ws-max-size",
+                "16777216",
+            ],
+            cwd=BACKEND_DIR,
+            env=backend_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+
+        # Wait for backend.
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                r = httpx.get(
+                    f"http://localhost:{backend_port}/health", timeout=2
+                )
+                if r.status_code == 200:
+                    break
+            except httpx.ConnectError:
+                pass
+            time.sleep(0.3)
+        else:
+            backend_proc.kill()
+            raise RuntimeError("Backend did not start")
+
+        # Start nginx with the host IP as the (sole) container source IP.
+        # CONTAINER_DENY on the catch-all then denies exactly that IP.
+        nginx_env = {
+            "HOME": tmpdir,
+            "PATH": os.environ["PATH"],
+            "DEVENV_STATE": tmpdir,
+            "KLANGK_NGINX_PORT": nginx_port,
+            "KLANGK_PORT": backend_port,
+            "KLANGK_CONTAINER_SUBNETS": host_ip,
+        }
+        nginx_proc = subprocess.Popen(
+            ["bash", NGINX_SH],
+            env=nginx_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+
+        # Wait for nginx (probe via loopback, which is always allowed).
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            try:
+                r = httpx.get(
+                    f"http://127.0.0.1:{nginx_port}/health", timeout=2
+                )
+                if r.status_code == 200:
+                    break
+            except httpx.ConnectError:
+                pass
+            time.sleep(0.3)
+        else:
+            nginx_proc.kill()
+            backend_proc.kill()
+            raise RuntimeError("Nginx did not start")
+
+        yield {"nginx_port": nginx_port, "host_ip": host_ip}
+
+        nginx_proc.kill()
+        nginx_proc.wait(timeout=5)
+        backend_proc.kill()
+        backend_proc.wait(timeout=5)
+
+    def test_api_denied_from_container_ip(self, stack):
+        """From the container source IP, a non-container /api/v1 path is
+        refused at nginx (403) — deny-by-default caps the brute-force surface."""
+        r = httpx.get(
+            f"http://{stack['host_ip']}:{stack['nginx_port']}/api/v1/users",
+            timeout=5,
+        )
+        assert r.status_code == 403
+
+    def test_api_allowed_from_loopback(self, stack):
+        """From loopback, the same /api/v1 path reaches the backend (not 403) —
+        local browsers keep full access."""
+        r = httpx.get(
+            f"http://127.0.0.1:{stack['nginx_port']}/api/v1/users",
+            timeout=5,
+        )
+        # Not nginx-denied (401 unauth or similar is fine) — proves loopback
+        # is exempt from the catch-all deny.
+        assert r.status_code != 403
+
+    def test_health_from_loopback(self, stack):
+        """Loopback browser traffic still reaches the app."""
+        r = httpx.get(
+            f"http://127.0.0.1:{stack['nginx_port']}/health", timeout=5
+        )
+        assert r.status_code == 200
+
+    def test_container_endpoint_acl_still_allows_container_ip(self, stack):
+        """The container endpoints keep their own allowlist: from the container
+        IP, browser-delegate passes CONTAINER_ACL (reaches auth_request) and
+        returns 401, NOT 403 — proving the container IP is not globally blocked,
+        only the catch-all."""
+        r = httpx.post(
+            f"http://{stack['host_ip']}:{stack['nginx_port']}/api/v1/browser-delegate",
+            timeout=5,
+        )
+        assert r.status_code == 401
+        assert r.status_code != 403
