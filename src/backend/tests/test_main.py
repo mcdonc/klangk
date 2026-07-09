@@ -683,6 +683,29 @@ class TestSetupLogfire:
         mock_logfire.configure.assert_called_once_with()
         mock_logfire.instrument_fastapi.assert_called_once_with(app)
 
+    def test_base_url_passed_via_advanced_options(self, monkeypatch):
+        # LOGFIRE_BASE_URL must be passed as advanced=AdvancedOptions(base_url=...),
+        # not as the deprecated top-level base_url= argument (#1410).
+        monkeypatch.setenv("LOGFIRE_TOKEN", "test-token")
+        monkeypatch.setenv("LOGFIRE_BASE_URL", "https://logfire.example.com")
+        monkeypatch.delenv("LOGFIRE_ENVIRONMENT", raising=False)
+        mock_logfire = MagicMock()
+        with patch.dict("sys.modules", {"logfire": mock_logfire}):
+            app = FastAPI()
+            result = main.setup_logfire(app)
+        assert result is True
+        mock_logfire.AdvancedOptions.assert_called_once_with(
+            base_url="https://logfire.example.com"
+        )
+        mock_logfire.configure.assert_called_once()
+        configure_kwargs = mock_logfire.configure.call_args.kwargs
+        assert "advanced" in configure_kwargs
+        assert (
+            configure_kwargs["advanced"]
+            is mock_logfire.AdvancedOptions.return_value
+        )
+        assert "base_url" not in configure_kwargs
+
 
 class TestCorsOrigins:
     def test_default_localhost(self, monkeypatch):
@@ -751,8 +774,11 @@ class TestCorsOrigins:
         with patch.dict("sys.modules", {"logfire": mock_logfire}):
             app = FastAPI()
             main.setup_logfire(app)
+        mock_logfire.AdvancedOptions.assert_called_once_with(
+            base_url="https://custom.logfire"
+        )
         mock_logfire.configure.assert_called_once_with(
-            base_url="https://custom.logfire",
+            advanced=mock_logfire.AdvancedOptions.return_value,
             environment="staging",
         )
 
