@@ -5,6 +5,7 @@ description = "Klangk backend: multi-user Pi coding agent web REPL"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
+    "pydantic-settings>=2.5.0",
     "uvicorn[standard]>=0.32.0",
     "websockets>=14.0",
     "aiosqlite>=0.20.0",

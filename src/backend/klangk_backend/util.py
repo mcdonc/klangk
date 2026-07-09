@@ -1,4 +1,4 @@
-"""Shared utilities: env var resolution, bounded async queue."""
+"""Shared utilities: env var resolution, bounded async queue, hosting info."""
 
 import asyncio
 import ipaddress
@@ -6,6 +6,12 @@ import logging
 import os
 import subprocess
 from typing import TypeVar
+
+# resolve_env_value / resolve_env_bool now live in the settings module (#1394)
+# and delegate to the KlangkSettings singleton.  Re-exported here for backward
+# compat — the ~85 call sites that do ``from .util import resolve_env_value``
+# keep working without changes.
+from .settings import resolve_env_value, resolve_env_bool
 
 T = TypeVar("T")
 
@@ -74,43 +80,9 @@ def run_cmd_value(value: str) -> tuple[str | None, str | None]:
     return proc.stdout.strip(), None
 
 
-def resolve_env_value(key: str, default: str | None = None) -> str | None:
-    """Read an env var, dereferencing 'file:' and 'cmd:' prefixed values.
-
-    If the value starts with 'file:', the remainder is treated as a
-    file path and the file contents (stripped) are returned. If it starts
-    with 'cmd:', the remainder is run as a shell command and its stdout
-    (stripped) is returned. On either failing, logs an error and returns
-    None. Otherwise the raw value is returned.
-    """
-    val = os.environ.get(key)
-    if val is None:
-        return default
-    if val.startswith("file:"):
-        contents, err = read_file_value(val)
-        if err is not None:
-            logger.error("Cannot read %s from %s: %s", key, err.filename, err)
-            return None
-        return contents
-    if val.startswith("cmd:"):
-        contents, err = run_cmd_value(val)
-        if err is not None:
-            logger.error("Cannot resolve %s via cmd: %s", key, err)
-            return None
-        return contents
-    return val
-
-
-def resolve_env_bool(key: str, default: bool = False) -> bool:
-    """Read an env var as a boolean.
-
-    Truthy values: "1", "true", "yes" (case-insensitive).
-    Everything else is falsy.  Unset returns *default*.
-    """
-    val = os.environ.get(key)
-    if val is None:
-        return default
-    return val.strip().lower() in ("1", "true", "yes")
+# NOTE: resolve_env_value / resolve_env_bool are imported from .settings
+# at the top of this module.  The implementations that lived here have been
+# moved to klangk_backend.settings (#1394).
 
 
 def resolve_file_value(value: str) -> str:
@@ -182,7 +154,7 @@ def load_trusted_proxy_cidrs() -> set[ipaddress._BaseAddress]:
     # it via os.environ rather than resolve_env_value (which treats its input
     # as a secret and would both support an unwanted "file:" prefix and trip
     # CodeQL's clear-text-logging taint check when we log invalid entries).
-    raw = os.environ.get("KLANGK_TRUSTED_PROXY_CIDRS", "127.0.0.1,::1")
+    raw = resolve_env_value("KLANGK_TRUSTED_PROXY_CIDRS")
     trusted: set[ipaddress._BaseAddress] = set()
     for token in (raw or "").split(","):
         token = token.strip()
