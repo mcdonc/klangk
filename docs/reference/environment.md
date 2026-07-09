@@ -1,5 +1,7 @@
 # Environment Variables
 
+> **Config file alternative:** All `KLANGK_*` settings below can also be set in a YAML config file via `klangkd --config`. The config file is the recommended substrate for production deployments; env vars override file values. See [Configuration File](klangkd-config.md).
+
 `$DEVENV_STATE` refers to `<project root>/.devenv/state` — this is where devenv stores runtime data.
 
 All settings can be overridden in `.env`. Defaults (where appropriate) are provided in `devenv.nix` at low priority so `.env` values take precedence.

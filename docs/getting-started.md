@@ -109,3 +109,7 @@ Admin page.
 
 See [Auth Modes](features/auth-modes.md) for the full picture, including how
 to switch modes.
+
+> **Configuration file:** For production deployments, a YAML config file is
+> recommended over env vars. See
+> [Configuration File](reference/klangkd-config.md) for the full reference.

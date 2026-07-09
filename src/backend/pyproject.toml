@@ -30,7 +30,7 @@ dependencies = [
 [project.scripts]
 klangk-instance-id = "klangk_backend._instance_id:main"
 klangk-resolve-value = "klangk_backend._resolve_value:main"
-klangkd = "klangk_backend._klangkd:app"
+klangkd = "klangk_backend.klangkd:app"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

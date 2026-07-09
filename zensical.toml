@@ -53,6 +53,7 @@ nav = [
   { "Reference" = [
     { "ACL System" = "reference/acl.md" },
     { "API Endpoints" = "reference/api-endpoints.md" },
+    { "Configuration File" = "reference/klangkd-config.md" },
     { "Environment Variables" = "reference/environment.md" },
   ]},
   { "Klangk Development" = [

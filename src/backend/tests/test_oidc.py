@@ -273,6 +273,144 @@ class TestLoadConfig:
         assert providers[0].logout_redirect is True
 
 
+class TestInlineProviders:
+    """OIDC providers specified inline in the klangkd config file (#1395)."""
+
+    def test_inline_providers_loaded(self, tmp_path):
+        from klangk_backend.settings import set_config_file
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "oidc_providers:\n"
+            "  - id: inline\n"
+            '    display-name: "Inline IdP"\n'
+            "    issuer: https://idp.example.com\n"
+            "    client-id: klangk\n"
+            '    client-secret: "inline-secret"\n'
+        )
+        set_config_file(str(cfg))
+        try:
+            providers = oidc.load_config()
+            assert len(providers) == 1
+            assert providers[0].id == "inline"
+            assert providers[0].display_name == "Inline IdP"
+            assert providers[0].client_secret == "inline-secret"
+            assert providers[0].issuer == "https://idp.example.com"
+        finally:
+            set_config_file(None)
+
+    def test_external_file_overrides_inline(self, monkeypatch, tmp_path):
+        """When both inline and external are configured, external wins
+        (env var override, consistent with env > file precedence)."""
+        from klangk_backend.settings import set_config_file
+
+        # External file via env var
+        ext = tmp_path / "oidc.yaml"
+        ext.write_text(
+            yaml.dump(
+                [
+                    {
+                        "id": "external",
+                        "display-name": "External",
+                        "issuer": "https://ext.example.com",
+                        "client-id": "klangk",
+                        "client-secret": "ext",
+                    }
+                ]
+            )
+        )
+        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(ext))
+
+        # Inline in config file
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "oidc_providers:\n"
+            "  - id: inline\n"
+            '    display-name: "Inline"\n'
+            "    issuer: https://inline.example.com\n"
+            "    client-id: klangk\n"
+            '    client-secret: "inline"\n'
+        )
+        set_config_file(str(cfg))
+        try:
+            providers = oidc.load_config()
+            assert len(providers) == 1
+            assert providers[0].id == "external"
+        finally:
+            set_config_file(None)
+
+    def test_inline_file_secret_resolution(self, tmp_path):
+        """file: prefix in inline provider secrets resolves correctly."""
+        from klangk_backend.settings import set_config_file
+
+        secret = tmp_path / "secret.txt"
+        secret.write_text("resolved-secret\n")
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "oidc_providers:\n"
+            "  - id: fs\n"
+            '    display-name: "File Secret"\n'
+            "    issuer: https://idp.example.com\n"
+            "    client-id: klangk\n"
+            f'    client-secret: "file:{secret}"\n'
+        )
+        set_config_file(str(cfg))
+        try:
+            providers = oidc.load_config()
+            assert providers[0].client_secret == "resolved-secret"
+        finally:
+            set_config_file(None)
+
+    def test_inline_multiple_providers(self, tmp_path):
+        from klangk_backend.settings import set_config_file
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "oidc_providers:\n"
+            "  - id: a\n"
+            '    display-name: "A"\n'
+            "    issuer: https://a.example.com\n"
+            "    client-id: klangk\n"
+            '    client-secret: "sa"\n'
+            "  - id: b\n"
+            '    display-name: "B"\n'
+            "    issuer: https://b.example.com\n"
+            "    client-id: klangk\n"
+            '    client-secret: "sb"\n'
+        )
+        set_config_file(str(cfg))
+        try:
+            providers = oidc.load_config()
+            assert len(providers) == 2
+            assert providers[0].id == "a"
+            assert providers[1].id == "b"
+        finally:
+            set_config_file(None)
+
+    def test_falls_back_to_external_when_no_inline(
+        self, monkeypatch, tmp_path
+    ):
+        """With no inline providers, external file is used."""
+        ext = tmp_path / "oidc.yaml"
+        ext.write_text(
+            yaml.dump(
+                [
+                    {
+                        "id": "external",
+                        "display-name": "External",
+                        "issuer": "https://ext.example.com",
+                        "client-id": "klangk",
+                        "client-secret": "ext",
+                    }
+                ]
+            )
+        )
+        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(ext))
+        providers = oidc.load_config()
+        assert len(providers) == 1
+        assert providers[0].id == "external"
+
+
 class TestProviderRegistry:
     def test_init_and_lookup(self, monkeypatch, tmp_path):
         cfg = tmp_path / "oidc.yaml"

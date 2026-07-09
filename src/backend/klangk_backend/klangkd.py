@@ -8,13 +8,13 @@ config subsystem on the current TCP transport.
 
 Usage::
 
-    klangkd                          # requires /etc/klangkd/config.yaml
+    klangkd                          # requires /etc/klangkd.conf
     klangkd --config /path/to/cfg.yaml
     klangkd --config=none            # env-vars-only (the sole opt-out)
 
 Config-file resolution (three states, no implicit escape):
 
-1. Bare ``klangkd`` → requires ``/etc/klangkd/config.yaml``; missing → error.
+1. Bare ``klangkd`` → requires ``/etc/klangkd.conf``; missing → error.
 2. ``--config=<path>`` → that path required to exist; missing → error.
 3. ``--config=none`` → run from env vars + built-in defaults (no file).
 
@@ -33,7 +33,7 @@ from klangk_backend.settings import set_config_file, validate_at_startup
 
 # The default config-file location — a deployed klangkd finds its config here
 # with no args.  See #1395.
-DEFAULT_CONFIG_PATH = "/etc/klangkd/config.yaml"
+DEFAULT_CONFIG_PATH = "/etc/klangkd.conf"
 
 app = typer.Typer(
     add_completion=False,
@@ -67,7 +67,7 @@ def main(  # pragma: no cover
         "--config",
         "-c",
         help=(
-            "Path to a YAML config file (default: /etc/klangkd/config.yaml). "
+            "Path to a YAML config file (default: /etc/klangkd.conf). "
             "Use 'none' to run from env vars only (no config file)."
         ),
     ),

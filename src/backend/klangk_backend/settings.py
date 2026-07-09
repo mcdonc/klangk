@@ -241,6 +241,7 @@ class KlangkSettings(BaseSettings):
     # --- OIDC ---
     oidc_config: str | None = None
     oidc_login_hook: str | None = None
+    oidc_providers: list[dict] | None = None
 
     # --- SMTP / email ---
     smtp_host: str | None = None
