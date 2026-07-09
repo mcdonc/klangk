@@ -440,6 +440,14 @@ async def lifespan(app: FastAPI):
     # upstream). No-op when KLANGK_SSL_CERT_DIR is unset or empty of certs.
     ssl_trust.apply_backend_ssl_trust()
 
+    # Configure Logfire *after* SSL trust is applied. logfire.configure()
+    # probes the Logfire API at configuration time, so it must run once the
+    # SSL_* env vars (pointing at the merged CA bundle) are set, or it
+    # emits an unreachable-API warning against a private-CA endpoint (#1406).
+    # Was previously called at module scope, which runs before this lifespan
+    # and therefore before trust is applied.
+    setup_logfire(app)
+
     auth.require_secure_jwt_secret()
     plugins.load()
     oidc.init_providers()
@@ -489,9 +497,6 @@ def setup_logfire(app: FastAPI) -> bool:
     logfire.instrument_fastapi(app)
     logger.info("Logfire instrumentation enabled")
     return True
-
-
-setup_logfire(app)
 
 
 def cors_origins() -> list[str]:
