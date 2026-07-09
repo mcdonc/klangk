@@ -1,6 +1,7 @@
 """Klangk backend: FastAPI app with HTTP + WebSocket endpoints."""
 
 import asyncio
+import ipaddress
 import logging
 import os
 import secrets
@@ -129,8 +130,17 @@ async def ensure_admin_group() -> str:
 # loopback interface is reachable from the host browser and not from other
 # machines or from workspace containers (which appear via pasta NAT as the
 # host's non-loopback IP). ``0.0.0.0`` / ``::`` bind every interface and are
-# NOT loopback. See #1374.
-_LOOPBACK_BINDINGS = {"127.0.0.1", "::1", "localhost"}
+# NOT loopback. The full IPv4 loopback range (127.0.0.0/8) and IPv6 ``::1``
+# are admitted via :func:`ipaddress.is_loopback`; the bare hostname
+# ``localhost`` is admitted as a special case (it resolves to loopback but is
+# not itself an IP literal). See #1374.
+def _is_loopback_bind(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def enforce_no_auth_bind_safety() -> None:
@@ -152,7 +162,7 @@ def enforce_no_auth_bind_safety() -> None:
     if oidc.auth_modes() != "none":
         return
     host = resolve_env_value("KLANGK_LISTEN", "127.0.0.1") or "127.0.0.1"
-    if host in _LOOPBACK_BINDINGS:
+    if _is_loopback_bind(host):
         return
     if resolve_env_bool("KLANGK_ALLOW_INSECURE_NO_AUTH"):
         logger.warning(
@@ -165,8 +175,8 @@ def enforce_no_auth_bind_safety() -> None:
     raise SystemExit(
         "Refusing to start: KLANGK_AUTH_MODES=none but KLANGK_LISTEN=%r "
         "is not a loopback address. no-auth mode freely issues an admin "
-        "token, so it must bind loopback (127.0.0.1/::1/localhost). Set "
-        "KLANGK_LISTEN=127.0.0.1, or set KLANGK_ALLOW_INSECURE_NO_AUTH=1 "
+        "token, so it must bind loopback (127.0.0.0/8, ::1, or localhost). "
+        "Set KLANGK_LISTEN=127.0.0.1, or set KLANGK_ALLOW_INSECURE_NO_AUTH=1 "
         "to override if you understand the risk. See #1374." % host
     )
 

@@ -228,6 +228,64 @@ def peer_trusted(client_host: str | None) -> bool:
     return False
 
 
+# Loopback addresses used by ``client_is_loopback`` (the none-mode
+# /auth/local self-defense). This is the *real* loopback range
+# (127.0.0.0/8 + ::1), not the three-string allowlist the startup bind
+# gate uses — see main._LOOPBACK_BINDINGS for why that one is intentionally
+# strict.
+_LOOPBACK_ADDRS = {
+    ipaddress.ip_address("127.0.0.1"),
+    ipaddress.ip_address("::1"),
+}
+
+
+def client_is_loopback(headers=None, client_host: str | None = None) -> bool:
+    """True if the *effective* client of this request is loopback.
+
+    In ``KLANGK_AUTH_MODES=none`` the ``/auth/local`` endpoint freely issues an
+    admin token, so it must only be reachable from the operator's own machine.
+    nginx's per-location ``allow 127.0.0.1; deny all`` ACL is the primary
+    control, but the backend re-checks here as belt-and-suspenders — and, more
+    importantly, to close the front-proxy bypass: if a loopback proxy (caddy,
+    traefik, a sidecar) sits in front of nginx then *every* proxied request has
+    ``$remote_addr=127.0.0.1`` and the nginx ACL admits everyone. The backend
+    sees the real client in ``X-Real-IP``/``X-Forwarded-For`` (set by nginx)
+    and refuses non-loopback values independently.
+
+    Resolution mirrors :func:`derive_hosting_info`: forwarded headers are
+    trusted only when the immediate peer (``client_host``) is in
+    ``KLANGK_TRUSTED_PROXY_CIDRS`` (default loopback — every klangk deployment
+    runs the backend behind a local reverse proxy). A request that arrives
+    directly from a non-loopback peer (e.g. a workspace container bypassing
+    nginx) has its forwarded headers ignored, and the peer itself is
+    non-loopback, so it is rejected.
+
+    Fail-closed: missing client info or an unparseable IP rejects.
+    """
+    candidate = client_host
+    trust = (
+        (not _REJECT_PROXY)
+        and peer_trusted(client_host)
+        and headers is not None
+    )
+    if trust:
+        # nginx sets X-Real-IP to $remote_addr (the real client). Prefer it;
+        # fall back to the first hop in X-Forwarded-For. An empty/garbage
+        # header leaves the trusted peer (loopback) as candidate — which is
+        # loopback, so it still admits. A *spoofed* header from an untrusted
+        # peer never reaches here (trust gate above).
+        real_ip = headers.get("x-real-ip") or ""
+        if not real_ip:
+            xff = headers.get("x-forwarded-for") or ""
+            real_ip = xff.split(",")[0].strip() if xff else ""
+        if real_ip:
+            candidate = real_ip
+    try:
+        return ipaddress.ip_address(candidate) in _LOOPBACK_ADDRS
+    except ValueError:
+        return False
+
+
 def derive_hosting_info(
     headers=None, client_host: str | None = None
 ) -> tuple[str, str, str]:

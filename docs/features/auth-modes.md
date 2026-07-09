@@ -62,9 +62,11 @@ required from the caller:
 
 - The **frontend** calls `POST /api/v1/auth/local` on load and stores the
   token, skipping the login form entirely.
-- The **CLI** (`klangkc`) auto-logs in the first time any command runs — no
-  `klangkc login` required (the server must be registered once with
-  `klangkc login <server>`; thereafter every command works).
+- The **CLI** (`klangkc`) probes the server's auth mode on each
+  command (via `GET /config`) and auto-calls `/auth/local` when it's `none`,
+  so no `klangkc login` is ever needed — the first command after registering
+  the server with `klangkc login <server>` just works (and re-registration
+  isn't: a saved token that 401s triggers the same auto-login fallback).
 - **Workspace terminals** (WebSocket) flow the token through the existing
   `?token=` path unchanged.
 
@@ -78,12 +80,13 @@ database row.
 Two complementary controls keep `none` mode local:
 
 1. **Loopback bind gate.** The server **refuses to start** in `none` mode
-   unless `KLANGK_LISTEN` is a loopback address (`127.0.0.1`, `::1`,
-   `localhost`). The loopback bind is the identity boundary: only the
-   operator's own browser can reach `/auth/local`. To expose a no-auth server
-   on another interface (e.g. an isolated throwaway VM), set
-   `KLANGK_ALLOW_INSECURE_NO_AUTH=1` explicitly — you will get a warning, and
-   anyone who can reach that address is effectively logged in as admin.
+   unless `KLANGK_LISTEN` is a loopback address (any of the IPv4 loopback
+   range `127.0.0.0/8`, IPv6 `::1`, or the `localhost` hostname). The loopback
+   bind is the identity boundary: only the operator's own browser can reach
+   `/auth/local`. To expose a no-auth server on another interface (e.g. an
+   isolated throwaway VM), set `KLANGK_ALLOW_INSECURE_NO_AUTH=1` explicitly —
+   you will get a warning, and anyone who can reach that address is
+   effectively logged in as admin.
 
 2. **nginx per-location ACL.** `POST /api/v1/auth/local` is wrapped in a
    `location` block that does `allow 127.0.0.1; allow ::1; deny all;`.
@@ -91,6 +94,23 @@ Two complementary controls keep `none` mode local:
    _non-loopback_ IP, so a container hitting `/auth/local` is denied with 403
    at nginx — while the host browser (127.0.0.1) succeeds. nginx itself stays
    bound to `0.0.0.0` (soliplex, hosted apps, and remote browsers rely on it).
+
+3. **Backend source-IP self-check.** As a third layer (and to close the
+   front-proxy bypass), the `local_login` handler independently verifies the
+   _effective_ client is loopback: it trusts `X-Real-IP` / `X-Forwarded-For`
+   only when the immediate peer is itself a trusted (loopback) proxy, so a
+   non-loopback caller can't spoof them. This matters when a loopback proxy
+   (caddy, traefik, a sidecar) sits in front of nginx — then every proxied
+   request has `$remote_addr=127.0.0.1` and the nginx ACL alone would admit
+   everyone; the backend re-check catches the real client via the forwarded
+   header and refuses non-loopback values.
+
+> **Do not place a non-loopback proxy in front of nginx in `none` mode.**
+> A loopback front-proxy makes `$remote_addr` loopback for all requests, so
+> the nginx ACL admits everyone; control #3 above still refuses non-loopback
+> real clients via `X-Real-IP`, so you stay safe, but the cleaner topology is
+> to let klangk's own nginx be the edge or to use a real auth mode
+> (`password`/`oidc`/`both`) when exposing the server beyond loopback.
 
 ### Why the token is kept
 

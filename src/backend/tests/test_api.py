@@ -709,8 +709,50 @@ class TestLocalLogin:
         resp = await client.post("/api/v1/auth/local")
         assert resp.status_code == 200
 
+    # --- source-IP self-defense (front-proxy bypass, #1374 review) ---
+    # The nginx `allow 127.0.0.1; deny all` ACL keys off $remote_addr, which
+    # is the loopback nginx<->uvicorn hop when any loopback proxy fronts nginx.
+    # So the ACL alone admits a workspace container that reached nginx through
+    # such a proxy. The backend re-checks the effective client here and refuses
+    # non-loopback X-Real-IP even when the immediate peer is loopback.
 
-# --- Resend verification ---
+    async def test_rejects_nonloopback_real_client_via_nginx(
+        self, client, db, monkeypatch
+    ):
+        """Front-proxy bypass: peer is loopback (nginx) but X-Real-IP is the
+        real client (a workspace container) -> backend refuses independently."""
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        await model.create_user(
+            "local@example.com",
+            auth.hash_password("unused"),
+            verified=True,
+        )
+        resp = await client.post(
+            "/api/v1/auth/local",
+            headers={"X-Real-IP": "10.89.0.5"},
+        )
+        assert resp.status_code == 403
+        assert "loopback" in resp.json()["detail"].lower()
+
+    async def test_admits_loopback_real_client_via_nginx(
+        self, client, db, monkeypatch
+    ):
+        """The benign mirror: peer loopback (nginx), X-Real-IP loopback (the
+        operator's browser) -> admit. (ASGI test client peer is itself
+        loopback, satisfying the trust gate that honors X-Real-IP.)"""
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        await model.create_user(
+            "local@example.com",
+            auth.hash_password("unused"),
+            verified=True,
+        )
+        resp = await client.post(
+            "/api/v1/auth/local",
+            headers={"X-Real-IP": "127.0.0.1"},
+        )
+        assert resp.status_code == 200
 
 
 class TestResendVerification:

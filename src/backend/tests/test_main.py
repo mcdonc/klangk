@@ -88,11 +88,37 @@ class TestNoAuthBindSafety:
             monkeypatch.setenv("KLANGK_LISTEN", host)
             assert main.enforce_no_auth_bind_safety() is None
 
+    def test_allows_full_loopback_range(self, monkeypatch):
+        """The whole 127.0.0.0/8 range is loopback (RFC 990), not just
+        127.0.0.1 — ``127.0.0.2`` is a valid loopback bind and must be
+        admitted (the original exact-match allowlist wrongly refused it)."""
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        for host in ("127.0.0.2", "127.255.255.254"):
+            monkeypatch.setenv("KLANGK_LISTEN", host)
+            assert main.enforce_no_auth_bind_safety() is None
+
     def test_allows_loopback_default_when_listen_unset(self, monkeypatch):
         monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         monkeypatch.delenv("KLANGK_LISTEN", raising=False)
         # KLANGK_LISTEN defaults to 127.0.0.1 (#1375).
         assert main.enforce_no_auth_bind_safety() is None
+
+    def test_refuses_ipv6_wildcard(self, monkeypatch):
+        """``::`` binds every interface (incl. IPv6) and is NOT loopback —
+        must be refused even though it isn't ``0.0.0.0``."""
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_LISTEN", "::")
+        with pytest.raises(SystemExit) as exc_info:
+            main.enforce_no_auth_bind_safety()
+        assert "::" in str(exc_info.value)
+
+    def test_refuses_non_loopback_hostname(self, monkeypatch):
+        """A bare hostname (other than ``localhost``) is not an IP literal and
+        not a recognized loopback name — fail-closed (refuse)."""
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_LISTEN", "myhost")
+        with pytest.raises(SystemExit):
+            main.enforce_no_auth_bind_safety()
 
     def test_refuses_non_loopback_bind(self, monkeypatch):
         monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
