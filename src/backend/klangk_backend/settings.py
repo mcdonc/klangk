@@ -1,4 +1,4 @@
-"""Typed configuration via pydantic-settings (#1394).
+"""Typed configuration via pydantic-settings (#1394, #1395).
 
 This module is the single source of truth for all ``KLANGK_*`` configuration.
 It replaces the ad-hoc ``resolve_env_value`` / ``resolve_env_bool`` /
@@ -31,7 +31,12 @@ import logging
 import os
 import subprocess
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    YamlConfigSettingsSource,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +153,35 @@ class KlangkSettings(BaseSettings):
         # flat field (access_token_hours), not a nested table.
     )
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Add a YAML config file source when one is configured.
+
+        Precedence (highest first): **env vars** > **config file** > built-in
+        defaults.  pydantic-settings applies sources in tuple order with later
+        entries overriding earlier ones, so env (later) overrides the file
+        (earlier), which overrides the built-in defaults (from the model).
+        When no config file is set (:data:`_config_file_path` is None or
+        "none"), only the default sources are used (env-only behavior from
+        #1394).
+        """
+        sources: list[PydanticBaseSettingsSource] = [env_settings]
+        path = _config_file_path
+        if path is not None and path != "none":
+            sources.append(
+                YamlConfigSettingsSource(settings_cls, yaml_file=path)
+            )
+        # init_settings (kwargs passed to the constructor) wins over everything.
+        sources.append(init_settings)
+        return tuple(sources)
+
     # --- Auth / identity ---
     auth_modes: str | None = None
     jwt_secret: str | None = _INSECURE_DEFAULT_SECRET
@@ -247,21 +281,55 @@ class KlangkSettings(BaseSettings):
 
 
 # ---------------------------------------------------------------------------
-# Singleton with env-change-detection cache
+# Singleton with env-change-detection cache + config-file path
 # ---------------------------------------------------------------------------
 
 _settings_instance: KlangkSettings | None = None
 _settings_env_signature: tuple | None = None
 
+# The config-file path, set by ``klangkd --config <path>`` before the settings
+# are first instantiated.  None means "no config file" (the #1394 env-only
+# behavior); "none" is the explicit opt-out string (same effect).  Any other
+# value is a filesystem path to a YAML config file.
+_config_file_path: str | None = None
+
+
+def set_config_file(path: str | None) -> None:
+    """Set the config-file path (called by the ``klangkd`` launcher).
+
+    ``path`` is one of:
+    - A filesystem path to a YAML config file (must exist when settings are
+      instantiated; checked by the launcher, not here).
+    - ``"none"`` — the explicit opt-out: run from env vars + built-in defaults
+      only, no config file (#1394 behavior, made explicit).
+    - ``None`` — reset to the default (no config file; the launcher handles the
+      default-location logic).
+
+    Invalidates the settings cache so the next :func:`get_settings` call
+    re-instantiates with the new source chain.
+    """
+    global _config_file_path
+    _config_file_path = path
+    _invalidate_cache()
+
+
+def get_config_file() -> str | None:
+    """Return the currently-set config-file path (or None)."""
+    return _config_file_path
+
 
 def _env_signature() -> tuple:
-    """A cheap hash of all KLANGK_* env vars, for change detection."""
-    return tuple(
-        sorted(
-            (k, v)
-            for k, v in os.environ.items()
-            if k.startswith("KLANGK_") or k.startswith("LOGFIRE_")
-        )
+    """A cheap hash of all KLANGK_* env vars + the config-file path, for
+    change detection."""
+    return (
+        _config_file_path,
+        tuple(
+            sorted(
+                (k, v)
+                for k, v in os.environ.items()
+                if k.startswith("KLANGK_") or k.startswith("LOGFIRE_")
+            )
+        ),
     )
 
 
