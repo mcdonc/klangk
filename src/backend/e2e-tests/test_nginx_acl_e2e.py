@@ -83,15 +83,24 @@ class TestNginxAclConfig:
             },
             str(tmp_path),
         )
-        assert "allow 10.89.0.0/24;" in conf
-        assert "allow 172.30.0.0/16;" in conf
-        assert "deny all;" in conf
-        # Explicit override: 127.0.0.1 is NOT implicitly added.
-        assert "allow 127.0.0.1;" not in conf
+        # Scope the CONTAINER_ACL checks to a container-endpoint location
+        # block (browser-delegate), not the whole config — the /auth/local
+        # block (#1374) legitimately emits its own `allow 127.0.0.1;`, so a
+        # whole-config grep would be ambiguous.
+        bd = re.search(
+            r"location /api/v1/browser-delegate \{(.*?)\}",
+            conf,
+            re.DOTALL,
+        ).group(1)
+        assert "allow 10.89.0.0/24;" in bd
+        assert "allow 172.30.0.0/16;" in bd
+        assert "deny all;" in bd
+        # Explicit override: 127.0.0.1 is NOT implicitly added to CONTAINER_ACL.
+        assert "allow 127.0.0.1;" not in bd
         # Broad ranges should NOT appear.
-        assert "allow 172.16.0.0/12;" not in conf
-        assert "allow 10.0.0.0/8;" not in conf
-        assert "allow 192.168.0.0/16;" not in conf
+        assert "allow 172.16.0.0/12;" not in bd
+        assert "allow 10.0.0.0/8;" not in bd
+        assert "allow 192.168.0.0/16;" not in bd
 
     def test_auto_detect_host_ips(self, tmp_path):
         """Without override, host IPv4 addresses are auto-detected."""
@@ -99,13 +108,20 @@ class TestNginxAclConfig:
             {"KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434"},
             str(tmp_path),
         )
-        # 127.0.0.1 is always a host IP, so it must appear.
-        assert "allow 127.0.0.1;" in conf
-        assert "deny all;" in conf
+        # Scope to the container-endpoint ACL (see test_explicit_subnets for
+        # why not whole-config): 127.0.0.1 is always a host IP, so it must be
+        # allowed in CONTAINER_ACL.
+        bd = re.search(
+            r"location /api/v1/browser-delegate \{(.*?)\}",
+            conf,
+            re.DOTALL,
+        ).group(1)
+        assert "allow 127.0.0.1;" in bd
+        assert "deny all;" in bd
         # Broad RFC1918 ranges should NOT appear (those are fallback only).
-        assert "allow 172.16.0.0/12;" not in conf
-        assert "allow 10.0.0.0/8;" not in conf
-        assert "allow 192.168.0.0/16;" not in conf
+        assert "allow 172.16.0.0/12;" not in bd
+        assert "allow 10.0.0.0/8;" not in bd
+        assert "allow 192.168.0.0/16;" not in bd
 
     def test_no_llm_block_without_url(self, tmp_path):
         """LLM proxy block is omitted when KLANGK_LLM_BASE_URL is unset."""
