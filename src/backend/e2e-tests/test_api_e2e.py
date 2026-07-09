@@ -29,10 +29,22 @@ _SANITIZED_VARS = [
 
 
 def _clean_env():
-    """Return os.environ with test-affecting vars removed."""
+    """Return os.environ with test-affecting vars removed, pinned to a known
+    baseline.
+
+    ``KLANGK_AUTH_MODES`` is stripped from the ambient env (above) and then
+    set explicitly to ``password`` here: the production default changed to
+    ``none`` (#1374), but these tests exercise the password auth flow
+    (login, register, lockout, ACL via ``admin_headers``). Stripping alone
+    used to yield ``password`` via the old unset default; that's no longer
+    true, so pin it explicitly. Tests that need a different mode set it in
+    their own env dict, which overrides this baseline (the spread order in
+    ``_start_server`` puts explicit keys after ``_clean_env()``).
+    """
     env = dict(os.environ)
     for var in _SANITIZED_VARS:
         env.pop(var, None)
+    env["KLANGK_AUTH_MODES"] = "password"
     return env
 
 

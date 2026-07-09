@@ -133,6 +133,10 @@ async function globalSetup() {
         KLANGK_JWT_SECRET: "e2e-test-secret",
         KLANGK_DEFAULT_USER: "admin@example.com",
         KLANGK_DEFAULT_PASSWORD: "admin",
+        // These tests exercise the password auth flow (login, register,
+        // lockout); pin password mode explicitly — the production default
+        // is `none` when unset (#1374), which disables all of that.
+        KLANGK_AUTH_MODES: "password",
         KLANGK_TEST_MODE: "1",
         KLANGK_PORT_RANGE_START: "19200",
         LOGFIRE_TOKEN: "", // Disable Logfire tracing during E2E tests
