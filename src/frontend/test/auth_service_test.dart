@@ -342,6 +342,58 @@ void main() {
     });
   });
 
+  group('AuthService.localLogin', () {
+    test('successful local login saves token and returns null', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        expect(request.url.path, '/api/v1/auth/local');
+        // No JSON body expected in none (no-auth) mode.
+        return http.Response(
+          jsonEncode({'access_token': 'free-token', 'email': 'a@x.com'}),
+          200,
+        );
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final error = await service.localLogin();
+      expect(error, isNull);
+      expect(service.token, 'free-token');
+      expect(service.isLoggedIn, isTrue);
+      expect(service.loading, isFalse);
+    });
+
+    test('failed local login returns error message', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response(
+          jsonEncode({'detail': "Local login is not enabled"}),
+          403,
+        );
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final error = await service.localLogin();
+      expect(error, "Local login is not enabled");
+      expect(service.isLoggedIn, isFalse);
+      expect(service.loading, isFalse);
+    });
+
+    test('connection error returns error string', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        throw Exception('Network unreachable');
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final error = await service.localLogin();
+      expect(error, contains('Connection error'));
+      expect(service.isLoggedIn, isFalse);
+    });
+  });
+
   group('AuthService.register', () {
     test('successful register saves token', () async {
       testAuthHttpClientOverride = MockClient((request) async {

@@ -14,6 +14,7 @@ nav = [
   { "Features" = [
     { "Overview" = "features/index.md" },
     { "Authentication" = "features/authentication.md" },
+    { "Auth Modes" = "features/auth-modes.md" },
     { "Authorization" = "features/authorization.md" },
     { "Handles" = "features/handles.md" },
     { "Admin Management" = "features/admin-management.md" },

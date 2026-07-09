@@ -629,7 +629,130 @@ class TestAuthRoutes:
         assert resp.status_code == 401
 
 
-# --- Resend verification ---
+# --- Local (no-auth) login (#1374) ---
+
+
+class TestLocalLogin:
+    """POST /api/v1/auth/local — no-login single-user mode token handout."""
+
+    async def test_returns_token_for_seeded_default_user(
+        self, client, db, monkeypatch
+    ):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        await model.create_user(
+            "local@example.com",
+            auth.hash_password("unused"),
+            verified=True,
+        )
+        resp = await client.post("/api/v1/auth/local")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["email"] == "local@example.com"
+        assert data["token_type"] == "bearer"
+        token = data["access_token"]
+        # The token flows through the normal JWT gate unchanged.
+        claims = auth.decode_token(token)
+        assert claims["email"] == "local@example.com"
+
+    async def test_token_authorizes_requests(self, client, db, monkeypatch):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        await model.create_user(
+            "local@example.com",
+            auth.hash_password("unused"),
+            verified=True,
+        )
+        token = (await client.post("/api/v1/auth/local")).json()[
+            "access_token"
+        ]
+        # An authenticated endpoint accepts the freely-minted token.
+        resp = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["email"] == "local@example.com"
+
+    async def test_disabled_when_not_none_mode(self, client, db, monkeypatch):
+        # In password mode (the explicit opposite of none) the endpoint refuses.
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
+        resp = await client.post("/api/v1/auth/local")
+        assert resp.status_code == 403
+
+    async def test_disabled_in_both_mode(self, client, db, monkeypatch):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "both")
+        resp = await client.post("/api/v1/auth/local")
+        assert resp.status_code == 403
+
+    async def test_500_when_default_user_missing(
+        self, client, db, monkeypatch
+    ):
+        # seed_default_user() runs in the lifespan, which the minimal test
+        # app skips — so if it were somehow bypassed at runtime the endpoint
+        # surfaces a 500 rather than minting a token for a ghost user.
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_DEFAULT_USER", "ghost@example.com")
+        resp = await client.post("/api/v1/auth/local")
+        assert resp.status_code == 500
+
+    async def test_no_body_required(self, client, db, monkeypatch):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        await model.create_user(
+            "local@example.com",
+            auth.hash_password("unused"),
+            verified=True,
+        )
+        # Simple POST (no JSON body, no custom header) — the loopback bind +
+        # nginx ACL, not a credential, is the identity boundary in this mode.
+        resp = await client.post("/api/v1/auth/local")
+        assert resp.status_code == 200
+
+    # --- source-IP self-defense (front-proxy bypass, #1374 review) ---
+    # The nginx `allow 127.0.0.1; deny all` ACL keys off $remote_addr, which
+    # is the loopback nginx<->uvicorn hop when any loopback proxy fronts nginx.
+    # So the ACL alone admits a workspace container that reached nginx through
+    # such a proxy. The backend re-checks the effective client here and refuses
+    # non-loopback X-Real-IP even when the immediate peer is loopback.
+
+    async def test_rejects_nonloopback_real_client_via_nginx(
+        self, client, db, monkeypatch
+    ):
+        """Front-proxy bypass: peer is loopback (nginx) but X-Real-IP is the
+        real client (a workspace container) -> backend refuses independently."""
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        await model.create_user(
+            "local@example.com",
+            auth.hash_password("unused"),
+            verified=True,
+        )
+        resp = await client.post(
+            "/api/v1/auth/local",
+            headers={"X-Real-IP": "10.89.0.5"},
+        )
+        assert resp.status_code == 403
+        assert "loopback" in resp.json()["detail"].lower()
+
+    async def test_admits_loopback_real_client_via_nginx(
+        self, client, db, monkeypatch
+    ):
+        """The benign mirror: peer loopback (nginx), X-Real-IP loopback (the
+        operator's browser) -> admit. (ASGI test client peer is itself
+        loopback, satisfying the trust gate that honors X-Real-IP.)"""
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        await model.create_user(
+            "local@example.com",
+            auth.hash_password("unused"),
+            verified=True,
+        )
+        resp = await client.post(
+            "/api/v1/auth/local",
+            headers={"X-Real-IP": "127.0.0.1"},
+        )
+        assert resp.status_code == 200
 
 
 class TestResendVerification:
@@ -7511,7 +7634,8 @@ class TestOIDCConfig:
         assert "oidc_providers" in data
         assert "auth_modes" in data
         assert data["oidc_providers"] == []
-        assert data["auth_modes"] == "password"
+        # Production default (no OIDC, mode unset) is now ``none`` (#1374).
+        assert data["auth_modes"] == "none"
 
     async def test_config_with_providers(self, client, monkeypatch):
         monkeypatch.setattr(

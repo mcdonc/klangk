@@ -162,6 +162,30 @@ docker run -d \
 
 See the [OIDC documentation](../reference/oidc.md) for the config file format.
 
+### Deployment profiles (auth modes)
+
+`KLANGK_AUTH_MODES` selects the deployment profile — same binary, different
+config. For a **no-login local-dev** server (single user, your own browser),
+use `none` — it auto-issues a token for the seeded default user and must bind
+loopback:
+
+```bash
+docker run -d \
+  -e KLANGK_AUTH_MODES=none \
+  ...
+```
+
+See [Auth Modes](../features/auth-modes.md) for the full
+local-dev / customer-locked / team mapping.
+
+> **Note for Docker users:** `none` is loopback-only by design, and a
+> `docker run -p` published port isn't loopback — so `none` mode does not
+> yet work with the published host image (the nginx `/auth/local` ACL denies
+> the port-forwarded request). For the Docker image, set
+> `KLANGK_AUTH_MODES=password` (or `oidc`/`both`) until #1391 lands.
+> Locally (devenv, or running the binary on your own machine) `none` works
+> out of the box.
+
 ## Building a Custom Image (Plugins)
 
 A custom image build is needed **only for plugins**. If you don't need plugins, use the stock `klangk-host` image with the runtime customization above.

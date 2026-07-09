@@ -37,7 +37,7 @@ class _LoginPageState extends State<LoginPage> {
   List<Map<String, dynamic>> _oidcProviders = [];
   String _authModes = 'password';
 
-  bool get _showPasswordForm => _authModes != 'oidc';
+  bool get _showPasswordForm => _authModes != 'oidc' && _authModes != 'none';
 
   @override
   void initState() {
@@ -59,20 +59,39 @@ class _LoginPageState extends State<LoginPage> {
         // The tab title was set from initState before config resolved; reapply
         // now that Branding.name is known.
         setPageTitle('Login');
+        final authModes = data['auth_modes'] ?? 'password';
         if (mounted) {
           setState(() {
             _registrationEnabled = data['registration_enabled'] ?? true;
             _oidcProviders = List<Map<String, dynamic>>.from(
               data['oidc_providers'] ?? [],
             );
-            _authModes = data['auth_modes'] ?? 'password';
+            _authModes = authModes;
           });
+        }
+        // No-auth single-user mode: auto-log in as the seeded default user
+        // with no prompt and skip rendering the login form (#1374).
+        if (authModes == 'none') {
+          await _autoLocalLogin();
         }
       }
     } catch (e) {
       // coverage:ignore-start
       debugPrint('[LoginPage] load config failed: $e');
     } // coverage:ignore-end
+  }
+
+  Future<void> _autoLocalLogin() async {
+    final auth = context.read<AuthService>();
+    final error = await auth.localLogin();
+    if (!mounted) return;
+    if (error != null) {
+      // Surface the failure so the operator sees why login stalled rather
+      // than a perpetual spinner.
+      setState(() => _error = error);
+    }
+    // On success, AuthService state change triggers GoRouter to navigate
+    // away from /login — no form is ever rendered.
   }
 
   @override
@@ -304,8 +323,25 @@ class _LoginPageState extends State<LoginPage> {
                       _isRegister ? 'Create Account' : 'Log In',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
-                    if (_oidcProviders.isNotEmpty) ..._buildOidcButtons(),
-                    if (_showPasswordForm) ..._buildPasswordForm(context, auth),
+                    if (_authModes == 'none')
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 32),
+                        child: auth.loading && _error == null
+                            ? const CircularProgressIndicator()
+                            : Text(
+                                _error ?? 'Signing in to your local instance…',
+                                style: TextStyle(
+                                  color: _error != null
+                                      ? Theme.of(context).colorScheme.error
+                                      : KColors.textMuted,
+                                ),
+                              ),
+                      )
+                    else ...[
+                      if (_oidcProviders.isNotEmpty) ..._buildOidcButtons(),
+                      if (_showPasswordForm)
+                        ..._buildPasswordForm(context, auth),
+                    ],
                     // Deployer-configured legal/support links (#1177).
                     // Legal links (Terms/Privacy/AUP) are most prominent on
                     // the auth screens; the support link is included too so a

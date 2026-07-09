@@ -57,7 +57,8 @@ _ensure_env() {
   if grep -qF "KLANGK_INSTANCE_ID=$DEMO_INSTANCE" .env 2>/dev/null &&
     grep -qF "KLANGK_PORT=$DEMO_PORT" .env 2>/dev/null &&
     grep -qF "KLANGK_NGINX_PORT=$DEMO_NGINX_PORT" .env 2>/dev/null &&
-    grep -qF "KLANGK_HOSTING_HOSTNAME=localhost:$DEMO_NGINX_PORT" .env 2>/dev/null; then
+    grep -qF "KLANGK_HOSTING_HOSTNAME=localhost:$DEMO_NGINX_PORT" .env 2>/dev/null &&
+    grep -qF "KLANGK_AUTH_MODES=password" .env 2>/dev/null; then
     return 0
   fi
   echo "  configuring demo ports in .env (instance=$DEMO_INSTANCE, backend=$DEMO_PORT, nginx=$DEMO_NGINX_PORT)"
@@ -74,6 +75,11 @@ _ensure_env() {
     echo "KLANGK_INSTANCE_ID=$DEMO_INSTANCE"
     echo "KLANGK_PORT=$DEMO_PORT"
     echo "KLANGK_NGINX_PORT=$DEMO_NGINX_PORT"
+    # The demo exercises the password auth flow (login, register, lockout),
+    # but the production default for KLANGK_AUTH_MODES (unset, no OIDC) is
+    # `none` (#1374), which disables password login/registration. Pin the
+    # demo backend to `password` so the default change doesn't break it.
+    echo "KLANGK_AUTH_MODES=password"
     # Post-#1241: derive_hosting_info treats the env var as the
     # authoritative override, so the eager-start path (no live request)
     # builds hosted URLs that resolve through nginx on the public port.

@@ -671,6 +671,137 @@ class TestDeriveHostingInfo:
         assert b == ""
 
 
+# --- client_is_loopback (none-mode /auth/local self-defense) ---
+
+
+class TestClientIsLoopback:
+    """client_is_loopback powers the /auth/local backend self-check (#1374).
+
+    It must admit a real loopback browser, admit a request proxied by nginx
+    (peer loopback, real client loopback in X-Real-IP), and reject a workspace
+    container (peer loopback-but-nginx-set-real-client-to-nonloopback, or a
+    direct connection from a non-loopback peer). Forwarded headers from an
+    untrusted peer are ignored so they can't be spoofed."""
+
+    def _hdr(self, **kw):
+        return kw
+
+    def test_direct_loopback_peer_admitted(self, monkeypatch):
+        import klangk_backend.util as util
+
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        # No forwarded headers, peer is loopback -> the peer IS the client.
+        assert util.client_is_loopback(self._hdr(), "127.0.0.1") is True
+        assert util.client_is_loopback(self._hdr(), "::1") is True
+
+    def test_nginx_proxied_loopback_client_admitted(self, monkeypatch):
+        """nginx fronts uvicorn on loopback; the real browser is loopback.
+        nginx set X-Real-IP to the real client (loopback) -> admit."""
+        import klangk_backend.util as util
+
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        h = self._hdr(**{"x-real-ip": "127.0.0.1"})
+        assert util.client_is_loopback(h, "127.0.0.1") is True
+
+    def test_nginx_proxied_nonloopback_client_rejected(self, monkeypatch):
+        """The front-proxy bypass: a workspace container reaches nginx, nginx
+        proxies to uvicorn on loopback, but X-Real-IP shows the real client
+        is non-loopback -> reject (the nginx ACL alone would have admitted
+        it because $remote_addr was nginx's loopback)."""
+        import klangk_backend.util as util
+
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        h = self._hdr(**{"x-real-ip": "10.89.0.5"})
+        assert util.client_is_loopback(h, "127.0.0.1") is False
+
+    def test_x_forwarded_for_fallback(self, monkeypatch):
+        """Without X-Real-IP, the first hop of X-Forwarded-For is used."""
+        import klangk_backend.util as util
+
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        h = self._hdr(**{"x-forwarded-for": "127.0.0.1, 10.0.0.1"})
+        assert util.client_is_loopback(h, "127.0.0.1") is True
+        h = self._hdr(**{"x-forwarded-for": "10.89.0.5, 127.0.0.1"})
+        assert util.client_is_loopback(h, "127.0.0.1") is False
+
+    def test_spoofed_header_from_untrusted_peer_ignored(self, monkeypatch):
+        """A direct (non-loopback) caller claims X-Real-IP=127.0.0.1 to try to
+        sneak past. The trust gate ignores forwarded headers from untrusted
+        peers, so its real non-loopback peer is what's evaluated -> reject."""
+        import klangk_backend.util as util
+
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        h = self._hdr(**{"x-real-ip": "127.0.0.1"})
+        assert util.client_is_loopback(h, "10.89.0.5") is False
+
+    def test_direct_non_loopback_peer_rejected(self, monkeypatch):
+        import klangk_backend.util as util
+
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        assert util.client_is_loopback(self._hdr(), "10.89.0.5") is False
+
+    def test_reject_proxy_header_forces_peer_only(self, monkeypatch):
+        """KLANGK_REJECT_PROXY_HEADERS=1 disables forwarded-header trust, so
+        the loopback peer (nginx) is evaluated directly -> admit, and the
+        spoofed non-loopback X-Real-IP is ignored."""
+        import klangk_backend.util as util
+
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", True)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        h = self._hdr(**{"x-real-ip": "10.89.0.5"})
+        assert util.client_is_loopback(h, "127.0.0.1") is True
+
+    def test_missing_client_host_rejected(self, monkeypatch):
+        import klangk_backend.util as util
+
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        assert util.client_is_loopback(self._hdr(), None) is False
+
+    def test_garbage_ip_rejected(self, monkeypatch):
+        import klangk_backend.util as util
+
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        assert util.client_is_loopback(self._hdr(), "not-an-ip") is False
+
+    def test_empty_forwarded_headers_fall_back_to_peer(self, monkeypatch):
+        """Trusted peer but no forwarded header at all: the peer (nginx,
+        loopback) is the candidate -> admit (a loopback browser hitting
+        nginx directly with no X-Real-IP set is the benign case)."""
+        import klangk_backend.util as util
+
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        assert util.client_is_loopback(self._hdr(), "127.0.0.1") is True
+
+
 # --- handle_steer ---
 
 

@@ -83,15 +83,24 @@ class TestNginxAclConfig:
             },
             str(tmp_path),
         )
-        assert "allow 10.89.0.0/24;" in conf
-        assert "allow 172.30.0.0/16;" in conf
-        assert "deny all;" in conf
-        # Explicit override: 127.0.0.1 is NOT implicitly added.
-        assert "allow 127.0.0.1;" not in conf
+        # Scope the CONTAINER_ACL checks to a container-endpoint location
+        # block (browser-delegate), not the whole config — the /auth/local
+        # block (#1374) legitimately emits its own `allow 127.0.0.1;`, so a
+        # whole-config grep would be ambiguous.
+        bd = re.search(
+            r"location /api/v1/browser-delegate \{(.*?)\}",
+            conf,
+            re.DOTALL,
+        ).group(1)
+        assert "allow 10.89.0.0/24;" in bd
+        assert "allow 172.30.0.0/16;" in bd
+        assert "deny all;" in bd
+        # Explicit override: 127.0.0.1 is NOT implicitly added to CONTAINER_ACL.
+        assert "allow 127.0.0.1;" not in bd
         # Broad ranges should NOT appear.
-        assert "allow 172.16.0.0/12;" not in conf
-        assert "allow 10.0.0.0/8;" not in conf
-        assert "allow 192.168.0.0/16;" not in conf
+        assert "allow 172.16.0.0/12;" not in bd
+        assert "allow 10.0.0.0/8;" not in bd
+        assert "allow 192.168.0.0/16;" not in bd
 
     def test_auto_detect_host_ips(self, tmp_path):
         """Without override, host IPv4 addresses are auto-detected."""
@@ -99,13 +108,20 @@ class TestNginxAclConfig:
             {"KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434"},
             str(tmp_path),
         )
-        # 127.0.0.1 is always a host IP, so it must appear.
-        assert "allow 127.0.0.1;" in conf
-        assert "deny all;" in conf
+        # Scope to the container-endpoint ACL (see test_explicit_subnets for
+        # why not whole-config): 127.0.0.1 is always a host IP, so it must be
+        # allowed in CONTAINER_ACL.
+        bd = re.search(
+            r"location /api/v1/browser-delegate \{(.*?)\}",
+            conf,
+            re.DOTALL,
+        ).group(1)
+        assert "allow 127.0.0.1;" in bd
+        assert "deny all;" in bd
         # Broad RFC1918 ranges should NOT appear (those are fallback only).
-        assert "allow 172.16.0.0/12;" not in conf
-        assert "allow 10.0.0.0/8;" not in conf
-        assert "allow 192.168.0.0/16;" not in conf
+        assert "allow 172.16.0.0/12;" not in bd
+        assert "allow 10.0.0.0/8;" not in bd
+        assert "allow 192.168.0.0/16;" not in bd
 
     def test_no_llm_block_without_url(self, tmp_path):
         """LLM proxy block is omitted when KLANGK_LLM_BASE_URL is unset."""
@@ -193,6 +209,51 @@ class TestNginxAclConfig:
         bd_block = bd_match.group(1)
         assert "allow 10.89.0.0/24;" in bd_block
         assert "deny all;" in bd_block
+
+    # --- /api/v1/auth/local ACL (#1374) ---
+    # In `none` mode this endpoint freely issues an admin token, so the nginx
+    # `allow 127.0.0.1/::1; deny all` ACL is the control that keeps workspace
+    # containers (which appear via pasta NAT as the host's non-loopback IP)
+    # from minting one. It is always generated regardless of mode (outside
+    # `none` the backend self-defends), so we assert it unconditionally — a
+    # future refactor of nginx.sh that silently drops this block would fail
+    # here, where before #1374's review there was no test at all.
+
+    def test_auth_local_has_loopback_acl(self, tmp_path):
+        """The /auth/local token handout always gets a loopback-only ACL."""
+        conf = _run_nginx_sh({}, str(tmp_path))
+        # Exact-match location (the `=`). Anchor on the opening brace and pull
+        # up to the closing brace so we inspect just this block.
+        m = re.search(
+            r"location = /api/v1/auth/local \{(.*?)\}",
+            conf,
+            re.DOTALL,
+        )
+        assert m, "/auth/local location block not found"
+        block = m.group(1)
+        assert "allow 127.0.0.1;" in block
+        assert "allow ::1;" in block
+        assert "deny all;" in block
+        # And the block must proxy to the backend (not just deny).
+        assert "proxy_pass" in block
+
+    def test_auth_local_acl_independent_of_container_subnets(self, tmp_path):
+        """The /auth/local ACL is a fixed loopback allowlist — it must NOT be
+        widened by KLANGK_CONTAINER_SUBNETS, or a container could reach the
+        free-token endpoint."""
+        conf = _run_nginx_sh(
+            {"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"}, str(tmp_path)
+        )
+        m = re.search(
+            r"location = /api/v1/auth/local \{(.*?)\}",
+            conf,
+            re.DOTALL,
+        )
+        assert m, "/auth/local location block not found"
+        block = m.group(1)
+        # Container subnet must not be allowed on the free-token endpoint.
+        assert "allow 10.89.0.0/24;" not in block
+        assert "deny all;" in block
 
     # --- deny-by-default on the catch-all `location /` (#1376) ---
     # The catch-all denies the container source IPs so a container can
@@ -602,3 +663,139 @@ class TestNginxDenyByDefault:
         )
         assert r.status_code == 401
         assert r.status_code != 403
+
+
+class TestNginxAuthLocalAcl:
+    """Runtime enforcement of the /api/v1/auth/local loopback ACL (#1374).
+
+    In `none` mode this endpoint freely issues an admin token, so the nginx
+    `allow 127.0.0.1/::1; deny all` ACL is the control that keeps a workspace
+    container (which appears via pasta NAT as the host's non-loopback IP) from
+    minting one. This is the runtime complement to the config-gen tests in
+    TestNginxAclConfig.test_auth_local_* — it proves the generated ACL actually
+    fires at request time, not just that the text is present in nginx.conf.
+
+    Two layers are exercised:
+      * nginx ACL:   a non-loopback source -> 403 at nginx (never proxied).
+      * backend:     a loopback source -> 200 (reaches local_login, which has
+                     its own source-IP self-check; see test_api TestLocalLogin).
+    """
+
+    @pytest.fixture(scope="class")
+    def stack(self, tmp_path_factory):
+        host_ip = _host_nonloopback_ipv4()
+        if not host_ip:
+            pytest.skip("no non-loopback IPv4 to simulate a container source")
+
+        tmpdir = str(tmp_path_factory.mktemp("nginx-auth-local"))
+        data_dir = os.path.join(tmpdir, "data")
+        os.makedirs(data_dir)
+        backend_port = _find_free_port()
+        nginx_port = _find_free_port()
+
+        # Start uvicorn (loopback; nginx reaches it via 127.0.0.1).
+        # KLANGK_AUTH_MODES=none so /auth/local actually mints a token.
+        backend_env = {
+            **os.environ,
+            "KLANGK_PORT": backend_port,
+            "KLANGK_DATA_DIR": data_dir,
+            "KLANGK_JWT_SECRET": "nginx-auth-local-test-secret",
+            "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
+            "KLANGK_DEFAULT_USER": "test@example.com",
+            "KLANGK_DEFAULT_PASSWORD": "testpass",
+            "KLANGK_AUTH_MODES": "none",
+            "KLANGK_TEST_MODE": "1",
+            "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
+            "KLANGK_PORT_RANGE_START": "9200",
+            "LOGFIRE_TOKEN": "",
+        }
+        backend_proc = subprocess.Popen(
+            [
+                "uvicorn",
+                "klangk_backend.main:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                backend_port,
+                "--ws-max-size",
+                "16777216",
+            ],
+            cwd=BACKEND_DIR,
+            env=backend_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                r = httpx.get(
+                    f"http://localhost:{backend_port}/health", timeout=2
+                )
+                if r.status_code == 200:
+                    break
+            except httpx.ConnectError:
+                pass
+            time.sleep(0.3)
+        else:
+            backend_proc.kill()
+            raise RuntimeError("Backend did not start")
+
+        # nginx with no container subnets configured — the /auth/local block
+        # is always generated with its fixed loopback allowlist.
+        nginx_env = {
+            "HOME": tmpdir,
+            "PATH": os.environ["PATH"],
+            "DEVENV_STATE": tmpdir,
+            "KLANGK_NGINX_PORT": nginx_port,
+            "KLANGK_PORT": backend_port,
+        }
+        nginx_proc = subprocess.Popen(
+            ["bash", NGINX_SH],
+            env=nginx_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            try:
+                r = httpx.get(
+                    f"http://127.0.0.1:{nginx_port}/health", timeout=2
+                )
+                if r.status_code == 200:
+                    break
+            except httpx.ConnectError:
+                pass
+            time.sleep(0.3)
+        else:
+            nginx_proc.kill()
+            backend_proc.kill()
+            raise RuntimeError("Nginx did not start")
+
+        yield {"nginx_port": nginx_port, "host_ip": host_ip}
+
+        nginx_proc.kill()
+        nginx_proc.wait(timeout=5)
+        backend_proc.kill()
+        backend_proc.wait(timeout=5)
+
+    def test_auth_local_denied_from_non_loopback(self, stack):
+        """From the host's non-loopback IP (the address pasta NAT traffic
+        appears as), POST /auth/local is refused at nginx (403) — the
+        free-token endpoint is unreachable to workspace containers."""
+        r = httpx.post(
+            f"http://{stack['host_ip']}:{stack['nginx_port']}/api/v1/auth/local",
+            timeout=5,
+        )
+        assert r.status_code == 403
+
+    def test_auth_local_allowed_from_loopback(self, stack):
+        """From loopback (the operator's browser), POST /auth/local reaches
+        the backend and mints a token (200) — the auto-login path works."""
+        r = httpx.post(
+            f"http://127.0.0.1:{stack['nginx_port']}/api/v1/auth/local",
+            timeout=5,
+        )
+        assert r.status_code == 200
+        assert "access_token" in r.json()

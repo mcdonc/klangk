@@ -267,6 +267,31 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// No-auth single-user mode: fetch a free token for the seeded default
+  /// user with no credentials (#1374). Returns null on success (the token
+  /// is saved and AuthService notifies listeners), or an error string.
+  Future<String?> localLogin() async {
+    _loading = true;
+    notifyListeners();
+    try {
+      final response = await _client.post(
+        Uri.parse('$_baseUrl/api/v1/auth/local'),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        await _saveToken(data['access_token']);
+        return null;
+      }
+      final error = jsonDecode(response.body);
+      return error['detail'] ?? 'Local login failed';
+    } catch (e) {
+      return 'Connection error: $e';
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
   Future<String?> resendVerification(String email, String password) async {
     try {
       final response = await _client.post(

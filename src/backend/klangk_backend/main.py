@@ -1,6 +1,7 @@
 """Klangk backend: FastAPI app with HTTP + WebSocket endpoints."""
 
 import asyncio
+import ipaddress
 import logging
 import os
 import secrets
@@ -37,7 +38,11 @@ from .model import (
     SYSTEM_EVERYONE,
 )
 from .model import AGENT_USER_ID
-from .util import customize_dir, resolve_env_value
+from .util import (
+    customize_dir,
+    resolve_env_bool,
+    resolve_env_value,
+)
 from .wshandler import handle_websocket
 
 _LIGHT_BLUE = "\033[94m"
@@ -119,6 +124,61 @@ async def ensure_admin_group() -> str:
         group = await model.create_group("admin", description="Administrators")
         logger.info("Created admin group: %s", group["id"])
     return group["id"]
+
+
+# Addresses that are safe for no-auth single-user (``none``) mode: only the
+# loopback interface is reachable from the host browser and not from other
+# machines or from workspace containers (which appear via pasta NAT as the
+# host's non-loopback IP). ``0.0.0.0`` / ``::`` bind every interface and are
+# NOT loopback. The full IPv4 loopback range (127.0.0.0/8) and IPv6 ``::1``
+# are admitted via :func:`ipaddress.is_loopback`; the bare hostname
+# ``localhost`` is admitted as a special case (it resolves to loopback but is
+# not itself an IP literal). See #1374.
+def _is_loopback_bind(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def enforce_no_auth_bind_safety() -> None:
+    """Refuse to start in ``none`` auth mode unless the bind is loopback.
+
+    ``KLANGK_AUTH_MODES=none`` freely issues a token for the seeded default
+    user (``POST /api/v1/auth/local``); anyone who can reach that endpoint is
+    effectively logged in as admin. The loopback bind (``KLANGK_LISTEN``, the
+    uvicorn ``--host``) is the identity boundary in this mode — it keeps the
+    endpoint reachable from the operator's own browser but not from the
+    network or from workspace containers. Override the gate explicitly with
+    ``KLANGK_ALLOW_INSECURE_NO_AUTH=1`` when you knowingly expose a no-auth
+    server (e.g. a throwaway VM on an isolated network). #1374.
+
+    Runs in the lifespan so ``auth_modes()`` goes through ``resolve_env_value``
+    (supports ``@file:`` indirection) — something a bash gate in nginx.sh
+    can't replicate.
+    """
+    if oidc.auth_modes() != "none":
+        return
+    host = resolve_env_value("KLANGK_LISTEN", "127.0.0.1") or "127.0.0.1"
+    if _is_loopback_bind(host):
+        return
+    if resolve_env_bool("KLANGK_ALLOW_INSECURE_NO_AUTH"):
+        logger.warning(
+            "KLANGK_AUTH_MODES=none with non-loopback bind %r — allowed "
+            "because KLANGK_ALLOW_INSECURE_NO_AUTH=1. Anyone who can reach "
+            "this address is effectively logged in as the default admin user.",
+            host,
+        )
+        return
+    raise SystemExit(
+        "Refusing to start: KLANGK_AUTH_MODES=none but KLANGK_LISTEN=%r "
+        "is not a loopback address. no-auth mode freely issues an admin "
+        "token, so it must bind loopback (127.0.0.0/8, ::1, or localhost). "
+        "Set KLANGK_LISTEN=127.0.0.1, or set KLANGK_ALLOW_INSECURE_NO_AUTH=1 "
+        "to override if you understand the risk. See #1374." % host
+    )
 
 
 async def seed_default_user() -> None:
@@ -376,6 +436,7 @@ async def lifespan(app: FastAPI):
     auth.require_secure_jwt_secret()
     plugins.load()
     oidc.init_providers()
+    enforce_no_auth_bind_safety()
     oidc.load_login_hook()
     await seed_default_user()
     await seed_agent_user()

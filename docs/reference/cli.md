@@ -105,6 +105,18 @@ http://localhost:8995:
 Multiple users can be cached per server. `klangkc login` switches
 the active user and reuses a cached token if it is still valid.
 
+### No-auth (single-user) servers
+
+If the server runs with `KLANGK_AUTH_MODES=none` (no-login local-dev mode),
+login requires **no password** — `klangkc login` calls `/api/v1/auth/local`
+and stores the freely-issued token. See [Auth Modes](../features/auth-modes.md).
+
+In `none` mode you don't even need to run `klangkc login` for each command:
+register the server once with `klangkc login <server>`, and thereafter every
+protected command auto-logs in (the `require_auth` gate probes the server mode
+and calls `/auth/local`). Against a `password`/`oidc`/`both` server the normal
+"Not logged in" error still fires.
+
 ## Server selection
 
 Commands need a server to talk to. The active server is determined by:
@@ -186,13 +198,19 @@ klangkc terminal share my-project bash        # share a terminal with workspace 
 klangkc terminal unshare my-project bash      # stop sharing a terminal
 
 # Admin
-klangkc invite user@example.com      # send an invitation email (admin only)
-klangkc invitations                  # list all invitations (admin only)
+klangkc admin users ls                    # list all user accounts (admin only)
+klangkc admin users set-password user@example.com   # set/reset a password (admin only)
+klangkc admin invitations send user@example.com     # send an invitation email (admin only)
+klangkc admin invitations ls                       # list all invitations (admin only)
 klangkc images                       # list available container images
 klangkc volumes ls                   # list your podman volumes
 klangkc volumes create nix-store     # create a named volume (owned by you)
 klangkc volumes rm nix-store         # delete a volume (must be yours)
 ```
+
+`klangkc status` shows the active server, your user id/email, and whether
+you hold site-wide admin privileges (derived from the server's
+`/my-permissions` — the same source the web UI uses).
 
 The CLI connects to the running Klangk backend over HTTP + WebSocket — it works locally and against remote servers.
 

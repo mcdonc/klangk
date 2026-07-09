@@ -153,15 +153,35 @@ def is_enabled() -> bool:
 
 
 def auth_modes() -> str:
-    """Return the configured auth mode."""
+    """Return the configured auth mode.
+
+    One of ``password``, ``oidc``, ``both``, or ``none`` (no-login
+    single-user local-dev mode). ``none`` auto-issues a token for the
+    seeded default user via ``POST /api/v1/auth/local``; see #1374.
+
+    When ``KLANGK_AUTH_MODES`` is unset, the default is ``none`` unless an
+    OIDC provider is configured — configuring OIDC is the signal that real
+    multi-user auth is wanted (in which case the default is ``both``). A
+    fresh klangk with nothing configured therefore boots in no-login
+    single-user mode, bound to loopback, and "just works" locally without a
+    password. Operators who want the old password-default behaviour (or any
+    other mode) set ``KLANGK_AUTH_MODES`` explicitly.
+    """
     val = resolve_env_value("KLANGK_AUTH_MODES", "")
-    if val in ("oidc", "password", "both"):
+    if val in ("oidc", "password", "both", "none"):
         return val
-    return "both" if is_enabled() else "password"
+    if is_enabled():
+        return "both"
+    return "none"
 
 
 def password_login_allowed() -> bool:
     return auth_modes() in ("password", "both")
+
+
+def local_login_allowed() -> bool:
+    """True when no-login single-user mode is active (``none``)."""
+    return auth_modes() == "none"
 
 
 def oidc_login_allowed() -> bool:

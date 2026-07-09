@@ -27,6 +27,24 @@ _TEST_PASSWORD_HASH = bcrypt.hashpw(
 
 
 @pytest.fixture(autouse=True)
+def _default_auth_mode(monkeypatch):
+    """Pin the test suite to ``password`` mode.
+
+    The production default for ``KLANGK_AUTH_MODES`` (when unset and no OIDC
+    is configured) is ``none`` — see ``oidc.auth_modes``. Most backend tests
+    exercise the authenticated API via ``_auth_headers`` (HTTP login), which
+    the ``password`` gate admits; pinning the suite here keeps that working
+    regardless of how the production default evolves, so a default change
+    doesn't silently flip ~190 login-flow tests.
+
+    Tests that care about a *specific* mode set it themselves (their
+    ``setenv``/``delenv`` overrides this). ``delenv`` is the way to opt into
+    the real production default within a test.
+    """
+    monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
+
+
+@pytest.fixture(autouse=True)
 def temp_data_dir(tmp_path, monkeypatch):
     """Point KLANGK_DATA_DIR / KLANGK_CUSTOMIZE_DIR at temp dirs per test."""
     monkeypatch.setenv("KLANGK_DATA_DIR", str(tmp_path))

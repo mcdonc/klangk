@@ -23,6 +23,7 @@ from .. import (
     wshandler,
 )
 from ..util import (
+    client_is_loopback,
     derive_hosting_info,
     resolve_env_value,
 )
@@ -284,6 +285,56 @@ async def login(req: auth.LoginRequest):
             status_code=403, detail="Password login is disabled"
         )
     return await auth.login(req)
+
+
+class LocalLoginResponse(auth.BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    email: str
+
+
+@router.post("/auth/local", response_model=LocalLoginResponse)
+async def local_login(request: Request):
+    """No-login single-user mode: mint a token for the seeded default
+    user, no credentials accepted (#1374).
+
+    Only available when ``KLANGK_AUTH_MODES=none``. The loopback bind
+    (``KLANGK_LISTEN``) plus the nginx per-location ``allow 127.0.0.1``
+    ACL keep this endpoint unreachable from workspace containers; the
+    freely-issued Bearer token is kept as belt-and-suspenders CSRF
+    defense on every subsequent request.
+
+    As a second belt-and-suspenders layer (and to close the front-proxy
+    bypass, where a loopback proxy in front of nginx makes every request
+    appear to come from 127.0.0.1), the backend independently verifies
+    the *effective* client is loopback via :func:`util.client_is_loopback`.
+    """
+    if not oidc.local_login_allowed():
+        raise HTTPException(
+            status_code=403,
+            detail="Local login is not enabled (auth mode is not 'none')",
+        )
+    # Independent loopback check: trusts X-Real-IP/X-Forwarded-For only when
+    # the immediate peer is itself a trusted (loopback) proxy, so it can't be
+    # spoofed by a direct non-loopback caller. See util.client_is_loopback.
+    if not client_is_loopback(
+        request.headers, request.client.host if request.client else None
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Local login requires a loopback client",
+        )
+    email = resolve_env_value("KLANGK_DEFAULT_USER", "admin@example.com")
+    user = await model.get_user_by_email(email)
+    if user is None:
+        # seed_default_user() runs in the lifespan before the app serves
+        # traffic, so this only triggers if seeding was bypassed.
+        raise HTTPException(
+            status_code=500,
+            detail="Default user is not seeded",
+        )
+    token = auth.create_token(user["id"], user["email"])
+    return LocalLoginResponse(access_token=token, email=user["email"])
 
 
 @router.post("/auth/refresh", response_model=auth.TokenResponse)
