@@ -15,10 +15,12 @@ from klangk_backend import settings as settings_mod
 from klangk_backend.settings import (
     KlangkSettings,
     _key_to_field,
+    get_config_file,
     get_settings,
     resolve_env_bool,
     resolve_env_value,
     resolve_indirection,
+    set_config_file,
     validate_at_startup,
 )
 
@@ -196,3 +198,96 @@ class TestSettingsModel:
             "container_subnets",
         ):
             assert name in fields, f"missing field: {name}"
+
+
+# ---------------------------------------------------------------------------
+# YAML config-file loading (#1395)
+# ---------------------------------------------------------------------------
+
+
+class TestConfigFile:
+    def test_yaml_provides_values(self, tmp_path):
+        """A YAML config file provides values that env doesn't override."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text('logo_url: "https://example.com/logo.png"\n')
+        set_config_file(str(cfg))
+        s = get_settings()
+        assert s.logo_url == "https://example.com/logo.png"
+
+    def test_env_overrides_yaml(self, monkeypatch, tmp_path):
+        """Env vars override YAML file values (precedence)."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text('brand_color: "#FF0000"\n')
+        set_config_file(str(cfg))
+        monkeypatch.setenv("KLANGK_BRAND_COLOR", "#00FF00")
+        s = get_settings()
+        assert s.brand_color == "#00FF00"
+
+    def test_yaml_doesnt_override_env(self, monkeypatch, tmp_path):
+        """A key set in both env and YAML: env wins."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text('product_name: "From YAML"\n')
+        set_config_file(str(cfg))
+        monkeypatch.setenv("KLANGK_PRODUCT_NAME", "From Env")
+        s = get_settings()
+        assert s.product_name == "From Env"
+
+    def test_config_none_opt_out(self, monkeypatch):
+        """--config=none: no file, env+defaults only."""
+        monkeypatch.delenv("KLANGK_NGINX_PORT", raising=False)
+        set_config_file("none")
+        s = get_settings()
+        assert s.nginx_port == "8995"  # built-in default
+
+    def test_set_config_file_invalidates_cache(self, tmp_path):
+        """Changing the config-file path re-instantiates settings."""
+        cfg1 = tmp_path / "c1.yaml"
+        cfg1.write_text('product_name: "First"\n')
+        set_config_file(str(cfg1))
+        assert get_settings().product_name == "First"
+        cfg2 = tmp_path / "c2.yaml"
+        cfg2.write_text('product_name: "Second"\n')
+        set_config_file(str(cfg2))
+        assert get_settings().product_name == "Second"
+
+    def test_file_cmd_resolution_from_yaml(self, tmp_path):
+        """file:/cmd: values in YAML resolve correctly."""
+        secret = tmp_path / "jwt.txt"
+        secret.write_text("yaml-secret\n")
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f'jwt_secret: "file:{secret}"\n')
+        set_config_file(str(cfg))
+        # resolve_env_value applies file:/cmd: resolution
+        assert resolve_env_value("KLANGK_JWT_SECRET") == "yaml-secret"
+
+    def test_get_config_file(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("product_name: test\n")
+        set_config_file(str(cfg))
+        assert get_config_file() == str(cfg)
+        set_config_file(None)
+        assert get_config_file() is None
+
+
+class TestKlangkdLauncher:
+    """Tests for the klangkd launcher's --config resolution."""
+
+    def test_resolve_config_path_existing(self, tmp_path):
+        from klangk_backend.klangkd import _resolve_config_path
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("product_name: test\n")
+        assert _resolve_config_path(str(cfg)) == str(cfg)
+
+    def test_resolve_config_path_none(self):
+        from klangk_backend.klangkd import _resolve_config_path
+
+        assert _resolve_config_path("none") == "none"
+
+    def test_resolve_config_path_missing(self):
+        import pytest as _pytest
+        from klangk_backend.klangkd import _resolve_config_path
+        import typer
+
+        with _pytest.raises(typer.BadParameter):
+            _resolve_config_path("/nonexistent/path/to/config.yaml")

@@ -4,7 +4,38 @@ Klangk supports OIDC authentication via one or more external Identity Providers 
 
 ## Setup
 
-1. Create a YAML config file with your OIDC providers:
+OIDC providers can be configured in two ways: **inline** in the `klangkd` config file (recommended), or in a **separate file** via `KLANGK_OIDC_CONFIG`.
+
+### Option 1: Inline in the config file (recommended)
+
+Add an `oidc_providers` section to your `klangkd` config file:
+
+```yaml
+# /etc/klangkd.conf
+auth_modes: both
+
+oidc_providers:
+  - id: cac
+    display-name: CAC Login
+    issuer: https://keycloak.example.com/realms/company
+    client-id: klangk
+    client-secret: "file:/run/secrets/cac-secret"
+    scopes: openid email profile
+    ca-cert: /etc/pki/tls/certs/company-ca-bundle.pem
+    logout-redirect: true
+
+  - id: internal
+    display-name: Internal SSO
+    issuer: https://keycloak.example.com/realms/corp
+    client-id: klangk
+    client-secret: "file:/run/secrets/corp-secret"
+```
+
+See [Configuration File](klangkd-config.md) for full config-file documentation.
+
+### Option 2: Separate file via `KLANGK_OIDC_CONFIG`
+
+Create a standalone YAML file with the provider list:
 
 ```yaml
 - id: cac
@@ -23,11 +54,13 @@ Klangk supports OIDC authentication via one or more external Identity Providers 
   client-secret: "file:/run/secrets/corp-secret"
 ```
 
-1. Set `KLANGK_OIDC_CONFIG` in `.env`:
+Set `KLANGK_OIDC_CONFIG` in `.env`:
 
 ```bash
 KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
 ```
+
+> When both `KLANGK_OIDC_CONFIG` (separate file) and `oidc_providers` (inline) are set, the separate file wins — consistent with the global precedence rule (env vars override config-file values).
 
 1. Optionally set `KLANGK_AUTH_MODES` to control which login methods are available:
    - `both` (default when OIDC configured) — SSO buttons + email/password form

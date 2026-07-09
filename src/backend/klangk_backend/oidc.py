@@ -19,6 +19,7 @@ from jose import jwt as jose_jwt
 
 from . import model
 from .exceptions import ConfigurationError
+from .settings import get_settings
 from .util import resolve_env_value, resolve_file_value
 
 logger = logging.getLogger(__name__)
@@ -79,29 +80,21 @@ def get(entry: dict, key: str, default: object = _SENTINEL) -> object:
     raise KeyError(key)
 
 
-def load_config() -> list[OIDCProvider]:
-    """Load OIDC provider config from the JSON file specified by
-    KLANGK_OIDC_CONFIG. Returns empty list if not configured.
-    Raises if the path is set but the file doesn't exist."""
-    config_path = resolve_env_value("KLANGK_OIDC_CONFIG", "")
-    if not config_path:
-        return []
-    if not os.path.isfile(config_path):
-        raise ConfigurationError(
-            f"KLANGK_OIDC_CONFIG={config_path!r} not found"
-            " (use an absolute path)"
-        )
+def _parse_providers(
+    entries: list[dict], config_dir: str | None = None
+) -> list[OIDCProvider]:
+    """Parse a list of raw provider dicts into OIDCProvider objects.
 
-    config_dir = os.path.dirname(os.path.abspath(config_path))
-    with open(config_path) as f:
-        raw = yaml.safe_load(f)
-
+    Shared by both inline (config-file ``oidc_providers:``) and external
+    (``KLANGK_OIDC_CONFIG``) loading paths.  *config_dir* is used to resolve
+    relative ``ca-cert`` paths — ``None`` when loaded inline (relative paths
+    are not meaningful without a file to be relative to).
+    """
     providers = []
-    for entry in raw:
+    for entry in entries:
         secret = resolve_file_value(get(entry, "client-secret", ""))
-        # Resolve ca-cert relative to the config file's directory
         ca_cert = get(entry, "ca-cert", None)
-        if ca_cert and not os.path.isabs(ca_cert):
+        if ca_cert and config_dir and not os.path.isabs(ca_cert):
             ca_cert = os.path.join(config_dir, ca_cert)
         providers.append(
             OIDCProvider(
@@ -118,6 +111,43 @@ def load_config() -> list[OIDCProvider]:
             )
         )
     return providers
+
+
+def load_config() -> list[OIDCProvider]:
+    """Load OIDC provider config.
+
+    Sources (checked in order, first non-empty wins):
+
+    1. **External file** — ``KLANGK_OIDC_CONFIG`` env var pointing at a
+       separate YAML file.  This is an env-var override, so it wins over
+       the config file (consistent with the global precedence rule:
+       env > file > defaults).
+    2. **Inline** — ``oidc_providers:`` list in the klangkd config file
+       (via :class:`~klangk_backend.settings.KlangkSettings`).
+
+    Returns an empty list if neither is configured.  Raises
+    :class:`~klangk_backend.exceptions.ConfigurationError` if the external
+    file path is set but doesn't exist.
+    """
+    # 1. External file via KLANGK_OIDC_CONFIG (env override wins)
+    config_path = resolve_env_value("KLANGK_OIDC_CONFIG", "")
+    if config_path:
+        if not os.path.isfile(config_path):
+            raise ConfigurationError(
+                f"KLANGK_OIDC_CONFIG={config_path!r} not found"
+                " (use an absolute path)"
+            )
+        config_dir = os.path.dirname(os.path.abspath(config_path))
+        with open(config_path) as f:
+            raw = yaml.safe_load(f)
+        return _parse_providers(raw, config_dir=config_dir)
+
+    # 2. Inline providers from the config file
+    settings = get_settings()
+    if settings.oidc_providers:
+        return _parse_providers(settings.oidc_providers)
+
+    return []
 
 
 def init_providers() -> None:
