@@ -74,6 +74,12 @@ set-password <email>` (set a known password for the default user — whose
   bypassing nginx — must set `KLANGK_LISTEN=0.0.0.0` to restore the old
   behavior. Applies to both the devenv dev server and the host container.
   (#1375)
+- **`klangkc invite` moved under the `admin` group** (#1374). The top-level
+  `klangkc invite <email>` command is gone, with no backward-compat alias.
+  Use `klangkc admin invitations send <email>` (and list with
+  `klangkc admin invitations ls`). Site-wide administration — users and
+  invitations — now has a dedicated `admin` CLI surface matching the
+  `terminal`/`volumes` noun-subgroup convention.
 
 ### Security
 
