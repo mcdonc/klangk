@@ -421,10 +421,12 @@ def setup_logfire(app: FastAPI) -> bool:
     base_url = resolve_env_value("LOGFIRE_BASE_URL")
     environment = resolve_env_value("LOGFIRE_ENVIRONMENT")
     kwargs: dict = {}
-    if base_url:
-        kwargs["base_url"] = base_url
     if environment:
         kwargs["environment"] = environment
+    if base_url:
+        # The top-level `base_url` argument is deprecated; pass it via
+        # `advanced=logfire.AdvancedOptions(base_url=...)` instead (#1410).
+        kwargs["advanced"] = logfire.AdvancedOptions(base_url=base_url)
     logfire.configure(**kwargs)
     logfire.instrument_fastapi(app)
     logger.info("Logfire instrumentation enabled")
