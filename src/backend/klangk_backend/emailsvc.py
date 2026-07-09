@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 import shutil
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -151,11 +150,11 @@ def _brand_ctx() -> dict:
         # file:/cmd: resolution -- they are public and shown in the email
         # footer to all recipients. Mirrors what /config exposes to the
         # frontend; the base template renders whatever is set.
-        "terms_url": os.environ.get("KLANGK_TERMS_URL", ""),
-        "privacy_url": os.environ.get("KLANGK_PRIVACY_URL", ""),
-        "aup_url": os.environ.get("KLANGK_AUP_URL", ""),
-        "support_url": os.environ.get("KLANGK_SUPPORT_URL", ""),
-        "support_email": os.environ.get("KLANGK_SUPPORT_EMAIL", ""),
+        "terms_url": resolve_env_value("KLANGK_TERMS_URL") or "",
+        "privacy_url": resolve_env_value("KLANGK_PRIVACY_URL") or "",
+        "aup_url": resolve_env_value("KLANGK_AUP_URL") or "",
+        "support_url": resolve_env_value("KLANGK_SUPPORT_URL") or "",
+        "support_email": resolve_env_value("KLANGK_SUPPORT_EMAIL") or "",
     }
 
 

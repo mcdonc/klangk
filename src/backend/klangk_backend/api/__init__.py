@@ -181,11 +181,11 @@ PRODUCT_NAME = resolve_env_value("KLANGK_PRODUCT_NAME", "Klangk") or "Klangk"
 # resolution). A deployer pointing these at sensitive internal resources
 # would be exposing them to the world. Empty string when unset, matching the
 # logo_url convention the frontend already falls back from.
-TERMS_URL = os.environ.get("KLANGK_TERMS_URL", "")
-PRIVACY_URL = os.environ.get("KLANGK_PRIVACY_URL", "")
-AUP_URL = os.environ.get("KLANGK_AUP_URL", "")
-SUPPORT_URL = os.environ.get("KLANGK_SUPPORT_URL", "")
-SUPPORT_EMAIL = os.environ.get("KLANGK_SUPPORT_EMAIL", "")
+TERMS_URL = resolve_env_value("KLANGK_TERMS_URL") or ""
+PRIVACY_URL = resolve_env_value("KLANGK_PRIVACY_URL") or ""
+AUP_URL = resolve_env_value("KLANGK_AUP_URL") or ""
+SUPPORT_URL = resolve_env_value("KLANGK_SUPPORT_URL") or ""
+SUPPORT_EMAIL = resolve_env_value("KLANGK_SUPPORT_EMAIL") or ""
 
 
 @router.get("/config")
