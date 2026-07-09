@@ -38,7 +38,8 @@ including the soliplex (pi plugin + browser-delegate) flow against your own
 browser — without standing up the multi-user tier or logging in each session.
 
 In `none` mode the server freely issues a JWT for the seeded default user
-(`KLANGK_DEFAULT_USER`, defaulting to `admin@example.com`) with no password:
+(`KLANGK_DEFAULT_USER`, defaulting to `admin@example.com`) with no credentials
+required from the caller:
 
 - The **frontend** calls `POST /api/v1/auth/local` on load and stores the
   token, skipping the login form entirely.
@@ -100,10 +101,12 @@ so the new mode takes effect the moment the server restarts.
 ### `none` -> `password` / `oidc` / `both` (adding real login)
 
 This is the common upgrade path: you've been running solo in `none` mode and
-now want real logins (for yourself and/or teammates). The one trap: **the
-seeded default user has no password** (it was created without one for `none`
-mode), and the self-service `change-password` route refuses password-less
-accounts. So set a password **before** you flip the switch:
+now want real logins (for yourself and/or teammates). One thing to sort out
+first: **the password for the default user.** The seeded admin user always
+has a password — either `KLANGK_DEFAULT_PASSWORD` if you set it, or a random
+one the server printed to stderr at first boot. If you didn't capture that
+random password, set a known one now while you're still holding the free
+admin token:
 
 ```bash
 # 1. Still in none mode — you're auto-logged-in as the admin default user.

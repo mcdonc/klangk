@@ -45,10 +45,10 @@ operators or integrators to act when upgrading.
   mode-switching guide.
 - **`klangkc admin` command group** (#1374): site-wide administration now
   has a dedicated CLI surface — `admin users ls`, `admin users
-set-password <email>` (the non-lockout path for giving the seeded default
-  user a real password before flipping `none` -> `password`), and
-  `admin invitations send/list`. The top-level `invite`/`invitations`
-  commands moved under `admin invitations`.
+set-password <email>` (set a known password for the default user — whose
+  password is random unless `KLANGK_DEFAULT_PASSWORD` was set — before
+  flipping `none` -> `password`), and `admin invitations send/ls`. The
+  top-level `invite`/`invitations` commands moved under `admin invitations`.
 - **`klangkc status`** now reports your user id and admin status (derived
   from `/my-permissions`).
 
