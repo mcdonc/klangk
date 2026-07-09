@@ -28,7 +28,13 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
-from .auth import login, logout as do_logout, refresh_token
+from .auth import (
+    fetch_config,
+    local_login,
+    login,
+    logout as do_logout,
+    refresh_token,
+)
 from .client import (
     AuthError,
     KlangkClient,
@@ -42,7 +48,7 @@ from .client import (
     ws_shell,
     reset_terminal,
 )
-from .config import CLIConfig, CLIState
+from .config import CLIConfig, CLIState, seed_config
 from .mount import validate_mount_spec
 from .sandbox import (
     build_all_mounts,
@@ -116,11 +122,57 @@ _err = Console(stderr=True)
 
 
 def require_auth() -> None:
-    if not _state().get_token(server_url()):
-        _err.print(
-            "[red]Not logged in[/red] — run [bold]klangkc login[/bold] first."
-        )
-        raise typer.Exit(code=1)
+    """Ensure the active server has a usable token.
+
+    In ``none`` (no-auth) mode the server freely issues a token for the
+    seeded default user, so any command auto-logs in on first run rather
+    than demanding a prior ``klangkc login`` (#1374). The server's mode is
+    probed once and cached per-server in CLIState; an old server never
+    reports ``none``, so the existing "Not logged in" error still fires
+    against password/oidc/both servers.
+    """
+    state = _state()
+    url = server_url()
+    if state.get_token(url):
+        return
+    if _maybe_none_login(state, url):
+        return
+    _err.print(
+        "[red]Not logged in[/red] — run [bold]klangkc login[/bold] first."
+    )
+    raise typer.Exit(code=1)
+
+
+def _maybe_none_login(state: CLIState, url: str) -> bool:
+    """If the server is in ``none`` mode, fetch a free token and cache it.
+
+    Returns True on success (token stored, ``require_auth`` proceeds).
+    Returns False if the server is not in ``none`` mode or the probe fails,
+    leaving the caller to emit the normal "Not logged in" error. The
+    ``auth_modes`` probe result is cached per-server so every command
+    doesn't pay a /config round-trip.
+    """
+    modes = state.get_auth_modes(url)
+    if modes is None:
+        config = fetch_config(url)
+        if not isinstance(config, dict):
+            return False
+        modes = config.get("auth_modes", "password")
+        state.set_auth_modes(url, modes)
+        state.save()
+    if modes != "none":
+        return False
+    try:
+        email, token = local_login(url)
+    except SystemExit:
+        return False
+    state.set_credentials(url, email, token)
+    # set_credentials clears the cached mode (it's meant to invalidate on a
+    # fresh login), so re-assert it: we just confirmed this server is none.
+    state.set_auth_modes(url, "none")
+    state.save()
+    seed_config(url, email)
+    return True
 
 
 @app.command("login")
@@ -1041,8 +1093,27 @@ def monitor_backoff(attempt: int, max_delay: float) -> float:
 
 
 async def refresh_token_threaded(server_url: str, token: str) -> str | None:
-    """Refresh the JWT off-loop; returns the new token or None."""
-    return await asyncio.to_thread(refresh_token, server_url, token)
+    """Refresh the JWT off-loop; returns the new token or None.
+
+    In ``none`` (no-auth) mode a refresh failure falls back to a free
+    re-login via ``/auth/local`` — re-login costs nothing, so it's
+    strictly better than reconnecting with a dead token (#1374).
+    """
+    new = await asyncio.to_thread(refresh_token, server_url, token)
+    if new:
+        return new
+    if _cached_mode_is_none(server_url):
+        try:
+            _email, new = await asyncio.to_thread(local_login, server_url)
+        except SystemExit:
+            return None
+        return new
+    return None
+
+
+def _cached_mode_is_none(server_url: str) -> bool:
+    """True if the per-server cached auth mode is ``none`` (see client.py)."""
+    return CLIState.load().get_auth_modes(server_url) == "none"
 
 
 async def monitor_run(

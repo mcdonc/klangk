@@ -41,6 +41,38 @@ def fetch_config(server_url: str) -> dict | str | None:
         return _UNREACHABLE
 
 
+def local_login(server_url: str) -> tuple[str, str]:
+    """No-auth single-user mode: fetch a free token for the seeded default
+    user via POST /api/v1/auth/local (#1374).
+
+    Returns ``(email, token)``. Raises ``SystemExit(1)`` on any failure
+    (network error, non-200, or missing fields) so callers can treat it
+    like the password/OIDC login arms: success returns, failure exits.
+    """
+    try:
+        resp = httpx.post(f"{server_url}/api/v1/auth/local", timeout=15.0)
+    except httpx.HTTPError as exc:
+        _err.print(
+            f"[red]Error:[/red] could not reach {server_url}"
+            f" for no-auth login: {exc}"
+        )
+        raise SystemExit(1)
+    if resp.status_code != 200:
+        try:
+            detail = resp.json().get("detail", f"HTTP {resp.status_code}")
+        except Exception:
+            detail = f"HTTP {resp.status_code}"
+        _err.print(f"[red]Login failed:[/red] {detail}")
+        raise SystemExit(1)
+    data = resp.json()
+    token = data.get("access_token")
+    email = data.get("email") or "local"
+    if not token:
+        _err.print("[red]Login failed:[/red] server returned no access token")
+        raise SystemExit(1)
+    return email, token
+
+
 def _oidc_browser_login(  # pragma: no cover
     server_url: str,
     provider_id: str,
@@ -190,9 +222,22 @@ def login(
         _err.print(f"[red]Error:[/red] could not reach {server_url}")
         raise SystemExit(1)
 
+    # Default-safe per #1374: a missing/unparseable auth_modes field falls
+    # back to password so an old server never routes to the /auth/local arm.
+    auth_modes = "password"
     if config:
         providers = config.get("oidc_providers", [])
         auth_modes = config.get("auth_modes", "password")
+        state.set_auth_modes(server_url, auth_modes)
+
+        if auth_modes == "none":
+            email, token = local_login(server_url)
+            state.set_credentials(server_url, email, token)
+            state.set_auth_modes(server_url, "none")
+            state.save()
+            seed_config(server_url, email)
+            _out.print(f"Logged in as [bold]{email}[/bold] (no-auth mode)")
+            return
 
         if providers and auth_modes in ("oidc", "both"):
             # Use OIDC if password login is disabled, or if the user
@@ -251,6 +296,8 @@ def login(
     token = resp.json()["access_token"]
 
     state.set_credentials(server_url, email, token)
+    # Re-assert the probed mode (set_credentials clears the cache by design).
+    state.set_auth_modes(server_url, auth_modes)
     state.save()
     seed_config(server_url, email)
     _out.print(f"Logged in as [bold]{email}[/bold]")

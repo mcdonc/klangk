@@ -629,6 +629,87 @@ class TestAuthRoutes:
         assert resp.status_code == 401
 
 
+# --- Local (no-auth) login (#1374) ---
+
+
+class TestLocalLogin:
+    """POST /api/v1/auth/local — no-login single-user mode token handout."""
+
+    async def test_returns_token_for_seeded_default_user(
+        self, client, db, monkeypatch
+    ):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        await model.create_user(
+            "local@example.com",
+            auth.hash_password("unused"),
+            verified=True,
+        )
+        resp = await client.post("/api/v1/auth/local")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["email"] == "local@example.com"
+        assert data["token_type"] == "bearer"
+        token = data["access_token"]
+        # The token flows through the normal JWT gate unchanged.
+        claims = auth.decode_token(token)
+        assert claims["email"] == "local@example.com"
+
+    async def test_token_authorizes_requests(self, client, db, monkeypatch):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        await model.create_user(
+            "local@example.com",
+            auth.hash_password("unused"),
+            verified=True,
+        )
+        token = (await client.post("/api/v1/auth/local")).json()[
+            "access_token"
+        ]
+        # An authenticated endpoint accepts the freely-minted token.
+        resp = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["email"] == "local@example.com"
+
+    async def test_disabled_when_not_none_mode(self, client, db, monkeypatch):
+        # Default (password) mode — endpoint must refuse.
+        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        resp = await client.post("/api/v1/auth/local")
+        assert resp.status_code == 403
+
+    async def test_disabled_in_both_mode(self, client, db, monkeypatch):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "both")
+        resp = await client.post("/api/v1/auth/local")
+        assert resp.status_code == 403
+
+    async def test_500_when_default_user_missing(
+        self, client, db, monkeypatch
+    ):
+        # seed_default_user() runs in the lifespan, which the minimal test
+        # app skips — so if it were somehow bypassed at runtime the endpoint
+        # surfaces a 500 rather than minting a token for a ghost user.
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_DEFAULT_USER", "ghost@example.com")
+        resp = await client.post("/api/v1/auth/local")
+        assert resp.status_code == 500
+
+    async def test_no_body_required(self, client, db, monkeypatch):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        await model.create_user(
+            "local@example.com",
+            auth.hash_password("unused"),
+            verified=True,
+        )
+        # Simple POST (no JSON body, no custom header) — the loopback bind +
+        # nginx ACL, not a credential, is the identity boundary in this mode.
+        resp = await client.post("/api/v1/auth/local")
+        assert resp.status_code == 200
+
+
 # --- Resend verification ---
 
 

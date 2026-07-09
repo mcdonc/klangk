@@ -611,6 +611,54 @@ void main() {
       expect(find.text('Password'), findsNothing);
     });
 
+    testWidgets('none mode skips the login form and auto-logs in',
+        (tester) async {
+      testConfigHttpClientOverride = _configClient(authModes: 'none');
+      // AuthService.localLogin() hits /auth/local (no body).
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/auth/local')) {
+          return http.Response(
+            jsonEncode({'access_token': 'none-token', 'email': 'a@x.com'}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      // No password form is rendered in none mode.
+      expect(find.text('Email'), findsNothing);
+      expect(find.text('Password'), findsNothing);
+      expect(find.textContaining('Create one'), findsNothing);
+      // The auto-login message (or spinner) is shown instead.
+      expect(
+        find.textContaining('local instance'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('none mode surfaces an error when /auth/local fails',
+        (tester) async {
+      testConfigHttpClientOverride = _configClient(authModes: 'none');
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/auth/local')) {
+          return http.Response(
+            jsonEncode({'detail': 'Local login is not enabled'}),
+            403,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Local login is not enabled'), findsOneWidget);
+      expect(find.text('Email'), findsNothing);
+    });
+
     testWidgets('no OIDC buttons when no providers', (tester) async {
       testConfigHttpClientOverride = _configClient(
         oidcProviders: [],

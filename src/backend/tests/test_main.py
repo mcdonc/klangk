@@ -64,6 +64,58 @@ class TestSeedDefaultUser:
         assert "Default admin password for" in captured.err
 
 
+# --- no-auth bind safety gate (#1374) ---
+
+
+class TestNoAuthBindSafety:
+    """enforce_no_auth_bind_safety() — refuse none mode on a non-loopback
+    bind unless explicitly overridden."""
+
+    def test_noop_when_not_none_mode(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
+        monkeypatch.setenv("KLANGK_LISTEN", "0.0.0.0")
+        # Returns None, raises nothing.
+        assert main.enforce_no_auth_bind_safety() is None
+
+    def test_allows_loopback_ipv4(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
+        assert main.enforce_no_auth_bind_safety() is None
+
+    def test_allows_loopback_ipv6_and_localhost(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        for host in ("::1", "localhost"):
+            monkeypatch.setenv("KLANGK_LISTEN", host)
+            assert main.enforce_no_auth_bind_safety() is None
+
+    def test_allows_loopback_default_when_listen_unset(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.delenv("KLANGK_LISTEN", raising=False)
+        # KLANGK_LISTEN defaults to 127.0.0.1 (#1375).
+        assert main.enforce_no_auth_bind_safety() is None
+
+    def test_refuses_non_loopback_bind(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_LISTEN", "0.0.0.0")
+        with pytest.raises(SystemExit) as exc_info:
+            main.enforce_no_auth_bind_safety()
+        msg = str(exc_info.value)
+        assert "KLANGK_AUTH_MODES=none" in msg
+        assert "loopback" in msg
+        assert "KLANGK_ALLOW_INSECURE_NO_AUTH=1" in msg
+        assert "0.0.0.0" in msg
+
+    def test_override_flag_allows_non_loopback(self, monkeypatch, caplog):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_LISTEN", "0.0.0.0")
+        monkeypatch.setenv("KLANGK_ALLOW_INSECURE_NO_AUTH", "1")
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            assert main.enforce_no_auth_bind_safety() is None
+        assert "non-loopback bind" in caplog.text
+
+
 # --- Seed agent user ---
 
 

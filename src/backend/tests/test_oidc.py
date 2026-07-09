@@ -352,6 +352,25 @@ class TestAuthModes:
         assert oidc.password_login_allowed()
         assert not oidc.oidc_login_allowed()
 
+    def test_none_mode(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        assert oidc.auth_modes() == "none"
+        assert not oidc.password_login_allowed()
+        assert not oidc.oidc_login_allowed()
+        assert oidc.local_login_allowed()
+
+    def test_none_mode_ignores_oidc_config(self, monkeypatch):
+        # OIDC config may be present but is irrelevant in none mode.
+        oidc._providers.append(_provider())
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        assert oidc.auth_modes() == "none"
+        assert oidc.local_login_allowed()
+
+    def test_local_login_false_in_other_modes(self, monkeypatch):
+        for mode in ("password", "oidc", "both"):
+            monkeypatch.setenv("KLANGK_AUTH_MODES", mode)
+            assert not oidc.local_login_allowed()
+
 
 class TestClientKwargs:
     def test_no_ca_cert(self):

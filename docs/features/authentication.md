@@ -4,7 +4,10 @@
 
 Klangk supports two ways to log in: email/password accounts and
 single sign-on (SSO) via OIDC providers like Keycloak, Okta, or
-Azure AD. You can use either or both.
+Azure AD. You can use either or both. There is also a no-login
+**local-dev** mode (`KLANGK_AUTH_MODES=none`) that auto-logs you in
+as the seeded default user with no password — see
+[Auth Modes](auth-modes.md).
 
 ## Email and password
 

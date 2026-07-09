@@ -336,10 +336,14 @@ No request body.
   "login_banner_title": "",
   "login_banner": "",
   "oidc_providers": [],
-  "auth_modes": [],
+  "auth_modes": "both",
   "instance_id": "string"
 }
 ```
+
+`auth_modes` is a string — one of `password`, `oidc`, `both`, or `none`
+(no-login single-user mode). The frontend and CLI branch on this value;
+see [Auth Modes](../features/auth-modes.md).
 
 ---
 
@@ -960,6 +964,32 @@ Authenticate with email and password. Returns a JWT access token.
 ```json
 { "access_token": "jwt-string", "token_type": "bearer" }
 ```
+
+---
+
+### POST `/api/v1/auth/local`
+
+No-login single-user mode: mint a JWT for the seeded default user with no
+credentials. Only available when `KLANGK_AUTH_MODES=none`; returns **403**
+otherwise. See [Auth Modes](../features/auth-modes.md).
+
+**Auth:** None. Reachable only from loopback (the `KLANGK_LISTEN` bind plus an
+nginx `allow 127.0.0.1/::1; deny all` per-location ACL keep it unreachable from
+workspace containers).
+
+No request body.
+
+```json
+{
+  "access_token": "jwt-string",
+  "token_type": "bearer",
+  "email": "admin@example.com"
+}
+```
+
+The `email` field lets the CLI key its cached credentials (it stores tokens
+per user). The token is indistinguishable from a password-login token to the
+refresh and blocklist machinery.
 
 ---
 

@@ -95,3 +95,8 @@ the server log output for the generated password.
 
 The default user is in the `admin` group and can manage other users
 and groups via the Admin page.
+
+> **No-login mode:** if you started the server with
+> `KLANGK_AUTH_MODES=none`, login is skipped entirely — the UI and CLI
+> auto-log in as the default user with no password. See
+> [Auth Modes](features/auth-modes.md).

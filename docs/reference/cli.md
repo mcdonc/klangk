@@ -105,6 +105,18 @@ http://localhost:8995:
 Multiple users can be cached per server. `klangkc login` switches
 the active user and reuses a cached token if it is still valid.
 
+### No-auth (single-user) servers
+
+If the server runs with `KLANGK_AUTH_MODES=none` (no-login local-dev mode),
+login requires **no password** — `klangkc login` calls `/api/v1/auth/local`
+and stores the freely-issued token. See [Auth Modes](../features/auth-modes.md).
+
+In `none` mode you don't even need to run `klangkc login` for each command:
+register the server once with `klangkc login <server>`, and thereafter every
+protected command auto-logs in (the `require_auth` gate probes the server mode
+and calls `/auth/local`). Against a `password`/`oidc`/`both` server the normal
+"Not logged in" error still fires.
+
 ## Server selection
 
 Commands need a server to talk to. The active server is determined by:

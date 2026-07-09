@@ -35,13 +35,13 @@ api_auth = sys.modules["klangk_backend.api.auth"]
 
 # Total HTTP route operations the monolith exposed (per the issue).  The
 # split must preserve this exactly — no dropped or duplicated handlers.
-EXPECTED_ROUTE_COUNT = 87
+EXPECTED_ROUTE_COUNT = 88
 
-# Per-domain submodules and the number of routes each owns.  79 sub-routes
+# Per-domain submodules and the number of routes each owns.  83 sub-routes
 # + 3 routes defined directly on the main router (version, config,
-# my-permissions) + 2 on the root router (health, empty) == 84.
+# my-permissions) + 2 on the root router (health, empty) == 88.
 SUBMODULE_ROUTES = {
-    "auth": 14,
+    "auth": 15,
     "oidc_auth": 2,
     "workspaces": 24,
     "files": 6,
@@ -199,7 +199,7 @@ class TestPackagePublicSurface:
 
 class TestRouteParity:
     def test_total_route_count_unchanged(self):
-        """All 84 original operations are registered — none dropped."""
+        """All 88 original operations are registered — none dropped."""
         ops = _operations(_build_app())
         assert len(ops) == EXPECTED_ROUTE_COUNT, (
             f"expected {EXPECTED_ROUTE_COUNT} routes, got {len(ops)}"
@@ -244,7 +244,7 @@ class TestSubmoduleStructure:
         )
 
     def test_submodule_route_counts_sum_to_subtotal(self):
-        """The 8 sub-routers together account for 79 of the 84 routes."""
+        """The 8 sub-routers together account for 83 of the 88 routes."""
         from importlib import import_module
 
         total = 0
@@ -252,8 +252,8 @@ class TestSubmoduleStructure:
             total += len(
                 import_module(f"klangk_backend.api.{submod}").router.routes
             )
-        # 79 sub-routes + 3 direct (version/config/my-permissions) + 2
-        # root (health/empty) == 84.
+        # 83 sub-routes + 3 direct (version/config/my-permissions) + 2
+        # root (health/empty) == 88.
         assert total == EXPECTED_ROUTE_COUNT - 3 - 2
 
     def test_common_module_has_no_router(self):

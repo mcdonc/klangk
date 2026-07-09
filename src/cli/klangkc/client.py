@@ -24,7 +24,21 @@ import time as _time
 import httpx
 import websockets
 
+from .auth import local_login as _local_login
 from .auth import refresh_token as _refresh_token
+from .config import CLIState
+
+
+def _cached_mode_is_none(server_url: str) -> bool:
+    """True if the per-server cached auth mode is ``none``.
+
+    Used by the 401 re-login path: in no-auth mode re-login is free, so a
+    refresh failure should retry ``/auth/local`` rather than erroring out.
+    Avoids an extra /config round-trip on every request — the cache is
+    invalidated on 401/login. Returns False when unprobed or not ``none``
+    so non-none servers keep their normal refresh-error behavior (#1374).
+    """
+    return CLIState.load().get_auth_modes(server_url) == "none"
 
 
 _WS_MAX_SIZE = int(os.environ.get("KLANGK_WS_MSG_SIZE_MAX", 2**24))
@@ -204,12 +218,21 @@ class KlangkClient:
         """Attempt to refresh the current token.
 
         On success, updates ``self.token`` and returns ``True``.
+        On refresh failure in ``none`` (no-auth) mode, re-login is free
+        (``/auth/local``), so retry that before giving up (#1374).
         """
         if not self.token:
             return False
         new_token = _refresh_token(self.server_url, self.token)
         if new_token:
             self.token = new_token
+            return True
+        if _cached_mode_is_none(self.server_url):
+            try:
+                _email, token = _local_login(self.server_url)
+            except SystemExit:
+                return False
+            self.token = token
             return True
         return False
 
@@ -1198,6 +1221,11 @@ class TerminalSession(_ShellSession):
                 _code = exc.rcvd.code if exc.rcvd else None
                 if _code == 4002 and self.token:
                     new = _refresh_token(self.server_url, self.token)
+                    if not new and _cached_mode_is_none(self.server_url):
+                        try:
+                            _email, new = _local_login(self.server_url)
+                        except SystemExit:
+                            new = None
                     if new:
                         self.stdout.write(
                             "\r\nSession refreshed."

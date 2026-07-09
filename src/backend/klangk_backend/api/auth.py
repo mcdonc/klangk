@@ -286,6 +286,41 @@ async def login(req: auth.LoginRequest):
     return await auth.login(req)
 
 
+class LocalLoginResponse(auth.BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    email: str
+
+
+@router.post("/auth/local", response_model=LocalLoginResponse)
+async def local_login():
+    """No-login single-user mode: mint a token for the seeded default
+    user, no credentials accepted (#1374).
+
+    Only available when ``KLANGK_AUTH_MODES=none``. The loopback bind
+    (``KLANGK_LISTEN``) plus the nginx per-location ``allow 127.0.0.1``
+    ACL keep this endpoint unreachable from workspace containers; the
+    freely-issued Bearer token is kept as belt-and-suspenders CSRF
+    defense on every subsequent request.
+    """
+    if not oidc.local_login_allowed():
+        raise HTTPException(
+            status_code=403,
+            detail="Local login is not enabled (auth mode is not 'none')",
+        )
+    email = resolve_env_value("KLANGK_DEFAULT_USER", "admin@example.com")
+    user = await model.get_user_by_email(email)
+    if user is None:
+        # seed_default_user() runs in the lifespan before the app serves
+        # traffic, so this only triggers if seeding was bypassed.
+        raise HTTPException(
+            status_code=500,
+            detail="Default user is not seeded",
+        )
+    token = auth.create_token(user["id"], user["email"])
+    return LocalLoginResponse(access_token=token, email=user["email"])
+
+
 @router.post("/auth/refresh", response_model=auth.TokenResponse)
 async def refresh_token(request: Request):
     """Exchange a valid access token for a new one."""

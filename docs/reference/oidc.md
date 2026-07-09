@@ -33,6 +33,7 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
    - `both` (default when OIDC configured) — SSO buttons + email/password form
    - `oidc` — SSO buttons only, email/password disabled
    - `password` — email/password only (same as no OIDC config)
+   - `none` — no-login single-user (local-dev) mode; OIDC config is ignored. See [Auth Modes](../features/auth-modes.md).
 
 ## Provider Config Fields
 

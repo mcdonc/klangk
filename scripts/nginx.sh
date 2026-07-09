@@ -311,6 +311,27 @@ ${CONTAINER_ACL}
       proxy_set_header Authorization \$http_authorization;
     }
 
+    # No-auth single-user token handout (POST /api/v1/auth/local, #1374).
+    # In $()none$() mode this endpoint freely issues an admin token, so it must
+    # be reachable from the operator's own browser (loopback) but NOT from
+    # workspace containers — which appear via pasta NAT as the host's
+    # *non-loopback* IP. The per-location $()allow 127.0.0.1/::1; deny all$()
+    # is the primary control; the loopback $()KLANGK_LISTEN$() bind is the
+    # backstop. nginx stays on $()0.0.0.0$() (soliplex/hosted apps rely on it),
+    # so the protection is this ACL, not a loopback bind. A container hitting
+    # this gets 403; the host browser gets 200. Outside $()none$() mode the
+    # backend itself 403s, so this block is harmless.
+    location = /api/v1/auth/local {
+      allow 127.0.0.1;
+      allow ::1;
+      deny all;
+      proxy_pass http://127.0.0.1:${KLANGK_PORT};
+      proxy_set_header Host \$http_host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_http_version 1.1;
+    }
+
     # JSON 401 error page for auth_request failures.  The \$auth_token_error
     # variable is set from the X-Token-Error header of the auth subrequest.
     location @token_auth_failed {
