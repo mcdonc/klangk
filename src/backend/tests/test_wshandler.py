@@ -99,7 +99,25 @@ def _mock_terminal(alive=True):
     t.resize = AsyncMock()
     t.stop = AsyncMock()
     t.read_only = False
+
+    # output() is an async generator (terminal.py). Auto-AsyncMock returns a
+    # coroutine, not an async iterator, so a test that iterates it without
+    # overriding .output would produce an un-awaited coroutine (RuntimeWarning
+    # at GC). Default to an empty async generator to match the real signature.
+    async def _empty_output():
+        if False:  # pragma: no cover - empty generator
+            yield
+
+    t.output = _empty_output
     return t
+
+
+def _empty_async_generator():
+    """An async generator that yields nothing — the safe default for
+    ``session.output`` on a bare ``AsyncMock()`` session (see
+    ``_mock_terminal`` for why)."""
+    if False:  # pragma: no cover - empty generator
+        yield
 
 
 def _base_conn(user=None, ws=None):
@@ -801,6 +819,66 @@ class TestClientIsLoopback:
         )
         assert util.client_is_loopback(self._hdr(), "127.0.0.1") is True
 
+    # --- UDS mode (#1396): None client is the trusted reverse proxy ---
+
+    def test_uds_mode_none_client_trusts_forwarded(self, monkeypatch):
+        """Over a UDS (set_uds_mode(True)), a None client is the same-uid
+        nginx peer. Its X-Real-IP IS consulted — a loopback value admits
+        (the loopback browser behind nginx)."""
+        import klangk_backend.util as util
+
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        util.set_uds_mode(True)
+        try:
+            h = self._hdr(**{"x-real-ip": "127.0.0.1"})
+            assert util.client_is_loopback(h, None) is True
+        finally:
+            util.set_uds_mode(False)
+
+    def test_uds_mode_none_client_rejects_nonloopback(self, monkeypatch):
+        """Over a UDS, a None client's X-Real-IP shows non-loopback -> reject
+        (a container behind nginx)."""
+        import klangk_backend.util as util
+
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        util.set_uds_mode(True)
+        try:
+            h = self._hdr(**{"x-real-ip": "10.89.0.5"})
+            assert util.client_is_loopback(h, None) is False
+        finally:
+            util.set_uds_mode(False)
+
+    def test_uds_mode_reset_restores_fail_closed(self, monkeypatch):
+        """After set_uds_mode(False), a None client is again rejected (fail
+        closed — the TCP/TestClient default)."""
+        import klangk_backend.util as util
+
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        util.set_uds_mode(True)
+        util.set_uds_mode(False)
+        assert util.client_is_loopback(self._hdr(), None) is False
+
+    def test_connection_peer_trusted_uds_mode(self, monkeypatch):
+        """_connection_peer_is_trusted: None client trusted only in UDS mode."""
+        import klangk_backend.util as util
+
+        assert util._connection_peer_is_trusted(None) is False
+        util.set_uds_mode(True)
+        try:
+            assert util._connection_peer_is_trusted(None) is True
+        finally:
+            util.set_uds_mode(False)
+        assert util._connection_peer_is_trusted(None) is False
+
 
 # --- handle_steer ---
 
@@ -1421,6 +1499,7 @@ class TestHandleTerminalStart:
         container.registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
         mock_session.is_alive = True
         MockTS = MagicMock(return_value=mock_session)
         with (
@@ -1487,6 +1566,7 @@ class TestHandleTerminalStart:
         container.registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
         mock_session.start = AsyncMock(
             side_effect=RuntimeError("podman broke")
         )
@@ -1521,6 +1601,7 @@ class TestHandleTerminalStart:
         container.registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
         mock_session.start = AsyncMock(side_effect=SlowClientError())
         MockTS = MagicMock(return_value=mock_session)
         with patch(
@@ -1551,6 +1632,7 @@ class TestHandleTerminalStart:
         container.registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
         mock_session.start = AsyncMock(side_effect=ValueError("bad config"))
         # send_json raises RuntimeError (a WS_ERRORS member) when
         # trying to send the error message
@@ -1580,6 +1662,7 @@ class TestHandleTerminalStart:
         container.registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
         mock_session.start = AsyncMock(side_effect=asyncio.CancelledError)
         MockTS = MagicMock(return_value=mock_session)
         with patch(
@@ -1612,6 +1695,7 @@ class TestHandleTerminalStart:
         container.registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
 
         async def start_and_replace(*a, **kw):
             # Simulate stop_terminal replacing the session mid-start
@@ -2534,6 +2618,7 @@ class TestExecHandlers:
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
         mock_session.start = AsyncMock()
 
         async def empty_output():
@@ -2566,6 +2651,7 @@ class TestExecHandlers:
         conn._user_home = "/home/admin"
         conn._ssh_agent_socket = "/tmp/agent.sock"
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
         mock_session.start = AsyncMock()
 
         async def empty_output():
@@ -3218,6 +3304,7 @@ class TestSSHAgentHandlers:
         conn._user_home = "/home/testuser"
         conn._ssh_agent_socket = "/tmp/klangk-ssh-agent-uid.sock"
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
         mock_session.start = AsyncMock()
         mock_session.session_name = "uid"
         mock_session.tmux_session_name = "uid"
@@ -8239,6 +8326,7 @@ class TestChatFollowUp:
         from klangk_backend.wshandler import state, agent_conversations
 
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
         mock_session.send_prompt = AsyncMock(return_value="reply")
 
         sock = _mock_sock()
@@ -8277,6 +8365,7 @@ class TestChatFollowUp:
         from klangk_backend.wshandler import state, agent_conversations
 
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
         mock_session.send_prompt = AsyncMock(return_value="reply")
 
         sock = _mock_sock()
@@ -8512,6 +8601,7 @@ class TestChatSend:
         )
 
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
         mock_session.send_prompt = AsyncMock(return_value="The time is now.")
 
         sock = _mock_sock()
@@ -8563,6 +8653,7 @@ class TestChatSend:
         from klangk_backend.wshandler import state
 
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
         mock_session.send_prompt = AsyncMock(return_value="Hi there!")
 
         sock = _mock_sock()
@@ -8627,6 +8718,7 @@ class TestChatSend:
         from klangk_backend.agent import AgentProcessDied
 
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
         mock_session.send_prompt = AsyncMock(
             side_effect=AgentProcessDied("exited")
         )
@@ -9951,6 +10043,7 @@ class TestAgentMentionOtherMsgsContext:
 
         captured_prompt = []
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
 
         async def capture_prompt(prompt):
             captured_prompt.append(prompt)
@@ -10011,6 +10104,7 @@ class TestAgentMentionAskerIdentity:
 
         captured_prompt = []
         mock_session = AsyncMock()
+        mock_session.output = _empty_async_generator
 
         async def capture_prompt(prompt):
             captured_prompt.append(prompt)

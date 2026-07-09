@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Run the klangk-host image locally in a Docker container.
 #
-# Forwards KLANGK_PORT and KLANGK_NGINX_PORT, passes through KLANGK_* env
-# vars (except paths that have container-internal defaults).
+# Forwards KLANGK_NGINX_PORT (the only TCP listener — uvicorn is UDS-only
+# inside the container since #1396), passes through KLANGK_* env vars
+# (except paths that have container-internal defaults).
 #
 # Usage:
 #   bash scripts/run-host-container.sh [extra docker-run flags...]
@@ -21,7 +22,6 @@ env | grep '^KLANGK_' |
     >"$ENVFILE"
 docker rm -f klangk-host-run 2>/dev/null || true
 exec docker run --name klangk-host-run \
-  -p "${KLANGK_PORT}:${KLANGK_PORT}" \
   -p "${KLANGK_NGINX_PORT}:${KLANGK_NGINX_PORT}" \
   -v "${KLANGK_DATA_DIR}:/home/klangk/data" \
   --cap-add SYS_ADMIN \

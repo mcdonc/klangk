@@ -101,24 +101,37 @@ def resolve_indirection(value: str | None, key: str = "") -> str | None:
     as-is.  On resolution failure, logs an error and returns ``None``.
 
     *key* is used only for error messages (identifying which config var
-    failed to resolve).
+    failed to resolve); it is a caller-supplied variable *name* (never the
+    secret value itself), so it is safe to log. The *value* and any
+    value-derived data (e.g. the file path) are never logged — they may
+    name a secret — so CodeQL ``py/clear-text-logging-sensitive-data`` does
+    not fire (this mirrors the legacy ``resolve_file_value``, which is
+    un-flagged for the same reason).
     """
     if value is None:
         return None
     if value.startswith("file:"):
         contents, err = _read_file(value)
         if err is not None:
-            label = key or value
+            # Log only the OS-level message (err.strerror, a fixed string
+            # like "No such file or directory") + the var name — never the
+            # value or err.filename (both derived from value, which may name
+            # a secret).
             logger.error(
-                "Cannot read %s from %s: %s", label, err.filename, err
+                "Cannot read %s: %s",
+                key or "config value",
+                err.strerror or "I/O error",
             )
             return None
         return contents
     if value.startswith("cmd:"):
         contents, err = _run_cmd(value)
         if err is not None:
-            label = key or value
-            logger.error("Cannot resolve %s via cmd: %s", label, err)
+            logger.error(
+                "Cannot resolve %s via cmd: %s",
+                key or "config value",
+                err,
+            )
             return None
         return contents
     return value
@@ -205,6 +218,29 @@ class KlangkSettings(BaseSettings):
     listen: str | None = "127.0.0.1"
     nginx_port: str | None = "8995"
     port_range_start: str | None = "9000"
+    # uds_mode: the honest "are we in UDS mode?" switch (#1396). Set only by
+    # klangkd (the launcher that binds a UDS and owns nginx); bare uvicorn /
+    # unit tests never set it, so the lifespan's nginx watchdog no-ops and
+    # _UDS_MODE stays False. A mode switch, not a path — the socket path is
+    # derived from state_dir (<state_dir>/klangk.sock) so there's one path
+    # knob, not two.
+    uds_mode: str | None = None
+    # state_dir: runtime state (the UDS, rendered nginx.conf, pid). Defaults to
+    # a klangk subdir under the system temp; devenv pins it to DEVENV_STATE and
+    # the host container to /tmp/klangk-state. The UDS lives at
+    # <state_dir>/klangk.sock.
+    state_dir: str | None = None
+    # nginx_bin: the nginx executable the renderer spawns. Falls back to
+    # shutil.which("nginx") then /usr/sbin/nginx at render time.
+    nginx_bin: str | None = None
+    # trust_outer_proxy: opt-in to surviving an outer trusted proxy's
+    # X-Forwarded-* in nginx's catch-all (see #1396 renderer). Mirrors the
+    # KLANGK_TRUST_OUTER_PROXY env var the old nginx.sh read.
+    trust_outer_proxy: str | None = None
+    # ws_msg_size_max: max WebSocket message size (bytes), passed to uvicorn.
+    # Default 16 MiB; klangkd reads it through the typed config (config file +
+    # file:/cmd: resolution), not raw env.
+    ws_msg_size_max: str | None = "16777216"
     cors_origins: str | None = None
     dns_servers: str | None = None
     hosting_hostname: str | None = None
@@ -235,6 +271,11 @@ class KlangkSettings(BaseSettings):
     version_file: str | None = None
 
     # --- LLM ---
+    # llm_base_url is consumed by the nginx renderer (the /llm-proxy/
+    # location proxies to it so containers never see the API key); it's
+    # not read by the backend itself. Kept here so the renderer reads it
+    # through the same typed config path as everything else (#1396).
+    llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_model: str | None = None
 
