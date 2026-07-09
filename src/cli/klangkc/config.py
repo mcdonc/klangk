@@ -112,10 +112,6 @@ class ServerState:
 
     active_user: str | None = None
     users: dict[str, UserEntry] = field(default_factory=dict)
-    # Cached server-reported auth mode (e.g. "none", "password", "oidc",
-    # "both"). Probed once so every command doesn't pay a /config round-trip;
-    # invalidated on 401 / explicit login. None when unprobed. See #1374.
-    auth_modes: str | None = None
 
 
 @dataclass
@@ -145,7 +141,6 @@ class CLIState:
             servers[key] = ServerState(
                 active_user=val.get("active-user"),
                 users=users,
-                auth_modes=val.get("auth-modes"),
             )
         return cls(active_server=active, servers=servers)
 
@@ -158,8 +153,6 @@ class CLIState:
             server_data: dict = {}
             if ss.active_user is not None:
                 server_data["active-user"] = ss.active_user
-            if ss.auth_modes is not None:
-                server_data["auth-modes"] = ss.auth_modes
             users_data: dict = {}
             for uname, ue in ss.users.items():
                 if ue.token is not None:
@@ -193,9 +186,6 @@ class CLIState:
         ss.users[user] = UserEntry(token=token)
         ss.active_user = user
         self.active_server = server_url
-        # A fresh login invalidates any cached mode probe — the server may
-        # have changed, and re-probing is cheap once. See #1374.
-        ss.auth_modes = None
 
     def clear_credentials(self, server_url: str) -> None:
         """Clear all credentials for a server."""
@@ -203,14 +193,3 @@ class CLIState:
             del self.servers[server_url]
         if self.active_server == server_url:
             self.active_server = None
-
-    def get_auth_modes(self, server_url: str) -> str | None:
-        """Return the cached auth mode for a server, or None if unprobed."""
-        ss = self.servers.get(server_url)
-        return ss.auth_modes if ss else None
-
-    def set_auth_modes(self, server_url: str, modes: str | None) -> None:
-        """Cache the server-reported auth mode for a server."""
-        if server_url not in self.servers:
-            self.servers[server_url] = ServerState()
-        self.servers[server_url].auth_modes = modes

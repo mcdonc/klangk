@@ -198,13 +198,19 @@ klangkc terminal share my-project bash        # share a terminal with workspace 
 klangkc terminal unshare my-project bash      # stop sharing a terminal
 
 # Admin
-klangkc invite user@example.com      # send an invitation email (admin only)
-klangkc invitations                  # list all invitations (admin only)
+klangkc admin users ls                    # list all user accounts (admin only)
+klangkc admin users set-password user@example.com   # set/reset a password (admin only)
+klangkc admin invitations send user@example.com     # send an invitation email (admin only)
+klangkc admin invitations ls                       # list all invitations (admin only)
 klangkc images                       # list available container images
 klangkc volumes ls                   # list your podman volumes
 klangkc volumes create nix-store     # create a named volume (owned by you)
 klangkc volumes rm nix-store         # delete a volume (must be yours)
 ```
+
+`klangkc status` shows the active server, your user id/email, and whether
+you hold site-wide admin privileges (derived from the server's
+`/my-permissions` — the same source the web UI uses).
 
 The CLI connects to the running Klangk backend over HTTP + WebSocket — it works locally and against remote servers.
 

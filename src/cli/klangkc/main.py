@@ -18,6 +18,7 @@ import typer
 import websockets
 from rich.console import Console
 from rich.live import Live
+from rich.prompt import Prompt
 from rich.progress import (
     BarColumn,
     DownloadColumn,
@@ -39,6 +40,7 @@ from .client import (
     AuthError,
     KlangkClient,
     WorkspaceNotFoundError,
+    decode_token_claims,
     drain_stdin,
     get_terminal_size,
     send_ignore_closed,
@@ -47,6 +49,7 @@ from .client import (
     ws_exec,
     ws_shell,
     reset_terminal,
+    _server_mode_is_none,
 )
 from .config import CLIConfig, CLIState, seed_config
 from .mount import validate_mount_spec
@@ -127,9 +130,10 @@ def require_auth() -> None:
     In ``none`` (no-auth) mode the server freely issues a token for the
     seeded default user, so any command auto-logs in on first run rather
     than demanding a prior ``klangkc login`` (#1374). The server's mode is
-    probed once and cached per-server in CLIState; an old server never
-    reports ``none``, so the existing "Not logged in" error still fires
-    against password/oidc/both servers.
+    probed live (not cached) so a mode switch takes effect immediately:
+    flipping none->password after a command auto-logged in still leaves
+    that token valid until it expires, but a *fresh* command with no
+    stored token will see the new mode and not auto-login.
     """
     state = _state()
     url = server_url()
@@ -144,32 +148,25 @@ def require_auth() -> None:
 
 
 def _maybe_none_login(state: CLIState, url: str) -> bool:
-    """If the server is in ``none`` mode, fetch a free token and cache it.
+    """If the server is in ``none`` mode, fetch a free token and store it.
 
     Returns True on success (token stored, ``require_auth`` proceeds).
-    Returns False if the server is not in ``none`` mode or the probe fails,
+    Returns False if the server is not in ``none`` mode or unreachable,
     leaving the caller to emit the normal "Not logged in" error. The
-    ``auth_modes`` probe result is cached per-server so every command
-    doesn't pay a /config round-trip.
+    mode is probed live via /config on every call (no cache) — cheap for
+    a single command entry point, and the only way to stay correct across
+    a mode switch.
     """
-    modes = state.get_auth_modes(url)
-    if modes is None:
-        config = fetch_config(url)
-        if not isinstance(config, dict):
-            return False
-        modes = config.get("auth_modes", "password")
-        state.set_auth_modes(url, modes)
-        state.save()
-    if modes != "none":
+    config = fetch_config(url)
+    if not isinstance(config, dict):
+        return False
+    if config.get("auth_modes") != "none":
         return False
     try:
         email, token = local_login(url)
     except SystemExit:
         return False
     state.set_credentials(url, email, token)
-    # set_credentials clears the cached mode (it's meant to invalidate on a
-    # fresh login), so re-assert it: we just confirmed this server is none.
-    state.set_auth_modes(url, "none")
     state.save()
     seed_config(url, email)
     return True
@@ -222,17 +219,36 @@ def logout(
 def status(
     plain: bool = typer.Option(False, "--plain", help="Plain text output"),
 ) -> None:
-    """Show connection info (server, user)."""
+    """Show connection info (server, user, admin status)."""
     # status works even with no active server (unlike other commands).
     url = _server_override or _state().active_server
     state = _state()
     token = state.get_token(url) if url else None
     email = state.get_email(url) if url else None
+    user_id = decode_token_claims(token).get("sub") if token else None
+    # Admin status comes from /my-permissions (the canonical source the
+    # frontend uses for isAdmin). Best-effort: if the probe fails (offline,
+    # token expired, old server without /admin in the static set) status
+    # still reports everything else rather than erroring out.
+    is_admin: bool | None = None
+    if token:
+        try:
+            client = _client()
+            resp = client.get("/api/v1/my-permissions")
+            client.check_auth(resp)
+            if resp.status_code == 200:
+                perms = resp.json().get("permissions", {})
+                is_admin = "*" in perms.get("/admin", [])
+        except Exception:
+            is_admin = None
     if plain:
         print(f"server={url or '(none)'}")
         if token:
             print(f"user={email or 'unknown'}")
+            print(f"user_id={user_id or 'unknown'}")
             print("status=logged_in")
+            if is_admin is not None:
+                print(f"admin={'yes' if is_admin else 'no'}")
         else:
             print("status=not_logged_in")
         return
@@ -243,7 +259,12 @@ def status(
     table.add_row("Server", url or "(none)")
     if token:
         table.add_row("User", email or "unknown")
+        table.add_row("User ID", user_id or "unknown")
         table.add_row("Status", "[green]logged in[/green]")
+        if is_admin:
+            table.add_row("Admin", "[green]yes[/green]")
+        elif is_admin is False:
+            table.add_row("Admin", "no")
     else:
         table.add_row("Status", "[yellow]not logged in[/yellow]")
     console.print(table)
@@ -1102,18 +1123,13 @@ async def refresh_token_threaded(server_url: str, token: str) -> str | None:
     new = await asyncio.to_thread(refresh_token, server_url, token)
     if new:
         return new
-    if _cached_mode_is_none(server_url):
+    if await asyncio.to_thread(_server_mode_is_none, server_url):
         try:
             _email, new = await asyncio.to_thread(local_login, server_url)
         except SystemExit:
             return None
         return new
     return None
-
-
-def _cached_mode_is_none(server_url: str) -> bool:
-    """True if the per-server cached auth mode is ``none`` (see client.py)."""
-    return CLIState.load().get_auth_modes(server_url) == "none"
 
 
 async def monitor_run(
@@ -2029,8 +2045,143 @@ vol_app = typer.Typer(
 app.add_typer(vol_app, name="volumes")
 
 
-@app.command()
-def invite(
+# --- Admin commands (site-wide admin privilege required) ---
+# Grouped under `admin` to separate site-wide management (users,
+# invitations, access control) from workspace-scoped commands. Every
+# command here hits an endpoint gated by the admin ACL permission
+# (acl.has_permission("admin")), so non-admins get a clear 403.
+admin_app = typer.Typer(
+    name="admin",
+    help="Site-wide administration (requires admin privileges).",
+    rich_markup_mode="rich",
+)
+app.add_typer(admin_app, name="admin")
+
+# Nested noun subgroups, matching the existing `volumes`/`terminal`
+# precedent so `admin --help` stays scannable as `admin <noun> <verb>`.
+admin_users_app = typer.Typer(
+    name="users", help="Manage user accounts.", rich_markup_mode="rich"
+)
+admin_app.add_typer(admin_users_app, name="users")
+
+admin_invitations_app = typer.Typer(
+    name="invitations",
+    help="Manage user invitations.",
+    rich_markup_mode="rich",
+)
+admin_app.add_typer(admin_invitations_app, name="invitations")
+
+
+def _admin_error(resp) -> None:
+    """Print a backend error detail and exit 1 for an admin API response."""
+    detail = (
+        resp.json().get("detail", resp.text)
+        if resp.headers.get("content-type", "").startswith("application/json")
+        else resp.text
+    )
+    _err.print(f"[red]{detail}[/red]")
+    raise typer.Exit(code=1)
+
+
+@admin_users_app.command("ls")
+def admin_users_ls(
+    page: int = typer.Option(1, "--page", help="Page number"),
+    page_size: int = typer.Option(
+        50, "--page-size", help="Users per page (max 200)"
+    ),
+) -> None:
+    """List all user accounts (admin only)."""
+    require_auth()
+    client = _client()
+    resp = client.get(
+        "/api/v1/admin/users",
+        params={"page": page, "page_size": page_size},
+    )
+    client.check_auth(resp)
+    if resp.status_code != 200:
+        _admin_error(resp)
+    body = resp.json()
+    users = body.get("users", [])
+    if not users:
+        typer.echo("No users.")
+        return
+    console = Console()
+    table = Table(box=None, pad_edge=False)
+    table.add_column("ID", style="dim")
+    table.add_column("Email", style="bold")
+    table.add_column("Handle")
+    table.add_column("Verified")
+    table.add_column("Provider")
+    table.add_column("Created")
+    for u in users:
+        table.add_row(
+            u["id"],
+            u["email"],
+            u.get("handle") or "",
+            "yes" if u.get("verified") else "no",
+            u.get("provider") or "password",
+            (u.get("created_at") or "")[:10],
+        )
+    total = body.get("total", len(users))
+    console.print(table)
+    if total > len(users):
+        console.print(
+            f"\n[dim]Showing {len(users)} of {total} "
+            f"(use --page to see more)[/dim]"
+        )
+
+
+@admin_users_app.command("set-password")
+def admin_users_set_password(
+    email: str = typer.Argument(..., help="Email of the user to update"),
+    password: str | None = typer.Option(
+        None,
+        "--password",
+        "-p",
+        help="New password (prompted if omitted)",
+    ),
+) -> None:
+    """Set a user's password (admin only).
+
+    Resolves the email to a user id, then PATCHes the password. Used to
+    give the seeded default (no-password) user a real credential before
+    switching the server from `none` to `password` mode — the
+    self-service `change-password` route refuses accounts with no
+    password hash, so this is the non-lockout path for the hero.
+    """
+    require_auth()
+    client = _client()
+    # Resolve email -> user id. /users/search is prefix-match (LIKE), so
+    # exact-match the result; emails are unique so there's at most one.
+    search = client.get("/api/v1/users/search", params={"q": email})
+    client.check_auth(search)
+    if search.status_code != 200:
+        _admin_error(search)
+    matches = [u for u in search.json() if u.get("email") == email]
+    if not matches:
+        _err.print(f"[red]No user found with email {email}[/red]")
+        raise typer.Exit(code=1)
+    user_id = matches[0]["id"]
+
+    if password is None:
+        password = Prompt.ask("[bold]New password[/bold]", password=True)
+        confirm = Prompt.ask("[bold]Confirm password[/bold]", password=True)
+        if password != confirm:
+            _err.print("[red]Passwords do not match[/red]")
+            raise typer.Exit(code=1)
+
+    resp = client.patch(
+        f"/api/v1/admin/users/{user_id}",
+        json={"password": password},
+    )
+    client.check_auth(resp)
+    if resp.status_code != 200:
+        _admin_error(resp)
+    Console().print(f"Password set for [bold]{email}[/bold]")
+
+
+@admin_invitations_app.command("send")
+def admin_invitations_send(
     email: str = typer.Argument(..., help="Email address to invite"),
 ) -> None:
     """Send an invitation email (admin only)."""
@@ -2038,22 +2189,20 @@ def invite(
     client = _client()
     resp = client.post("/api/v1/admin/invitations", json={"email": email})
     client.check_auth(resp)
-    if resp.status_code in (400, 403):
-        detail = resp.json().get("detail", resp.text)
-        _err.print(f"[red]{detail}[/red]")
-        raise typer.Exit(code=1)
-    resp.raise_for_status()
+    if resp.status_code != 200:
+        _admin_error(resp)
     Console().print(f"Invitation sent to [bold]{email}[/bold]")
 
 
-@app.command("invitations")
-def list_invitations() -> None:
+@admin_invitations_app.command("ls")
+def admin_invitations_ls() -> None:
     """List all invitations (admin only)."""
     require_auth()
     client = _client()
     resp = client.get("/api/v1/admin/invitations?page_size=200")
     client.check_auth(resp)
-    resp.raise_for_status()
+    if resp.status_code != 200:
+        _admin_error(resp)
     data = resp.json().get("invitations", [])
     if not data:
         typer.echo("No invitations.")

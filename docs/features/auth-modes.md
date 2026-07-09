@@ -89,3 +89,69 @@ simple endpoints — cheap to keep, risky to drop.
 For `password`, `oidc`, and `both`, see [Authentication](authentication.md)
 and [OIDC configuration](../reference/oidc.md). These modes behave exactly as
 before; `none` is purely additive.
+
+## Switching modes
+
+Mode switching is **just changing `KLANGK_AUTH_MODES` and restarting** — no
+migration, no data loss, no re-seed. Two directions matter; both work because
+the CLI probes the server's mode **live** on every command (it is not cached),
+so the new mode takes effect the moment the server restarts.
+
+### `none` -> `password` / `oidc` / `both` (adding real login)
+
+This is the common upgrade path: you've been running solo in `none` mode and
+now want real logins (for yourself and/or teammates). The one trap: **the
+seeded default user has no password** (it was created without one for `none`
+mode), and the self-service `change-password` route refuses password-less
+accounts. So set a password **before** you flip the switch:
+
+```bash
+# 1. Still in none mode — you're auto-logged-in as the admin default user.
+#    Give that user a real password via the admin endpoint:
+klangkc admin users set-password admin@example.com
+
+# 2. (Optional) invite teammates while you're still admin-with-token:
+klangkc admin invitations send teammate@example.com
+
+# 3. Flip the mode and restart the substrate:
+#    (set KLANGK_AUTH_MODES=password in your substrate env, then restart)
+
+# 4. Log in for real — you and your invitees now use the login form / CLI:
+klangkc login
+```
+
+`klangkc admin users set-password` resolves the email to a user id and
+`PATCH`es the password (admin-gated). Run it **while still in `none` mode**,
+when you're holding the free admin token — after the flip, the old free token
+still authorizes until it expires, but it's simplest to do the password set
+first. Confirm you're the admin with `klangkc status` (it reports
+`admin: yes`).
+
+### `password` / `oidc` / `both` -> `none` (dropping back to solo)
+
+Going the other way needs no preparation — flip `KLANGK_AUTH_MODES=none` and
+restart (remember the [loopback bind](#why-this-is-safe) gate). Existing
+issued tokens remain valid until they expire; once they do, the CLI auto-logs
+in as the default user, and the browser skips the login form. No one is
+locked out, because `none` requires no credential at all.
+
+### What carries over across a switch
+
+- **User accounts and their data** are unaffected — modes only change _how_
+  you authenticate, not what's stored. The same users, workspaces, volumes,
+  groups, and ACLs survive every switch.
+- **Tokens already in flight** keep working until they expire (or are
+  blocklisted on logout). A mode switch is not a global logout.
+- **The seeded default user** (`KLANGK_DEFAULT_USER`) is always present; in
+  `none` it's who you become, in the other modes it's a normal account.
+
+### One OIDC caveat
+
+If you switch to `oidc`/`both`, users (including the default user) link to an
+OIDC identity on their **first SSO login**, keyed on the identity's `sub` and
+email. If the default user's seeded email doesn't match a real SSO account,
+that first SSO login creates a _new_ user row and the default user's solo-mode
+data stays under the old email. To avoid orphaning data, set
+`KLANGK_DEFAULT_USER` to your SSO email **before** the first seed, or assign
+the default user's workspaces to the SSO identity via the admin API after
+linking.

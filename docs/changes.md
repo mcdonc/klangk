@@ -39,8 +39,18 @@ operators or integrators to act when upgrading.
   unreachable from workspace containers, and the server refuses to start in
   `none` mode on a non-loopback bind unless `KLANGK_ALLOW_INSECURE_NO_AUTH=1`
   is set. The CLI (`klangkc`) auto-logs in on first command run with no prior
-  `klangkc login`, caching the server's auth mode per-server. `password`,
-  `oidc`, and `both` modes are unchanged.
+  `klangkc login`; the server's auth mode is probed live (not cached) so a
+  mode switch takes effect immediately. `password`, `oidc`, and `both` modes
+  are unchanged. See [Auth Modes](features/auth-modes.md) for the full
+  mode-switching guide.
+- **`klangkc admin` command group** (#1374): site-wide administration now
+  has a dedicated CLI surface — `admin users ls`, `admin users
+set-password <email>` (the non-lockout path for giving the seeded default
+  user a real password before flipping `none` -> `password`), and
+  `admin invitations send/list`. The top-level `invite`/`invitations`
+  commands moved under `admin invitations`.
+- **`klangkc status`** now reports your user id and admin status (derived
+  from `/my-permissions`).
 
 ### Breaking
 

@@ -228,12 +228,10 @@ def login(
     if config:
         providers = config.get("oidc_providers", [])
         auth_modes = config.get("auth_modes", "password")
-        state.set_auth_modes(server_url, auth_modes)
 
         if auth_modes == "none":
             email, token = local_login(server_url)
             state.set_credentials(server_url, email, token)
-            state.set_auth_modes(server_url, "none")
             state.save()
             seed_config(server_url, email)
             _out.print(f"Logged in as [bold]{email}[/bold] (no-auth mode)")
@@ -296,8 +294,6 @@ def login(
     token = resp.json()["access_token"]
 
     state.set_credentials(server_url, email, token)
-    # Re-assert the probed mode (set_credentials clears the cache by design).
-    state.set_auth_modes(server_url, auth_modes)
     state.save()
     seed_config(server_url, email)
     _out.print(f"Logged in as [bold]{email}[/bold]")

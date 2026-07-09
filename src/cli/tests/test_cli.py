@@ -1475,11 +1475,9 @@ class TestNoneModeAuth:
         state = CLIState.load()
         assert state.get_token("http://localhost:8995") == "jwt-none"
         assert state.get_email("http://localhost:8995") == "admin@example.com"
-        # Mode is cached so later commands skip the /config probe.
-        assert state.get_auth_modes("http://localhost:8995") == "none"
 
-    def test_login_caches_auth_modes_probe(self, tmp_path, monkeypatch):
-        """Even in password mode the probed mode is cached."""
+    def test_login_password_arm_unchanged(self, tmp_path, monkeypatch):
+        """In password mode login() prompts as before (cache removed)."""
         monkeypatch.setattr("klangkc.config._STATE_PATH", tmp_path / "s.yaml")
         monkeypatch.setattr(
             "klangkc.auth.fetch_config",
@@ -1497,26 +1495,7 @@ class TestNoneModeAuth:
 
                 auth.login("http://localhost:8995")
         state = CLIState.load()
-        assert state.get_auth_modes("http://localhost:8995") == "password"
-
-    def test_set_credentials_invalidates_cached_mode(
-        self, tmp_path, monkeypatch
-    ):
-        monkeypatch.setattr("klangkc.config._STATE_PATH", tmp_path / "s.yaml")
-        state = CLIState()
-        state.set_auth_modes("http://srv", "none")
-        assert state.get_auth_modes("http://srv") == "none"
-        # A fresh login clears the cache so a server change is re-probed.
-        state.set_credentials("http://srv", "u@test.com", "jwt")
-        assert state.get_auth_modes("http://srv") is None
-
-    def test_auth_modes_round_trips_through_yaml(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("klangkc.config._STATE_PATH", tmp_path / "s.yaml")
-        state = CLIState()
-        state.set_auth_modes("http://srv", "none")
-        state.save()
-        reloaded = CLIState.load()
-        assert reloaded.get_auth_modes("http://srv") == "none"
+        assert state.get_token("http://localhost:8995") == "jwt-pw"
 
 
 class TestRequireAuthNoneMode:
@@ -1533,7 +1512,7 @@ class TestRequireAuthNoneMode:
         state = CLIState()
         state.active_server = "http://localhost:8995"
         state.save()
-        # No cached token, no cached mode -> probe returns none.
+        # No stored token -> probe /config live, it reports none.
         monkeypatch.setattr(
             "klangkc.main.fetch_config",
             lambda _: {"auth_modes": "none", "oidc_providers": []},
@@ -1548,7 +1527,6 @@ class TestRequireAuthNoneMode:
             main.require_auth()
         state = main._state()
         assert state.get_token("http://localhost:8995") == "jwt-auto"
-        assert state.get_auth_modes("http://localhost:8995") == "none"
 
     def test_errors_when_not_logged_in_and_not_none(
         self, tmp_path, monkeypatch
@@ -1569,7 +1547,11 @@ class TestRequireAuthNoneMode:
                 main.require_auth()
             post.assert_not_called()  # no /auth/local attempt in password mode
 
-    def test_uses_cached_mode_without_probe(self, tmp_path, monkeypatch):
+    def test_auto_login_skipped_when_mode_switched_to_password(
+        self, tmp_path, monkeypatch
+    ):
+        """If a server flipped none->password, require_auth must NOT
+        auto-login — it should demand a real login (no stale cache)."""
         from klangkc import main
 
         monkeypatch.setattr("klangkc.config._STATE_PATH", tmp_path / "s.yaml")
@@ -1577,21 +1559,16 @@ class TestRequireAuthNoneMode:
         monkeypatch.setattr(main, "_state_cache", None)
         state = CLIState()
         state.active_server = "http://localhost:8995"
-        # Pre-cache the mode so /config is never hit.
-        state.set_auth_modes("http://localhost:8995", "none")
         state.save()
+        # Live probe now reports password (server switched modes).
         monkeypatch.setattr(
-            "klangkc.main.fetch_config", lambda _: {}
-        )  # sentinel
-        local_resp = MagicMock()
-        local_resp.status_code = 200
-        local_resp.json.return_value = {
-            "access_token": "jwt-cached",
-            "email": "admin@example.com",
-        }
-        with patch("klangkc.auth.httpx.post", return_value=local_resp):
-            main.require_auth()
-        assert main._state().get_token("http://localhost:8995") == "jwt-cached"
+            "klangkc.main.fetch_config",
+            lambda _: {"auth_modes": "password", "oidc_providers": []},
+        )
+        with patch("klangkc.auth.httpx.post") as post:
+            with pytest.raises(typer.Exit):
+                main.require_auth()
+            post.assert_not_called()  # no /auth/local attempt
 
     def test_probe_failure_returns_false(self, tmp_path, monkeypatch):
         # fetch_config returns None (not a klangk instance) -> no auto-login.
@@ -1634,57 +1611,51 @@ class TestMonitorNoneRelogin:
     async def test_refresh_threaded_relogins_in_none_mode(
         self, tmp_path, monkeypatch
     ):
-        monkeypatch.setattr("klangkc.config._STATE_PATH", tmp_path / "s.yaml")
-        state = CLIState()
-        state.set_auth_modes("http://srv", "none")
-        state.save()
         from klangkc import main
 
         with patch("klangkc.main.refresh_token", return_value=None):
-            with patch(
-                "klangkc.main.local_login",
-                return_value=("a@x.com", "fresh-token"),
-            ):
-                new = await main.refresh_token_threaded("http://srv", "old")
+            with patch("klangkc.main._server_mode_is_none", return_value=True):
+                with patch(
+                    "klangkc.main.local_login",
+                    return_value=("a@x.com", "fresh-token"),
+                ):
+                    new = await main.refresh_token_threaded(
+                        "http://srv", "old"
+                    )
         assert new == "fresh-token"
 
     @pytest.mark.asyncio
     async def test_refresh_threaded_returns_none_when_relogin_exits(
         self, tmp_path, monkeypatch
     ):
-        monkeypatch.setattr("klangkc.config._STATE_PATH", tmp_path / "s.yaml")
-        state = CLIState()
-        state.set_auth_modes("http://srv", "none")
-        state.save()
         from klangkc import main
 
         with patch("klangkc.main.refresh_token", return_value=None):
-            with patch("klangkc.main.local_login", side_effect=SystemExit(1)):
-                new = await main.refresh_token_threaded("http://srv", "old")
+            with patch("klangkc.main._server_mode_is_none", return_value=True):
+                with patch(
+                    "klangkc.main.local_login", side_effect=SystemExit(1)
+                ):
+                    new = await main.refresh_token_threaded(
+                        "http://srv", "old"
+                    )
         assert new is None
 
     @pytest.mark.asyncio
     async def test_refresh_threaded_no_relogin_when_not_none(
         self, tmp_path, monkeypatch
     ):
-        monkeypatch.setattr("klangkc.config._STATE_PATH", tmp_path / "s.yaml")
         from klangkc import main
 
         with patch("klangkc.main.refresh_token", return_value=None):
-            with patch("klangkc.main.local_login") as m:
-                new = await main.refresh_token_threaded("http://srv", "old")
+            with patch(
+                "klangkc.main._server_mode_is_none", return_value=False
+            ):
+                with patch("klangkc.main.local_login") as m:
+                    new = await main.refresh_token_threaded(
+                        "http://srv", "old"
+                    )
         assert new is None
         m.assert_not_called()
-
-    def test_cached_mode_is_none(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("klangkc.config._STATE_PATH", tmp_path / "s.yaml")
-        from klangkc import main
-
-        state = CLIState()
-        state.set_auth_modes("http://srv", "none")
-        state.save()
-        assert main._cached_mode_is_none("http://srv") is True
-        assert main._cached_mode_is_none("http://other") is False
 
 
 class TestRefreshToken:
@@ -1751,41 +1722,42 @@ class TestClientTryRefresh:
         assert client._try_refresh() is False
 
     def test_try_refresh_relogins_in_none_mode(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("klangkc.config._STATE_PATH", tmp_path / "s.yaml")
-        state = CLIState()
-        state.set_auth_modes("http://test:8995", "none")
-        state.save()
         client = KlangkClient("http://test:8995", "old-token")
         with patch("klangkc.client._refresh_token", return_value=None):
             with patch(
-                "klangkc.client._local_login",
-                return_value=("local@example.com", "fresh-token"),
-            ) as m:
-                assert client._try_refresh() is True
+                "klangkc.client._server_mode_is_none", return_value=True
+            ):
+                with patch(
+                    "klangkc.client._local_login",
+                    return_value=("local@example.com", "fresh-token"),
+                ) as m:
+                    assert client._try_refresh() is True
         assert client.token == "fresh-token"
         m.assert_called_once_with("http://test:8995")
 
     def test_try_refresh_skips_relogin_when_not_none_mode(self):
         client = KlangkClient("http://test:8995", "old-token")
         with patch("klangkc.client._refresh_token", return_value=None):
-            with patch("klangkc.client._local_login") as m:
-                assert client._try_refresh() is False
+            with patch(
+                "klangkc.client._server_mode_is_none", return_value=False
+            ):
+                with patch("klangkc.client._local_login") as m:
+                    assert client._try_refresh() is False
         assert client.token == "old-token"
         m.assert_not_called()
 
     def test_try_refresh_returns_false_when_relogin_exits(
         self, tmp_path, monkeypatch
     ):
-        monkeypatch.setattr("klangkc.config._STATE_PATH", tmp_path / "s.yaml")
-        state = CLIState()
-        state.set_auth_modes("http://test:8995", "none")
-        state.save()
         client = KlangkClient("http://test:8995", "old-token")
         with patch("klangkc.client._refresh_token", return_value=None):
             with patch(
-                "klangkc.client._local_login", side_effect=SystemExit(1)
+                "klangkc.client._server_mode_is_none", return_value=True
             ):
-                assert client._try_refresh() is False
+                with patch(
+                    "klangkc.client._local_login", side_effect=SystemExit(1)
+                ):
+                    assert client._try_refresh() is False
         assert client.token == "old-token"
 
 
@@ -1954,7 +1926,7 @@ class TestWs4002Refresh:
         )
         with patch("klangkc.client._refresh_token", return_value=None):
             with patch(
-                "klangkc.client._cached_mode_is_none", return_value=True
+                "klangkc.client._server_mode_is_none", return_value=True
             ):
                 with patch(
                     "klangkc.client._local_login",
@@ -1994,7 +1966,7 @@ class TestWs4002Refresh:
         )
         with patch("klangkc.client._refresh_token", return_value=None):
             with patch(
-                "klangkc.client._cached_mode_is_none", return_value=True
+                "klangkc.client._server_mode_is_none", return_value=True
             ):
                 with patch(
                     "klangkc.client._local_login", side_effect=SystemExit(1)

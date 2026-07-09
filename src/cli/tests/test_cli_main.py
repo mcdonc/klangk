@@ -2764,7 +2764,9 @@ class TestInviteCLI:
         from typer.testing import CliRunner
 
         runner = CliRunner()
-        result = runner.invoke(main.app, ["invite", "a@b.com"])
+        result = runner.invoke(
+            main.app, ["admin", "invitations", "send", "a@b.com"]
+        )
         assert result.exit_code == 0
         assert "a@b.com" in result.stdout
 
@@ -2782,7 +2784,9 @@ class TestInviteCLI:
         from typer.testing import CliRunner
 
         runner = CliRunner()
-        result = runner.invoke(main.app, ["invite", "a@b.com"])
+        result = runner.invoke(
+            main.app, ["admin", "invitations", "send", "a@b.com"]
+        )
         assert result.exit_code == 1
 
     def test_invite_forbidden(self, logged_in_cfg, monkeypatch):
@@ -2799,7 +2803,9 @@ class TestInviteCLI:
         from typer.testing import CliRunner
 
         runner = CliRunner()
-        result = runner.invoke(main.app, ["invite", "a@b.com"])
+        result = runner.invoke(
+            main.app, ["admin", "invitations", "send", "a@b.com"]
+        )
         assert result.exit_code == 1
 
     def test_invitations_list(self, logged_in_cfg, monkeypatch):
@@ -2828,7 +2834,7 @@ class TestInviteCLI:
         from typer.testing import CliRunner
 
         runner = CliRunner()
-        result = runner.invoke(main.app, ["invitations"])
+        result = runner.invoke(main.app, ["admin", "invitations", "ls"])
         assert result.exit_code == 0
         assert "a@b.com" in result.stdout
 
@@ -2851,9 +2857,26 @@ class TestInviteCLI:
         from typer.testing import CliRunner
 
         runner = CliRunner()
-        result = runner.invoke(main.app, ["invitations"])
+        result = runner.invoke(main.app, ["admin", "invitations", "ls"])
         assert result.exit_code == 0
         assert "No invitations" in result.stdout
+
+    def test_invitations_list_error(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+
+        client = MagicMock()
+        resp = MagicMock(status_code=403)
+        resp.json.return_value = {"detail": "Permission denied"}
+        resp.text = "Permission denied"
+        resp.headers = {"content-type": "application/json"}
+        client.get.return_value = resp
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["admin", "invitations", "ls"])
+        assert result.exit_code == 1
 
 
 class TestBuildWsUrl:
@@ -3642,3 +3665,331 @@ class TestMonitorCommand:
             result = runner.invoke(main.app, ["monitor"])
             assert result.exit_code == 0
             assert "Stopped" in result.output
+
+
+class TestStatusAdminFlag:
+    """`status` derives admin from /my-permissions and degrades gracefully."""
+
+    def _perms_client(self, perms, monkeypatch):
+        from klangkc import main
+
+        client = MagicMock()
+        resp = MagicMock(
+            status_code=200,
+            json=lambda: {"permissions": perms},
+        )
+        resp.headers = {"content-type": "application/json"}
+        client.get.return_value = resp
+        monkeypatch.setattr(main, "_client", lambda: client)
+        return client
+
+    def test_plain_shows_admin_yes(self, logged_in_cfg, capsys, monkeypatch):
+        from klangkc import main
+
+        self._perms_client({"/admin": ["*"]}, monkeypatch)
+        main.status(plain=True)
+        out = capsys.readouterr().out
+        assert "admin=yes" in out
+
+    def test_plain_shows_admin_no(self, logged_in_cfg, capsys, monkeypatch):
+        from klangkc import main
+
+        self._perms_client({"/admin": []}, monkeypatch)
+        main.status(plain=True)
+        out = capsys.readouterr().out
+        assert "admin=no" in out
+
+    def test_rich_shows_admin_yes(self, logged_in_cfg, monkeypatch):
+        from io import StringIO
+
+        from rich.console import Console
+
+        from klangkc import main
+
+        self._perms_client({"/admin": ["*"]}, monkeypatch)
+        buf = StringIO()
+        with patch.object(
+            main,
+            "Console",
+            return_value=Console(file=buf, force_terminal=True),
+        ):
+            main.status(plain=False)
+        assert "yes" in buf.getvalue()
+
+    def test_rich_shows_admin_no(self, logged_in_cfg, monkeypatch):
+        from io import StringIO
+
+        from rich.console import Console
+
+        from klangkc import main
+
+        self._perms_client({"/admin": []}, monkeypatch)
+        buf = StringIO()
+        with patch.object(
+            main,
+            "Console",
+            return_value=Console(file=buf, force_terminal=True),
+        ):
+            main.status(plain=False)
+        assert "no" in buf.getvalue()
+
+    def test_degrades_when_permissions_unreachable(
+        self, logged_in_cfg, capsys, monkeypatch
+    ):
+        from klangkc import main
+
+        client = MagicMock()
+        client.get.side_effect = Exception("offline")
+        monkeypatch.setattr(main, "_client", lambda: client)
+        main.status(plain=True)
+        out = capsys.readouterr().out
+        # No admin line, but the rest is still reported.
+        assert "status=logged_in" in out
+        assert "admin=" not in out
+
+
+class TestAdminUsersCLI:
+    """`admin users list` and `admin users set-password` (#1374)."""
+
+    def test_users_list(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        client.get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {
+                "users": [
+                    {
+                        "id": "u-1",
+                        "email": "admin@example.com",
+                        "handle": "admin",
+                        "verified": True,
+                        "provider": None,
+                        "created_at": "2026-01-01 00:00:00",
+                    }
+                ],
+                "page": 1,
+                "page_size": 50,
+                "total": 1,
+            },
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+        result = CliRunner().invoke(main.app, ["admin", "users", "ls"])
+        assert result.exit_code == 0
+        assert "admin@example.com" in result.stdout
+
+    def test_users_list_empty(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        client.get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {"users": [], "total": 0},
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+        result = CliRunner().invoke(main.app, ["admin", "users", "ls"])
+        assert result.exit_code == 0
+        assert "No users" in result.stdout
+
+    def test_users_list_error(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        resp = MagicMock(status_code=403)
+        resp.json.return_value = {"detail": "Permission denied"}
+        resp.text = "Permission denied"
+        resp.headers = {"content-type": "application/json"}
+        client.get.return_value = resp
+        monkeypatch.setattr(main, "_client", lambda: client)
+        result = CliRunner().invoke(main.app, ["admin", "users", "ls"])
+        assert result.exit_code == 1
+
+    def test_users_list_pagination_note(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        client.get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {
+                "users": [
+                    {
+                        "id": "u-1",
+                        "email": "a@example.com",
+                        "handle": "",
+                        "verified": True,
+                        "provider": None,
+                        "created_at": "2026-01-01 00:00:00",
+                    }
+                ],
+                "total": 5,
+            },
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+        result = CliRunner().invoke(main.app, ["admin", "users", "ls"])
+        assert result.exit_code == 0
+        assert "Showing 1 of 5" in result.stdout
+
+    def test_set_password_search_error(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        search_resp = MagicMock(status_code=500)
+        search_resp.json.return_value = {"detail": "boom"}
+        search_resp.text = "boom"
+        search_resp.headers = {"content-type": "application/json"}
+        client.get.return_value = search_resp
+        monkeypatch.setattr(main, "_client", lambda: client)
+        result = CliRunner().invoke(
+            main.app,
+            [
+                "admin",
+                "users",
+                "set-password",
+                "hero@example.com",
+                "--password",
+                "x",
+            ],
+        )
+        assert result.exit_code == 1
+        client.patch.assert_not_called()
+
+    def test_set_password_with_option(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        # /users/search resolves email -> id
+        search_resp = MagicMock(status_code=200)
+        search_resp.json.return_value = [
+            {"id": "u-1", "email": "hero@example.com", "handle": "hero"}
+        ]
+        # PATCH /admin/users/{id} succeeds
+        patch_resp = MagicMock(status_code=200)
+        patch_resp.json.return_value = {"status": "updated"}
+        patch_resp.headers = {"content-type": "application/json"}
+        client.get.return_value = search_resp
+        client.patch.return_value = patch_resp
+        monkeypatch.setattr(main, "_client", lambda: client)
+        result = CliRunner().invoke(
+            main.app,
+            [
+                "admin",
+                "users",
+                "set-password",
+                "hero@example.com",
+                "--password",
+                "newpw123",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "hero@example.com" in result.stdout
+        client.patch.assert_called_once()
+        called_path = client.patch.call_args.args[0]
+        assert called_path == "/api/v1/admin/users/u-1"
+
+    def test_set_password_prompt_match(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        search_resp = MagicMock(status_code=200)
+        search_resp.json.return_value = [
+            {"id": "u-1", "email": "hero@example.com", "handle": "hero"}
+        ]
+        patch_resp = MagicMock(status_code=200)
+        patch_resp.json.return_value = {"status": "updated"}
+        patch_resp.headers = {"content-type": "application/json"}
+        client.get.return_value = search_resp
+        client.patch.return_value = patch_resp
+        monkeypatch.setattr(main, "_client", lambda: client)
+        # Two identical prompts.
+        monkeypatch.setattr(
+            "klangkc.main.Prompt.ask",
+            lambda *a, **k: "newpw123",
+        )
+        result = CliRunner().invoke(
+            main.app, ["admin", "users", "set-password", "hero@example.com"]
+        )
+        assert result.exit_code == 0
+
+    def test_set_password_prompt_mismatch(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        search_resp = MagicMock(status_code=200)
+        search_resp.json.return_value = [
+            {"id": "u-1", "email": "hero@example.com", "handle": "hero"}
+        ]
+        client.get.return_value = search_resp
+        monkeypatch.setattr(main, "_client", lambda: client)
+        answers = iter(["newpw123", "different"])
+
+        def _ask(*a, **k):
+            return next(answers)
+
+        monkeypatch.setattr("klangkc.main.Prompt.ask", _ask)
+        result = CliRunner().invoke(
+            main.app, ["admin", "users", "set-password", "hero@example.com"]
+        )
+        assert result.exit_code == 1
+        client.patch.assert_not_called()
+
+    def test_set_password_user_not_found(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        search_resp = MagicMock(status_code=200)
+        search_resp.json.return_value = [
+            {"id": "u-2", "email": "other@example.com", "handle": "other"}
+        ]
+        client.get.return_value = search_resp
+        monkeypatch.setattr(main, "_client", lambda: client)
+        result = CliRunner().invoke(
+            main.app,
+            [
+                "admin",
+                "users",
+                "set-password",
+                "ghost@example.com",
+                "--password",
+                "x",
+            ],
+        )
+        assert result.exit_code == 1
+        client.patch.assert_not_called()
+
+    def test_set_password_backend_error(self, logged_in_cfg, monkeypatch):
+        from klangkc import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        search_resp = MagicMock(status_code=200)
+        search_resp.json.return_value = [
+            {"id": "u-1", "email": "hero@example.com", "handle": "hero"}
+        ]
+        patch_resp = MagicMock(status_code=400)
+        patch_resp.json.return_value = {"detail": "Password too short"}
+        patch_resp.text = "Password too short"
+        patch_resp.headers = {"content-type": "application/json"}
+        client.get.return_value = search_resp
+        client.patch.return_value = patch_resp
+        monkeypatch.setattr(main, "_client", lambda: client)
+        result = CliRunner().invoke(
+            main.app,
+            [
+                "admin",
+                "users",
+                "set-password",
+                "hero@example.com",
+                "--password",
+                "x",
+            ],
+        )
+        assert result.exit_code == 1

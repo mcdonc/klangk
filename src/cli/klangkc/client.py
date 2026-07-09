@@ -24,21 +24,22 @@ import time as _time
 import httpx
 import websockets
 
+from .auth import fetch_config as _fetch_config
 from .auth import local_login as _local_login
 from .auth import refresh_token as _refresh_token
-from .config import CLIState
 
 
-def _cached_mode_is_none(server_url: str) -> bool:
-    """True if the per-server cached auth mode is ``none``.
+def _server_mode_is_none(server_url: str) -> bool:
+    """True if the server's live auth mode is ``none`` (no-login).
 
-    Used by the 401 re-login path: in no-auth mode re-login is free, so a
-    refresh failure should retry ``/auth/local`` rather than erroring out.
-    Avoids an extra /config round-trip on every request — the cache is
-    invalidated on 401/login. Returns False when unprobed or not ``none``
-    so non-none servers keep their normal refresh-error behavior (#1374).
+    Probes ``/config`` on every call rather than trusting a cache: a mode
+    switch (none <-> password/oidc) must take effect immediately, and the
+    probe is one cheap GET only on a refresh-failure path, not every
+    request (#1374). Returns False on any probe failure so non-none or
+    unreachable servers keep their normal refresh-error behavior.
     """
-    return CLIState.load().get_auth_modes(server_url) == "none"
+    config = _fetch_config(server_url)
+    return isinstance(config, dict) and config.get("auth_modes") == "none"
 
 
 _WS_MAX_SIZE = int(os.environ.get("KLANGK_WS_MSG_SIZE_MAX", 2**24))
@@ -186,6 +187,22 @@ def get_terminal_size() -> tuple[int, int]:
 _REFRESH_MARGIN_SECONDS = 300  # refresh 5 minutes before expiry
 
 
+def decode_token_claims(token: str) -> dict:
+    """Decode a JWT's payload without verifying the signature.
+
+    The CLI already trusts the token it holds (it came from a successful
+    login), so signature verification adds nothing for read-only local
+    use like reading the ``sub`` (user id) claim in ``klangkc status``.
+    Returns ``{}`` on any decode failure.
+    """
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (4 - len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return {}
+
+
 def token_expires_soon(token: str) -> bool:
     """Return True if *token* expires within ``_REFRESH_MARGIN_SECONDS``.
 
@@ -194,16 +211,10 @@ def token_expires_soon(token: str) -> bool:
     Returns ``False`` on any decode failure so callers fall through to
     the normal request path.
     """
-    try:
-        payload = token.split(".")[1]
-        payload += "=" * (4 - len(payload) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(payload))
-        exp = claims.get("exp")
-        if exp is None:
-            return False
-        return _time.time() >= (exp - _REFRESH_MARGIN_SECONDS)
-    except Exception:
+    exp = decode_token_claims(token).get("exp")
+    if exp is None:
         return False
+    return _time.time() >= (exp - _REFRESH_MARGIN_SECONDS)
 
 
 class KlangkClient:
@@ -218,8 +229,10 @@ class KlangkClient:
         """Attempt to refresh the current token.
 
         On success, updates ``self.token`` and returns ``True``.
-        On refresh failure in ``none`` (no-auth) mode, re-login is free
-        (``/auth/local``), so retry that before giving up (#1374).
+        On refresh failure, if the server is in ``none`` (no-auth) mode,
+        re-login is free (``/auth/local``), so retry that before giving up
+        (#1374). The mode is probed live (not cached) so a recent mode
+        switch takes effect immediately.
         """
         if not self.token:
             return False
@@ -227,7 +240,7 @@ class KlangkClient:
         if new_token:
             self.token = new_token
             return True
-        if _cached_mode_is_none(self.server_url):
+        if _server_mode_is_none(self.server_url):
             try:
                 _email, token = _local_login(self.server_url)
             except SystemExit:
@@ -1221,7 +1234,7 @@ class TerminalSession(_ShellSession):
                 _code = exc.rcvd.code if exc.rcvd else None
                 if _code == 4002 and self.token:
                     new = _refresh_token(self.server_url, self.token)
-                    if not new and _cached_mode_is_none(self.server_url):
+                    if not new and _server_mode_is_none(self.server_url):
                         try:
                             _email, new = _local_login(self.server_url)
                         except SystemExit:
