@@ -20,6 +20,7 @@ docker run -d \
   --security-opt systempaths=unconfined \
   -e KLANGK_DEFAULT_USER=you@example.com \
   -e KLANGK_DEFAULT_PASSWORD=changeme \
+  -e KLANGK_AUTH_MODES=password \
   -e KLANGK_JWT_SECRET=$(openssl rand -hex 32) \
   -e KLANGK_LLM_BASE_URL=https://ollama.com/v1 \
   -e KLANGK_LLM_API_KEY=your-api-key \
@@ -30,8 +31,11 @@ docker run -d \
 Open <http://localhost:8995> and log in with the email and password
 you set above.
 
-See [Running with Docker](deployment/docker.md) for details on the
-Docker flags, docker-compose, persistence, and updating.
+> A Docker container publishes its port (`-p 8995:8995`), making it
+> network-reachable, so these examples set `KLANGK_AUTH_MODES=password`
+> explicitly. The default mode is `none` (no-login, loopback-only), which is
+> meant for local dev on your own machine — a published port is not that.
+> See [Auth Modes](features/auth-modes.md).
 
 ## Run Using devenv
 
@@ -58,7 +62,10 @@ KLANGK_LLM_BASE_URL=https://ollama.com/v1
 KLANGK_LLM_MODEL=gemma4:31b
 KLANGK_JWT_SECRET=change-this-to-a-random-secret
 KLANGK_DEFAULT_USER=admin@example.com
-# Omit to generate a random password on first run
+# The default auth mode is `none` (no password, loopback-only) — you're
+# logged in automatically as the default user above. To require a real
+# password instead, uncomment the next two lines:
+# KLANGK_AUTH_MODES=password
 # KLANGK_DEFAULT_PASSWORD=admin
 EOF
 
@@ -87,16 +94,18 @@ you may need to create a policy file. See
 [Container Policy](reference/podman.md#container-policy) for
 instructions.
 
-## Logging In
+## Logging in
 
-Log in with the email you configured (`KLANGK_DEFAULT_USER`). If you
-set `KLANGK_DEFAULT_PASSWORD`, use that password. Otherwise, check
-the server log output for the generated password.
+Out of the box (the default `none` auth mode) there is **nothing to log in
+with** — open <http://localhost:8995> and you're already in, as the default
+user (`KLANGK_DEFAULT_USER`). The CLI likewise needs no `klangkc login`.
 
-The default user is in the `admin` group and can manage other users
-and groups via the Admin page.
+If you switched to a real auth mode (`password`, `oidc`, or `both` — e.g. the
+Docker examples above set `KLANGK_AUTH_MODES=password`), log in with the
+email you configured. If you set `KLANGK_DEFAULT_PASSWORD`, use that
+password; otherwise check the server log for the generated one. The default
+user is in the `admin` group and can manage other users and groups via the
+Admin page.
 
-> **No-login mode:** if you started the server with
-> `KLANGK_AUTH_MODES=none`, login is skipped entirely — the UI and CLI
-> auto-log in as the default user with no password. See
-> [Auth Modes](features/auth-modes.md).
+See [Auth Modes](features/auth-modes.md) for the full picture, including how
+to switch modes.

@@ -249,6 +249,10 @@ class TestLifespan:
     async def test_lifespan_starts_and_stops(self, db, monkeypatch):
         monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        # Default mode is now ``none``; pin the bind loopback so the
+        # no-auth safety gate admits startup deterministically (the real
+        # out-of-box boot path).
+        monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
         monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
         app = FastAPI()
         with (
@@ -282,6 +286,7 @@ class TestLifespan:
     async def test_lifespan_refuses_if_pid_alive(self, db, monkeypatch):
         monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
         monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
         app = FastAPI()
         with (
@@ -454,6 +459,7 @@ class TestStartupShutdownRestart:
         """The lifespan installs (and removes) a SIGHUP handler."""
         monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
         monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
         app = FastAPI()
         loop = asyncio.get_running_loop()

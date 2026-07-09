@@ -325,11 +325,13 @@ class TestProviderRegistry:
 
 
 class TestAuthModes:
-    def test_default_password_when_no_oidc(self, monkeypatch):
+    def test_default_none_when_no_oidc(self, monkeypatch):
+        # Production default (no OIDC, mode unset) is now ``none`` — a fresh
+        # klangk boots in no-login single-user local-dev mode (#1374).
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
-        assert oidc.auth_modes() == "password"
-        assert oidc.password_login_allowed()
-        assert not oidc.oidc_login_allowed()
+        assert oidc.auth_modes() == "none"
+        assert not oidc.password_login_allowed()
+        assert oidc.local_login_allowed()
 
     def test_default_both_when_oidc_enabled(self, monkeypatch):
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)

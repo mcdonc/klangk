@@ -11,9 +11,9 @@ as the seeded default user with no password — see
 
 ## Email and password
 
-The default setup uses email/password accounts. New users register
-with an email address, receive a verification link, and set a
-password. Passwords are hashed with bcrypt.
+With `KLANGK_AUTH_MODES` set to `password` (or `both`), klangk uses
+email/password accounts. New users register with an email address, receive
+a verification link, and set a password. Passwords are hashed with bcrypt.
 
 ### Registration
 

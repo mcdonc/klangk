@@ -15,6 +15,38 @@ devenv shell -- pytest
 
 A long-running interactive `devenv up` (backend + nginx + workspace image build) is a human-facing workflow; agents generally don't run it. If you need the backend up for something, ask.
 
+## Running tests (match CI)
+
+Always run the test suites **the way CI runs them**. The exact invocations
+are:
+
+```bash
+# Backend (100% coverage gate)
+devenv shell -- python -m pytest src/backend/tests -v -n auto
+
+# CLI (100% coverage gate)
+devenv shell -- python -m pytest src/cli/tests -v -n auto
+
+# Frontend
+devenv shell -- flutter test --coverage
+```
+
+`-n auto` (pytest-xdist) is **not optional** for the Python suites — it's how
+CI runs them, and for the backend it is the difference between a real and a
+bogus coverage number. The backend `conftest.py` sets
+`COVERAGE_CORE=sysmon` specifically so that code executed inside
+SQLAlchemy's greenlet context is tracked **in each xdist worker**; without
+`-n` (a single-process run) that tracking under-counts and you'll see a
+false ~93% total with heavy files like `api/auth.py` reported at ~55%.
+Run with `-n auto` and coverage matches CI (100%, every module). Don't try
+to "reproduce" a coverage drop from a single-process run — re-run with
+`-n auto` first.
+
+The 100% coverage gate is enforced in both Python suites; a new code path
+with no test will fail the build. When iterating fast on one file you can
+scope with `-k` / a path and add `--no-cov`, but re-run the full suite
+**with** coverage (and `-n auto`) before committing.
+
 ## Process manager: devenv 2.x native (not process-compose)
 
 `devenv processes up` / `devenv up` use **devenv 2.x's built-in process manager**,

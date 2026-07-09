@@ -40,9 +40,8 @@ operators or integrators to act when upgrading.
   `none` mode on a non-loopback bind unless `KLANGK_ALLOW_INSECURE_NO_AUTH=1`
   is set. The CLI (`klangkc`) auto-logs in on first command run with no prior
   `klangkc login`; the server's auth mode is probed live (not cached) so a
-  mode switch takes effect immediately. `password`, `oidc`, and `both` modes
-  are unchanged. See [Auth Modes](features/auth-modes.md) for the full
-  mode-switching guide.
+  mode switch takes effect immediately. See [Auth Modes](features/auth-modes.md)
+  for the full mode-switching guide.
 - **`klangkc admin` command group** (#1374): site-wide administration now
   has a dedicated CLI surface — `admin users ls`, `admin users
 set-password <email>` (set a known password for the default user — whose
@@ -54,6 +53,18 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Breaking
 
+- **Default auth mode is now `none`** (no-login single-user, loopback-bound)
+  when `KLANGK_AUTH_MODES` is unset and no OIDC provider is configured
+  (#1374). Previously the unset default was `password`. A fresh klangk now
+  "just works" locally with no password and is unreachable from the network.
+  This is safe by construction — `none` refuses to start on a non-loopback
+  bind unless `KLANGK_ALLOW_INSECURE_NO_AUTH=1` — but it is a behavior change
+  on upgrade: **set `KLANGK_AUTH_MODES=password` (or `oidc`/`both`) explicitly
+  before redeploying if you relied on the old default.** When an OIDC
+  provider is configured (`KLANGK_OIDC_CONFIG`), the unset default stays
+  `both`, unchanged. Note: `none` mode is not yet supported with the published
+  Docker host image (a published port isn't loopback) — the Docker examples
+  set `KLANGK_AUTH_MODES=password`; see #1391.
 - **uvicorn now binds `127.0.0.1` by default** instead of `0.0.0.0`
   (`KLANGK_LISTEN`, new). Workspace containers could previously reach the
   backend directly via `host.containers.internal:$KLANGK_PORT`, bypassing nginx

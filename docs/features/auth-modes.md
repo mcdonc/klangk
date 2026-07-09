@@ -12,12 +12,18 @@ customer, only configuration.
 | `password` | email/password only                | small team                                    |
 | `both`     | SSO buttons **and** email/password | **team** (default when OIDC is configured)    |
 
+The **default is `none`** unless an OIDC provider is configured (then
+`both`). A fresh klangk with nothing set boots in no-login single-user mode,
+bound to loopback — it "just works" locally with no password and is
+unreachable from the network. See [The default](#the-default) below for the
+upgrade implications.
+
 ## Choosing a mode
 
-- **`none`** — you run klangk on your own machine for development or testing
-  and don't want to type a password. The server auto-logs you in as the seeded
-  default user (see [no-auth mode](#no-auth-mode-none) below). Must bind
-  loopback.
+- **`none`** — **the default** (unless OIDC is configured). You run klangk on
+  your own machine for development or testing and don't want to type a
+  password. The server auto-logs you in as the seeded default user (see
+  [no-auth mode](#no-auth-mode-none) below). Must bind loopback.
 - **`password`** — a small trusted group logs in with email/password.
 - **`oidc`** — your organisation manages identity through an OIDC provider
   (Keycloak, Okta, Azure AD, …) and you want to disable local passwords.
@@ -27,9 +33,22 @@ customer, only configuration.
 
 ## The default
 
-`KLANGK_AUTH_MODES` defaults to `both` when an OIDC provider is configured
-(via `KLANGK_OIDC_CONFIG`), and `password` otherwise. Set it explicitly to
-pin a mode regardless of OIDC config.
+`KLANGK_AUTH_MODES` defaults to **`none`** — a fresh klangk with nothing
+configured boots in no-login single-user mode, bound to loopback
+(`127.0.0.1`). It "just works" locally: open the browser, you're in, no
+password. The only exception is when an OIDC provider is configured (via
+`KLANGK_OIDC_CONFIG`): configuring OIDC is the signal that real multi-user
+auth is wanted, so the default becomes `both` in that case. Set
+`KLANGK_AUTH_MODES` explicitly to pin any other mode regardless of OIDC
+config.
+
+> **Upgrading from an earlier version:** if you previously relied on the
+> unset-default being `password` (or `both`), your server will now boot in
+> `none` mode instead. That is safe by construction — `none` refuses to
+> start on a non-loopback bind (see [why this is safe](#why-this-is-safe)) —
+> but you should set `KLANGK_AUTH_MODES=password` (or `oidc`/`both`)
+> explicitly before redeploying to preserve your intended auth posture. See
+> [Switching modes](#switching-modes).
 
 ## No-auth mode (`none`)
 

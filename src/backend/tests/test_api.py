@@ -675,8 +675,8 @@ class TestLocalLogin:
         assert resp.json()["email"] == "local@example.com"
 
     async def test_disabled_when_not_none_mode(self, client, db, monkeypatch):
-        # Default (password) mode — endpoint must refuse.
-        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        # In password mode (the explicit opposite of none) the endpoint refuses.
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
         resp = await client.post("/api/v1/auth/local")
         assert resp.status_code == 403
 
@@ -7592,7 +7592,8 @@ class TestOIDCConfig:
         assert "oidc_providers" in data
         assert "auth_modes" in data
         assert data["oidc_providers"] == []
-        assert data["auth_modes"] == "password"
+        # Production default (no OIDC, mode unset) is now ``none`` (#1374).
+        assert data["auth_modes"] == "none"
 
     async def test_config_with_providers(self, client, monkeypatch):
         monkeypatch.setattr(
