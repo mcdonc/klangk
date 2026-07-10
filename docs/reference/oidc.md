@@ -63,10 +63,12 @@ KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
 > When both `KLANGK_OIDC_CONFIG` (separate file) and `oidc_providers` (inline) are set, the separate file wins — consistent with the global precedence rule (env vars override config-file values).
 
 1. Optionally set `KLANGK_AUTH_MODES` to control which login methods are available:
-   - `both` (default when OIDC configured) — SSO buttons + email/password form
+   - `both` — SSO buttons + email/password form
    - `oidc` — SSO buttons only, email/password disabled
    - `password` — email/password only
    - `none` — no-login single-user (local-dev) mode; OIDC config is ignored. See [Auth Modes](../features/auth-modes.md).
+
+   The default (when `KLANGK_AUTH_MODES` is unset) is `none`; configuring OIDC no longer implies `both` — set `KLANGK_AUTH_MODES=oidc` (or `both`) to turn OIDC login on (#1419).
 
 ## Provider Config Fields
 
