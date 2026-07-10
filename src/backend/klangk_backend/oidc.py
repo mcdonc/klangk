@@ -189,35 +189,22 @@ def auth_modes() -> str:
     single-user local-dev mode). ``none`` auto-issues a token for the
     seeded default user via ``POST /api/v1/auth/local``; see #1374.
 
-    Resolution order when ``KLANGK_AUTH_MODES`` is unset:
+    When ``KLANGK_AUTH_MODES`` is unset the default is ``none``. OIDC
+    settings (``KLANGK_OIDC_*``) do **not** change the mode (#1419) — they
+    only take effect once the mode is ``oidc`` or ``both`` (set explicitly).
+    A fresh klangk with nothing configured therefore boots in no-login
+    single-user mode, bound to loopback, and "just works" locally without a
+    password. Operators who want password login, OIDC, or both set
+    ``KLANGK_AUTH_MODES`` explicitly.
 
-    1. ``KLANGK_PRESET`` (#1397) — a ``*-auth`` preset defaults the mode
-       to ``password`` (the gate is required by the preset; the backend
-       defaults to password). A ``*-noauth`` preset defaults to ``none``.
-    2. otherwise ``none`` (loopback single-user).
-
-    OIDC settings (``KLANGK_OIDC_*``) do **not** change the mode (#1419) —
-    they only take effect once the mode is ``oidc`` or ``both`` (set
-    explicitly or via a preset). A fresh klangk with nothing configured
-    therefore boots in no-login single-user mode, bound to loopback, and
-    "just works" locally without a password. Operators who want password
-    login, OIDC, or both set ``KLANGK_AUTH_MODES`` explicitly (or pick an
-    ``*-auth`` preset). A preset that requires a different backend (e.g.
-    OIDC) sets ``KLANGK_AUTH_MODES=oidc`` — the preset only owns the
-    *default*, never an override.
+    ``KLANGK_AUTH_MODES`` is the sole authority on auth — nothing else
+    defaults or overrides it (#1422 removed the deployment-shape setting
+    that used to default it). The deployment shape is derived from this
+    knob plus ``KLANGK_LISTEN``.
     """
     val = resolve_env_value("KLANGK_AUTH_MODES", "")
     if val in ("oidc", "password", "both", "none"):
         return val
-    # ``KLANGK_AUTH_MODES`` unset — let the deployment preset (#1397) own the
-    # default; otherwise ``none``. A ``*-auth`` preset means the gate is
-    # required, so default to password; the preset never overrides an
-    # explicit ``KLANGK_AUTH_MODES`` (handled above). OIDC settings no longer
-    # promote the mode (#1419) — they are inert unless the mode is already
-    # ``oidc``/``both``.
-    preset = get_settings().preset
-    if preset is not None and preset.endswith("-auth"):
-        return "password"
     return "none"
 
 

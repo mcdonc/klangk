@@ -125,6 +125,9 @@ async function globalSetup() {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
+        // Bare uvicorn; the lifespan must not spawn nginx (frontend e2e
+        // runs its own nginx via the old scripts/nginx.sh path).
+        _KLANGK_DISABLE_NGINX: "1",
         KLANGK_PORT: backendPort,
         KLANGK_NGINX_PORT: nginxPort,
         KLANGK_DATA_DIR: dataDir,

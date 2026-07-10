@@ -28,7 +28,11 @@ from . import (
     workspaces,
     wshandler,
 )
-from .settings import get_settings, resolve_indirection, validate_at_startup
+from .settings import (
+    get_settings,
+    resolve_indirection,
+    validate_at_startup,
+)
 from .api import root_router, router
 from .util import API_PREFIX, derive_hosting_info
 from .model import (
@@ -393,23 +397,19 @@ _nginx_task: asyncio.Task | None = None
 _nginx_stopping = False
 
 
-def _uds_enabled() -> bool:
-    """True when the server is bound to a UDS (only klangkd sets this).
-
-    The honest mode switch (#1396): klangkd sets ``KLANGK_UDS_MODE`` to arm the
-    nginx watchdog; bare uvicorn / unit tests never set it, so the watchdog
-    no-ops and ``_UDS_MODE`` stays False. A flag, not a path — the socket
-    path is derived from ``state_dir``.
-    """
-    raw = resolve_indirection(get_settings().uds_mode) or ""
-    return raw.strip().lower() in ("1", "true", "yes")
-
-
 def _socket_path() -> str:
-    """The UDS path: ``<state_dir>/klangk.sock``.
+    """The UDS path klangkd is bound to (only meaningful when listen is a socket).
 
-    Single path knob (``state_dir``); the socket always lives under it.
+    Reads ``KLANGK_LISTEN`` directly — under the derive model (#1422) the
+    socket path IS the listen value (e.g. ``/tmp/klangk.sock``), not a
+    separate derived-from-state_dir artifact. When listen is unset/empty,
+    falls back to ``<state_dir>/klangk.sock`` (a sensible default rather than
+    an empty string). The renderer + watchdog use this to know where nginx
+    should ``proxy_pass``.
     """
+    listen = resolve_indirection(get_settings().listen) or ""
+    if listen:
+        return listen
     state_dir = (
         resolve_indirection(get_settings().state_dir) or "/tmp/klangk-state"
     )
@@ -455,7 +455,7 @@ async def _nginx_watchdog(
 def _prepare_nginx() -> tuple[str, str]:
     """Render nginx.conf for the UDS and return ``(bin_path, conf_path)``.
 
-    Pure-ish (writes one file): resolves the socket path from ``state_dir``,
+    Pure-ish (writes one file): reads the socket path from ``KLANGK_LISTEN``,
     arms ``_UDS_MODE``, locates the nginx binary, and renders the config with
     the UDS upstream. Extracted from :func:`start_nginx_watchdog` so the
     config-rendering logic is unit-testable without spawning nginx; only the
@@ -467,20 +467,27 @@ def _prepare_nginx() -> tuple[str, str]:
     state_dir = (
         resolve_indirection(get_settings().state_dir) or "/tmp/klangk-state"
     )
-    conf_path = os.path.join(state_dir, "nginx", "nginx.conf")
+    conf_path = os.path.join(state_dir, "nginx.conf")
     bin_path = nginx_mod.find_nginx_bin()
     nginx_mod.write_config(nginx_mod.uds_upstream(sock), conf_path)
     return bin_path, conf_path
 
 
 async def start_nginx_watchdog() -> None:
-    """Render nginx.conf for the UDS and start the nginx watchdog.
+    """Render nginx.conf and start the nginx watchdog.
 
-    No-op when ``KLANGK_UDS_MODE`` is unset (bare uvicorn, TCP tests) — only
-    klangkd sets it, so direct-uvicorn paths never spawn nginx.
+    nginx is always klangkd's child (rendered + spawned + supervised here),
+    regardless of transport — the bind only changes what nginx proxies to
+    (a UDS upstream vs a TCP upstream), not whether nginx exists. No external
+    supervisor manages klangk's nginx.
+
+    Gated only by ``_KLANGK_DISABLE_NGINX`` — an **internal, non-user-facing**
+    env var the test suite sets to suppress nginx spawn (tests boot the app
+    via the lifespan and don't want a real nginx process). Not a documented
+    config knob; no operator-facing name.
     """
     global _nginx_task, _nginx_stopping
-    if not _uds_enabled():
+    if os.environ.get("_KLANGK_DISABLE_NGINX"):
         return
     bin_path, conf_path = _prepare_nginx()
     _nginx_stopping = False
