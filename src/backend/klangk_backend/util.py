@@ -183,6 +183,48 @@ def load_trusted_proxy_cidrs() -> set[ipaddress._BaseAddress]:
 _TRUSTED_PROXY_CIDRS = load_trusted_proxy_cidrs()
 
 
+# UDS mode flag (#1396): set to True only when the server is bound to a UNIX
+# domain socket. Over a UDS there is no TCP peer, so uvicorn leaves
+# ``request.client`` as ``None``. The socket file is 0600 in a 0700 dir, both
+# owned by the klangk user, so the only processes that can open it run as the
+# klangk user (nginx and uvicorn do). A ``None`` peer over a UDS is therefore
+# treated as the trusted reverse proxy — same as a loopback peer over TCP —
+# but the trust boundary is the same-uid boundary, not an nginx-vs-attacker
+# boundary: any klangk-uid process can open the socket, and we trust that
+# klangk-uid processes do not forge the X-Real-IP/X-Forwarded-* headers.
+# That is the single-user threat model ``none`` mode already assumes.
+# The trust helpers below consult this flag so they honor nginx's forwarded
+# headers instead of failing closed on the missing client. Default False:
+# unit/e2e tests that launch uvicorn over TCP are unaffected, and the
+# fail-closed property for a genuinely-missing client is preserved (see
+# TestClientIsLoopback.test_missing_client_host_rejected).
+_UDS_MODE = False
+
+
+def set_uds_mode(enabled: bool) -> None:
+    """Mark whether the server is bound to a UDS (so a ``None`` client peer
+    is treated as the trusted reverse proxy). Called from the lifespan when
+    the bind is a socket; never set by tests that use TCP or the ASGI
+    TestClient.
+    """
+    global _UDS_MODE
+    _UDS_MODE = bool(enabled)
+
+
+def _connection_peer_is_trusted(client_host: str | None) -> bool:
+    """True if the immediate connection peer is the trusted reverse proxy.
+
+    Over TCP this is :func:`peer_trusted` (peer IP in the trusted CIDR set).
+    Over a UDS there is no peer IP (``client_host`` is ``None``); the socket
+    file perms restrict access to klangk-uid processes (nginx among them), so
+    a ``None`` peer is treated as the trusted reverse proxy when
+    ``_UDS_MODE`` is set — the trust boundary is the same-uid boundary (see
+    ``_UDS_MODE``). ``None`` outside UDS mode stays untrusted (fail-closed)
+    — preserving the missing-client rejection.
+    """
+    return peer_trusted(client_host) or (client_host is None and _UDS_MODE)
+
+
 def peer_trusted(client_host: str | None) -> bool:
     """True if the immediate peer is in the trusted proxy set."""
     if not client_host:
@@ -232,12 +274,16 @@ def client_is_loopback(headers=None, client_host: str | None = None) -> bool:
     nginx) has its forwarded headers ignored, and the peer itself is
     non-loopback, so it is rejected.
 
-    Fail-closed: missing client info or an unparseable IP rejects.
+    Fail-closed: a missing client (``None``) that is NOT behind a UDS, or an
+    unparseable IP, rejects. Over a UDS a ``None`` client is treated as the
+    trusted reverse proxy (same-uid access to the socket; see
+    ``_UDS_MODE``), so its forwarded headers ARE consulted — the loopback
+    TCP case in disguise.
     """
     candidate = client_host
     trust = (
         (not _REJECT_PROXY)
-        and peer_trusted(client_host)
+        and _connection_peer_is_trusted(client_host)
         and headers is not None
     )
     if trust:
@@ -304,7 +350,7 @@ def derive_hosting_info(
     base_path = resolve_env_value("KLANGK_HOSTING_BASE_PATH")
     trust = (
         (not _REJECT_PROXY)
-        and peer_trusted(client_host)
+        and _connection_peer_is_trusted(client_host)
         # Only a real request can inform a forwarded header; an eager
         # start (no connection) must fall back to env / bare localhost.
         and headers is not None

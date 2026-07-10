@@ -1,8 +1,9 @@
 """
 E2E tests for the nginx container ACL (LLM proxy / browser-delegate).
 
-TestNginxAclConfig — runs nginx.sh with controlled env to verify the
-generated nginx.conf contains the correct allow/deny directives.
+TestNginxAclConfig — renders nginx.conf via the Python renderer (#1396) with
+controlled env to verify the generated config contains the correct
+allow/deny directives (replaces the old scripts/nginx.sh invocation).
 
 TestNginxAclEnforcement — starts nginx + uvicorn and verifies that
 requests from 127.0.0.1 are denied when KLANGK_CONTAINER_SUBNETS is
@@ -17,58 +18,92 @@ import time
 import httpx
 import pytest
 
-SCRIPTS_DIR = os.path.join(
-    os.path.dirname(__file__), "..", "..", "..", "scripts"
-)
-NGINX_SH = os.path.join(SCRIPTS_DIR, "nginx.sh")
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
+
+
+def _render_conf(env_overrides, tmpdir=None):
+    """Render nginx.conf via the Python renderer (#1396) with controlled env.
+
+    Replaces the old ``_run_nginx_sh`` (which ran ``scripts/nginx.sh`` and
+    killed it after config generation). Sets KLANGK_* env vars, invalidates
+    the settings cache, renders via :func:`klangk_backend.nginx.render_config`,
+    then restores the env. Returns the conf text.
+
+    Keys the renderer consults but that aren't in ``env_overrides`` are
+    explicitly *cleared* (not left at whatever a prior test set) so each test
+    starts from a known-clean state — without this, ``test_no_llm_block_*``
+    would see a ``KLANGK_LLM_BASE_URL`` leaked from ``test_llm_block_*``.
+    """
+    env = {
+        "KLANGK_NGINX_PORT": "19999",
+        **env_overrides,
+    }
+    # Every renderer-relevant key: absent in env_overrides => cleared for this
+    # render (restored to its prior value afterwards).
+    renderer_keys = {
+        "KLANGK_NGINX_PORT",
+        "KLANGK_CONTAINER_SUBNETS",
+        "KLANGK_LLM_BASE_URL",
+        "KLANGK_LLM_API_KEY",
+        "KLANGK_HOSTED_PORTS_PER_WORKSPACE",
+        "KLANGK_TRUST_OUTER_PROXY",
+        "KLANGK_FILE_UPLOAD_SIZE_MAX",
+        "KLANGK_DNS_SERVERS",
+        "KLANGK_NGINX_BIN",
+    }
+    old_env = {}
+    for k in renderer_keys:
+        old_env[k] = os.environ.get(k)
+        if k in env and env[k] is not None:
+            os.environ[k] = env[k]
+        else:
+            # Explicitly clear so an absent key means "not set" for this
+            # render, regardless of what a prior test left behind.
+            os.environ.pop(k, None)
+    try:
+        from klangk_backend.settings import _invalidate_cache
+        from klangk_backend.nginx import render_config, tcp_upstream
+
+        _invalidate_cache()
+        return render_config(tcp_upstream("127.0.0.1", "19998"))
+    finally:
+        for k, old in old_env.items():
+            if old is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = old
+        from klangk_backend.settings import _invalidate_cache
+
+        _invalidate_cache()
+
+
+def _write_and_launch_nginx(conf_text, nginx_port, tmpdir):
+    """Write rendered conf and launch nginx directly (no bash script).
+
+    Returns the nginx ``Popen`` process. The conf is written to
+    ``<tmpdir>/nginx/nginx.conf`` and nginx is launched with ``-c`` pointing
+    at it (#1396 — replaces ``scripts/nginx.sh``).
+    """
+    nginx_state = os.path.join(tmpdir, "nginx")
+    os.makedirs(nginx_state, exist_ok=True)
+    conf_path = os.path.join(nginx_state, "nginx.conf")
+    with open(conf_path, "w") as f:
+        f.write(conf_text)
+    return subprocess.Popen(
+        ["nginx", "-e", "stderr", "-c", conf_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
 
 
 def _find_free_port():
     import socket
 
     with socket.socket() as s:
-        s.bind(("", 0))
+        # Bind loopback (not INADDR_ANY "") for ephemeral port pickup —
+        # same free-port behavior, avoids the all-interfaces flag.
+        s.bind(("127.0.0.1", 0))
         return str(s.getsockname()[1])
-
-
-def _run_nginx_sh(env_overrides, tmpdir):
-    """Run nginx.sh just far enough to generate nginx.conf, then kill it.
-
-    nginx.sh ends with ``exec nginx ...`` which blocks. We set a short
-    alarm so the script generates the config and then we grab it.
-    """
-    env = {
-        "HOME": tmpdir,
-        "PATH": os.environ["PATH"],
-        "DEVENV_STATE": tmpdir,
-        "KLANGK_NGINX_PORT": "19999",
-        "KLANGK_PORT": "19998",
-        **env_overrides,
-    }
-    # We only need the generated config, not a running nginx. Run the
-    # script but kill it once the config file appears (exec nginx blocks).
-    proc = subprocess.Popen(
-        ["bash", NGINX_SH],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    conf_path = os.path.join(tmpdir, "nginx", "nginx.conf")
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        if os.path.exists(conf_path):
-            # Give it a moment to finish writing.
-            time.sleep(0.2)
-            break
-        time.sleep(0.1)
-    proc.kill()
-    proc.wait(timeout=5)
-    if not os.path.exists(conf_path):
-        raise RuntimeError(
-            f"nginx.conf not generated.\nstderr: {proc.stderr.read().decode()}"
-        )
-    return open(conf_path).read()
 
 
 class TestNginxAclConfig:
@@ -76,7 +111,7 @@ class TestNginxAclConfig:
 
     def test_explicit_subnets(self, tmp_path):
         """KLANGK_CONTAINER_SUBNETS override produces exact allow lines."""
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {
                 "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16",
                 "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
@@ -104,7 +139,7 @@ class TestNginxAclConfig:
 
     def test_auto_detect_host_ips(self, tmp_path):
         """Without override, host IPv4 addresses are auto-detected."""
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {"KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434"},
             str(tmp_path),
         )
@@ -125,7 +160,7 @@ class TestNginxAclConfig:
 
     def test_no_llm_block_without_url(self, tmp_path):
         """LLM proxy block is omitted when KLANGK_LLM_BASE_URL is unset."""
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"},
             str(tmp_path),
         )
@@ -133,7 +168,7 @@ class TestNginxAclConfig:
 
     def test_llm_block_present_with_url(self, tmp_path):
         """LLM proxy block is included when KLANGK_LLM_BASE_URL is set."""
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {
                 "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
                 "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
@@ -151,7 +186,7 @@ class TestNginxAclConfig:
         conf would send `Bearer cmd:...` verbatim as the Authorization
         header.
         """
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {
                 "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
                 "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
@@ -167,7 +202,7 @@ class TestNginxAclConfig:
         """A file:-prefixed KLANGK_LLM_API_KEY is read from the file."""
         key_file = tmp_path / "llm-key"
         key_file.write_text("from-file-key\n")
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {
                 "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
                 "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
@@ -180,7 +215,7 @@ class TestNginxAclConfig:
 
     def test_llm_base_url_cmd_prefix_resolved(self, tmp_path):
         """A cmd:-prefixed KLANGK_LLM_BASE_URL is resolved to the real URL."""
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {
                 "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
                 "KLANGK_LLM_BASE_URL": "cmd:printf %s http://127.0.0.1:11434",
@@ -193,7 +228,7 @@ class TestNginxAclConfig:
 
     def test_browser_delegate_has_acl(self, tmp_path):
         """browser-delegate endpoint always gets the ACL."""
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"},
             str(tmp_path),
         )
@@ -216,12 +251,12 @@ class TestNginxAclConfig:
     # containers (which appear via pasta NAT as the host's non-loopback IP)
     # from minting one. It is always generated regardless of mode (outside
     # `none` the backend self-defends), so we assert it unconditionally — a
-    # future refactor of nginx.sh that silently drops this block would fail
+    # future renderer change that silently drops this block would fail
     # here, where before #1374's review there was no test at all.
 
     def test_auth_local_has_loopback_acl(self, tmp_path):
         """The /auth/local token handout always gets a loopback-only ACL."""
-        conf = _run_nginx_sh({}, str(tmp_path))
+        conf = _render_conf({}, str(tmp_path))
         # Exact-match location (the `=`). Anchor on the opening brace and pull
         # up to the closing brace so we inspect just this block.
         m = re.search(
@@ -241,7 +276,7 @@ class TestNginxAclConfig:
         """The /auth/local ACL is a fixed loopback allowlist — it must NOT be
         widened by KLANGK_CONTAINER_SUBNETS, or a container could reach the
         free-token endpoint."""
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"}, str(tmp_path)
         )
         m = re.search(
@@ -263,7 +298,7 @@ class TestNginxAclConfig:
 
     def test_catch_all_denies_container_subnets(self, tmp_path):
         """Catch-all `location /` denies the explicit container subnets."""
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {
                 "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16",
                 "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
@@ -281,7 +316,7 @@ class TestNginxAclConfig:
         """Loopback is never denied on the catch-all even when it appears in
         KLANGK_CONTAINER_SUBNETS — local browsers connect via loopback and
         must reach the full UI/API."""
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {"KLANGK_CONTAINER_SUBNETS": "127.0.0.1,10.89.0.0/24"},
             str(tmp_path),
         )
@@ -295,7 +330,7 @@ class TestNginxAclConfig:
     def test_catch_all_deny_present_when_containers_configured(self, tmp_path):
         """The deny-by-default ACL is always present on the catch-all whenever
         container subnets are configured — there is no way to opt out of it."""
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"}, str(tmp_path)
         )
         catch_all = re.search(r"location / \{(.*?)\}", conf, re.DOTALL).group(
@@ -310,7 +345,7 @@ class TestNginxHostedBlock:
 
     def test_default_emits_proxy_locations(self, tmp_path):
         """Unset / non-zero: both hosted proxy locations are present."""
-        conf = _run_nginx_sh({}, str(tmp_path))
+        conf = _render_conf({}, str(tmp_path))
         # slash-less WS-aware redirect-or-proxy location
         assert "location ~ ^/hosted/[^/]+/(?<hosted_port>" in conf
         # trailing-slash app-proxy location
@@ -323,14 +358,14 @@ class TestNginxHostedBlock:
 
     def test_explicit_nonzero_emits_proxy_locations(self, tmp_path):
         """An explicit positive cap still emits the proxy locations."""
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "3"}, str(tmp_path)
         )
         assert "location ~ ^/hosted/[^/]+/(?<hosted_port>" in conf
 
     def test_zero_replaces_proxy_with_404(self, tmp_path):
         """cap=0 collapses the hosted locations to a single 404 location."""
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "0"}, str(tmp_path)
         )
         assert "location ^~ /hosted/ {" in conf
@@ -342,7 +377,7 @@ class TestNginxHostedBlock:
     def test_non_int_does_not_disable(self, tmp_path):
         """Garbage is not '0', so the proxy stays enabled (backend clamps
         to the default 5; nginx only needs the boolean off-switch)."""
-        conf = _run_nginx_sh(
+        conf = _render_conf(
             {"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "garbage"}, str(tmp_path)
         )
         assert "location ~ ^/hosted/[^/]+/(?<hosted_port>" in conf
@@ -416,23 +451,25 @@ class TestNginxAclEnforcement:
             backend_proc.kill()
             raise RuntimeError("Backend did not start")
 
-        # Start nginx via nginx.sh.
-        nginx_env = {
-            "HOME": tmpdir,
-            "PATH": os.environ["PATH"],
-            "DEVENV_STATE": tmpdir,
+        # Start nginx via the Python renderer (#1396): render the conf
+        # from these env vars, then launch nginx directly with -c.
+        from klangk_backend.settings import _invalidate_cache
+        from klangk_backend.nginx import write_config, tcp_upstream
+
+        for k, v in {
             "KLANGK_NGINX_PORT": nginx_port,
-            "KLANGK_PORT": backend_port,
-            # TEST-NET-1: ensures localhost is NOT allowed.
             "KLANGK_CONTAINER_SUBNETS": "192.0.2.0/24",
-            # Need a real-ish LLM URL so the proxy block is generated.
-            # It won't actually be reached since the ACL denies us.
             "KLANGK_LLM_BASE_URL": f"http://127.0.0.1:{backend_port}",
             "KLANGK_LLM_API_KEY": "fake-key",
-        }
+        }.items():
+            os.environ[k] = v
+        _invalidate_cache()
+        nginx_state = os.path.join(tmpdir, "nginx")
+        os.makedirs(nginx_state, exist_ok=True)
+        conf_path = os.path.join(nginx_state, "nginx.conf")
+        write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
         nginx_proc = subprocess.Popen(
-            ["bash", NGINX_SH],
-            env=nginx_env,
+            ["nginx", "-e", "stderr", "-c", conf_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
@@ -584,19 +621,24 @@ class TestNginxDenyByDefault:
             backend_proc.kill()
             raise RuntimeError("Backend did not start")
 
-        # Start nginx with the host IP as the (sole) container source IP.
-        # CONTAINER_DENY on the catch-all then denies exactly that IP.
-        nginx_env = {
-            "HOME": tmpdir,
-            "PATH": os.environ["PATH"],
-            "DEVENV_STATE": tmpdir,
+        # Start nginx via the Python renderer (#1396) with the host IP as
+        # the (sole) container source IP. CONTAINER_DENY on the catch-all
+        # then denies exactly that IP.
+        from klangk_backend.settings import _invalidate_cache
+        from klangk_backend.nginx import write_config, tcp_upstream
+
+        for k, v in {
             "KLANGK_NGINX_PORT": nginx_port,
-            "KLANGK_PORT": backend_port,
             "KLANGK_CONTAINER_SUBNETS": host_ip,
-        }
+        }.items():
+            os.environ[k] = v
+        _invalidate_cache()
+        nginx_state = os.path.join(tmpdir, "nginx")
+        os.makedirs(nginx_state, exist_ok=True)
+        conf_path = os.path.join(nginx_state, "nginx.conf")
+        write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
         nginx_proc = subprocess.Popen(
-            ["bash", NGINX_SH],
-            env=nginx_env,
+            ["nginx", "-e", "stderr", "-c", conf_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
@@ -741,18 +783,20 @@ class TestNginxAuthLocalAcl:
             backend_proc.kill()
             raise RuntimeError("Backend did not start")
 
-        # nginx with no container subnets configured — the /auth/local block
-        # is always generated with its fixed loopback allowlist.
-        nginx_env = {
-            "HOME": tmpdir,
-            "PATH": os.environ["PATH"],
-            "DEVENV_STATE": tmpdir,
-            "KLANGK_NGINX_PORT": nginx_port,
-            "KLANGK_PORT": backend_port,
-        }
+        # nginx via the Python renderer (#1396) with no container subnets —
+        # the /auth/local block is always generated with its fixed loopback
+        # allowlist.
+        from klangk_backend.settings import _invalidate_cache
+        from klangk_backend.nginx import write_config, tcp_upstream
+
+        os.environ["KLANGK_NGINX_PORT"] = nginx_port
+        _invalidate_cache()
+        nginx_state = os.path.join(tmpdir, "nginx")
+        os.makedirs(nginx_state, exist_ok=True)
+        conf_path = os.path.join(nginx_state, "nginx.conf")
+        write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
         nginx_proc = subprocess.Popen(
-            ["bash", NGINX_SH],
-            env=nginx_env,
+            ["nginx", "-e", "stderr", "-c", conf_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )

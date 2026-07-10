@@ -5,15 +5,13 @@
   ...
 }:
 let
-  uvicornCmd = ''
-    python3 -m uvicorn klangk_backend.main:app \
-       --host $KLANGK_LISTEN \
-       --port $KLANGK_PORT \
-       --no-access-log \
-       --no-proxy-headers \
-       --ws-max-size ''${KLANGK_WS_MSG_SIZE_MAX:-16777216} \
-       --ws-ping-interval 20 \
-       --ws-ping-timeout 20'';
+  # klangkd binds a UDS and owns nginx as a child (#1396); the old
+  # two-process layout (uvicorn + scripts/nginx.sh) is collapsed into this
+  # single entry. Dev runs env-vars-only (--config=none); uvicorn bind + WS
+  # flags are set inside klangkd itself.
+  backendCmd = ''
+    python3 -m klangk_backend.klangkd --config=none
+  '';
 in
 {
   languages.javascript = {
@@ -170,20 +168,12 @@ in
   processes = {
     backend = {
       exec = ''
-        cd $DEVENV_ROOT/src/backend && exec ${uvicornCmd}
+        cd $DEVENV_ROOT/src/backend && exec ${backendCmd}
       '';
       after = [
         "klangk:flutter-build"
         "klangk:build-workspace-image"
         "klangk:kill-containers"
-        "klangk:kill-port-holders"
-      ];
-    };
-    nginx = {
-      exec = ''exec bash "$DEVENV_ROOT/scripts/nginx.sh"'';
-      after = [
-        "klangk:flutter-build"
-        "klangk:build-workspace-image"
         "klangk:kill-port-holders"
       ];
     };
