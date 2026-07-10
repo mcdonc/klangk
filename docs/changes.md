@@ -27,6 +27,18 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`test-all` / `test-unit` devenv scripts and concurrency-safe test corpus**
+  (#1393). The whole test corpus is now runnable concurrently: every E2E
+  harness free-allocates its server port and `KLANGK_PORT_RANGE_START`
+  (via a new `klangk_backend.model.free_port` helper) instead of hardcoding
+  them, and container teardown is instance-scoped (no more `klangk.managed=true`
+  sweeps that nuked other suites' containers). The two unit suites combine
+  into one `python -m pytest src/backend/tests src/cli/tests` invocation
+  (the root `pyproject.toml` now carries the asyncio + capture config that
+  used to conflate them). New `test-all` runs unit + E2E; `test-unit` runs
+  the combined unit corpus. E2E tasks dropped the forced `-p no:xdist` —
+  opt into parallelism with `-n auto --dist=loadscope`.
+
 - **`KLANGK_AUTH_MODES=none`: no-login single-user (local-dev) mode**
   (#1374). A new `none` auth mode lets the frontend and CLI obtain a token
   for the seeded default user with no password prompt, enabling a frictionless

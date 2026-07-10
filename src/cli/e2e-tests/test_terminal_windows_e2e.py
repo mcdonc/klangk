@@ -25,9 +25,11 @@ import httpx
 import pytest
 import websockets
 
+from klangk_backend.model import free_port
+
 logger = logging.getLogger(__name__)
 
-PORT = "18998"
+PORT = str(free_port())
 WS_NAME = "e2e-twintest"
 
 
@@ -53,7 +55,7 @@ def _start_server(data_dir):
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-        "KLANGK_PORT_RANGE_START": "9020",
+        "KLANGK_PORT_RANGE_START": str(free_port()),
         "LOGFIRE_TOKEN": "",
     }
     log_path = os.path.join(data_dir, "server.log")
@@ -104,23 +106,34 @@ def _stop_server(proc, data_dir):
         proc.wait(timeout=5)
     except (ProcessLookupError, subprocess.TimeoutExpired):
         pass
-    result = subprocess.run(
-        [
-            "podman",
-            "ps",
-            "-a",
-            "--filter",
-            "label=klangk.managed=true",
-            "-q",
-        ],
+    # Instance-scoped cleanup: only remove containers THIS test server
+    # started (label=klangk.instance=<id>), never another suite's or xdist
+    # worker's. The old ``label=klangk.managed=true`` filter was a cross-run
+    # hazard once suites could run concurrently (#1393).
+    instance_id = subprocess.run(
+        ["klangk-instance-id"],
         capture_output=True,
         text=True,
-    )
-    if result.stdout.strip():
-        subprocess.run(
-            ["podman", "rm", "-f", *result.stdout.strip().split()],
+        env={**os.environ, "KLANGK_DATA_DIR": data_dir},
+    ).stdout.strip()
+    if instance_id:
+        result = subprocess.run(
+            [
+                "podman",
+                "ps",
+                "-a",
+                "--filter",
+                f"label=klangk.instance={instance_id}",
+                "-q",
+            ],
             capture_output=True,
+            text=True,
         )
+        if result.stdout.strip():
+            subprocess.run(
+                ["podman", "rm", "-f", *result.stdout.strip().split()],
+                capture_output=True,
+            )
     shutil.rmtree(data_dir, ignore_errors=True)
 
 

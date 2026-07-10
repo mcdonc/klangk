@@ -25,6 +25,8 @@ import httpx
 import pytest
 import websockets
 
+from klangk_backend.model import free_port
+
 
 @pytest.fixture(scope="module")
 def server():
@@ -34,7 +36,7 @@ def server():
     fanout (container ready, exec output routing), not LLM interactions.
     """
     data_dir = tempfile.mkdtemp(prefix="klangk-fanout-e2e-")
-    port = "18996"
+    port = str(free_port())
 
     env = {
         **os.environ,
@@ -46,7 +48,7 @@ def server():
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-        "KLANGK_PORT_RANGE_START": "9100",
+        "KLANGK_PORT_RANGE_START": str(free_port()),
         "LOGFIRE_TOKEN": "",
         # Clear LLM vars so .env values don't leak in
         "KLANGK_LLM_BASE_URL": "",

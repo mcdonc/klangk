@@ -16,6 +16,8 @@ import uuid
 import httpx
 import pytest
 
+from klangk_backend.model import free_port
+
 # Env vars from .env that could change test behavior.
 _SANITIZED_VARS = [
     "KLANGK_AUTH_MODES",
@@ -59,7 +61,7 @@ def _start_server(data_dir, port):
         "KLANGK_DEFAULT_PASSWORD": "adminpass",
         "KLANGK_TEST_MODE": "1",
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-        "KLANGK_PORT_RANGE_START": "9200",
+        "KLANGK_PORT_RANGE_START": str(free_port()),
         "LOGFIRE_TOKEN": "",
     }
     proc = subprocess.Popen(
@@ -130,7 +132,7 @@ def _stop_server(proc, data_dir):
 def server():
     """Start a real Klangk server for the test module."""
     data_dir = tempfile.mkdtemp(prefix="klangk-acl-e2e-")
-    proc, base_url = _start_server(data_dir, "18993")
+    proc, base_url = _start_server(data_dir, str(free_port()))
     yield {"url": base_url, "data_dir": data_dir, "proc": proc}
     _stop_server(proc, data_dir)
 
@@ -1047,16 +1049,17 @@ class TestAutoStartWithServiceCommand:
     @staticmethod
     def autostart_server(request):
         data_dir = tempfile.mkdtemp(prefix="klangk-autostart-e2e-")
+        port = str(free_port())
         env = {
             **_clean_env(),
-            "KLANGK_PORT": "18992",
+            "KLANGK_PORT": port,
             "KLANGK_DATA_DIR": data_dir,
             "KLANGK_JWT_SECRET": "autostart-e2e-secret",
             "KLANGK_DEFAULT_USER": "admin@example.com",
             "KLANGK_DEFAULT_PASSWORD": "adminpass",
             "KLANGK_TEST_MODE": "1",
             "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-            "KLANGK_PORT_RANGE_START": "9300",
+            "KLANGK_PORT_RANGE_START": str(free_port()),
             "KLANGK_ALLOW_AUTOSTART": "1",
             "LOGFIRE_TOKEN": "",
         }
@@ -1067,7 +1070,7 @@ class TestAutoStartWithServiceCommand:
                 "--host",
                 "0.0.0.0",
                 "--port",
-                "18992",
+                port,
                 "--ws-max-size",
                 "16777216",
             ],
@@ -1076,7 +1079,7 @@ class TestAutoStartWithServiceCommand:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
-        base_url = "http://localhost:18992"
+        base_url = f"http://localhost:{port}"
         for _ in range(60):
             try:
                 if (

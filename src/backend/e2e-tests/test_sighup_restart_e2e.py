@@ -32,12 +32,14 @@ import httpx
 import pytest
 import websockets
 
+from klangk_backend.model import free_port
+
 
 @pytest.fixture(scope="module")
 def server():
     """Start a real Klangk server with short idle + health intervals."""
     data_dir = tempfile.mkdtemp(prefix="klangk-sighup-e2e-")
-    port = "18997"
+    port = str(free_port())
 
     env = {
         **os.environ,
@@ -51,7 +53,7 @@ def server():
         # Short idle timeout so a workspace with no subscribers stops
         # quickly; we mainly care that SIGHUP stops *all* of them.
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-        "KLANGK_PORT_RANGE_START": "9400",
+        "KLANGK_PORT_RANGE_START": str(free_port()),
         # Allow auto-start so the post-SIGHUP restart brings workspaces
         # back (acceptance criterion #4).
         "KLANGK_ALLOW_AUTOSTART": "1",

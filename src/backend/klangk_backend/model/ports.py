@@ -31,6 +31,31 @@ def port_in_use(port: int) -> bool:
             return True
 
 
+def free_port() -> int:
+    """Return a free TCP port on loopback for ephemeral use.
+
+    Binds ``127.0.0.1:0`` so the OS assigns an ephemeral port, then
+    releases it and returns the number. Used by the E2E harnesses to
+    pick the server port (and to seed ``KLANGK_PORT_RANGE_START``)
+    instead of a hardcoded value, so concurrent runs — xdist workers,
+    or several suites on one machine — don't collide (#1393). This
+    generalizes the ``_find_free_port`` helper first introduced in
+    ``test_nginx_acl_e2e.py``.
+
+    The port is released before this returns, so there is an inherent
+    TOCTOU window before the caller rebinds it (e.g. uvicorn at server
+    startup, or a workspace container binding a hosted-app port). For
+    the workspace-port range the allocator's own :func:`port_in_use`
+    check (run inside :func:`scan_free_ports`) is the backstop: it skips
+    any port a concurrent run grabbed in the meantime.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        # Loopback (not INADDR_ANY "") for ephemeral pickup — same
+        # free-port behavior, matches the test_nginx_acl_e2e pattern.
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 def scan_free_ports(start: int, count: int, used: set[int]) -> list[int]:
     """Find ``count`` free ports at or after ``start``.
 

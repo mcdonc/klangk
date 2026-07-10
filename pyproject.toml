@@ -1,2 +1,38 @@
 [tool.uv.workspace]
 members = ["src/backend", "src/cli"]
+
+# Root pytest config — applied only when the two unit suites are run
+# together from the repo root (``python -m pytest src/backend/tests
+# src/cli/tests``). When either suite is run alone, pytest's rootdir
+# resolves to that package's own ``pyproject.toml`` (src/backend or
+# src/cli), so its per-suite ``addopts`` (coverage + 100% gate) still
+# apply and this block is not consulted.
+#
+# Without this, the combined run resolves rootdir to the repo root,
+# finds no ``[tool.pytest.ini_options]`` here, and ``asyncio_mode``
+# falls back to ``strict`` — every async fixture (``db``, ``agent_user``,
+# …) becomes "no plugin or hook that handled it" and the whole backend
+# suite errors out. That's the "conflation" from #1393: not a fixture
+# clash (the conftests are directory-scoped, they don't leak across
+# src/backend/tests ↔ src/cli/tests) but a *config-discovery* clash.
+# See #1393.
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# ``--capture=no`` mirrors the per-suite ``addopts`` in src/backend and
+# src/cli: the CLI ``run_shell`` integration tests spawn a ``stdin_loop``
+# that calls ``stdin.fileno()``, which blows up on pytest's captured
+# stdin (``DontReadFromInput``). Under the default ``--capture=fd`` this
+# takes those 5 tests down *only* in the combined run (each suite alone
+# sets ``--capture=no``). No coverage here — the 100% gate stays
+# per-suite (each package's own ``addopts``), the combined run is a
+# pass/fail smoke. See #1393.
+addopts = "--capture=no"
+# Suppress unawaited-coroutine warnings that surface when MagicMock stubs
+# create coroutine objects (e.g. ws_shell, sandbox_setup_only) that are
+# garbage-collected in a later test.  These are mock-induced GC artifacts,
+# not real bugs.
+filterwarnings = [
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+    "ignore:coroutine .* was never awaited:RuntimeWarning",
+]

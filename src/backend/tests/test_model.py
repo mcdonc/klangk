@@ -758,6 +758,28 @@ class TestPortAllocations:
         ports = await model.get_workspace_ports(workspace["id"])
         assert ports == [9000, 9001, 9002]
 
+    def test_free_port_returns_bindable_ephemeral_port(self):
+        """free_port hands back a port nothing else holds (#1393)."""
+        p = model.free_port()
+        assert isinstance(p, int)
+        assert 0 < p <= model.MAX_PORT
+        # The port must actually be bindable right now (the E2E harnesses
+        # rely on this to seed KLANGK_PORT / KLANGK_PORT_RANGE_START).
+        assert model.port_in_use(p) is False
+
+    def test_free_port_is_distinct_across_calls(self):
+        """Two calls don't hand back the same port while held (#1393)."""
+        import socket
+
+        a = model.free_port()
+        held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        held.bind(("127.0.0.1", a))
+        try:
+            b = model.free_port()
+            assert b != a, "free_port reused a port that is currently bound"
+        finally:
+            held.close()
+
     async def test_get_all_allocated_ports(self, workspace):
         await model.add_port_allocations(workspace["id"], [9000, 9001])
         all_ports = await model.get_all_allocated_ports()

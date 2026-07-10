@@ -35,8 +35,12 @@ jobs:
       # currently only openclaw; more will be added over time. Each suite
       # is responsible for its own server/container teardown (SIGKILL on
       # shutdown) so they don't leak across runs. Requires network (real
-      # installs).
+      # installs). Ports are free-allocated and container cleanup is
+      # instance-scoped (#1393), so xdist is no longer forcibly disabled;
+      # the suites run serially (no -n) because each does real installs
+      # (npm/uv + git clone) that take several minutes. Opt into xdist
+      # with -n auto --dist=loadscope.
       - name: Run sandbox e2e tests
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- pytest sandboxes/tests -v -p no:xdist --no-cov
+          devenv shell -- pytest sandboxes/tests -v --no-cov

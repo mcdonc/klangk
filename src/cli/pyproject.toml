@@ -23,6 +23,10 @@ dev = [
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "--capture=no --cov=klangkc --cov-report=term-missing --no-cov-on-fail --cov-fail-under=100"
+filterwarnings = [
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+    "ignore:coroutine .* was never awaited:RuntimeWarning",
+]
 
 [tool.ruff]
 line-length = 79

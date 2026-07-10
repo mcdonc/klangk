@@ -269,24 +269,62 @@ in
     exec python -m pytest src/cli/tests -v -n auto "$@"
   '';
 
-  # CLI E2E tests: start real server, run klangkc commands
+  # Both unit suites in one invocation. The root pyproject.toml carries
+  # the asyncio + capture config this needs (each suite alone resolves to
+  # its own package config); see #1393. No coverage here -- the 100% gate
+  # stays per-suite (test-backend / test-cli). This is the fast "does the
+  # whole unit corpus pass?" smoke (~2818 tests in ~26s).
+  scripts.test-unit.exec = ''
+    cd $DEVENV_ROOT
+    exec python -m pytest src/backend/tests src/cli/tests -v -n auto --no-cov "$@"
+  '';
+
+  # CLI E2E tests: start real server, run klangkc commands.
+  # Ports are free-allocated (#1393), so xdist is no longer forcibly
+  # disabled. The suite runs serially by default (no -n) because the
+  # tests spawn real podman containers and within-suite parallelism is
+  # bounded by container concurrency. To opt into xdist:
+  #   test-cli-e2e -n auto --dist=loadscope
+  # (--dist=loadscope keeps each module/class-scoped server on one worker).
   scripts.test-cli-e2e.exec = ''
     cd $DEVENV_ROOT
     exec python -m pytest src/cli/e2e-tests \
-      -v -p no:xdist --no-cov "$@"
+      -v --no-cov "$@"
   '';
 
   scripts.test-terminal-windows-e2e.exec = ''
     cd $DEVENV_ROOT
     exec python -m pytest src/cli/e2e-tests/test_terminal_windows_e2e.py \
-      -v -p no:xdist --no-cov "$@"
+      -v --no-cov "$@"
   '';
 
-  # Backend E2E tests: start real server, run backend E2E tests
+  # Backend E2E tests: start real server, run backend E2E tests.
+  # Same xdist story as test-cli-e2e (free ports, serial by default,
+  # opt-in with -n auto --dist=loadscope). See #1393.
   scripts.test-backend-e2e.exec = ''
     cd $DEVENV_ROOT
     exec python -m pytest src/backend/e2e-tests \
-      -v -p no:xdist --no-cov "$@"
+      -v --no-cov "$@"
+  '';
+
+  # Run the whole corpus as concurrently as is safe (#1393): the unit
+  # suites combine into one parallel invocation (test-unit), then the
+  # e2e suites run. E2e suites are now concurrency-safe (free-allocated
+  # ports + instance-scoped container cleanup) so they could be
+  # backgrounded; they run serially here to bound podman/container
+  # resource usage. Requires podman + a built workspace image for the
+  # e2e steps (klangk:build-workspace-image). Passes through args to the
+  # e2e invocations only.
+  scripts.test-all.exec = ''
+    cd $DEVENV_ROOT
+    set -e
+    echo "=== unit (backend + cli, combined, parallel) ==="
+    python -m pytest src/backend/tests src/cli/tests -v -n auto --no-cov "$@"
+    echo "=== backend e2e ==="
+    python -m pytest src/backend/e2e-tests -v --no-cov "$@"
+    echo "=== cli e2e ==="
+    python -m pytest src/cli/e2e-tests -v --no-cov "$@"
+    echo "=== all green ==="
   '';
 
   scripts.test-frontend-e2e.exec = ''

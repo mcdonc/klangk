@@ -18,6 +18,8 @@ import time
 import httpx
 import pytest
 
+from klangk_backend.model import free_port
+
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
 
 
@@ -97,13 +99,7 @@ def _write_and_launch_nginx(conf_text, nginx_port, tmpdir):
 
 
 def _find_free_port():
-    import socket
-
-    with socket.socket() as s:
-        # Bind loopback (not INADDR_ANY "") for ephemeral port pickup —
-        # same free-port behavior, avoids the all-interfaces flag.
-        s.bind(("127.0.0.1", 0))
-        return str(s.getsockname()[1])
+    return str(free_port())
 
 
 class TestNginxAclConfig:
@@ -388,7 +384,8 @@ class TestNginxAclEnforcement:
     """Start nginx + uvicorn and verify ACL enforcement at runtime."""
 
     @pytest.fixture(scope="class")
-    def nginx_stack(self, tmp_path_factory):
+    @staticmethod
+    def nginx_stack(tmp_path_factory):
         """Start uvicorn + nginx with a restrictive KLANGK_CONTAINER_SUBNETS.
 
         KLANGK_CONTAINER_SUBNETS=192.0.2.0/24 (TEST-NET-1). With an
@@ -415,7 +412,7 @@ class TestNginxAclEnforcement:
             "KLANGK_DEFAULT_PASSWORD": "testpass",
             "KLANGK_TEST_MODE": "1",
             "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-            "KLANGK_PORT_RANGE_START": "9200",
+            "KLANGK_PORT_RANGE_START": str(free_port()),
             "LOGFIRE_TOKEN": "",
         }
         backend_proc = subprocess.Popen(
@@ -563,7 +560,8 @@ class TestNginxDenyByDefault:
     """
 
     @pytest.fixture(scope="class")
-    def stack(self, tmp_path_factory):
+    @staticmethod
+    def stack(tmp_path_factory):
         host_ip = _host_nonloopback_ipv4()
         if not host_ip:
             pytest.skip("no non-loopback IPv4 to simulate a container source")
@@ -585,7 +583,7 @@ class TestNginxDenyByDefault:
             "KLANGK_DEFAULT_PASSWORD": "testpass",
             "KLANGK_TEST_MODE": "1",
             "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-            "KLANGK_PORT_RANGE_START": "9200",
+            "KLANGK_PORT_RANGE_START": str(free_port()),
             "LOGFIRE_TOKEN": "",
         }
         backend_proc = subprocess.Popen(
@@ -724,7 +722,8 @@ class TestNginxAuthLocalAcl:
     """
 
     @pytest.fixture(scope="class")
-    def stack(self, tmp_path_factory):
+    @staticmethod
+    def stack(tmp_path_factory):
         host_ip = _host_nonloopback_ipv4()
         if not host_ip:
             pytest.skip("no non-loopback IPv4 to simulate a container source")
@@ -748,7 +747,7 @@ class TestNginxAuthLocalAcl:
             "KLANGK_AUTH_MODES": "none",
             "KLANGK_TEST_MODE": "1",
             "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-            "KLANGK_PORT_RANGE_START": "9200",
+            "KLANGK_PORT_RANGE_START": str(free_port()),
             "LOGFIRE_TOKEN": "",
         }
         backend_proc = subprocess.Popen(

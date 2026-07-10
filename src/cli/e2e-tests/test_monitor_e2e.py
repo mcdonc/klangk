@@ -36,6 +36,8 @@ import httpx
 import pytest
 import websockets
 
+from klangk_backend.model import free_port
+
 
 # --- server / auth / cli-config fixtures (self-contained, per repo convention) ---
 
@@ -58,7 +60,7 @@ def _start_server(data_dir, port, health_interval="2"):
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-        "KLANGK_PORT_RANGE_START": "9300",
+        "KLANGK_PORT_RANGE_START": str(free_port()),
         # Poll every 2s so transitions show up in the monitor quickly.
         "KLANGK_HEALTH_CHECK_INTERVAL": health_interval,
         "LOGFIRE_TOKEN": "",
@@ -115,23 +117,34 @@ def _stop_server(proc, data_dir):
         proc.wait(timeout=5)
     except (ProcessLookupError, subprocess.TimeoutExpired):
         pass
-    result = subprocess.run(
-        [
-            "podman",
-            "ps",
-            "-a",
-            "--filter",
-            "label=klangk.managed=true",
-            "-q",
-        ],
+    # Instance-scoped cleanup: only remove containers THIS test server
+    # started (label=klangk.instance=<id>), never another suite's or xdist
+    # worker's. The old ``label=klangk.managed=true`` filter was a cross-run
+    # hazard once suites could run concurrently (#1393).
+    instance_id = subprocess.run(
+        ["klangk-instance-id"],
         capture_output=True,
         text=True,
-    )
-    if result.stdout.strip():
-        subprocess.run(
-            ["podman", "rm", "-f", *result.stdout.strip().split()],
+        env={**os.environ, "KLANGK_DATA_DIR": data_dir},
+    ).stdout.strip()
+    if instance_id:
+        result = subprocess.run(
+            [
+                "podman",
+                "ps",
+                "-a",
+                "--filter",
+                f"label=klangk.instance={instance_id}",
+                "-q",
+            ],
             capture_output=True,
+            text=True,
         )
+        if result.stdout.strip():
+            subprocess.run(
+                ["podman", "rm", "-f", *result.stdout.strip().split()],
+                capture_output=True,
+            )
     shutil.rmtree(data_dir, ignore_errors=True)
 
 
@@ -139,7 +152,7 @@ def _stop_server(proc, data_dir):
 def server():
     """Start a real Klangk server with a fast health-check interval."""
     data_dir = tempfile.mkdtemp(prefix="klangk-monitor-e2e-")
-    proc, base_url = _start_server(data_dir, "18997")
+    proc, base_url = _start_server(data_dir, str(free_port()))
     yield {"url": base_url, "data_dir": data_dir}
     _stop_server(proc, data_dir)
 
