@@ -269,6 +269,78 @@ class TestConfigFile:
         assert get_config_file() is None
 
 
+# ---------------------------------------------------------------------------
+# Deployment-profile config keys (#1397): settable via env var AND YAML file
+# ---------------------------------------------------------------------------
+
+
+class TestDeploymentProfileKeys:
+    """The four #1397 deployment-profile values must be settable via BOTH an
+    env var and the YAML config file.
+
+    The KlangkSettings substrate gives every model field two sources for
+    free: the env source (env_prefix="KLANGK_") and the YAML config-file
+    source (settings_customise_sources). These tests pin that contract for
+    the profile keys so a future change can't silently drop the config-file
+    path for one of them — which is the whole point of #1397's "settable in
+    the config file too" requirement.
+
+    Note ``KLANGK_AUTH`` is the coarse #1397 axis (none|password), distinct
+    from ``KLANGK_AUTH_MODES`` (the auth-backend selector). ``KLANGK_PRESET``
+    was chosen over ``KLANGK_PROFILE``/``KLANGK_ROLE``: "preset" = a named
+    bundle of defaults; "role" collides with klangk's RBAC workspace roles.
+    """
+
+    # (env var, field name, sample value)
+    CASES = [
+        ("KLANGK_PRESET", "preset", "uds-auth"),
+        ("KLANGK_AUTH", "auth", "password"),
+        ("KLANGK_BROWSER_INGRESS", "browser_ingress", "true"),
+        (
+            "KLANGK_CONTAINER_EGRESS_PATHS",
+            "container_egress_paths",
+            "/llm-proxy,/browser-delegate",
+        ),
+    ]
+    _IDS = [c[1] for c in CASES]
+
+    @pytest.mark.parametrize("env_key,field,value", CASES, ids=_IDS)
+    def test_field_exists(self, env_key, field, value):
+        """All four keys are real fields on the model (hence dual-source)."""
+        assert field in KlangkSettings.model_fields
+
+    @pytest.mark.parametrize("env_key,field,value", CASES, ids=_IDS)
+    def test_settable_via_env(self, monkeypatch, env_key, field, value):
+        set_config_file(None)
+        monkeypatch.setenv(env_key, value)
+        assert getattr(get_settings(), field) == value
+
+    @pytest.mark.parametrize("env_key,field,value", CASES, ids=_IDS)
+    def test_settable_via_yaml(self, tmp_path, env_key, field, value):
+        # Quoted so YAML yields a str (e.g. "true" stays a string, not a
+        # bool), matching the str|None field type and env-var semantics.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f'{field}: "{value}"\n')
+        set_config_file(str(cfg))
+        assert getattr(get_settings(), field) == value
+
+    @pytest.mark.parametrize("env_key,field,value", CASES, ids=_IDS)
+    def test_env_overrides_yaml(
+        self, monkeypatch, tmp_path, env_key, field, value
+    ):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f'{field}: "from-yaml"\n')
+        set_config_file(str(cfg))
+        monkeypatch.setenv(env_key, value)
+        assert getattr(get_settings(), field) == value
+
+    @pytest.mark.parametrize("env_key,field,value", CASES, ids=_IDS)
+    def test_default_none_preserves_today(self, env_key, field, value):
+        # No env, no config file → None for every key (pre-#1392 behavior).
+        set_config_file(None)
+        assert getattr(get_settings(), field) is None
+
+
 class TestKlangkdLauncher:
     """Tests for the klangkd launcher's --config resolution."""
 

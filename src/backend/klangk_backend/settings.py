@@ -182,6 +182,30 @@ class KlangkSettings(BaseSettings):
         sources.append(init_settings)
         return tuple(sources)
 
+    # --- Deployment profiles (#1397) ---
+    # The four deployment shapes (the auth × browser-ingress 2×2). ``preset``
+    # is a named alias (uds-noauth / uds-auth / ip-noauth / ip-auth) that, in
+    # the full #1397 chunk, resolves to the axis values + nginx template/bind
+    # + an egress default; the three axis keys below are its orthogonal
+    # components. These are the config-substrate entries only — each is
+    # settable via its KLANGK_* env var AND via the YAML config file, like
+    # every other field. Preset resolution, per-profile egress defaults, and
+    # load-time cross-field validation arrive with the rest of #1397; here we
+    # just ensure the values are accepted from both config sources.
+    # All default to None so a deployment that sets none of them behaves
+    # identically to pre-#1392 (acceptance criterion: defaults preserved).
+    #
+    # Naming: ``preset`` (a named bundle of defaults) was chosen over
+    # ``profile`` (vague) and ``role`` (collides with klangk's RBAC workspace
+    # roles — the wrong mental model for a deployment *shape*).
+    # NOTE: ``auth`` is the coarse 2-value deployment axis (none|password) and
+    # is DISTINCT from ``auth_modes`` (the precise auth-backend selector:
+    # none|password|oidc). The two reconcile in #1392 chunk 7.
+    preset: str | None = None
+    auth: str | None = None
+    browser_ingress: str | None = None
+    container_egress_paths: str | None = None
+
     # --- Auth / identity ---
     auth_modes: str | None = None
     jwt_secret: str | None = _INSECURE_DEFAULT_SECRET
