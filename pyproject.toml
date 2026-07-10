@@ -28,3 +28,11 @@ asyncio_default_fixture_loop_scope = "function"
 # per-suite (each package's own ``addopts``), the combined run is a
 # pass/fail smoke. See #1393.
 addopts = "--capture=no"
+# Suppress unawaited-coroutine warnings that surface when MagicMock stubs
+# create coroutine objects (e.g. ws_shell, sandbox_setup_only) that are
+# garbage-collected in a later test.  These are mock-induced GC artifacts,
+# not real bugs.
+filterwarnings = [
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+    "ignore:coroutine .* was never awaited:RuntimeWarning",
+]

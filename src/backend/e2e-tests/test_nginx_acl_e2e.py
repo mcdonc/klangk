@@ -384,7 +384,8 @@ class TestNginxAclEnforcement:
     """Start nginx + uvicorn and verify ACL enforcement at runtime."""
 
     @pytest.fixture(scope="class")
-    def nginx_stack(self, tmp_path_factory):
+    @staticmethod
+    def nginx_stack(tmp_path_factory):
         """Start uvicorn + nginx with a restrictive KLANGK_CONTAINER_SUBNETS.
 
         KLANGK_CONTAINER_SUBNETS=192.0.2.0/24 (TEST-NET-1). With an
@@ -559,7 +560,8 @@ class TestNginxDenyByDefault:
     """
 
     @pytest.fixture(scope="class")
-    def stack(self, tmp_path_factory):
+    @staticmethod
+    def stack(tmp_path_factory):
         host_ip = _host_nonloopback_ipv4()
         if not host_ip:
             pytest.skip("no non-loopback IPv4 to simulate a container source")
@@ -720,7 +722,8 @@ class TestNginxAuthLocalAcl:
     """
 
     @pytest.fixture(scope="class")
-    def stack(self, tmp_path_factory):
+    @staticmethod
+    def stack(tmp_path_factory):
         host_ip = _host_nonloopback_ipv4()
         if not host_ip:
             pytest.skip("no non-loopback IPv4 to simulate a container source")
