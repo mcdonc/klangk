@@ -26,12 +26,14 @@ import httpx
 import pytest
 import websockets
 
+from klangk_backend.model import free_port
+
 
 @pytest.fixture(scope="module")
 def server():
     """Start a real Klangk server with a fast health-check poll interval."""
     data_dir = tempfile.mkdtemp(prefix="klangk-health-e2e-")
-    port = "18998"
+    port = str(free_port())
 
     env = {
         **os.environ,
@@ -43,7 +45,7 @@ def server():
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-        "KLANGK_PORT_RANGE_START": "9300",
+        "KLANGK_PORT_RANGE_START": str(free_port()),
         # Poll every 2s so an unhealthy transition shows up quickly.
         "KLANGK_HEALTH_CHECK_INTERVAL": "2",
         "LOGFIRE_TOKEN": "",

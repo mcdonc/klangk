@@ -39,6 +39,8 @@ import httpx
 import pytest
 import websockets
 
+from klangk_backend.model import free_port
+
 # Default agent handle (see model/users.py: _DEFAULT_AGENT_HANDLE).  Not
 # imported from the backend to keep the e2e test decoupled from the
 # server's internals -- the test asserts against observable container
@@ -56,7 +58,7 @@ def server():
     start_workspace -> ensure_agent_home).
     """
     data_dir = tempfile.mkdtemp(prefix="klangk-agent-home-e2e-")
-    port = "18997"
+    port = str(free_port())
 
     env = {
         **os.environ,
@@ -68,7 +70,7 @@ def server():
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-        "KLANGK_PORT_RANGE_START": "9400",
+        "KLANGK_PORT_RANGE_START": str(free_port()),
         "KLANGK_ALLOW_AUTOSTART": "1",
         "LOGFIRE_TOKEN": "",
         "KLANGK_LLM_BASE_URL": "",

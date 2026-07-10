@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from klangk_backend.model import free_port
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,7 +52,7 @@ def _start_server(data_dir, port, extra_env=None):
         "KLANGK_DEFAULT_PASSWORD": "testpass",
         "KLANGK_TEST_MODE": "1",
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-        "KLANGK_PORT_RANGE_START": "9000",
+        "KLANGK_PORT_RANGE_START": str(free_port()),
         "LOGFIRE_TOKEN": "",
         **(extra_env or {}),
     }
@@ -106,23 +108,34 @@ def _stop_server(proc, data_dir):
         proc.wait(timeout=5)
     except (ProcessLookupError, subprocess.TimeoutExpired):
         pass
-    result = subprocess.run(
-        [
-            "podman",
-            "ps",
-            "-a",
-            "--filter",
-            "label=klangk.managed=true",
-            "-q",
-        ],
+    # Instance-scoped cleanup: only remove containers THIS test server
+    # started (label=klangk.instance=<id>), never another suite's or xdist
+    # worker's. The old ``label=klangk.managed=true`` filter was a cross-run
+    # hazard once suites could run concurrently (#1393).
+    instance_id = subprocess.run(
+        ["klangk-instance-id"],
         capture_output=True,
         text=True,
-    )
-    if result.stdout.strip():
-        subprocess.run(
-            ["podman", "rm", "-f", *result.stdout.strip().split()],
+        env={**os.environ, "KLANGK_DATA_DIR": data_dir},
+    ).stdout.strip()
+    if instance_id:
+        result = subprocess.run(
+            [
+                "podman",
+                "ps",
+                "-a",
+                "--filter",
+                f"label=klangk.instance={instance_id}",
+                "-q",
+            ],
             capture_output=True,
+            text=True,
         )
+        if result.stdout.strip():
+            subprocess.run(
+                ["podman", "rm", "-f", *result.stdout.strip().split()],
+                capture_output=True,
+            )
     shutil.rmtree(data_dir, ignore_errors=True)
 
 
@@ -130,10 +143,11 @@ def _stop_server(proc, data_dir):
 def server():
     """Start a real Klangk server for the test session."""
     data_dir = tempfile.mkdtemp(prefix="klangk-cli-e2e-")
-    proc, base_url = _start_server(data_dir, "18995")
+    port = str(free_port())
+    proc, base_url = _start_server(data_dir, port)
     yield {
         "url": base_url,
-        "port": "18995",
+        "port": port,
         "data_dir": data_dir,
         "proc": proc,
     }
@@ -694,7 +708,7 @@ class TestAutoStart:
         data_dir = tempfile.mkdtemp(prefix="klangk-autostart-")
         proc, base_url = _start_server(
             data_dir,
-            "18996",
+            str(free_port()),
             extra_env={"KLANGK_ALLOW_AUTOSTART": "1"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-autostart-config")
@@ -802,9 +816,9 @@ class TestSandboxAutoStartServiceCommand:
     """
 
     WS = "e2e-sandbox-defcmd"
-    # Own port + instance id so it never collides with TestAutoStart
-    # (18996) or the session server (18995).
-    PORT = "18997"
+    # Free port (allocated once at class-definition time) so this never
+    # collides with the other class-scoped servers or the session server.
+    PORT = str(free_port())
 
     @pytest.fixture(autouse=True, scope="class")
     @staticmethod
@@ -1482,7 +1496,7 @@ class TestAllowedMountRoots:
         data_dir = tempfile.mkdtemp(prefix="klangk-mount-roots-")
         proc, base_url = _start_server(
             data_dir,
-            "18998",
+            str(free_port()),
             extra_env={"KLANGK_ALLOWED_MOUNT_ROOTS": "/tmp,/home"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-mount-roots-config")
@@ -1552,7 +1566,7 @@ class TestVolumeUserIsolation:
         import httpx
 
         data_dir = tempfile.mkdtemp(prefix="klangk-vol-iso-")
-        proc, base_url = _start_server(data_dir, "18999")
+        proc, base_url = _start_server(data_dir, str(free_port()))
 
         # Register a second user via the API
         httpx.post(
@@ -1703,7 +1717,7 @@ class TestTerminalSharing:
     @staticmethod
     def _dedicated_server(tmp_path_factory, request):
         data_dir = tempfile.mkdtemp(prefix="klangk-terminal-sharing-")
-        proc, base_url = _start_server(data_dir, "18997")
+        proc, base_url = _start_server(data_dir, str(free_port()))
         config_dir = tmp_path_factory.mktemp("klangk-terminal-sharing-config")
         env = {**os.environ, "HOME": str(config_dir)}
         (config_dir / ".config" / "klangk").mkdir(parents=True)
@@ -1994,7 +2008,7 @@ def short_token_server():
     data_dir = tempfile.mkdtemp(prefix="klangk-refresh-e2e-")
     proc, base_url = _start_server(
         data_dir,
-        "18997",
+        str(free_port()),
         extra_env={"KLANGK_ACCESS_TOKEN_HOURS": "0.002"},
     )
     yield {"url": base_url, "data_dir": data_dir, "proc": proc}

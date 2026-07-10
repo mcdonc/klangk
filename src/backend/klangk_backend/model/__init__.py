@@ -124,6 +124,7 @@ from .workspaces import (
 from .ports import (
     MAX_PORT,
     port_in_use,
+    free_port,
     scan_free_ports,
     add_port_allocations,
     find_and_allocate_ports,
@@ -273,6 +274,7 @@ __all__ = (
     # ports
     "MAX_PORT",
     "port_in_use",
+    "free_port",
     "scan_free_ports",
     "add_port_allocations",
     "find_and_allocate_ports",

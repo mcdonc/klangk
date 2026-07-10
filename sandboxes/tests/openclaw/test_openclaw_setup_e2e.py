@@ -67,6 +67,8 @@ import time
 import httpx
 import pytest
 
+from klangk_backend.model import free_port
+
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 SANDBOX_DIR = os.path.join(REPO_ROOT, "sandboxes", "openclaw")
 # setup.sh blocks while this file exists on the mount (/openclaw is the
@@ -87,9 +89,9 @@ WS2 = "e2e-openclaw-setup-2"
 # path (config -> monitor -> status endpoint) against a real gateway, not
 # to re-run the install.
 WS3 = "e2e-openclaw-setup-3"
-# Own port so it never collides with other e2e suites
-# (cli-e2e 18995, autostart 18996/18997).
-PORT = "18998"
+# Free port (allocated once at import) so this never collides with other
+# e2e suites or concurrent runs (#1393).
+PORT = str(free_port())
 EMAIL = "test@example.com"
 PASSWORD = "testpass"
 # The agent's user id (klangk_backend.model.AGENT_USER_ID). setup.sh
@@ -151,7 +153,7 @@ def _start_server(data_dir, port, extra_env=None):
         # at the sentinel (health checks are skipped until complete) or
         # have already finished asserting by the time polling starts.
         "KLANGK_HEALTH_CHECK_INTERVAL": "3",
-        "KLANGK_PORT_RANGE_START": "9000",
+        "KLANGK_PORT_RANGE_START": str(free_port()),
         "KLANGK_ALLOW_AUTOSTART": "1",
         "LOGFIRE_TOKEN": "",
         **(extra_env or {}),
@@ -202,23 +204,34 @@ def _stop_server(proc, data_dir):
             proc.wait(timeout=5)
         except (ProcessLookupError, subprocess.TimeoutExpired):
             pass
-    res = subprocess.run(
-        [
-            "podman",
-            "ps",
-            "-a",
-            "--filter",
-            "label=klangk.managed=true",
-            "-q",
-        ],
+    # Instance-scoped cleanup: only remove containers THIS test server
+    # started (label=klangk.instance=<id>), never another suite's or xdist
+    # worker's. The old ``label=klangk.managed=true`` filter was a cross-run
+    # hazard once suites could run concurrently (#1393).
+    instance_id = subprocess.run(
+        ["klangk-instance-id"],
         capture_output=True,
         text=True,
-    )
-    if res.stdout.strip():
-        subprocess.run(
-            ["podman", "rm", "-f", *res.stdout.strip().split()],
+        env={**os.environ, "KLANGK_DATA_DIR": data_dir},
+    ).stdout.strip()
+    if instance_id:
+        res = subprocess.run(
+            [
+                "podman",
+                "ps",
+                "-a",
+                "--filter",
+                f"label=klangk.instance={instance_id}",
+                "-q",
+            ],
             capture_output=True,
+            text=True,
         )
+        if res.stdout.strip():
+            subprocess.run(
+                ["podman", "rm", "-f", *res.stdout.strip().split()],
+                capture_output=True,
+            )
     shutil.rmtree(data_dir, ignore_errors=True)
 
 
