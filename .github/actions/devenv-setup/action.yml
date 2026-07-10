@@ -11,6 +11,24 @@ runs:
   steps:
     - uses: DeterminateSystems/determinate-nix-action@v3
 
+    - name: Disable Determinate binary-cache substituter
+      shell: bash
+      run: |
+        # The Determinate Nix installer configures install.determinate.systems
+        # as a binary-cache substituter in /etc/nix/nix.conf. Its NARs
+        # intermittently arrive corrupt/partial on GitHub hosted runners,
+        # causing "error: path '...' is not valid" mid-evaluation (#1420).
+        #
+        # nix.conf processes lines in order: a bare `substituters =` line
+        # REPLACES the accumulated value (including any `extra-substituters`
+        # the installer added), so appending one here leaves only
+        # cache.nixos.org. The bootstrap step's `cachix use` later appends
+        # devenv.cachix.org via `extra-substituters`. Result: paths come
+        # only from the two reliable caches — no Determinate store caching.
+        echo 'substituters = https://cache.nixos.org/' \
+          | sudo tee -a /etc/nix/nix.conf
+        sudo systemctl restart nix-daemon
+
     - name: Free disk space
       shell: bash
       run: |
