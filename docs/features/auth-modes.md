@@ -10,51 +10,48 @@ customer, only configuration.
 | `none`     | none — auto-login                  | **local-dev** (single user, your own browser) |
 | `oidc`     | SSO buttons only                   | **customer-locked**                           |
 | `password` | email/password only                | small team                                    |
-| `both`     | SSO buttons **and** email/password | **team** (default when OIDC is configured)    |
+| `both`     | SSO buttons **and** email/password | **team**                                      |
 
-The **default is `none`** unless an OIDC provider is configured (then
-`both`). A fresh klangk with nothing set boots in no-login single-user mode,
-bound to loopback — it "just works" locally with no password and is
-unreachable from the network. See [The default](#the-default) below for the
-upgrade implications.
+The **default is `none`**. A fresh klangk with nothing set boots in
+no-login single-user mode, bound to loopback — it "just works" locally with
+no password and is unreachable from the network. See
+[The default](#the-default) below for the upgrade implications.
 
 ## Choosing a mode
 
-- **`none`** — **the default** (unless OIDC is configured). You run klangk on
-  your own machine for development or testing and don't want to type a
-  password. The server auto-logs you in as the seeded default user (see
+- **`none`** — **the default**. You run klangk on your own machine for
+  development or testing and don't want to type a password. The server
+  auto-logs you in as the seeded default user (see
   [no-auth mode](#no-auth-mode-none) below). Must bind loopback.
 - **`password`** — a small trusted group logs in with email/password.
 - **`oidc`** — your organisation manages identity through an OIDC provider
   (Keycloak, Okta, Azure AD, …) and you want to disable local passwords.
   See [OIDC](../reference/oidc.md).
-- **`both`** — the default when an OIDC provider is configured: SSO for most
-  users, plus email/password as a fallback.
+- **`both`** — SSO for most users, plus email/password as a fallback.
 
 ## The default
 
 `KLANGK_AUTH_MODES` defaults to **`none`** — a fresh klangk with nothing
 configured boots in no-login single-user mode, bound to loopback
 (`127.0.0.1`). It "just works" locally: open the browser, you're in, no
-password. The only exception is when an OIDC provider is configured (via
-`KLANGK_OIDC_CONFIG`): configuring OIDC is the signal that real multi-user
-auth is wanted, so the default becomes `both` in that case. Set
-`KLANGK_AUTH_MODES` explicitly to pin any other mode regardless of OIDC
-config.
+password. OIDC settings (`KLANGK_OIDC_*`) do **not** change this default —
+configuring a provider only takes effect once the mode is `oidc` or `both`
+(set explicitly). Set `KLANGK_AUTH_MODES` explicitly to enable password,
+OIDC, or combined login.
 
-> **Upgrading from an earlier version:** if you previously relied on the
-> unset-default being `password` (or `both`), your server will now boot in
-> `none` mode instead. That is safe by construction — `none` refuses to
-> start on a non-loopback bind (see [why this is safe](#why-this-is-safe)) —
-> but you should set `KLANGK_AUTH_MODES=password` (or `oidc`/`both`)
-> explicitly before redeploying to preserve your intended auth posture. See
+> **Upgrading from an earlier version:** if you previously relied on OIDC
+> being configured _implying_ `both` (the old "OIDC turns auth on" rule),
+> your server will now boot in `none` mode instead — no-login single-user,
+> loopback-bound. That is safe by construction — `none` refuses to start on
+> a non-loopback bind (see [why this is safe](#why-this-is-safe)) — but you
+> should set `KLANGK_AUTH_MODES=oidc` (or `both`) explicitly before
+> redeploying to preserve your intended auth posture. See
 > [Switching modes](#switching-modes).
 
 ## No-auth mode (`none`)
 
 `none` is the foundation for a no-friction single-user dev/test loop —
-including the soliplex (pi plugin + browser-delegate) flow against your own
-browser — without standing up the multi-user tier or logging in each session.
+without standing up the multi-user tier or logging in each session.
 
 In `none` mode the server freely issues a JWT for the seeded default user
 (`KLANGK_DEFAULT_USER`, defaulting to `admin@example.com`) with no credentials
@@ -93,7 +90,7 @@ Two complementary controls keep `none` mode local:
    Workspace containers reach the host via pasta NAT and appear as the host's
    _non-loopback_ IP, so a container hitting `/auth/local` is denied with 403
    at nginx — while the host browser (127.0.0.1) succeeds. nginx itself stays
-   bound to `0.0.0.0` (soliplex, hosted apps, and remote browsers rely on it).
+   bound to `0.0.0.0` (hosted apps and remote browsers rely on it).
 
 3. **Backend source-IP self-check.** As a third layer (and to close the
    front-proxy bypass), the `local_login` handler independently verifies the

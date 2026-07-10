@@ -30,9 +30,9 @@ operators or integrators to act when upgrading.
 - **`KLANGK_AUTH_MODES=none`: no-login single-user (local-dev) mode**
   (#1374). A new `none` auth mode lets the frontend and CLI obtain a token
   for the seeded default user with no password prompt, enabling a frictionless
-  single-user dev/test loop (including the soliplex browser-delegate flow)
-  and serving as the foundation for a "one binary, named deployment
-  profiles" strategy (`local-dev` / `customer-locked` / `team`). The server
+  single-user dev/test loop and serving as the foundation for a "one binary,
+  named deployment profiles" strategy (`local-dev` / `customer-locked` /
+  `team`). The server
   auto-creates the default user at startup; `POST /api/v1/auth/local` mints a
   standard JWT for it. The loopback bind (`KLANGK_LISTEN`, #1375) plus an
   nginx per-location `allow 127.0.0.1/::1; deny all` ACL keep `/auth/local`
@@ -60,17 +60,27 @@ set-password <email>` (set a known password for the default user — whose
   This is safe by construction — `none` refuses to start on a non-loopback
   bind unless `KLANGK_ALLOW_INSECURE_NO_AUTH=1` — but it is a behavior change
   on upgrade: **set `KLANGK_AUTH_MODES=password` (or `oidc`/`both`) explicitly
-  before redeploying if you relied on the old default.** When an OIDC
-  provider is configured (`KLANGK_OIDC_CONFIG`), the unset default stays
-  `both`, unchanged. Note: `none` mode is not yet supported with the published
-  Docker host image (a published port isn't loopback) — the Docker examples
-  set `KLANGK_AUTH_MODES=password`; see #1391.
+  before redeploying if you relied on the old default.** Note: `none` mode is
+  not yet supported with the published Docker host image (a published port
+  isn't loopback) — the Docker examples set `KLANGK_AUTH_MODES=password`; see
+  #1391.
+- **OIDC settings no longer change the auth mode (#1419).** Previously, when
+  `KLANGK_AUTH_MODES` was unset **and** an OIDC provider was configured, the
+  resolved default was silently promoted to `both` (the "OIDC turns auth on"
+  rule). That promotion is removed: the unset default is now **always `none`**,
+  regardless of OIDC config, and `KLANGK_OIDC_*` settings only take effect
+  once the mode is explicitly `oidc` or `both`. **If you relied on OIDC being
+  configured implying `both`, set `KLANGK_AUTH_MODES=oidc` (or `both`)
+  explicitly before redeploying** — otherwise your server will boot in `none`
+  mode (no-login single-user, loopback-bound; safe by construction, but not
+  your intended multi-user posture).
 - **uvicorn now binds `127.0.0.1` by default** instead of `0.0.0.0`
   (`KLANGK_LISTEN`, new). Workspace containers could previously reach the
   backend directly via `host.containers.internal:$KLANGK_PORT`, bypassing nginx
   and therefore every per-location nginx ACL. nginx remains bound to `0.0.0.0`
-  (container-reachable, so soliplex and hosted apps still work) and proxies to
-  uvicorn on the loopback address. Operators who reach the backend directly —
+  (container-reachable, so hosted apps and remote browsers still work) and
+  proxies to uvicorn on the loopback address. Operators who reach the backend
+  directly —
   bypassing nginx — must set `KLANGK_LISTEN=0.0.0.0` to restore the old
   behavior. Applies to both the devenv dev server and the host container.
   (#1375)

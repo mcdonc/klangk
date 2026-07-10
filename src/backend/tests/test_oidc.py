@@ -471,12 +471,18 @@ class TestAuthModes:
         assert not oidc.password_login_allowed()
         assert oidc.local_login_allowed()
 
-    def test_default_both_when_oidc_enabled(self, monkeypatch):
+    def test_default_none_when_oidc_enabled(self, monkeypatch):
+        # #1419: OIDC settings no longer change auth_mode. An unset
+        # KLANGK_AUTH_MODES resolves to "none" even when an OIDC provider
+        # is configured — OIDC is opt-in via an explicit
+        # KLANGK_AUTH_MODES=oidc (or "both"). (Earlier versions promoted
+        # the unset default to "both" here; that rule was removed.)
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
         oidc._providers.append(_provider())
-        assert oidc.auth_modes() == "both"
-        assert oidc.password_login_allowed()
-        assert oidc.oidc_login_allowed()
+        assert oidc.auth_modes() == "none"
+        assert oidc.local_login_allowed()
+        assert not oidc.password_login_allowed()
+        assert not oidc.oidc_login_allowed()
 
     def test_oidc_only(self, monkeypatch):
         monkeypatch.setenv("KLANGK_AUTH_MODES", "oidc")
@@ -549,13 +555,14 @@ class TestAuthModes:
         assert not oidc.password_login_allowed()
 
     def test_no_preset_preserves_legacy_default(self, monkeypatch):
-        # No preset + AUTH_MODES unset → today's pre-#1397 rule still holds
-        # (none, or both when an OIDC provider is configured).
+        # No preset + AUTH_MODES unset → ``none``. OIDC settings no longer
+        # promote the mode (#1419), so configuring a provider does not flip
+        # the default; the operator must set KLANGK_AUTH_MODES=oidc/both.
         monkeypatch.delenv("KLANGK_PRESET", raising=False)
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
         assert oidc.auth_modes() == "none"
         oidc._providers.append(_provider())
-        assert oidc.auth_modes() == "both"
+        assert oidc.auth_modes() == "none"
 
 
 class TestClientKwargs:
