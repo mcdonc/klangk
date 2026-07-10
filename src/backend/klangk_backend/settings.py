@@ -197,35 +197,36 @@ class KlangkSettings(BaseSettings):
         sources.append(init_settings)
         return tuple(sources)
 
-    # --- Deployment profiles (#1397) ---
-    # ``preset`` is the SINGLE deployment-shape selector — the new name for
-    # the "deployment profiles" from #1392. It is one of the four corners
-    # of the (transport × auth-gate) space:
+    # --- Deployment UI mode (#1397) ---
+    # ``ui_mode`` is the SINGLE deployment-shape selector — selects one of the
+    # four corners of the (UI × auth-gate) space, with values named for the
+    # operator *experience* rather than the transport:
     #
-    #     uds-noauth / uds-auth   (UDS transport, gate off / on)
-    #     ip-noauth  / ip-auth    (TCP transport, gate off / on)
+    #     cli-noauth / cli-auth   (headless / CLI-driven, UDS transport)
+    #     web-noauth  / web-auth  (browser-facing,    TCP transport)
     #
     # Everything the earlier #1397 draft exposed as separate axis keys is
-    # *derived* from the preset and is NOT individually configurable:
+    # *derived* from the ui_mode and is NOT individually configurable:
     #   - the auth GATE is the ``-auth``/``-noauth`` suffix (no KLANGK_AUTH);
-    #   - browser ingress is implied by the ``ip-*`` presets — a browser can't
-    #     ingress over a UDS — so there is no KLANGK_BROWSER_INGRESS;
-    #   - container egress paths have one fixed default per preset, with no
+    #   - UI presence is the ``cli-``/``web-`` prefix — a browser can't ingress
+    #     over a UDS, so ``cli-*`` is headless and ``web-*`` is browser-facing;
+    #     there is no KLANGK_BROWSER_INGRESS;
+    #   - container egress paths have one fixed default per ui_mode, with no
     #     override, so there is no KLANGK_CONTAINER_EGRESS_PATHS.
     #
     # The one thing the operator still chooses separately is the auth
     # BACKEND (password vs OIDC vs both) via the existing KLANGK_AUTH_MODES —
     # that decision can't be made for them. The two keys are cross-validated
-    # at config-load: a ``*-noauth`` preset requires ``auth_modes() == none``;
-    # a ``*-auth`` preset requires a gated backend. See
-    # :func:`_validate_preset` (wired into :func:`validate_at_startup`).
+    # at config-load: a ``*-noauth`` ui_mode requires ``auth_modes() == none``;
+    # a ``*-auth`` ui_mode requires a gated backend. See
+    # :func:`_validate_ui_mode` (wired into :func:`validate_at_startup`).
     #
-    # Naming: ``preset`` (a named bundle of defaults) was chosen over
-    # ``profile`` (vague) and ``role`` (collides with klangk's RBAC workspace
-    # roles — the wrong mental model for a deployment *shape*).
+    # Naming: ``KLANGK_UI_MODE`` with values ``cli-*``/``web-*`` — both the key
+    # and the values answer the operator's actual question ("do I get a
+    # UI?"), not the implementation detail (socket vs TCP).
     # Defaults to None so a deployment that sets none of these behaves
     # identically to pre-#1392 (acceptance criterion: defaults preserved).
-    preset: str | None = None
+    ui_mode: str | None = None
 
     # --- Auth / identity ---
     auth_modes: str | None = None
@@ -430,55 +431,55 @@ def _invalidate_cache() -> None:
     _settings_env_signature = None
 
 
-# The four ``KLANGK_PRESET`` values (#1397) — the (transport × auth-gate)
+# The four ``KLANGK_UI_MODE`` values (#1397) — the (transport × auth-gate)
 # corners. ``-noauth`` means "no auth gate"; ``-auth`` means "gate required".
 # Kept module-level so the nginx renderer (chunk 3 of #1392) can import it as
-# the canonical preset set. See KlangkSettings.preset for the full rationale.
-PRESETS: frozenset[str] = frozenset(
-    {"uds-noauth", "uds-auth", "ip-noauth", "ip-auth"}
+# the canonical set. See KlangkSettings.ui_mode for the full rationale.
+UI_MODES: frozenset[str] = frozenset(
+    {"cli-noauth", "cli-auth", "web-noauth", "web-auth"}
 )
 
 
-def _validate_preset() -> None:
-    """Validate ``KLANGK_PRESET`` and its consistency with the auth backend.
+def _validate_ui_mode() -> None:
+    """Validate ``KLANGK_UI_MODE`` and its consistency with the auth backend.
 
-    ``KLANGK_PRESET`` is the single deployment-shape selector (#1397); the
+    ``KLANGK_UI_MODE`` is the single deployment-shape selector (#1397); the
     auth *backend* (password vs OIDC vs both) stays the operator's choice via
     ``KLANGK_AUTH_MODES``. The two must agree when ``KLANGK_AUTH_MODES`` is
     set EXPLICITLY:
 
-    - a ``*-noauth`` preset requires the resolved auth mode to be ``none``;
-    - a ``*-auth``   preset requires it to be ``password`` / ``oidc`` / ``both``.
+    - a ``*-noauth`` ui_mode requires the resolved auth mode to be ``none``;
+    - a ``*-auth``   ui_mode requires it to be ``password`` / ``oidc`` / ``both``.
 
     An UNSET ``KLANGK_AUTH_MODES`` never conflicts: :func:`oidc.auth_modes`
-    is preset-aware in the unset path (#1397), self-defaulting to ``password``
-    for ``*-auth`` presets and ``none`` for ``*-noauth``.
+    is ui_mode-aware in the unset path (#1397), self-defaulting to ``password``
+    for ``*-auth`` ui_modes and ``none`` for ``*-noauth``.
 
     Raises :class:`~klangk_backend.exceptions.ConfigurationError` on an
-    unknown preset value or an explicit preset/auth-mode conflict.
+    unknown ui_mode value or an explicit ui_mode/auth-mode conflict.
 
     ``klangk_backend.oidc`` is imported lazily to avoid a settings <-> oidc
     import cycle (``oidc`` imports :func:`get_settings` from this module).
     """
-    preset = get_settings().preset
-    if preset is None:
-        return  # no preset set → today's pre-#1392 behavior
-    if preset not in PRESETS:
+    ui_mode = get_settings().ui_mode
+    if ui_mode is None:
+        return  # no ui_mode set → today's pre-#1392 behavior
+    if ui_mode not in UI_MODES:
         raise ConfigurationError(
-            f"KLANGK_PRESET={preset!r} is not one of {sorted(PRESETS)}"
+            f"KLANGK_UI_MODE={ui_mode!r} is not one of {sorted(UI_MODES)}"
         )
     from . import oidc  # noqa: allow-deferred-import  (settings <-> oidc cycle)
 
     mode = oidc.auth_modes()
-    noauth = preset.endswith("-noauth")
+    noauth = ui_mode.endswith("-noauth")
     if noauth and mode != "none":
         raise ConfigurationError(
-            f"KLANGK_PRESET={preset!r} requires KLANGK_AUTH_MODES=none, "
+            f"KLANGK_UI_MODE={ui_mode!r} requires KLANGK_AUTH_MODES=none, "
             f"but the resolved auth mode is {mode!r}"
         )
     if not noauth and mode == "none":
         raise ConfigurationError(
-            f"KLANGK_PRESET={preset!r} requires an auth-gated backend "
+            f"KLANGK_UI_MODE={ui_mode!r} requires an auth-gated backend "
             f"(KLANGK_AUTH_MODES=password|oidc|both), but the resolved "
             f"auth mode is 'none'"
         )
@@ -490,13 +491,13 @@ def validate_at_startup() -> KlangkSettings:
     Call once from the lifespan startup (and from the ``klangkd`` launcher).
     Bogus config (once fields gain strict types) fails here with a
     :class:`ValidationError` before the server serves traffic. Also runs the
-    :func:`_validate_preset` cross-check so a ``KLANGK_PRESET`` that
+    :func:`_validate_ui_mode` cross-check so a ``KLANGK_UI_MODE`` that
     disagrees with the resolved ``KLANGK_AUTH_MODES`` backend fails fast.
     Returns the validated settings instance (which also primes the cache).
     """
     _invalidate_cache()
     settings = get_settings()
-    _validate_preset()
+    _validate_ui_mode()
     return settings
 
 

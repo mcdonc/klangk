@@ -129,30 +129,30 @@ logo_url: https://example.com/logo.png
 
 Every key below corresponds to a `KLANGK_*` environment variable (uppercased, with `KLANGK_` prefix). See [Environment Variables](environment.md) for detailed descriptions of each.
 
-### Deployment profiles
+### Deployment UI mode
 
-`KLANGK_PRESET` (config key `preset`) is the single deployment-shape selector — the new name for the "deployment profiles" from [#1397](https://github.com/mcdonc/klangk/issues/1397). It is one of four corners of the (transport × auth-gate) space:
+`KLANGK_UI_MODE` (config key `ui_mode`) is the single deployment-shape selector — selects one of four corners of the (UI × auth-gate) space, with values named for the operator _experience_ (do I get a UI?) rather than the transport:
 
-| `preset`     | transport | auth gate | browser ingress |
-| ------------ | --------- | --------- | --------------- |
-| `uds-noauth` | UDS       | off       | — (impossible)  |
-| `uds-auth`   | UDS       | on        | — (impossible)  |
-| `ip-noauth`  | TCP       | off       | implied on      |
-| `ip-auth`    | TCP       | on        | implied on      |
+| `ui_mode`    | UI             | transport | auth gate |
+| ------------ | -------------- | --------- | --------- |
+| `cli-noauth` | headless (CLI) | UDS       | off       |
+| `cli-auth`   | headless (CLI) | UDS       | on        |
+| `web-noauth` | browser        | TCP       | off       |
+| `web-auth`   | browser        | TCP       | on        |
 
-Everything else is _derived_ from the preset and is **not** individually configurable: the auth gate is the `-auth`/`-noauth` suffix; browser ingress is implied by the `ip-*` presets (a browser can't ingress over a UDS); container egress paths are a fixed per-preset default. The one thing the operator still chooses separately is the auth **backend** (password vs OIDC vs both) via the existing `KLANGK_AUTH_MODES` — that decision can't be made for them.
+Everything else is _derived_ from the ui_mode and is **not** individually configurable: the auth gate is the `-auth`/`-noauth` suffix; UI presence is the `cli-`/`web-` prefix (a browser can't ingress over a UDS, so `cli-*` is headless and `web-*` is browser-facing); container egress paths are a fixed per-ui_mode default. The one thing the operator still chooses separately is the auth **backend** (password vs OIDC vs both) via the existing `KLANGK_AUTH_MODES` — that decision can't be made for them.
 
-`KLANGK_PRESET` and `KLANGK_AUTH_MODES` are cross-validated at startup: a `*-noauth` preset requires `KLANGK_AUTH_MODES=none`; a `*-auth` preset requires a gated backend (`password`/`oidc`/`both`). A conflicting config fails fast with a `ConfigurationError`. When `KLANGK_AUTH_MODES` is **unset**, it self-defaults to match the preset — `password` for `*-auth`, `none` for `*-noauth` — so a preset alone boots cleanly without an explicit backend. (OIDC is then opt-in by setting `KLANGK_AUTH_MODES=oidc` or `both`.)
+`KLANGK_UI_MODE` and `KLANGK_AUTH_MODES` are cross-validated at startup: a `*-noauth` ui_mode requires `KLANGK_AUTH_MODES=none`; a `*-auth` ui_mode requires a gated backend (`password`/`oidc`/`both`). A conflicting config fails fast with a `ConfigurationError`. When `KLANGK_AUTH_MODES` is **unset**, it self-defaults to match the ui_mode — `password` for `*-auth`, `none` for `*-noauth` — so a ui_mode alone boots cleanly without an explicit backend. (OIDC is then opt-in by setting `KLANGK_AUTH_MODES=oidc` or `both`.)
 
-| Key      | Default | Env var         |
-| -------- | ------- | --------------- |
-| `preset` |         | `KLANGK_PRESET` |
+| Key       | Default | Env var          |
+| --------- | ------- | ---------------- |
+| `ui_mode` |         | `KLANGK_UI_MODE` |
 
 ```yaml
-# --- Deployment profiles (#1397) ---
-# One of: uds-noauth | uds-auth | ip-noauth | ip-auth
+# --- Deployment UI mode (#1397) ---
+# One of: cli-noauth | cli-auth | web-noauth | web-auth
 # The auth backend is chosen separately via KLANGK_AUTH_MODES:
-preset: ip-auth # + KLANGK_AUTH_MODES=oidc (a preset with a gate needs a backend)
+ui_mode: web-auth # + KLANGK_AUTH_MODES=oidc (a ui_mode with a gate needs a backend)
 ```
 
 ### Auth / identity

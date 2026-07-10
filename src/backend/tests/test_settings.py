@@ -15,7 +15,7 @@ from klangk_backend import settings as settings_mod
 from klangk_backend.exceptions import ConfigurationError
 from klangk_backend.settings import (
     KlangkSettings,
-    PRESETS,
+    UI_MODES,
     _key_to_field,
     get_config_file,
     get_settings,
@@ -272,147 +272,149 @@ class TestConfigFile:
 
 
 # ---------------------------------------------------------------------------
-# KLANGK_PRESET (#1397): the single deployment-shape key
+# KLANGK_UI_MODE (#1397): the single deployment-shape key
 # ---------------------------------------------------------------------------
 
 
-class TestPreset:
-    """``KLANGK_PRESET`` is the only settable deployment-shape key (#1397).
+class TestUiMode:
+    """``KLANGK_UI_MODE`` is the only settable deployment-shape key (#1397).
 
-    The earlier #1397 draft exposed four axis keys (preset / auth /
+    The earlier #1397 draft exposed four axis keys (auth /
     browser_ingress / container_egress_paths). The finalized model keeps only
-    ``preset``: the auth GATE is its ``-auth``/``-noauth`` suffix, browser
-    ingress is implied by the ``ip-*`` presets, and container egress paths
-    are a fixed per-preset default. The auth BACKEND (password vs OIDC vs
-    both) stays the operator's choice via the existing ``KLANGK_AUTH_MODES``;
-    the two are cross-validated (see :class:`TestPresetAuthConflict`).
+    ``ui_mode``: the auth GATE is its ``-auth``/``-noauth`` suffix, UI
+    presence is its ``cli-``/``web-`` prefix (a browser can't ingress over a
+    UDS, so ``cli-*`` is headless and ``web-*`` is browser-facing), and
+    container egress paths are a fixed per-ui_mode default. The auth BACKEND
+    (password vs OIDC vs both) stays the operator's choice via the existing
+    ``KLANGK_AUTH_MODES``; the two are cross-validated (see
+    :class:`TestUiModeAuthConflict`).
 
-    These tests pin that ``preset`` is settable via BOTH an env var and the
+    These tests pin that ``ui_mode`` is settable via BOTH an env var and the
     YAML config file (like every other field) so a future change can't
     silently drop the config-file path.
     """
 
     def test_field_exists(self):
-        assert "preset" in KlangkSettings.model_fields
-        assert PRESETS == frozenset(
-            {"uds-noauth", "uds-auth", "ip-noauth", "ip-auth"}
+        assert "ui_mode" in KlangkSettings.model_fields
+        assert UI_MODES == frozenset(
+            {"cli-noauth", "cli-auth", "web-noauth", "web-auth"}
         )
 
     def test_dropped_axis_keys_are_not_fields(self):
         # auth / browser_ingress / container_egress_paths are NOT individually
-        # settable — everything but preset is derived from the preset.
+        # settable — everything but ui_mode is derived from the ui_mode.
         fields = KlangkSettings.model_fields
         for dropped in ("auth", "browser_ingress", "container_egress_paths"):
             assert dropped not in fields, dropped
 
-    @pytest.mark.parametrize("value", sorted(PRESETS))
+    @pytest.mark.parametrize("value", sorted(UI_MODES))
     def test_settable_via_env(self, monkeypatch, value):
         set_config_file(None)
-        monkeypatch.setenv("KLANGK_PRESET", value)
-        assert get_settings().preset == value
+        monkeypatch.setenv("KLANGK_UI_MODE", value)
+        assert get_settings().ui_mode == value
 
-    @pytest.mark.parametrize("value", sorted(PRESETS))
+    @pytest.mark.parametrize("value", sorted(UI_MODES))
     def test_settable_via_yaml(self, tmp_path, value):
         cfg = tmp_path / "config.yaml"
-        cfg.write_text(f'preset: "{value}"\n')
+        cfg.write_text(f'ui_mode: "{value}"\n')
         set_config_file(str(cfg))
-        assert get_settings().preset == value
+        assert get_settings().ui_mode == value
 
     def test_env_overrides_yaml(self, monkeypatch, tmp_path):
         cfg = tmp_path / "config.yaml"
-        cfg.write_text('preset: "uds-noauth"\n')
+        cfg.write_text('ui_mode: "cli-noauth"\n')
         set_config_file(str(cfg))
-        monkeypatch.setenv("KLANGK_PRESET", "ip-auth")
-        assert get_settings().preset == "ip-auth"
+        monkeypatch.setenv("KLANGK_UI_MODE", "web-auth")
+        assert get_settings().ui_mode == "web-auth"
 
     def test_default_none_preserves_today(self):
-        # No preset set → None → pre-#1392 behavior; validate_at_startup is a
-        # no-op (no conflict check runs when preset is unset).
+        # No ui_mode set → None → pre-#1392 behavior; validate_at_startup is a
+        # no-op (no conflict check runs when ui_mode is unset).
         set_config_file(None)
-        assert get_settings().preset is None
+        assert get_settings().ui_mode is None
 
 
-class TestPresetAuthConflict:
-    """``KLANGK_PRESET`` must agree with an EXPLICIT ``KLANGK_AUTH_MODES``.
+class TestUiModeAuthConflict:
+    """``KLANGK_UI_MODE`` must agree with an EXPLICIT ``KLANGK_AUTH_MODES``.
 
-    The preset fixes whether an auth gate is required (its suffix); the
+    The ui_mode fixes whether an auth gate is required (its suffix); the
     operator separately chooses the backend (password / OIDC / both) via
     ``KLANGK_AUTH_MODES``. The two are cross-validated at config-load by
     :func:`validate_at_startup`, so an *explicitly conflicting* config fails
     fast at boot:
 
-    - ``*-noauth`` presets require the resolved auth mode to be ``none``;
-    - ``*-auth``   presets require it to be non-``none``.
+    - ``*-noauth`` ui_modes require the resolved auth mode to be ``none``;
+    - ``*-auth``   ui_modes require it to be non-``none``.
 
     Important: an UNSET ``KLANGK_AUTH_MODES`` never conflicts —
-    ``oidc.auth_modes()`` is preset-aware in the unset path (#1397), so a
-    ``*-auth`` preset defaults the mode to ``password`` and ``*-noauth`` to
+    ``oidc.auth_modes()`` is ui_mode-aware in the unset path (#1397), so a
+    ``*-auth`` ui_mode defaults the mode to ``password`` and ``*-noauth`` to
     ``none``. The conflict check only fires on an *explicit* value that
-    disagrees with the preset. These tests set ``KLANGK_AUTH_MODES``
+    disagrees with the ui_mode. These tests set ``KLANGK_AUTH_MODES``
     explicitly in every case; the unset-no-conflict cases are covered at the
     end.
     """
 
-    def test_unknown_preset_rejected(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_PRESET", "bogus")
+    def test_unknown_ui_mode_rejected(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_UI_MODE", "bogus")
         monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
         with pytest.raises(ConfigurationError, match="not one of"):
             validate_at_startup()
 
-    @pytest.mark.parametrize("preset", ["uds-noauth", "ip-noauth"])
+    @pytest.mark.parametrize("ui_mode", ["cli-noauth", "web-noauth"])
     @pytest.mark.parametrize("mode", ["password", "oidc", "both"])
-    def test_noauth_preset_conflicts_with_any_backend(
-        self, monkeypatch, preset, mode
+    def test_noauth_ui_mode_conflicts_with_any_backend(
+        self, monkeypatch, ui_mode, mode
     ):
-        monkeypatch.setenv("KLANGK_PRESET", preset)
+        monkeypatch.setenv("KLANGK_UI_MODE", ui_mode)
         monkeypatch.setenv("KLANGK_AUTH_MODES", mode)
         with pytest.raises(
             ConfigurationError, match="requires KLANGK_AUTH_MODES=none"
         ):
             validate_at_startup()
 
-    @pytest.mark.parametrize("preset", ["uds-noauth", "ip-noauth"])
-    def test_noauth_preset_ok_with_none(self, monkeypatch, preset):
-        monkeypatch.setenv("KLANGK_PRESET", preset)
+    @pytest.mark.parametrize("ui_mode", ["cli-noauth", "web-noauth"])
+    def test_noauth_ui_mode_ok_with_none(self, monkeypatch, ui_mode):
+        monkeypatch.setenv("KLANGK_UI_MODE", ui_mode)
         monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         settings = validate_at_startup()  # no raise
-        assert settings.preset == preset
+        assert settings.ui_mode == ui_mode
 
-    @pytest.mark.parametrize("preset", ["uds-auth", "ip-auth"])
-    def test_auth_preset_conflicts_with_none(self, monkeypatch, preset):
-        monkeypatch.setenv("KLANGK_PRESET", preset)
+    @pytest.mark.parametrize("ui_mode", ["cli-auth", "web-auth"])
+    def test_auth_ui_mode_conflicts_with_none(self, monkeypatch, ui_mode):
+        monkeypatch.setenv("KLANGK_UI_MODE", ui_mode)
         monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         with pytest.raises(
             ConfigurationError, match="requires an auth-gated backend"
         ):
             validate_at_startup()
 
-    @pytest.mark.parametrize("preset", ["uds-auth", "ip-auth"])
+    @pytest.mark.parametrize("ui_mode", ["cli-auth", "web-auth"])
     @pytest.mark.parametrize("mode", ["password", "oidc", "both"])
-    def test_auth_preset_ok_with_backend(self, monkeypatch, preset, mode):
-        monkeypatch.setenv("KLANGK_PRESET", preset)
+    def test_auth_ui_mode_ok_with_backend(self, monkeypatch, ui_mode, mode):
+        monkeypatch.setenv("KLANGK_UI_MODE", ui_mode)
         monkeypatch.setenv("KLANGK_AUTH_MODES", mode)
         settings = validate_at_startup()  # no raise
-        assert settings.preset == preset
+        assert settings.ui_mode == ui_mode
 
-    def test_no_preset_skips_conflict_check(self, monkeypatch):
-        # preset unset → no validation runs (pre-#1392 behavior preserved),
+    def test_no_ui_mode_skips_conflict_check(self, monkeypatch):
+        # ui_mode unset → no validation runs (pre-#1392 behavior preserved),
         # regardless of the auth mode.
-        monkeypatch.delenv("KLANGK_PRESET", raising=False)
+        monkeypatch.delenv("KLANGK_UI_MODE", raising=False)
         monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         validate_at_startup()  # no raise
 
     @pytest.mark.parametrize(
-        "preset", ["uds-noauth", "uds-auth", "ip-noauth", "ip-auth"]
+        "ui_mode", ["cli-noauth", "cli-auth", "web-noauth", "web-auth"]
     )
-    def test_unset_auth_mode_never_conflicts(self, monkeypatch, preset):
+    def test_unset_auth_mode_never_conflicts(self, monkeypatch, ui_mode):
         # An unset KLANGK_AUTH_MODES never conflicts: oidc.auth_modes()
-        # self-defaults to match the preset (*-auth → password, *-noauth →
-        # none). So a preset alone boots cleanly with no explicit backend.
-        monkeypatch.setenv("KLANGK_PRESET", preset)
+        # self-defaults to match the ui_mode (*-auth → password, *-noauth →
+        # none). So a ui_mode alone boots cleanly with no explicit backend.
+        monkeypatch.setenv("KLANGK_UI_MODE", ui_mode)
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
         settings = validate_at_startup()  # no raise
-        assert settings.preset == preset
+        assert settings.ui_mode == ui_mode
 
 
 class TestKlangkdLauncher:
