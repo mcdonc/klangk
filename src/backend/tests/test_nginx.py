@@ -309,7 +309,7 @@ class TestContainerAclFallback:
 class TestWriteConfig:
     def test_writes_file(self, tmp_path):
         _set(nginx_port="8995")
-        conf_path = tmp_path / "nginx" / "nginx.conf"
+        conf_path = tmp_path / "nginx.conf"
         text = render_config(tcp_upstream("127.0.0.1", "8997"))
         from klangk_backend.nginx import write_config
 
@@ -345,33 +345,36 @@ class TestKlangkdHelpers:
         assert _default_state_dir() == "/tmp/klangk-state"
 
 
-# socket path is now derived (<state_dir>/klangk.sock), not a setting —
-# covered by main._socket_path() which is exercised via the watchdog tests.
+# The watchdog is gated only by the internal _KLANGK_DISABLE_NGINX kill
+# switch (test-only); nginx is owned unconditionally in real runs. Covered
+# below.
 
 
-class TestWatchdogNoop:
-    """The watchdog no-ops when KLANGK_UDS_MODE is unset (TCP / tests)."""
+class TestWatchdogGate:
+    """start_nginx_watchdog respects the test kill switch; otherwise prepares+spawns."""
 
     @pytest.mark.asyncio
-    async def test_start_noop_without_uds_mode(self, monkeypatch):
-        """start_nginx_watchdog returns immediately when KLANGK_UDS_MODE unset."""
+    async def test_start_noop_when_disabled(self, monkeypatch):
+        """No-op when the test-only _KLANGK_DISABLE_NGINX is set."""
         import klangk_backend.main as main
 
-        monkeypatch.delenv("KLANGK_UDS_MODE", raising=False)
-        _invalidate_cache()
+        monkeypatch.setenv("_KLANGK_DISABLE_NGINX", "1")
         await main.start_nginx_watchdog()
-        # No task was created.
-        assert main._nginx_task is None
+        assert main._nginx_task is None  # killed by the switch
 
     @pytest.mark.asyncio
-    async def test_start_runs_prepare_in_uds_mode(self, monkeypatch, tmp_path):
-        """In UDS mode, start_nginx_watchdog runs _prepare_nginx then spawns
-        (a stubbed) watchdog task. The real nginx spawn is e2e-covered; here
-        we stub _nginx_watchdog to a no-op coroutine so the orchestration —
-        prepare, set _nginx_stopping=False, create_task — is unit-tested."""
+    async def test_start_runs_prepare_when_enabled(
+        self, monkeypatch, tmp_path
+    ):
+        """When not disabled, start_nginx_watchdog runs _prepare_nginx then spawns
+        (a stubbed) watchdog. The real nginx spawn is e2e-covered; here
+        _nginx_watchdog is stubbed so the orchestration (prepare, set
+        _nginx_stopping=False, create_task) is unit-tested."""
         import klangk_backend.main as main
 
-        _set(uds_mode="1", state_dir=str(tmp_path), nginx_port="19999")
+        sock = str(tmp_path / "klangk.sock")
+        _set(listen=sock, state_dir=str(tmp_path), nginx_port="19999")
+        monkeypatch.delenv("_KLANGK_DISABLE_NGINX", raising=False)
         monkeypatch.setattr(
             "klangk_backend.nginx.find_nginx_bin", lambda: "/fake/nginx"
         )
@@ -388,7 +391,7 @@ class TestWatchdogNoop:
             assert main._nginx_task is not None
             assert main._nginx_stopping is False
             # prepare ran: config written + paths passed to the watchdog.
-            assert (tmp_path / "nginx" / "nginx.conf").is_file()
+            assert (tmp_path / "nginx.conf").is_file()
             await main._nginx_task  # let the stub complete
             assert spawned["bin"] == "/fake/nginx"
         finally:
@@ -399,39 +402,27 @@ class TestWatchdogNoop:
             main._nginx_proc = None
 
 
-class TestUdsEnabledAndSocketPath:
-    """_uds_enabled (the mode switch) and _socket_path (derived path)."""
+class TestSocketPath:
+    """_socket_path() reads KLANGK_LISTEN (the socket IS the listen value)."""
 
-    def test_uds_enabled_false_by_default(self):
+    def test_returns_listen_value(self):
         import klangk_backend.main as main
 
-        _set()  # no uds_mode
-        assert main._uds_enabled() is False
+        _set(listen="/tmp/klangk.sock")
+        assert main._socket_path() == "/tmp/klangk.sock"
 
-    def test_uds_enabled_truthy_values(self):
+    def test_falls_back_to_state_dir_when_listen_unset(self, monkeypatch):
         import klangk_backend.main as main
 
-        for val in ("1", "true", "yes", "TRUE", "Yes"):
-            _set(uds_mode=val)
-            assert main._uds_enabled() is True, val
-
-    def test_uds_enabled_falsy_values(self):
-        import klangk_backend.main as main
-
-        for val in ("", "0", "false", "no", "garbage"):
-            _set(uds_mode=val)
-            assert main._uds_enabled() is False, val
-
-    def test_socket_path_derived_from_state_dir(self):
-        import klangk_backend.main as main
-
-        _set(state_dir="/custom/state")
+        # When listen is empty/unset, _socket_path defaults to
+        # <state_dir>/klangk.sock rather than an empty string.
+        _set(listen="", state_dir="/custom/state")
         assert main._socket_path() == "/custom/state/klangk.sock"
 
-    def test_socket_path_falls_back_to_tmp(self):
+    def test_falls_back_to_tmp_when_both_unset(self, monkeypatch):
         import klangk_backend.main as main
 
-        _set()  # no state_dir
+        _set(listen="", state_dir="")
         assert main._socket_path() == "/tmp/klangk-state/klangk.sock"
 
 
@@ -441,18 +432,19 @@ class TestPrepareNginx:
     def test_renders_config_and_returns_paths(self, monkeypatch, tmp_path):
         import klangk_backend.main as main
 
-        _set(state_dir=str(tmp_path), nginx_port="19999")
+        sock = str(tmp_path / "klangk.sock")
+        _set(listen=sock, state_dir=str(tmp_path), nginx_port="19999")
         # Stub the binary lookup so the test doesn't depend on PATH.
         monkeypatch.setattr(
             "klangk_backend.nginx.find_nginx_bin", lambda: "/fake/nginx"
         )
         bin_path, conf_path = main._prepare_nginx()
         assert bin_path == "/fake/nginx"
-        assert conf_path == str(tmp_path / "nginx" / "nginx.conf")
-        assert (tmp_path / "nginx" / "nginx.conf").is_file()
-        # The rendered config targets the derived socket.
-        conf = (tmp_path / "nginx" / "nginx.conf").read_text()
-        assert f"proxy_pass http://unix:{tmp_path}/klangk.sock:" in conf
+        assert conf_path == str(tmp_path / "nginx.conf")
+        assert (tmp_path / "nginx.conf").is_file()
+        # The rendered config targets the LISTEN socket path.
+        conf = (tmp_path / "nginx.conf").read_text()
+        assert f"proxy_pass http://unix:{sock}:" in conf
         # _UDS_MODE armed.
         import klangk_backend.util as util
 

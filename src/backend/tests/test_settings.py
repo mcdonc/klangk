@@ -12,15 +12,15 @@ Covers:
 import pytest
 
 from klangk_backend import settings as settings_mod
-from klangk_backend.exceptions import ConfigurationError
 from klangk_backend.settings import (
     KlangkSettings,
-    PRESETS,
     _key_to_field,
     get_config_file,
     get_settings,
     resolve_env_bool,
     resolve_env_value,
+    classify_listen,
+    listen_is_socket,
     resolve_indirection,
     set_config_file,
     validate_at_startup,
@@ -272,147 +272,67 @@ class TestConfigFile:
 
 
 # ---------------------------------------------------------------------------
-# KLANGK_PRESET (#1397): the single deployment-shape key
+# classify_listen / listen_is_socket (polymorphic KLANGK_LISTEN, #1422)
 # ---------------------------------------------------------------------------
+# KLANGK_LISTEN is polymorphic: a socket path or a TCP host (no port —
+# the port comes from KLANGK_PORT). The
+# deployment shape is *derived* from listen's shape + auth_modes (there is
+# no amalgamated UI-mode/preset setting — it never shipped). These pin the
+# classifier that the renderer, the klangkd bind, and the CLI (#1399) share.
 
 
-class TestPreset:
-    """``KLANGK_PRESET`` is the only settable deployment-shape key (#1397).
+class TestClassifyListen:
+    def test_absolute_path_is_socket(self):
+        assert classify_listen("/tmp/klangk.sock") == "socket"
+        assert classify_listen("/run/user/1000/klangk.sock") == "socket"
 
-    The earlier #1397 draft exposed four axis keys (preset / auth /
-    browser_ingress / container_egress_paths). The finalized model keeps only
-    ``preset``: the auth GATE is its ``-auth``/``-noauth`` suffix, browser
-    ingress is implied by the ``ip-*`` presets, and container egress paths
-    are a fixed per-preset default. The auth BACKEND (password vs OIDC vs
-    both) stays the operator's choice via the existing ``KLANGK_AUTH_MODES``;
-    the two are cross-validated (see :class:`TestPresetAuthConflict`).
+    def test_tcp_host_is_tcp(self):
+        assert classify_listen("127.0.0.1") == "tcp"
+        assert classify_listen("0.0.0.0") == "tcp"
+        assert classify_listen("::1") == "tcp"
 
-    These tests pin that ``preset`` is settable via BOTH an env var and the
-    YAML config file (like every other field) so a future change can't
-    silently drop the config-file path.
-    """
+    def test_value_with_port_is_tcp(self):
+        # LISTEN never carries a port (it comes from KLANGK_PORT), but if a
+        # port-bearing value did appear it must classify as TCP, not socket —
+        # the classifier never mis-classifies a non-socket.
+        assert classify_listen("127.0.0.1:8997") == "tcp"
+        assert classify_listen("0.0.0.0:8997") == "tcp"
+        assert classify_listen("[::1]:8997") == "tcp"
 
-    def test_field_exists(self):
-        assert "preset" in KlangkSettings.model_fields
-        assert PRESETS == frozenset(
-            {"uds-noauth", "uds-auth", "ip-noauth", "ip-auth"}
-        )
+    def test_http_scheme_is_tcp(self):
+        # CLI-style absolute URL — TCP (shared convention with #1399).
+        assert classify_listen("http://host:8995") == "tcp"
+        assert classify_listen("https://host") == "tcp"
 
-    def test_dropped_axis_keys_are_not_fields(self):
-        # auth / browser_ingress / container_egress_paths are NOT individually
-        # settable — everything but preset is derived from the preset.
-        fields = KlangkSettings.model_fields
-        for dropped in ("auth", "browser_ingress", "container_egress_paths"):
-            assert dropped not in fields, dropped
+    def test_none_is_tcp(self):
+        # None ⇒ the TCP default (loopback until #1400 flips it to a socket).
+        assert classify_listen(None) == "tcp"
+        assert classify_listen("") == "tcp"
 
-    @pytest.mark.parametrize("value", sorted(PRESETS))
-    def test_settable_via_env(self, monkeypatch, value):
-        set_config_file(None)
-        monkeypatch.setenv("KLANGK_PRESET", value)
-        assert get_settings().preset == value
-
-    @pytest.mark.parametrize("value", sorted(PRESETS))
-    def test_settable_via_yaml(self, tmp_path, value):
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text(f'preset: "{value}"\n')
-        set_config_file(str(cfg))
-        assert get_settings().preset == value
-
-    def test_env_overrides_yaml(self, monkeypatch, tmp_path):
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text('preset: "uds-noauth"\n')
-        set_config_file(str(cfg))
-        monkeypatch.setenv("KLANGK_PRESET", "ip-auth")
-        assert get_settings().preset == "ip-auth"
-
-    def test_default_none_preserves_today(self):
-        # No preset set → None → pre-#1392 behavior; validate_at_startup is a
-        # no-op (no conflict check runs when preset is unset).
-        set_config_file(None)
-        assert get_settings().preset is None
+    def test_bare_relative_is_tcp(self):
+        # Ambiguous (no scheme, no leading slash) — classified as TCP, not a
+        # socket. Callers needing a socket must pass an absolute path; this
+        # keeps the classifier total (mirrors #1399's absolute-path rule).
+        assert classify_listen("klangk.sock") == "tcp"
+        assert classify_listen("localhost") == "tcp"
 
 
-class TestPresetAuthConflict:
-    """``KLANGK_PRESET`` must agree with an EXPLICIT ``KLANGK_AUTH_MODES``.
+class TestListenIsSocket:
+    def test_true_when_listen_is_socket_path(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_LISTEN", "/tmp/klangk.sock")
+        settings_mod._invalidate_cache()
+        assert listen_is_socket() is True
 
-    The preset fixes whether an auth gate is required (its suffix); the
-    operator separately chooses the backend (password / OIDC / both) via
-    ``KLANGK_AUTH_MODES``. The two are cross-validated at config-load by
-    :func:`validate_at_startup`, so an *explicitly conflicting* config fails
-    fast at boot:
+    def test_false_when_listen_is_tcp(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
+        settings_mod._invalidate_cache()
+        assert listen_is_socket() is False
 
-    - ``*-noauth`` presets require the resolved auth mode to be ``none``;
-    - ``*-auth``   presets require it to be non-``none``.
-
-    Important: an UNSET ``KLANGK_AUTH_MODES`` never conflicts —
-    ``oidc.auth_modes()`` is preset-aware in the unset path (#1397), so a
-    ``*-auth`` preset defaults the mode to ``password`` and ``*-noauth`` to
-    ``none``. The conflict check only fires on an *explicit* value that
-    disagrees with the preset. These tests set ``KLANGK_AUTH_MODES``
-    explicitly in every case; the unset-no-conflict cases are covered at the
-    end.
-    """
-
-    def test_unknown_preset_rejected(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_PRESET", "bogus")
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
-        with pytest.raises(ConfigurationError, match="not one of"):
-            validate_at_startup()
-
-    @pytest.mark.parametrize("preset", ["uds-noauth", "ip-noauth"])
-    @pytest.mark.parametrize("mode", ["password", "oidc", "both"])
-    def test_noauth_preset_conflicts_with_any_backend(
-        self, monkeypatch, preset, mode
-    ):
-        monkeypatch.setenv("KLANGK_PRESET", preset)
-        monkeypatch.setenv("KLANGK_AUTH_MODES", mode)
-        with pytest.raises(
-            ConfigurationError, match="requires KLANGK_AUTH_MODES=none"
-        ):
-            validate_at_startup()
-
-    @pytest.mark.parametrize("preset", ["uds-noauth", "ip-noauth"])
-    def test_noauth_preset_ok_with_none(self, monkeypatch, preset):
-        monkeypatch.setenv("KLANGK_PRESET", preset)
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
-        settings = validate_at_startup()  # no raise
-        assert settings.preset == preset
-
-    @pytest.mark.parametrize("preset", ["uds-auth", "ip-auth"])
-    def test_auth_preset_conflicts_with_none(self, monkeypatch, preset):
-        monkeypatch.setenv("KLANGK_PRESET", preset)
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
-        with pytest.raises(
-            ConfigurationError, match="requires an auth-gated backend"
-        ):
-            validate_at_startup()
-
-    @pytest.mark.parametrize("preset", ["uds-auth", "ip-auth"])
-    @pytest.mark.parametrize("mode", ["password", "oidc", "both"])
-    def test_auth_preset_ok_with_backend(self, monkeypatch, preset, mode):
-        monkeypatch.setenv("KLANGK_PRESET", preset)
-        monkeypatch.setenv("KLANGK_AUTH_MODES", mode)
-        settings = validate_at_startup()  # no raise
-        assert settings.preset == preset
-
-    def test_no_preset_skips_conflict_check(self, monkeypatch):
-        # preset unset → no validation runs (pre-#1392 behavior preserved),
-        # regardless of the auth mode.
-        monkeypatch.delenv("KLANGK_PRESET", raising=False)
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
-        validate_at_startup()  # no raise
-
-    @pytest.mark.parametrize(
-        "preset", ["uds-noauth", "uds-auth", "ip-noauth", "ip-auth"]
-    )
-    def test_unset_auth_mode_never_conflicts(self, monkeypatch, preset):
-        # An unset KLANGK_AUTH_MODES never conflicts: oidc.auth_modes()
-        # self-defaults to match the preset (*-auth → password, *-noauth →
-        # none). So a preset alone boots cleanly with no explicit backend.
-        monkeypatch.setenv("KLANGK_PRESET", preset)
-        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
-        settings = validate_at_startup()  # no raise
-        assert settings.preset == preset
+    def test_false_for_default(self, monkeypatch):
+        # The default (127.0.0.1) is TCP; #1400 will flip this to a socket.
+        monkeypatch.delenv("KLANGK_LISTEN", raising=False)
+        settings_mod._invalidate_cache()
+        assert listen_is_socket() is False
 
 
 class TestKlangkdLauncher:

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Ensure state/data dirs exist
-mkdir -p "${KLANGK_STATE_DIR:-${DEVENV_STATE:-/tmp/klangk-state}}/nginx" "$KLANGK_DATA_DIR"
+mkdir -p "${KLANGK_STATE_DIR:-${DEVENV_STATE:-/tmp/klangk-state}}" "$KLANGK_DATA_DIR"
 
 # Load the embedded workspace image into podman on first startup.
 WORKSPACE_TAR="$HOME/workspace.tar"

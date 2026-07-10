@@ -1,8 +1,9 @@
 """``klangkd`` — the klangk server launcher (#1395, #1396).
 
 Loads config (from a YAML file + env vars + built-in defaults, per the
-precedence rules in :mod:`klangk_backend.settings`), binds uvicorn to a UNIX
-domain socket (UDS), and owns the nginx child that fronts it (#1396).
+precedence rules in :mod:`klangk_backend.settings`), binds uvicorn (to a
+UNIX domain socket when ``KLANGK_LISTEN`` is a path, or a TCP host
+otherwise), and owns the nginx child that fronts it.
 
 Usage::
 
@@ -29,11 +30,14 @@ import typer
 import uvicorn
 
 from klangk_backend.settings import (
+    classify_listen,
     get_settings,
+    resolve_env_value,
     resolve_indirection,
     set_config_file,
     validate_at_startup,
 )
+from klangk_backend.util import set_uds_mode
 
 # The default config-file location — a deployed klangkd finds its config here
 # with no args.  See #1395.
@@ -90,7 +94,7 @@ def main(  # pragma: no cover
         ),
     ),
 ) -> None:
-    """Start the klangk server (uvicorn on a UDS + nginx child)."""
+    """Start the klangk server (uvicorn + nginx child)."""
     resolved = _resolve_config_path(config)
 
     # Seed the state_dir default into the env so the settings model can pick
@@ -106,59 +110,70 @@ def main(  # pragma: no cover
 
     # Everything below reads through the typed config (config file > env >
     # defaults, with file:/cmd: resolution), NOT raw os.environ — so a YAML
-    # ``state_dir:``/``ws_msg_size_max:`` value or a ``file:``/``cmd:`` prefix
-    # takes effect the same as an env var (#1394/#1395).
+    # value or a ``file:``/``cmd:`` prefix takes effect the same as an env
+    # var (#1394/#1395).
     settings = get_settings()
     state_dir = resolve_indirection(settings.state_dir) or _default_state_dir()
-    socket_path = os.path.join(state_dir, "klangk.sock")
-
-    # Arm the lifespan's nginx watchdog: this is the honest "are we in UDS
-    # mode?" switch (#1396). Only klangkd sets it; bare uvicorn / unit tests
-    # never do, so the watchdog no-ops there. Read through the typed config so
-    # ``uds_mode: true`` in the config file works too.
-    uds_mode = resolve_indirection(settings.uds_mode) or "1"
-    os.environ["KLANGK_UDS_MODE"] = uds_mode
     # Re-pin state_dir into env so the lifespan watchdog (which reads the
     # merged config fresh) sees the same resolved value.
     os.environ["KLANGK_STATE_DIR"] = state_dir
 
-    # uvicorn creates the socket, but a stale socket from a kill -9'd process
-    # makes the bind fail with EADDRINUSE. Unlink it first (accept that a race
-    # with a concurrent klangkd is the operator's problem — the pidfile guard
-    # in the lifespan already refuses a second instance). #1396.
-    try:
-        os.unlink(socket_path)
-    except FileNotFoundError:
-        pass
+    # ``KLANGK_LISTEN`` is polymorphic (#1422): a socket path or a TCP
+    # TCP host or socket path. classify_listen picks the transport from its
+    # shape; uvicorn
+    # binds accordingly. The deployment shape is *derived* from listen's shape
+    # + auth_modes — there is no amalgamated UI-mode setting.
+    listen = resolve_indirection(settings.listen) or "127.0.0.1"
+    transport = classify_listen(listen)
 
-    # Ensure the socket's parent dir exists and is private (0700) so only the
-    # klangk user can open the socket — the same-uid trust boundary the
-    # _UDS_MODE flag in util.py relies on.
-    Path(socket_path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-
-    # uvicorn is single-bind: host/port XOR uds XOR fd. We bind the UDS only —
-    # no TCP listener on uvicorn in any mode (the security win of #1396).
-    # nginx (started by the lifespan watchdog) proxies the TCP listener
-    # (KLANGK_NGINX_PORT) to this socket for browser + CLI clients.
     # Read ws_max_size through the typed config (config file > env > default,
     # with file:/cmd:), not raw os.environ (#1394/#1395).
     ws_max_size = int(
         resolve_indirection(settings.ws_msg_size_max) or "16777216"
     )
 
-    uvicorn.run(
-        "klangk_backend.main:app",
-        uds=socket_path,
-        # proxy_headers=False (default): over a UDS request.client is None, and
-        # we do NOT want uvicorn to populate it from X-Forwarded-* — our trust
-        # helpers (_connection_peer_is_trusted) handle header trust explicitly
-        # via the _UDS_MODE flag. Letting uvicorn also rewrite client would
-        # double-resolve and bypass the trusted-proxy gate.
-        proxy_headers=False,
-        ws_max_size=ws_max_size,
-        ws_ping_interval=20,
-        ws_ping_timeout=20,
-    )
+    if transport == "socket":
+        # Bind the UDS. A stale socket from a kill -9'd process makes the
+        # bind fail with EADDRINUSE — unlink first (the pidfile guard in the
+        # lifespan refuses a concurrent klangkd). Ensure the parent dir is
+        # private (0700) so only the klangk user can open the socket — the
+        # same-uid trust boundary _UDS_MODE relies on.
+        try:
+            os.unlink(listen)
+        except FileNotFoundError:
+            pass
+        Path(listen).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # Arm the internal _UDS_MODE trust flag (util.py): over a UDS,
+        # request.client is None, and a None peer is the trusted reverse
+        # proxy (same-uid socket access). Set here, from the bind decision —
+        # not via a config field (#1422 retired KLANGK_UDS_MODE).
+        set_uds_mode(True)
+        uvicorn.run(
+            "klangk_backend.main:app",
+            uds=listen,
+            # proxy_headers=False: over a UDS request.client is None; our
+            # trust helpers handle header trust via _UDS_MODE. Letting uvicorn
+            # also rewrite client would double-resolve.
+            proxy_headers=False,
+            ws_max_size=ws_max_size,
+            ws_ping_interval=20,
+            ws_ping_timeout=20,
+        )
+    else:
+        # TCP bind. LISTEN is the host (no port — port always comes from
+        # KLANGK_PORT). No nginx ownership on this path (bare uvicorn /
+        # direct-TCP tests); nginx is owned only in the UDS case.
+        host = listen
+        port = int(resolve_env_value("KLANGK_PORT") or "8997")
+        uvicorn.run(
+            "klangk_backend.main:app",
+            host=host,
+            port=port,
+            proxy_headers=False,
+            ws_max_size=ws_max_size,
+            ws_ping_interval=20,
+            ws_ping_timeout=20,
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

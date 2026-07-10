@@ -27,6 +27,17 @@ _TEST_PASSWORD_HASH = bcrypt.hashpw(
 
 
 @pytest.fixture(autouse=True)
+def _disable_nginx(monkeypatch):
+    """Suppress nginx spawn across the suite.
+
+    The lifespan's nginx watchdog is unconditional in real runs; tests boot
+    the app (often via the lifespan) and never want a real nginx process.
+    Sets the internal, non-user-facing ``_KLANGK_DISABLE_NGINX`` kill switch.
+    """
+    monkeypatch.setenv("_KLANGK_DISABLE_NGINX", "1")
+
+
+@pytest.fixture(autouse=True)
 def _default_auth_mode(monkeypatch):
     """Pin the test suite to ``password`` mode.
 

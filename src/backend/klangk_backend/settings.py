@@ -38,8 +38,6 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from .exceptions import ConfigurationError
-
 logger = logging.getLogger(__name__)
 
 # Re-exported for backward compat — callers that ``from ..util import ...``
@@ -197,36 +195,6 @@ class KlangkSettings(BaseSettings):
         sources.append(init_settings)
         return tuple(sources)
 
-    # --- Deployment profiles (#1397) ---
-    # ``preset`` is the SINGLE deployment-shape selector — the new name for
-    # the "deployment profiles" from #1392. It is one of the four corners
-    # of the (transport × auth-gate) space:
-    #
-    #     uds-noauth / uds-auth   (UDS transport, gate off / on)
-    #     ip-noauth  / ip-auth    (TCP transport, gate off / on)
-    #
-    # Everything the earlier #1397 draft exposed as separate axis keys is
-    # *derived* from the preset and is NOT individually configurable:
-    #   - the auth GATE is the ``-auth``/``-noauth`` suffix (no KLANGK_AUTH);
-    #   - browser ingress is implied by the ``ip-*`` presets — a browser can't
-    #     ingress over a UDS — so there is no KLANGK_BROWSER_INGRESS;
-    #   - container egress paths have one fixed default per preset, with no
-    #     override, so there is no KLANGK_CONTAINER_EGRESS_PATHS.
-    #
-    # The one thing the operator still chooses separately is the auth
-    # BACKEND (password vs OIDC vs both) via the existing KLANGK_AUTH_MODES —
-    # that decision can't be made for them. The two keys are cross-validated
-    # at config-load: a ``*-noauth`` preset requires ``auth_modes() == none``;
-    # a ``*-auth`` preset requires a gated backend. See
-    # :func:`_validate_preset` (wired into :func:`validate_at_startup`).
-    #
-    # Naming: ``preset`` (a named bundle of defaults) was chosen over
-    # ``profile`` (vague) and ``role`` (collides with klangk's RBAC workspace
-    # roles — the wrong mental model for a deployment *shape*).
-    # Defaults to None so a deployment that sets none of these behaves
-    # identically to pre-#1392 (acceptance criterion: defaults preserved).
-    preset: str | None = None
-
     # --- Auth / identity ---
     auth_modes: str | None = None
     jwt_secret: str | None = _INSECURE_DEFAULT_SECRET
@@ -247,20 +215,23 @@ class KlangkSettings(BaseSettings):
     trusted_proxy_cidrs: str | None = "127.0.0.1,::1"
 
     # --- Server / network ---
+    # listen: the uvicorn bind spec — **polymorphic** (#1422). Either a TCP
+    # host (e.g. ``127.0.0.1``, ``0.0.0.0``) or a UNIX socket path
+    # (e.g. ``/tmp/klangk.sock``). Classification (see :func:`classify_listen`):
+    # an absolute path with no ``://`` scheme ⇒ socket; otherwise TCP. The
+    # deployment shape is *derived* from listen's shape + auth_modes — there
+    # is no amalgamated ``KLANGK_UI_MODE``/``KLANGK_PRESET`` setting (it never
+    # shipped). Socket ⇒ nginx renders the minimal (headless) template; TCP
+    # ⇒ full (browser) template. ``KLANGK_PORT`` applies only when listen is
+    # TCP. Default ``127.0.0.1`` preserves today's behavior; #1400 flips the
+    # default to a socket path (the headless posture).
     listen: str | None = "127.0.0.1"
     nginx_port: str | None = "8995"
     port_range_start: str | None = "9000"
-    # uds_mode: the honest "are we in UDS mode?" switch (#1396). Set only by
-    # klangkd (the launcher that binds a UDS and owns nginx); bare uvicorn /
-    # unit tests never set it, so the lifespan's nginx watchdog no-ops and
-    # _UDS_MODE stays False. A mode switch, not a path — the socket path is
-    # derived from state_dir (<state_dir>/klangk.sock) so there's one path
-    # knob, not two.
-    uds_mode: str | None = None
-    # state_dir: runtime state (the UDS, rendered nginx.conf, pid). Defaults to
-    # a klangk subdir under the system temp; devenv pins it to DEVENV_STATE and
-    # the host container to /tmp/klangk-state. The UDS lives at
-    # <state_dir>/klangk.sock.
+    # state_dir: runtime state (the UDS when listen is a socket path, rendered
+    # nginx.conf, pid). Defaults to a klangk subdir under the system temp;
+    # devenv pins it to DEVENV_STATE and the host container to
+    # /tmp/klangk-state.
     state_dir: str | None = None
     # nginx_bin: the nginx executable the renderer spawns. Falls back to
     # shutil.which("nginx") then /usr/sbin/nginx at render time.
@@ -430,74 +401,64 @@ def _invalidate_cache() -> None:
     _settings_env_signature = None
 
 
-# The four ``KLANGK_PRESET`` values (#1397) — the (transport × auth-gate)
-# corners. ``-noauth`` means "no auth gate"; ``-auth`` means "gate required".
-# Kept module-level so the nginx renderer (chunk 3 of #1392) can import it as
-# the canonical preset set. See KlangkSettings.preset for the full rationale.
-PRESETS: frozenset[str] = frozenset(
-    {"uds-noauth", "uds-auth", "ip-noauth", "ip-auth"}
-)
-
-
-def _validate_preset() -> None:
-    """Validate ``KLANGK_PRESET`` and its consistency with the auth backend.
-
-    ``KLANGK_PRESET`` is the single deployment-shape selector (#1397); the
-    auth *backend* (password vs OIDC vs both) stays the operator's choice via
-    ``KLANGK_AUTH_MODES``. The two must agree when ``KLANGK_AUTH_MODES`` is
-    set EXPLICITLY:
-
-    - a ``*-noauth`` preset requires the resolved auth mode to be ``none``;
-    - a ``*-auth``   preset requires it to be ``password`` / ``oidc`` / ``both``.
-
-    An UNSET ``KLANGK_AUTH_MODES`` never conflicts: :func:`oidc.auth_modes`
-    is preset-aware in the unset path (#1397), self-defaulting to ``password``
-    for ``*-auth`` presets and ``none`` for ``*-noauth``.
-
-    Raises :class:`~klangk_backend.exceptions.ConfigurationError` on an
-    unknown preset value or an explicit preset/auth-mode conflict.
-
-    ``klangk_backend.oidc`` is imported lazily to avoid a settings <-> oidc
-    import cycle (``oidc`` imports :func:`get_settings` from this module).
-    """
-    preset = get_settings().preset
-    if preset is None:
-        return  # no preset set → today's pre-#1392 behavior
-    if preset not in PRESETS:
-        raise ConfigurationError(
-            f"KLANGK_PRESET={preset!r} is not one of {sorted(PRESETS)}"
-        )
-    from . import oidc  # noqa: allow-deferred-import  (settings <-> oidc cycle)
-
-    mode = oidc.auth_modes()
-    noauth = preset.endswith("-noauth")
-    if noauth and mode != "none":
-        raise ConfigurationError(
-            f"KLANGK_PRESET={preset!r} requires KLANGK_AUTH_MODES=none, "
-            f"but the resolved auth mode is {mode!r}"
-        )
-    if not noauth and mode == "none":
-        raise ConfigurationError(
-            f"KLANGK_PRESET={preset!r} requires an auth-gated backend "
-            f"(KLANGK_AUTH_MODES=password|oidc|both), but the resolved "
-            f"auth mode is 'none'"
-        )
-
-
 def validate_at_startup() -> KlangkSettings:
     """Instantiate settings eagerly for fail-fast validation at boot.
 
     Call once from the lifespan startup (and from the ``klangkd`` launcher).
     Bogus config (once fields gain strict types) fails here with a
-    :class:`ValidationError` before the server serves traffic. Also runs the
-    :func:`_validate_preset` cross-check so a ``KLANGK_PRESET`` that
-    disagrees with the resolved ``KLANGK_AUTH_MODES`` backend fails fast.
-    Returns the validated settings instance (which also primes the cache).
+    :class:`ValidationError` before the server serves traffic. Returns the
+    validated settings instance (which also primes the cache).
     """
     _invalidate_cache()
     settings = get_settings()
-    _validate_preset()
     return settings
+
+
+# ---------------------------------------------------------------------------
+# Bind-spec classification (polymorphic KLANGK_LISTEN, #1422)
+# ---------------------------------------------------------------------------
+
+
+def classify_listen(value: str | None) -> str:
+    """Classify a ``KLANGK_LISTEN`` value as ``"socket"`` or ``"tcp"``.
+
+    ``KLANGK_LISTEN`` is polymorphic: a UNIX socket path (e.g.
+    ``/tmp/klangk.sock``) or a TCP host (e.g. ``127.0.0.1``). The port is NOT
+    part of listen — it comes from ``KLANGK_PORT`` when listen is TCP.
+    Classification rule (shared with the CLI ``--server`` resolver, #1399):
+
+    - an **absolute path** with no ``://`` scheme ⇒ ``"socket"``;
+    - otherwise ⇒ ``"tcp"`` (a bare hostname/IP, e.g. ``127.0.0.1``).
+
+    A bare/relative non-scheme value (e.g. ``klangk.sock``) is ambiguous and
+    is classified as ``"tcp"`` — callers that need a socket should pass an
+    absolute path. This mirrors #1399's "socket paths must be absolute" rule
+    and keeps the classifier total (no exceptions). ``None`` ⇒ ``"tcp"``
+    (the default bind is loopback TCP until #1400 flips it to a socket).
+    """
+    if not value:
+        return "tcp"
+    if "://" in value:
+        return "tcp"  # http(s)://... — TCP (CLI-style absolute URL)
+    if value.startswith("/"):
+        return "socket"  # absolute path, no scheme — UDS
+    return "tcp"  # bare hostname/IP — TCP
+
+
+def listen_is_socket(value: str | None = None) -> bool:
+    """True iff the resolved ``KLANGK_LISTEN`` is a socket path.
+
+    Convenience wrapper around :func:`classify_listen` that reads the merged
+    setting when *value* is omitted. This is what the nginx renderer and the
+    lifespan watchdog key off to decide "headless/minimal template + UDS
+    bind" vs "full template + TCP bind."
+    """
+    v = (
+        value
+        if value is not None
+        else resolve_indirection(get_settings().listen)
+    )
+    return classify_listen(v) == "socket"
 
 
 # ---------------------------------------------------------------------------

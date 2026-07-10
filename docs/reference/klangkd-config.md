@@ -129,30 +129,61 @@ logo_url: https://example.com/logo.png
 
 Every key below corresponds to a `KLANGK_*` environment variable (uppercased, with `KLANGK_` prefix). See [Environment Variables](environment.md) for detailed descriptions of each.
 
-### Deployment profiles
+### Deployment shape (derived from `KLANGK_LISTEN` + `KLANGK_AUTH_MODE`)
 
-`KLANGK_PRESET` (config key `preset`) is the single deployment-shape selector — the new name for the "deployment profiles" from [#1397](https://github.com/mcdonc/klangk/issues/1397). It is one of four corners of the (transport × auth-gate) space:
+The deployment shape is **derived** from two knobs: the bind address (`KLANGK_LISTEN`) and the auth gate (`KLANGK_AUTH_MODE`). klangk picks the nginx template and enforces its one safety rule from their combination — there is no separate "mode" to set.
 
-| `preset`     | transport | auth gate | browser ingress |
-| ------------ | --------- | --------- | --------------- |
-| `uds-noauth` | UDS       | off       | — (impossible)  |
-| `uds-auth`   | UDS       | on        | — (impossible)  |
-| `ip-noauth`  | TCP       | off       | implied on      |
-| `ip-auth`    | TCP       | on        | implied on      |
+**`KLANGK_LISTEN`** is **polymorphic**: either a UNIX socket path (e.g.
+`/tmp/klangk.sock`) or a TCP host (e.g. `127.0.0.1`, `0.0.0.0`). The port is
+NOT part of listen — it comes from `KLANGK_PORT` when listen is TCP.
+Classification: an absolute path with no `://` scheme ⇒ socket; otherwise TCP.
+`KLANGK_PORT` applies only when LISTEN is TCP.
 
-Everything else is _derived_ from the preset and is **not** individually configurable: the auth gate is the `-auth`/`-noauth` suffix; browser ingress is implied by the `ip-*` presets (a browser can't ingress over a UDS); container egress paths are a fixed per-preset default. The one thing the operator still chooses separately is the auth **backend** (password vs OIDC vs both) via the existing `KLANGK_AUTH_MODES` — that decision can't be made for them.
+**`KLANGK_AUTH_MODE`** is the sole authority on the auth gate (`none` /
+`password` / `oidc` / `both`). When unset it defaults to `none`; OIDC settings
+never promote it.
 
-`KLANGK_PRESET` and `KLANGK_AUTH_MODES` are cross-validated at startup: a `*-noauth` preset requires `KLANGK_AUTH_MODES=none`; a `*-auth` preset requires a gated backend (`password`/`oidc`/`both`). A conflicting config fails fast with a `ConfigurationError`. When `KLANGK_AUTH_MODES` is **unset**, it self-defaults to match the preset — `password` for `*-auth`, `none` for `*-noauth` — so a preset alone boots cleanly without an explicit backend. (OIDC is then opt-in by setting `KLANGK_AUTH_MODES=oidc` or `both`.)
+For each combination, klangk renders the **maximum-feature nginx template
+the combination can service**:
 
-| Key      | Default | Env var         |
-| -------- | ------- | --------------- |
-| `preset` |         | `KLANGK_PRESET` |
+| `KLANGK_LISTEN`  | `KLANGK_AUTH_MODE`     | nginx template | browser?    | status                                               |
+| ---------------- | ---------------------- | -------------- | ----------- | ---------------------------------------------------- |
+| socket (UDS)     | none                   | minimal        | no          | ✅ **default** (most-secure-convenient)              |
+| socket (UDS)     | password / oidc / both | minimal        | no          | ✅ (most secure, less convenient)                    |
+| loopback TCP     | none                   | full           | yes (local) | ✅ (local-dev "just works")                          |
+| loopback TCP     | password / oidc / both | full           | yes (local) | ✅                                                   |
+| non-loopback TCP | none                   | —              | —           | ⚠️ rejected unless `KLANGK_ALLOW_INSECURE_NO_AUTH=1` |
+| non-loopback TCP | password / oidc / both | full           | yes (net)   | ✅ (least secure; operator opted in)                 |
+
+- **Template selection keys off LISTEN's shape only**: socket ⇒ minimal
+  (container-egress `/llm-proxy` only — no browser UI, since a browser can't
+  reach a UDS); TCP ⇒ full. `KLANGK_AUTH_MODE` does **not** change which
+  template renders.
+- **The one gate** (`none` on non-loopback TCP) is enforced by
+  `enforce_no_auth_bind_safety()` at boot — refused unless
+  `KLANGK_ALLOW_INSECURE_NO_AUTH=1` is set (e.g. a throwaway VM on an
+  isolated network). No-auth mode freely issues an admin token, so exposing
+  it off-loopback is opt-in, not silent.
+
+**Security ordering** (most → least secure): UDS+password > UDS+none
+(default) > loopback TCP (local) > non-loopback TCP+gate. The default
+(UDS+none) is the most-secure-_convenient_ posture: same-uid-only socket
+access, no password to manage, and — via the minimal template — no
+browser/TCP surface. A future release will flip `KLANGK_LISTEN`'s default
+to a socket path so bare `klangkd` boots this posture.
+
+| Key      | Default     | Env var         |
+| -------- | ----------- | --------------- |
+| `listen` | `127.0.0.1` | `KLANGK_LISTEN` |
 
 ```yaml
-# --- Deployment profiles (#1397) ---
-# One of: uds-noauth | uds-auth | ip-noauth | ip-auth
-# The auth backend is chosen separately via KLANGK_AUTH_MODES:
-preset: ip-auth # + KLANGK_AUTH_MODES=oidc (a preset with a gate needs a backend)
+# --- Deployment shape ---
+# listen is polymorphic: a socket path (UDS, minimal/headless template) or
+# a TCP host (full/browser template). Today the default is 127.0.0.1
+# (TCP); a future release will default it to a socket path (headless).
+listen: 127.0.0.1
+# auth_modes is the sole auth authority; unset defaults to none.
+# auth_modes: password  # or oidc / both / none
 ```
 
 ### Auth / identity
