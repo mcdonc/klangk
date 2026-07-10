@@ -619,10 +619,13 @@ class TestOpenclawSetupProfileExports:
         )
 
     def _await_setup_exports(self, ws_id, timeout=120):
-        """Poll the agent's ~/.profile until setup has appended its first export.
+        """Poll the agent's ~/.profile until setup has written ALL exports.
 
-        setup.sh writes the consolidated export block then blocks on the
-        sentinel, so once ``export NVM_DIR`` appears setup is parked.
+        setup.sh writes NVM_DIR, then PATH, then OPENCLAW_HOME, then blocks
+        on the sentinel. Waiting for OPENCLAW_HOME (the last export)
+        guarantees setup is parked at the sentinel with the full export set
+        written — waiting on just NVM_DIR (the first) races on slow runners,
+        which can read the file between the PATH and OPENCLAW_HOME appends.
         Returns the path to the agent's .profile.
         """
         deadline = time.monotonic() + timeout
@@ -630,11 +633,19 @@ class TestOpenclawSetupProfileExports:
             path = _agent_profile(self._data_dir, ws_id)
             if path and os.path.exists(path):
                 with open(path) as f:
-                    if "export NVM_DIR" in f.read():
+                    if "export OPENCLAW_HOME" in f.read():
                         return path
             time.sleep(1)
+        # Timed out — dump whatever partial profile exists so we can see
+        # exactly where setup stopped (which exports landed, which didn't).
+        path = _agent_profile(self._data_dir, ws_id)
+        partial = ""
+        if path and os.path.exists(path):
+            with open(path) as f:
+                partial = f.read()
         raise AssertionError(
             "setup never wrote the agent's ~/.profile exports "
             "(sentinel not reached); "
-            f"user_id={self._user_id} data_dir={self._data_dir}"
+            f"user_id={self._user_id} data_dir={self._data_dir}\n"
+            f"--- partial ~/.profile ---\n{partial}"
         )
