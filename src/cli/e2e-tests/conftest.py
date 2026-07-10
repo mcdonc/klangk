@@ -19,6 +19,25 @@ import pytest
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _e2e_disable_nginx():
+    """Suppress the lifespan's nginx watchdog across the CLI E2E suite.
+
+    Mirrors the backend E2E fixture: these tests launch bare ``uvicorn`` and
+    don't want the lifespan spawning nginx. Sets the internal, non-user-facing
+    ``_KLANGK_DISABLE_NGINX`` kill switch.
+    """
+    old = os.environ.get("_KLANGK_DISABLE_NGINX")
+    os.environ["_KLANGK_DISABLE_NGINX"] = "1"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("_KLANGK_DISABLE_NGINX", None)
+        else:
+            os.environ["_KLANGK_DISABLE_NGINX"] = old
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _e2e_default_auth_mode():
     """Pin E2E servers to ``password`` mode for the whole session.
 

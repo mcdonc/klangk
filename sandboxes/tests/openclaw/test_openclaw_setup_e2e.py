@@ -134,12 +134,14 @@ def _login(base_url):
 def _start_server(data_dir, port, extra_env=None):
     env = {
         **os.environ,
+        "_KLANGK_DISABLE_NGINX": "1",  # bare uvicorn; lifespan must not spawn nginx
         "KLANGK_PORT": port,
         "KLANGK_DATA_DIR": data_dir,
         "KLANGK_JWT_SECRET": "openclaw-e2e-test-secret",
         "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
         "KLANGK_DEFAULT_USER": EMAIL,
         "KLANGK_DEFAULT_PASSWORD": PASSWORD,
+        "KLANGK_AUTH_MODES": "password",  # these tests use password login
         "KLANGK_TEST_MODE": "1",
         "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
         # Poll health every 3s instead of the 30s default so the
