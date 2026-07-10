@@ -511,6 +511,52 @@ class TestAuthModes:
             monkeypatch.setenv("KLANGK_AUTH_MODES", mode)
             assert not oidc.local_login_allowed()
 
+    # --- #1397 preset-driven default (KLANGK_AUTH_MODES unset) ---
+    # A ``*-auth`` preset means the gate is required, so the *unset* default
+    # resolves to ``password`` (the operator still picks the backend —
+    # e.g. OIDC — by setting KLANGK_AUTH_MODES explicitly). A ``*-noauth``
+    # preset stays ``none``. With no preset set, today's pre-#1392 default
+    # (the OIDC-promotion rule below) is preserved — removing that promotion
+    # is a separate breaking change, deferred to #1392 chunk 7.
+
+    @pytest.mark.parametrize("preset", ["uds-auth", "ip-auth"])
+    def test_auth_preset_defaults_to_password(self, monkeypatch, preset):
+        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        monkeypatch.setenv("KLANGK_PRESET", preset)
+        assert oidc.auth_modes() == "password"
+        assert oidc.password_login_allowed()
+        assert not oidc.local_login_allowed()
+
+    @pytest.mark.parametrize("preset", ["uds-noauth", "ip-noauth"])
+    def test_noauth_preset_defaults_to_none(self, monkeypatch, preset):
+        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        monkeypatch.setenv("KLANGK_PRESET", preset)
+        assert oidc.auth_modes() == "none"
+        assert oidc.local_login_allowed()
+        assert not oidc.password_login_allowed()
+
+    def test_auth_preset_default_does_not_override_explicit_mode(
+        self, monkeypatch
+    ):
+        # The preset only owns the *default* — an explicit KLANGK_AUTH_MODES
+        # always wins (even a conflicting one; that's what the settings-level
+        # _validate_preset cross-check is for, not auth_modes() itself).
+        monkeypatch.setenv("KLANGK_PRESET", "uds-auth")
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "oidc")
+        oidc._providers.append(_provider())
+        assert oidc.auth_modes() == "oidc"
+        assert oidc.oidc_login_allowed()
+        assert not oidc.password_login_allowed()
+
+    def test_no_preset_preserves_legacy_default(self, monkeypatch):
+        # No preset + AUTH_MODES unset → today's pre-#1397 rule still holds
+        # (none, or both when an OIDC provider is configured).
+        monkeypatch.delenv("KLANGK_PRESET", raising=False)
+        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        assert oidc.auth_modes() == "none"
+        oidc._providers.append(_provider())
+        assert oidc.auth_modes() == "both"
+
 
 class TestClientKwargs:
     def test_no_ca_cert(self):

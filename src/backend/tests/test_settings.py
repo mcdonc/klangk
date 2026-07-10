@@ -333,19 +333,24 @@ class TestPreset:
 
 
 class TestPresetAuthConflict:
-    """``KLANGK_PRESET`` must agree with the resolved ``KLANGK_AUTH_MODES``.
+    """``KLANGK_PRESET`` must agree with an EXPLICIT ``KLANGK_AUTH_MODES``.
 
     The preset fixes whether an auth gate is required (its suffix); the
     operator separately chooses the backend (password / OIDC / both) via
     ``KLANGK_AUTH_MODES``. The two are cross-validated at config-load by
-    :func:`validate_at_startup`, so a conflicting config fails fast at boot:
+    :func:`validate_at_startup`, so an *explicitly conflicting* config fails
+    fast at boot:
 
     - ``*-noauth`` presets require the resolved auth mode to be ``none``;
     - ``*-auth``   presets require it to be non-``none``.
 
-    ``KLANGK_AUTH_MODES`` is set explicitly in every case (the unit-test
-    autouse ``_default_auth_mode`` fixture pins it to ``password``), so these
-    tests don't depend on the OIDC-enabled resolution path.
+    Important: an UNSET ``KLANGK_AUTH_MODES`` never conflicts —
+    ``oidc.auth_modes()`` is preset-aware in the unset path (#1397), so a
+    ``*-auth`` preset defaults the mode to ``password`` and ``*-noauth`` to
+    ``none``. The conflict check only fires on an *explicit* value that
+    disagrees with the preset. These tests set ``KLANGK_AUTH_MODES``
+    explicitly in every case; the unset-no-conflict cases are covered at the
+    end.
     """
 
     def test_unknown_preset_rejected(self, monkeypatch):
@@ -396,6 +401,18 @@ class TestPresetAuthConflict:
         monkeypatch.delenv("KLANGK_PRESET", raising=False)
         monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         validate_at_startup()  # no raise
+
+    @pytest.mark.parametrize(
+        "preset", ["uds-noauth", "uds-auth", "ip-noauth", "ip-auth"]
+    )
+    def test_unset_auth_mode_never_conflicts(self, monkeypatch, preset):
+        # An unset KLANGK_AUTH_MODES never conflicts: oidc.auth_modes()
+        # self-defaults to match the preset (*-auth → password, *-noauth →
+        # none). So a preset alone boots cleanly with no explicit backend.
+        monkeypatch.setenv("KLANGK_PRESET", preset)
+        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        settings = validate_at_startup()  # no raise
+        assert settings.preset == preset
 
 
 class TestKlangkdLauncher:

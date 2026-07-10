@@ -403,13 +403,18 @@ def _validate_preset() -> None:
 
     ``KLANGK_PRESET`` is the single deployment-shape selector (#1397); the
     auth *backend* (password vs OIDC vs both) stays the operator's choice via
-    ``KLANGK_AUTH_MODES``. The two must agree:
+    ``KLANGK_AUTH_MODES``. The two must agree when ``KLANGK_AUTH_MODES`` is
+    set EXPLICITLY:
 
     - a ``*-noauth`` preset requires the resolved auth mode to be ``none``;
     - a ``*-auth``   preset requires it to be ``password`` / ``oidc`` / ``both``.
 
+    An UNSET ``KLANGK_AUTH_MODES`` never conflicts: :func:`oidc.auth_modes`
+    is preset-aware in the unset path (#1397), self-defaulting to ``password``
+    for ``*-auth`` presets and ``none`` for ``*-noauth``.
+
     Raises :class:`~klangk_backend.exceptions.ConfigurationError` on an
-    unknown preset value or a preset/auth-mode conflict.
+    unknown preset value or an explicit preset/auth-mode conflict.
 
     ``klangk_backend.oidc`` is imported lazily to avoid a settings <-> oidc
     import cycle (``oidc`` imports :func:`get_settings` from this module).

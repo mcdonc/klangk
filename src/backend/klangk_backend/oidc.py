@@ -189,17 +189,35 @@ def auth_modes() -> str:
     single-user local-dev mode). ``none`` auto-issues a token for the
     seeded default user via ``POST /api/v1/auth/local``; see #1374.
 
-    When ``KLANGK_AUTH_MODES`` is unset, the default is ``none`` unless an
-    OIDC provider is configured — configuring OIDC is the signal that real
-    multi-user auth is wanted (in which case the default is ``both``). A
-    fresh klangk with nothing configured therefore boots in no-login
+    Resolution order when ``KLANGK_AUTH_MODES`` is unset:
+
+    1. ``KLANGK_PRESET`` (#1397) — a ``*-auth`` preset defaults the mode
+       to ``password`` (the gate is required by the preset; the backend
+       defaults to password). A ``*-noauth`` preset defaults to ``none``.
+    2. otherwise, legacy behaviour: ``none`` unless an OIDC provider is
+       configured — configuring OIDC is the signal that real multi-user
+       auth is wanted (in which case the default is ``both``).
+
+    A fresh klangk with nothing configured therefore boots in no-login
     single-user mode, bound to loopback, and "just works" locally without a
     password. Operators who want the old password-default behaviour (or any
-    other mode) set ``KLANGK_AUTH_MODES`` explicitly.
+    other mode) set ``KLANGK_AUTH_MODES`` explicitly. A preset that requires
+    a different backend (e.g. OIDC) sets ``KLANGK_AUTH_MODES=oidc`` — the
+    preset only owns the *default*, never an override.
     """
     val = resolve_env_value("KLANGK_AUTH_MODES", "")
     if val in ("oidc", "password", "both", "none"):
         return val
+    # ``KLANGK_AUTH_MODES`` unset — let the deployment preset (#1397) own the
+    # default before falling back to the legacy OIDC-promotion rule. A ``*-auth``
+    # preset means the gate is required, so default to password; the preset
+    # never overrides an explicit ``KLANGK_AUTH_MODES`` (handled above). The
+    # OIDC-promotion fallback below is slated for removal in #1392 chunk 7
+    # ("OIDC presence should not change auth_mode") and lives only for
+    # backward compat with pre-#1397 operators.
+    preset = get_settings().preset
+    if preset is not None and preset.endswith("-auth"):
+        return "password"
     if is_enabled():
         return "both"
     return "none"

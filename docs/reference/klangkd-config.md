@@ -142,7 +142,7 @@ Every key below corresponds to a `KLANGK_*` environment variable (uppercased, wi
 
 Everything else is _derived_ from the preset and is **not** individually configurable: the auth gate is the `-auth`/`-noauth` suffix; browser ingress is implied by the `ip-*` presets (a browser can't ingress over a UDS); container egress paths are a fixed per-preset default. The one thing the operator still chooses separately is the auth **backend** (password vs OIDC vs both) via the existing `KLANGK_AUTH_MODES` — that decision can't be made for them.
 
-`KLANGK_PRESET` and `KLANGK_AUTH_MODES` are cross-validated at startup: a `*-noauth` preset requires `KLANGK_AUTH_MODES=none`; a `*-auth` preset requires a gated backend (`password`/`oidc`/`both`). A conflicting config fails fast with a `ConfigurationError`.
+`KLANGK_PRESET` and `KLANGK_AUTH_MODES` are cross-validated at startup: a `*-noauth` preset requires `KLANGK_AUTH_MODES=none`; a `*-auth` preset requires a gated backend (`password`/`oidc`/`both`). A conflicting config fails fast with a `ConfigurationError`. When `KLANGK_AUTH_MODES` is **unset**, it self-defaults to match the preset — `password` for `*-auth`, `none` for `*-noauth` — so a preset alone boots cleanly without an explicit backend. (OIDC is then opt-in by setting `KLANGK_AUTH_MODES=oidc` or `both`.)
 
 | Key      | Default | Env var         |
 | -------- | ------- | --------------- |
