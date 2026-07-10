@@ -12,8 +12,10 @@ Covers:
 import pytest
 
 from klangk_backend import settings as settings_mod
+from klangk_backend.exceptions import ConfigurationError
 from klangk_backend.settings import (
     KlangkSettings,
+    PRESETS,
     _key_to_field,
     get_config_file,
     get_settings,
@@ -270,75 +272,130 @@ class TestConfigFile:
 
 
 # ---------------------------------------------------------------------------
-# Deployment-profile config keys (#1397): settable via env var AND YAML file
+# KLANGK_PRESET (#1397): the single deployment-shape key
 # ---------------------------------------------------------------------------
 
 
-class TestDeploymentProfileKeys:
-    """The four #1397 deployment-profile values must be settable via BOTH an
-    env var and the YAML config file.
+class TestPreset:
+    """``KLANGK_PRESET`` is the only settable deployment-shape key (#1397).
 
-    The KlangkSettings substrate gives every model field two sources for
-    free: the env source (env_prefix="KLANGK_") and the YAML config-file
-    source (settings_customise_sources). These tests pin that contract for
-    the profile keys so a future change can't silently drop the config-file
-    path for one of them — which is the whole point of #1397's "settable in
-    the config file too" requirement.
+    The earlier #1397 draft exposed four axis keys (preset / auth /
+    browser_ingress / container_egress_paths). The finalized model keeps only
+    ``preset``: the auth GATE is its ``-auth``/``-noauth`` suffix, browser
+    ingress is implied by the ``ip-*`` presets, and container egress paths
+    are a fixed per-preset default. The auth BACKEND (password vs OIDC vs
+    both) stays the operator's choice via the existing ``KLANGK_AUTH_MODES``;
+    the two are cross-validated (see :class:`TestPresetAuthConflict`).
 
-    Note ``KLANGK_AUTH`` is the coarse #1397 axis (none|password), distinct
-    from ``KLANGK_AUTH_MODES`` (the auth-backend selector). ``KLANGK_PRESET``
-    was chosen over ``KLANGK_PROFILE``/``KLANGK_ROLE``: "preset" = a named
-    bundle of defaults; "role" collides with klangk's RBAC workspace roles.
+    These tests pin that ``preset`` is settable via BOTH an env var and the
+    YAML config file (like every other field) so a future change can't
+    silently drop the config-file path.
     """
 
-    # (env var, field name, sample value)
-    CASES = [
-        ("KLANGK_PRESET", "preset", "uds-auth"),
-        ("KLANGK_AUTH", "auth", "password"),
-        ("KLANGK_BROWSER_INGRESS", "browser_ingress", "true"),
-        (
-            "KLANGK_CONTAINER_EGRESS_PATHS",
-            "container_egress_paths",
-            "/llm-proxy,/browser-delegate",
-        ),
-    ]
-    _IDS = [c[1] for c in CASES]
+    def test_field_exists(self):
+        assert "preset" in KlangkSettings.model_fields
+        assert PRESETS == frozenset(
+            {"uds-noauth", "uds-auth", "ip-noauth", "ip-auth"}
+        )
 
-    @pytest.mark.parametrize("env_key,field,value", CASES, ids=_IDS)
-    def test_field_exists(self, env_key, field, value):
-        """All four keys are real fields on the model (hence dual-source)."""
-        assert field in KlangkSettings.model_fields
+    def test_dropped_axis_keys_are_not_fields(self):
+        # auth / browser_ingress / container_egress_paths are NOT individually
+        # settable — everything but preset is derived from the preset.
+        fields = KlangkSettings.model_fields
+        for dropped in ("auth", "browser_ingress", "container_egress_paths"):
+            assert dropped not in fields, dropped
 
-    @pytest.mark.parametrize("env_key,field,value", CASES, ids=_IDS)
-    def test_settable_via_env(self, monkeypatch, env_key, field, value):
+    @pytest.mark.parametrize("value", sorted(PRESETS))
+    def test_settable_via_env(self, monkeypatch, value):
         set_config_file(None)
-        monkeypatch.setenv(env_key, value)
-        assert getattr(get_settings(), field) == value
+        monkeypatch.setenv("KLANGK_PRESET", value)
+        assert get_settings().preset == value
 
-    @pytest.mark.parametrize("env_key,field,value", CASES, ids=_IDS)
-    def test_settable_via_yaml(self, tmp_path, env_key, field, value):
-        # Quoted so YAML yields a str (e.g. "true" stays a string, not a
-        # bool), matching the str|None field type and env-var semantics.
+    @pytest.mark.parametrize("value", sorted(PRESETS))
+    def test_settable_via_yaml(self, tmp_path, value):
         cfg = tmp_path / "config.yaml"
-        cfg.write_text(f'{field}: "{value}"\n')
+        cfg.write_text(f'preset: "{value}"\n')
         set_config_file(str(cfg))
-        assert getattr(get_settings(), field) == value
+        assert get_settings().preset == value
 
-    @pytest.mark.parametrize("env_key,field,value", CASES, ids=_IDS)
-    def test_env_overrides_yaml(
-        self, monkeypatch, tmp_path, env_key, field, value
+    def test_env_overrides_yaml(self, monkeypatch, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text('preset: "uds-noauth"\n')
+        set_config_file(str(cfg))
+        monkeypatch.setenv("KLANGK_PRESET", "ip-auth")
+        assert get_settings().preset == "ip-auth"
+
+    def test_default_none_preserves_today(self):
+        # No preset set → None → pre-#1392 behavior; validate_at_startup is a
+        # no-op (no conflict check runs when preset is unset).
+        set_config_file(None)
+        assert get_settings().preset is None
+
+
+class TestPresetAuthConflict:
+    """``KLANGK_PRESET`` must agree with the resolved ``KLANGK_AUTH_MODES``.
+
+    The preset fixes whether an auth gate is required (its suffix); the
+    operator separately chooses the backend (password / OIDC / both) via
+    ``KLANGK_AUTH_MODES``. The two are cross-validated at config-load by
+    :func:`validate_at_startup`, so a conflicting config fails fast at boot:
+
+    - ``*-noauth`` presets require the resolved auth mode to be ``none``;
+    - ``*-auth``   presets require it to be non-``none``.
+
+    ``KLANGK_AUTH_MODES`` is set explicitly in every case (the unit-test
+    autouse ``_default_auth_mode`` fixture pins it to ``password``), so these
+    tests don't depend on the OIDC-enabled resolution path.
+    """
+
+    def test_unknown_preset_rejected(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_PRESET", "bogus")
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
+        with pytest.raises(ConfigurationError, match="not one of"):
+            validate_at_startup()
+
+    @pytest.mark.parametrize("preset", ["uds-noauth", "ip-noauth"])
+    @pytest.mark.parametrize("mode", ["password", "oidc", "both"])
+    def test_noauth_preset_conflicts_with_any_backend(
+        self, monkeypatch, preset, mode
     ):
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text(f'{field}: "from-yaml"\n')
-        set_config_file(str(cfg))
-        monkeypatch.setenv(env_key, value)
-        assert getattr(get_settings(), field) == value
+        monkeypatch.setenv("KLANGK_PRESET", preset)
+        monkeypatch.setenv("KLANGK_AUTH_MODES", mode)
+        with pytest.raises(
+            ConfigurationError, match="requires KLANGK_AUTH_MODES=none"
+        ):
+            validate_at_startup()
 
-    @pytest.mark.parametrize("env_key,field,value", CASES, ids=_IDS)
-    def test_default_none_preserves_today(self, env_key, field, value):
-        # No env, no config file → None for every key (pre-#1392 behavior).
-        set_config_file(None)
-        assert getattr(get_settings(), field) is None
+    @pytest.mark.parametrize("preset", ["uds-noauth", "ip-noauth"])
+    def test_noauth_preset_ok_with_none(self, monkeypatch, preset):
+        monkeypatch.setenv("KLANGK_PRESET", preset)
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        settings = validate_at_startup()  # no raise
+        assert settings.preset == preset
+
+    @pytest.mark.parametrize("preset", ["uds-auth", "ip-auth"])
+    def test_auth_preset_conflicts_with_none(self, monkeypatch, preset):
+        monkeypatch.setenv("KLANGK_PRESET", preset)
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        with pytest.raises(
+            ConfigurationError, match="requires an auth-gated backend"
+        ):
+            validate_at_startup()
+
+    @pytest.mark.parametrize("preset", ["uds-auth", "ip-auth"])
+    @pytest.mark.parametrize("mode", ["password", "oidc", "both"])
+    def test_auth_preset_ok_with_backend(self, monkeypatch, preset, mode):
+        monkeypatch.setenv("KLANGK_PRESET", preset)
+        monkeypatch.setenv("KLANGK_AUTH_MODES", mode)
+        settings = validate_at_startup()  # no raise
+        assert settings.preset == preset
+
+    def test_no_preset_skips_conflict_check(self, monkeypatch):
+        # preset unset → no validation runs (pre-#1392 behavior preserved),
+        # regardless of the auth mode.
+        monkeypatch.delenv("KLANGK_PRESET", raising=False)
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        validate_at_startup()  # no raise
 
 
 class TestKlangkdLauncher:

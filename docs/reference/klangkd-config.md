@@ -131,23 +131,28 @@ Every key below corresponds to a `KLANGK_*` environment variable (uppercased, wi
 
 ### Deployment profiles
 
-The four deployment _shapes_ — the auth × browser-ingress 2×2 from [#1397](https://github.com/mcdonc/klangk/issues/1397). `preset` is a named alias (`uds-noauth` / `uds-auth` / `ip-noauth` / `ip-auth`); `auth`, `browser_ingress`, and `container_egress_paths` are its orthogonal axis keys. These are accepted from both the config file and env vars today (the config-substrate layer); preset→axis resolution, per-profile egress defaults, and load-time validation are wired up by the rest of #1397.
+`KLANGK_PRESET` (config key `preset`) is the single deployment-shape selector — the new name for the "deployment profiles" from [#1397](https://github.com/mcdonc/klangk/issues/1397). It is one of four corners of the (transport × auth-gate) space:
 
-> **Note:** `auth` is the coarse deployment axis (`none` / `password`) and is distinct from `auth_modes` (the precise auth-backend selector: `none` / `password` / `oidc`).
+| `preset`     | transport | auth gate | browser ingress |
+| ------------ | --------- | --------- | --------------- |
+| `uds-noauth` | UDS       | off       | — (impossible)  |
+| `uds-auth`   | UDS       | on        | — (impossible)  |
+| `ip-noauth`  | TCP       | off       | implied on      |
+| `ip-auth`    | TCP       | on        | implied on      |
 
-| Key                      | Default | Env var                         |
-| ------------------------ | ------- | ------------------------------- |
-| `preset`                 |         | `KLANGK_PRESET`                 |
-| `auth`                   |         | `KLANGK_AUTH`                   |
-| `browser_ingress`        |         | `KLANGK_BROWSER_INGRESS`        |
-| `container_egress_paths` |         | `KLANGK_CONTAINER_EGRESS_PATHS` |
+Everything else is _derived_ from the preset and is **not** individually configurable: the auth gate is the `-auth`/`-noauth` suffix; browser ingress is implied by the `ip-*` presets (a browser can't ingress over a UDS); container egress paths are a fixed per-preset default. The one thing the operator still chooses separately is the auth **backend** (password vs OIDC vs both) via the existing `KLANGK_AUTH_MODES` — that decision can't be made for them.
+
+`KLANGK_PRESET` and `KLANGK_AUTH_MODES` are cross-validated at startup: a `*-noauth` preset requires `KLANGK_AUTH_MODES=none`; a `*-auth` preset requires a gated backend (`password`/`oidc`/`both`). A conflicting config fails fast with a `ConfigurationError`.
+
+| Key      | Default | Env var         |
+| -------- | ------- | --------------- |
+| `preset` |         | `KLANGK_PRESET` |
 
 ```yaml
 # --- Deployment profiles (#1397) ---
-preset: uds-auth # one of uds-noauth|uds-auth|ip-noauth|ip-auth
-auth: password # none|password (coarse axis; cf. auth_modes)
-browser_ingress: "true" # "true"|"false"
-container_egress_paths: "/llm-proxy,/browser-delegate" # CSV; complete override
+# One of: uds-noauth | uds-auth | ip-noauth | ip-auth
+# The auth backend is chosen separately via KLANGK_AUTH_MODES:
+preset: ip-auth # + KLANGK_AUTH_MODES=oidc (a preset with a gate needs a backend)
 ```
 
 ### Auth / identity
