@@ -1652,6 +1652,50 @@ class TestServiceSessionLock:
         # Must not raise for a container that never registered a lock.
         clear_service_session_lock("never-seen")
 
+    def test_prune_removes_entries_for_untracked_containers(self):
+        from klangk_backend.terminal import (
+            _service_session_locks,
+            get_service_session_lock,
+            prune_service_session_locks,
+        )
+
+        get_service_session_lock("alive")
+        get_service_session_lock("dead-a")
+        get_service_session_lock("dead-b")
+        assert len(_service_session_locks) == 3
+
+        removed = prune_service_session_locks({"alive"})
+        assert removed == 2
+        assert set(_service_session_locks) == {"alive"}
+
+    async def test_prune_keeps_held_lock_even_if_untracked(self):
+        from klangk_backend.terminal import (
+            _service_session_locks,
+            get_service_session_lock,
+            prune_service_session_locks,
+        )
+
+        held = get_service_session_lock("held-but-orphaned")
+        await held.acquire()  # simulate an in-flight service-command fire
+        try:
+            removed = prune_service_session_locks(set())
+            # Not pruned: recreating its lock would not serialize against the
+            # in-flight fire (#1188 duplicate-window race).
+            assert removed == 0
+            assert "held-but-orphaned" in _service_session_locks
+        finally:
+            held.release()
+
+    def test_prune_noop_when_all_tracked(self):
+        from klangk_backend.terminal import (
+            get_service_session_lock,
+            prune_service_session_locks,
+        )
+
+        get_service_session_lock("a")
+        get_service_session_lock("b")
+        assert prune_service_session_locks({"a", "b"}) == 0
+
 
 class TestServiceSessionHelpers:
     """Direct coverage for the firing-predicate helpers used by

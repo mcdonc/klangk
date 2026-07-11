@@ -1643,6 +1643,30 @@ class TestStopContainer:
         assert "ws" in container.registry._workspace_locks
         assert container.registry._workspace_locks["ws"] is lock
 
+    async def test_stop_prunes_orphaned_service_session_locks(self):
+        # stop_and_remove_container sweeps the per-container service-firing
+        # lock dict so it does not grow unbounded with container churn (#1351).
+        from klangk_backend import terminal
+
+        terminal._service_session_locks.clear()
+        try:
+            # Tracked container (being stopped) + two orphaned entries whose
+            # containers are no longer in the registry.
+            container.registry.track_activity("alive", "ws-alive")
+            terminal.get_service_session_lock("alive")
+            terminal.get_service_session_lock("orphan-a")
+            terminal.get_service_session_lock("orphan-b")
+            assert len(terminal._service_session_locks) == 3
+
+            with patch_podman():
+                await container.registry.stop_and_remove_container("alive")
+
+            # The stopped container's entry and the orphans are gone; the dict
+            # is empty because no container remains tracked.
+            assert terminal._service_session_locks == {}
+        finally:
+            terminal._service_session_locks.clear()
+
     async def test_stop_podman_error(self):
         container.registry.track_activity("cid", "ws")
         container.registry._get_workspace_lock("ws")

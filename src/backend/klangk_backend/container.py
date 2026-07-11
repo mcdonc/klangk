@@ -871,8 +871,10 @@ class ContainerRegistry:
             state = self.states.pop(workspace_id, None)
             if state:
                 self._cid_to_wsid.pop(state.container_id, None)
-                # Drop the per-container service-firing lock (#1188).
+                # Drop the per-container service-firing lock (#1188), then
+                # sweep any other entries orphaned by container churn (#1351).
                 terminal.clear_service_session_lock(state.container_id)
+                terminal.prune_service_session_locks(set(self._cid_to_wsid))
 
     # --- Proxy: PortAllocator ---
 
@@ -1544,8 +1546,11 @@ class ContainerRegistry:
                     self._cid_to_wsid.pop(container_id, None)
                     self.revoke_workspace_browsers(ws_id)
                     self.states.pop(ws_id, None)
-        # Drop the per-container service-firing lock (#1188).
+        # Drop the per-container service-firing lock (#1188), then sweep any
+        # other entries orphaned by container churn (e.g. a racing re-bind
+        # that popped this container's mapping before teardown) (#1351).
         terminal.clear_service_session_lock(container_id)
+        terminal.prune_service_session_locks(set(self._cid_to_wsid))
 
     async def notify_workspace_killed(self, workspace_id: str) -> None:
         """Call the on_workspace_killed callback, logging any errors.

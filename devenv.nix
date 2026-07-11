@@ -541,6 +541,10 @@ in
     # Generate markdownlint config (not committed)
     cat > "$DEVENV_ROOT/.markdownlint.yaml" <<'MDLINT'
     MD013: false
+    MD024:
+      # Allow Keep a Changelog's repeated per-version section headings
+      # (### Fixed / ### Changed under each ## version).
+      siblings_only: true
     MD034: false
     MDLINT
   '';
