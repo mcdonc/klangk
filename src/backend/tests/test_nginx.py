@@ -231,6 +231,92 @@ class TestRenderConfig:
         assert 'Authorization "Bearer file-based-key"' in conf
 
 
+class TestMinimalTemplate:
+    """Socket LISTEN ⇒ minimal (headless) template (#1398).
+
+    Template selection keys off ``KLANGK_LISTEN``'s shape alone: a socket
+    path emits only the container-egress ``/llm-proxy`` location (+ its
+    workspace-token ``auth_request`` gate + CONTAINER_ACL); TCP emits the
+    full browser template. AUTH does not participate.
+    """
+
+    def test_socket_emits_minimal_with_llm(self):
+        """Socket + LLM ⇒ only /llm-proxy, no browser surface (#1398)."""
+        _set(
+            listen="/tmp/klangk.sock",
+            llm_base_url="http://127.0.0.1:11434",
+            nginx_port="8995",
+        )
+        conf = render_config(uds_upstream("/tmp/klangk.sock"))
+        # /llm-proxy container-egress location is present, token-gated.
+        assert "location ~ ^/llm-proxy/" in conf
+        assert "auth_request /api/v1/auth/verify-workspace-token;" in conf
+        # The auth_request subrequest target + 401 page ride along.
+        assert "location = /api/v1/auth/verify-workspace-token" in conf
+        assert "location @token_auth_failed" in conf
+        # UDS upstream lands in the proxied locations.
+        assert "proxy_pass http://unix:/tmp/klangk.sock:" in conf
+        # No browser surface whatsoever.
+        assert "location / {" not in conf  # no catch-all
+        assert "/api/v1/browser-delegate" not in conf
+        assert "/api/v1/auth/local" not in conf
+        assert "post-chat-message" not in conf
+        assert "/hosted/" not in conf  # no hosted/static UI
+
+    def test_socket_no_llm_emits_listener_only(self):
+        """Socket + no LLM ⇒ no /llm-proxy, no auth locations; just listener."""
+        _set(listen="/tmp/klangk.sock", nginx_port="8995")
+        conf = render_config(uds_upstream("/tmp/klangk.sock"))
+        assert "location ~ ^/llm-proxy/" not in conf
+        assert "verify-workspace-token" not in conf
+        assert "@token_auth_failed" not in conf
+        # Still a valid server block with the container-egress listener.
+        assert "listen 8995;" in conf
+        assert "daemon off;" in conf
+
+    def test_socket_single_container_egress_listener(self):
+        """No client-facing TCP: exactly one listen (container-egress), no
+        browser catch-all location (#1398 criterion 3)."""
+        _set(
+            listen="/tmp/klangk.sock",
+            llm_base_url="http://127.0.0.1:11434",
+            nginx_port="8995",
+        )
+        conf = render_config(uds_upstream("/tmp/klangk.sock"))
+        # Exactly one listen directive — the container-egress nginx_port.
+        assert conf.count("\n    listen ") == 1
+        assert "listen 8995;" in conf
+        # No browser catch-all is served off it.
+        assert "location / {" not in conf
+
+    def test_tcp_emits_full_template(self):
+        """Regression guard: TCP LISTEN ⇒ full browser template (#1398 #2)."""
+        _set(listen="127.0.0.1", nginx_port="8995")
+        conf = render_config(tcp_upstream("127.0.0.1", "8997"))
+        assert "location / {" in conf
+        assert "/api/v1/browser-delegate" in conf
+        assert "/api/v1/auth/local" in conf
+        assert "listen 8995;" in conf
+
+    def test_template_keys_off_listen_not_auth(self):
+        """AUTH value does not change which template is rendered (#1398 #4):
+        socket ⇒ minimal and TCP ⇒ full across auth values."""
+        for auth in ("none", "password", "password,oidc"):
+            _set(
+                listen="/tmp/klangk.sock",
+                auth_modes=auth,
+                llm_base_url="http://127.0.0.1:11434",
+                nginx_port="8995",
+            )
+            minimal = render_config(uds_upstream("/tmp/klangk.sock"))
+            assert "location / {" not in minimal
+            assert "location ~ ^/llm-proxy/" in minimal
+
+            _set(listen="127.0.0.1", auth_modes=auth, nginx_port="8995")
+            full = render_config(tcp_upstream("127.0.0.1", "8997"))
+            assert "location / {" in full
+
+
 class TestFindNginxBin:
     def test_configured(self):
         _set(nginx_bin="/custom/nginx")
@@ -433,7 +519,16 @@ class TestPrepareNginx:
         import klangk_backend.main as main
 
         sock = str(tmp_path / "klangk.sock")
-        _set(listen=sock, state_dir=str(tmp_path), nginx_port="19999")
+        # Socket LISTEN ⇒ minimal (headless) template (#1398). Set an LLM
+        # base URL so the /llm-proxy location (which carries the UDS
+        # proxy_pass) is actually rendered; without it the minimal server
+        # block serves nothing.
+        _set(
+            listen=sock,
+            state_dir=str(tmp_path),
+            nginx_port="19999",
+            llm_base_url="http://127.0.0.1:11434",
+        )
         # Stub the binary lookup so the test doesn't depend on PATH.
         monkeypatch.setattr(
             "klangk_backend.nginx.find_nginx_bin", lambda: "/fake/nginx"
@@ -442,9 +537,13 @@ class TestPrepareNginx:
         assert bin_path == "/fake/nginx"
         assert conf_path == str(tmp_path / "nginx.conf")
         assert (tmp_path / "nginx.conf").is_file()
-        # The rendered config targets the LISTEN socket path.
         conf = (tmp_path / "nginx.conf").read_text()
+        # The UDS upstream lands in the /llm-proxy location + its auth_request
+        # subrequest target; the minimal template carries no browser surface.
         assert f"proxy_pass http://unix:{sock}:" in conf
+        assert "location ~ ^/llm-proxy/" in conf
+        assert "location / {" not in conf
+        assert "/api/v1/auth/local" not in conf
         # _UDS_MODE armed.
         import klangk_backend.util as util
 
