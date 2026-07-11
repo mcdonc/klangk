@@ -53,6 +53,13 @@ def _set(**kw):
         os.environ["KLANGK_" + k.upper()] = str(v)
 
 
+def _settings():
+    """Build settings from the live (mutated) environment."""
+    from klangk_backend.settings import KlangkSettings
+
+    return KlangkSettings(os.environ)
+
+
 class TestUpstreams:
     def test_tcp_upstream(self):
         assert tcp_upstream("127.0.0.1", "8997") == "http://127.0.0.1:8997"
@@ -64,25 +71,25 @@ class TestUpstreams:
 class TestClientMaxBodySize:
     def test_default_500mb(self):
         _set()
-        assert compute_client_max_body_size() == "500m"
+        assert compute_client_max_body_size(_settings()) == "500m"
 
     def test_custom(self):
         _set(file_upload_size_max="10485760")  # 10 MB
-        assert compute_client_max_body_size() == "10m"
+        assert compute_client_max_body_size(_settings()) == "10m"
 
     def test_minimum_1m(self):
         _set(file_upload_size_max="100")  # 100 bytes
-        assert compute_client_max_body_size() == "1m"
+        assert compute_client_max_body_size(_settings()) == "1m"
 
     def test_garbage_falls_back(self):
         _set(file_upload_size_max="not-a-number")
-        assert compute_client_max_body_size() == "500m"
+        assert compute_client_max_body_size(_settings()) == "500m"
 
 
 class TestContainerAcls:
     def test_explicit_subnets(self):
         _set(container_subnets="10.89.0.0/24,172.30.0.0/16")
-        acl, deny = compute_container_acls()
+        acl, deny = compute_container_acls(_settings())
         assert "allow 10.89.0.0/24;" in acl
         assert "allow 172.30.0.0/16;" in acl
         assert "deny all;" in acl
@@ -94,21 +101,21 @@ class TestContainerAcls:
 
     def test_loopback_excluded_from_deny(self):
         _set(container_subnets="127.0.0.1,10.89.0.0/24")
-        _, deny = compute_container_acls()
+        _, deny = compute_container_acls(_settings())
         assert "deny 10.89.0.0/24;" in deny
         assert "deny 127.0.0.1;" not in deny
         assert "allow all;" in deny
 
     def test_all_loopback_warns(self, caplog):
         _set(container_subnets="127.0.0.1")
-        _, deny = compute_container_acls()
+        _, deny = compute_container_acls(_settings())
         assert "allow all;" in deny
         assert "no non-loopback" in caplog.text
 
     def test_auto_detect_or_fallback(self):
         """Without explicit subnets: either host IPs or fallback RFC1918."""
         _set()
-        acl, deny = compute_container_acls()
+        acl, deny = compute_container_acls(_settings())
         # Must produce *something* (host IPs or fallback).
         assert "deny all;" in acl
         assert "allow all;" in deny
@@ -117,24 +124,24 @@ class TestContainerAcls:
 class TestDnsResolvers:
     def test_explicit_servers(self):
         _set(dns_servers="1.2.3.4,5.6.7.8")
-        result = detect_dns_resolvers()
+        result = detect_dns_resolvers(_settings())
         assert "1.2.3.4" in result
         assert "5.6.7.8" in result
 
     def test_ipv6_bracketed(self):
         _set(dns_servers="::1")
-        assert "[::1]" in detect_dns_resolvers()
+        assert "[::1]" in detect_dns_resolvers(_settings())
 
     def test_empty_tokens_skipped(self):
         """Trailing commas / empty entries in KLANGK_DNS_SERVERS are skipped."""
         _set(dns_servers="1.2.3.4,,5.6.7.8,")
-        result = detect_dns_resolvers()
+        result = detect_dns_resolvers(_settings())
         assert "1.2.3.4" in result
         assert "5.6.7.8" in result
 
     def test_fallback(self):
         _set()
-        result = detect_dns_resolvers()
+        result = detect_dns_resolvers(_settings())
         assert len(result) > 0  # from resolv.conf or 8.8.8.8
 
 
@@ -356,7 +363,7 @@ class TestDnsResolversFromResolvConf:
             "read_text",
             lambda self: content,
         )
-        result = detect_dns_resolvers()
+        result = detect_dns_resolvers(_settings())
         assert "1.1.1.1" in result
         assert "[::1]" in result
 
@@ -370,7 +377,7 @@ class TestDnsResolversFromResolvConf:
             raise OSError("no resolv.conf")
 
         monkeypatch.setattr(nginx_mod.Path, "read_text", _raise)
-        assert detect_dns_resolvers() == "8.8.8.8"
+        assert detect_dns_resolvers(_settings()) == "8.8.8.8"
 
 
 class TestContainerAclFallback:
@@ -380,7 +387,7 @@ class TestContainerAclFallback:
 
         _set()  # no container_subnets
         monkeypatch.setattr(nginx_mod, "detect_host_ipv4s", lambda: [])
-        acl, deny = compute_container_acls()
+        acl, deny = compute_container_acls(_settings())
         assert "allow 172.16.0.0/12;" in acl
         assert "allow 10.0.0.0/8;" in acl
         assert "deny 172.16.0.0/12;" in deny
@@ -457,7 +464,7 @@ class TestWatchdogGate:
         _set(listen=sock, state_dir=str(tmp_path), nginx_port="19999")
         monkeypatch.delenv("_KLANGK_DISABLE_NGINX", raising=False)
         monkeypatch.setattr(
-            "klangk_backend.nginx.find_nginx_bin", lambda: "/fake/nginx"
+            "klangk_backend.nginx.find_nginx_bin", lambda *a: "/fake/nginx"
         )
 
         spawned = {}
@@ -497,7 +504,7 @@ class TestPrepareNginx:
             llm_base_url="http://127.0.0.1:11434",
         )
         monkeypatch.setattr(
-            "klangk_backend.nginx.find_nginx_bin", lambda: "/fake/nginx"
+            "klangk_backend.nginx.find_nginx_bin", lambda *a: "/fake/nginx"
         )
         bin_path, conf_path = main._prepare_nginx()
         assert bin_path == "/fake/nginx"

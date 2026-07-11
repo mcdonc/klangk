@@ -25,6 +25,7 @@ import subprocess
 from pathlib import Path
 
 from .settings import (
+    KlangkSettings,
     get_settings,
     listen_is_socket,
     resolve_indirection,
@@ -101,13 +102,13 @@ def detect_host_ipv4s() -> list[str]:
     return addrs
 
 
-def detect_dns_resolvers() -> str:
+def detect_dns_resolvers(settings: KlangkSettings) -> str:
     """Space-separated nameservers for nginx's ``resolver`` directive.
 
     From ``KLANGK_DNS_SERVERS`` (comma→space) if set, else parsed from
     ``/etc/resolv.conf`` (IPv6 bracketed for nginx), else ``8.8.8.8``.
     """
-    raw = resolve_indirection(get_settings().dns_servers)
+    raw = resolve_indirection(settings.dns_servers)
     if raw:
         servers = []
         for token in str(raw).split(","):
@@ -146,7 +147,7 @@ _FALLBACK_ACL_SUBNETS = ["172.16.0.0/12", "10.0.0.0/8", "127.0.0.1"]
 _FALLBACK_DENY_SUBNETS = ["172.16.0.0/12", "10.0.0.0/8"]
 
 
-def compute_container_acls() -> tuple[str, str]:
+def compute_container_acls(settings: KlangkSettings) -> tuple[str, str]:
     """Build the CONTAINER_ACL (allowlist) and CONTAINER_DENY (blocklist) text.
 
     Returns ``(acl_block, deny_block)`` where each is the indented
@@ -164,7 +165,7 @@ def compute_container_acls() -> tuple[str, str]:
     With an explicit ``KLANGK_CONTAINER_SUBNETS`` override, 127.0.0.1 is NOT
     implicitly added to CONTAINER_ACL (the operator's list is used verbatim).
     """
-    explicit = resolve_indirection(get_settings().container_subnets)
+    explicit = resolve_indirection(settings.container_subnets)
     if explicit:
         subnets = [s.strip() for s in str(explicit).split(",") if s.strip()]
         acl_lines = [f"      allow {s};" for s in subnets]
@@ -199,13 +200,13 @@ def compute_container_acls() -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def compute_client_max_body_size() -> str:
+def compute_client_max_body_size(settings: KlangkSettings) -> str:
     """Derive nginx ``client_max_body_size`` from ``KLANGK_FILE_UPLOAD_SIZE_MAX``.
 
     The setting is in bytes (default 500 MB); nginx wants ``Nm``. Minimum 1m.
     """
     raw = (
-        resolve_indirection(get_settings().file_upload_size_max) or "524288000"
+        resolve_indirection(settings.file_upload_size_max) or "524288000"
     )
     try:
         bytes_ = int(str(raw))
@@ -220,13 +221,13 @@ def compute_client_max_body_size() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _build_hosted_block() -> str:
+def _build_hosted_block(settings: KlangkSettings) -> str:
     """The /hosted/ proxy locations (or a 404 block when disabled).
 
     Disabled entirely when ``KLANGK_HOSTED_PORTS_PER_WORKSPACE`` is exactly 0
     — mirrors the backend's ``ports_per_workspace_cap()`` (#1237).
     """
-    raw = resolve_indirection(get_settings().hosted_ports_per_workspace) or "5"
+    raw = resolve_indirection(settings.hosted_ports_per_workspace) or "5"
     if str(raw).strip() == "0":
         return (
             "    # Hosted-app serving is disabled "
@@ -268,7 +269,7 @@ def _build_hosted_block() -> str:
     )
 
 
-def _build_llm_block(acl: str, resolvers: str) -> str:
+def _build_llm_block(acl: str, resolvers: str, settings: KlangkSettings) -> str:
     """The /llm-proxy/ location, only when ``KLANGK_LLM_BASE_URL`` is set.
 
     Containers hit this instead of the real endpoint, so they never see the
@@ -277,10 +278,10 @@ def _build_llm_block(acl: str, resolvers: str) -> str:
     URL and key are resolved here (Python's resolver, not the retired
     ``klangk-resolve-value`` console script).
     """
-    base_url = resolve_indirection(get_settings().llm_base_url)
+    base_url = resolve_indirection(settings.llm_base_url)
     if not base_url:
         return ""
-    api_key = resolve_indirection(get_settings().llm_api_key) or ""
+    api_key = resolve_indirection(settings.llm_api_key) or ""
     return (
         f"    location ~ ^/llm-proxy/(.*)$ {{\n"
         f"{acl}\n"
@@ -302,8 +303,8 @@ def _build_llm_block(acl: str, resolvers: str) -> str:
     )
 
 
-def _trust_outer_proxy() -> bool:
-    raw = resolve_indirection(get_settings().trust_outer_proxy) or ""
+def _trust_outer_proxy(settings: KlangkSettings) -> bool:
+    raw = resolve_indirection(settings.trust_outer_proxy) or ""
     return str(raw).strip().lower() in ("1", "true", "yes")
 
 
@@ -312,7 +313,7 @@ def _trust_outer_proxy() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def render_config(upstream: str) -> str:
+def render_config(upstream: str, settings: KlangkSettings | None = None) -> str:
     """Render ``nginx.conf`` as a string.
 
     Template selection keys off ``KLANGK_LISTEN``'s shape only (#1398): a
@@ -324,9 +325,11 @@ def render_config(upstream: str) -> str:
     (env > config file > defaults) plus the host-IP / DNS auto-detection
     probes.
     """
+    if settings is None:
+        settings = get_settings()
     if listen_is_socket():
-        return _render_minimal_config(upstream)
-    return _render_full_config(upstream)
+        return _render_minimal_config(upstream, settings)
+    return _render_full_config(upstream, settings)
 
 
 def _minimal_auth_locations(upstream: str) -> str:
@@ -358,7 +361,7 @@ def _minimal_auth_locations(upstream: str) -> str:
     )
 
 
-def _render_minimal_config(upstream: str) -> str:
+def _render_minimal_config(upstream: str, settings: KlangkSettings) -> str:
     """Render the minimal (headless) ``nginx.conf`` — socket bind only (#1398).
 
     Emitted when ``KLANGK_LISTEN`` is a socket path: a browser can't reach a
@@ -374,12 +377,11 @@ def _render_minimal_config(upstream: str) -> str:
     ``KLANGK_LLM_BASE_URL`` is set); with no LLM configured the server block
     serves nothing.
     """
-    settings = get_settings()
     nginx_port = resolve_indirection(settings.nginx_port) or "8995"
-    client_max_body_size = compute_client_max_body_size()
-    resolvers = detect_dns_resolvers()
-    acl, _deny = compute_container_acls()
-    llm_block = _build_llm_block(acl, resolvers)
+    client_max_body_size = compute_client_max_body_size(settings)
+    resolvers = detect_dns_resolvers(settings)
+    acl, _deny = compute_container_acls(settings)
+    llm_block = _build_llm_block(acl, resolvers, settings)
     # The auth_request infrastructure is only reachable via the /llm-proxy
     # location's auth_request; omit it entirely when there's no LLM proxy.
     auth_locations = _minimal_auth_locations(upstream) if llm_block else ""
@@ -404,7 +406,7 @@ http {{
 """
 
 
-def _render_full_config(upstream: str) -> str:
+def _render_full_config(upstream: str, settings: KlangkSettings) -> str:
     """Render the full (browser) ``nginx.conf`` — TCP bind (#1396, #1398).
 
     Emitted when ``KLANGK_LISTEN`` is TCP: the browser UI + every API path +
@@ -412,15 +414,14 @@ def _render_full_config(upstream: str) -> str:
     This is the template the renderer shipped before #1398's socket/minimal
     branch; it is kept verbatim so the TCP path is a strict regression guard.
     """
-    settings = get_settings()
     nginx_port = resolve_indirection(settings.nginx_port) or "8995"
-    client_max_body_size = compute_client_max_body_size()
-    resolvers = detect_dns_resolvers()
-    acl, deny = compute_container_acls()
+    client_max_body_size = compute_client_max_body_size(settings)
+    resolvers = detect_dns_resolvers(settings)
+    acl, deny = compute_container_acls(settings)
 
-    hosted_block = _build_hosted_block()
-    llm_block = _build_llm_block(acl, resolvers)
-    trust = _trust_outer_proxy()
+    hosted_block = _build_hosted_block(settings)
+    llm_block = _build_llm_block(acl, resolvers, settings)
+    trust = _trust_outer_proxy(settings)
     if trust:
         forwarded_headers = (
             "      proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n"
@@ -530,7 +531,7 @@ http {{
     return conf
 
 
-def write_config(upstream: str, conf_path: str | Path) -> str:
+def write_config(upstream: str, conf_path: str | Path, settings: KlangkSettings | None = None) -> str:
     """Render the config and write it to ``conf_path`` (returns the text).
 
     Written mode ``0600`` because the rendered config may embed secrets
@@ -540,7 +541,7 @@ def write_config(upstream: str, conf_path: str | Path) -> str:
     same-uid-only ``state_dir`` as the UDS, so the restrictive mode matches
     the existing trust boundary.
     """
-    text = render_config(upstream)
+    text = render_config(upstream, settings)
     path = Path(conf_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # The LLM API key is necessarily in this config (nginx adds the
@@ -553,9 +554,9 @@ def write_config(upstream: str, conf_path: str | Path) -> str:
     return text
 
 
-def find_nginx_bin() -> str:
+def find_nginx_bin(settings: KlangkSettings | None = None) -> str:
     """Locate the nginx binary: KLANGK_NGINX_BIN > PATH > /usr/sbin/nginx."""
-    configured = resolve_indirection(get_settings().nginx_bin)
+    configured = resolve_indirection((settings or get_settings()).nginx_bin)
     if configured:
         return str(configured)
     found = shutil.which("nginx")

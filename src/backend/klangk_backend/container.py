@@ -6,6 +6,7 @@ import os
 import time
 
 from . import auth, bringup, model, plugins, podman, terminal, util
+from .settings import KlangkSettings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -757,15 +758,21 @@ class HealthMonitor:
 
 
 class ContainerRegistry:
-    """Singleton managing all container state and podman interactions.
+    """Manages all container state and podman interactions.
 
     Composes :class:`PortAllocator`, :class:`BrowserRouter`,
     :class:`IdleMonitor`, and :class:`HealthMonitor` as collaborators.
     Backward-compatible proxy methods delegate to the collaborators so
     existing callers are unchanged.
+
+    Constructed once in :func:`build_app` and stored on
+    ``app.state.container_registry`` (#1426). The module-level ``registry``
+    is a transitional shim for callers not yet migrated to explicit
+    threading.
     """
 
-    def __init__(self):
+    def __init__(self, settings: "KlangkSettings | None" = None):
+        self.settings = settings
         self.states: dict[str, ContainerState] = {}
         # Reverse lookup: container_id -> workspace_id
         self._cid_to_wsid: dict[str, str] = {}
@@ -779,6 +786,27 @@ class ContainerRegistry:
         self.browsers = BrowserRouter()
         self.idle = IdleMonitor(self)
         self.health = HealthMonitor(self)
+
+    # --- Service-session locks (#1188, moved from terminal.py, #1426) ---
+    # The dict still physically lives in terminal.py (terminal.py can't import
+    # container — circular) and the terminal functions operate on it. These
+    # methods delegate so the registry is the single API surface; the dict
+    # moves fully in Slice 2d (#1465) when tests stop reaching into
+    # terminal._service_session_locks directly.
+
+    def get_service_session_lock(self, container_id: str) -> asyncio.Lock:
+        """Get or create the per-container lock for service-command firing."""
+        return terminal.get_service_session_lock(container_id)
+
+    def clear_service_session_lock(self, container_id: str) -> None:
+        """Drop the per-container firing lock for a torn-down container."""
+        terminal.clear_service_session_lock(container_id)
+
+    def prune_service_session_locks(
+        self, active_container_ids: set[str]
+    ) -> int:
+        """Remove lock entries for containers no longer tracked (#1351)."""
+        return terminal.prune_service_session_locks(active_container_ids)
 
     def workspace_id_for(self, container_id: str) -> str | None:
         """Return the workspace_id for a container, or None."""
@@ -873,8 +901,8 @@ class ContainerRegistry:
                 self._cid_to_wsid.pop(state.container_id, None)
                 # Drop the per-container service-firing lock (#1188), then
                 # sweep any other entries orphaned by container churn (#1351).
-                terminal.clear_service_session_lock(state.container_id)
-                terminal.prune_service_session_locks(set(self._cid_to_wsid))
+                self.clear_service_session_lock(state.container_id)
+                self.prune_service_session_locks(set(self._cid_to_wsid))
 
     # --- Proxy: PortAllocator ---
 
@@ -1549,8 +1577,8 @@ class ContainerRegistry:
         # Drop the per-container service-firing lock (#1188), then sweep any
         # other entries orphaned by container churn (e.g. a racing re-bind
         # that popped this container's mapping before teardown) (#1351).
-        terminal.clear_service_session_lock(container_id)
-        terminal.prune_service_session_locks(set(self._cid_to_wsid))
+        self.clear_service_session_lock(container_id)
+        self.prune_service_session_locks(set(self._cid_to_wsid))
 
     async def notify_workspace_killed(self, workspace_id: str) -> None:
         """Call the on_workspace_killed callback, logging any errors.
@@ -1689,4 +1717,7 @@ class ContainerRegistry:
 
 
 # Module-level singleton
-registry = ContainerRegistry()
+# Transitional module-level shim (#1426 Slice 2a). Production constructs the
+# real instance in build_app() → app.state.container_registry; this exists so
+# the ~660 test references and unmigrated callers keep working. Dies in #1465.
+registry = ContainerRegistry(get_settings())
