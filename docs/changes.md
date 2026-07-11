@@ -27,6 +27,22 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Headless single-user profile: nginx minimal template on a socket bind**
+  (#1398, chunk 5 of #1392). When `KLANGK_LISTEN` is a UNIX socket path,
+  the nginx renderer now emits a minimal (headless) template — only the
+  container-egress `/llm-proxy` location (with its workspace-token
+  `auth_request` gate + `CONTAINER_ACL`) on the single container-egress
+  listener, and nothing else: no `location /`, no `/api/v1/*`, no static
+  UI, no `/auth/local`. A browser can't reach a UDS and uvicorn exposes no
+  browser-facing TCP, so no browser surface is serviceable — the attack
+  surface is two channels (operator→UDS, container→llm-proxy) and nothing
+  else. Template selection keys off `KLANGK_LISTEN`'s shape alone; the
+  `KLANGK_AUTH_MODE` value does not participate (socket ⇒ minimal, TCP ⇒
+  full browser template, across all auth values). The TCP path is a strict
+  regression guard (byte-for-byte identical output). This makes the
+  UDS+none default posture's "eliminate the browser/TCP surface" a real
+  property rather than a claim; the default-flip itself is #1400.
+
 - **`test-all` / `test-unit` devenv scripts and concurrency-safe test corpus**
   (#1393). The whole test corpus is now runnable concurrently: every E2E
   harness free-allocates its server port and `KLANGK_PORT_RANGE_START`

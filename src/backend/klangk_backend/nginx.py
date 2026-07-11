@@ -24,7 +24,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .settings import get_settings, resolve_indirection
+from .settings import (
+    get_settings,
+    listen_is_socket,
+    resolve_indirection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -309,12 +313,104 @@ def _trust_outer_proxy() -> bool:
 
 
 def render_config(upstream: str) -> str:
-    """Render the full ``nginx.conf`` as a string.
+    """Render ``nginx.conf`` as a string.
 
-    ``upstream`` is the ``proxy_pass`` base: :func:`uds_upstream` for the
-    production socket bind, :func:`tcp_upstream` for tests. All other values
-    come from the merged settings (env > config file > defaults) plus the
-    host-IP / DNS auto-detection probes.
+    Template selection keys off ``KLANGK_LISTEN``'s shape only (#1398): a
+    socket path ⇒ the minimal (headless) template; TCP ⇒ the full (browser)
+    template. The AUTH value does not participate in template selection —
+    only the bind does. ``upstream`` is the ``proxy_pass`` base
+    (:func:`uds_upstream` for the production socket bind, :func:`tcp_upstream`
+    for tests). All other values come from the merged settings
+    (env > config file > defaults) plus the host-IP / DNS auto-detection
+    probes.
+    """
+    if listen_is_socket():
+        return _render_minimal_config(upstream)
+    return _render_full_config(upstream)
+
+
+def _minimal_auth_locations(upstream: str) -> str:
+    """The workspace-token ``auth_request`` subrequest target + JSON 401 page.
+
+    Minimal-template counterpart of the inline blocks in the full template.
+    Extracted because the minimal server block emits them adjacent to the
+    ``/llm-proxy`` location that gates on them; the full template interleaves
+    them with the browser/auth-local locations, so it keeps them inline.
+    """
+    return (
+        "    # Workspace token verification subrequest"
+        " (nginx auth_request target).\n"
+        "    location = /api/v1/auth/verify-workspace-token {\n"
+        "      internal;\n"
+        f"      proxy_pass {upstream}/api/v1/auth/verify-workspace-token;\n"
+        "      proxy_pass_request_body off;\n"
+        '      proxy_set_header Content-Length "";\n'
+        "      proxy_set_header Authorization $http_authorization;\n"
+        "    }\n"
+        "\n"
+        "    # JSON 401 error page for auth_request failures.\n"
+        "    location @token_auth_failed {\n"
+        "      internal;\n"
+        "      default_type application/json;\n"
+        '      return 401 \'{"error":"$auth_token_error",'
+        '"detail":"Workspace token $auth_token_error"}\';\n'
+        "    }\n"
+    )
+
+
+def _render_minimal_config(upstream: str) -> str:
+    """Render the minimal (headless) ``nginx.conf`` — socket bind only (#1398).
+
+    Emitted when ``KLANGK_LISTEN`` is a socket path: a browser can't reach a
+    UDS and uvicorn exposes no browser-facing TCP, so no browser UI is
+    serviceable. The only served surface is the container-egress
+    ``/llm-proxy`` location (with its workspace-token ``auth_request`` gate +
+    CONTAINER_ACL) on the single container-egress listener. No ``location /``,
+    no ``/api/v1/*``, no static UI, no ``/auth/local`` — the attack surface is
+    two channels (operator→UDS, container→llm-proxy) and nothing else.
+
+    The ``auth_request`` subrequest target + JSON 401 page are emitted only
+    when an ``/llm-proxy`` location exists to gate on them (i.e. when
+    ``KLANGK_LLM_BASE_URL`` is set); with no LLM configured the server block
+    serves nothing.
+    """
+    settings = get_settings()
+    nginx_port = resolve_indirection(settings.nginx_port) or "8995"
+    client_max_body_size = compute_client_max_body_size()
+    resolvers = detect_dns_resolvers()
+    acl, _deny = compute_container_acls()
+    llm_block = _build_llm_block(acl, resolvers)
+    # The auth_request infrastructure is only reachable via the /llm-proxy
+    # location's auth_request; omit it entirely when there's no LLM proxy.
+    auth_locations = _minimal_auth_locations(upstream) if llm_block else ""
+    return f"""daemon off;
+pid /tmp/nginx.pid;
+error_log stderr;
+events {{ worker_connections 1024; }}
+http {{
+  access_log /dev/stdout;
+  client_body_temp_path /tmp/nginx_client_body;
+  proxy_temp_path /tmp/nginx_proxy;
+  fastcgi_temp_path /tmp/nginx_fastcgi;
+  uwsgi_temp_path /tmp/nginx_uwsgi;
+  scgi_temp_path /tmp/nginx_scgi;
+
+  client_max_body_size {client_max_body_size};
+
+  server {{
+    listen {nginx_port};
+{llm_block}{auth_locations}  }}
+}}
+"""
+
+
+def _render_full_config(upstream: str) -> str:
+    """Render the full (browser) ``nginx.conf`` — TCP bind (#1396, #1398).
+
+    Emitted when ``KLANGK_LISTEN`` is TCP: the browser UI + every API path +
+    static files + the no-auth ``/auth/local`` handout are all serviceable.
+    This is the template the renderer shipped before #1398's socket/minimal
+    branch; it is kept verbatim so the TCP path is a strict regression guard.
     """
     settings = get_settings()
     nginx_port = resolve_indirection(settings.nginx_port) or "8995"
