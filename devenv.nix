@@ -50,6 +50,7 @@ in
       git # "error: Failed to find git" during devenv:git-hooks:install
       gzip
       gnutar
+      caddy # reverse proxy; will replace nginx (#1443)
       nginx
       podman
       ruff

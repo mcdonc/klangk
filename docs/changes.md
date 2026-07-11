@@ -42,6 +42,10 @@ operators or integrators to act when upgrading.
 - **Direct UDS login:** `client_is_loopback` treats direct UDS connections
   (no nginx proxy) as loopback, so `klangkc login /path/to/sock` works in
   no-auth mode (#1399).
+- **Caddy dev dependency:** `caddy` is now a devenv package and
+  `fastcaddy` (Caddy API wrapper) a backend Python dependency, in
+  preparation for replacing nginx with Caddy as the reverse proxy
+  (#1443). nginx is unchanged for now.
 
 ### Removed
 

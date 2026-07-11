@@ -21,6 +21,7 @@ dependencies = [
     "logfire[fastapi]>=3.0.0",
     "pyyaml>=6.0",
     "httpx>=0.28.0",
+    "fastcaddy",  # Caddy API wrapper; nginx→Caddy reverse proxy (#1443)
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
