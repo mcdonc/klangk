@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { execSync, spawn } from "child_process";
 import { createWriteStream, mkdirSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -87,20 +87,34 @@ async function globalSetup() {
   // Containers are configured with KLANGK_LLM_PROXY_URL pointing at this nginx.
   const nginxPort = "18995";
   if (llmUrl) {
+    // Render nginx.conf via the Python renderer (#1396) and launch nginx
+    // directly — replaces the deleted scripts/nginx.sh (#1427).
+    const nginxState = join(dataDir, "nginx");
+    mkdirSync(nginxState, { recursive: true });
+    const confPath = join(nginxState, "nginx.conf");
+
+    const renderEnv = {
+      ...process.env,
+      KLANGK_NGINX_PORT: nginxPort,
+      KLANGK_PORT: backendPort,
+    };
+    execSync(
+      `python -c "from klangk_backend.nginx import write_config, tcp_upstream; ` +
+        `write_config(tcp_upstream('127.0.0.1', '${backendPort}'), '${confPath}')"`,
+      {
+        cwd: join(projectRoot, "src", "backend"),
+        env: renderEnv,
+      },
+    );
+
     const nginxLogPath = join(
       logDir,
       `nginx-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
     );
     const nginxLogFd = require("fs").openSync(nginxLogPath, "w");
-    const nginxProcess = spawn(join(projectRoot, "scripts", "nginx.sh"), [], {
+    const nginxProcess = spawn("nginx", ["-e", "stderr", "-c", confPath], {
       detached: true,
       stdio: ["ignore", nginxLogFd, nginxLogFd],
-      env: {
-        ...process.env,
-        DEVENV_STATE: dataDir,
-        KLANGK_NGINX_PORT: nginxPort,
-        KLANGK_PORT: backendPort,
-      },
     });
     process.env.KLANGK_E2E_NGINX_PID = String(nginxProcess.pid);
     // Wait briefly for nginx to start
@@ -125,8 +139,8 @@ async function globalSetup() {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
-        // Bare uvicorn; the lifespan must not spawn nginx (frontend e2e
-        // runs its own nginx via the old scripts/nginx.sh path).
+        // Bare uvicorn on TCP; the lifespan's nginx expects a UDS, so
+        // suppress it and let global-setup manage nginx separately (#1427).
         _KLANGK_DISABLE_NGINX: "1",
         KLANGK_PORT: backendPort,
         KLANGK_NGINX_PORT: nginxPort,
