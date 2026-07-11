@@ -23,7 +23,9 @@ KlangkSettings(env={...})     # reads the dict only; os.environ ignored (tests)
 
 Implementation: `_EnvDictSource(EnvSettingsSource)` overrides `_load_env_vars()` to run the passed dict through the same `parse_env_vars` normalizer the base uses for `os.environ`. A class-var bridge (`_env_for_sources`) shuttles the env dict from `__init__` through the classmethod boundary (`settings_customise_sources` runs before `self` exists), cleaned up after construction so it doesn't leak.
 
-**Precedence note**: pydantic-settings gives earlier sources in the tuple higher priority. The source order is: `[env_source, yaml_config, init_kwargs]`. So env values win over init kwargs when both provide the same field. This is existing behavior, preserved by the change.
+**Known tech debt — the class-var bridge (`_env_for_sources`, `_config_file_for_sources`).** This is nasty but works: `__init__` sets a class var, `super().__init__()` reads it in the classmethod, then `__init__` resets it to `None`. It's safe because construction is single-threaded (startup + tests construct one at a time), but it's not thread-safe and it's surprising. A cleaner alternative to investigate: stash `env`/`config_file` on a subclassed `init_settings` source (the one `settings_customise_sources` argument tied to *this* construction) instead of a class var. That's deeper pydantic-internals work and wasn't verified under time pressure; leave as a follow-up cleanup. Do **not** treat the class-var bridge as permanent.
+
+**Precedence note**: env > config file > defaults. (pydantic-settings gives earlier sources in the tuple higher priority. Init kwargs / field overrides are not a supported configuration path — don't use them.)
 
 **Tests**: 57 settings tests pass (6 new `TestEnvConstructor` tests). Full suite: 2354 pass, 1 pre-existing flaky WS test fails under `-n auto` (passes in isolation), 0 warnings from new tests.
 
@@ -94,3 +96,89 @@ See #1426 for the full design. Summary:
 - **Slice 5**: `DB(settings)` — kill `data_dir`/`DB_PATH`/`get_db()` globals in `model/db.py`.
 - **Slice 6**: freeze `resolve_env_value` at startup (132 call sites).
 - **Slice 7**: delete the `main:app` shim.
+
+## Full target `build_app()` shape (the end state across all slices)
+
+Every `app.state` attribute created across the refactor, in slice order. The
+HANDOFF model should understand this is the target — each slice creates its
+subset and leaves the rest for later slices.
+
+```python
+def build_app(settings: KlangkSettings) -> FastAPI:
+    app = FastAPI(title="Klangk", lifespan=_lifespan(settings))
+
+    # --- Slice 1 ---
+    app.state.settings = settings
+
+    # --- Slice 2 ---
+    app.state.container_registry = container.ContainerRegistry(settings)
+    #   - IdleMonitor / HealthMonitor / BrowserRouter / PortAllocator become
+    #     collaborators of the registry (nested as `.idle`, `.health`, etc.)
+    #   - terminal._service_session_locks moves onto the registry
+    #   - auto_start_workspaces becomes a ContainerRegistry method
+    app.state.nginx_watchdog = NginxWatchdog(settings)
+    app.state.connections = ConnectionRegistry()
+    #   ^ new lifecycle object: replaces the `wshandler.state` module global.
+    #     The WS layer registers connections into it; HealthMonitor broadcasts
+    #     health/death frames through it (today this is a lazy `from .wshandler
+    #     import state as _ws_state`). It's the one place where a background
+    #     actor (monitor, owned by the registry) needs a handle to the set of
+    #     live WS connections — different lifecycle than either, so it gets its
+    #     own owner on app.state.
+
+    # --- Slice 3 ---
+    app.state.oidc = oidc.OIDC(settings)
+    #   - _providers / _discovery_cache / _jwks_cache move onto the instance
+
+    # --- Slice 4 ---
+    app.state.plugins = plugins.Plugins(settings)
+    #   - _declarations / _values move onto the instance
+
+    # --- Slice 5 ---
+    app.state.db = DB(settings)
+    #   - kills data_dir / DB_PATH / engine / ensure_engine / get_db() globals
+    #   - model methods take settings (or live on DB; see #1452 scope fence)
+
+    # --- routers become factories closing over instances (not module globals) ---
+    app.include_router(api.build_router(settings, app.state.container_registry, app.state.oidc), prefix=API_PREFIX)
+    app.include_router(auth.build_router(app.state.oidc), prefix=API_PREFIX)
+
+    # --- WS handler takes instances as explicit args ---
+    @app.websocket("/ws")
+    async def _ws(websocket: WebSocket):
+        await wshandler.handle(websocket, app.state.settings, app.state.container_registry, app.state.oidc, app.state.connections)
+    # settings: needed for KLANGKC_DEBUG_SSH_AGENT / KLANGKWS_DEBUG /
+    #   KLANGK_BRIDGE_TIMEOUT_SECONDS (read today via resolve_env_value;
+    #   migrate to settings in Slice 6). Passed from the start so the WS
+    #   handler signature doesn't change twice.
+
+    return app
+```
+
+### Lifecycle objects on `app.state` (reference)
+
+| Attribute | Slice | Lifecycle | Notes |
+|-----------|-------|-----------|-------|
+| `settings` | 1 | frozen at startup | `KlangkSettings(os.environ, config_file=...)` |
+| `container_registry` | 2 | process lifetime | owns monitors, port allocator, browser router |
+| `nginx_watchdog` | 2 | start/stop in lifespan | `.start()` / `.stop()` methods |
+| `connections` | 2 | process lifetime (connections register/unregister) | replaces `wshandler.state` global; monitor broadcasts through it |
+| `oidc` | 3 | process lifetime | owns providers + discovery/JWKS caches |
+| `plugins` | 4 | process lifetime | owns declarations + values |
+| `db` | 5 | process lifetime | owns engine + model methods |
+
+### The `connections` lifecycle (new — the one genuinely new owner)
+
+Today `wshandler.state` is a module global holding live WS connections.
+`HealthMonitor._send_heartbeats` reaches into it via a lazy import to
+broadcast health/death frames. This is the one place where a background
+actor (the monitor, owned by the registry) needs to talk to all live
+connections — connections come and go on a different lifecycle than the
+monitor, so neither can own the other.
+
+Slice 2 promotes `wshandler.state` to a `ConnectionRegistry` instance on
+`app.state.connections`. The WS layer registers/unregisters connections
+into it; the monitor (and anything else that needs to broadcast) gets a
+handle to it. This is the single place in the refactor where "thread it as
+a param" requires introducing a **new owner** rather than reusing an
+existing one — call it out as a micro-slice within Slice 2.

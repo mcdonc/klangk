@@ -203,6 +203,8 @@ class KlangkSettings(BaseSettings):
     # permanent global — construction is single-threaded at startup and
     # one-at-a-time in tests.
     _env_for_sources: dict[str, str] | None = None
+    # Same bridge pattern for config_file (see __init__).
+    _config_file_for_sources: str | None = None
 
     model_config = SettingsConfigDict(
         env_prefix="KLANGK_",
@@ -211,23 +213,28 @@ class KlangkSettings(BaseSettings):
         # flat field (access_token_hours), not a nested table.
     )
 
-    def __init__(self, env: dict[str, str], **values: object) -> None:
-        """Construct settings from *env* plus field kwargs.
+    def __init__(
+        self, env: dict[str, str], config_file: str | None = None, **values: object
+    ) -> None:
+        """Construct settings from *env* and an optional config file.
 
-        - ``KlangkSettings(os.environ)`` — production.
+        - ``KlangkSettings(os.environ)`` — production (no config file).
+        - ``KlangkSettings(os.environ, config_file="/path/to/config.yaml")``
+          — production with a YAML config file.
         - ``KlangkSettings(env={...})`` — tests; reads the dict only,
           ``os.environ`` is never consulted.
-        - ``KlangkSettings(env=..., foo="override")`` — field kwargs are applied
-          but env values take precedence (consistent with the existing source
-          ordering: env_source is earlier in the tuple = higher priority).
 
         *env* is required — every construction is explicit about where
-        configuration comes from.
+        configuration comes from.  *config_file* defaults to ``None``
+        (no config file; env-only).  ``"none"`` is the explicit opt-out
+        string (same effect as ``None``).
         """
         type(self)._env_for_sources = env
+        type(self)._config_file_for_sources = config_file
         super().__init__(**values)
-        # Clean up the bridge so the dict doesn't leak between instances.
+        # Clean up the bridges so dicts don't leak between instances.
         type(self)._env_for_sources = None
+        type(self)._config_file_for_sources = None
 
     @classmethod
     def settings_customise_sources(
@@ -240,17 +247,14 @@ class KlangkSettings(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         """Add a YAML config file source when one is configured.
 
-        Precedence (highest first): **init kwargs** > **the env dict passed
-        to the constructor** > **config file** > built-in defaults.
-        pydantic-settings applies sources in tuple order with later entries
-        overriding earlier ones.
-
-        The env source is ALWAYS the dict passed to ``__init__`` via
-        ``env=`` — either ``os.environ`` (production, the default) or a test
-        dict (``KlangkSettings(env={...})``).  ``os.environ`` is never
-        consulted directly by the framework; it is merely the default value
-        of the ``env`` parameter.  In tests, when a dict is passed,
-        ``os.environ`` is never read.
+        Precedence (highest first): **the env dict passed to the constructor**
+        > **config file** > built-in defaults.  The env source is ALWAYS
+        the dict passed to ``__init__`` via ``env=`` — either ``os.environ``
+        (production, the default) or a test dict
+        (``KlangkSettings(env={...})``).  ``os.environ`` is never consulted
+        directly by the framework; it is merely the default value of the
+        ``env`` parameter.  In tests, when a dict is passed, ``os.environ``
+        is never read.
         """
         env = cls._env_for_sources
         active_env: PydanticBaseSettingsSource = (
@@ -259,7 +263,13 @@ class KlangkSettings(BaseSettings):
             else env_settings
         )
         sources: list[PydanticBaseSettingsSource] = [active_env]
-        path = _config_file_path
+        # config_file from the constructor (class-var bridge) takes precedence
+        # over the legacy module global (_config_file_path / set_config_file).
+        # The module global dies once all callers (klangkd + tests) migrate to
+        # passing config_file= to the constructor (follow-up to this commit).
+        path = cls._config_file_for_sources
+        if path is None:
+            path = _config_file_path
         if path is not None and path != "none":
             sources.append(
                 YamlConfigSettingsSource(settings_cls, yaml_file=path)
