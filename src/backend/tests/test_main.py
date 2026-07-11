@@ -131,6 +131,12 @@ class TestNoAuthBindSafety:
         assert "KLANGK_ALLOW_INSECURE_NO_AUTH=1" in msg
         assert "0.0.0.0" in msg
 
+    def test_allows_socket_path(self, monkeypatch):
+        """A UDS path is safe — same-uid trust boundary (#1399)."""
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setenv("KLANGK_LISTEN", "/tmp/klangk.sock")
+        assert main.enforce_no_auth_bind_safety() is None
+
     def test_override_flag_allows_non_loopback(self, monkeypatch, caplog):
         monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         monkeypatch.setenv("KLANGK_LISTEN", "0.0.0.0")

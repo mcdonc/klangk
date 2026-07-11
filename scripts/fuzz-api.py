@@ -578,7 +578,6 @@ def start_server(port: int, data_dir: str) -> tuple[subprocess.Popen, TeeReader]
         "KLANGK_DEFAULT_USER": "admin@example.com",
         "KLANGK_DEFAULT_PASSWORD": "admin",
         "KLANGK_JWT_SECRET": "fuzz-test-secret",
-        "KLANGK_PORT": str(port),
         "KLANGK_MIN_PASSWORD_LENGTH": "1",
         # Disable features that need external services
         "KLANGK_IMAGE_PULL_POLICY": "never",

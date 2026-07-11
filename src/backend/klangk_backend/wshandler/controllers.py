@@ -69,7 +69,7 @@ class SshAgentForwarder:
             logger.info("[ssh-agent] starting socat at %s", sock_path)
         # Start socat: listen on the Unix socket, relay to stdin/stdout.
         proc = await asyncio.create_subprocess_exec(
-            podman.PODMAN_BIN,
+            podman._podman_bin(),
             "exec",
             "-i",
             container_id,

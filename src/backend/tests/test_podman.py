@@ -84,7 +84,7 @@ class TestRun:
         with patch(EXEC, _exec(("hello\n", "", 0))) as m:
             rc, out, err = await podman.run(["version"])
         assert (rc, out, err) == (0, "hello\n", "")
-        assert m.call_args.args[0] == podman.PODMAN_BIN
+        assert m.call_args.args[0] == "podman"
         assert m.call_args.kwargs["stdin"] is None
 
     async def test_check_raises_with_classified_status(self):

@@ -8,7 +8,7 @@ Non-zero exits raise :class:`PodmanError` whose ``status`` mimics
 HTTP-like codes (404 not-found, 409 conflict/in-use) so callers can
 branch accordingly; anything else maps to 500.
 
-The binary is configurable via ``KLANGK_PODMAN_BIN`` (defaults to
+The binary is configurable via the ``podman_bin`` setting (defaults to
 ``podman``).
 """
 
@@ -20,12 +20,14 @@ import tempfile
 import time
 from collections.abc import AsyncGenerator
 
-from . import util
+from .settings import get_settings, resolve_indirection
 from .util import BoundedOutputQueue
 
 logger = logging.getLogger(__name__)
 
-PODMAN_BIN = util.resolve_env_value("KLANGK_PODMAN_BIN", "podman")
+
+def _podman_bin() -> str:
+    return resolve_indirection(get_settings().podman_bin) or "podman"
 
 
 def subprocess_env() -> dict[str, str]:
@@ -86,7 +88,7 @@ async def run(
     ):
         t1 = time.monotonic()
         proc = await asyncio.create_subprocess_exec(
-            PODMAN_BIN,
+            _podman_bin(),
             *args,
             stdin=(
                 asyncio.subprocess.PIPE if stdin_data is not None else None
@@ -153,7 +155,7 @@ async def run_raw(
     ):
         t1 = time.monotonic()
         proc = await asyncio.create_subprocess_exec(
-            PODMAN_BIN,
+            _podman_bin(),
             *args,
             stdin=(
                 asyncio.subprocess.PIPE if stdin_data is not None else None
@@ -388,7 +390,7 @@ async def exec_container_stream(
     """
     args = _exec_args(container_id, cmd, user=user, extra_env=extra_env)
     proc = await asyncio.create_subprocess_exec(
-        PODMAN_BIN,
+        _podman_bin(),
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
@@ -545,7 +547,7 @@ class ExecSession:
         else:
             argv = command
         exec_cmd = [
-            PODMAN_BIN,
+            _podman_bin(),
             "exec",
             "-i",
             *env_flags,

@@ -140,10 +140,14 @@ async def ensure_admin_group() -> str:
 # NOT loopback. The full IPv4 loopback range (127.0.0.0/8) and IPv6 ``::1``
 # are admitted via :func:`ipaddress.is_loopback`; the bare hostname
 # ``localhost`` is admitted as a special case (it resolves to loopback but is
-# not itself an IP literal). See #1374.
+# not itself an IP literal). A UNIX socket path is also safe — ``klangkd``
+# creates the parent directory with mode 0700, so only the same uid can
+# connect (the same trust boundary as loopback). See #1374.
 def _is_loopback_bind(host: str) -> bool:
     if host == "localhost":
         return True
+    if host.startswith("/"):
+        return True  # UDS — same-uid trust boundary
     try:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:

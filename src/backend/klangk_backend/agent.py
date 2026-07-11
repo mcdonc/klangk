@@ -101,7 +101,7 @@ async def ensure_agent_home(workspace_id: str, container_id: str) -> str:
     # personal preferences — --force deletes settings.json first so
     # it picks up the current KLANGK_LLM_MODEL env var.
     proc = await asyncio.create_subprocess_exec(
-        podman.PODMAN_BIN,
+        podman._podman_bin(),
         "exec",
         "-u",
         "klangk",
@@ -253,7 +253,7 @@ class AgentSession:
                 container_id,
             )
             self._proc = await asyncio.create_subprocess_exec(
-                podman.PODMAN_BIN,
+                podman._podman_bin(),
                 *argv,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,

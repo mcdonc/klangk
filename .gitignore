@@ -36,6 +36,7 @@ src/frontend/pubspec.lock
 # Environment / secrets
 .env
 *.env.local
+klangkd.conf
 .oidc/
 
 # IDE
