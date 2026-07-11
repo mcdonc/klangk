@@ -488,48 +488,19 @@ class TestWatchdogGate:
             main._nginx_proc = None
 
 
-class TestSocketPath:
-    """_socket_path() reads KLANGK_LISTEN (the socket IS the listen value)."""
-
-    def test_returns_listen_value(self):
-        import klangk_backend.main as main
-
-        _set(listen="/tmp/klangk.sock")
-        assert main._socket_path() == "/tmp/klangk.sock"
-
-    def test_falls_back_to_state_dir_when_listen_unset(self, monkeypatch):
-        import klangk_backend.main as main
-
-        # When listen is empty/unset, _socket_path defaults to
-        # <state_dir>/klangk.sock rather than an empty string.
-        _set(listen="", state_dir="/custom/state")
-        assert main._socket_path() == "/custom/state/klangk.sock"
-
-    def test_falls_back_to_tmp_when_both_unset(self, monkeypatch):
-        import klangk_backend.main as main
-
-        _set(listen="", state_dir="")
-        assert main._socket_path() == "/tmp/klangk-state/klangk.sock"
-
-
 class TestPrepareNginx:
-    """_prepare_nginx renders the config + arms UDS mode (no spawn)."""
+    """_prepare_nginx renders nginx.conf with UDS upstream (#1400)."""
 
     def test_renders_config_and_returns_paths(self, monkeypatch, tmp_path):
         import klangk_backend.main as main
 
-        sock = str(tmp_path / "klangk.sock")
-        # Socket LISTEN ⇒ minimal (headless) template (#1398). Set an LLM
-        # base URL so the /llm-proxy location (which carries the UDS
-        # proxy_pass) is actually rendered; without it the minimal server
-        # block serves nothing.
+        # uvicorn always binds <state_dir>/klangk.sock; _prepare_nginx
+        # renders the config pointing at that socket.
         _set(
-            listen=sock,
             state_dir=str(tmp_path),
             nginx_port="19999",
             llm_base_url="http://127.0.0.1:11434",
         )
-        # Stub the binary lookup so the test doesn't depend on PATH.
         monkeypatch.setattr(
             "klangk_backend.nginx.find_nginx_bin", lambda: "/fake/nginx"
         )
@@ -538,17 +509,8 @@ class TestPrepareNginx:
         assert conf_path == str(tmp_path / "nginx.conf")
         assert (tmp_path / "nginx.conf").is_file()
         conf = (tmp_path / "nginx.conf").read_text()
-        # The UDS upstream lands in the /llm-proxy location + its auth_request
-        # subrequest target; the minimal template carries no browser surface.
-        assert f"proxy_pass http://unix:{sock}:" in conf
-        assert "location ~ ^/llm-proxy/" in conf
-        assert "location / {" not in conf
-        assert "/api/v1/auth/local" not in conf
-        # _UDS_MODE armed.
-        import klangk_backend.util as util
-
-        assert util._UDS_MODE is True
-        util.set_uds_mode(False)  # reset for other tests
+        uds_path = str(tmp_path / "klangk.sock")
+        assert f"proxy_pass http://unix:{uds_path}:" in conf
 
 
 class TestStopWatchdogWithInjectedState:

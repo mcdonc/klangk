@@ -7,10 +7,10 @@
 # devenv's backend process does this automatically.
 
 # --- Deployment shape ---
-# Socket path → UDS (headless, no browser UI).
-# Change to 127.0.0.1 for TCP (browser UI at http://localhost:$nginx_port).
-listen: /tmp/klangk.sock
-auth_modes: none
+# 127.0.0.1 → TCP, browser UI at http://localhost:$nginx_port.
+# Change to a socket path (e.g. /tmp/klangk.sock) for headless/UDS.
+listen: "127.0.0.1"
+auth_modes: password
 
 # --- Auth / identity ---
 jwt_secret: bark-dev-secret-change-in-production
@@ -18,7 +18,6 @@ default_user: admin@example.com
 default_password: admin
 
 # --- Server / network ---
-port: "8997"
 nginx_port: "8995"
 idle_timeout_seconds: "300"
 
