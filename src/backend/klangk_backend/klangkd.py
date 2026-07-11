@@ -135,8 +135,15 @@ def main(  # pragma: no cover
     # proxy (same-uid socket access). Set here, from the bind decision —
     # not via a config field (#1422 retired KLANGK_UDS_MODE).
     set_uds_mode(True)
+    # Construct the app explicitly and pass the object to uvicorn (not the
+    # "klangk_backend.main:app" string import). This avoids the module-level
+    # ``app = build_app()`` global — there's one ``build_app(settings)`` call,
+    # one registry, wired correctly (#1464).
+    from klangk_backend.main import build_app
+
+    asgi_app = build_app(settings)
     uvicorn.run(
-        "klangk_backend.main:app",
+        asgi_app,
         uds=uds_path,
         # proxy_headers=False: over a UDS request.client is None; our
         # trust helpers handle header trust via _UDS_MODE. Letting uvicorn
