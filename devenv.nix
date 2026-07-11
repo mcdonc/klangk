@@ -541,6 +541,7 @@ in
       # (### Fixed / ### Changed under each ## version).
       siblings_only: true
     MD034: false
+    MD060: false
     MDLINT
   '';
 
