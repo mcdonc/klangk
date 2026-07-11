@@ -9,6 +9,8 @@ Covers:
 - _key_to_field mapping
 """
 
+import os
+
 import pytest
 
 from klangk_backend import settings as settings_mod
@@ -357,3 +359,49 @@ class TestKlangkdLauncher:
 
         with _pytest.raises(typer.BadParameter):
             _resolve_config_path("/nonexistent/path/to/config.yaml")
+
+
+class TestEnvConstructor:
+    """Tests for the KlangkSettings(env=...) constructor (#1426 Slice 1)."""
+
+    def test_reads_from_env_dict(self):
+        # Explicit env dict is the only source — os.environ is ignored.
+        s = KlangkSettings(env={"KLANGK_NGINX_PORT": "4321"})
+        assert s.nginx_port == "4321"
+
+    def test_env_dict_ignores_os_environ(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_NGINX_PORT", "9999")
+        s = KlangkSettings(env={"KLANGK_NGINX_PORT": "1111"})
+        assert s.nginx_port == "1111"
+        assert s.nginx_port != "9999"
+
+    def test_empty_env_dict_uses_defaults(self):
+        s = KlangkSettings(env={})
+        assert s.auth_modes is None
+        assert s.default_user == "admin@example.com"
+        assert s.min_password_length == "8"
+
+    def test_default_reads_os_environ(self, monkeypatch):
+        # KlangkSettings(os.environ) reads from os.environ; monkeypatch.setenv
+        # mutates os.environ, so the constructed settings see the value.
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "oidc")
+        s = KlangkSettings(os.environ)
+        assert s.auth_modes == "oidc"
+
+    def test_env_for_sources_reset_after_construction(self):
+        # The class-var bridge is cleaned up after construction so it doesn't
+        # leak between instances.
+        KlangkSettings(env={"KLANGK_NGINX_PORT": "1234"})
+        assert KlangkSettings._env_for_sources is None
+
+    def test_env_dict_multiple_fields(self):
+        s = KlangkSettings(
+            env={
+                "KLANGK_AUTH_MODES": "password",
+                "KLANGK_JWT_SECRET": "secret123",
+                "KLANGK_DEFAULT_USER": "admin@test.com",
+            }
+        )
+        assert s.auth_modes == "password"
+        assert s.jwt_secret == "secret123"
+        assert s.default_user == "admin@test.com"

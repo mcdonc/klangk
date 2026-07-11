@@ -33,10 +33,12 @@ import subprocess
 
 from pydantic_settings import (
     BaseSettings,
+    EnvSettingsSource,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
+from pydantic_settings.sources.providers.env import parse_env_vars
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +147,36 @@ def resolve_indirection(value: str | None, key: str = "") -> str | None:
 _INSECURE_DEFAULT_SECRET = "change-this-to-a-random-secret"
 
 
+# --- Env-source override for injectable env dicts (#1426 Slice 1) ---
+#
+# pydantic-settings reads os.environ in exactly one spot:
+# EnvSettingsSource._load_env_vars(), which calls parse_env_vars(os.environ,
+# ...).  Subclassing to run a *different* mapping through the *same*
+# parse_env_vars normalizer preserves all base behavior (case handling,
+# env_parse_none_str, prefix logic).  This lets tests pass a plain dict via
+# ``KlangkSettings(env={...})`` instead of monkeypatching os.environ.
+
+
+class _EnvDictSource(EnvSettingsSource):
+    """EnvSettingsSource pointed at an arbitrary env mapping.
+
+    Used instead of the default env source when an explicit ``env`` dict is
+    passed to :class:`KlangkSettings`.
+    """
+
+    def __init__(self, settings_cls: type[BaseSettings], env: dict[str, str]):
+        self._env = env
+        super().__init__(settings_cls)
+
+    def _load_env_vars(self):
+        return parse_env_vars(
+            self._env,
+            self.case_sensitive,
+            self.env_ignore_empty,
+            self.env_parse_none_str,
+        )
+
+
 class KlangkSettings(BaseSettings):
     """Typed configuration for all ``KLANGK_*`` environment variables.
 
@@ -157,7 +189,20 @@ class KlangkSettings(BaseSettings):
     ``extra="ignore"`` preserves the lenient behavior for unknown keys (typo'd
     *keys* are tolerated; only typo'd *values* of known keys newly reject once
     fields gain strict types).
+
+    Constructor (``#1426``): ``KlangkSettings(env, **values)``.  *env* is
+    required — it is the env-var mapping the model reads from.  In production
+    pass ``os.environ``; in tests pass a dict.  ``os.environ`` is never read
+    unless it is explicitly passed as *env*.
     """
+
+    # Bridge for the classmethod boundary: ``settings_customise_sources``
+    # runs inside ``BaseSettings.__init__`` before ``self`` exists, so it
+    # can't read ``self.env``.  ``__init__`` stashes the env dict here before
+    # calling ``super().__init__()``.  This is a transient bridge, not a
+    # permanent global — construction is single-threaded at startup and
+    # one-at-a-time in tests.
+    _env_for_sources: dict[str, str] | None = None
 
     model_config = SettingsConfigDict(
         env_prefix="KLANGK_",
@@ -165,6 +210,24 @@ class KlangkSettings(BaseSettings):
         # Do NOT set env_nested_delimiter — KLANGK_ACCESS_TOKEN_HOURS is a
         # flat field (access_token_hours), not a nested table.
     )
+
+    def __init__(self, env: dict[str, str], **values: object) -> None:
+        """Construct settings from *env* plus field kwargs.
+
+        - ``KlangkSettings(os.environ)`` — production.
+        - ``KlangkSettings(env={...})`` — tests; reads the dict only,
+          ``os.environ`` is never consulted.
+        - ``KlangkSettings(env=..., foo="override")`` — field kwargs are applied
+          but env values take precedence (consistent with the existing source
+          ordering: env_source is earlier in the tuple = higher priority).
+
+        *env* is required — every construction is explicit about where
+        configuration comes from.
+        """
+        type(self)._env_for_sources = env
+        super().__init__(**values)
+        # Clean up the bridge so the dict doesn't leak between instances.
+        type(self)._env_for_sources = None
 
     @classmethod
     def settings_customise_sources(
@@ -177,15 +240,25 @@ class KlangkSettings(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         """Add a YAML config file source when one is configured.
 
-        Precedence (highest first): **env vars** > **config file** > built-in
-        defaults.  pydantic-settings applies sources in tuple order with later
-        entries overriding earlier ones, so env (later) overrides the file
-        (earlier), which overrides the built-in defaults (from the model).
-        When no config file is set (:data:`_config_file_path` is None or
-        "none"), only the default sources are used (env-only behavior from
-        #1394).
+        Precedence (highest first): **init kwargs** > **the env dict passed
+        to the constructor** > **config file** > built-in defaults.
+        pydantic-settings applies sources in tuple order with later entries
+        overriding earlier ones.
+
+        The env source is ALWAYS the dict passed to ``__init__`` via
+        ``env=`` — either ``os.environ`` (production, the default) or a test
+        dict (``KlangkSettings(env={...})``).  ``os.environ`` is never
+        consulted directly by the framework; it is merely the default value
+        of the ``env`` parameter.  In tests, when a dict is passed,
+        ``os.environ`` is never read.
         """
-        sources: list[PydanticBaseSettingsSource] = [env_settings]
+        env = cls._env_for_sources
+        active_env: PydanticBaseSettingsSource = (
+            _EnvDictSource(settings_cls, env)
+            if env is not None
+            else env_settings
+        )
+        sources: list[PydanticBaseSettingsSource] = [active_env]
         path = _config_file_path
         if path is not None and path != "none":
             sources.append(
@@ -390,7 +463,7 @@ def get_settings() -> KlangkSettings:
     global _settings_instance, _settings_env_signature
     sig = _env_signature()
     if _settings_instance is None or sig != _settings_env_signature:
-        _settings_instance = KlangkSettings()
+        _settings_instance = KlangkSettings(os.environ)
         _settings_env_signature = sig
     return _settings_instance
 
