@@ -44,9 +44,7 @@ class TestClientMaxBodySize:
         assert compute_client_max_body_size(s) == "1m"
 
     def test_garbage_falls_back(self):
-        s = KlangkSettings(
-            env={"KLANGK_FILE_UPLOAD_SIZE_MAX": "not-a-number"}
-        )
+        s = KlangkSettings(env={"KLANGK_FILE_UPLOAD_SIZE_MAX": "not-a-number"})
         assert compute_client_max_body_size(s) == "500m"
 
 
@@ -102,9 +100,7 @@ class TestDnsResolvers:
 
     def test_empty_tokens_skipped(self):
         """Trailing commas / empty entries in KLANGK_DNS_SERVERS are skipped."""
-        s = KlangkSettings(
-            env={"KLANGK_DNS_SERVERS": "1.2.3.4,,5.6.7.8,"}
-        )
+        s = KlangkSettings(env={"KLANGK_DNS_SERVERS": "1.2.3.4,,5.6.7.8,"})
         result = detect_dns_resolvers(s)
         assert "1.2.3.4" in result
         assert "5.6.7.8" in result
@@ -171,9 +167,7 @@ class TestRenderConfig:
         assert "deny all;" in block
 
     def test_hosted_disabled(self):
-        s = KlangkSettings(
-            env={"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "0"}
-        )
+        s = KlangkSettings(env={"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "0"})
         conf = render_config(tcp_upstream("127.0.0.1", "8997"), s)
         assert "location ^~ /hosted/ {" in conf
         assert "return 404;" in conf
@@ -436,31 +430,36 @@ class TestKlangkdHelpers:
 
 
 class TestWatchdogGate:
-    """start_nginx_watchdog respects the test kill switch; otherwise prepares+spawns."""
+    """NginxWatchdog.start() respects the test kill switch; otherwise prepares+spawns."""
 
     @pytest.mark.asyncio
     async def test_start_noop_when_disabled(self, monkeypatch):
         """No-op when the test-only _KLANGK_DISABLE_NGINX is set."""
-        import klangk_backend.main as main
+        from klangk_backend.main import NginxWatchdog
 
         monkeypatch.setenv("_KLANGK_DISABLE_NGINX", "1")
-        await main.start_nginx_watchdog()
-        assert main._nginx_task is None  # killed by the switch
+        wd = NginxWatchdog(KlangkSettings(env={}))
+        await wd.start()
+        assert wd._task is None
 
     @pytest.mark.asyncio
     async def test_start_runs_prepare_when_enabled(
         self, monkeypatch, tmp_path
     ):
-        """When not disabled, start_nginx_watchdog runs _prepare_nginx then spawns
-        (a stubbed) watchdog. The real nginx spawn is e2e-covered; here
-        _nginx_watchdog is stubbed so the orchestration (prepare, set
-        _nginx_stopping=False, create_task) is unit-tested."""
-        import klangk_backend.main as main
+        """When not disabled, start() runs _prepare then spawns (a stubbed)
+        watchdog. The real nginx spawn is e2e-covered; here _watch is stubbed
+        so the orchestration (prepare, set _stopping=False, create_task) is
+        unit-tested."""
+        from klangk_backend.main import NginxWatchdog
 
         sock = str(tmp_path / "klangk.sock")
-        monkeypatch.setenv("KLANGK_STATE_DIR", str(tmp_path))
-        monkeypatch.setenv("KLANGK_LISTEN", sock)
-        monkeypatch.setenv("KLANGK_NGINX_PORT", "19999")
+        s = KlangkSettings(
+            env={
+                "KLANGK_STATE_DIR": str(tmp_path),
+                "KLANGK_LISTEN": sock,
+                "KLANGK_NGINX_PORT": "19999",
+            }
+        )
         monkeypatch.delenv("_KLANGK_DISABLE_NGINX", raising=False)
         monkeypatch.setattr(
             "klangk_backend.nginx.find_nginx_bin", lambda *a: "/fake/nginx"
@@ -468,42 +467,44 @@ class TestWatchdogGate:
 
         spawned = {}
 
-        async def _fake_watchdog(bin_path, conf_path):
+        async def _fake_watch(self_wd, bin_path, conf_path):
             spawned["bin"] = bin_path
             spawned["conf"] = conf_path
 
-        monkeypatch.setattr(main, "_nginx_watchdog", _fake_watchdog)
-        await main.start_nginx_watchdog()
+        monkeypatch.setattr(NginxWatchdog, "_watch", _fake_watch)
+        wd = NginxWatchdog(s)
+        await wd.start()
         try:
-            assert main._nginx_task is not None
-            assert main._nginx_stopping is False
-            # prepare ran: config written + paths passed to the watchdog.
+            assert wd._task is not None
+            assert wd._stopping is False
             assert (tmp_path / "nginx.conf").is_file()
-            await main._nginx_task  # let the stub complete
+            await wd._task
             assert spawned["bin"] == "/fake/nginx"
+            assert spawned["conf"] == str(tmp_path / "nginx.conf")
         finally:
             import klangk_backend.util as util
 
             util.set_uds_mode(False)
-            main._nginx_task = None
-            main._nginx_proc = None
 
 
 class TestPrepareNginx:
-    """_prepare_nginx renders nginx.conf with UDS upstream (#1400)."""
+    """NginxWatchdog._prepare() renders nginx.conf with UDS upstream (#1400)."""
 
     def test_renders_config_and_returns_paths(self, monkeypatch, tmp_path):
-        import klangk_backend.main as main
+        from klangk_backend.main import NginxWatchdog
 
-        # uvicorn always binds <state_dir>/klangk.sock; _prepare_nginx
-        # renders the config pointing at that socket.
-        monkeypatch.setenv("KLANGK_STATE_DIR", str(tmp_path))
-        monkeypatch.setenv("KLANGK_NGINX_PORT", "19999")
-        monkeypatch.setenv("KLANGK_LLM_BASE_URL", "http://127.0.0.1:11434")
+        s = KlangkSettings(
+            env={
+                "KLANGK_STATE_DIR": str(tmp_path),
+                "KLANGK_NGINX_PORT": "19999",
+                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
+            }
+        )
         monkeypatch.setattr(
             "klangk_backend.nginx.find_nginx_bin", lambda *a: "/fake/nginx"
         )
-        bin_path, conf_path = main._prepare_nginx()
+        wd = NginxWatchdog(s)
+        bin_path, conf_path = wd._prepare()
         assert bin_path == "/fake/nginx"
         assert conf_path == str(tmp_path / "nginx.conf")
         assert (tmp_path / "nginx.conf").is_file()
@@ -512,25 +513,24 @@ class TestPrepareNginx:
         assert f"proxy_pass http://unix:{uds_path}:" in conf
 
 
-class TestStopWatchdogWithInjectedState:
-    """stop_nginx_watchdog teardown when a proc/task were injected."""
+class TestStopWatchdog:
+    """NginxWatchdog.stop() teardown when a proc/task were injected."""
 
     @pytest.mark.asyncio
     async def test_stops_no_proc_no_task(self):
         """Nothing spawned: just clears state (the no-op path)."""
-        import klangk_backend.main as main
+        from klangk_backend.main import NginxWatchdog
 
-        main._nginx_proc = None
-        main._nginx_task = None
-        await main.stop_nginx_watchdog()
-        assert main._nginx_proc is None
-        assert main._nginx_task is None
-        assert main._nginx_stopping is True
+        wd = NginxWatchdog(KlangkSettings(env={}))
+        await wd.stop()
+        assert wd._proc is None
+        assert wd._task is None
+        assert wd._stopping is True
 
     @pytest.mark.asyncio
     async def test_stops_terminates_running_proc(self):
         """A still-running nginx proc is terminated, then awaited."""
-        import klangk_backend.main as main
+        from klangk_backend.main import NginxWatchdog
 
         terminated = []
 
@@ -546,18 +546,16 @@ class TestStopWatchdogWithInjectedState:
             async def wait(self):
                 return 0
 
-        main._nginx_proc = FakeProc()
-        main._nginx_task = None
-        await main.stop_nginx_watchdog()
+        wd = NginxWatchdog(KlangkSettings(env={}))
+        wd._proc = FakeProc()
+        await wd.stop()
         assert terminated == [True]
-        assert main._nginx_proc is None
+        assert wd._proc is None
 
     @pytest.mark.asyncio
     async def test_stops_cancels_task(self):
         """A watchdog task is cancelled and awaited. Covers the task branch."""
-        import klangk_backend.main as main
-
-        main._nginx_proc = None  # no proc branch
+        from klangk_backend.main import NginxWatchdog
 
         async def _long_running():
             try:
@@ -565,14 +563,16 @@ class TestStopWatchdogWithInjectedState:
             except asyncio.CancelledError:
                 raise
 
-        main._nginx_task = asyncio.create_task(_long_running())
-        await main.stop_nginx_watchdog()
-        assert main._nginx_task is None
+        wd = NginxWatchdog(KlangkSettings(env={}))
+        wd._task = asyncio.create_task(_long_running())
+        await wd.stop()
+        assert wd._task is None
 
     @pytest.mark.asyncio
     async def test_stops_kills_on_timeout(self, monkeypatch):
         """If the proc doesn't exit within the timeout, kill() follows."""
         import klangk_backend.main as main
+        from klangk_backend.main import NginxWatchdog
 
         actions = []
 
@@ -594,8 +594,8 @@ class TestStopWatchdogWithInjectedState:
             raise asyncio.TimeoutError()
 
         monkeypatch.setattr(main.asyncio, "wait_for", _fake_wait_for)
-        main._nginx_proc = HungProc()
-        main._nginx_task = None
-        await main.stop_nginx_watchdog()
+        wd = NginxWatchdog(KlangkSettings(env={}))
+        wd._proc = HungProc()
+        await wd.stop()
         assert actions == ["terminate", "kill"]
-        assert main._nginx_proc is None
+        assert wd._proc is None

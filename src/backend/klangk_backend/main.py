@@ -386,7 +386,7 @@ async def process_shutdown() -> None:
 
 
 # ---------------------------------------------------------------------------
-# nginx child-process ownership (#1396)
+# nginx child-process ownership (#1396, #1463)
 # ---------------------------------------------------------------------------
 # When the server binds a UDS (only klangkd does this), Python owns the nginx
 # child: it renders nginx.conf, spawns nginx pointing at the UDS, and supervises
@@ -395,112 +395,114 @@ async def process_shutdown() -> None:
 # supervisor library — bespoke, matching uvicorn's own precedent. devenv /
 # supervisord remain only the outer restart layer for uvicorn (klangkd).
 
-_nginx_proc: asyncio.subprocess.Process | None = None
-_nginx_task: asyncio.Task | None = None
-_nginx_stopping = False
 
+class NginxWatchdog:
+    """Owns the nginx child process and its supervision task (#1463).
 
-async def _nginx_watchdog(
-    bin_path: str, conf_path: str
-) -> None:  # pragma: no cover
-    """Spawn nginx and respawn it on unexpected exit (with backoff).
-
-    Exits cleanly when ``_nginx_stopping`` is set (a cooperative shutdown).
-    nginx runs in klangkd's process group (no ``start_new_session``) so
-    it is killed automatically when klangkd is terminated (#1439).
+    Constructed with ``settings`` (needed to render nginx.conf via the
+    renderer, which takes settings as of Slice 2a). Stored on
+    ``app.state.nginx_watchdog``; the lifespan calls ``.start()`` /
+    ``.stop()``.
     """
-    global _nginx_proc
-    backoff = 1.0
-    while not _nginx_stopping:
-        _nginx_proc = await asyncio.create_subprocess_exec(
-            bin_path,
-            "-e",
-            "stderr",
-            "-c",
-            conf_path,
-            stdout=None,
-            stderr=None,
+
+    def __init__(self, settings: KlangkSettings) -> None:
+        self._settings = settings
+        self._proc: asyncio.subprocess.Process | None = None
+        self._task: asyncio.Task | None = None
+        self._stopping = False
+
+    async def _watch(
+        self, bin_path: str, conf_path: str
+    ) -> None:  # pragma: no cover
+        """Spawn nginx and respawn it on unexpected exit (with backoff).
+
+        Exits cleanly when ``_stopping`` is set (a cooperative shutdown).
+        nginx runs in klangkd's process group (no ``start_new_session``) so
+        it is killed automatically when klangkd is terminated (#1439).
+        """
+        backoff = 1.0
+        while not self._stopping:
+            self._proc = await asyncio.create_subprocess_exec(
+                bin_path,
+                "-e",
+                "stderr",
+                "-c",
+                conf_path,
+                stdout=None,
+                stderr=None,
+            )
+            logger.info(
+                "nginx started (pid %d) with %s", self._proc.pid, conf_path
+            )
+            rc = await self._proc.wait()
+            self._proc = None
+            if self._stopping:
+                return
+            logger.warning(
+                "nginx exited (rc=%d); restarting in %.1fs", rc, backoff
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30.0)
+
+    def _prepare(self) -> tuple[str, str]:
+        """Render nginx.conf and return ``(bin_path, conf_path)``.
+
+        uvicorn always binds a UDS (``<state_dir>/klangk.sock``); nginx proxies
+        to that socket regardless of whether ``KLANGK_LISTEN`` is a socket path
+        or a TCP address. ``KLANGK_LISTEN`` only controls the *nginx template*
+        (minimal/headless vs full/browser) and the nginx listen directive, not
+        the upstream.
+        """
+        state_dir = (
+            resolve_indirection(self._settings.state_dir)
+            or "/tmp/klangk-state"
         )
-        logger.info(
-            "nginx started (pid %d) with %s", _nginx_proc.pid, conf_path
+        uds_path = os.path.join(state_dir, "klangk.sock")
+        conf_path = os.path.join(state_dir, "nginx.conf")
+        bin_path = nginx_mod.find_nginx_bin(self._settings)
+        nginx_mod.write_config(
+            nginx_mod.uds_upstream(uds_path), conf_path, self._settings
         )
-        rc = await _nginx_proc.wait()
-        _nginx_proc = None
-        if _nginx_stopping:
+        return bin_path, conf_path
+
+    async def start(self) -> None:
+        """Render nginx.conf and start the nginx watchdog.
+
+        Gated only by ``_KLANGK_DISABLE_NGINX`` — an **internal,
+        non-user-facing** env var the test suite sets to suppress nginx spawn
+        (tests boot the app via the lifespan and don't want a real nginx
+        process). Not a documented config knob; no operator-facing name.
+        """
+        if os.environ.get("_KLANGK_DISABLE_NGINX"):
             return
-        logger.warning(
-            "nginx exited (rc=%d); restarting in %.1fs", rc, backoff
-        )
-        await asyncio.sleep(backoff)
-        backoff = min(backoff * 2, 30.0)
+        bin_path, conf_path = self._prepare()
+        self._stopping = False
+        # The real watchdog (nginx spawn + respawn loop) is covered by the
+        # e2e ACL suite; here create_task just schedules the coroutine.
+        self._task = asyncio.create_task(self._watch(bin_path, conf_path))
 
-
-def _prepare_nginx() -> tuple[str, str]:
-    """Render nginx.conf and return ``(bin_path, conf_path)``.
-
-    uvicorn always binds a UDS (``<state_dir>/klangk.sock``); nginx proxies
-    to that socket regardless of whether ``KLANGK_LISTEN`` is a socket path
-    or a TCP address. ``KLANGK_LISTEN`` only controls the *nginx template*
-    (minimal/headless vs full/browser) and the nginx listen directive, not
-    the upstream.
-    """
-    settings = get_settings()
-    state_dir = (
-        resolve_indirection(settings.state_dir) or "/tmp/klangk-state"
-    )
-    uds_path = os.path.join(state_dir, "klangk.sock")
-    conf_path = os.path.join(state_dir, "nginx.conf")
-    bin_path = nginx_mod.find_nginx_bin(settings)
-    nginx_mod.write_config(nginx_mod.uds_upstream(uds_path), conf_path, settings)
-    return bin_path, conf_path
-
-
-async def start_nginx_watchdog() -> None:
-    """Render nginx.conf and start the nginx watchdog.
-
-    nginx is always klangkd's child (rendered + spawned + supervised here),
-    regardless of transport — the bind only changes what nginx proxies to
-    (a UDS upstream vs a TCP upstream), not whether nginx exists. No external
-    supervisor manages klangk's nginx.
-
-    Gated only by ``_KLANGK_DISABLE_NGINX`` — an **internal, non-user-facing**
-    env var the test suite sets to suppress nginx spawn (tests boot the app
-    via the lifespan and don't want a real nginx process). Not a documented
-    config knob; no operator-facing name.
-    """
-    global _nginx_task, _nginx_stopping
-    if os.environ.get("_KLANGK_DISABLE_NGINX"):
-        return
-    bin_path, conf_path = _prepare_nginx()
-    _nginx_stopping = False
-    # The real watchdog (nginx spawn + respawn loop) is covered by the e2e ACL
-    # suite; here create_task just schedules the coroutine.
-    _nginx_task = asyncio.create_task(_nginx_watchdog(bin_path, conf_path))
-
-
-async def stop_nginx_watchdog() -> None:
-    """Stop nginx and cancel the watchdog (cooperative: waits for exit)."""
-    global _nginx_proc, _nginx_task, _nginx_stopping
-    _nginx_stopping = True
-    proc = _nginx_proc
-    # The proc-kill branch is only reached when nginx was spawned (UDS mode);
-    # covered via TestStopWatchdogWithInjectedState + the e2e ACL teardown.
-    if proc is not None and proc.returncode is None:
-        proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5)
-        except asyncio.TimeoutError:
-            proc.kill()
-    _nginx_proc = None
-    task = _nginx_task
-    # Same: only when a watchdog task was created (UDS mode).
-    if task is not None:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-    _nginx_task = None
+    async def stop(self) -> None:
+        """Stop nginx and cancel the watchdog (cooperative: waits for exit)."""
+        self._stopping = True
+        proc = self._proc
+        # The proc-kill branch is only reached when nginx was spawned (UDS
+        # mode); covered via TestStopWatchdog + the e2e ACL teardown.
+        if proc is not None and proc.returncode is None:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                proc.kill()
+        self._proc = None
+        task = self._task
+        # Same: only when a watchdog task was created (UDS mode).
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._task = None
 
 
 # Serializes concurrent SIGHUP-triggered restarts so a second signal
@@ -583,7 +585,7 @@ async def lifespan(app: FastAPI):
     await startup()
     # Start nginx (only when bound to a UDS — klangkd; no-op for TCP tests).
     # Rendered + owned by Python (#1396); replaces scripts/nginx.sh.
-    await start_nginx_watchdog()
+    await app.state.nginx_watchdog.start()
     logger.info("Klangk backend started")
 
     # uvicorn only handles SIGINT/SIGTERM, so SIGHUP is ours to claim:
@@ -596,10 +598,11 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
-        await stop_nginx_watchdog()
+        await app.state.nginx_watchdog.stop()
         await runtime_shutdown()
         await process_shutdown()
         logger.info("Klangk backend stopped")
+
 
 def setup_logfire(app: FastAPI) -> bool:
     """Enable Logfire instrumentation if LOGFIRE_TOKEN is set."""
@@ -724,6 +727,9 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
     app.state.container_registry = container.ContainerRegistry(settings)
+    # Slice 2b (#1463): nginx watchdog is an owned instance with start/stop
+    # lifecycle methods called by the lifespan.
+    app.state.nginx_watchdog = NginxWatchdog(settings)
 
     app.add_middleware(
         CORSMiddleware,
