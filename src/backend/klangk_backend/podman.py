@@ -20,14 +20,14 @@ import tempfile
 import time
 from collections.abc import AsyncGenerator
 
-from .settings import KlangkSettings, get_settings, resolve_indirection
+from .settings import get_settings, resolve_indirection
 from .util import BoundedOutputQueue
 
 logger = logging.getLogger(__name__)
 
 
-def _podman_bin(settings: KlangkSettings | None = None) -> str:
-    return resolve_indirection((settings or get_settings()).podman_bin) or "podman"
+def _podman_bin() -> str:
+    return resolve_indirection(get_settings().podman_bin) or "podman"
 
 
 def subprocess_env() -> dict[str, str]:
