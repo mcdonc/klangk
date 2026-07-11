@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+from typing import ClassVar, Mapping
 
 from pydantic_settings import (
     BaseSettings,
@@ -164,7 +165,7 @@ class _EnvDictSource(EnvSettingsSource):
     passed to :class:`KlangkSettings`.
     """
 
-    def __init__(self, settings_cls: type[BaseSettings], env: dict[str, str]):
+    def __init__(self, settings_cls: type[BaseSettings], env: Mapping[str, str]):
         self._env = env
         super().__init__(settings_cls)
 
@@ -190,21 +191,21 @@ class KlangkSettings(BaseSettings):
     *keys* are tolerated; only typo'd *values* of known keys newly reject once
     fields gain strict types).
 
-    Constructor (``#1426``): ``KlangkSettings(env, **values)``.  *env* is
-    required — it is the env-var mapping the model reads from.  In production
-    pass ``os.environ``; in tests pass a dict.  ``os.environ`` is never read
-    unless it is explicitly passed as *env*.
+    Constructor (``#1426``): ``KlangkSettings(env, config_file=None)``.
+    *env* is required — it is the env-var mapping the model reads from.  In
+    production pass ``os.environ``; in tests pass a dict.  ``os.environ`` is
+    never read unless it is explicitly passed as *env*.
     """
 
-    # Bridge for the classmethod boundary: ``settings_customise_sources``
+    # Bridges for the classmethod boundary: ``settings_customise_sources``
     # runs inside ``BaseSettings.__init__`` before ``self`` exists, so it
-    # can't read ``self.env``.  ``__init__`` stashes the env dict here before
-    # calling ``super().__init__()``.  This is a transient bridge, not a
-    # permanent global — construction is single-threaded at startup and
-    # one-at-a-time in tests.
-    _env_for_sources: dict[str, str] | None = None
-    # Same bridge pattern for config_file (see __init__).
-    _config_file_for_sources: str | None = None
+    # can't read ``self.env``.  ``__init__`` stashes the env mapping and
+    # config-file path here before calling ``super().__init__()``.  These are
+    # ``ClassVar``s (NOT pydantic private attrs) so they stay pure class
+    # state — not per-instance slots, not model fields.  Construction is
+    # single-threaded at startup and one-at-a-time in tests.
+    _env_for_sources: ClassVar[Mapping[str, str] | None] = None
+    _config_file_for_sources: ClassVar[str | None] = None
 
     model_config = SettingsConfigDict(
         env_prefix="KLANGK_",
@@ -214,7 +215,7 @@ class KlangkSettings(BaseSettings):
     )
 
     def __init__(
-        self, env: dict[str, str], config_file: str | None = None, **values: object
+        self, env: Mapping[str, str], config_file: str | None = None
     ) -> None:
         """Construct settings from *env* and an optional config file.
 
@@ -231,10 +232,13 @@ class KlangkSettings(BaseSettings):
         """
         type(self)._env_for_sources = env
         type(self)._config_file_for_sources = config_file
-        super().__init__(**values)
-        # Clean up the bridges so dicts don't leak between instances.
-        type(self)._env_for_sources = None
-        type(self)._config_file_for_sources = None
+        try:
+            super().__init__()
+        finally:
+            # Clean up the bridges (exception-safe) so dicts don't leak onto
+            # the class if ``super().__init__()`` raises.
+            type(self)._env_for_sources = None
+            type(self)._config_file_for_sources = None
 
     @classmethod
     def settings_customise_sources(
@@ -473,7 +477,7 @@ def get_settings() -> KlangkSettings:
     global _settings_instance, _settings_env_signature
     sig = _env_signature()
     if _settings_instance is None or sig != _settings_env_signature:
-        _settings_instance = KlangkSettings(os.environ)
+        _settings_instance = KlangkSettings(os.environ, config_file=_config_file_path)
         _settings_env_signature = sig
     return _settings_instance
 

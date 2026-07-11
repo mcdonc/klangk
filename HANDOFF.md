@@ -2,11 +2,7 @@
 
 ## What this is
 
-This is a large, multi-slice refactor to eliminate module-level mutable globals from `klangk_backend`. The tracking issue is **#1426** (read its full body for the complete design). The worktree is at:
-
-```
-/home/chrism/projects/klangk/.worktrees/refactor-1426-composition-root
-```
+This is a large, multi-slice refactor to eliminate module-level mutable globals from `klangk_backend`. The tracking issue is **#1426** (read its full body for the complete design).
 
 Branch: `refactor/1426-composition-root`, based on `origin/main`.
 
