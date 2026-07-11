@@ -27,6 +27,10 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **CLI transport resolver:** `klangkc --server` now accepts a Unix socket
+  path (e.g. `/tmp/klangk.sock`) in addition to `http(s)://` URLs. All HTTP
+  and WebSocket connections route through a single transport resolver that
+  picks UDS or TCP based on the server spec (#1399).
 - **Headless single-user profile: nginx minimal template on a socket bind**
   (#1398, chunk 5 of #1392). When `KLANGK_LISTEN` is a UNIX socket path,
   the nginx renderer now emits a minimal (headless) template — only the

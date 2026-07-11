@@ -53,6 +53,7 @@ from .client import (
 )
 from .config import CLIConfig, CLIState, seed_config
 from .mount import validate_mount_spec
+from .transport import ws_connect
 from .sandbox import (
     build_all_mounts,
     build_copy_pairs,
@@ -902,15 +903,6 @@ def edit(
     typer.echo(f"Updated workspace {ws.name}")
 
 
-def build_ws_url(server_url: str) -> str:
-    """Convert an HTTP(S) server URL to a WebSocket URL."""
-    if server_url.startswith("http://"):
-        return server_url.replace("http://", "ws://") + "/ws"
-    elif server_url.startswith("https://"):
-        return server_url.replace("https://", "wss://") + "/ws"
-    return f"ws://{server_url}/ws"
-
-
 def resolve_forward_agent(
     forward_agent: bool | None,
     config_default: bool = False,
@@ -990,10 +982,6 @@ def shell(
                 raise typer.Exit(code=1)  # pragma: no cover
             ws = workspaces[idx]
 
-    # Build WebSocket URL
-    base_url = server_url().rstrip("/")
-    ws_url = build_ws_url(base_url)
-
     _err.print(f"Connecting to [bold]{ws.name}[/bold]...")
     _err.print("[dim]Escape: Enter, then ~.[/dim]")
     forward_agent = resolve_forward_agent(
@@ -1003,7 +991,7 @@ def shell(
     try:
         asyncio.run(
             ws_shell(
-                ws_url,
+                server_url(),
                 token,
                 ws.id,
                 window=terminal,
@@ -1072,7 +1060,7 @@ def _dispatch_monitor_event(msg: dict, command: list[str]) -> None:
 
 
 async def monitor_connection(
-    ws_url: str,
+    server_spec: str,
     token: str,
     max_size: int,
     command: list[str],
@@ -1087,9 +1075,7 @@ async def monitor_connection(
     """
     type_filter = {t for t in types}
     ws_filter = {w for w in workspaces}
-    async with websockets.connect(
-        f"{ws_url}?token={token}", max_size=max_size
-    ) as conn:
+    async with ws_connect(server_spec, token=token, max_size=max_size) as conn:
         async for raw in conn:
             try:
                 msg = json.loads(raw)
@@ -1133,8 +1119,7 @@ async def refresh_token_threaded(server_url: str, token: str) -> str | None:
 
 
 async def monitor_run(
-    server_url: str,
-    ws_url: str,
+    server_spec: str,
     token: str,
     max_size: int,
     command: list[str],
@@ -1160,7 +1145,12 @@ async def monitor_run(
         auth_close = False
         try:
             await monitor_connection(
-                ws_url, current_token, max_size, command, types, workspaces
+                server_spec,
+                current_token,
+                max_size,
+                command,
+                types,
+                workspaces,
             )
             reason = "connection closed"
         except websockets.ConnectionClosed as exc:
@@ -1178,7 +1168,7 @@ async def monitor_run(
         # refresh lets the next attempt authenticate cleanly; a failed
         # one still reconnects (the server/token may recover).
         if auth_close:
-            new = await refresh_token_threaded(server_url, current_token)
+            new = await refresh_token_threaded(server_spec, current_token)
             if new:
                 current_token = new
                 _err.print("[green]Token refreshed.[/green]")
@@ -1286,9 +1276,8 @@ def monitor(
       klangkc monitor --workspace <id> --type service_health
     """
     require_auth()
-    base_url = server_url().rstrip("/")
-    ws_url = build_ws_url(base_url)
-    token = _state().get_token(base_url)
+    surl = server_url()
+    token = _state().get_token(surl)
     if not token:  # pragma: no cover  # require_auth already guards this
         _err.print("[red]Not logged in. Run `klangkc login` first.[/red]")
         raise typer.Exit(code=1)
@@ -1296,8 +1285,7 @@ def monitor(
     try:
         asyncio.run(
             monitor_run(
-                base_url,
-                ws_url,
+                surl,
                 token,
                 max_size=ws_max_size(),
                 command=list(command) if command else [],
@@ -1319,7 +1307,7 @@ def monitor(
 def _resolve_workspace_and_url(
     workspace_name: str,
 ) -> tuple:
-    """Resolve a workspace by name and return (ws, ws_url, token)."""
+    """Resolve a workspace by name and return (ws, server_spec, token)."""
     require_auth()
     client = _client()
     try:
@@ -1327,9 +1315,7 @@ def _resolve_workspace_and_url(
     except WorkspaceNotFoundError:
         _err.print(f"[red]No workspace named[/red] '{workspace_name}'")
         raise typer.Exit(code=1) from None
-    base_url = server_url().rstrip("/")
-    ws_url = build_ws_url(base_url)
-    return ws, ws_url, _state().get_token(server_url())
+    return ws, server_url(), _state().get_token(server_url())
 
 
 async def sandbox_setup(ws, config, sandbox_root, handle):
@@ -1434,7 +1420,7 @@ def sandbox(
 
     client = _client()
     handle = client.get_handle()
-    ws_url = build_ws_url(server_url().rstrip("/"))
+    surl = server_url()
     created = False
 
     # Check if workspace already exists.
@@ -1474,7 +1460,7 @@ def sandbox(
         try:
             asyncio.run(
                 sandbox_setup_only(
-                    ws_url,
+                    surl,
                     token,
                     ws.id,
                     config,
@@ -1503,7 +1489,7 @@ def sandbox(
 
 
 async def sandbox_setup_only(
-    ws_url,
+    server_spec,
     token,
     workspace_id,
     config,
@@ -1523,10 +1509,7 @@ async def sandbox_setup_only(
     is sent, so the server reads ``complete`` from the DB when it
     decides whether to create the service-cmd window.
     """
-    kwargs = {}
-    if max_size is not None:
-        kwargs["max_size"] = max_size
-    async with websockets.connect(f"{ws_url}?token={token}", **kwargs) as ws:
+    async with ws_connect(server_spec, token=token, max_size=max_size) as ws:
         await wait_container_ready(ws, workspace_id)
         # Re-enter 'pending' before running setup (#1033). On first
         # create the workspace is already 'pending', but on --force
@@ -1599,15 +1582,13 @@ def terminals(
     workspace: str = typer.Argument(help="Workspace name"),
 ) -> None:
     """List all terminals (own + shared) in a workspace."""
-    ws, ws_url, token = _resolve_workspace_and_url(workspace)
+    ws, sspec, token = _resolve_workspace_and_url(workspace)
     max_size = ws_max_size()
 
     # We need to start a terminal to get the window list, then also
     # get shared terminals. Use _ws_command to get each.
     async def _list() -> None:
-        async with websockets.connect(
-            f"{ws_url}?token={token}", max_size=max_size
-        ) as conn:
+        async with ws_connect(sspec, token=token, max_size=max_size) as conn:
             await wait_container_ready(conn, ws.id)
 
             await conn.send(json.dumps({"cmd": "ui_ready"}))
@@ -1733,13 +1714,11 @@ def share_terminal(
     terminal: str = typer.Argument(help="Terminal name to share"),
 ) -> None:
     """Share a terminal with other workspace members."""
-    ws, ws_url, token = _resolve_workspace_and_url(workspace)
+    ws, sspec, token = _resolve_workspace_and_url(workspace)
     max_size = ws_max_size()
 
     async def _share() -> None:
-        async with websockets.connect(
-            f"{ws_url}?token={token}", max_size=max_size
-        ) as conn:
+        async with ws_connect(sspec, token=token, max_size=max_size) as conn:
             await wait_container_ready(conn, ws.id)
 
             await conn.send(json.dumps({"cmd": "ui_ready"}))
@@ -1814,13 +1793,11 @@ def unshare_terminal(
     terminal: str = typer.Argument(help="Terminal name to unshare"),
 ) -> None:
     """Stop sharing a terminal."""
-    ws, ws_url, token = _resolve_workspace_and_url(workspace)
+    ws, sspec, token = _resolve_workspace_and_url(workspace)
     max_size = ws_max_size()
 
     async def _unshare() -> None:
-        async with websockets.connect(
-            f"{ws_url}?token={token}", max_size=max_size
-        ) as conn:
+        async with ws_connect(sspec, token=token, max_size=max_size) as conn:
             await wait_container_ready(conn, ws.id)
 
             await conn.send(json.dumps({"cmd": "ui_ready"}))
@@ -1945,13 +1922,12 @@ def exec_cmd(
         _err.print(f"[red]No workspace named[/red] '{workspace}'")
         raise typer.Exit(code=1) from None
 
-    base_url = server_url().rstrip("/")
-    ws_url = build_ws_url(base_url)
-    token = _state().get_token(server_url())
+    surl = server_url()
+    token = _state().get_token(surl)
 
     exit_code = asyncio.run(
         ws_exec(
-            ws_url,
+            surl,
             token,
             ws.id,
             command,

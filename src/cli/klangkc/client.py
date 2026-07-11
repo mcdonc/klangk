@@ -27,6 +27,7 @@ import websockets
 from .auth import fetch_config as _fetch_config
 from .auth import local_login as _local_login
 from .auth import refresh_token as _refresh_token
+from .transport import http_request, http_stream, ws_connect
 
 
 def _server_mode_is_none(server_url: str) -> bool:
@@ -114,8 +115,9 @@ async def wait_container_ready(
 
 
 def request_with_retry(
+    server_spec: str,
     method: str,
-    url: str,
+    path: str,
     *,
     timeout: float = 60.0,
     **kwargs,
@@ -128,7 +130,9 @@ def request_with_retry(
     backoff = _RETRY_BACKOFF
     for attempt in range(_RETRY_ATTEMPTS):
         try:
-            resp = httpx.request(method, url, timeout=timeout, **kwargs)
+            resp = http_request(
+                server_spec, method, path, timeout=timeout, **kwargs
+            )
             if (
                 resp.status_code in (502, 503, 504)
                 and attempt < _RETRY_ATTEMPTS - 1
@@ -136,7 +140,7 @@ def request_with_retry(
                 logger.debug(
                     "HTTP %s %s returned %d, retrying in %.1fs",
                     method,
-                    url,
+                    path,
                     resp.status_code,
                     backoff,
                 )
@@ -149,7 +153,7 @@ def request_with_retry(
                 logger.debug(
                     "HTTP %s %s failed (%s), retrying in %.1fs",
                     method,
-                    url,
+                    path,
                     exc,
                     backoff,
                 )
@@ -257,8 +261,9 @@ class KlangkClient:
 
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         resp = request_with_retry(
+            self.server_url,
             method,
-            f"{self.server_url}{path}",
+            path,
             headers=self._headers(),
             **kwargs,
         )
@@ -266,8 +271,9 @@ class KlangkClient:
             self._refreshed = True
             if self._try_refresh():
                 resp = request_with_retry(
+                    self.server_url,
                     method,
-                    f"{self.server_url}{path}",
+                    path,
                     headers=self._headers(),
                     **kwargs,
                 )
@@ -543,9 +549,10 @@ class KlangkClient:
         on_progress(bytes_so_far, total_bytes) is called for each chunk.
         total_bytes is None if the server didn't send Content-Length.
         """
-        with httpx.stream(
+        with http_stream(
+            self.server_url,
             "GET",
-            f"{self.server_url}/api/v1/workspaces/{workspace_id}/export",
+            f"/api/v1/workspaces/{workspace_id}/export",
             headers=self._headers(),
             timeout=300.0,
         ) as resp:
@@ -607,8 +614,10 @@ class KlangkClient:
 
         with open(archive, "rb") as f:
             pf = _ProgressFile(f) if on_progress else f
-            resp = httpx.post(
-                f"{self.server_url}/api/v1/workspaces/import",
+            resp = http_request(
+                self.server_url,
+                "POST",
+                "/api/v1/workspaces/import",
                 headers=self._headers(),
                 files={"file": (archive.name, pf, "application/gzip")},
                 params=params,
@@ -745,7 +754,7 @@ def reset_terminal() -> None:
 
 
 async def ws_shell(
-    ws_url: str,
+    server_spec: str,
     token: str,
     workspace_id: str,
     raw_mode: bool = True,
@@ -764,9 +773,7 @@ async def ws_shell(
     workspace is ready but before the terminal starts.  Used by
     ``sandbox`` to run copy/setup on the same connection.
     """
-    async with websockets.connect(
-        f"{ws_url}?token={token}", max_size=max_size
-    ) as ws:
+    async with ws_connect(server_spec, token=token, max_size=max_size) as ws:
         # 1. Connect to workspace
         await wait_container_ready(ws, workspace_id)
 
@@ -991,19 +998,15 @@ async def ws_shell(
         if raw_mode:
             old_settings = _raw_mode_enter()
             tty.setraw(sys.stdin)
-        # Derive the HTTP base URL from the WebSocket URL for token refresh.
-        _http_url = ws_url.replace("wss://", "https://").replace(
-            "ws://", "http://"
-        )
-        if _http_url.endswith("/ws"):
-            _http_url = _http_url[:-3]
+        # Use the original server spec for token refresh (works for both
+        # TCP URLs and UDS socket paths).
         try:
             await run_shell(
                 ws,
                 cols,
                 rows,
                 ssh_agent_sock=local_agent_sock if ssh_agent_active else None,
-                server_url=_http_url,
+                server_url=server_spec,
                 token=token,
             )
         finally:
@@ -1501,7 +1504,7 @@ async def exec_on_ws(
 
 
 async def ws_exec(
-    ws_url: str,
+    server_spec: str,
     token: str,
     workspace_id: str,
     command: list[str],
@@ -1515,9 +1518,7 @@ async def ws_exec(
     terminal -- #1041); ``klangkc exec --raw`` and the rsync transport
     pass False for raw argv.
     """
-    async with websockets.connect(
-        f"{ws_url}?token={token}", max_size=max_size
-    ) as ws:
+    async with ws_connect(server_spec, token=token, max_size=max_size) as ws:
         await wait_container_ready(ws, workspace_id)
         return await exec_on_ws(
             ws,
@@ -1529,7 +1530,7 @@ async def ws_exec(
 
 
 async def ws_exec_piped(
-    ws_url: str,
+    server_spec: str,
     token: str,
     workspace_id: str,
     command: list[str],
@@ -1541,9 +1542,7 @@ async def ws_exec_piped(
     Returns ``(exit_code, stdout_text)``.  Does not touch real
     stdin/stdout — designed for programmatic use (file copy, setup).
     """
-    async with websockets.connect(
-        f"{ws_url}?token={token}", max_size=max_size
-    ) as ws:
+    async with ws_connect(server_spec, token=token, max_size=max_size) as ws:
         await wait_container_ready(ws, workspace_id)
         stdin_buf = io.BytesIO(stdin_data) if stdin_data else None
         stdout_buf = io.BytesIO()
