@@ -32,7 +32,6 @@ import uvicorn
 from klangk_backend.settings import (
     classify_listen,
     get_settings,
-    resolve_env_value,
     resolve_indirection,
     set_config_file,
     validate_at_startup,
@@ -164,7 +163,7 @@ def main(  # pragma: no cover
         # KLANGK_PORT). No nginx ownership on this path (bare uvicorn /
         # direct-TCP tests); nginx is owned only in the UDS case.
         host = listen
-        port = int(resolve_env_value("KLANGK_PORT") or "8997")
+        port = int(resolve_indirection(settings.port) or "8997")
         uvicorn.run(
             "klangk_backend.main:app",
             host=host,

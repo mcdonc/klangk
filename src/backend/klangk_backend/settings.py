@@ -226,6 +226,7 @@ class KlangkSettings(BaseSettings):
     # TCP. Default ``127.0.0.1`` preserves today's behavior; #1400 flips the
     # default to a socket path (the headless posture).
     listen: str | None = "127.0.0.1"
+    port: str | None = "8997"
     nginx_port: str | None = "8995"
     port_range_start: str | None = "9000"
     # state_dir: runtime state (the UDS when listen is a socket path, rendered

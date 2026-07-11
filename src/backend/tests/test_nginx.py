@@ -567,33 +567,28 @@ class TestStopWatchdogWithInjectedState:
         assert main._nginx_stopping is True
 
     @pytest.mark.asyncio
-    async def test_stops_sigterms_running_proc(self, monkeypatch):
-        """A still-running nginx proc is SIGTERM'd (its process group), then
-        awaited. Covers the proc-kill branch with an injected fake proc."""
+    async def test_stops_terminates_running_proc(self):
+        """A still-running nginx proc is terminated, then awaited."""
         import klangk_backend.main as main
 
-        killed = {"term": [], "kill": []}
+        terminated = []
 
         class FakeProc:
-            returncode = None  # still running
-            pid = 4242
+            returncode = None
+
+            def terminate(self):
+                terminated.append(True)
+
+            def kill(self):
+                pass  # pragma: no cover
 
             async def wait(self):
                 return 0
 
-        monkeypatch.setattr(main.os, "getpgid", lambda pid: 9999)
-        monkeypatch.setattr(
-            main.os,
-            "killpg",
-            lambda pgid, sig: killed[
-                "term" if sig == main.signal.SIGTERM else "kill"
-            ].append(pgid),
-        )
         main._nginx_proc = FakeProc()
         main._nginx_task = None
         await main.stop_nginx_watchdog()
-        assert killed["term"] == [9999]  # SIGTERM sent to the group
-        assert killed["kill"] == []  # exited before the SIGKILL timeout
+        assert terminated == [True]
         assert main._nginx_proc is None
 
     @pytest.mark.asyncio
@@ -614,33 +609,26 @@ class TestStopWatchdogWithInjectedState:
         assert main._nginx_task is None
 
     @pytest.mark.asyncio
-    async def test_stops_sigkills_on_timeout(self, monkeypatch):
-        """If the proc doesn't exit within the timeout, SIGKILL follows."""
+    async def test_stops_kills_on_timeout(self, monkeypatch):
+        """If the proc doesn't exit within the timeout, kill() follows."""
         import klangk_backend.main as main
 
-        killed = {"term": [], "kill": []}
+        actions = []
 
         class HungProc:
             returncode = None
-            pid = 1111
+
+            def terminate(self):
+                actions.append("terminate")
+
+            def kill(self):
+                actions.append("kill")
 
             async def wait(self):
-                await asyncio.sleep(100)  # never exits within the 5s timeout
+                await asyncio.sleep(100)
                 return 0
 
-        monkeypatch.setattr(main.os, "getpgid", lambda pid: 7777)
-        monkeypatch.setattr(
-            main.os,
-            "killpg",
-            lambda pgid, sig: killed[
-                "term" if sig == main.signal.SIGTERM else "kill"
-            ].append(pgid),
-        )
-
         async def _fake_wait_for(coro, timeout):
-            # Simulate the 5s grace elapsing: close the coro (avoids an
-            # un-awaited-coroutine warning) and raise TimeoutError so the
-            # SIGKILL branch fires.
             coro.close()
             raise asyncio.TimeoutError()
 
@@ -648,68 +636,5 @@ class TestStopWatchdogWithInjectedState:
         main._nginx_proc = HungProc()
         main._nginx_task = None
         await main.stop_nginx_watchdog()
-        assert killed["term"] == [7777]
-        assert killed["kill"] == [7777]  # SIGKILL after timeout
-        assert main._nginx_proc is None
-
-    @pytest.mark.asyncio
-    async def test_stops_sigterm_missing_group(self, monkeypatch):
-        """SIGTERM raises ProcessLookupError (group already gone) — covers the
-        outer killpg exception arm."""
-        import klangk_backend.main as main
-
-        class Proc:
-            returncode = None
-            pid = 3333
-
-            async def wait(self):
-                return 0
-
-        def _killpg_raises(pgid, sig):
-            raise ProcessLookupError()
-
-        monkeypatch.setattr(main.os, "getpgid", lambda pid: 9999)
-        monkeypatch.setattr(main.os, "killpg", _killpg_raises)
-        main._nginx_proc = Proc()
-        main._nginx_task = None
-        await main.stop_nginx_watchdog()
-        assert main._nginx_proc is None
-
-    @pytest.mark.asyncio
-    async def test_stops_handles_missing_process_group(self, monkeypatch):
-        """Covers the inner SIGKILL ProcessLookupError arm: SIGTERM kills the
-        group, but on the SIGKILL-after-timeout path the group is gone."""
-        import klangk_backend.main as main
-
-        class ProcThatHangsThenGroupGone:
-            returncode = None
-            pid = 2222
-
-            async def wait(self):
-                await asyncio.sleep(100)  # never exits within the timeout
-                return 0
-
-        # SIGTERM succeeds (no raise); the SIGKILL path raises ProcessLookupError
-        # (group already reaped) — covers both the successful-term branch and
-        # the inner SIGKILL exception arm (lines 510-511).
-        term_calls = []
-
-        def _killpg(pgid, sig):
-            if sig == main.signal.SIGTERM:
-                term_calls.append(pgid)
-            else:  # SIGKILL — group already gone
-                raise ProcessLookupError()
-
-        monkeypatch.setattr(main.os, "getpgid", lambda pid: 8888)
-        monkeypatch.setattr(main.os, "killpg", _killpg)
-
-        async def _fake_wait_for(coro, timeout):
-            coro.close()
-            raise asyncio.TimeoutError()
-
-        monkeypatch.setattr(main.asyncio, "wait_for", _fake_wait_for)
-        main._nginx_proc = ProcThatHangsThenGroupGone()
-        main._nginx_task = None
-        await main.stop_nginx_watchdog()
-        assert term_calls == [8888]  # SIGTERM sent; SIGKILL arm swallowed
+        assert actions == ["terminate", "kill"]
         assert main._nginx_proc is None

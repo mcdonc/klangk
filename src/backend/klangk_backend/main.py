@@ -426,8 +426,8 @@ async def _nginx_watchdog(
     """Spawn nginx and respawn it on unexpected exit (with backoff).
 
     Exits cleanly when ``_nginx_stopping`` is set (a cooperative shutdown).
-    Uses ``start_new_session=True`` so we can signal the whole process group,
-    not just the nginx master.
+    nginx runs in klangkd's process group (no ``start_new_session``) so
+    it is killed automatically when klangkd is terminated (#1439).
     """
     global _nginx_proc
     backoff = 1.0
@@ -440,7 +440,6 @@ async def _nginx_watchdog(
             conf_path,
             stdout=None,
             stderr=None,
-            start_new_session=True,
         )
         logger.info(
             "nginx started (pid %d) with %s", _nginx_proc.pid, conf_path
@@ -508,18 +507,11 @@ async def stop_nginx_watchdog() -> None:
     # The proc-kill branch is only reached when nginx was spawned (UDS mode);
     # covered via TestStopWatchdogWithInjectedState + the e2e ACL teardown.
     if proc is not None and proc.returncode is None:
-        # SIGTERM the whole process group (nginx master + workers).
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        except ProcessLookupError:
-            pass
+        proc.terminate()
         try:
             await asyncio.wait_for(proc.wait(), timeout=5)
         except asyncio.TimeoutError:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            proc.kill()
     _nginx_proc = None
     task = _nginx_task
     # Same: only when a watchdog task was created (UDS mode).
