@@ -1,213 +1,284 @@
-# Handoff: issue #1393 — make the whole test corpus runnable concurrently
+# HANDOFF — issue #1399: CLI transport resolver (UDS or URL for `--server`)
 
-**Branch:** `issue-1393-make-the-whole-test-corpus-runnable-concurrently-free-ports`
-**Worktree:** `.worktrees/issue-1393-make-the-whole-test-corpus-runnable-concurrently-free-ports`
-**Issue:** https://github.com/mcdonc/klangk/issues/1393
-**Status:** Core work done, committed, pushed. **Remaining work below.**
+Status: **investigation complete, no code written yet.** This document is
+the full picture so a fresh agent can implement without re-reading the whole
+CLI. Delete this file before opening the PR.
 
-> Read this top to bottom before resuming. All commands must be run through
-> `devenv --quiet -O dotenv.enable:bool false shell -- ...` (see `AGENTS.md`).
+- Issue: https://github.com/mcdonc/klangk/issues/1399 (chunk 6 of 7 in #1392)
+- Worktree: `.worktrees/issue-1399-cli-transport-resolver-klangkc-server-accepts-socket-path-or`
+- Branch: `issue-1399-cli-transport-resolver-klangkc-server-accepts-socket-path-or` (off `origin/main` @ `2d4e914e`)
+- Scope: **client-only.** No server changes.
 
-## What's done (committed)
+## Goal (one line)
 
-### A. Unit-suite conflation — FIXED ✅
+`klangkc login --server` (and therefore every CLI command) must accept
+**either** an absolute Unix socket path **or** an `http(s)://` URL. One
+transport resolver picks UDS vs TCP and routes **every** outbound call
+(HTTP requests + WebSocket connections) through it.
 
-Root cause was **pytest config discovery**, not a fixture clash. When run
-together, `python -m pytest src/backend/tests src/cli/tests` resolves
-rootdir to the **repo root**, which had no `[tool.pytest.ini_options]`, so
-`asyncio_mode` fell back to `strict` → every async fixture (`db`, etc.)
-errored with "no plugin or hook that handled it". A second issue: both
-per-package configs set `--capture=no` but the root had none, so the
-combined run used default `--capture=fd`, replacing stdin with
-`DontReadFromInput` → 5 CLI `run_shell` tests failed on `stdin.fileno()`.
+## Detection rule (from the issue)
 
-**Fix:** `pyproject.toml` (repo root) now has:
+- `http://...` or `https://...` prefix → **TCP** (unchanged behavior).
+- Anything else → **UDS**, and the path **must be absolute**. A
+  relative/bare value is an error ("socket path must be absolute").
+- No `unix:`/`file:` scheme — the _absence_ of an http(s) scheme is the
+  signal.
 
-```toml
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
-addopts = "--capture=no"
+**Incremental rollout:** the issue asks to ship a **guesser first**
+(try-is-it-a-file/socket/has-scheme, pick; **warn on every guess**), then
+tighten to the strict rule. The strict rule is a restriction, so it breaks
+nothing the guesser accepted correctly. (See "Open design question" below
+on whether to ship guesser or strict first — the issue's wording slightly
+contradicts its own acceptance criteria.)
+
+## Verified facts (from a throwaway script, not committed)
+
+Installed: `httpx==0.28.1`, `websockets==16.0`.
+
+- **httpx UDS works:** `httpx.HTTPTransport(uds=path)` →
+  `httpx.Client(transport=..., base_url="http://localhost")` → `c.get("/api/v1/config")`
+  returns 200 from a uvicorn server bound to the socket. Confirmed.
+- **websockets UDS works:** open a preconnected socket
+  (`socket.socket(AF_UNIX); sock.connect(path)`), then
+  `websockets.connect("ws://localhost/ws", sock=sock, ...)`. The `sock=`
+  kwarg is the supported hook (documented in `connect`'s docstring: "You
+  may set `sock` to provide a preexisting TCP socket"). Note the socket
+  must be a **connected** AF_UNIX socket, not a path. The URI still needs
+  a host (use a dummy like `localhost` / `unix`); the real transport is
+  the socket.
+
+## Current architecture (what exists today)
+
+Everything assumes TCP. Two modules carry all outbound calls:
+
+### `src/cli/klangkc/auth.py` — HTTP auth calls (6 module-level httpx calls)
+
+| #   | function                    | call                                                          | line |
+| --- | --------------------------- | ------------------------------------------------------------- | ---- |
+| 1   | `fetch_config`              | `httpx.get(f"{server_url}/api/v1/config", timeout=5.0)`       | 36   |
+| 2   | `local_login`               | `httpx.post(f"{server_url}/api/v1/auth/local", timeout=15.0)` | 53   |
+| 3   | `login` (token-reuse probe) | `httpx.get(f"{server_url}/api/v1/workspaces", ...)`           | 196  |
+| 4   | `login` (password)          | `httpx.post(f"{server_url}/api/v1/auth/login", ...)`          | 271  |
+| 5   | `refresh_token`             | `httpx.post(f"{server_url}/api/v1/auth/refresh", ...)`        | 309  |
+| 6   | `logout`                    | `httpx.post(f"{server_url}/api/v1/auth/logout", ...)`         | 347  |
+
+`server_url` here is the raw `--server` string (URL today).
+
+### `src/cli/klangkc/client.py` — KlangkClient + WS session code
+
+HTTP (3 sites; `KlangkClient` methods all funnel through `_request`):
+
+| #   | function             | call                                                        | line |
+| --- | -------------------- | ----------------------------------------------------------- | ---- |
+| 7   | `request_with_retry` | `httpx.request(method, url, timeout=timeout, **kwargs)`     | 131  |
+| 8   | `export_workspace`   | `httpx.stream("GET", f"{self.server_url}/.../export", ...)` | 546  |
+| 9   | `import_workspace`   | `httpx.post(f"{self.server_url}/.../import", ...)`          | 610  |
+
+WebSocket (3 connect sites; all `websockets.connect(f"{ws_url}?token={token}", max_size=...)`):
+
+| #   | function        | line |
+| --- | --------------- | ---- |
+| W1  | `ws_shell`      | 767  |
+| W2  | `ws_exec`       | 1518 |
+| W3  | `ws_exec_piped` | 1544 |
+
+**Token-refresh-via-WS wrinkle (W1 only):** inside `ws_shell`, after
+connecting, it derives an HTTP base URL from the WS URL for the
+session's self-healing refresh (client.py ~line 995):
+
+```python
+_http_url = ws_url.replace("wss://", "https://").replace("ws://", "http://")
+if _http_url.endswith("/ws"):
+    _http_url = _http_url[:-3]
+# passed as server_url= into TerminalSession; on a 4002 close,
+# stdout_loop calls _refresh_token / _server_mode_is_none / _local_login
+# with that server_url.
 ```
 
-No coverage in the root config — the 100% gate stays per-package (each
-suite alone still resolves rootdir to `src/backend` or `src/cli`).
+For UDS this derivation is **wrong** — it must yield a value the HTTP
+resolver recognizes as UDS again (i.e. the socket path), not a dummy host.
 
-**Verified:** `python -m pytest src/backend/tests src/cli/tests -n auto --no-cov`
-→ **2818 passed**. Per-suite CI runs still 100% coverage (backend 2343,
-cli 477).
+### `src/cli/klangkc/main.py` — command entrypoints + `build_ws_url`
 
-### B. Free-port allocation in all E2E harnesses — DONE ✅
+`build_ws_url(server_url)` at **line 905** is the single HTTP→WS
+converter today:
 
-Added `free_port()` to `src/backend/klangk_backend/model/ports.py`
-(returns an OS-assigned ephemeral port via `socket.bind(("127.0.0.1", 0))`),
-exported from `model/__init__.py`, with 2 unit tests in
-`src/backend/tests/test_model.py::TestPortAllocations`.
+```python
+def build_ws_url(server_url: str) -> str:
+    if server_url.startswith("http://"):
+        return server_url.replace("http://", "ws://") + "/ws"
+    elif server_url.startswith("https://"):
+        return server_url.replace("https://", "wss://") + "/ws"
+    return f"ws://{server_url}/ws"
+```
 
-Replaced **every** hardcoded port across all E2E + sandbox suites:
+Callers of `build_ws_url`: `shell` (~995), `exec_cmd` (~1995), `monitor`
+(~1289), `sandbox` (~1448), `_resolve_workspace_and_url` (~1331, used by
+`terminal ls`, `share_terminal`, `unshare_terminal`).
 
-- Backend E2E (`src/backend/e2e-tests/`): `test_agent_home_e2e.py`,
-  `test_api_e2e.py` (2 servers), `test_event_fanout.py`,
-  `test_health_check_e2e.py`, `test_nginx_acl_e2e.py` (3 servers + the
-  old local `_find_free_port` now delegates to `free_port`),
-  `test_per_user_home.py`, `test_service_command_shared_e2e.py`,
-  `test_sighup_restart_e2e.py`.
-- CLI E2E (`src/cli/e2e-tests/`): `test_cli_e2e.py` (session server + 5
-  class-scoped servers), `test_monitor_e2e.py`, `test_terminal_windows_e2e.py`.
-- Sandbox (`sandboxes/tests/`): `hermes/test_hermes_setup_e2e.py`,
-  `openclaw/test_openclaw_setup_e2e.py`.
+WS connect sites in main.py (5):
 
-Both `KLANGK_PORT` (server) and `KLANGK_PORT_RANGE_START` (workspace
-container hosted-app range) are now `str(free_port())`.
+| #   | function                  | line |
+| --- | ------------------------- | ---- |
+| W4  | `monitor_connection`      | 1090 |
+| W5  | `sandbox_setup_only`      | 1529 |
+| W6  | `terminals` (terminal ls) | 1608 |
+| W7  | `share_terminal`          | 1740 |
+| W8  | `unshare_terminal`        | 1821 |
 
-**Verified:** `test_nginx_acl_e2e.py` (26 tests, starts backend+nginx,
-no containers) green. `test_health_check_e2e.py` (2 tests, spawns real
-podman containers) green — logs show ports allocated from the ephemeral
-range, e.g. `[47363, 47364, ...]`. `TestLogin` from CLI E2E green.
+**Total: 9 HTTP call sites + 8 WS connect sites = 17 places, all currently
+hardcoded TCP.** Centralizing is the point of the issue.
 
-### C. Instance-scoped container cleanup — DONE ✅
+### `src/cli/klangkc/config.py`
 
-The CLI E2E (3 files) and sandbox (2 files) `_stop_server` helpers used
-`label=klangk.managed=true` — a cross-suite/cross-worker hazard (one
-suite's teardown nuked another's containers). Replaced with
-instance-scoped cleanup using `klangk-instance-id` resolved from the
-test's `data_dir` (the proven pattern from `test_api_e2e.py`). Backend
-E2E already used specific labels — unchanged.
+`CLIConfig.resolve_server(name_or_url)` (line ~67) maps a config alias to
+its `url` and is applied to `--server` in `main.py:app_callback` (~93) and
+`login_cmd` (~187) **before** `server_url()` is set. `ServerEntry.url` is
+`str`. A socket path can be stored as the alias's `url` unchanged (it's
+just a string); no schema change needed, but the resolver must run _after_
+alias resolution, on whatever string comes out.
 
-### D. xdist unblocking + single command — DONE ✅
+## THE design decision (read this first)
 
-- `devenv.nix`: dropped `-p no:xdist` from `test-cli-e2e`,
-  `test-terminal-windows-e2e`, `test-backend-e2e`. Added `test-unit`
-  (combined unit corpus) and `test-all` (unit + backend-e2e + cli-e2e).
-  E2E runs serially by default with an opt-in comment for
-  `-n auto --dist=loadscope`.
-- `.github/workflows/sandbox-e2e-tests.yml`: dropped `-p no:xdist`.
-- **Verified xdist works on E2E:** `test_nginx_acl_e2e.py -n auto
---dist=loadscope` → 26 passed (module/class-scoped fixtures stay
-  cohesive with `loadscope`).
+There is a hard tension between the issue's "one resolver, no per-call-site
+branching" and the **existing test mocking surface**:
 
-### Changelog
+- Tests patch the **module-level functions**: `httpx.get`, `httpx.post`,
+  `httpx.request`, `httpx.stream` (37 patch sites), and `websockets.connect`
+  (38 patch sites). All tests use TCP/server URLs.
+- `httpx.Client(...).get(...)` does **NOT** go through the module-level
+  `httpx.get`. So if the resolver returns an `httpx.Client` for _every_
+  call, the 37 httpx patches stop intercepting → ~all HTTP tests break and
+  need rewriting.
 
-Added an entry under `## [Unreleased] → ### Added` in `docs/changes.md`.
+**Recommended resolution (preserves the mocking surface):** make the
+resolver a **pair of thin helper functions**, not a shared Client object.
+The TCP path delegates to the exact module functions tests already patch;
+only the UDS path constructs a Client/socket.
 
----
+```python
+# in a new src/cli/klangkc/transport.py  (the "single resolver")
 
-## Remaining work (NOT done)
+def resolve_transport(server_spec: str) -> ServerTransport:
+    """Decide UDS vs TCP from the server spec string.
+    Returns (is_uds, uds_path, base_url, ws_uri). Raises ValueError on a
+    relative/non-http(s) value (strict rule) — or warns + guesses (rollout)."""
 
-### 1. ⚠️ Warnings cleanup (the task that was interrupted)
+def http_request(server_spec, method, path, **kwargs) -> httpx.Response:
+    """TCP → httpx.request(...)  (module fn, tests patch this).
+       UDS  → pooled httpx.Client(transport=HTTPTransport(uds=path)).request(...)."""
 
-The user asked to "fix any warnings you find during test runs." This was
-**aborted before any investigation**. Resume by running:
+# + a ws_connect(...) async context-manager helper:
+async def ws_connect(server_spec, ws_path, *, token, **kwargs):
+    """TCP → websockets.connect(uri, **kw)            (tests patch this).
+       UDS  → open AF_UNIX socket, connect(path), websockets.connect(uri, sock=sock, **kw)."""
+```
+
+Every call site swaps its `httpx.X(...)` / `websockets.connect(...)` for
+the matching helper, passing the **raw server spec string** (so the helper
+can re-derive transport each time — no stale cached decision). That is
+"one resolver, used everywhere" with **zero** transport branching at call
+sites, and **zero** test-mock breakage on the TCP path (which is what every
+test exercises). UDS paths get fresh, dedicated unit tests.
+
+> Alternative considered: a global pooled `httpx.Client`. Rejected — breaks
+> the 37 module-level patches and risks connection-pool surprises. Only
+> pool _inside_ the UDS arm if needed.
+
+## Concrete steps
+
+1. **New module `src/cli/klangkc/transport.py`** with
+   `resolve_transport` + `http_request` + `ws_connect` (see shape above).
+   - `resolve_transport`: returns a small dataclass. Detection: prefix
+     `http://`/`https://` → TCP; absolute path → UDS; else error (or
+     guess-and-warn for the rollout phase).
+   - `http_request`: TCP arm calls `httpx.request` (so `patch("httpx.request")`
+     / `patch("klangkc.client.httpx.request")` keep working); UDS arm builds
+     `httpx.HTTPTransport(uds=path)` + `httpx.Client` and `.request`s.
+     The full URL for UDS is `http://localhost` + path (dummy host — the
+     socket is the transport, host is irrelevant to a UDS server).
+   - `ws_connect`: TCP arm is a thin passthrough to `websockets.connect`
+     (preserve patchability). UDS arm: `socket.socket(AF_UNIX).connect(path)`
+     then `websockets.connect(uri, sock=sock, **kw)`. Make it usable as
+     `async with ws_connect(...) as ws:` (return the connect()'s
+     context manager, or a small async-CM wrapper).
+   - Build the WS URI inside the helper from the spec + a `ws_path`
+     ("/ws"), so call sites stop hand-building `f"{ws_url}?token=..."`.
+
+2. **Re-route HTTP call sites** (auth.py 1–6, client.py 7–9) through
+   `http_request`. Each keeps passing the raw server spec + the API path.
+   For client.py, `KlangkClient._request` already centralizes its own
+   calls, so only `request_with_retry` + `export_workspace` + `import_workspace`
+   change; the retry/refresh logic above them is untouched.
+
+3. **Re-route WS call sites** (client.py W1–W3, main.py W4–W8) through
+   `ws_connect`. `build_ws_url` either becomes a delegate to the resolver
+   or is replaced by passing the raw spec into `ws_connect` (prefer the
+   latter — fewer string round-trips, fixes the `_http_url` wrinkle
+   directly: the WS helper can also hand back the HTTP refresh URL as the
+   raw spec so token-refresh-on-4002 works over UDS).
+
+4. **Fix the `ws_shell` token-refresh URL** (client.py ~995): for UDS,
+   `_http_url` must be the socket spec, not a dummy host. Cleanest: have
+   `ws_connect` / the resolver return the canonical HTTP server spec for
+   refresh, and pass _that_ into `TerminalSession.server_url`.
+
+5. **Tests (100% coverage gate, run with `-n auto`):**
+   - Existing TCP tests must pass **unchanged** (that's the point of the
+     delegating-helper design). Spot-check `TestBuildWsUrl`
+     (test_cli_main.py ~2882), the `request_with_retry` tests
+     (test_cli.py ~913), and the monitor `ws_url` assertion
+     (test_cli_main.py ~3625: `args[1] == "ws://localhost:8995/ws"`).
+     If `build_ws_url`'s signature/return changes, update these — but keep
+     TCP behavior identical.
+   - **Add new unit tests for the resolver:** TCP detection, UDS detection,
+     absolute-path enforcement / guesser warning, and that `http_request`/
+     `ws_connect` invoke `httpx.request`/`websockets.connect` on the TCP
+     path (mock the module fns) while constructing the UDS transport on the
+     UDS path (mock `httpx.HTTPTransport`/`socket`). The issue's acceptance
+     criteria are effectively these tests.
+   - Optional but high-value: one integration test spinning up a uvicorn
+     server on a UDS (use the pattern from the throwaway script that's
+     described under "Verified facts") and proving a full request +
+     websocket round-trip. See `src/cli/tests/test_cli_integration.py` for
+     the existing real-server test style.
+   - **Run:** `devenv --quiet -O dotenv.enable:bool false shell -- python
+-m pytest src/cli/tests -v -n auto` (must stay 100%).
+
+6. **Changelog:** add an **Added** bullet under `## [Unreleased]` in
+   `docs/changes.md` per AGENTS.md (this is user-visible: `--server`
+   accepts a socket path).
+
+## Open design question to confirm with the issue author
+
+The issue's **Acceptance criteria** are phrased as the **strict** rule
+("any non-http(s) value connects over UDS"), but the **Design** section
+says "ship a guesser first, warn on every guess, then tighten." These
+conflict: the strict rule has no guessing. **Recommendation:** ship the
+**strict** rule (absolute-path-or-URL) directly — it's simpler, matches
+the acceptance criteria exactly, and the "relative socket path" error
+message is self-documenting. The guesser is only worth the complexity if
+real-world `--server` values turn out to be ambiguous. Flag this in the PR
+description if you go strict-first.
+
+## Things that should NOT change
+
+- Server-side anything (client-only issue).
+- `KlangkClient`'s public method signatures or the retry/refresh flow
+  (`_request`, `_try_refresh`, `_headers`, 401-retry) — only the leaf
+  transport call inside them moves into the helper.
+- The `websockets` `sock=` approach is confirmed working in 16.0; do not
+  switch to a different WS-UDS mechanism.
+- The on-the-wire protocol (token in `?token=`, `/ws` path, same JSON
+  frames) — UDS is just a different transport for the same endpoints.
+
+## Quick orientation commands
 
 ```bash
-devenv --quiet -O dotenv.enable:bool false shell -- \
-  python -m pytest src/backend/tests src/cli/tests -n auto --no-cov 2>&1 \
-  | grep -iE "warning|Warn" | sort | uniq -c | sort -rn
+# all HTTP call sites
+grep -rn 'httpx\.\(get\|post\|request\|stream\|put\|delete\)' src/cli/klangkc/
+# all WS connect sites
+grep -rn 'websockets.connect' src/cli/klangkc/
+# run the suite (100% gate, must use -n auto)
+devenv --quiet -O dotenv.enable:bool false shell -- python -m pytest src/cli/tests -v -n auto
 ```
-
-Known warnings likely to appear (from the nginx_acl run I did):
-
-- **`PytestRemovedIn10Warning: Class-scoped fixture defined as instance method is deprecated.`**
-  Hits `test_nginx_acl_e2e.py` (`TestNginxAclEnforcement`,
-  `TestNginxDenyByDefault`, `TestNginxAuthLocalAcl`) — their
-  `@pytest.fixture(autouse=True, scope="class")` fixtures are defined as
-  instance methods. Fix: add `@staticmethod` and set attrs on `cls`
-  (the warning message itself says how). **Check whether other E2E files
-  have the same pattern** (`test_cli_e2e.py` class-scoped servers already
-  use `@staticmethod` — they're fine).
-- There may be a `ResourceWarning` (the combined unit run output
-  mentioned "Enable tracemalloc to get traceback where the object was
-  allocated" / resource-warnings). Investigate the source.
-
-Run each suite and fix warnings in the files you touch. Re-run with
-`-W error` scoped to specific categories to find them fast.
-
-### 2. ⚠️ Full E2E validation not run
-
-I only ran **representative** E2E tests (nginx_acl, health_check, CLI
-TestLogin) to validate the free-port + cleanup changes. The **full** E2E
-suites were not run end-to-end (they take a long time + spawn many
-containers). Before merging, run:
-
-```bash
-devenv --quiet -O dotenv.enable:bool false shell -- test-backend-e2e
-devenv --quiet -O dotenv.enable:bool false shell -- test-cli-e2e
-```
-
-Sandbox E2E (`sandboxes/tests`) needs network + does real installs
-(npm/uv + git clone) — run if feasible, otherwise rely on CI.
-
-### 3. ⚠️ `test-all` script not run end-to-end
-
-The `test-all` devenv script is written but not executed (it would run
-the full corpus). At minimum smoke-test the unit portion:
-
-```bash
-devenv --quiet -O dotenv.enable:bool false shell -- test-unit
-```
-
-### 4. Open question from the issue: container concurrency ceiling
-
-The issue asks how many workspace containers can run concurrently before
-rootless-podman / resource limits bite. **Not investigated.** The E2E
-suites default to serial (no `-n`) so this isn't blocking, but if you
-want to enable `-n auto --dist=loadscope` by default for E2E, you'd need
-to cap workers (e.g. `-n 4`) or document the ceiling. The
-`--dist=loadscope` flag is important: it keeps each module/class-scoped
-server fixture on a single worker (otherwise the same server fixture
-would be requested by multiple workers and they'd each try to start it).
-
-### 5. PR not opened
-
-The branch is pushed but **no PR exists yet**. After the remaining work
-above, open one:
-
-```bash
-cat <<'EOF' | devenv --quiet -O dotenv.enable:bool false shell -- \
-  gh pr create --base main \
-  --head issue-1393-make-the-whole-test-corpus-runnable-concurrently-free-ports \
-  --title "fix(#1393): make the whole test corpus runnable concurrently" \
-  --body-file -
-<body here — note the PR uses --body-file - per AGENTS.md, NOT --body ->
-EOF
-```
-
-Reference the issue (`Closes #1393`).
-
----
-
-## Key design decisions (so you don't re-litigate them)
-
-1. **`free_port()` lives in `klangk_backend.model.ports`** — the natural
-   home (already has `port_in_use`/`scan_free_ports`). It returns `int`;
-   E2E harnesses cast with `str(free_port())` at the env edge. The
-   nginx_acl local `_find_free_port` (which returned `str`) is kept as a
-   one-line shim `return str(free_port())` rather than rewriting all its
-   call sites — feel free to inline it if you prefer.
-
-2. **Root `pyproject.toml` config is intentionally minimal** — no
-   coverage, no `--cov-fail-under`. The combined run is a pass/fail
-   smoke; the 100% gate stays per-package. This is because the two
-   packages have different `--cov=<pkg>` targets and you can't cleanly
-   combine them in one `addopts`.
-
-3. **E2E defaults to serial, not `-n auto`** — the issue's acceptance
-   criteria allow "each individual suite is explicitly documented as
-   serial-only with the reason." I chose serial-by-default-with-opt-in
-   because (a) container concurrency ceiling is an open question, and
-   (b) `loadscope` is the correct dist mode and users should opt in
-   knowingly. The comments in `devenv.nix` explain this.
-
-4. **Instance-scoped cleanup uses `klangk-instance-id`** resolved from
-   `data_dir` (not the server's auto-generated ID fetched over HTTP,
-   which is what `test_agent_home_e2e.py` does). The `klangk-instance-id`
-   CLI is deterministic from `data_dir` and works even if the server is
-   already dead at teardown time — more robust. Verified it returns a
-   UUID even for a fresh dir.
-
-## Files changed (19 + changelog)
-
-See `git diff --stat` on the branch. The stray `devenv.lock` files that
-appeared in `sandboxes/tests/` and `src/cli/e2e-tests/` were **deleted**
-(spurious devenv artifacts, not part of the change) — if they reappear
-during your test runs, `rm` them before committing.
