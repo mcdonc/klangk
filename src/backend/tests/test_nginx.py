@@ -296,7 +296,7 @@ class TestMinimalTemplate:
     def test_template_keys_off_listen_not_auth(self):
         """AUTH value does not change which template is rendered (#1398 #4):
         socket ⇒ minimal and TCP ⇒ full across auth values."""
-        for auth in ("none", "password", "password,oidc"):
+        for auth in ("none", "password", "both"):
             _set(
                 listen="/tmp/klangk.sock",
                 auth_modes=auth,

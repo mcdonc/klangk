@@ -29,16 +29,6 @@ from klangk_backend.settings import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _reset_settings():
-    """Ensure a clean KLANGK_* environment around each test.
-
-    get_settings() is cache-free (constructs on every call), so there is no
-    cache to clear — the fixture just ensures a clean env snapshot.
-    """
-    yield
-
-
 class TestKeyToField:
     def test_klangk_prefix(self):
         assert _key_to_field("KLANGK_JWT_SECRET") == "jwt_secret"
@@ -447,3 +437,47 @@ class TestEnvConstructor:
             env={"KLANGK_PRODUCT_NAME": "FromEnv"}, config_file=str(cfg)
         )
         assert s.product_name == "FromEnv"
+
+
+class TestAuthModesValidator:
+    """KLANGK_AUTH_MODES is security-sensitive: a typo must fail at
+    construction (boot), not silently downgrade to the no-auth ``none`` mode
+    (which freely issues an admin token)."""
+
+    @pytest.mark.parametrize("mode", ["password", "oidc", "both", "none"])
+    def test_valid_modes_accepted(self, mode):
+        s = KlangkSettings(env={"KLANGK_AUTH_MODES": mode})
+        assert s.auth_modes == mode
+
+    def test_unset_allowed_means_none(self):
+        # None = unset = "default to none at read time" (legitimate).
+        s = KlangkSettings(env={})
+        assert s.auth_modes is None
+
+    @pytest.mark.parametrize(
+        "bad", ["passdword", "PASSWORD", " true", "x", "None"]
+    )
+    def test_typo_rejected_at_construction(self, bad):
+        # A set-but-garbage value must raise (not silently become "none").
+        import pytest as _pytest
+        from pydantic import ValidationError
+
+        with _pytest.raises(ValidationError):
+            KlangkSettings(env={"KLANGK_AUTH_MODES": bad})
+
+    def test_empty_string_treated_as_unset(self):
+        # KLANGK_AUTH_MODES="" (set but blank) is treated as unset → None →
+        # "none" at read time, preserving the pre-validator behavior.
+        # (Not a security risk: blank is a config mistake, not a typo'd
+        # secure-mode name silently degrading.)
+        s = KlangkSettings(env={"KLANGK_AUTH_MODES": ""})
+        assert s.auth_modes is None
+
+    def test_typo_error_message_lists_valid_modes(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(env={"KLANGK_AUTH_MODES": "passdword"})
+        msg = str(exc_info.value)
+        assert "passdword" in msg
+        assert "password" in msg  # valid modes listed in the message

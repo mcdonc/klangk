@@ -39,9 +39,17 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
+from pydantic import field_validator
 from pydantic_settings.sources.providers.env import parse_env_vars
 
 logger = logging.getLogger(__name__)
+
+# Valid values for ``KLANGK_AUTH_MODES``. ``None`` (unset) defaults to ``none``
+# at *read* time (in ``oidc.auth_modes``), but a non-None value must be one of
+# these — rejecting typos at construction so a misspelled mode fails loudly at
+# boot instead of silently downgrading to the no-auth ``none`` mode (which
+# freely issues an admin token). See the ``auth_modes`` field validator below.
+_VALID_AUTH_MODES = frozenset({"password", "oidc", "both", "none"})
 
 # Re-exported for backward compat — callers that ``from ..util import ...``
 # still work because util.py re-exports these.
@@ -411,6 +419,33 @@ class KlangkSettings(BaseSettings):
 
     # --- File upload ---
     file_upload_size_max: str | None = None
+
+    @field_validator("auth_modes")
+    @classmethod
+    def _validate_auth_modes(cls, v: str | None) -> str | None:
+        """Reject typo'd auth modes so a misspelling fails loudly at boot.
+
+        Without this, ``KLANGK_AUTH_MODES=passdword`` (or any value outside the
+        valid set) would fall through ``oidc.auth_modes()`` to the ``none``
+        default — a *silent security downgrade*: ``none`` freely issues an
+        admin token via ``POST /api/v1/auth/local``. ``None`` is allowed (the
+        unset case, which legitimately means "default to none"); only a
+        *set-but-garbage* value is rejected.
+
+        Runs at construction (``KlangkSettings(...)`` → ``validate_at_startup``
+        in the lifespan), so the bad value aborts boot before traffic.
+        """
+        if v is None or v == "":
+            # Unset or empty → default to ``none`` at read time (in
+            # ``oidc.auth_modes``). Legitimate: the operator didn't set a mode.
+            return None
+        if v not in _VALID_AUTH_MODES:
+            raise ValueError(
+                f"KLANGK_AUTH_MODES={v!r} is invalid. "
+                f"Must be one of {sorted(_VALID_AUTH_MODES)} (or unset "
+                "→ defaults to 'none')."
+            )
+        return v
 
 
 # ---------------------------------------------------------------------------

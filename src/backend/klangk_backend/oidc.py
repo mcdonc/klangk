@@ -207,7 +207,7 @@ def auth_modes(settings: KlangkSettings) -> str:
     ``settings.auth_modes`` (resolved once at startup), not re-read from
     the environment at call time.
     """
-    val = settings.auth_modes or ""
+    val = settings.auth_modes
     if val in ("oidc", "password", "both", "none"):
         return val
     return "none"
