@@ -13,6 +13,7 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from klangk_backend import main, model
+from klangk_backend.settings import KlangkSettings
 
 
 # --- Seed default user ---
@@ -893,3 +894,46 @@ class TestPidFile:
         result = main.runtime_dir()
         assert result == tmp_path / ".klangk" / "run"
         assert result.exists()
+
+
+class TestBuildApp:
+    """Tests for build_app() composition root (#1426)."""
+
+    def test_build_app_returns_fastapi(self):
+        settings = KlangkSettings(env={})
+        app = main.build_app(settings)
+        assert isinstance(app, FastAPI)
+
+    def test_build_app_sets_state_settings(self):
+        settings = KlangkSettings(env={})
+        app = main.build_app(settings)
+        assert app.state.settings is settings
+
+    def test_build_app_includes_routers(self):
+        app = main.build_app(KlangkSettings(env={}))
+        paths = set(app.openapi()["paths"].keys())
+        assert "/api/v1/config" in paths  # api router with prefix
+
+    def test_build_app_has_ws_endpoint(self):
+        app = main.build_app(KlangkSettings(env={}))
+        ws_paths = {r.path for r in app.routes if hasattr(r, "path") and r.path == "/ws"}
+        assert "/ws" in ws_paths
+
+    def test_build_app_registers_exception_handlers(self):
+        app = main.build_app(KlangkSettings(env={}))
+        assert model.AgentPrincipalError in app.exception_handlers
+
+    def test_module_app_is_built(self):
+        """The module-level ``app`` shim is a real FastAPI app."""
+        assert isinstance(main.app, FastAPI)
+
+
+class TestGetSettingsDep:
+    """Tests for get_settings_dep per-request bridge (#1426)."""
+
+    def test_returns_app_state_settings(self):
+        settings = KlangkSettings(env={})
+        app = main.build_app(settings)
+        request = MagicMock()
+        request.app = app
+        assert main.get_settings_dep(request) is settings

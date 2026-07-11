@@ -10,7 +10,6 @@ import os
 
 import pytest
 
-from klangk_backend.settings import _invalidate_cache
 from klangk_backend.nginx import (
     compute_client_max_body_size,
     compute_container_acls,
@@ -41,21 +40,17 @@ def _clean_env(monkeypatch):
     for k in list(os.environ):
         if k.startswith("KLANGK_"):
             monkeypatch.delenv(k, raising=False)
-    _invalidate_cache()
     yield
     # Restore: clear any KLANGK_* added by this test, then reinstate snapshot.
     for k in [k for k in list(os.environ) if k.startswith("KLANGK_")]:
         os.environ.pop(k, None)
     os.environ.update(snapshot)
-    _invalidate_cache()
-    _invalidate_cache()
 
 
 def _set(**kw):
-    """Set KLANGK_* env vars + invalidate cache."""
+    """Set KLANGK_* env vars."""
     for k, v in kw.items():
         os.environ["KLANGK_" + k.upper()] = str(v)
-    _invalidate_cache()
 
 
 class TestUpstreams:
