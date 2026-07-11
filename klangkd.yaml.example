@@ -1,9 +1,9 @@
 # Local dev config for klangkd.
 #
-# Copy to klangkd.conf (gitignored) and edit:
-#   cp klangkd.conf.example klangkd.conf
+# Copy to klangkd.yaml (gitignored) and edit:
+#   cp klangkd.yaml.example klangkd.yaml
 #
-# klangkd reads this via: klangkd --config klangkd.conf
+# klangkd reads this via: klangkd --config klangkd.yaml
 # devenv's backend process does this automatically.
 
 # --- Deployment shape ---

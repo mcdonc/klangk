@@ -7,10 +7,10 @@
 let
   # klangkd binds a UDS and owns nginx as a child (#1396); the old
   # two-process layout (uvicorn + scripts/nginx.sh) is collapsed into this
-  # single entry. Dev config lives in klangkd.conf (gitignored);
-  # copy from klangkd.conf.example if missing.
+  # single entry. Dev config lives in klangkd.yaml (gitignored);
+  # copy from klangkd.yaml.example if missing.
   backendCmd = ''
-    python3 -m klangk_backend.klangkd --config="$DEVENV_ROOT/klangkd.conf"
+    python3 -m klangk_backend.klangkd --config="$DEVENV_ROOT/klangkd.yaml"
   '';
   pluginsDir = config.devenv.root + "/.devenv/state/klangk/plugins";
   dataDir = config.devenv.root + "/.devenv/state/klangk/data";
@@ -188,7 +188,7 @@ in
   env.UV_PYTHON = config.devenv.state + "/venv/bin/python";
 
   # --- Devenv-only env vars (used by shell hooks and scripts, NOT by the
-  # backend — backend config lives in klangkd.conf). ---
+  # backend — backend config lives in klangkd.yaml). ---
 
   # KLANGK_PLUGINS_DIR is still exported for shell scripts (update_plugins.py,
   # stub_dart_plugins.sh) that read it from the environment. The Nix-level
@@ -217,6 +217,7 @@ in
   env.KLANGK_PLATFORM = lib.mkOverride 1500 (
     if pkgs.stdenv.hostPlatform.isAarch64 then "linux/arm64" else "linux/amd64"
   );
+  env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk-workspace";
 
   scripts.flutterbuildweb.exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh" "$@"'';
   scripts.build-workspace-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-workspace-image.sh" "$@"'';
@@ -473,9 +474,9 @@ in
   };
 
   enterShell = ''
-    if [ ! -f "$DEVENV_ROOT/klangkd.conf" ]; then
-      cp "$DEVENV_ROOT/klangkd.conf.example" "$DEVENV_ROOT/klangkd.conf"
-      echo "Created klangkd.conf from klangkd.conf.example — edit it to taste."
+    if [ ! -f "$DEVENV_ROOT/klangkd.yaml" ]; then
+      cp "$DEVENV_ROOT/klangkd.yaml.example" "$DEVENV_ROOT/klangkd.yaml"
+      echo "Created klangkd.yaml from klangkd.yaml.example — edit it to taste."
     fi
 
     mkdir -p "${dataDir}"

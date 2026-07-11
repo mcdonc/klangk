@@ -31,8 +31,8 @@ operators or integrators to act when upgrading.
   path (e.g. `/tmp/klangk.sock`) in addition to `http(s)://` URLs. All HTTP
   and WebSocket connections route through a single transport resolver that
   picks UDS or TCP based on the server spec (#1399).
-- **Dev config file:** devenv now reads backend config from `klangkd.conf`
-  (gitignored; copied from `klangkd.conf.example` on first shell entry).
+- **Dev config file:** devenv now reads backend config from `klangkd.yaml`
+  (gitignored; copied from `klangkd.yaml.example` on first shell entry).
   `.env` / `dotenv.enable` removed; `KLANGK_LISTEN`, `KLANGK_IMAGE_NAME`,
   `KLANGK_CUSTOMIZE_DIR`, `KLANGK_PORT`, `KLANGK_NGINX_PORT` no longer set
   as env vars by devenv (#1399).
