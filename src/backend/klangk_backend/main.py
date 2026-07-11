@@ -725,9 +725,12 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
     app.state.container_registry = container.ContainerRegistry(settings)
-    # Slice 2c (#1464): the WebSocketState instance on app.state.connections
-    # so the HealthMonitor can broadcast without lazy wshandler imports.
-    # wshandler.state stays as a transitional shim for other callers.
+    # Slice 2c (#1464): wire the WebSocketState instance onto the registry so
+    # HealthMonitor (and anything else in the container subsystem) can
+    # broadcast through it via self._registry.connections — no module global,
+    # no lazy import. wshandler.state stays as a transitional shim for other
+    # callers (WS layer, API endpoints); it dies in Slice 2d (#1465).
+    app.state.container_registry.connections = wshandler.state
     app.state.connections = wshandler.state
 
     app.add_middleware(

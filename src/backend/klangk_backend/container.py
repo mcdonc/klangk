@@ -5,16 +5,7 @@ import logging
 import os
 import time
 
-from . import (
-    auth,
-    bringup,
-    connections as _connections_mod,
-    model,
-    plugins,
-    podman,
-    terminal,
-    util,
-)
+from . import auth, bringup, model, plugins, podman, terminal, util
 from .settings import KlangkSettings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -530,8 +521,13 @@ class HealthMonitor:
 
     @property
     def _connections(self):
-        """The process-wide ``WebSocketState`` singleton (#1464)."""
-        return _connections_mod.state
+        """The WebSocketState instance the monitor broadcasts through (#1464).
+
+        Reached via the registry's ``connections`` attribute, set by
+        ``build_app()`` in production and on the module-level shim in
+        ``container.py``. No lazy import — the registry owns the reference.
+        """
+        return self._registry.connections
 
     def _setup_complete(self, state: ContainerState) -> bool:
         """True if health checks may run for this workspace.
@@ -791,6 +787,11 @@ class ContainerRegistry:
         self.browsers = BrowserRouter()
         self.idle = IdleMonitor(self)
         self.health = HealthMonitor(self)
+
+        # The WebSocketState instance (set by build_app after construction,
+        # #1464). The HealthMonitor reaches it via self._registry.connections.
+        # wshandler.state stays as a transitional shim (dies in Slice 2d / #1465).
+        self.connections = None
 
     # --- Service-session locks (#1188, moved from terminal.py, #1426) ---
     # The dict still physically lives in terminal.py (terminal.py can't import

@@ -1899,12 +1899,13 @@ class TestShutdown:
             await asyncio.sleep(999)
 
         task = asyncio.create_task(fake_health())
-        container.registry.health.health_task = task
+        reg = _health_registry()
+        reg.health.health_task = task
 
         with patch_podman():
-            await container.registry.shutdown()
+            await reg.shutdown()
         assert task.cancelled()
-        assert container.registry.health.health_task is None
+        assert reg.health.health_task is None
 
     async def test_shutdown_handles_podman_error(self):
         with patch_podman(
@@ -2363,6 +2364,23 @@ def _mock_sock_for_health():
     return sock
 
 
+def _health_registry(ws_state=None):
+    """A ContainerRegistry wired for health-monitor tests (#1464).
+
+    Constructs a fresh registry (not the module shim) and wires its
+    ``connections`` to the given WebSocketState (or the module-global
+    ``wshandler.state`` by default). HealthMonitor reaches connections via
+    ``self._registry.connections`` — no lazy import, no module global on the
+    production path.
+    """
+    from klangk_backend.settings import KlangkSettings
+    from klangk_backend.wshandler import state as _ws_state
+
+    reg = container.ContainerRegistry(KlangkSettings(env={}))
+    reg.connections = ws_state or _ws_state
+    return reg
+
+
 def _health_state(
     *,
     workspace_id="ws-h",
@@ -2392,7 +2410,7 @@ class TestHealthMonitorRunOne:
     """_run_one: rc 0 → healthy, non-zero/error → unhealthy (with reason)."""
 
     async def test_exit_zero_is_healthy(self):
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state()
         exec_mock = AsyncMock(return_value=(0, "", ""))
         with (
@@ -2427,7 +2445,7 @@ class TestHealthMonitorRunOne:
     async def test_nonzero_exit_is_unhealthy_with_stderr_reason(self):
         # The stderr that explains the non-zero exit is captured as the
         # reason instead of being thrown away (#1088).
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state()
         with (
             patch.object(
@@ -2452,7 +2470,7 @@ class TestHealthMonitorRunOne:
 
     async def test_nonzero_exit_falls_back_to_stdout(self):
         # No stderr → the reason uses stdout instead.
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state()
         with (
             patch.object(
@@ -2477,7 +2495,7 @@ class TestHealthMonitorRunOne:
     async def test_nonzero_exit_no_output_reports_exit_code(self):
         # Non-zero exit but no output at all → still surface the exit
         # code so it isn't a complete black box (#1088).
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state()
         with (
             patch.object(
@@ -2512,7 +2530,7 @@ class TestHealthMonitorRunOne:
     async def test_exec_error_is_unhealthy_with_reason(self):
         # The podman/timeout failure text is captured as the reason
         # instead of being discarded (#1088).
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state()
         with (
             patch.object(
@@ -2536,7 +2554,7 @@ class TestHealthMonitorRunOne:
         assert "boom" in message
 
     async def test_no_owner_is_unhealthy_with_reason(self):
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state(owner_id=None)
         with patch.object(podman, "exec_container") as exec_mock:
             status, message = await monitor._run_one(st)
@@ -2546,7 +2564,7 @@ class TestHealthMonitorRunOne:
 
     async def test_no_handle_is_unhealthy_with_reason(self):
         # Owner exists in the state but has no handle resolved.
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state(owner_id="uid-owner")
         with (
             patch.object(
@@ -2564,7 +2582,7 @@ class TestHealthMonitorCheckWorkspace:
     """_check_workspace: records status + reason and broadcasts changes."""
 
     async def test_broadcasts_on_transition_to_unhealthy(self):
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state(health_status=None)  # unknown → unhealthy
         with (
             patch.object(
@@ -2581,7 +2599,7 @@ class TestHealthMonitorCheckWorkspace:
         bcast.assert_called_once_with(st, "unhealthy", "connection refused")
 
     async def test_no_broadcast_when_status_unchanged(self):
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state(health_status="healthy")  # stays healthy
         with (
             patch.object(
@@ -2596,7 +2614,7 @@ class TestHealthMonitorCheckWorkspace:
     async def test_clears_message_when_becomes_healthy(self):
         # A stale failure reason must not linger next to a "healthy"
         # status once the check starts passing again (#1088).
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state(health_status="unhealthy")
         st.health_message = "old reason"
         with patch.object(
@@ -2613,7 +2631,7 @@ class TestHealthMonitorCheckWorkspace:
         # logs at least once per unhealthy transition, at info (#1088).
         import logging
 
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state(health_status=None)
         with patch.object(
             monitor,
@@ -2634,7 +2652,7 @@ class TestHealthMonitorCheckWorkspace:
         # polls log the reason at debug (#1088).
         import logging
 
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state(health_status="unhealthy")
         with patch.object(
             monitor,
@@ -2665,7 +2683,7 @@ class TestHealthMonitorStartupGrace:
     """
 
     async def test_unhealthy_during_grace_is_suppressed(self):
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state(health_status=None, in_startup_grace=True)
         with (
             patch.object(
@@ -2687,7 +2705,7 @@ class TestHealthMonitorStartupGrace:
         # Even mid-grace, a passing check marks the service healthy
         # right away -- the grace only suppresses failures, not
         # successes, so a fast-booting service isn't hidden.
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state(health_status=None, in_startup_grace=True)
         with (
             patch.object(
@@ -2703,7 +2721,7 @@ class TestHealthMonitorStartupGrace:
     async def test_unhealthy_after_grace_is_recorded(self):
         # Once the grace window has elapsed, a failing check is a real
         # outage again: status flips, reason is kept, and it broadcasts.
-        monitor = container.registry.health
+        monitor = _health_registry().health
         st = _health_state(health_status=None, in_startup_grace=False)
         with (
             patch.object(
@@ -2719,7 +2737,7 @@ class TestHealthMonitorStartupGrace:
         bcast.assert_called_once_with(st, "unhealthy", "connection refused")
 
     def test_in_startup_grace_uses_anchor_window(self):
-        monitor = container.registry.health
+        monitor = _health_registry().health
         # service_started_at = now -> within the default 30s window.
         st_in = _health_state(in_startup_grace=True)
         assert monitor._in_startup_grace(st_in) is True
@@ -2757,7 +2775,7 @@ class TestHealthMonitorStartupGrace:
     def test_fans_out_via_notify_service_health(self):
         from klangk_backend.wshandler import state as _ws_state
 
-        monitor = container.registry.health
+        monitor = _health_registry().health
         sock = _mock_sock_for_health()
         st = _health_state(health_status="unhealthy")
         try:
@@ -2787,9 +2805,10 @@ class TestHealthMonitorLoopSkips:
     """run_health_loop skips setup-incomplete and checkless workspaces."""
 
     async def test_skips_setup_incomplete(self):
-        monitor = container.registry.health
+        reg = _health_registry()
+        monitor = reg.health
         st = _health_state(setup_state="pending")
-        container.registry.states[st.workspace_id] = st
+        reg.states[st.workspace_id] = st
         try:
             with (
                 patch.object(
@@ -2806,12 +2825,13 @@ class TestHealthMonitorLoopSkips:
                     pass
             check.assert_not_called()
         finally:
-            container.registry.states.pop(st.workspace_id, None)
+            reg.states.pop(st.workspace_id, None)
 
     async def test_skips_when_no_health_check(self):
-        monitor = container.registry.health
+        reg = _health_registry()
+        monitor = reg.health
         st = _health_state(health_check=None)
-        container.registry.states[st.workspace_id] = st
+        reg.states[st.workspace_id] = st
         try:
             with (
                 patch.object(
@@ -2828,12 +2848,13 @@ class TestHealthMonitorLoopSkips:
                     pass
             check.assert_not_called()
         finally:
-            container.registry.states.pop(st.workspace_id, None)
+            reg.states.pop(st.workspace_id, None)
 
     async def test_runs_when_setup_complete(self):
-        monitor = container.registry.health
+        reg = _health_registry()
+        monitor = reg.health
         st = _health_state(setup_state="complete")
-        container.registry.states[st.workspace_id] = st
+        reg.states[st.workspace_id] = st
         try:
             with (
                 patch.object(
@@ -2850,7 +2871,7 @@ class TestHealthMonitorLoopSkips:
                     pass
             check.assert_called()
         finally:
-            container.registry.states.pop(st.workspace_id, None)
+            reg.states.pop(st.workspace_id, None)
 
 
 class TestHealthMonitorBroadcastSeq:
@@ -2859,7 +2880,7 @@ class TestHealthMonitorBroadcastSeq:
     def test_bumps_seq_each_emit_and_forwards_fields(self):
         from klangk_backend.wshandler import state as _ws_state
 
-        monitor = container.registry.health
+        monitor = _health_registry().health
         sock = _mock_sock_for_health()
         st = _health_state(health_status="unhealthy")
         st.health_checked_at = 1_700_000_000.0
@@ -2891,7 +2912,7 @@ class TestHealthMonitorDeath:
     def test_broadcast_death_emits_terminal_frame(self):
         from klangk_backend.wshandler import state as _ws_state
 
-        monitor = container.registry.health
+        monitor = _health_registry().health
         sock = _mock_sock_for_health()
         st = _health_state(health_status="healthy")
         st.health_checked_at = 1_700_000_000.0
@@ -2919,26 +2940,27 @@ class TestHealthMonitorDeath:
         # subscribers BEFORE the on_workspace_killed callback drops state.
         from klangk_backend.wshandler import state as _ws_state
 
+        reg = _health_registry(_ws_state)
         sock = _mock_sock_for_health()
         st = _health_state(health_status="healthy")
-        container.registry.states[st.workspace_id] = st
+        reg.states[st.workspace_id] = st
         seen_state_present = []
 
         async def on_killed(wid):
             # The state must still be present when the callback runs --
             # death emission happens first, before removal.
-            seen_state_present.append(wid in container.registry.states)
+            seen_state_present.append(wid in reg.states)
 
         try:
             _ws_state.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
-            container.registry.set_on_workspace_killed(on_killed)
-            await container.registry.notify_workspace_killed(st.workspace_id)
+            reg.set_on_workspace_killed(on_killed)
+            await reg.notify_workspace_killed(st.workspace_id)
         finally:
             _ws_state.connections.pop(sock, None)
-            container.registry.states.pop(st.workspace_id, None)
-            container.registry.set_on_workspace_killed(None)
+            reg.states.pop(st.workspace_id, None)
+            reg.set_on_workspace_killed(None)
         frame = sock.send_json.call_args[0][0]
         assert frame["healthy"] is False
         assert frame["running"] is False
@@ -2986,14 +3008,15 @@ class TestHealthMonitorDeath:
         """
         from klangk_backend.wshandler import state as _ws_state
 
+        reg = _health_registry(_ws_state)
         sock = _mock_sock_for_health()
         st = _health_state(
             workspace_id="ws-idle-death",
             container_id="cid-idle-death",
             health_status="healthy",
         )
-        container.registry.states[st.workspace_id] = st
-        container.registry._cid_to_wsid[st.container_id] = st.workspace_id
+        reg.states[st.workspace_id] = st
+        reg._cid_to_wsid[st.container_id] = st.workspace_id
         st.last_activity = time.time() - container.IDLE_TIMEOUT_SECONDS - 100
 
         try:
@@ -3002,10 +3025,10 @@ class TestHealthMonitorDeath:
             )
             with patch_podman():
                 task = asyncio.create_task(
-                    container.registry.cleanup_idle_containers()
+                    reg.cleanup_idle_containers()
                 )
                 await asyncio.sleep(0.05)
-                container.registry.get_cleanup_wake().set()
+                reg.get_cleanup_wake().set()
                 await asyncio.sleep(0.05)
                 task.cancel()
                 try:
@@ -3014,8 +3037,8 @@ class TestHealthMonitorDeath:
                     pass
         finally:
             _ws_state.connections.pop(sock, None)
-            container.registry.states.pop(st.workspace_id, None)
-            container.registry._cid_to_wsid.pop(st.container_id, None)
+            reg.states.pop(st.workspace_id, None)
+            reg._cid_to_wsid.pop(st.container_id, None)
 
         # The death frame must have been emitted.
         sock.send_json.assert_called()
@@ -3034,7 +3057,7 @@ class TestHealthLoopHeartbeat:
     async def test_heartbeats_sent_each_tick_to_opted_in(self):
         from klangk_backend.wshandler import state as _ws_state
 
-        monitor = container.registry.health
+        monitor = _health_registry().health
         sock = _mock_sock_for_health()
         try:
             _ws_state.connections[sock] = SimpleNamespace(
@@ -3106,13 +3129,15 @@ class TestRegistryServiceSessionLockDelegates:
         assert reg.settings is not None
 
 
-class TestConnectionsModule:
-    """HealthMonitor reads connections from the connections module (#1464)."""
+class TestRegistryConnections:
+    """HealthMonitor reaches WebSocketState via the registry, not a module global (#1464)."""
 
-    def test_connections_property_returns_singleton(self):
-        """The _connections property returns the connections.state singleton."""
-        from klangk_backend import connections
+    def test_connections_property_reads_from_registry(self):
+        """The _connections property returns self._registry.connections."""
         from klangk_backend.settings import KlangkSettings
+        from klangk_backend.wshandler.session import WebSocketState
 
+        ws_state = WebSocketState()
         reg = container.ContainerRegistry(KlangkSettings(env={}))
-        assert reg.health._connections is connections.state
+        reg.connections = ws_state
+        assert reg.health._connections is ws_state
