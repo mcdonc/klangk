@@ -28,7 +28,7 @@ def _render_conf(env_overrides, tmpdir=None):
 
     Replaces the old ``_run_nginx_sh`` (which ran ``scripts/nginx.sh`` and
     killed it after config generation). Sets KLANGK_* env vars, invalidates
-    the settings cache, renders via :func:`klangk_backend.nginx.render_config`,
+    the live env (read by render_config via get_settings), renders via :func:`klangk_backend.nginx.render_config`,
     then restores the env. Returns the conf text.
 
     Keys the renderer consults but that aren't in ``env_overrides`` are
@@ -63,10 +63,8 @@ def _render_conf(env_overrides, tmpdir=None):
             # render, regardless of what a prior test left behind.
             os.environ.pop(k, None)
     try:
-        from klangk_backend.settings import _invalidate_cache
         from klangk_backend.nginx import render_config, tcp_upstream
 
-        _invalidate_cache()
         return render_config(tcp_upstream("127.0.0.1", "19998"))
     finally:
         for k, old in old_env.items():
@@ -74,9 +72,7 @@ def _render_conf(env_overrides, tmpdir=None):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = old
-        from klangk_backend.settings import _invalidate_cache
 
-        _invalidate_cache()
 
 
 def _write_and_launch_nginx(conf_text, nginx_port, tmpdir):
@@ -450,7 +446,6 @@ class TestNginxAclEnforcement:
 
         # Start nginx via the Python renderer (#1396): render the conf
         # from these env vars, then launch nginx directly with -c.
-        from klangk_backend.settings import _invalidate_cache
         from klangk_backend.nginx import write_config, tcp_upstream
 
         for k, v in {
@@ -460,7 +455,6 @@ class TestNginxAclEnforcement:
             "KLANGK_LLM_API_KEY": "fake-key",
         }.items():
             os.environ[k] = v
-        _invalidate_cache()
         nginx_state = os.path.join(tmpdir, "nginx")
         os.makedirs(nginx_state, exist_ok=True)
         conf_path = os.path.join(nginx_state, "nginx.conf")
@@ -622,7 +616,6 @@ class TestNginxDenyByDefault:
         # Start nginx via the Python renderer (#1396) with the host IP as
         # the (sole) container source IP. CONTAINER_DENY on the catch-all
         # then denies exactly that IP.
-        from klangk_backend.settings import _invalidate_cache
         from klangk_backend.nginx import write_config, tcp_upstream
 
         for k, v in {
@@ -630,7 +623,6 @@ class TestNginxDenyByDefault:
             "KLANGK_CONTAINER_SUBNETS": host_ip,
         }.items():
             os.environ[k] = v
-        _invalidate_cache()
         nginx_state = os.path.join(tmpdir, "nginx")
         os.makedirs(nginx_state, exist_ok=True)
         conf_path = os.path.join(nginx_state, "nginx.conf")
@@ -785,11 +777,9 @@ class TestNginxAuthLocalAcl:
         # nginx via the Python renderer (#1396) with no container subnets —
         # the /auth/local block is always generated with its fixed loopback
         # allowlist.
-        from klangk_backend.settings import _invalidate_cache
         from klangk_backend.nginx import write_config, tcp_upstream
 
         os.environ["KLANGK_NGINX_PORT"] = nginx_port
-        _invalidate_cache()
         nginx_state = os.path.join(tmpdir, "nginx")
         os.makedirs(nginx_state, exist_ok=True)
         conf_path = os.path.join(nginx_state, "nginx.conf")

@@ -7,7 +7,7 @@ steps, then flipping the mode) and asserts the behaviour the
 the docs honest — if a documented flow stops working, these tests fail.
 
 Mode is read live from the environment on every request
-(``oidc.auth_modes()``), so "restart with a different mode" is simulated by
+(``oidc.auth_modes(settings)``), so "restart with a different mode" is simulated by
 re-seeding (the real lifespan step that touches identity) against the *same*
 persistent test database, then changing ``KLANGK_AUTH_MODES`` and continuing
 to hit the same API.
