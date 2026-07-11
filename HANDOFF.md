@@ -2,49 +2,141 @@
 
 ## What this is
 
-This is a large, multi-slice refactor to eliminate module-level mutable globals from `klangk_backend`. The tracking issue is **#1426** (read its full body for the complete design).
+A multi-slice refactor to eliminate module-level mutable globals from
+`klangk_backend` in favor of one composition root: a `build_app(settings)`
+factory. The tracking issue is **#1426**. Every actionable slice has its own
+issue (see "Issue map" below).
 
-Branch: `refactor/1426-composition-root`, based on `origin/main`.
+**Current branch**: `issue-1447-klangksettings-env-constructor-for-injectable-env-dicts-1426`
+**Current PR**: [#1455](https://github.com/mcdonc/klangk/pull/1455) (OPEN)
+**Test state**: 2377 passed, 100% coverage, 0 warnings
 
-## What's been done (commit `7040610e`)
+## Issue map
 
-**Slice 1, step 1: `KlangkSettings(env=...)` constructor.** Done and tested.
+| Issue | Title | State |
+|-------|-------|-------|
+| **#1426** | Tracker: one composition root, no module globals | umbrella |
+| **#1447** | Slice 1 — `KlangkSettings(env=...)` + settings threading | in progress (#1455) |
+| **#1458** | Slice 1 remainder — delete `_config_file_path` global | next |
+| **#1449** | Slice 2 — ContainerRegistry owned instance | |
+| **#1450** | Slice 3 — OIDC instance + caches | |
+| **#1451** | Slice 4 — Plugins instance | |
+| **#1452** | Slice 5 — `DB(settings)`; kill db globals | |
+| **#1453** | Slice 6 — freeze `resolve_env_value` at startup | |
+| **#1454** | Slice 7 — delete the `main:app` shim | |
+| **#1456** | Standalone — `frontend_dir` config setting | |
+| **#1457** | Standalone — tests stop monkeypatching `os.environ` | |
 
-`KlangkSettings` now accepts an optional `env` dict parameter:
+The next-step chain after #1455 merges: **#1458** → Slice 1 done →
+**#1449** (Slice 2) → #1450 → #1451 → #1452 → #1453 → #1454.
 
-```python
-KlangkSettings()              # reads os.environ (production default)
-KlangkSettings(env={...})     # reads the dict only; os.environ ignored (tests)
-```
+## Slice 1: what's DONE
 
-Implementation: `_EnvDictSource(EnvSettingsSource)` overrides `_load_env_vars()` to run the passed dict through the same `parse_env_vars` normalizer the base uses for `os.environ`. A class-var bridge (`_env_for_sources`) shuttles the env dict from `__init__` through the classmethod boundary (`settings_customise_sources` runs before `self` exists), cleaned up after construction so it doesn't leak.
+Two PRs land Slice 1. **#1448 is merged** (on `main`); **#1455 is open**
+(this branch).
 
-**Known tech debt — the class-var bridge (`_env_for_sources`, `_config_file_for_sources`).** This is nasty but works: `__init__` sets a class var, `super().__init__()` reads it in the classmethod, then `__init__` resets it to `None`. It's safe because construction is single-threaded (startup + tests construct one at a time), but it's not thread-safe and it's surprising. A cleaner alternative to investigate: stash `env`/`config_file` on a subclassed `init_settings` source (the one `settings_customise_sources` argument tied to *this* construction) instead of a class var. That's deeper pydantic-internals work and wasn't verified under time pressure; leave as a follow-up cleanup. Do **not** treat the class-var bridge as permanent.
+### PR #1448 (merged) — the constructor
 
-**Precedence note**: env > config file > defaults. (pydantic-settings gives earlier sources in the tuple higher priority. Init kwargs / field overrides are not a supported configuration path — don't use them.)
+- **`KlangkSettings(env, config_file=None)`** constructor. `env` is
+  **required** (`Mapping[str, str]` — production passes `os.environ`,
+  tests pass a dict). `config_file` is optional (`str | None`; `None` =
+  no config file). Implementation: `_EnvDictSource(EnvSettingsSource)`
+  overrides `_load_env_vars()` to run the passed mapping through the
+  same `parse_env_vars` normalizer the base uses for `os.environ`.
+- **Class-var bridge** (`_env_for_sources`, `_config_file_for_sources`):
+  shuttles the env dict / config-file path from `__init__` through the
+  classmethod boundary (`settings_customise_sources` runs before `self`
+  exists). **Review fixes applied (#1448 review):**
+  - Annotated as `ClassVar[...]` (not bare underscore attrs — pydantic
+    absorbs those into `__private_attributes__` and they worked only by
+    `cls.` vs `self.` accident).
+  - Cleanup is `try/finally` around `super().__init__()` (a failed
+    construction no longer leaks the env dict onto the class).
+- **No init kwargs.** `**values` was dropped — init kwargs are NOT a
+  supported config path (lowest-priority source, silently ignored when
+  env sets the field).
+- **Precedence**: env dict > config file > defaults (earlier sources in
+  the pydantic-settings tuple win).
 
-**Tests**: 57 settings tests pass (6 new `TestEnvConstructor` tests). Full suite: 2354 pass, 1 pre-existing flaky WS test fails under `-n auto` (passes in isolation), 0 warnings from new tests.
+### PR #1455 (open, this branch) — build_app, cache deletion, oidc threading, validator
 
-## What remains for Slice 1
+Four commits on top of the merged #1448:
 
-The rest of Slice 1 (see #1426 for acceptance criteria):
+1. **`oidc.auth_modes(settings)` + predicate threading.**
+   `auth_modes()`, `password_login_allowed()`, `local_login_allowed()`,
+   `oidc_login_allowed()` now take a `KlangkSettings` arg and read
+   `settings.auth_modes` instead of `resolve_env_value("KLANGK_AUTH_MODES")`
+   at call time. Production callers obtain settings via `get_settings()`
+   (transitional — `get_settings_dep` arrives in commit 2). **This is a
+   stepping stone for Slice 3 (#1450)**, where the `settings` param
+   becomes `self.settings` on an `OIDC(settings)` class.
 
-1. **`build_app(settings)` factory.** Wrap the module-level `app = FastAPI()` + `add_middleware` + `include_router` in `main.py` into a `build_app()` function. Keep `main:app` as a shim (`app = build_app(get_settings())`) so uvicorn's string import still works. The factory takes `settings: KlangkSettings` and stores it on `app.state.settings`.
+2. **`build_app(settings)` composition root + `get_settings_dep` + cache
+   machinery deletion.**
+   - `build_app()` wraps app construction (FastAPI, CORS, routers,
+     exception handlers, WS endpoint, static files) into one factory.
+     Sets `app.state.settings = settings`.
+   - `get_settings_dep(request)` → `request.app.state.settings` — the
+     per-request bridge (zero callers yet; endpoints migrate to it
+     incrementally or via subsystem Depends in later slices).
+   - Module-level `app = build_app(get_settings())` remains as a shim
+     for uvicorn's string import.
+   - **Cache machinery deleted**: `_settings_instance`,
+     `_settings_env_signature`, `_env_signature()`, `_invalidate_cache()`
+     all gone. `get_settings()` is cache-free (constructs a fresh
+     `KlangkSettings(os.environ, config_file=_config_file_path)` on
+     every call).
 
-2. **`get_settings_dep` FastAPI dependency.** Add a per-request dependency that reads `request.app.state.settings`:
+3. **`auth_modes` field validator (security fix).**
+   A typo'd `KLANGK_AUTH_MODES` (e.g. `passdword`) used to fall through
+   to `"none"` — a **silent security downgrade** (`none` freely issues
+   an admin token). A pydantic `field_validator` now rejects non-`None`,
+   non-empty values outside `{password, oidc, both, none}` at
+   construction (`validate_at_startup()` in the lifespan → aborts boot
+   before serving traffic). Empty string is treated as unset (`None`),
+   preserving the blank-value behavior. `oidc.auth_modes()` simplified
+   to `settings.auth_modes` + `None → "none"` fallback (the set check is
+   redundant now that the validator guarantees validity).
 
-   ```python
-   def get_settings_dep(request: Request) -> KlangkSettings:
-       return request.app.state.settings
-   ```
+4. **E2E test fix.** `test_nginx_acl_e2e.py` imported `_invalidate_cache`
+   (deleted in commit 2). Removed all 10 lines (5 imports + 5 calls).
+   Also fixed invalid `password,oidc` test data in `test_nginx.py`
+   (never a valid mode — the new validator catches it) → `both`.
 
-3. **Thread `settings` into `oidc.auth_modes()` and the `*_login_allowed` predicates.** These currently call `get_settings()` internally. Change them to take a `settings: KlangkSettings` arg. Update all callers (the FastAPI auth dependencies in `api/auth.py`, the `/config` endpoint in `api/__init__.py`, and startup callers).
+## Slice 1: what REMAINS
 
-4. **Drop the cache machinery.** Delete `_settings_instance`, `_settings_env_signature`, `_env_signature()`, `_invalidate_cache()`, and the env-change detection in `get_settings()`. `get_settings()` either goes away entirely or becomes a test-only constructor.
+Only one item — **#1458** (filed as its own issue):
 
-5. **Migrate tests.** Tests that use `monkeypatch.setenv` + `_invalidate_cache()` should migrate to `KlangkSettings(env={...})` where practical. Some tests may keep monkeypatch if they test code paths that still call `resolve_env_value` (those retire in Slice 6).
+- **Delete the `_config_file_path` global.** `set_config_file()` /
+  `get_config_file()` / `_config_file_path` are still present as a
+  transitional fallback. `get_settings()` passes
+  `config_file=_config_file_path` explicitly so the coupling is visible.
+  Migrate `klangkd` (the one production caller, `klangkd.py:105`) and
+  ~15 test callers to pass `config_file=` to the constructor, then
+  delete the global + accessors.
 
-6. **Update `validate_at_startup()`** to construct `KlangkSettings(os.environ)` instead of calling `get_settings()`.
+After #1458 merges, **#1447 (Slice 1) closes** and **#1449 (Slice 2)**
+starts.
+
+## Design decisions (locked in)
+
+- **`env` is required on `KlangkSettings.__init__`** — forces explicit
+  config source. `os.environ` is never read unless explicitly passed.
+- **`config_file` defaults to `None`** — `None` means "no config file"
+  (legitimate common case for tests/scripts). `"none"` is the explicit
+  opt-out string.
+- **Init kwargs NOT supported** — dropped from signature, not mentioned
+  in docstrings (except `config_file`).
+- **Precedence**: env dict > config file > defaults.
+- **`DB(settings)` not `settings.get_db()`** — settings stays a pure
+  config value; engine/PRAGMA/cache concerns live on `DB`.
+- **No ContextVar** — Pyramid discipline; all threaded explicitly.
+- **`get_settings()` is a cache-free shim** — stays until Slice 7
+  (#1454) when its last caller (the `main:app` shim) is gone.
+- **`get_settings_dep` is NOT for every endpoint** — its real audience
+  is endpoints reading config fields directly. Endpoints delegating to
+  subsystem objects (oidc/container/plugins) use per-subsystem Depends
+  once those become instances (Slices 2-4).
 
 ## How to run tests
 
@@ -52,66 +144,69 @@ The rest of Slice 1 (see #1426 for acceptance criteria):
 # Always use this prefix (devenv project):
 devenv --quiet -O dotenv.enable:bool false shell --
 
-# Settings tests only (fast iteration):
-devenv --quiet -O dotenv.enable:bool false shell -- bash -c 'cd src/backend && python3 -m pytest tests/test_settings.py -o addopts="" -q'
+# Full backend suite (CI-matching, with coverage + xdist):
+devenv --quiet -O dotenv.enable:bool false shell -- \
+  bash -c 'cd src/backend && python3 -m pytest tests -n auto'
 
-# Full backend suite (CI-matching, with coverage):
-devenv --quiet -O dotenv.enable:bool false shell -- bash -c 'cd src/backend && python3 -m pytest tests -n auto'
+# Settings/main tests only (fast iteration, no coverage):
+devenv --quiet -O dotenv.enable:bool false shell -- \
+  bash -c 'cd src/backend && python3 -m pytest tests/test_settings.py tests/test_main.py -o addopts="" -q'
 
-# Quick run without coverage (for fast iteration):
-devenv --quiet -O dotenv.enable:bool false shell -- bash -c 'cd src/backend && python3 -m pytest tests/test_settings.py tests/test_main.py -o addopts="" -q'
+# Full CLI suite (CI-matching):
+devenv --quiet -O dotenv.enable:bool false shell -- \
+  bash -c 'cd src/cli && python3 -m pytest tests -n auto'
 ```
+
+CI runs E2E suites (`test-backend-e2e`, `test-cli-e2e`,
+`test-frontend-e2e`) that need a container runtime — those can't run
+locally without podman. The nginx ACL E2E tests were the catch for the
+`_invalidate_cache` import breakage in #1455 (fixed in commit 4).
 
 ## Key files and their roles
 
-| File                                         | Role                                                                                                                                                  |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/backend/klangk_backend/settings.py`     | `KlangkSettings` model, `get_settings()` singleton (to be removed), `validate_at_startup()`, `resolve_env_value/bool` (Slice 6)                       |
-| `src/backend/klangk_backend/main.py`         | Lifespan, `app = FastAPI()`, `setup_logfire`, `cors_origins`, nginx watchdog. The `build_app()` factory goes here.                                    |
-| `src/backend/klangk_backend/oidc.py`         | `auth_modes()`, `password_login_allowed()`, `oidc_login_allowed()`, `local_login_allowed()` — the per-request predicates that need settings threading |
-| `src/backend/klangk_backend/api/auth.py`     | Auth dependencies (`require_auth`, etc.) that call `oidc.auth_modes()`                                                                                |
-| `src/backend/klangk_backend/api/__init__.py` | The `/config` endpoint that reads `oidc.auth_modes()`                                                                                                 |
-| `src/backend/klangk_backend/klangkd.py`      | The launcher entry point; calls `validate_at_startup()` and `uvicorn.run("klangk_backend.main:app")`                                                  |
+| File | Role |
+|------|------|
+| `src/backend/klangk_backend/settings.py` | `KlangkSettings` model + constructor (`_EnvDictSource`, class-var bridges, `auth_modes` validator), `get_settings()` (cache-free shim), `validate_at_startup()`, `_config_file_path` global (dies in #1458), `resolve_env_value/bool` (die in Slice 6 / #1453) |
+| `src/backend/klangk_backend/main.py` | `build_app(settings)` composition root, `get_settings_dep`, `lifespan`, `setup_logfire`, `cors_origins`, nginx watchdog globals, `app = build_app(get_settings())` shim (dies in Slice 7 / #1454) |
+| `src/backend/klangk_backend/oidc.py` | `auth_modes(settings)`, `*_login_allowed(settings)` — take settings arg (become methods in Slice 3 / #1450); `_providers` / `_discovery_cache` / `_jwks_cache` globals (move onto OIDC instance in Slice 3) |
+| `src/backend/klangk_backend/api/auth.py` | Auth endpoints calling `oidc.password_login_allowed(get_settings())` / `oidc.local_login_allowed(get_settings())` |
+| `src/backend/klangk_backend/api/__init__.py` | `/config` endpoint calling `oidc.auth_modes(get_settings())`; module-scope `resolve_env_value` constants (migrate to settings in Slice 6) |
+| `src/backend/klangk_backend/klangkd.py` | Launcher; calls `set_config_file(resolved)` (dies in #1458), `validate_at_startup()`, `uvicorn.run("klangk_backend.main:app")` |
 
-## Design rules (from #1426)
+## Tech debt callout: the class-var bridge
 
-- **No implicit lookups.** All threaded explicitly as constructor/param args — no `ContextVar`, no module global, no `app.state`-as-registry. The lifespan closes over the instances it constructs and passes them into the background actors and WS/router factories.
-- **ASGI app is the only global.** Everything else is an instance owned by `app.state` or an explicit constructor arg.
-- **`app.state.x = ...` only inside `build_app()` or the lifespan.**
-- **`KlangkSettings(os.environ)`** in production; `KlangkSettings(env={...})` in tests.
-- **100% coverage maintained** at every commit.
-- **Warnings in tests you touched must be squashed** before pushing.
+`_env_for_sources` and `_config_file_for_sources` are `ClassVar`s set on
+the class in `__init__` before `super().__init__()`, read in the
+classmethod `settings_customise_sources`, and cleaned up in a `try/finally`.
+This is safe (construction is single-threaded at startup and one-at-a-time
+in tests) but not thread-safe and surprising.
 
-## Remaining slices (beyond Slice 1)
-
-See #1426 for the full design. Summary:
-
-- **Slice 2**: promote `ContainerRegistry` to `app.state.container_registry`; move `_service_session_locks`; make `IdleMonitor`/`HealthMonitor`/`BrowserRouter`/`PortAllocator` take `settings` in constructors; `auto_start_workspaces` becomes a `ContainerRegistry` method; `NginxWatchdog` → `app.state.nginx_watchdog`; `wshandler.state` → `ConnectionRegistry`.
-- **Slice 3**: `OIDC` instance + caches → `app.state.oidc`.
-- **Slice 4**: `Plugins` instance → `app.state.plugins`.
-- **Slice 5**: `DB(settings)` — kill `data_dir`/`DB_PATH`/`get_db()` globals in `model/db.py`.
-- **Slice 6**: freeze `resolve_env_value` at startup (132 call sites).
-- **Slice 7**: delete the `main:app` shim.
+A cleaner alternative (not yet verified): stash `env`/`config_file` on a
+subclassed `init_settings` source (the one `settings_customise_sources`
+argument tied to *this* construction) instead of a class var. That's deeper
+pydantic-internals work; leave as a follow-up cleanup. Do **not** treat the
+class-var bridge as permanent — it exists because extracting `env` from
+`init_settings` inside the classmethod doesn't work (`extra="ignore"` drops
+non-field init kwargs).
 
 ## Full target `build_app()` shape (the end state across all slices)
 
-Every `app.state` attribute created across the refactor, in slice order. The
-HANDOFF model should understand this is the target — each slice creates its
-subset and leaves the rest for later slices.
+Every `app.state` attribute created across the refactor, in slice order.
+Each slice creates its subset and leaves the rest for later slices.
 
 ```python
 def build_app(settings: KlangkSettings) -> FastAPI:
     app = FastAPI(title="Klangk", lifespan=_lifespan(settings))
 
-    # --- Slice 1 ---
+    # --- Slice 1 (DONE) ---
     app.state.settings = settings
 
-    # --- Slice 2 ---
+    # --- Slice 2 (#1449) ---
     app.state.container_registry = container.ContainerRegistry(settings)
     #   - IdleMonitor / HealthMonitor / BrowserRouter / PortAllocator become
     #     collaborators of the registry (nested as `.idle`, `.health`, etc.)
     #   - terminal._service_session_locks moves onto the registry
-    #   - auto_start_workspaces becomes a ContainerRegistry method
+    #   - auto_start_workspaces takes (container_registry, settings) as args
     app.state.nginx_watchdog = NginxWatchdog(settings)
     app.state.connections = ConnectionRegistry()
     #   ^ new lifecycle object: replaces the `wshandler.state` module global.
@@ -122,15 +217,17 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     #     live WS connections — different lifecycle than either, so it gets its
     #     own owner on app.state.
 
-    # --- Slice 3 ---
+    # --- Slice 3 (#1450) ---
     app.state.oidc = oidc.OIDC(settings)
     #   - _providers / _discovery_cache / _jwks_cache move onto the instance
+    #   - auth_modes(settings) / *_login_allowed(settings) become methods
+    #     (self.settings replaces the settings arg threaded in Slice 1)
 
-    # --- Slice 4 ---
+    # --- Slice 4 (#1451) ---
     app.state.plugins = plugins.Plugins(settings)
     #   - _declarations / _values move onto the instance
 
-    # --- Slice 5 ---
+    # --- Slice 5 (#1452) ---
     app.state.db = DB(settings)
     #   - kills data_dir / DB_PATH / engine / ensure_engine / get_db() globals
     #   - model methods take settings (or live on DB; see #1452 scope fence)
@@ -145,8 +242,8 @@ def build_app(settings: KlangkSettings) -> FastAPI:
         await wshandler.handle(websocket, app.state.settings, app.state.container_registry, app.state.oidc, app.state.connections)
     # settings: needed for KLANGKC_DEBUG_SSH_AGENT / KLANGKWS_DEBUG /
     #   KLANGK_BRIDGE_TIMEOUT_SECONDS (read today via resolve_env_value;
-    #   migrate to settings in Slice 6). Passed from the start so the WS
-    #   handler signature doesn't change twice.
+    #   migrate to settings in Slice 6 / #1453). Passed from the start so the
+    #   WS handler signature doesn't change twice.
 
     return app
 ```
@@ -155,7 +252,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
 
 | Attribute | Slice | Lifecycle | Notes |
 |-----------|-------|-----------|-------|
-| `settings` | 1 | frozen at startup | `KlangkSettings(os.environ, config_file=...)` |
+| `settings` | 1 (done) | frozen at startup | `KlangkSettings(os.environ, config_file=...)` |
 | `container_registry` | 2 | process lifetime | owns monitors, port allocator, browser router |
 | `nginx_watchdog` | 2 | start/stop in lifespan | `.start()` / `.stop()` methods |
 | `connections` | 2 | process lifetime (connections register/unregister) | replaces `wshandler.state` global; monitor broadcasts through it |
