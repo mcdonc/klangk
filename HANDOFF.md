@@ -75,6 +75,8 @@ the suggested order, grouped by theme, with dependencies noted:
 | #1463 | Slice 2b — NginxWatchdog class | next |
 | #1464 | Slice 2c — ConnectionRegistry | next (parallel with 2b) |
 | #1465 | Slice 2d — migrate test refs off globals | after 2a+2c |
+| #1468 | Slice 2 — `Podman(settings)` class | part of Slice 2 |
+| #1469 | Slice 2 — nginx renderer class | part of Slice 2 |
 | #1450 | Slice 3 — OIDC instance + caches | |
 | #1451 | Slice 4 — Plugins instance | |
 | #1452 | Slice 5 — `DB(settings)`; kill db globals | |
@@ -85,8 +87,6 @@ the suggested order, grouped by theme, with dependencies noted:
 | #1459 | Standalone — `state_dir` field default (no env mutation) | |
 | #1461 | Standalone — resolve `file:`/`cmd:` at construction | |
 | #1467 | Standalone — centralize logging configuration | |
-| #1468 | Standalone — `Podman(settings)` class | |
-| #1469 | Standalone — nginx renderer class | |
 
 ## Slice 1: DONE (reference)
 
