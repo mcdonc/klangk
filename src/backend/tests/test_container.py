@@ -3057,3 +3057,50 @@ class TestHealthLoopHeartbeat:
         frames = [c[0][0] for c in sock.send_json.call_args_list]
         assert frames  # at least one heartbeat over ~5 ticks
         assert all(f["type"] == "service_health_heartbeat" for f in frames)
+
+
+class TestRegistryServiceSessionLockDelegates:
+    """The registry delegates service-session-lock ops to terminal (#1426 2a)."""
+
+    def setup_method(self):
+        from klangk_backend import terminal
+
+        terminal._service_session_locks.clear()
+
+    def teardown_method(self):
+        from klangk_backend import terminal
+
+        terminal._service_session_locks.clear()
+
+    def test_get_via_registry(self):
+        from klangk_backend import terminal
+
+        reg = container.registry
+        lock = reg.get_service_session_lock("cid")
+        assert lock is terminal.get_service_session_lock("cid")
+
+    def test_clear_via_registry(self):
+        from klangk_backend import terminal
+
+        reg = container.registry
+        reg.get_service_session_lock("cid")
+        assert "cid" in terminal._service_session_locks
+        reg.clear_service_session_lock("cid")
+        assert "cid" not in terminal._service_session_locks
+
+    def test_prune_via_registry(self):
+        from klangk_backend import terminal
+
+        reg = container.registry
+        reg.get_service_session_lock("alive")
+        reg.get_service_session_lock("dead")
+        removed = reg.prune_service_session_locks({"alive"})
+        assert removed == 1
+        assert "dead" not in terminal._service_session_locks
+
+    def test_registry_takes_settings(self):
+        """ContainerRegistry.__init__ accepts settings (#1426)."""
+        from klangk_backend.settings import KlangkSettings
+
+        reg = container.ContainerRegistry(KlangkSettings(env={}))
+        assert reg.settings is not None

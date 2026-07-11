@@ -444,13 +444,14 @@ def _prepare_nginx() -> tuple[str, str]:
     (minimal/headless vs full/browser) and the nginx listen directive, not
     the upstream.
     """
+    settings = get_settings()
     state_dir = (
-        resolve_indirection(get_settings().state_dir) or "/tmp/klangk-state"
+        resolve_indirection(settings.state_dir) or "/tmp/klangk-state"
     )
     uds_path = os.path.join(state_dir, "klangk.sock")
     conf_path = os.path.join(state_dir, "nginx.conf")
-    bin_path = nginx_mod.find_nginx_bin()
-    nginx_mod.write_config(nginx_mod.uds_upstream(uds_path), conf_path)
+    bin_path = nginx_mod.find_nginx_bin(settings)
+    nginx_mod.write_config(nginx_mod.uds_upstream(uds_path), conf_path, settings)
     return bin_path, conf_path
 
 
@@ -720,6 +721,9 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     """
     app = FastAPI(title="Klangk", lifespan=lifespan)
     app.state.settings = settings
+    # Slice 2 (#1449): the container registry is an owned instance, not a
+    # module global. The lifespan reads app.state.container_registry.
+    app.state.container_registry = container.ContainerRegistry(settings)
 
     app.add_middleware(
         CORSMiddleware,
