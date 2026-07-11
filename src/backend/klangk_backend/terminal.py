@@ -131,6 +131,31 @@ def clear_service_session_lock(container_id: str) -> None:
     _service_session_locks.pop(container_id, None)
 
 
+def prune_service_session_locks(active_container_ids: set[str]) -> int:
+    """Remove lock entries for containers no longer tracked by the registry.
+
+    Bounds the ``_service_session_locks`` dict against unbounded growth from
+    container churn (#1351): explicit :func:`clear_service_session_lock`
+    calls cover the normal teardown path, but a racing re-bind in
+    ``stop_and_remove_container`` can leave an entry whose container is gone.
+    This opportunistic sweep removes any entry whose container id is no longer
+    in *active_container_ids*.
+
+    Entries whose lock is currently held are skipped: recreating a fresh
+    ``asyncio.Lock`` for an in-flight service-command fire would not serialize
+    against the held one, reopening the duplicate-window race the lock exists
+    to prevent. Returns the number of entries pruned.
+    """
+    stale = [
+        cid
+        for cid, lock in _service_session_locks.items()
+        if cid not in active_container_ids and not lock.locked()
+    ]
+    for cid in stale:
+        del _service_session_locks[cid]
+    return len(stale)
+
+
 async def has_tmux_session(container_id: str, session_name: str) -> bool:
     """Return True if a tmux session named *session_name* exists."""
     try:
