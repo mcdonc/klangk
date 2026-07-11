@@ -19,7 +19,7 @@ from jose import jwt as jose_jwt
 
 from . import model
 from .exceptions import ConfigurationError
-from .settings import get_settings
+from .settings import KlangkSettings, get_settings
 from .util import resolve_env_value, resolve_file_value
 
 logger = logging.getLogger(__name__)
@@ -158,7 +158,7 @@ def init_providers() -> None:
     """
     global _providers
     _providers = load_config()
-    mode = auth_modes()
+    mode = auth_modes(get_settings())
     if mode in ("oidc", "both") and not _providers:
         raise ConfigurationError(
             f"KLANGK_AUTH_MODES={mode!r} but no OIDC providers configured"
@@ -182,7 +182,7 @@ def is_enabled() -> bool:
     return len(_providers) > 0
 
 
-def auth_modes() -> str:
+def auth_modes(settings: KlangkSettings) -> str:
     """Return the configured auth mode.
 
     One of ``password``, ``oidc``, ``both``, or ``none`` (no-login
@@ -201,24 +201,29 @@ def auth_modes() -> str:
     defaults or overrides it (#1422 removed the deployment-shape setting
     that used to default it). The deployment shape is derived from this
     knob plus ``KLANGK_LISTEN``.
+
+    Takes the frozen :class:`KlangkSettings` explicitly (no global read) —
+    part of the composition-root refactor (#1426): the mode is read from
+    ``settings.auth_modes`` (resolved once at startup), not re-read from
+    the environment at call time.
     """
-    val = resolve_env_value("KLANGK_AUTH_MODES", "")
+    val = settings.auth_modes or ""
     if val in ("oidc", "password", "both", "none"):
         return val
     return "none"
 
 
-def password_login_allowed() -> bool:
-    return auth_modes() in ("password", "both")
+def password_login_allowed(settings: KlangkSettings) -> bool:
+    return auth_modes(settings) in ("password", "both")
 
 
-def local_login_allowed() -> bool:
+def local_login_allowed(settings: KlangkSettings) -> bool:
     """True when no-login single-user mode is active (``none``)."""
-    return auth_modes() == "none"
+    return auth_modes(settings) == "none"
 
 
-def oidc_login_allowed() -> bool:
-    return auth_modes() in ("oidc", "both") and is_enabled()
+def oidc_login_allowed(settings: KlangkSettings) -> bool:
+    return auth_modes(settings) in ("oidc", "both") and is_enabled()
 
 
 # --- PKCE ---

@@ -165,11 +165,11 @@ def enforce_no_auth_bind_safety() -> None:
     ``KLANGK_ALLOW_INSECURE_NO_AUTH=1`` when you knowingly expose a no-auth
     server (e.g. a throwaway VM on an isolated network). #1374.
 
-    Runs in the lifespan so ``auth_modes()`` goes through ``resolve_env_value``
-    (supports ``@file:`` indirection) — something a bash gate in the
+    Runs in the lifespan so ``auth_modes(settings)`` reads the resolved
+    setting (supports ``@file:`` indirection resolved at startup) — something a bash gate in the
     old nginx.sh couldn't replicate.
     """
-    if oidc.auth_modes() != "none":
+    if oidc.auth_modes(get_settings()) != "none":
         return
     host = resolve_env_value("KLANGK_LISTEN", "127.0.0.1") or "127.0.0.1"
     if _is_loopback_bind(host):

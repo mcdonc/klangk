@@ -7643,7 +7643,7 @@ class TestOIDCConfig:
             "list_providers",
             lambda: [{"id": "test", "display_name": "Test"}],
         )
-        monkeypatch.setattr(api.oidc, "auth_modes", lambda: "both")
+        monkeypatch.setattr(api.oidc, "auth_modes", lambda *args: "both")
         resp = await client.get("/api/v1/config")
         data = resp.json()
         assert len(data["oidc_providers"]) == 1
@@ -7654,7 +7654,7 @@ class TestOIDCAuthModeGuards:
     async def test_login_blocked_when_oidc_only(
         self, client, monkeypatch, user
     ):
-        monkeypatch.setattr(api.oidc, "password_login_allowed", lambda: False)
+        monkeypatch.setattr(api.oidc, "password_login_allowed", lambda *args: False)
         resp = await client.post(
             "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
@@ -7665,7 +7665,7 @@ class TestOIDCAuthModeGuards:
     async def test_register_blocked_when_oidc_only(
         self, client, monkeypatch, db
     ):
-        monkeypatch.setattr(api.oidc, "password_login_allowed", lambda: False)
+        monkeypatch.setattr(api.oidc, "password_login_allowed", lambda *args: False)
         resp = await client.post(
             "/api/v1/auth/register",
             json={"email": "new@example.com", "password": "testpass"},
@@ -7673,7 +7673,7 @@ class TestOIDCAuthModeGuards:
         assert resp.status_code == 403
 
     async def test_login_allowed_when_both(self, client, monkeypatch, user):
-        monkeypatch.setattr(api.oidc, "password_login_allowed", lambda: True)
+        monkeypatch.setattr(api.oidc, "password_login_allowed", lambda *args: True)
         resp = await client.post(
             "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
@@ -7683,12 +7683,12 @@ class TestOIDCAuthModeGuards:
 
 class TestOIDCLogin:
     async def test_oidc_login_not_enabled(self, client, monkeypatch):
-        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda: False)
+        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda *args: False)
         resp = await client.get("/api/v1/auth/oidc/test/login")
         assert resp.status_code == 404
 
     async def test_unknown_provider(self, client, monkeypatch):
-        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda: True)
+        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda *args: True)
         monkeypatch.setattr(api.oidc, "get_provider", lambda _: None)
         resp = await client.get("/api/v1/auth/oidc/nope/login")
         assert resp.status_code == 404
@@ -7701,7 +7701,7 @@ class TestOIDCLogin:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda: True)
+        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda *args: True)
         monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
         resp = await client.get(
             "/api/v1/auth/oidc/test/login",
@@ -7718,7 +7718,7 @@ class TestOIDCLogin:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda: True)
+        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda *args: True)
         monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
         monkeypatch.setattr(
             api.oidc,

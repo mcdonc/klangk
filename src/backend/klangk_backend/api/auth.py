@@ -22,6 +22,7 @@ from .. import (
     oidc,
     wshandler,
 )
+from ..settings import get_settings
 from ..util import (
     client_is_loopback,
     derive_hosting_info,
@@ -69,7 +70,7 @@ async def register(
     req: auth.RegisterRequest,
     request: Request,
 ):
-    if not oidc.password_login_allowed():
+    if not oidc.password_login_allowed(get_settings()):
         raise HTTPException(
             status_code=403,
             detail="Password registration is disabled",
@@ -280,7 +281,7 @@ async def reset_password(req: ResetPasswordRequest):
 
 @router.post("/auth/login", response_model=auth.TokenResponse)
 async def login(req: auth.LoginRequest):
-    if not oidc.password_login_allowed():
+    if not oidc.password_login_allowed(get_settings()):
         raise HTTPException(
             status_code=403, detail="Password login is disabled"
         )
@@ -309,7 +310,7 @@ async def local_login(request: Request):
     appear to come from 127.0.0.1), the backend independently verifies
     the *effective* client is loopback via :func:`util.client_is_loopback`.
     """
-    if not oidc.local_login_allowed():
+    if not oidc.local_login_allowed(get_settings()):
         raise HTTPException(
             status_code=403,
             detail="Local login is not enabled (auth mode is not 'none')",
