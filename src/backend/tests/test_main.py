@@ -288,6 +288,7 @@ class TestLifespan:
         monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
         monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
         app = FastAPI()
+        app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
         with (
             patch.object(
                 main.container.registry,
@@ -495,6 +496,7 @@ class TestStartupShutdownRestart:
         monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
         monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
         app = FastAPI()
+        app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
         loop = asyncio.get_running_loop()
         with (
             patch.object(
@@ -916,7 +918,11 @@ class TestBuildApp:
 
     def test_build_app_has_ws_endpoint(self):
         app = main.build_app(KlangkSettings(env={}))
-        ws_paths = {r.path for r in app.routes if hasattr(r, "path") and r.path == "/ws"}
+        ws_paths = {
+            r.path
+            for r in app.routes
+            if hasattr(r, "path") and r.path == "/ws"
+        }
         assert "/ws" in ws_paths
 
     def test_build_app_registers_exception_handlers(self):
