@@ -480,6 +480,7 @@ class TestWatchdogGate:
             assert (tmp_path / "nginx.conf").is_file()
             await wd._task
             assert spawned["bin"] == "/fake/nginx"
+            assert spawned["conf"] == str(tmp_path / "nginx.conf")
         finally:
             import klangk_backend.util as util
 
