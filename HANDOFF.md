@@ -133,10 +133,12 @@ starts.
 - **No ContextVar** — Pyramid discipline; all threaded explicitly.
 - **`get_settings()` is a cache-free shim** — stays until Slice 7
   (#1454) when its last caller (the `main:app` shim) is gone.
-- **`get_settings_dep` is NOT for every endpoint** — its real audience
-  is endpoints reading config fields directly. Endpoints delegating to
-  subsystem objects (oidc/container/plugins) use per-subsystem Depends
-  once those become instances (Slices 2-4).
+- **`get_settings_dep` is for every endpoint that needs settings** — no
+  either/or. Any endpoint requiring settings uses
+  `Depends(get_settings_dep)`. When subsystems become instances (Slices 2-4),
+  endpoints needing those use the corresponding per-subsystem Depends too —
+  that's additive, not alternative. An endpoint needing OIDC *and* a raw
+  config field uses both `get_oidc_dep` and `get_settings_dep`.
 
 ## How to run tests
 
