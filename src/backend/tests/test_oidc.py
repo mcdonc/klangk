@@ -283,9 +283,7 @@ class TestLoadConfig:
 class TestInlineProviders:
     """OIDC providers specified inline in the klangkd config file (#1395)."""
 
-    def test_inline_providers_loaded(self, tmp_path):
-        from klangk_backend.settings import set_config_file
-
+    def test_inline_providers_loaded(self, tmp_path, monkeypatch):
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             "oidc_providers:\n"
@@ -295,22 +293,23 @@ class TestInlineProviders:
             "    client-id: klangk\n"
             '    client-secret: "inline-secret"\n'
         )
-        set_config_file(str(cfg))
-        try:
-            providers = oidc.load_config()
-            assert len(providers) == 1
-            assert providers[0].id == "inline"
-            assert providers[0].display_name == "Inline IdP"
-            assert providers[0].client_secret == "inline-secret"
-            assert providers[0].issuer == "https://idp.example.com"
-        finally:
-            set_config_file(None)
+        from klangk_backend.settings import KlangkSettings
+
+        monkeypatch.setattr(
+            oidc,
+            "get_settings",
+            lambda: KlangkSettings(env={}, config_file=str(cfg)),
+        )
+        providers = oidc.load_config()
+        assert len(providers) == 1
+        assert providers[0].id == "inline"
+        assert providers[0].display_name == "Inline IdP"
+        assert providers[0].client_secret == "inline-secret"
+        assert providers[0].issuer == "https://idp.example.com"
 
     def test_external_file_overrides_inline(self, monkeypatch, tmp_path):
         """When both inline and external are configured, external wins
         (env var override, consistent with env > file precedence)."""
-        from klangk_backend.settings import set_config_file
-
         # External file via env var
         ext = tmp_path / "oidc.yaml"
         ext.write_text(
@@ -338,18 +337,19 @@ class TestInlineProviders:
             "    client-id: klangk\n"
             '    client-secret: "inline"\n'
         )
-        set_config_file(str(cfg))
-        try:
-            providers = oidc.load_config()
-            assert len(providers) == 1
-            assert providers[0].id == "external"
-        finally:
-            set_config_file(None)
+        from klangk_backend.settings import KlangkSettings
 
-    def test_inline_file_secret_resolution(self, tmp_path):
+        monkeypatch.setattr(
+            oidc,
+            "get_settings",
+            lambda: KlangkSettings(env={}, config_file=str(cfg)),
+        )
+        providers = oidc.load_config()
+        assert len(providers) == 1
+        assert providers[0].id == "external"
+
+    def test_inline_file_secret_resolution(self, tmp_path, monkeypatch):
         """file: prefix in inline provider secrets resolves correctly."""
-        from klangk_backend.settings import set_config_file
-
         secret = tmp_path / "secret.txt"
         secret.write_text("resolved-secret\n")
         cfg = tmp_path / "config.yaml"
@@ -361,16 +361,17 @@ class TestInlineProviders:
             "    client-id: klangk\n"
             f'    client-secret: "file:{secret}"\n'
         )
-        set_config_file(str(cfg))
-        try:
-            providers = oidc.load_config()
-            assert providers[0].client_secret == "resolved-secret"
-        finally:
-            set_config_file(None)
+        from klangk_backend.settings import KlangkSettings
 
-    def test_inline_multiple_providers(self, tmp_path):
-        from klangk_backend.settings import set_config_file
+        monkeypatch.setattr(
+            oidc,
+            "get_settings",
+            lambda: KlangkSettings(env={}, config_file=str(cfg)),
+        )
+        providers = oidc.load_config()
+        assert providers[0].client_secret == "resolved-secret"
 
+    def test_inline_multiple_providers(self, tmp_path, monkeypatch):
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             "oidc_providers:\n"
@@ -385,14 +386,17 @@ class TestInlineProviders:
             "    client-id: klangk\n"
             '    client-secret: "sb"\n'
         )
-        set_config_file(str(cfg))
-        try:
-            providers = oidc.load_config()
-            assert len(providers) == 2
-            assert providers[0].id == "a"
-            assert providers[1].id == "b"
-        finally:
-            set_config_file(None)
+        from klangk_backend.settings import KlangkSettings
+
+        monkeypatch.setattr(
+            oidc,
+            "get_settings",
+            lambda: KlangkSettings(env={}, config_file=str(cfg)),
+        )
+        providers = oidc.load_config()
+        assert len(providers) == 2
+        assert providers[0].id == "a"
+        assert providers[1].id == "b"
 
     def test_falls_back_to_external_when_no_inline(
         self, monkeypatch, tmp_path

@@ -7,18 +7,33 @@ A multi-slice refactor to eliminate module-level mutable globals from
 factory. The tracking issue is **#1426**. Every actionable slice has its own
 issue (see "Issue map" below).
 
-**Current branch**: `issue-1447-klangksettings-env-constructor-for-injectable-env-dicts-1426`
-**Current PR**: [#1455](https://github.com/mcdonc/klangk/pull/1455) (OPEN)
-**Test state**: 2377 passed, 100% coverage, 0 warnings
+**Current branch**: `issue-1458-slice-1-remainder-delete-config-file-path-global-dead-valida`
+**Current PR**: [#1460](https://github.com/mcdonc/klangk/pull/1460) (OPEN — Slice 1 final cleanup)
+**Test state**: 2370 passed, 100% coverage, 0 warnings
+
+## Slice 1 is DONE
+
+Three PRs land Slice 1. **#1448 and #1455 are merged** (on `main`);
+**#1460 is open** (this branch — the final cleanup).
+
+- **#1448 (merged)** — `KlangkSettings(env, config_file=None)` constructor.
+- **#1455 (merged)** — `build_app(settings)` composition root,
+  `get_settings_dep`, oidc settings threading, `auth_modes` validator,
+  cache machinery deletion.
+- **#1460 (this PR)** — delete `_config_file_path` global + dead
+  `validate_at_startup()`. Completes Slice 1.
+
+After #1460 merges, **Slice 1 (#1447) is complete** and **#1449 (Slice 2)**
+starts.
 
 ## Issue map
 
 | Issue | Title | State |
 |-------|-------|-------|
 | **#1426** | Tracker: one composition root, no module globals | umbrella |
-| **#1447** | Slice 1 — `KlangkSettings(env=...)` + settings threading | in progress (#1455) |
-| **#1458** | Slice 1 remainder — delete `_config_file_path` global | next |
-| **#1449** | Slice 2 — ContainerRegistry owned instance | |
+| **#1447** | Slice 1 — `KlangkSettings(env=...)` + settings threading | ✅ done (#1448 + #1455 + #1460) |
+| **#1458** | Slice 1 remainder — delete `_config_file_path` global | ✅ done (#1460) |
+| **#1449** | Slice 2 — ContainerRegistry owned instance | **next** |
 | **#1450** | Slice 3 — OIDC instance + caches | |
 | **#1451** | Slice 4 — Plugins instance | |
 | **#1452** | Slice 5 — `DB(settings)`; kill db globals | |
@@ -26,8 +41,10 @@ issue (see "Issue map" below).
 | **#1454** | Slice 7 — delete the `main:app` shim | |
 | **#1456** | Standalone — `frontend_dir` config setting | |
 | **#1457** | Standalone — tests stop monkeypatching `os.environ` | |
+| **#1459** | Standalone — `state_dir` field default (no env mutation) | |
+| **#1461** | Standalone — resolve `file:`/`cmd:` at construction; delete `resolve_indirection` | |
 
-The next-step chain after #1455 merges: **#1458** → Slice 1 done →
+The next-step chain after #1460 merges: Slice 1 done →
 **#1449** (Slice 2) → #1450 → #1451 → #1452 → #1453 → #1454.
 
 ## Slice 1: what's DONE
