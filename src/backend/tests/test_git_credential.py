@@ -128,6 +128,7 @@ def bridge_server():
     thread.start()
     yield server, port
     server.shutdown()
+    server.server_close()
 
 
 class TestGetOperation:
