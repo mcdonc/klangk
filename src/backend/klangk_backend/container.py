@@ -5,7 +5,16 @@ import logging
 import os
 import time
 
-from . import auth, bringup, model, plugins, podman, terminal, util
+from . import (
+    auth,
+    bringup,
+    connections as _connections_mod,
+    model,
+    plugins,
+    podman,
+    terminal,
+    util,
+)
 from .settings import KlangkSettings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -517,21 +526,12 @@ class HealthMonitor:
 
     def __init__(self, registry: "ContainerRegistry") -> None:
         self._registry = registry
-        self._connections_ref = None
         self.health_task: asyncio.Task | None = None
 
     @property
     def _connections(self):
-        """Return the explicitly-set connections, or fall back to the
-        module-level ``wshandler.state`` shim (lazy import to avoid the
-        circular ``container`` ↔ ``wshandler`` import). The fallback
-        disappears in Slice 2d (#1465) when all callers use the explicit
-        reference."""
-        if self._connections_ref is not None:
-            return self._connections_ref
-        from .wshandler import state  # noqa: allow-deferred-import
-
-        return state
+        """The process-wide ``WebSocketState`` singleton (#1464)."""
+        return _connections_mod.state
 
     def _setup_complete(self, state: ContainerState) -> bool:
         """True if health checks may run for this workspace.
@@ -883,14 +883,6 @@ class ContainerRegistry:
 
     def set_on_workspace_killed(self, callback) -> None:
         self.on_workspace_killed = callback
-
-    def set_connections(self, connections) -> None:
-        """Inject the WebSocketState so the HealthMonitor can broadcast.
-
-        Replaces the lazy-import fallback in :attr:`HealthMonitor._connections`
-        with an explicit reference. Called by the lifespan after construction.
-        """
-        self.health._connections_ref = connections
 
     def set_on_container_status_changed(self, callback) -> None:
         self.on_container_status_changed = callback

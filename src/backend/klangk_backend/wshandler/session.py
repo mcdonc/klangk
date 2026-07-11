@@ -10,7 +10,14 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from .. import agent, auth, container, model, terminal
+from .. import (
+    agent,
+    auth,
+    connections as _connections_mod,
+    container,
+    model,
+    terminal,
+)
 from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
 from .constants import (
     agent_conversations,
@@ -795,6 +802,11 @@ class WebSocketState:
 
 
 state = WebSocketState()
+
+# Register the singleton in the connections module (#1464) so
+# container.py can reach it without importing wshandler (breaking
+# the container ↔ wshandler circular dependency).
+_connections_mod.state = state
 
 # Wire up the agent broadcast callback so agent.py can broadcast
 # to WebSocket sessions without importing wshandler (breaking the
