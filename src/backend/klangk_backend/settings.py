@@ -39,9 +39,17 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
+from pydantic import field_validator
 from pydantic_settings.sources.providers.env import parse_env_vars
 
 logger = logging.getLogger(__name__)
+
+# Valid values for ``KLANGK_AUTH_MODES``. ``None`` (unset) defaults to ``none``
+# at *read* time (in ``oidc.auth_modes``), but a non-None value must be one of
+# these — rejecting typos at construction so a misspelled mode fails loudly at
+# boot instead of silently downgrading to the no-auth ``none`` mode (which
+# freely issues an admin token). See the ``auth_modes`` field validator below.
+_VALID_AUTH_MODES = frozenset({"password", "oidc", "both", "none"})
 
 # Re-exported for backward compat — callers that ``from ..util import ...``
 # still work because util.py re-exports these.
@@ -412,13 +420,37 @@ class KlangkSettings(BaseSettings):
     # --- File upload ---
     file_upload_size_max: str | None = None
 
+    @field_validator("auth_modes")
+    @classmethod
+    def _validate_auth_modes(cls, v: str | None) -> str | None:
+        """Reject typo'd auth modes so a misspelling fails loudly at boot.
+
+        Without this, ``KLANGK_AUTH_MODES=passdword`` (or any value outside the
+        valid set) would fall through ``oidc.auth_modes()`` to the ``none``
+        default — a *silent security downgrade*: ``none`` freely issues an
+        admin token via ``POST /api/v1/auth/local``. ``None`` is allowed (the
+        unset case, which legitimately means "default to none"); only a
+        *set-but-garbage* value is rejected.
+
+        Runs at construction (``KlangkSettings(...)`` → ``validate_at_startup``
+        in the lifespan), so the bad value aborts boot before traffic.
+        """
+        if v is None or v == "":
+            # Unset or empty → default to ``none`` at read time (in
+            # ``oidc.auth_modes``). Legitimate: the operator didn't set a mode.
+            return None
+        if v not in _VALID_AUTH_MODES:
+            raise ValueError(
+                f"KLANGK_AUTH_MODES={v!r} is invalid. "
+                f"Must be one of {sorted(_VALID_AUTH_MODES)} (or unset "
+                "→ defaults to 'none')."
+            )
+        return v
+
 
 # ---------------------------------------------------------------------------
 # Singleton with env-change-detection cache + config-file path
 # ---------------------------------------------------------------------------
-
-_settings_instance: KlangkSettings | None = None
-_settings_env_signature: tuple | None = None
 
 # The config-file path, set by ``klangkd --config <path>`` before the settings
 # are first instantiated.  None means "no config file" (the #1394 env-only
@@ -438,12 +470,11 @@ def set_config_file(path: str | None) -> None:
     - ``None`` — reset to the default (no config file; the launcher handles the
       default-location logic).
 
-    Invalidates the settings cache so the next :func:`get_settings` call
-    re-instantiates with the new source chain.
+    ``get_settings()`` is cache-free (re-constructs on every call), so there
+    is no cache to invalidate — the next call simply picks up the new path.
     """
     global _config_file_path
     _config_file_path = path
-    _invalidate_cache()
 
 
 def get_config_file() -> str | None:
@@ -451,42 +482,17 @@ def get_config_file() -> str | None:
     return _config_file_path
 
 
-def _env_signature() -> tuple:
-    """A cheap hash of all KLANGK_* env vars + the config-file path, for
-    change detection."""
-    return (
-        _config_file_path,
-        tuple(
-            sorted(
-                (k, v)
-                for k, v in os.environ.items()
-                if k.startswith("KLANGK_") or k.startswith("LOGFIRE_")
-            )
-        ),
-    )
-
-
 def get_settings() -> KlangkSettings:
-    """Return the settings singleton, re-instantiating if env has changed.
+    """Return a fresh ``KlangkSettings`` from the live environment.
 
-    The env-change detection makes this safe for tests: ``monkeypatch.setenv``
-    / ``monkeypatch.delenv`` changes ``os.environ``, which invalidates the
-    cache, so the next read sees the updated value.  In production (where env
-    is stable), the cache holds for the process lifetime after first access.
+    Cache-free: constructs on every call.  Tests that change the environment
+    via ``monkeypatch.setenv`` / ``delenv`` are automatically correct — the
+    next call reads the updated env.  Production constructs exactly one
+    instance in ``build_app(settings)`` (stored on ``app.state.settings``);
+    this function is the transitional shim for callers not yet migrated to
+    explicit settings threading (#1426).
     """
-    global _settings_instance, _settings_env_signature
-    sig = _env_signature()
-    if _settings_instance is None or sig != _settings_env_signature:
-        _settings_instance = KlangkSettings(os.environ, config_file=_config_file_path)
-        _settings_env_signature = sig
-    return _settings_instance
-
-
-def _invalidate_cache() -> None:
-    """Force the next :func:`get_settings` call to re-instantiate."""
-    global _settings_instance, _settings_env_signature
-    _settings_instance = None
-    _settings_env_signature = None
+    return KlangkSettings(os.environ, config_file=_config_file_path)
 
 
 def validate_at_startup() -> KlangkSettings:
@@ -495,11 +501,9 @@ def validate_at_startup() -> KlangkSettings:
     Call once from the lifespan startup (and from the ``klangkd`` launcher).
     Bogus config (once fields gain strict types) fails here with a
     :class:`ValidationError` before the server serves traffic. Returns the
-    validated settings instance (which also primes the cache).
+    validated settings instance.
     """
-    _invalidate_cache()
-    settings = get_settings()
-    return settings
+    return get_settings()
 
 
 # ---------------------------------------------------------------------------

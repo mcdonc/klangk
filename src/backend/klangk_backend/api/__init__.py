@@ -54,6 +54,7 @@ from .. import (
 # name to the logic module after the submodule imports (see below) so the
 # instance endpoints reference klangk_backend.auth, not the route module.
 from .. import auth as _auth_logic
+from ..settings import get_settings
 from ..util import resolve_env_bool, resolve_env_value
 
 # Route submodules, aliased because their names collide with the logic
@@ -200,7 +201,7 @@ async def get_config():
         "login_banner_title": LOGIN_BANNER_TITLE,
         "login_banner": LOGIN_BANNER,
         "oidc_providers": oidc.list_providers(),
-        "auth_modes": oidc.auth_modes(),
+        "auth_modes": oidc.auth_modes(get_settings()),
         "instance_id": model.get_instance_id(),
         # Whether per-workspace auto-start (start the container on server
         # boot) is permitted. The web UI gates its "Auto start" checkbox on

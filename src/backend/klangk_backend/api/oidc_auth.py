@@ -19,6 +19,7 @@ from .. import (
     model,
     oidc,
 )
+from ..settings import get_settings
 from ..util import (
     API_PREFIX,
     derive_hosting_info,
@@ -52,7 +53,7 @@ async def oidc_login(
     cli_redirect: str | None = None,
 ):
     """Redirect to the OIDC IdP for authentication."""
-    if not oidc.oidc_login_allowed():
+    if not oidc.oidc_login_allowed(get_settings()):
         raise HTTPException(status_code=404, detail="OIDC not enabled")
 
     provider = oidc.get_provider(provider_id)

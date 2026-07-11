@@ -29,14 +29,6 @@ from klangk_backend.settings import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _reset_settings_cache():
-    """Clear the settings cache before and after each test."""
-    settings_mod._invalidate_cache()
-    yield
-    settings_mod._invalidate_cache()
-
-
 class TestKeyToField:
     def test_klangk_prefix(self):
         assert _key_to_field("KLANGK_JWT_SECRET") == "jwt_secret"
@@ -96,16 +88,22 @@ class TestGetSettings:
         assert s.nginx_port == "12345"
 
     def test_cache_invalidated_on_env_change(self, monkeypatch):
+        # get_settings() is cache-free — constructs on every call. Env
+        # changes are automatically picked up (no cache to invalidate).
         monkeypatch.setenv("KLANGK_NGINX_PORT", "1111")
         assert get_settings().nginx_port == "1111"
         monkeypatch.setenv("KLANGK_NGINX_PORT", "2222")
         assert get_settings().nginx_port == "2222"
 
-    def test_cache_holds_when_env_stable(self, monkeypatch):
+    def test_cache_free_fresh_each_call(self, monkeypatch):
+        # get_settings() constructs a new instance every call (cache machinery
+        # deleted in #1426 Slice 1). Two calls return equivalent but distinct
+        # objects.
         monkeypatch.setenv("KLANGK_NGINX_PORT", "3333")
         s1 = get_settings()
         s2 = get_settings()
-        assert s1 is s2
+        assert s1 is not s2
+        assert s1 == s2
 
     def test_delenv_invalidates(self, monkeypatch):
         monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
@@ -171,9 +169,12 @@ class TestValidateAtStartup:
         s = validate_at_startup()
         assert isinstance(s, KlangkSettings)
 
-    def test_primes_cache(self):
+    def test_reads_env(self, monkeypatch):
+        # validate_at_startup() is cache-free now (no cache to prime); it just
+        # constructs settings from the live env.
+        monkeypatch.setenv("KLANGK_NGINX_PORT", "5555")
         s = validate_at_startup()
-        assert get_settings() is s
+        assert s.nginx_port == "5555"
 
     def test_re_validates_after_env_change(self, monkeypatch):
         monkeypatch.setenv("KLANGK_NGINX_PORT", "5555")
@@ -322,18 +323,15 @@ class TestClassifyListen:
 class TestListenIsSocket:
     def test_true_when_listen_is_socket_path(self, monkeypatch):
         monkeypatch.setenv("KLANGK_LISTEN", "/tmp/klangk.sock")
-        settings_mod._invalidate_cache()
         assert listen_is_socket() is True
 
     def test_false_when_listen_is_tcp(self, monkeypatch):
         monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
-        settings_mod._invalidate_cache()
         assert listen_is_socket() is False
 
     def test_false_for_default(self, monkeypatch):
         # The default (127.0.0.1) is TCP; #1400 will flip this to a socket.
         monkeypatch.delenv("KLANGK_LISTEN", raising=False)
-        settings_mod._invalidate_cache()
         assert listen_is_socket() is False
 
 
@@ -439,3 +437,47 @@ class TestEnvConstructor:
             env={"KLANGK_PRODUCT_NAME": "FromEnv"}, config_file=str(cfg)
         )
         assert s.product_name == "FromEnv"
+
+
+class TestAuthModesValidator:
+    """KLANGK_AUTH_MODES is security-sensitive: a typo must fail at
+    construction (boot), not silently downgrade to the no-auth ``none`` mode
+    (which freely issues an admin token)."""
+
+    @pytest.mark.parametrize("mode", ["password", "oidc", "both", "none"])
+    def test_valid_modes_accepted(self, mode):
+        s = KlangkSettings(env={"KLANGK_AUTH_MODES": mode})
+        assert s.auth_modes == mode
+
+    def test_unset_allowed_means_none(self):
+        # None = unset = "default to none at read time" (legitimate).
+        s = KlangkSettings(env={})
+        assert s.auth_modes is None
+
+    @pytest.mark.parametrize(
+        "bad", ["passdword", "PASSWORD", " true", "x", "None"]
+    )
+    def test_typo_rejected_at_construction(self, bad):
+        # A set-but-garbage value must raise (not silently become "none").
+        import pytest as _pytest
+        from pydantic import ValidationError
+
+        with _pytest.raises(ValidationError):
+            KlangkSettings(env={"KLANGK_AUTH_MODES": bad})
+
+    def test_empty_string_treated_as_unset(self):
+        # KLANGK_AUTH_MODES="" (set but blank) is treated as unset → None →
+        # "none" at read time, preserving the pre-validator behavior.
+        # (Not a security risk: blank is a config mistake, not a typo'd
+        # secure-mode name silently degrading.)
+        s = KlangkSettings(env={"KLANGK_AUTH_MODES": ""})
+        assert s.auth_modes is None
+
+    def test_typo_error_message_lists_valid_modes(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(env={"KLANGK_AUTH_MODES": "passdword"})
+        msg = str(exc_info.value)
+        assert "passdword" in msg
+        assert "password" in msg  # valid modes listed in the message

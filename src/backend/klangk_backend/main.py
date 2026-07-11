@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import bcrypt
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +29,7 @@ from . import (
     wshandler,
 )
 from .settings import (
+    KlangkSettings,
     get_settings,
     resolve_indirection,
     validate_at_startup,
@@ -165,11 +166,11 @@ def enforce_no_auth_bind_safety() -> None:
     ``KLANGK_ALLOW_INSECURE_NO_AUTH=1`` when you knowingly expose a no-auth
     server (e.g. a throwaway VM on an isolated network). #1374.
 
-    Runs in the lifespan so ``auth_modes()`` goes through ``resolve_env_value``
-    (supports ``@file:`` indirection) — something a bash gate in the
+    Runs in the lifespan so ``auth_modes(settings)`` reads the resolved
+    setting (supports ``@file:`` indirection resolved at startup) — something a bash gate in the
     old nginx.sh couldn't replicate.
     """
-    if oidc.auth_modes() != "none":
+    if oidc.auth_modes(get_settings()) != "none":
         return
     host = resolve_env_value("KLANGK_LISTEN", "127.0.0.1") or "127.0.0.1"
     if _is_loopback_bind(host):
@@ -606,10 +607,6 @@ async def lifespan(app: FastAPI):
         await process_shutdown()
         logger.info("Klangk backend stopped")
 
-
-app = FastAPI(title="Klangk", lifespan=lifespan)
-
-
 def setup_logfire(app: FastAPI) -> bool:
     """Enable Logfire instrumentation if LOGFIRE_TOKEN is set."""
     if not resolve_env_value("LOGFIRE_TOKEN"):
@@ -650,18 +647,6 @@ def cors_origins() -> list[str]:
     return [f"{proto}://{hostname}"]
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(root_router)
-app.include_router(router, prefix=API_PREFIX)
-
-
 async def _agent_principal_error_handler(request, exc):  # noqa: ARG001
     """Reject any operation that would make the agent an ACL principal.
 
@@ -675,23 +660,13 @@ async def _agent_principal_error_handler(request, exc):  # noqa: ARG001
 def register_exception_handlers(application: FastAPI) -> None:
     """Register global exception handlers on a FastAPI application.
 
-    Called for the production app below and by the test app fixture so
-    both surface the same handler wiring without duplicating the handler.
+    Called for the production app (in :func:`build_app`) and by the test
+    app fixture so both surface the same handler wiring without
+    duplicating the handler.
     """
     application.add_exception_handler(
         model.AgentPrincipalError, _agent_principal_error_handler
     )
-
-
-register_exception_handlers(app)
-
-
-# --- WebSocket ---
-
-
-@app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket):  # pragma: no cover
-    await handle_websocket(ws)
 
 
 # --- Static files (Flutter Web) ---
@@ -742,8 +717,55 @@ def setup_static_files(app: FastAPI, frontend_dir: Path) -> None:
     app.mount("/", static_app, name="frontend")
 
 
-_frontend_dir = (
-    Path(__file__).parent.parent.parent / "frontend" / "build" / "web"
-)
-if _frontend_dir.exists():  # pragma: no cover
-    setup_static_files(app, _frontend_dir)
+def build_app(settings: KlangkSettings) -> FastAPI:
+    """Single composition root (#1426).
+
+    Constructs the FastAPI app, wires middleware, routers, exception
+    handlers, the WebSocket endpoint, and static files. The ASGI app is the
+    *only* global; everything else is reached per-request via
+    :func:`get_settings_dep` (or ``app.state`` for non-request code).
+    """
+    app = FastAPI(title="Klangk", lifespan=lifespan)
+    app.state.settings = settings
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins(),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    app.include_router(root_router)
+    app.include_router(router, prefix=API_PREFIX)
+
+    register_exception_handlers(app)
+
+    @app.websocket("/ws")
+    async def websocket_endpoint(ws: WebSocket):  # pragma: no cover
+        await handle_websocket(ws)
+
+    frontend_dir = (
+        Path(__file__).parent.parent.parent / "frontend" / "build" / "web"
+    )
+    if frontend_dir.exists():  # pragma: no cover
+        setup_static_files(app, frontend_dir)
+
+    return app
+
+
+def get_settings_dep(request: Request) -> KlangkSettings:
+    """Per-request bridge to ``app.state.settings`` (no global read).
+
+    Request handlers obtain the frozen settings via
+    ``settings: KlangkSettings = Depends(get_settings_dep)`` instead of
+    calling the module-level ``get_settings()`` singleton (#1426).
+    """
+    return request.app.state.settings
+
+
+# --- ASGI app (the only global) ---
+# Module-level shim for uvicorn's ``klangk_backend.main:app`` string import.
+# klangkd and tests construct their own app via ``build_app()``; this exists
+# solely so ``uvicorn.run("klangk_backend.main:app")`` keeps working.
+app = build_app(get_settings())

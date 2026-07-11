@@ -10,7 +10,6 @@ import os
 
 import pytest
 
-from klangk_backend.settings import _invalidate_cache
 from klangk_backend.nginx import (
     compute_client_max_body_size,
     compute_container_acls,
@@ -41,21 +40,17 @@ def _clean_env(monkeypatch):
     for k in list(os.environ):
         if k.startswith("KLANGK_"):
             monkeypatch.delenv(k, raising=False)
-    _invalidate_cache()
     yield
     # Restore: clear any KLANGK_* added by this test, then reinstate snapshot.
     for k in [k for k in list(os.environ) if k.startswith("KLANGK_")]:
         os.environ.pop(k, None)
     os.environ.update(snapshot)
-    _invalidate_cache()
-    _invalidate_cache()
 
 
 def _set(**kw):
-    """Set KLANGK_* env vars + invalidate cache."""
+    """Set KLANGK_* env vars."""
     for k, v in kw.items():
         os.environ["KLANGK_" + k.upper()] = str(v)
-    _invalidate_cache()
 
 
 class TestUpstreams:
@@ -301,7 +296,7 @@ class TestMinimalTemplate:
     def test_template_keys_off_listen_not_auth(self):
         """AUTH value does not change which template is rendered (#1398 #4):
         socket ⇒ minimal and TCP ⇒ full across auth values."""
-        for auth in ("none", "password", "password,oidc"):
+        for auth in ("none", "password", "both"):
             _set(
                 listen="/tmp/klangk.sock",
                 auth_modes=auth,

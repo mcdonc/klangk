@@ -1,5 +1,6 @@
 """Tests for OIDC client module."""
 
+import os
 import time
 from unittest.mock import AsyncMock, patch
 
@@ -9,6 +10,12 @@ import pytest
 
 from klangk_backend import oidc
 from klangk_backend.exceptions import ConfigurationError
+from klangk_backend.settings import KlangkSettings
+
+
+def _settings() -> KlangkSettings:
+    """Build settings from the live (monkeypatched) environment."""
+    return KlangkSettings(os.environ)
 
 
 @pytest.fixture(autouse=True)
@@ -467,9 +474,9 @@ class TestAuthModes:
         # Production default (no OIDC, mode unset) is now ``none`` — a fresh
         # klangk boots in no-login single-user local-dev mode (#1374).
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
-        assert oidc.auth_modes() == "none"
-        assert not oidc.password_login_allowed()
-        assert oidc.local_login_allowed()
+        assert oidc.auth_modes(_settings()) == "none"
+        assert not oidc.password_login_allowed(_settings())
+        assert oidc.local_login_allowed(_settings())
 
     def test_default_none_when_oidc_enabled(self, monkeypatch):
         # #1419: OIDC settings no longer change auth_mode. An unset
@@ -479,43 +486,43 @@ class TestAuthModes:
         # the unset default to "both" here; that rule was removed.)
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
         oidc._providers.append(_provider())
-        assert oidc.auth_modes() == "none"
-        assert oidc.local_login_allowed()
-        assert not oidc.password_login_allowed()
-        assert not oidc.oidc_login_allowed()
+        assert oidc.auth_modes(_settings()) == "none"
+        assert oidc.local_login_allowed(_settings())
+        assert not oidc.password_login_allowed(_settings())
+        assert not oidc.oidc_login_allowed(_settings())
 
     def test_oidc_only(self, monkeypatch):
         monkeypatch.setenv("KLANGK_AUTH_MODES", "oidc")
         oidc._providers.append(_provider())
-        assert oidc.auth_modes() == "oidc"
-        assert not oidc.password_login_allowed()
-        assert oidc.oidc_login_allowed()
+        assert oidc.auth_modes(_settings()) == "oidc"
+        assert not oidc.password_login_allowed(_settings())
+        assert oidc.oidc_login_allowed(_settings())
 
     def test_password_only(self, monkeypatch):
         monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
         oidc._providers.append(_provider())
-        assert oidc.auth_modes() == "password"
-        assert oidc.password_login_allowed()
-        assert not oidc.oidc_login_allowed()
+        assert oidc.auth_modes(_settings()) == "password"
+        assert oidc.password_login_allowed(_settings())
+        assert not oidc.oidc_login_allowed(_settings())
 
     def test_none_mode(self, monkeypatch):
         monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
-        assert oidc.auth_modes() == "none"
-        assert not oidc.password_login_allowed()
-        assert not oidc.oidc_login_allowed()
-        assert oidc.local_login_allowed()
+        assert oidc.auth_modes(_settings()) == "none"
+        assert not oidc.password_login_allowed(_settings())
+        assert not oidc.oidc_login_allowed(_settings())
+        assert oidc.local_login_allowed(_settings())
 
     def test_none_mode_ignores_oidc_config(self, monkeypatch):
         # OIDC config may be present but is irrelevant in none mode.
         oidc._providers.append(_provider())
         monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
-        assert oidc.auth_modes() == "none"
-        assert oidc.local_login_allowed()
+        assert oidc.auth_modes(_settings()) == "none"
+        assert oidc.local_login_allowed(_settings())
 
     def test_local_login_false_in_other_modes(self, monkeypatch):
         for mode in ("password", "oidc", "both"):
             monkeypatch.setenv("KLANGK_AUTH_MODES", mode)
-            assert not oidc.local_login_allowed()
+            assert not oidc.local_login_allowed(_settings())
 
     # --- AUTH_MODES unset defaults to ``none`` (no amalgamated setting) ---
     # #1422 removed KLANGK_PRESET/KLANGK_UI_MODE — AUTH_MODES is the sole
@@ -524,17 +531,17 @@ class TestAuthModes:
 
     def test_unset_defaults_to_none(self, monkeypatch):
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
-        assert oidc.auth_modes() == "none"
-        assert oidc.local_login_allowed()
-        assert not oidc.password_login_allowed()
+        assert oidc.auth_modes(_settings()) == "none"
+        assert oidc.local_login_allowed(_settings())
+        assert not oidc.password_login_allowed(_settings())
 
     def test_unset_stays_none_with_oidc_configured(self, monkeypatch):
         # OIDC presence never flips the mode (#1419) — operator must set
         # KLANGK_AUTH_MODES=oidc/both explicitly.
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
-        assert oidc.auth_modes() == "none"
+        assert oidc.auth_modes(_settings()) == "none"
         oidc._providers.append(_provider())
-        assert oidc.auth_modes() == "none"
+        assert oidc.auth_modes(_settings()) == "none"
 
 
 class TestClientKwargs:
