@@ -48,7 +48,6 @@ from .util import (
     customize_dir,
     resolve_env_bool,
     resolve_env_value,
-    set_uds_mode,
 )
 from .wshandler import handle_websocket
 
@@ -401,25 +400,6 @@ _nginx_task: asyncio.Task | None = None
 _nginx_stopping = False
 
 
-def _socket_path() -> str:
-    """The UDS path klangkd is bound to (only meaningful when listen is a socket).
-
-    Reads ``KLANGK_LISTEN`` directly — under the derive model (#1422) the
-    socket path IS the listen value (e.g. ``/tmp/klangk.sock``), not a
-    separate derived-from-state_dir artifact. When listen is unset/empty,
-    falls back to ``<state_dir>/klangk.sock`` (a sensible default rather than
-    an empty string). The renderer + watchdog use this to know where nginx
-    should ``proxy_pass``.
-    """
-    listen = resolve_indirection(get_settings().listen) or ""
-    if listen:
-        return listen
-    state_dir = (
-        resolve_indirection(get_settings().state_dir) or "/tmp/klangk-state"
-    )
-    return os.path.join(state_dir, "klangk.sock")
-
-
 async def _nginx_watchdog(
     bin_path: str, conf_path: str
 ) -> None:  # pragma: no cover
@@ -456,23 +436,21 @@ async def _nginx_watchdog(
 
 
 def _prepare_nginx() -> tuple[str, str]:
-    """Render nginx.conf for the UDS and return ``(bin_path, conf_path)``.
+    """Render nginx.conf and return ``(bin_path, conf_path)``.
 
-    Pure-ish (writes one file): reads the socket path from ``KLANGK_LISTEN``,
-    arms ``_UDS_MODE``, locates the nginx binary, and renders the config with
-    the UDS upstream. Extracted from :func:`start_nginx_watchdog` so the
-    config-rendering logic is unit-testable without spawning nginx; only the
-    actual ``create_task(_nginx_watchdog(...))`` spawn stays untested (covered
-    at runtime by the e2e ACL suite).
+    uvicorn always binds a UDS (``<state_dir>/klangk.sock``); nginx proxies
+    to that socket regardless of whether ``KLANGK_LISTEN`` is a socket path
+    or a TCP address. ``KLANGK_LISTEN`` only controls the *nginx template*
+    (minimal/headless vs full/browser) and the nginx listen directive, not
+    the upstream.
     """
-    sock = _socket_path()
-    set_uds_mode(True)
     state_dir = (
         resolve_indirection(get_settings().state_dir) or "/tmp/klangk-state"
     )
+    uds_path = os.path.join(state_dir, "klangk.sock")
     conf_path = os.path.join(state_dir, "nginx.conf")
     bin_path = nginx_mod.find_nginx_bin()
-    nginx_mod.write_config(nginx_mod.uds_upstream(sock), conf_path)
+    nginx_mod.write_config(nginx_mod.uds_upstream(uds_path), conf_path)
     return bin_path, conf_path
 
 

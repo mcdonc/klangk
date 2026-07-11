@@ -223,9 +223,9 @@ class KlangkSettings(BaseSettings):
     # is no amalgamated ``KLANGK_UI_MODE``/``KLANGK_PRESET`` setting (it never
     # shipped). Socket ⇒ nginx renders the minimal (headless) template; TCP
     # ⇒ full (browser) template. ``KLANGK_PORT`` applies only when listen is
-    # TCP. Default ``127.0.0.1`` preserves today's behavior; #1400 flips the
-    # default to a socket path (the headless posture).
-    listen: str | None = "127.0.0.1"
+    # TCP. Default is None → klangkd derives a socket path from state_dir
+    # (#1400: headless UDS posture is the production default).
+    listen: str | None = None
     port: str | None = "8997"
     nginx_port: str | None = "8995"
     port_range_start: str | None = "9000"

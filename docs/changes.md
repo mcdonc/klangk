@@ -101,6 +101,17 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Breaking
 
+- **Direct TCP to uvicorn is gone.** uvicorn now binds only a UNIX socket
+  (`<state_dir>/klangk.sock`); nginx proxies to it. Point external proxies at
+  `KLANGK_NGINX_PORT` (default 8995), not the old port 8997 (#1400).
+- **Default is now headless.** Bare `klangkd` (no `KLANGK_LISTEN` set)
+  defaults to UDS + `none` auth — headless, CLI-only. Set
+  `KLANGK_LISTEN=127.0.0.1` for the browser UI (#1400).
+- **`KLANGK_PORT` is no longer used by klangkd.** uvicorn always binds a UDS;
+  the setting is retained only for bare-uvicorn test harnesses (#1400).
+- **Devenv default changed to browser-first.** `klangkd.yaml.example` now
+  defaults to `listen: 127.0.0.1` + `auth_modes: password`. Delete your local
+  `klangkd.yaml` and re-enter `devenv shell` to regenerate it (#1400).
 - **Default auth mode is now `none`** (no-login single-user, loopback-bound)
   when `KLANGK_AUTH_MODES` is unset and no OIDC provider is configured
   (#1374). Previously the unset default was `password`. A fresh klangk now
