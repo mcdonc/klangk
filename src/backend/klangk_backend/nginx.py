@@ -26,7 +26,6 @@ from pathlib import Path
 
 from .settings import (
     KlangkSettings,
-    get_settings,
     listen_is_socket,
     resolve_indirection,
 )
@@ -313,7 +312,7 @@ def _trust_outer_proxy(settings: KlangkSettings) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def render_config(upstream: str, settings: KlangkSettings | None = None) -> str:
+def render_config(upstream: str, settings: KlangkSettings) -> str:
     """Render ``nginx.conf`` as a string.
 
     Template selection keys off ``KLANGK_LISTEN``'s shape only (#1398): a
@@ -325,9 +324,7 @@ def render_config(upstream: str, settings: KlangkSettings | None = None) -> str:
     (env > config file > defaults) plus the host-IP / DNS auto-detection
     probes.
     """
-    if settings is None:
-        settings = get_settings()
-    if listen_is_socket():
+    if listen_is_socket(resolve_indirection(settings.listen)):
         return _render_minimal_config(upstream, settings)
     return _render_full_config(upstream, settings)
 
@@ -531,7 +528,7 @@ http {{
     return conf
 
 
-def write_config(upstream: str, conf_path: str | Path, settings: KlangkSettings | None = None) -> str:
+def write_config(upstream: str, conf_path: str | Path, settings: KlangkSettings) -> str:
     """Render the config and write it to ``conf_path`` (returns the text).
 
     Written mode ``0600`` because the rendered config may embed secrets
@@ -554,9 +551,9 @@ def write_config(upstream: str, conf_path: str | Path, settings: KlangkSettings 
     return text
 
 
-def find_nginx_bin(settings: KlangkSettings | None = None) -> str:
+def find_nginx_bin(settings: KlangkSettings) -> str:
     """Locate the nginx binary: KLANGK_NGINX_BIN > PATH > /usr/sbin/nginx."""
-    configured = resolve_indirection((settings or get_settings()).nginx_bin)
+    configured = resolve_indirection(settings.nginx_bin)
     if configured:
         return str(configured)
     found = shutil.which("nginx")
