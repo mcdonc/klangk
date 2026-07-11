@@ -867,6 +867,22 @@ class TestClientIsLoopback:
         util.set_uds_mode(False)
         assert util.client_is_loopback(self._hdr(), None) is False
 
+    def test_uds_direct_connection_admitted(self, monkeypatch):
+        """Direct UDS connection (no nginx, no forwarded headers): client_host
+        is None, _UDS_MODE is True → treat as loopback (#1399)."""
+        import klangk_backend.util as util
+
+        monkeypatch.setattr("klangk_backend.util._REJECT_PROXY", False)
+        monkeypatch.setattr(
+            "klangk_backend.util._TRUSTED_PROXY_CIDRS", _trusted_default()
+        )
+        util.set_uds_mode(True)
+        try:
+            # No headers at all — direct CLI connection over UDS.
+            assert util.client_is_loopback(self._hdr(), None) is True
+        finally:
+            util.set_uds_mode(False)
+
     def test_connection_peer_trusted_uds_mode(self, monkeypatch):
         """_connection_peer_is_trusted: None client trusted only in UDS mode."""
         import klangk_backend.util as util

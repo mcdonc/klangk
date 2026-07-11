@@ -757,7 +757,7 @@ class ShellProcess:
             tty.setraw(slave_fd)
             _set_winsize(master_fd, rows, cols)
             self._proc = await asyncio.create_subprocess_exec(
-                podman.PODMAN_BIN,
+                podman._podman_bin(),
                 *argv,
                 stdin=slave_fd,
                 stdout=slave_fd,

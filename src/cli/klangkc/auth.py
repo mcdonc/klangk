@@ -16,6 +16,7 @@ from rich.console import Console
 from rich.prompt import Prompt
 
 from .config import CLIState, seed_config
+from .transport import http_request
 
 _err = Console(stderr=True)
 _out = Console()
@@ -33,7 +34,7 @@ def fetch_config(server_url: str) -> dict | str | None:
         None — server responded but is not a klangk instance
     """
     try:
-        resp = httpx.get(f"{server_url}/api/v1/config", timeout=5.0)
+        resp = http_request(server_url, "GET", "/api/v1/config", timeout=5.0)
         if resp.status_code == 200:
             return resp.json()
         return None
@@ -50,7 +51,9 @@ def local_login(server_url: str) -> tuple[str, str]:
     like the password/OIDC login arms: success returns, failure exits.
     """
     try:
-        resp = httpx.post(f"{server_url}/api/v1/auth/local", timeout=15.0)
+        resp = http_request(
+            server_url, "POST", "/api/v1/auth/local", timeout=15.0
+        )
     except httpx.HTTPError as exc:
         _err.print(
             f"[red]Error:[/red] could not reach {server_url}"
@@ -193,8 +196,10 @@ def login(
         cached = ss.users.get(email) if ss else None
         if cached and cached.token:
             try:
-                resp = httpx.get(
-                    f"{server_url}/api/v1/workspaces",
+                resp = http_request(
+                    server_url,
+                    "GET",
+                    "/api/v1/workspaces",
                     headers={"Authorization": f"Bearer {cached.token}"},
                     timeout=5.0,
                 )
@@ -268,8 +273,10 @@ def login(
     email = email or Prompt.ask("[bold]Email[/bold]")
     password = password or Prompt.ask("[bold]Password[/bold]", password=True)
 
-    resp = httpx.post(
-        f"{server_url}/api/v1/auth/login",
+    resp = http_request(
+        server_url,
+        "POST",
+        "/api/v1/auth/login",
         json={"email": email, "password": password},
         timeout=15.0,
     )
@@ -306,8 +313,10 @@ def refresh_token(server_url: str, token: str) -> str | None:
     Returns ``None`` on any failure (expired, revoked, network error).
     """
     try:
-        resp = httpx.post(
-            f"{server_url}/api/v1/auth/refresh",
+        resp = http_request(
+            server_url,
+            "POST",
+            "/api/v1/auth/refresh",
             headers={"Authorization": f"Bearer {token}"},
             timeout=10.0,
         )
@@ -344,8 +353,10 @@ def logout(server_url: str) -> None:
     # Then notify server
     if token:
         try:
-            httpx.post(
-                f"{server_url}/api/v1/auth/logout",
+            http_request(
+                server_url,
+                "POST",
+                "/api/v1/auth/logout",
                 headers={"Authorization": f"Bearer {token}"},
                 timeout=5.0,
             )

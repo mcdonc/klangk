@@ -27,6 +27,26 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **CLI transport resolver:** `klangkc --server` now accepts a Unix socket
+  path (e.g. `/tmp/klangk.sock`) in addition to `http(s)://` URLs. All HTTP
+  and WebSocket connections route through a single transport resolver that
+  picks UDS or TCP based on the server spec (#1399).
+- **Dev config file:** devenv now reads backend config from `klangkd.yaml`
+  (gitignored; copied from `klangkd.yaml.example` on first shell entry).
+  `.env` / `dotenv.enable` removed; `KLANGK_LISTEN`, `KLANGK_IMAGE_NAME`,
+  `KLANGK_CUSTOMIZE_DIR`, `KLANGK_PORT`, `KLANGK_NGINX_PORT` no longer set
+  as env vars by devenv (#1399).
+- **UDS safe for no-auth mode:** `KLANGK_AUTH_MODES=none` now accepts a UDS
+  bind without `KLANGK_ALLOW_INSECURE_NO_AUTH` — socket file permissions
+  (0700 parent dir) provide the same trust boundary as loopback (#1399).
+- **Direct UDS login:** `client_is_loopback` treats direct UDS connections
+  (no nginx proxy) as loopback, so `klangkc login /path/to/sock` works in
+  no-auth mode (#1399).
+
+### Removed
+
+- **`scripts/run-host-container.sh`:** retired; the `env | grep '^KLANGK_'`
+  env-passthrough mechanism is replaced by mounting a config file (#1417).
 - **Headless single-user profile: nginx minimal template on a socket bind**
   (#1398, chunk 5 of #1392). When `KLANGK_LISTEN` is a UNIX socket path,
   the nginx renderer now emits a minimal (headless) template — only the

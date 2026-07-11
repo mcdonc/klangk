@@ -1,0 +1,43 @@
+# Local dev config for klangkd.
+#
+# Copy to klangkd.yaml (gitignored) and edit:
+#   cp klangkd.yaml.example klangkd.yaml
+#
+# klangkd reads this via: klangkd --config klangkd.yaml
+# devenv's backend process does this automatically.
+
+# --- Deployment shape ---
+# Socket path → UDS (headless, no browser UI).
+# Change to 127.0.0.1 for TCP (browser UI at http://localhost:$nginx_port).
+listen: /tmp/klangk.sock
+auth_modes: none
+
+# --- Auth / identity ---
+jwt_secret: bark-dev-secret-change-in-production
+default_user: admin@example.com
+default_password: admin
+
+# --- Server / network ---
+port: "8997"
+nginx_port: "8995"
+idle_timeout_seconds: "300"
+
+# --- Storage (resolved from devenv's $DEVENV_STATE at startup) ---
+data_dir: "cmd:echo $DEVENV_STATE/klangk/data"
+
+# --- Container / workspace ---
+image_name: klangk-workspace
+
+# --- Uncomment to enable OIDC ---
+# auth_modes: both
+# oidc_providers:
+#   - id: my-provider
+#     display-name: My SSO
+#     issuer: https://keycloak.example.com/realms/main
+#     client-id: klangk
+#     client-secret: changeme
+
+# --- Uncomment for LLM proxy ---
+# llm_api_key: your-key-here
+# llm_base_url: https://api.example.com/v1
+# llm_model: gpt-4

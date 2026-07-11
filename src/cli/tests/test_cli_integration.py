@@ -35,9 +35,11 @@ class TestWsShell:
         )
         ws_mock.send = AsyncMock()
 
-        with patch("websockets.connect", return_value=ws_mock):
+        with patch(
+            "klangkc.transport.websockets.connect", return_value=ws_mock
+        ):
             with pytest.raises(ConnectionError):
-                await ws_shell("ws://localhost/ws", "token", "ws1")
+                await ws_shell("http://localhost", "token", "ws1")
 
     @pytest.mark.asyncio
     async def test_wait_container_ready_timeout(self):
@@ -111,12 +113,14 @@ class TestWsShell:
             ]
         )
 
-        with patch("websockets.connect", return_value=ws_mock):
+        with patch(
+            "klangkc.transport.websockets.connect", return_value=ws_mock
+        ):
             with patch("termios.tcgetattr", return_value=None):
                 with patch("termios.tcsetattr"):
                     with patch("tty.setraw"):
                         try:
-                            await ws_shell("ws://localhost/ws", "token", "ws1")
+                            await ws_shell("http://localhost", "token", "ws1")
                         except Exception:
                             pass
 
@@ -174,12 +178,14 @@ class TestWsShell:
             ]
         )
 
-        with patch("websockets.connect", return_value=ws_mock):
+        with patch(
+            "klangkc.transport.websockets.connect", return_value=ws_mock
+        ):
             with patch("termios.tcgetattr", return_value=None):
                 with patch("termios.tcsetattr"):
                     with patch("tty.setraw"):
                         try:
-                            await ws_shell("ws://localhost/ws", "token", "ws1")
+                            await ws_shell("http://localhost", "token", "ws1")
                         except Exception:
                             pass
 
@@ -226,13 +232,15 @@ class TestWsShell:
             ]
         )
 
-        with patch("websockets.connect", return_value=ws_mock):
+        with patch(
+            "klangkc.transport.websockets.connect", return_value=ws_mock
+        ):
             with patch("termios.tcgetattr", return_value=None):
                 with patch("termios.tcsetattr"):
                     with patch("tty.setraw"):
                         try:
                             await ws_shell(
-                                "ws://localhost/ws",
+                                "http://localhost",
                                 "token",
                                 "ws1",
                                 window="build",
@@ -304,14 +312,16 @@ class TestWsShell:
         )
 
         with (
-            patch("websockets.connect", return_value=ws_mock),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=ws_mock
+            ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
             patch("tty.setraw"),
         ):
             try:
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     window="nonexistent",
@@ -383,13 +393,15 @@ class TestWsShell:
             ]
         )
 
-        with patch("websockets.connect", return_value=ws_mock):
+        with patch(
+            "klangkc.transport.websockets.connect", return_value=ws_mock
+        ):
             with patch("termios.tcgetattr", return_value=None):
                 with patch("termios.tcsetattr"):
                     with patch("tty.setraw"):
                         try:
                             await ws_shell(
-                                "ws://localhost/ws",
+                                "http://localhost",
                                 "token",
                                 "ws1",
                                 window="alice:dev",
@@ -439,10 +451,12 @@ class TestWsShell:
             ]
         )
 
-        with patch("websockets.connect", return_value=ws_mock):
+        with patch(
+            "klangkc.transport.websockets.connect", return_value=ws_mock
+        ):
             with pytest.raises(ConnectionError, match="not found"):
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     window="alice:dev",
@@ -497,10 +511,12 @@ class TestWsShell:
             ]
         )
 
-        with patch("websockets.connect", return_value=ws_mock):
+        with patch(
+            "klangkc.transport.websockets.connect", return_value=ws_mock
+        ):
             with pytest.raises(ConnectionError, match="Permission denied"):
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     window="alice:dev",
@@ -991,7 +1007,9 @@ class TestAuthLines:
         state.set_credentials("http://localhost:8995", "x@y.com", "tok")
         state.save()
 
-        with patch("httpx.post", side_effect=OSError("no route")):
+        with patch(
+            "klangkc.transport.httpx.request", side_effect=OSError("no route")
+        ):
             with pytest.raises(OSError):
                 auth.logout("http://localhost:8995")
 
@@ -1173,11 +1191,13 @@ class TestWsExec:
             ]
         )
 
-        with patch("websockets.connect", return_value=ws_mock):
+        with patch(
+            "klangkc.transport.websockets.connect", return_value=ws_mock
+        ):
             from klangkc.client import ws_exec_piped
 
             code, output = await ws_exec_piped(
-                "ws://localhost/ws",
+                "http://localhost",
                 "token",
                 "ws1",
                 ["ls"],
@@ -1205,9 +1225,11 @@ class TestWsExec:
         )
         ws_mock.send = AsyncMock()
 
-        with patch("websockets.connect", return_value=ws_mock):
+        with patch(
+            "klangkc.transport.websockets.connect", return_value=ws_mock
+        ):
             with pytest.raises(ConnectionError):
-                await ws_exec("ws://localhost/ws", "token", "ws1", ["ls"])
+                await ws_exec("http://localhost", "token", "ws1", ["ls"])
 
 
 class TestShellConnectionError:
@@ -1351,7 +1373,9 @@ class TestSSHAgentForwarding:
         )
 
         with (
-            patch("websockets.connect", return_value=ws_mock),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=ws_mock
+            ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
             patch("tty.setraw"),
@@ -1359,7 +1383,7 @@ class TestSSHAgentForwarding:
         ):
             try:
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     forward_agent=True,
@@ -1412,14 +1436,16 @@ class TestSSHAgentForwarding:
         )
 
         with (
-            patch("websockets.connect", return_value=ws_mock),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=ws_mock
+            ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
             patch("tty.setraw"),
         ):
             try:
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     forward_agent=False,
@@ -1492,7 +1518,9 @@ class TestSSHAgentForwarding:
             return await original_wait_for(coro, timeout=timeout)
 
         with (
-            patch("websockets.connect", return_value=ws_mock),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=ws_mock
+            ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
             patch("tty.setraw"),
@@ -1501,7 +1529,7 @@ class TestSSHAgentForwarding:
         ):
             try:
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     forward_agent=True,
@@ -1557,7 +1585,9 @@ class TestSSHAgentForwarding:
         )
 
         with (
-            patch("websockets.connect", return_value=ws_mock),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=ws_mock
+            ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
             patch("tty.setraw"),
@@ -1565,7 +1595,7 @@ class TestSSHAgentForwarding:
         ):
             try:
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     forward_agent=True,
@@ -1627,7 +1657,9 @@ class TestSSHAgentForwarding:
         )
 
         with (
-            patch("websockets.connect", return_value=ws_mock),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=ws_mock
+            ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
             patch("tty.setraw"),
@@ -1635,7 +1667,7 @@ class TestSSHAgentForwarding:
         ):
             try:
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     forward_agent=True,
@@ -1903,9 +1935,11 @@ class TestWsExecPipedWithInput:
             ]
         )
 
-        with patch("websockets.connect", return_value=ws_mock):
+        with patch(
+            "klangkc.transport.websockets.connect", return_value=ws_mock
+        ):
             code, output = await ws_exec_piped(
-                "ws://localhost/ws",
+                "http://localhost",
                 "token",
                 "ws1",
                 ["cat"],
@@ -2269,7 +2303,9 @@ class TestWsExecWrapper:
         os.close(write_fd)
 
         with (
-            patch("websockets.connect", return_value=ws_mock),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=ws_mock
+            ),
             patch(
                 "sys.stdin",
                 MagicMock(
@@ -2281,7 +2317,7 @@ class TestWsExecWrapper:
                 MagicMock(buffer=MagicMock(fileno=MagicMock(return_value=1))),
             ),
         ):
-            code = await ws_exec("ws://localhost/ws", "token", "ws1", ["ls"])
+            code = await ws_exec("http://localhost", "token", "ws1", ["ls"])
 
         os.close(read_fd)
         assert code == 42
@@ -2331,14 +2367,16 @@ class TestSandboxSetupHook:
         )
 
         with (
-            patch("websockets.connect", return_value=ws_mock),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=ws_mock
+            ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
             patch("tty.setraw"),
         ):
             try:
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     sandbox_setup=fake_sandbox_setup,
@@ -2416,14 +2454,16 @@ class TestWindowAutoCreate:
         )
 
         with (
-            patch("websockets.connect", return_value=ws_mock),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=ws_mock
+            ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
             patch("tty.setraw"),
         ):
             try:
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     window="debug",
@@ -2486,14 +2526,16 @@ class TestWindowAutoCreate:
         )
 
         with (
-            patch("websockets.connect", return_value=ws_mock),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=ws_mock
+            ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
             patch("tty.setraw"),
         ):
             try:
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     window="debug",
@@ -2565,14 +2607,16 @@ class TestWindowAutoCreate:
         )
 
         with (
-            patch("websockets.connect", return_value=ws_mock),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=ws_mock
+            ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
             patch("tty.setraw"),
         ):
             try:
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     window="build",
@@ -2625,10 +2669,12 @@ class TestWindowAutoCreate:
             ]
         )
 
-        with patch("websockets.connect", return_value=ws_mock):
+        with patch(
+            "klangkc.transport.websockets.connect", return_value=ws_mock
+        ):
             with pytest.raises(ConnectionError, match="Failed to create"):
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     window="bad",

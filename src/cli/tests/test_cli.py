@@ -455,7 +455,7 @@ class TestAuth:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "jwt123"}
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             with patch(
                 "klangkc.auth.Prompt.ask",
                 side_effect=["u@test.com", "pass123"],
@@ -474,7 +474,7 @@ class TestAuth:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "jwt456"}
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             # Only one Prompt.ask call (password) since email is provided
             with patch(
                 "klangkc.auth.Prompt.ask",
@@ -495,7 +495,7 @@ class TestAuth:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "jwt789"}
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             from klangkc import auth
 
             auth.login(
@@ -519,7 +519,7 @@ class TestAuth:
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        with patch("httpx.get", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             from klangkc import auth
 
             auth.login("http://localhost:8995", email="saved@test.com")
@@ -542,15 +542,17 @@ class TestAuth:
         post_resp = MagicMock()
         post_resp.status_code = 200
         post_resp.json.return_value = {"access_token": "fresh"}
-        with patch("httpx.get", side_effect=httpx.ConnectError("unreachable")):
-            with patch("httpx.post", return_value=post_resp):
-                with patch(
-                    "klangkc.auth.Prompt.ask",
-                    return_value="pw",
-                ):
-                    from klangkc import auth
+        with patch(
+            "klangkc.transport.httpx.request",
+            side_effect=[httpx.ConnectError("unreachable"), post_resp],
+        ):
+            with patch(
+                "klangkc.auth.Prompt.ask",
+                return_value="pw",
+            ):
+                from klangkc import auth
 
-                    auth.login("http://localhost:8995", email="old@test.com")
+                auth.login("http://localhost:8995", email="old@test.com")
 
         loaded = CLIState.load()
         assert loaded.get_token("http://localhost:8995") == "fresh"
@@ -570,15 +572,17 @@ class TestAuth:
         post_resp = MagicMock()
         post_resp.status_code = 200
         post_resp.json.return_value = {"access_token": "new-token"}
-        with patch("httpx.get", return_value=get_resp):
-            with patch("httpx.post", return_value=post_resp):
-                with patch(
-                    "klangkc.auth.Prompt.ask",
-                    return_value="pw",
-                ):
-                    from klangkc import auth
+        with patch(
+            "klangkc.transport.httpx.request",
+            side_effect=[get_resp, post_resp],
+        ):
+            with patch(
+                "klangkc.auth.Prompt.ask",
+                return_value="pw",
+            ):
+                from klangkc import auth
 
-                    auth.login("http://localhost:8995", email="old@test.com")
+                auth.login("http://localhost:8995", email="old@test.com")
 
         loaded = CLIState.load()
         assert loaded.get_token("http://localhost:8995") == "new-token"
@@ -590,7 +594,7 @@ class TestAuth:
         mock_resp = MagicMock()
         mock_resp.status_code = 401
         mock_resp.json.return_value = {"detail": "Bad credentials"}
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             with patch(
                 "klangkc.auth.Prompt.ask",
                 side_effect=["u@test.com", "wrong"],
@@ -608,7 +612,7 @@ class TestAuth:
         state.save()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             from klangkc import auth
 
             auth.logout("http://localhost:8995")
@@ -622,7 +626,10 @@ class TestAuth:
         state = CLIState()
         state.set_credentials("http://localhost:8995", "u@t.com", "tok")
         state.save()
-        with patch("httpx.post", side_effect=httpx.ConnectError("no server")):
+        with patch(
+            "klangkc.transport.httpx.request",
+            side_effect=httpx.ConnectError("no server"),
+        ):
             from klangkc import auth
 
             auth.logout("http://localhost:8995")  # Should not raise
@@ -647,7 +654,7 @@ class TestAuth:
         state.save()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             from klangkc import auth
 
             auth.logout("http://server1:8995")
@@ -664,14 +671,17 @@ class TestOIDCCLILogin:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"auth_modes": "both"}
-        with patch("httpx.get", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             result = fetch_config("http://localhost:8995")
         assert result == {"auth_modes": "both"}
 
     def test_fetch_config_unreachable(self, monkeypatch):
         from klangkc.auth import _UNREACHABLE, fetch_config
 
-        with patch("httpx.get", side_effect=httpx.ConnectError("fail")):
+        with patch(
+            "klangkc.transport.httpx.request",
+            side_effect=httpx.ConnectError("fail"),
+        ):
             result = fetch_config("http://localhost:8995")
         assert result == _UNREACHABLE
 
@@ -680,7 +690,7 @@ class TestOIDCCLILogin:
 
         mock_resp = MagicMock()
         mock_resp.status_code = 404
-        with patch("httpx.get", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             result = fetch_config("http://localhost:8995")
         assert result is None
 
@@ -747,7 +757,7 @@ class TestOIDCCLILogin:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "jwt"}
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             auth.login(
                 "http://localhost:8995",
                 email="u@test.com",
@@ -791,7 +801,7 @@ class TestOIDCCLILogin:
         mock_resp.status_code = 301
         mock_resp.headers = {"location": "https://example.com/auth/login"}
         with (
-            patch("httpx.post", return_value=mock_resp),
+            patch("klangkc.transport.httpx.request", return_value=mock_resp),
             pytest.raises(SystemExit),
         ):
             auth.login(
@@ -812,7 +822,7 @@ class TestOIDCCLILogin:
         mock_resp.json.side_effect = Exception("no body")
         mock_resp.text = ""
         with (
-            patch("httpx.post", return_value=mock_resp),
+            patch("klangkc.transport.httpx.request", return_value=mock_resp),
             pytest.raises(SystemExit),
         ):
             auth.login(
@@ -918,10 +928,10 @@ class TestRequestWithRetry:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         monkeypatch.setattr(
-            "klangkc.client.httpx.request",
+            "klangkc.transport.httpx.request",
             lambda *a, **kw: mock_resp,
         )
-        resp = request_with_retry("GET", "http://test/path")
+        resp = request_with_retry("http://test", "GET", "/path")
         assert resp.status_code == 200
 
     def test_retries_on_timeout(self, monkeypatch):
@@ -936,9 +946,9 @@ class TestRequestWithRetry:
                 raise httpx.ReadTimeout("timed out")
             return mock_resp
 
-        monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
+        monkeypatch.setattr("klangkc.transport.httpx.request", fake_request)
         monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
-        resp = request_with_retry("GET", "http://test/path")
+        resp = request_with_retry("http://test", "GET", "/path")
         assert resp.status_code == 200
         assert call_count == 3
 
@@ -954,9 +964,9 @@ class TestRequestWithRetry:
                 raise httpx.ConnectError("connection refused")
             return mock_resp
 
-        monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
+        monkeypatch.setattr("klangkc.transport.httpx.request", fake_request)
         monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
-        resp = request_with_retry("GET", "http://test/path")
+        resp = request_with_retry("http://test", "GET", "/path")
         assert resp.status_code == 200
         assert call_count == 2
 
@@ -970,9 +980,9 @@ class TestRequestWithRetry:
             resp.status_code = 503 if call_count < 3 else 200
             return resp
 
-        monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
+        monkeypatch.setattr("klangkc.transport.httpx.request", fake_request)
         monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
-        resp = request_with_retry("GET", "http://test/path")
+        resp = request_with_retry("http://test", "GET", "/path")
         assert resp.status_code == 200
         assert call_count == 3
 
@@ -980,10 +990,10 @@ class TestRequestWithRetry:
         def fake_request(*args, **kwargs):
             raise httpx.ReadTimeout("timed out")
 
-        monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
+        monkeypatch.setattr("klangkc.transport.httpx.request", fake_request)
         monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
         with pytest.raises(httpx.ReadTimeout):
-            request_with_retry("GET", "http://test/path")
+            request_with_retry("http://test", "GET", "/path")
 
     def test_returns_503_after_exhausting_retries(self, monkeypatch):
         def fake_request(*args, **kwargs):
@@ -991,9 +1001,9 @@ class TestRequestWithRetry:
             resp.status_code = 503
             return resp
 
-        monkeypatch.setattr("klangkc.client.httpx.request", fake_request)
+        monkeypatch.setattr("klangkc.transport.httpx.request", fake_request)
         monkeypatch.setattr("klangkc.client._time.sleep", lambda _: None)
-        resp = request_with_retry("GET", "http://test/path")
+        resp = request_with_retry("http://test", "GET", "/path")
         assert resp.status_code == 503
 
 
@@ -1408,7 +1418,7 @@ class TestNoneModeAuth:
             "access_token": "jwt-free",
             "email": "admin@example.com",
         }
-        with patch("klangkc.auth.httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             email, token = local_login("http://srv")
         assert email == "admin@example.com"
         assert token == "jwt-free"
@@ -1419,7 +1429,7 @@ class TestNoneModeAuth:
         mock_resp = MagicMock()
         mock_resp.status_code = 403
         mock_resp.json.return_value = {"detail": "not enabled"}
-        with patch("klangkc.auth.httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             with pytest.raises(SystemExit):
                 local_login("http://srv")
 
@@ -1427,7 +1437,7 @@ class TestNoneModeAuth:
         from klangkc.auth import local_login
 
         with patch(
-            "klangkc.auth.httpx.post",
+            "klangkc.transport.httpx.request",
             side_effect=httpx.ConnectError(""),
         ):
             with pytest.raises(SystemExit):
@@ -1439,7 +1449,7 @@ class TestNoneModeAuth:
         mock_resp = MagicMock()
         mock_resp.status_code = 500
         mock_resp.json.side_effect = ValueError("not json")
-        with patch("klangkc.auth.httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             with pytest.raises(SystemExit):
                 local_login("http://srv")
 
@@ -1449,7 +1459,7 @@ class TestNoneModeAuth:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"email": "a@x.com"}  # no token
-        with patch("klangkc.auth.httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             with pytest.raises(SystemExit):
                 local_login("http://srv")
 
@@ -1466,7 +1476,7 @@ class TestNoneModeAuth:
             "access_token": "jwt-none",
             "email": "admin@example.com",
         }
-        with patch("klangkc.auth.httpx.post", return_value=local_resp):
+        with patch("klangkc.transport.httpx.request", return_value=local_resp):
             with patch("klangkc.auth.Prompt.ask") as prompt:
                 from klangkc import auth
 
@@ -1486,7 +1496,7 @@ class TestNoneModeAuth:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "jwt-pw"}
-        with patch("klangkc.auth.httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             with patch(
                 "klangkc.auth.Prompt.ask",
                 side_effect=["u@test.com", "pass123"],
@@ -1523,7 +1533,7 @@ class TestRequireAuthNoneMode:
             "access_token": "jwt-auto",
             "email": "admin@example.com",
         }
-        with patch("klangkc.auth.httpx.post", return_value=local_resp):
+        with patch("klangkc.transport.httpx.request", return_value=local_resp):
             main.require_auth()
         state = main._state()
         assert state.get_token("http://localhost:8995") == "jwt-auto"
@@ -1542,7 +1552,7 @@ class TestRequireAuthNoneMode:
             "klangkc.main.fetch_config",
             lambda _: {"auth_modes": "password", "oidc_providers": []},
         )
-        with patch("klangkc.auth.httpx.post") as post:
+        with patch("klangkc.transport.httpx.request") as post:
             with pytest.raises(typer.Exit):
                 main.require_auth()
             post.assert_not_called()  # no /auth/local attempt in password mode
@@ -1565,7 +1575,7 @@ class TestRequireAuthNoneMode:
             "klangkc.main.fetch_config",
             lambda _: {"auth_modes": "password", "oidc_providers": []},
         )
-        with patch("klangkc.auth.httpx.post") as post:
+        with patch("klangkc.transport.httpx.request") as post:
             with pytest.raises(typer.Exit):
                 main.require_auth()
             post.assert_not_called()  # no /auth/local attempt
@@ -1580,7 +1590,7 @@ class TestRequireAuthNoneMode:
         state.active_server = "http://localhost:8995"
         state.save()
         monkeypatch.setattr("klangkc.main.fetch_config", lambda _: None)
-        with patch("klangkc.auth.httpx.post") as post:
+        with patch("klangkc.transport.httpx.request") as post:
             with pytest.raises(typer.Exit):
                 main.require_auth()
             post.assert_not_called()
@@ -1665,7 +1675,7 @@ class TestRefreshToken:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": new_jwt}
-        with patch("klangkc.auth.httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             result = refresh_token("http://srv", "old-token")
         assert result == new_jwt
         # Verify state was persisted
@@ -1675,12 +1685,13 @@ class TestRefreshToken:
     def test_returns_none_on_401(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 401
-        with patch("klangkc.auth.httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             assert refresh_token("http://srv", "old-token") is None
 
     def test_returns_none_on_network_error(self):
         with patch(
-            "klangkc.auth.httpx.post", side_effect=httpx.ConnectError("")
+            "klangkc.transport.httpx.request",
+            side_effect=httpx.ConnectError(""),
         ):
             assert refresh_token("http://srv", "old-token") is None
 
@@ -1688,7 +1699,7 @@ class TestRefreshToken:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {}
-        with patch("klangkc.auth.httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             assert refresh_token("http://srv", "old-token") is None
 
     def test_handles_unparseable_jwt_email(self, tmp_path, monkeypatch):
@@ -1697,7 +1708,7 @@ class TestRefreshToken:
         mock_resp.status_code = 200
         # A token whose payload is not valid base64/JSON
         mock_resp.json.return_value = {"access_token": "a.!!!.c"}
-        with patch("klangkc.auth.httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             result = refresh_token("http://srv", "old-token")
         assert result == "a.!!!.c"
         state = CLIState.load()
@@ -2235,9 +2246,11 @@ class TestRunShell:
         )
         ws_mock.send = AsyncMock()
 
-        with patch("websockets.connect", return_value=ws_mock):
+        with patch(
+            "klangkc.transport.websockets.connect", return_value=ws_mock
+        ):
             with pytest.raises(ConnectionError) as exc_info:
-                await ws_shell("ws://localhost/ws", "token", "ws1")
+                await ws_shell("http://localhost", "token", "ws1")
             assert "Connection failed" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -2311,11 +2324,13 @@ class TestRunShell:
 
         ws_mock.send = capture_send
 
-        with patch("websockets.connect", return_value=ws_mock):
+        with patch(
+            "klangkc.transport.websockets.connect", return_value=ws_mock
+        ):
             with patch("klangkc.client.run_shell", new=AsyncMock()):
                 # Should NOT raise "Shared terminal not found".
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     raw_mode=False,
@@ -2367,10 +2382,12 @@ class TestRunShell:
         ws_mock.recv = fake_recv
         ws_mock.send = AsyncMock()
 
-        with patch("websockets.connect", return_value=ws_mock):
+        with patch(
+            "klangkc.transport.websockets.connect", return_value=ws_mock
+        ):
             with pytest.raises(ConnectionError) as exc_info:
                 await ws_shell(
-                    "ws://localhost/ws",
+                    "http://localhost",
                     "token",
                     "ws1",
                     raw_mode=False,
@@ -2523,7 +2540,7 @@ class TestMisc:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "jwt"}
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             with patch(
                 "klangkc.auth.Prompt.ask",
                 side_effect=["admin@example.com", "pw"],
@@ -2552,7 +2569,7 @@ class TestExportImportClient:
         def _on_progress(downloaded, total):
             progress_calls.append((downloaded, total))
 
-        with patch("httpx.stream") as mock_stream:
+        with patch("klangkc.transport.httpx.stream") as mock_stream:
             mock_stream.return_value.__enter__ = MagicMock(
                 return_value=mock_resp
             )
@@ -2577,7 +2594,7 @@ class TestExportImportClient:
 
         progress_calls = []
 
-        with patch("httpx.stream") as mock_stream:
+        with patch("klangkc.transport.httpx.stream") as mock_stream:
             mock_stream.return_value.__enter__ = MagicMock(
                 return_value=mock_resp
             )
@@ -2602,7 +2619,7 @@ class TestExportImportClient:
 
         progress_calls = []
 
-        with patch("httpx.stream") as mock_stream:
+        with patch("klangkc.transport.httpx.stream") as mock_stream:
             mock_stream.return_value.__enter__ = MagicMock(
                 return_value=mock_resp
             )
@@ -2625,7 +2642,7 @@ class TestExportImportClient:
             "not found", request=MagicMock(), response=mock_resp
         )
 
-        with patch("httpx.stream") as mock_stream:
+        with patch("klangkc.transport.httpx.stream") as mock_stream:
             mock_stream.return_value.__enter__ = MagicMock(
                 return_value=mock_resp
             )
@@ -2641,7 +2658,7 @@ class TestExportImportClient:
         mock_resp = MagicMock()
         mock_resp.status_code = 401
 
-        with patch("httpx.stream") as mock_stream:
+        with patch("klangkc.transport.httpx.stream") as mock_stream:
             mock_stream.return_value.__enter__ = MagicMock(
                 return_value=mock_resp
             )
@@ -2663,7 +2680,7 @@ class TestExportImportClient:
             "created_at": "2025-01-01",
         }
 
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             ws = client.import_workspace(archive, name="imported-ws")
 
         assert ws.name == "imported-ws"
@@ -2695,7 +2712,7 @@ class TestExportImportClient:
                     pass
             return mock_resp
 
-        with patch("httpx.post", side_effect=_mock_post):
+        with patch("klangkc.transport.httpx.request", side_effect=_mock_post):
             ws = client.import_workspace(
                 archive,
                 name="prog-ws",
@@ -2716,7 +2733,7 @@ class TestExportImportClient:
         mock_resp = MagicMock()
         mock_resp.status_code = 401
 
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             with pytest.raises(AuthError):
                 client.import_workspace(archive)
 
@@ -2734,7 +2751,9 @@ class TestExportImportClient:
             "created_at": "2025-01-01",
         }
 
-        with patch("httpx.post", return_value=mock_resp) as mock_post:
+        with patch(
+            "klangkc.transport.httpx.request", return_value=mock_resp
+        ) as mock_post:
             ws = client.import_workspace(archive)
 
         assert ws.name == "from-archive"
@@ -2758,8 +2777,9 @@ class TestHTTPMethodWrappers:
             result = client.get("/foo")
         assert result is mock_resp
         mock_req.assert_called_once_with(
+            "http://test:8995",
             "GET",
-            "http://test:8995/foo",
+            "/foo",
             headers={"Authorization": "Bearer tok"},
         )
 
@@ -2772,8 +2792,9 @@ class TestHTTPMethodWrappers:
             result = client.post("/bar", json={"a": 1})
         assert result is mock_resp
         mock_req.assert_called_once_with(
+            "http://test:8995",
             "POST",
-            "http://test:8995/bar",
+            "/bar",
             headers={"Authorization": "Bearer tok"},
             json={"a": 1},
         )
@@ -2787,8 +2808,9 @@ class TestHTTPMethodWrappers:
             result = client.put("/baz")
         assert result is mock_resp
         mock_req.assert_called_once_with(
+            "http://test:8995",
             "PUT",
-            "http://test:8995/baz",
+            "/baz",
             headers={"Authorization": "Bearer tok"},
         )
 
@@ -2801,8 +2823,9 @@ class TestHTTPMethodWrappers:
             result = client.patch("/qux", json={"b": 2})
         assert result is mock_resp
         mock_req.assert_called_once_with(
+            "http://test:8995",
             "PATCH",
-            "http://test:8995/qux",
+            "/qux",
             headers={"Authorization": "Bearer tok"},
             json={"b": 2},
         )
@@ -2816,8 +2839,9 @@ class TestHTTPMethodWrappers:
             result = client.delete("/del")
         assert result is mock_resp
         mock_req.assert_called_once_with(
+            "http://test:8995",
             "DELETE",
-            "http://test:8995/del",
+            "/del",
             headers={"Authorization": "Bearer tok"},
         )
 
@@ -3103,7 +3127,7 @@ class TestMonitor:
             return_value=_FakeMonitorCM(conn),
         ):
             await monitor_connection(
-                "ws://x/ws", "tok", 1024, command=[], types=[], workspaces=[]
+                "http://x", "tok", 1024, command=[], types=[], workspaces=[]
             )
         out = capsys.readouterr().out.strip().splitlines()
         assert len(out) == 2
@@ -3136,7 +3160,7 @@ class TestMonitor:
             return_value=_FakeMonitorCM(conn),
         ):
             await monitor_connection(
-                "ws://x/ws",
+                "http://x",
                 "tok",
                 1024,
                 command=[],
@@ -3173,7 +3197,7 @@ class TestMonitor:
             return_value=_FakeMonitorCM(conn),
         ):
             await monitor_connection(
-                "ws://x/ws",
+                "http://x",
                 "tok",
                 1024,
                 command=[],
@@ -3200,7 +3224,7 @@ class TestMonitor:
         ):
             with patch("klangkc.main.subprocess.run") as run_mock:
                 await monitor_connection(
-                    "ws://x/ws",
+                    "http://x",
                     "tok",
                     1024,
                     command=["notify-send"],
@@ -3235,7 +3259,7 @@ class TestMonitor:
         ):
             with patch("klangkc.main.subprocess.run") as run_mock:
                 await monitor_connection(
-                    "ws://x/ws",
+                    "http://x",
                     "tok",
                     1024,
                     command=["notify-send"],
@@ -3268,7 +3292,7 @@ class TestMonitor:
         ):
             with patch("klangkc.main.subprocess.run") as run_mock:
                 await monitor_connection(
-                    "ws://x/ws",
+                    "http://x",
                     "tok",
                     1024,
                     command=["notify-send"],
@@ -3303,7 +3327,7 @@ class TestMonitor:
             )
             with pytest.raises(FileNotFoundError):
                 await monitor_connection(
-                    "ws://x/ws",
+                    "http://x",
                     "tok",
                     1024,
                     command=["nope"],
@@ -3337,7 +3361,6 @@ class TestMonitor:
             with pytest.raises(typer.Exit) as exc_info:
                 await main_mod.monitor_run(
                     "http://x",
-                    "ws://x/ws",
                     "tok",
                     1024,
                     command=[],
@@ -3370,7 +3393,6 @@ class TestMonitor:
             with pytest.raises(typer.Exit) as exc_info:
                 await main_mod.monitor_run(
                     "http://x",
-                    "ws://x/ws",
                     "tok",
                     1024,
                     command=[],
@@ -3400,7 +3422,6 @@ class TestMonitor:
             with pytest.raises(typer.Exit) as exc_info:
                 await main_mod.monitor_run(
                     "http://x",
-                    "ws://x/ws",
                     "tok",
                     1024,
                     command=[],
@@ -3440,7 +3461,6 @@ class TestMonitor:
             with pytest.raises(typer.Exit):
                 await main_mod.monitor_run(
                     "http://x",
-                    "ws://x/ws",
                     "OLD_TOKEN",
                     1024,
                     command=[],
@@ -3477,7 +3497,6 @@ class TestMonitor:
             with pytest.raises(typer.Exit):
                 await main_mod.monitor_run(
                     "http://x",
-                    "ws://x/ws",
                     "OLD_TOKEN",
                     1024,
                     command=[],
@@ -3519,7 +3538,7 @@ class TestMonitor:
             return_value=_FakeMonitorCM(conn),
         ):
             await monitor_connection(
-                "ws://x/ws", "tok", 1024, command=[], types=[], workspaces=[]
+                "http://x", "tok", 1024, command=[], types=[], workspaces=[]
             )
         out = capsys.readouterr().out.strip().splitlines()
         assert len(out) == 1
@@ -3565,7 +3584,6 @@ class TestMonitor:
             with pytest.raises(typer.Exit):
                 await main_mod.monitor_run(
                     "http://x",
-                    "ws://x/ws",
                     "OLD_TOKEN",
                     1024,
                     command=[],

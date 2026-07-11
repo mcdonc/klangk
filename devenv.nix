@@ -7,11 +7,16 @@
 let
   # klangkd binds a UDS and owns nginx as a child (#1396); the old
   # two-process layout (uvicorn + scripts/nginx.sh) is collapsed into this
-  # single entry. Dev runs env-vars-only (--config=none); uvicorn bind + WS
-  # flags are set inside klangkd itself.
+  # single entry. Dev config lives in klangkd.yaml (gitignored);
+  # copy from klangkd.yaml.example if missing.
   backendCmd = ''
-    python3 -m klangk_backend.klangkd --config=none
+    python3 -m klangk_backend.klangkd --config="$DEVENV_ROOT/klangkd.yaml"
   '';
+  pluginsDir = config.devenv.root + "/.devenv/state/klangk/plugins";
+  dataDir = config.devenv.root + "/.devenv/state/klangk/data";
+  versionFile = config.devenv.state + "/klangk/version.json";
+  backendPort = "8997";
+  nginxPort = "8995";
 in
 {
   languages.javascript = {
@@ -114,8 +119,8 @@ in
         "src/frontend/web/**"
         "src/frontend/pubspec.yaml"
         "src/frontend/pubspec.lock"
-        "${config.env.KLANGK_PLUGINS_DIR}/**/*.dart"
-        "${config.env.KLANGK_PLUGINS_DIR}/plugins.lock"
+        "${pluginsDir}/**/*.dart"
+        "${pluginsDir}/plugins.lock"
       ];
     };
     "klangk:build-workspace-image" = {
@@ -126,8 +131,8 @@ in
     "klangk:kill-containers" = {
       exec = ''
         if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
-          ''${KLANGK_PODMAN_BIN:-podman} ps -a --filter "label=klangk.instance=$(klangk-instance-id)" -q \
-            | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
+          podman ps -a --filter "label=klangk.instance=$(klangk-instance-id)" -q \
+            | xargs -r podman rm -f
         fi
       '';
       after = [ "klangk:uv-sync" ];
@@ -135,7 +140,7 @@ in
     "klangk:kill-port-holders" = {
       exec = ''
         if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
-          for port in $KLANGK_PORT $KLANGK_NGINX_PORT; do
+          for port in ${backendPort} ${nginxPort}; do
             fuser -k "$port/tcp" 2>/dev/null || true
           done
         fi
@@ -143,7 +148,7 @@ in
     };
     "klangk:init-plugins" = {
       exec = ''
-        if [ ! -f "${config.env.KLANGK_PLUGINS_DIR}/plugins.yaml" ]; then
+        if [ ! -f "${pluginsDir}/plugins.yaml" ]; then
           cd $DEVENV_ROOT
           python3 scripts/update_plugins.py
         fi
@@ -160,7 +165,7 @@ in
       before = [ "klangk:flutter-build" ];
       showOutput = true;
       execIfModified = [
-        "${config.env.KLANGK_PLUGINS_DIR}/plugins.yaml"
+        "${pluginsDir}/plugins.yaml"
       ];
     };
   };
@@ -181,27 +186,14 @@ in
 
   env.SOURCE_DATE_EPOCH = "";
   env.UV_PYTHON = config.devenv.state + "/venv/bin/python";
-  # Port defaults: mkOverride 1500 (lower priority than mkDefault).
-  # dotenv.enable loads .env values as mkDefault, so .env overrides.
-  # devenv.local.nix (mkForce/50) > .env (1000) > these (1500)
-  env.KLANGK_PORT = lib.mkOverride 1500 "8997";
-  env.KLANGK_NGINX_PORT = lib.mkOverride 1500 "8995";
-  # uvicorn bind address. Defaults to loopback so workspace containers
-  # can't reach the backend directly via host.containers.internal:$KLANGK_PORT
-  # and bypass nginx's per-location ACLs (#1375). nginx stays 0.0.0.0
-  # (container-reachable) and proxies to this address. Set 0.0.0.0 to restore
-  # the old direct-reach behavior.
-  env.KLANGK_LISTEN = lib.mkOverride 1500 "127.0.0.1";
-  env.KLANGK_DATA_DIR = lib.mkOverride 1500 (
-    config.devenv.root + "/.devenv/state/klangk/data"
-  );
-  env.KLANGK_PLUGINS_DIR = lib.mkOverride 1500 (
-    config.devenv.root + "/.devenv/state/klangk/plugins"
-  );
-  env.KLANGK_CUSTOMIZE_DIR = lib.mkOverride 1500 (
-    config.devenv.root + "/.devenv/state/klangk/custom"
-  );
-  env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk-workspace";
+
+  # --- Devenv-only env vars (used by shell hooks and scripts, NOT by the
+  # backend — backend config lives in klangkd.yaml). ---
+
+  # KLANGK_PLUGINS_DIR is still exported for shell scripts (update_plugins.py,
+  # stub_dart_plugins.sh) that read it from the environment. The Nix-level
+  # references use the ``pluginsDir`` let binding instead.
+  env.KLANGK_PLUGINS_DIR = pluginsDir;
   # Rootless podman from nix (Linux) ships no default policy.json, so a build/pull
   # fails with "no policy.json file found". enterShell generates a permissive one
   # at this path, and the build/pull scripts consume this var and pass it to podman
@@ -216,16 +208,16 @@ in
     else
       config.devenv.state + "/klangk/podman/policy.json"
   );
-  env.KLANGK_VERSION_FILE = config.devenv.state + "/klangk/version.json";
+  env.KLANGK_VERSION_FILE = versionFile;
   # Docker build platform for klangk images. On Linux, default to the host
   # architecture so arm64 machines build/run natively instead of under amd64
   # emulation. The published GHCR base (klangk-workspace-base:latest) is
   # multi-arch (amd64 + arm64), so we default to the host's native
-  # architecture on all platforms. Override in .env to force a specific arch.
+  # architecture on all platforms. Override via devenv.local.nix.
   env.KLANGK_PLATFORM = lib.mkOverride 1500 (
     if pkgs.stdenv.hostPlatform.isAarch64 then "linux/arm64" else "linux/amd64"
   );
-  dotenv.enable = true;
+  env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk-workspace";
 
   scripts.flutterbuildweb.exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh" "$@"'';
   scripts.build-workspace-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-workspace-image.sh" "$@"'';
@@ -244,12 +236,10 @@ in
     fi
     exec python3 "$DEVENV_ROOT/scripts/trivy-report-nofix.py" "$@"'';
 
-  scripts.run-host-container.exec = ''exec bash "$DEVENV_ROOT/scripts/run-host-container.sh" "$@"'';
-
   scripts.kill-containers.exec = ''
-    ''${KLANGK_PODMAN_BIN:-podman} ps -a \
+    podman ps -a \
       --filter "label=klangk.instance=$(klangk-instance-id)" \
-      -q | xargs -r ''${KLANGK_PODMAN_BIN:-podman} rm -f
+      -q | xargs -r podman rm -f
   '';
 
   scripts.update-plugins.exec = ''
@@ -484,11 +474,16 @@ in
   };
 
   enterShell = ''
-    mkdir -p "$KLANGK_DATA_DIR"
+    if [ ! -f "$DEVENV_ROOT/klangkd.yaml" ]; then
+      cp "$DEVENV_ROOT/klangkd.yaml.example" "$DEVENV_ROOT/klangkd.yaml"
+      echo "Created klangkd.yaml from klangkd.yaml.example — edit it to taste."
+    fi
+
+    mkdir -p "${dataDir}"
 
     # Generate version file (used by update_plugins.py and /version endpoint)
-    mkdir -p "$(dirname "$KLANGK_VERSION_FILE")"
-    bash "$DEVENV_ROOT/scripts/generate-version.sh" > "$KLANGK_VERSION_FILE"
+    mkdir -p "$(dirname "${versionFile}")"
+    bash "$DEVENV_ROOT/scripts/generate-version.sh" > "${versionFile}"
 
     # Podman uses its default storage (~/.local/share/containers/).
     # To customize, create ~/.config/containers/storage.conf.

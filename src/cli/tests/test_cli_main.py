@@ -79,7 +79,7 @@ class TestMainCLI:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "new-token"}
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             with patch(
                 "klangkc.auth.Prompt.ask",
                 side_effect=["u@test.com", "pw"],
@@ -106,7 +106,7 @@ class TestMainCLI:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "file-token"}
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             login_cmd(
                 server="http://localhost:8995",
                 user="file@test.com",
@@ -126,7 +126,7 @@ class TestMainCLI:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "stdin-token"}
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             with patch("sys.stdin") as mock_stdin:
                 mock_stdin.readline.return_value = "stdin-pw\n"
                 login_cmd(
@@ -150,7 +150,7 @@ class TestMainCLI:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "tok"}
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             with patch(
                 "klangkc.auth.Prompt.ask",
                 side_effect=["u@test.com", "pw"],
@@ -180,7 +180,7 @@ class TestMainCLI:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "tok"}
-        with patch("httpx.post", return_value=mock_resp):
+        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
             with patch(
                 "klangkc.auth.Prompt.ask",
                 return_value="pw",
@@ -865,7 +865,10 @@ class TestMainCLI:
     def test_logout_command(self, logged_in_cfg):
         from klangkc import main
 
-        with patch("httpx.post", return_value=MagicMock(status_code=200)):
+        with patch(
+            "klangkc.transport.httpx.request",
+            return_value=MagicMock(status_code=200),
+        ):
             main.logout(server=None)
         state = CLIState.load()
         assert state.get_token("http://localhost:8995") is None
@@ -873,7 +876,10 @@ class TestMainCLI:
     def test_logout_with_server_arg(self, logged_in_cfg, monkeypatch):
         from klangkc import main
 
-        with patch("httpx.post", return_value=MagicMock(status_code=200)):
+        with patch(
+            "klangkc.transport.httpx.request",
+            return_value=MagicMock(status_code=200),
+        ):
             main.logout(server="http://localhost:8995")
         state = CLIState.load()
         assert state.get_token("http://localhost:8995") is None
@@ -894,7 +900,10 @@ class TestMainCLI:
     def test_logout_network_error_does_not_propagate(self, logged_in_cfg):
         from klangkc import main
 
-        with patch("httpx.post", side_effect=httpx.ConnectError("no route")):
+        with patch(
+            "klangkc.transport.httpx.request",
+            side_effect=httpx.ConnectError("no route"),
+        ):
             main.logout(server=None)  # must not raise
 
     def test_shell_with_single_workspace_auto_selects(
@@ -1174,7 +1183,9 @@ class TestMainCLI:
 
         with (
             patch.object(main, "_client", return_value=client),
-            patch("websockets.connect", return_value=mock_ws),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=mock_ws
+            ),
         ):
             os.environ["TERM"] = "xterm-256color"
             main.terminals("my-ws")
@@ -1232,7 +1243,9 @@ class TestMainCLI:
 
         with (
             patch.object(main, "_client", return_value=client),
-            patch("websockets.connect", return_value=mock_ws),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=mock_ws
+            ),
         ):
             os.environ["TERM"] = "xterm-256color"
             main.share_terminal("my-ws", "build")
@@ -1287,7 +1300,9 @@ class TestMainCLI:
 
         with (
             patch.object(main, "_client", return_value=client),
-            patch("websockets.connect", return_value=mock_ws),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=mock_ws
+            ),
         ):
             os.environ["TERM"] = "xterm-256color"
             main.unshare_terminal("my-ws", "build")
@@ -1336,7 +1351,9 @@ class TestMainCLI:
 
         with (
             patch.object(main, "_client", return_value=client),
-            patch("websockets.connect", return_value=mock_ws),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=mock_ws
+            ),
         ):
             os.environ["TERM"] = "xterm-256color"
             with pytest.raises(typer.Exit):
@@ -1377,7 +1394,9 @@ class TestMainCLI:
 
         with (
             patch.object(main, "_client", return_value=client),
-            patch("websockets.connect", return_value=mock_ws),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=mock_ws
+            ),
         ):
             os.environ["TERM"] = "xterm-256color"
             with pytest.raises(ConnectionError):
@@ -1408,7 +1427,9 @@ class TestMainCLI:
 
         with (
             patch.object(main, "_client", return_value=client),
-            patch("websockets.connect", return_value=mock_ws),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=mock_ws
+            ),
         ):
             os.environ["TERM"] = "xterm-256color"
             with pytest.raises(ConnectionError):
@@ -1439,7 +1460,9 @@ class TestMainCLI:
 
         with (
             patch.object(main, "_client", return_value=client),
-            patch("websockets.connect", return_value=mock_ws),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=mock_ws
+            ),
         ):
             os.environ["TERM"] = "xterm-256color"
             with pytest.raises(ConnectionError):
@@ -1482,7 +1505,9 @@ class TestMainCLI:
 
         with (
             patch.object(main, "_client", return_value=client),
-            patch("websockets.connect", return_value=mock_ws),
+            patch(
+                "klangkc.transport.websockets.connect", return_value=mock_ws
+            ),
         ):
             os.environ["TERM"] = "xterm-256color"
             with pytest.raises(typer.Exit):
@@ -2879,25 +2904,6 @@ class TestInviteCLI:
         assert result.exit_code == 1
 
 
-class TestBuildWsUrl:
-    def test_http(self):
-        from klangkc.main import build_ws_url
-
-        assert (
-            build_ws_url("http://localhost:8995") == "ws://localhost:8995/ws"
-        )
-
-    def test_https(self):
-        from klangkc.main import build_ws_url
-
-        assert build_ws_url("https://example.com") == "wss://example.com/ws"
-
-    def test_bare(self):
-        from klangkc.main import build_ws_url
-
-        assert build_ws_url("example.com") == "ws://example.com/ws"
-
-
 class TestWorkspaceStatus:
     def test_stopped_when_not_running(self):
         from klangkc.main import workspace_status
@@ -3206,7 +3212,7 @@ class TestSandboxSetupOnly:
         )
 
         with (
-            patch("klangkc.main.websockets.connect") as mock_connect,
+            patch("klangkc.transport.websockets.connect") as mock_connect,
             patch("klangkc.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
@@ -3215,7 +3221,7 @@ class TestSandboxSetupOnly:
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_setup.return_value = 0
             await sandbox_setup_only(
-                "ws://test",
+                "http://test",
                 "token",
                 "ws-id",
                 config,
@@ -3246,7 +3252,7 @@ class TestSandboxSetupOnly:
         )
 
         with (
-            patch("klangkc.main.websockets.connect") as mock_connect,
+            patch("klangkc.transport.websockets.connect") as mock_connect,
             patch("klangkc.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
@@ -3255,7 +3261,7 @@ class TestSandboxSetupOnly:
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_setup.return_value = 0
             await sandbox_setup_only(
-                "ws://test",
+                "http://test",
                 "token",
                 "ws-id",
                 config,
@@ -3292,7 +3298,7 @@ class TestSandboxSetupOnly:
         )
 
         with (
-            patch("klangkc.main.websockets.connect") as mock_connect,
+            patch("klangkc.transport.websockets.connect") as mock_connect,
             patch("klangkc.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
@@ -3302,7 +3308,7 @@ class TestSandboxSetupOnly:
             mock_setup.return_value = 0
             # Must not raise / hang waiting for terminal_started.
             await sandbox_setup_only(
-                "ws://test",
+                "http://test",
                 "token",
                 "ws-id",
                 config,
@@ -3332,7 +3338,7 @@ class TestSandboxSetupOnly:
         mock_client.set_setup_state = MagicMock()
 
         with (
-            patch("klangkc.main.websockets.connect") as mock_connect,
+            patch("klangkc.transport.websockets.connect") as mock_connect,
             patch("klangkc.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
@@ -3341,7 +3347,7 @@ class TestSandboxSetupOnly:
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_setup.return_value = 0
             await sandbox_setup_only(
-                "ws://test",
+                "http://test",
                 "token",
                 "ws-id",
                 config,
@@ -3375,7 +3381,7 @@ class TestSandboxSetupOnly:
         mock_client.set_setup_state = MagicMock()
 
         with (
-            patch("klangkc.main.websockets.connect") as mock_connect,
+            patch("klangkc.transport.websockets.connect") as mock_connect,
             patch("klangkc.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
@@ -3384,7 +3390,7 @@ class TestSandboxSetupOnly:
             mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_setup.return_value = 1  # setup failed
             await sandbox_setup_only(
-                "ws://test",
+                "http://test",
                 "token",
                 "ws-id",
                 config,
@@ -3621,9 +3627,8 @@ class TestMonitorCommand:
 
         assert mock_run.await_count == 1
         args, kwargs = mock_run.call_args
-        assert args[0] == "http://localhost:8995"  # server_url
-        assert args[1] == "ws://localhost:8995/ws"  # ws_url
-        assert args[2] == "test-token"  # token
+        assert args[0] == "http://localhost:8995"  # server_spec
+        assert args[1] == "test-token"  # token
         assert kwargs["max_reconnects"] != 0  # reconnects by default
 
     def test_monitor_no_reconnect_passes_zero(self, logged_in_cfg):

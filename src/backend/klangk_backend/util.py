@@ -278,7 +278,9 @@ def client_is_loopback(headers=None, client_host: str | None = None) -> bool:
     unparseable IP, rejects. Over a UDS a ``None`` client is treated as the
     trusted reverse proxy (same-uid access to the socket; see
     ``_UDS_MODE``), so its forwarded headers ARE consulted — the loopback
-    TCP case in disguise.
+    TCP case in disguise. A direct UDS connection (no nginx, no forwarded
+    headers) is treated as loopback: the socket's file permissions (0700
+    parent dir) restrict access to the same uid.
     """
     candidate = client_host
     trust = (
@@ -298,6 +300,10 @@ def client_is_loopback(headers=None, client_host: str | None = None) -> bool:
             real_ip = xff.split(",")[0].strip() if xff else ""
         if real_ip:
             candidate = real_ip
+    # Direct UDS connection: client_host is None, no forwarded headers,
+    # but _UDS_MODE is set → same-uid trust boundary, treat as loopback.
+    if candidate is None and _UDS_MODE:
+        return True
     try:
         return ipaddress.ip_address(candidate) in _LOOPBACK_ADDRS
     except ValueError:
