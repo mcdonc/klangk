@@ -9,6 +9,8 @@ Covers:
 - _key_to_field mapping
 """
 
+import os
+
 import pytest
 
 from klangk_backend import settings as settings_mod
@@ -357,3 +359,83 @@ class TestKlangkdLauncher:
 
         with _pytest.raises(typer.BadParameter):
             _resolve_config_path("/nonexistent/path/to/config.yaml")
+
+
+class TestEnvConstructor:
+    """Tests for the KlangkSettings(env=...) constructor (#1426 Slice 1)."""
+
+    def test_reads_from_env_dict(self):
+        # Explicit env dict is the only source — os.environ is ignored.
+        s = KlangkSettings(env={"KLANGK_NGINX_PORT": "4321"})
+        assert s.nginx_port == "4321"
+
+    def test_env_dict_ignores_os_environ(self, monkeypatch):
+        monkeypatch.setenv("KLANGK_NGINX_PORT", "9999")
+        s = KlangkSettings(env={"KLANGK_NGINX_PORT": "1111"})
+        assert s.nginx_port == "1111"
+        assert s.nginx_port != "9999"
+
+    def test_empty_env_dict_uses_defaults(self):
+        s = KlangkSettings(env={})
+        assert s.auth_modes is None
+        assert s.default_user == "admin@example.com"
+        assert s.min_password_length == "8"
+
+    def test_default_reads_os_environ(self, monkeypatch):
+        # KlangkSettings(os.environ) reads from os.environ; monkeypatch.setenv
+        # mutates os.environ, so the constructed settings see the value.
+        monkeypatch.setenv("KLANGK_AUTH_MODES", "oidc")
+        s = KlangkSettings(os.environ)
+        assert s.auth_modes == "oidc"
+
+    def test_env_for_sources_reset_after_construction(self):
+        # The class-var bridge is cleaned up after construction so it doesn't
+        # leak between instances.
+        KlangkSettings(env={"KLANGK_NGINX_PORT": "1234"})
+        assert KlangkSettings._env_for_sources is None
+
+    def test_env_dict_multiple_fields(self):
+        s = KlangkSettings(
+            env={
+                "KLANGK_AUTH_MODES": "password",
+                "KLANGK_JWT_SECRET": "secret123",
+                "KLANGK_DEFAULT_USER": "admin@test.com",
+            }
+        )
+        assert s.auth_modes == "password"
+        assert s.jwt_secret == "secret123"
+        assert s.default_user == "admin@test.com"
+
+    def test_config_file_param_loads_yaml(self, tmp_path):
+        # The config_file= constructor param wires a YAML source in, with no
+        # help from the module-global set_config_file().
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("product_name: FromConfigFile\n")
+        s = KlangkSettings(env={}, config_file=str(cfg))
+        assert s.product_name == "FromConfigFile"
+
+    def test_config_file_param_beats_module_global(self, tmp_path, monkeypatch):
+        # When both the constructor param and the module global are set, the
+        # constructor param wins (it's the intended path; the global is the
+        # legacy fallback slated for deletion).
+        from klangk_backend.settings import set_config_file
+
+        global_cfg = tmp_path / "global.yaml"
+        global_cfg.write_text("product_name: FromGlobal\n")
+        param_cfg = tmp_path / "param.yaml"
+        param_cfg.write_text("product_name: FromParam\n")
+        set_config_file(str(global_cfg))
+        try:
+            s = KlangkSettings(env={}, config_file=str(param_cfg))
+            assert s.product_name == "FromParam"
+        finally:
+            set_config_file(None)
+
+    def test_env_overrides_config_file(self, tmp_path):
+        # Precedence: env dict > config file.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("product_name: FromConfigFile\n")
+        s = KlangkSettings(
+            env={"KLANGK_PRODUCT_NAME": "FromEnv"}, config_file=str(cfg)
+        )
+        assert s.product_name == "FromEnv"
