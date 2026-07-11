@@ -10,6 +10,7 @@ import logging
 import os
 import ssl
 import types
+from pathlib import Path
 
 import pytest
 
@@ -121,7 +122,7 @@ class TestApplyBackendSslTrust:
 
         assert bundle is not None
         assert os.path.isfile(bundle)
-        contents = open(bundle).read()
+        contents = Path(bundle).read_text()
         # System bundle first (preserves public-internet trust), then custom.
         assert contents == "FAKE-SYSTEM-CA\nFAKE-CORP-CA\n"
         # All toolchain vars point at the merged bundle.
@@ -146,7 +147,7 @@ class TestApplyBackendSslTrust:
         ssl_trust.apply_backend_ssl_trust()
 
         bundle = os.environ["SSL_CERT_FILE"]
-        contents = open(bundle).read()
+        contents = Path(bundle).read_text()
         assert "SYSTEM-MARKER" in contents  # public-internet CAs preserved
         assert "CORP" in contents  # custom CA present
 
@@ -172,13 +173,15 @@ class TestApplyBackendSslTrust:
         ssl_trust.apply_backend_ssl_trust()
         first = os.environ["SSL_CERT_FILE"]
         size_after_first = os.path.getsize(first)
-        contents_after_first = open(first).read()
+        contents_after_first = Path(first).read_text()
 
         ssl_trust.apply_backend_ssl_trust()
         second = os.environ["SSL_CERT_FILE"]
         assert second == first
         assert os.path.getsize(second) == size_after_first
-        assert open(second).read() == contents_after_first  # no duplication
+        assert (
+            Path(second).read_text() == contents_after_first
+        )  # no duplication
 
     def test_custom_cert_missing_system_bundle_warns(
         self, monkeypatch, tmp_path, caplog
@@ -291,7 +294,7 @@ class TestInternalsAndErrorBranches:
         out = tmp_path / "bundle.crt"
         ok = ssl_trust.write_merged_bundle(str(out), str(cert_dir))
         assert ok is True
-        assert open(out).read() == "CORP\n"  # system skipped, custom kept
+        assert Path(out).read_text() == "CORP\n"  # system skipped, custom kept
 
     def test_write_empty_when_cert_unreadable(self, monkeypatch, tmp_path):
         out = tmp_path / "bundle.crt"

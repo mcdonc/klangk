@@ -143,7 +143,8 @@ def write_merged_bundle(bundle_path: str, ssl_dir: str) -> bool:
         sys_bundle = system_ca_bundle(self_bundle=bundle_path)
         if sys_bundle:
             try:
-                out.write(open(sys_bundle).read())
+                with open(sys_bundle) as f:
+                    out.write(f.read())
                 written += 1
             except OSError as exc:
                 logger.warning(
@@ -151,7 +152,8 @@ def write_merged_bundle(bundle_path: str, ssl_dir: str) -> bool:
                 )
         for cert in iter_cert_files(ssl_dir):
             try:
-                out.write(open(cert).read())
+                with open(cert) as f:
+                    out.write(f.read())
                 written += 1
             except OSError as exc:
                 logger.warning("Skipping unreadable cert %s: %s", cert, exc)
