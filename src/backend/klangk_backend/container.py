@@ -517,7 +517,21 @@ class HealthMonitor:
 
     def __init__(self, registry: "ContainerRegistry") -> None:
         self._registry = registry
+        self._connections_ref = None
         self.health_task: asyncio.Task | None = None
+
+    @property
+    def _connections(self):
+        """Return the explicitly-set connections, or fall back to the
+        module-level ``wshandler.state`` shim (lazy import to avoid the
+        circular ``container`` ↔ ``wshandler`` import). The fallback
+        disappears in Slice 2d (#1465) when all callers use the explicit
+        reference."""
+        if self._connections_ref is not None:
+            return self._connections_ref
+        from .wshandler import state  # noqa: allow-deferred-import
+
+        return state
 
     def _setup_complete(self, state: ContainerState) -> bool:
         """True if health checks may run for this workspace.
@@ -680,11 +694,8 @@ class HealthMonitor:
         ``seq`` (#1175 item 4) bumped on every emit so a reconnecting
         consumer can detect a missed transition.
         """
-        # Imported lazily to avoid an import cycle with wshandler.
-        from .wshandler import state as _ws_state  # noqa: allow-deferred-import
-
         state.health_seq += 1
-        _ws_state.notify_service_health(
+        self._connections.notify_service_health(
             state.workspace_id,
             healthy=status == "healthy",
             message=message,
@@ -707,11 +718,8 @@ class HealthMonitor:
         and ``healthy=False`` *before* the state is dropped, so a single
         stream is a single source of truth.
         """
-        # Imported lazily to avoid an import cycle with wshandler.
-        from .wshandler import state as _ws_state  # noqa: allow-deferred-import
-
         state.health_seq += 1
-        _ws_state.notify_service_health(
+        self._connections.notify_service_health(
             state.workspace_id,
             healthy=False,
             message=None,
@@ -746,11 +754,8 @@ class HealthMonitor:
             self._send_heartbeats()
 
     def _send_heartbeats(self) -> None:
-        """Fan health heartbeats to opt-in connections (lazy ws import)."""
-        # Imported lazily to avoid an import cycle with wshandler.
-        from .wshandler import state as _ws_state  # noqa: allow-deferred-import
-
-        _ws_state.send_health_heartbeats()
+        """Fan health heartbeats to opt-in connections."""
+        self._connections.send_health_heartbeats()
 
     def start_health_loop(self) -> None:
         if self.health_task is None:
@@ -878,6 +883,14 @@ class ContainerRegistry:
 
     def set_on_workspace_killed(self, callback) -> None:
         self.on_workspace_killed = callback
+
+    def set_connections(self, connections) -> None:
+        """Inject the WebSocketState so the HealthMonitor can broadcast.
+
+        Replaces the lazy-import fallback in :attr:`HealthMonitor._connections`
+        with an explicit reference. Called by the lifespan after construction.
+        """
+        self.health._connections_ref = connections
 
     def set_on_container_status_changed(self, callback) -> None:
         self.on_container_status_changed = callback

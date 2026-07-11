@@ -3104,3 +3104,16 @@ class TestRegistryServiceSessionLockDelegates:
 
         reg = container.ContainerRegistry(KlangkSettings(env={}))
         assert reg.settings is not None
+
+
+class TestSetConnections:
+    """set_connections injects the WebSocketState into HealthMonitor (#1464)."""
+
+    def test_explicit_connections_used(self):
+        """After set_connections, the monitor uses the explicit reference."""
+        from klangk_backend.settings import KlangkSettings
+
+        reg = container.ContainerRegistry(KlangkSettings(env={}))
+        sentinel = object()
+        reg.set_connections(sentinel)
+        assert reg.health._connections is sentinel

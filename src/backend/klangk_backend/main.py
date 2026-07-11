@@ -445,13 +445,13 @@ def _prepare_nginx() -> tuple[str, str]:
     the upstream.
     """
     settings = get_settings()
-    state_dir = (
-        resolve_indirection(settings.state_dir) or "/tmp/klangk-state"
-    )
+    state_dir = resolve_indirection(settings.state_dir) or "/tmp/klangk-state"
     uds_path = os.path.join(state_dir, "klangk.sock")
     conf_path = os.path.join(state_dir, "nginx.conf")
     bin_path = nginx_mod.find_nginx_bin(settings)
-    nginx_mod.write_config(nginx_mod.uds_upstream(uds_path), conf_path, settings)
+    nginx_mod.write_config(
+        nginx_mod.uds_upstream(uds_path), conf_path, settings
+    )
     return bin_path, conf_path
 
 
@@ -577,6 +577,7 @@ async def lifespan(app: FastAPI):
     await seed_default_user()
     await seed_agent_user()
     container.registry.set_on_workspace_killed(wshandler.reset_workspace_state)
+    container.registry.set_connections(wshandler.state)
     container.registry.set_on_container_status_changed(
         wshandler.state.notify_container_status
     )
@@ -600,6 +601,7 @@ async def lifespan(app: FastAPI):
         await runtime_shutdown()
         await process_shutdown()
         logger.info("Klangk backend stopped")
+
 
 def setup_logfire(app: FastAPI) -> bool:
     """Enable Logfire instrumentation if LOGFIRE_TOKEN is set."""
@@ -724,6 +726,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
     app.state.container_registry = container.ContainerRegistry(settings)
+    # Slice 2c (#1464): the WebSocketState instance on app.state.connections
+    # so the HealthMonitor can broadcast without lazy wshandler imports.
+    # wshandler.state stays as a transitional shim for other callers.
+    app.state.connections = wshandler.state
 
     app.add_middleware(
         CORSMiddleware,
