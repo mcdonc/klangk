@@ -16,13 +16,12 @@ Design (see #1392, #1394):
   Both paths produce identical results regardless of whether the value came
   from an env var or (future) a config file — capability is a property of the
   value, not the source.
-- **Env-change-detection cache** (:func:`get_settings`): the settings singleton
-  is re-instantiated whenever any ``KLANGK_*`` env var changes, so
-  ``monkeypatch.setenv`` / ``monkeypatch.delenv`` in tests invalidates the
-  cache automatically — preserving the call-time env-reading behavior that
-  ~337 test env-manipulations rely on.
-- **Startup validation**: :func:`validate_at_startup` instantiates the model
-  eagerly so bogus config fails fast, before the server serves traffic.
+- **Env-change-detection cache** (:func:`get_settings`): cache-free —
+  re-constructs on every call, so ``monkeypatch.setenv`` /
+  ``monkeypatch.delenv`` in tests is picked up automatically.
+- **Startup validation**: field validators (e.g. ``auth_modes``) run at
+  construction, so bogus config fails fast when ``KlangkSettings(...)`` is
+  first built in ``build_app(settings)``.
 """
 
 from __future__ import annotations
@@ -59,7 +58,6 @@ __all__ = [
     "resolve_env_value",
     "resolve_env_bool",
     "resolve_indirection",
-    "validate_at_startup",
 ]
 
 # ---------------------------------------------------------------------------
@@ -275,13 +273,8 @@ class KlangkSettings(BaseSettings):
             else env_settings
         )
         sources: list[PydanticBaseSettingsSource] = [active_env]
-        # config_file from the constructor (class-var bridge) takes precedence
-        # over the legacy module global (_config_file_path / set_config_file).
-        # The module global dies once all callers (klangkd + tests) migrate to
-        # passing config_file= to the constructor (follow-up to this commit).
+        # config_file from the constructor (class-var bridge).
         path = cls._config_file_for_sources
-        if path is None:
-            path = _config_file_path
         if path is not None and path != "none":
             sources.append(
                 YamlConfigSettingsSource(settings_cls, yaml_file=path)
@@ -432,8 +425,9 @@ class KlangkSettings(BaseSettings):
         unset case, which legitimately means "default to none"); only a
         *set-but-garbage* value is rejected.
 
-        Runs at construction (``KlangkSettings(...)`` → ``validate_at_startup``
-        in the lifespan), so the bad value aborts boot before traffic.
+        Runs at construction (``KlangkSettings(...)``), so the bad value aborts
+        boot (via ``build_app(settings)`` → ``app.state.settings``) before
+        traffic.
         """
         if v is None or v == "":
             # Unset or empty → default to ``none`` at read time (in
@@ -452,36 +446,6 @@ class KlangkSettings(BaseSettings):
 # Singleton with env-change-detection cache + config-file path
 # ---------------------------------------------------------------------------
 
-# The config-file path, set by ``klangkd --config <path>`` before the settings
-# are first instantiated.  None means "no config file" (the #1394 env-only
-# behavior); "none" is the explicit opt-out string (same effect).  Any other
-# value is a filesystem path to a YAML config file.
-_config_file_path: str | None = None
-
-
-def set_config_file(path: str | None) -> None:
-    """Set the config-file path (called by the ``klangkd`` launcher).
-
-    ``path`` is one of:
-    - A filesystem path to a YAML config file (must exist when settings are
-      instantiated; checked by the launcher, not here).
-    - ``"none"`` — the explicit opt-out: run from env vars + built-in defaults
-      only, no config file (#1394 behavior, made explicit).
-    - ``None`` — reset to the default (no config file; the launcher handles the
-      default-location logic).
-
-    ``get_settings()`` is cache-free (re-constructs on every call), so there
-    is no cache to invalidate — the next call simply picks up the new path.
-    """
-    global _config_file_path
-    _config_file_path = path
-
-
-def get_config_file() -> str | None:
-    """Return the currently-set config-file path (or None)."""
-    return _config_file_path
-
-
 def get_settings() -> KlangkSettings:
     """Return a fresh ``KlangkSettings`` from the live environment.
 
@@ -492,18 +456,7 @@ def get_settings() -> KlangkSettings:
     this function is the transitional shim for callers not yet migrated to
     explicit settings threading (#1426).
     """
-    return KlangkSettings(os.environ, config_file=_config_file_path)
-
-
-def validate_at_startup() -> KlangkSettings:
-    """Instantiate settings eagerly for fail-fast validation at boot.
-
-    Call once from the lifespan startup (and from the ``klangkd`` launcher).
-    Bogus config (once fields gain strict types) fails here with a
-    :class:`ValidationError` before the server serves traffic. Returns the
-    validated settings instance.
-    """
-    return get_settings()
+    return KlangkSettings(os.environ)
 
 
 # ---------------------------------------------------------------------------

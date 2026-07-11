@@ -2,30 +2,23 @@
 
 Covers:
 - file: / cmd: indirection resolution (success + error paths)
-- get_settings env-change-detection cache
+- KlangkSettings(env=...) constructor + config_file= param
 - resolve_env_value (KLANGK_ and non-KLANGK_ keys)
 - resolve_env_bool
-- validate_at_startup
 - _key_to_field mapping
 """
 
-import os
-
 import pytest
 
-from klangk_backend import settings as settings_mod
 from klangk_backend.settings import (
     KlangkSettings,
     _key_to_field,
-    get_config_file,
     get_settings,
     resolve_env_bool,
     resolve_env_value,
     classify_listen,
     listen_is_socket,
     resolve_indirection,
-    set_config_file,
-    validate_at_startup,
 )
 
 
@@ -164,24 +157,6 @@ class TestResolveEnvBool:
         assert resolve_env_bool("KLANGK_NONEXISTENT", True) is True
 
 
-class TestValidateAtStartup:
-    def test_returns_settings(self):
-        s = validate_at_startup()
-        assert isinstance(s, KlangkSettings)
-
-    def test_reads_env(self, monkeypatch):
-        # validate_at_startup() is cache-free now (no cache to prime); it just
-        # constructs settings from the live env.
-        monkeypatch.setenv("KLANGK_NGINX_PORT", "5555")
-        s = validate_at_startup()
-        assert s.nginx_port == "5555"
-
-    def test_re_validates_after_env_change(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_NGINX_PORT", "5555")
-        validate_at_startup()
-        assert get_settings().nginx_port == "5555"
-
-
 class TestSettingsModel:
     def test_extra_ignored(self, monkeypatch):
         """Unknown KLANGK_ keys are tolerated (extra='ignore')."""
@@ -215,45 +190,31 @@ class TestConfigFile:
         """A YAML config file provides values that env doesn't override."""
         cfg = tmp_path / "config.yaml"
         cfg.write_text('logo_url: "https://example.com/logo.png"\n')
-        set_config_file(str(cfg))
-        s = get_settings()
+        s = KlangkSettings(env={}, config_file=str(cfg))
         assert s.logo_url == "https://example.com/logo.png"
 
-    def test_env_overrides_yaml(self, monkeypatch, tmp_path):
+    def test_env_overrides_yaml(self, tmp_path):
         """Env vars override YAML file values (precedence)."""
         cfg = tmp_path / "config.yaml"
         cfg.write_text('brand_color: "#FF0000"\n')
-        set_config_file(str(cfg))
-        monkeypatch.setenv("KLANGK_BRAND_COLOR", "#00FF00")
-        s = get_settings()
+        s = KlangkSettings(
+            env={"KLANGK_BRAND_COLOR": "#00FF00"}, config_file=str(cfg)
+        )
         assert s.brand_color == "#00FF00"
 
-    def test_yaml_doesnt_override_env(self, monkeypatch, tmp_path):
+    def test_yaml_doesnt_override_env(self, tmp_path):
         """A key set in both env and YAML: env wins."""
         cfg = tmp_path / "config.yaml"
         cfg.write_text('product_name: "From YAML"\n')
-        set_config_file(str(cfg))
-        monkeypatch.setenv("KLANGK_PRODUCT_NAME", "From Env")
-        s = get_settings()
+        s = KlangkSettings(
+            env={"KLANGK_PRODUCT_NAME": "From Env"}, config_file=str(cfg)
+        )
         assert s.product_name == "From Env"
 
-    def test_config_none_opt_out(self, monkeypatch):
-        """--config=none: no file, env+defaults only."""
-        monkeypatch.delenv("KLANGK_NGINX_PORT", raising=False)
-        set_config_file("none")
-        s = get_settings()
+    def test_config_none_opt_out(self):
+        """config_file='none': no file, env+defaults only."""
+        s = KlangkSettings(env={}, config_file="none")
         assert s.nginx_port == "8995"  # built-in default
-
-    def test_set_config_file_invalidates_cache(self, tmp_path):
-        """Changing the config-file path re-instantiates settings."""
-        cfg1 = tmp_path / "c1.yaml"
-        cfg1.write_text('product_name: "First"\n')
-        set_config_file(str(cfg1))
-        assert get_settings().product_name == "First"
-        cfg2 = tmp_path / "c2.yaml"
-        cfg2.write_text('product_name: "Second"\n')
-        set_config_file(str(cfg2))
-        assert get_settings().product_name == "Second"
 
     def test_file_cmd_resolution_from_yaml(self, tmp_path):
         """file:/cmd: values in YAML resolve correctly."""
@@ -261,17 +222,8 @@ class TestConfigFile:
         secret.write_text("yaml-secret\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(f'jwt_secret: "file:{secret}"\n')
-        set_config_file(str(cfg))
-        # resolve_env_value applies file:/cmd: resolution
-        assert resolve_env_value("KLANGK_JWT_SECRET") == "yaml-secret"
-
-    def test_get_config_file(self, tmp_path):
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("product_name: test\n")
-        set_config_file(str(cfg))
-        assert get_config_file() == str(cfg)
-        set_config_file(None)
-        assert get_config_file() is None
+        s = KlangkSettings(env={}, config_file=str(cfg))
+        assert resolve_indirection(s.jwt_secret) == "yaml-secret"
 
 
 # ---------------------------------------------------------------------------
@@ -379,13 +331,6 @@ class TestEnvConstructor:
         assert s.default_user == "admin@example.com"
         assert s.min_password_length == "8"
 
-    def test_default_reads_os_environ(self, monkeypatch):
-        # KlangkSettings(os.environ) reads from os.environ; monkeypatch.setenv
-        # mutates os.environ, so the constructed settings see the value.
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "oidc")
-        s = KlangkSettings(os.environ)
-        assert s.auth_modes == "oidc"
-
     def test_env_for_sources_reset_after_construction(self):
         # The class-var bridge is cleaned up after construction so it doesn't
         # leak between instances.
@@ -405,29 +350,11 @@ class TestEnvConstructor:
         assert s.default_user == "admin@test.com"
 
     def test_config_file_param_loads_yaml(self, tmp_path):
-        # The config_file= constructor param wires a YAML source in, with no
-        # help from the module-global set_config_file().
+        # The config_file= constructor param wires a YAML source in.
         cfg = tmp_path / "config.yaml"
         cfg.write_text("product_name: FromConfigFile\n")
         s = KlangkSettings(env={}, config_file=str(cfg))
         assert s.product_name == "FromConfigFile"
-
-    def test_config_file_param_beats_module_global(self, tmp_path, monkeypatch):
-        # When both the constructor param and the module global are set, the
-        # constructor param wins (it's the intended path; the global is the
-        # legacy fallback slated for deletion).
-        from klangk_backend.settings import set_config_file
-
-        global_cfg = tmp_path / "global.yaml"
-        global_cfg.write_text("product_name: FromGlobal\n")
-        param_cfg = tmp_path / "param.yaml"
-        param_cfg.write_text("product_name: FromParam\n")
-        set_config_file(str(global_cfg))
-        try:
-            s = KlangkSettings(env={}, config_file=str(param_cfg))
-            assert s.product_name == "FromParam"
-        finally:
-            set_config_file(None)
 
     def test_env_overrides_config_file(self, tmp_path):
         # Precedence: env dict > config file.

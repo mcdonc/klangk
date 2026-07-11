@@ -30,10 +30,8 @@ import typer
 import uvicorn
 
 from klangk_backend.settings import (
-    get_settings,
+    KlangkSettings,
     resolve_indirection,
-    set_config_file,
-    validate_at_startup,
 )
 from klangk_backend.util import set_uds_mode
 
@@ -97,20 +95,15 @@ def main(  # pragma: no cover
 
     # Seed the state_dir default into the env so the settings model can pick
     # it up as the lowest-priority default (config file > env > this). Done
-    # before set_config_file so the YAML source sees a consistent env.
+    # before constructing settings so the YAML source sees a consistent env.
     os.environ.setdefault("KLANGK_STATE_DIR", _default_state_dir())
-
-    # Set the config-file path on the settings module before anything reads
-    # config. This wires the YAML source into the customise_sources chain.
-    set_config_file(resolved)
-    # Eagerly validate — a bogus config fails here, before uvicorn starts.
-    validate_at_startup()
 
     # Everything below reads through the typed config (config file > env >
     # defaults, with file:/cmd: resolution), NOT raw os.environ — so a YAML
     # value or a ``file:``/``cmd:`` prefix takes effect the same as an env
-    # var (#1394/#1395).
-    settings = get_settings()
+    # var (#1394/#1395). Construction runs field validators (fail-fast on
+    # bogus config) before uvicorn starts.
+    settings = KlangkSettings(os.environ, config_file=resolved)
 
     # uvicorn always binds a UDS (#1400). ``KLANGK_LISTEN`` is polymorphic
     # (#1422) but only controls what *nginx* does: a socket path → nginx

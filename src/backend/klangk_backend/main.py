@@ -32,7 +32,6 @@ from .settings import (
     KlangkSettings,
     get_settings,
     resolve_indirection,
-    validate_at_startup,
 )
 from .api import root_router, router
 from .util import API_PREFIX, derive_hosting_info
@@ -544,12 +543,6 @@ def on_sighup() -> None:
 async def lifespan(app: FastAPI):
     await model.init_db()
     await model.resolve_instance_id()
-
-    # Eagerly validate all config at startup (#1394).  Instantiate the
-    # KlangkSettings singleton so bogus values fail fast before the server
-    # serves traffic.  (Fields are Optional[str] in this chunk; strict types
-    # arrive incrementally as call sites migrate to settings.field access.)
-    validate_at_startup()
 
     existing_pid = check_pid_file()
     if existing_pid is not None:
