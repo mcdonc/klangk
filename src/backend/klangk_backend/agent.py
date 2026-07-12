@@ -11,7 +11,7 @@ import logging
 import re
 import time
 
-from . import model, util, workspaces
+from . import model, util
 from .podman import subprocess_env
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
@@ -69,7 +69,7 @@ def is_disabled() -> bool:
 
 
 async def ensure_agent_home(
-    workspace_id: str, container_id: str, podman=None
+    workspace_id: str, container_id: str, app_state=None
 ) -> str:
     """Eagerly provision the agent's home directory with Pi config.
 
@@ -90,15 +90,15 @@ async def ensure_agent_home(
         raise AgentSetupError(
             f"Workspace {workspace_id} not found in database"
         )
-    workspace_home = workspaces.home_path(workspace_id)
+    workspace_home = app_state.workspaces.home_path(workspace_id)
 
     agent_handle = await model.agent_handle()
-    container_home, created = await workspaces.ensure_home_symlink(
+    container_home, created = await app_state.workspaces.ensure_home_symlink(
         workspace_home, agent_handle, model.AGENT_USER_ID
     )
     if created:
-        await workspaces.populate_home_skel(
-            container_id, model.AGENT_USER_ID, podman
+        await app_state.workspaces.populate_home_skel(
+            container_id, model.AGENT_USER_ID
         )
 
     # Run klangk-setup-pi to populate ~/.pi/agent/ with models.json,
@@ -106,7 +106,7 @@ async def ensure_agent_home(
     # personal preferences — --force deletes settings.json first so
     # it picks up the current KLANGK_LLM_MODEL env var.
     proc = await asyncio.create_subprocess_exec(
-        podman.bin,
+        app_state.podman.bin,
         "exec",
         "-u",
         "klangk",
@@ -197,7 +197,7 @@ class AgentSession:
             handle = await model.agent_handle()
             return f"/home/{handle}"
         container_home = await ensure_agent_home(
-            self.workspace_id, container_id, self.app_state.podman
+            self.workspace_id, container_id, self.app_state
         )
         self._home_ready = True
         return container_home

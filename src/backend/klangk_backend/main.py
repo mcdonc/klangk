@@ -363,7 +363,7 @@ async def startup(app_state) -> None:
     await registry.adopt_orphaned_containers()
     registry.start_cleanup_loop()
     registry.start_health_loop()
-    n = await workspaces.auto_start_workspaces(app_state)
+    n = await app_state.workspaces.auto_start_workspaces()
     if n:  # pragma: no cover
         logger.info("Auto-started %d workspace(s)", n)
 
@@ -769,6 +769,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # settings, not frozen at import), declarations, and resolved values
     # (previously module globals).
     app.state.plugins = plugins.Plugins(app.state)
+    # #1484: Workspaces(app_state) owns the workspace root (computed from
+    # settings.data_dir at construction, not frozen at import) + CRUD/path
+    # helpers.
+    app.state.workspaces = workspaces.Workspaces(app.state)
     # #1452: DB(settings) owns the engine cache + data dir (computed from
     # settings, not frozen at import). Set as the module-level default so
     # the model/ free functions (transaction/fetchone/get_db) reach it.

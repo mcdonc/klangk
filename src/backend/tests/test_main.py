@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
-from klangk_backend import main, model, oidc, plugins
+from klangk_backend import main, model, oidc, plugins, workspaces
 from klangk_backend.container import ContainerRegistry
 from klangk_backend.settings import KlangkSettings
 from klangk_backend.wshandler.session import WebSocketState
@@ -38,6 +38,9 @@ def _make_app_state(settings=None):
 
     registry.podman = Podman(settings)
     app_state.podman = registry.podman
+    app_state.oidc = oidc.OIDC(app_state)
+    app_state.plugins = plugins.Plugins(app_state)
+    app_state.workspaces = workspaces.Workspaces(app_state)
     return app_state
 
 
@@ -105,6 +108,7 @@ def _bind_safety_app_state(auth_mode=None):
     app_state = types.SimpleNamespace(settings=settings)
     app_state.oidc = oidc.OIDC(app_state)
     app_state.plugins = plugins.Plugins(app_state)
+    app_state.workspaces = workspaces.Workspaces(app_state)
     return app_state
 
 
@@ -366,6 +370,7 @@ class TestLifespan:
         app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
+        app.state.workspaces = workspaces.Workspaces(app.state)
         registry = app_state.container_registry
         with (
             patch.object(
@@ -410,6 +415,7 @@ class TestLifespan:
         app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
+        app.state.workspaces = workspaces.Workspaces(app.state)
         registry = app_state.container_registry
         with (
             patch.object(
@@ -479,8 +485,9 @@ class TestStartupShutdownRestart:
             ) as mock_adopt,
             patch.object(registry, "start_cleanup_loop") as mock_cleanup,
             patch.object(registry, "start_health_loop") as mock_health,
-            patch(
-                "klangk_backend.main.workspaces.auto_start_workspaces",
+            patch.object(
+                workspaces.Workspaces,
+                "auto_start_workspaces",
                 new_callable=AsyncMock,
                 return_value=0,
             ) as mock_autostart,
@@ -629,6 +636,7 @@ class TestStartupShutdownRestart:
         app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
+        app.state.workspaces = workspaces.Workspaces(app.state)
         registry = app_state.container_registry
         loop = asyncio.get_running_loop()
         with (

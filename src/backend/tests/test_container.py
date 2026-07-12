@@ -44,6 +44,9 @@ def _make_app_state(registry=None, sockets=None):
 
     app_state.terminal = Terminal(app_state)
     app_state.plugins = plugins_mod.Plugins(app_state)
+    from klangk_backend.workspaces import Workspaces
+
+    app_state.workspaces = Workspaces(app_state)
     return app_state
 
 
@@ -2439,9 +2442,14 @@ class TestHealthMonitorRunOne:
             patch.object(
                 model, "get_user_handle", AsyncMock(return_value="owner")
             ),
-            patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
-            patch(
-                "klangk_backend.workspaces.ensure_home_symlink",
+            patch.object(
+                monitor._registry.app_state.workspaces,
+                "home_path",
+                return_value="/h/p",
+            ),
+            patch.object(
+                monitor._registry.app_state.workspaces,
+                "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
             ),
@@ -2477,9 +2485,14 @@ class TestHealthMonitorRunOne:
             patch.object(
                 model, "get_user_handle", AsyncMock(return_value="owner")
             ),
-            patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
-            patch(
-                "klangk_backend.workspaces.ensure_home_symlink",
+            patch.object(
+                monitor._registry.app_state.workspaces,
+                "home_path",
+                return_value="/h/p",
+            ),
+            patch.object(
+                monitor._registry.app_state.workspaces,
+                "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
             ),
@@ -2502,9 +2515,14 @@ class TestHealthMonitorRunOne:
             patch.object(
                 model, "get_user_handle", AsyncMock(return_value="owner")
             ),
-            patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
-            patch(
-                "klangk_backend.workspaces.ensure_home_symlink",
+            patch.object(
+                monitor._registry.app_state.workspaces,
+                "home_path",
+                return_value="/h/p",
+            ),
+            patch.object(
+                monitor._registry.app_state.workspaces,
+                "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
             ),
@@ -2527,9 +2545,14 @@ class TestHealthMonitorRunOne:
             patch.object(
                 model, "get_user_handle", AsyncMock(return_value="owner")
             ),
-            patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
-            patch(
-                "klangk_backend.workspaces.ensure_home_symlink",
+            patch.object(
+                monitor._registry.app_state.workspaces,
+                "home_path",
+                return_value="/h/p",
+            ),
+            patch.object(
+                monitor._registry.app_state.workspaces,
+                "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
             ),
@@ -2562,9 +2585,14 @@ class TestHealthMonitorRunOne:
             patch.object(
                 model, "get_user_handle", AsyncMock(return_value="owner")
             ),
-            patch("klangk_backend.workspaces.home_path", return_value="/h/p"),
-            patch(
-                "klangk_backend.workspaces.ensure_home_symlink",
+            patch.object(
+                monitor._registry.app_state.workspaces,
+                "home_path",
+                return_value="/h/p",
+            ),
+            patch.object(
+                monitor._registry.app_state.workspaces,
+                "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
             ),

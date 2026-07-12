@@ -106,6 +106,7 @@ def _make_app_state(registry=None, sockets=None):
     # #1480: shared mock Terminal wired onto app_state. Tests patch
     # its methods via patch.object(_mock_term, ...).
     app_state.terminal = _mock_term
+    app_state.workspaces = ws_mod.Workspaces(app_state)
     return app_state
 
 
@@ -219,14 +220,14 @@ async def _conn_in_workspace(
         sockets.sessions.pop(workspace_id, None)
 
 
-async def _create_workspace_with_acl(user_id, name, **kwargs):
+async def _create_workspace_with_acl(app_state, user_id, name, **kwargs):
     """Create a workspace whose owner has full access.
 
     The service-layer ``create_workspace`` now seeds the owner ACE and role
     groups atomically (see model.create_workspace_with_acl, #128), so this
     is a thin alias kept for call-site readability.
     """
-    return await ws_mod.create_workspace(user_id, name, **kwargs)
+    return await app_state.workspaces.create_workspace(user_id, name, **kwargs)
 
 
 # --- SafeWebSocket ---
@@ -1868,10 +1869,11 @@ class TestHandleTerminalStart:
 
 
 class TestHandleSetHandle:
-    async def test_set_handle_success(self, user, temp_data_dir):
-        from klangk_backend import workspaces
+    async def test_set_handle_success(self, user, temp_data_dir, app_state):
 
-        ws = await workspaces.create_workspace(user["id"], "handle-test")
+        ws = await app_state.workspaces.create_workspace(
+            user["id"], "handle-test"
+        )
         sock = _mock_sock()
         conn = _base_conn(
             user={"id": user["id"], "email": user["email"]}, ws=sock
@@ -1896,7 +1898,7 @@ class TestHandleSetHandle:
         )
         assert conn._user_home == "/home/alice"
 
-    async def test_set_handle_conflict(self, user, temp_data_dir):
+    async def test_set_handle_conflict(self, user, temp_data_dir, app_state):
         # Create another user that already has handle "alice"
         other = await model.create_user(
             "alice@example.com", "hash", verified=True
@@ -1920,13 +1922,15 @@ class TestHandleSetHandle:
         sent = sock.send_json.call_args_list
         assert any(call.args[0].get("type") == "error" for call in sent)
 
-    async def test_handle_auto_created_on_connect(self, user):
+    async def test_handle_auto_created_on_connect(self, user, app_state):
         app_state = _make_app_state()
         sockets = app_state.sockets
         registry = app_state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        workspace = await ws_mod.create_workspace(user["id"], "auto-handle")
+        workspace = await app_state.workspaces.create_workspace(
+            user["id"], "auto-handle"
+        )
 
         async def fake_start(*a, **kw):
             registry.track_activity("cid-ah", workspace["id"])
@@ -1949,10 +1953,13 @@ class TestHandleSetHandle:
         sockets.sessions.pop(workspace["id"], None)
         registry.states.pop(workspace["id"], None)
 
-    async def test_handle_resolved_on_start(self, user, temp_data_dir):
-        from klangk_backend import workspaces
+    async def test_handle_resolved_on_start(
+        self, user, temp_data_dir, app_state
+    ):
 
-        ws = await workspaces.create_workspace(user["id"], "handle-test4")
+        ws = await app_state.workspaces.create_workspace(
+            user["id"], "handle-test4"
+        )
         sock = _mock_sock()
         conn = _base_conn(
             user={"id": user["id"], "email": user["email"]}, ws=sock
@@ -2136,17 +2143,19 @@ class TestHandleWorkspaceConnect:
         await conn.handle_workspace_connect({})
         assert "Missing" in sock.send_json.call_args[0][0]["message"]
 
-    async def test_workspace_not_found(self, user):
+    async def test_workspace_not_found(self, user, app_state):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         await conn.handle_workspace_connect({"workspaceId": "fake"})
         assert "Permission denied" in sock.send_json.call_args[0][0]["message"]
 
-    async def test_connect_success(self, user, agent_user):
+    async def test_connect_success(self, user, agent_user, app_state):
         app_state = _make_app_state()
         registry = app_state.container_registry
         sock = _mock_sock()
-        workspace = await _create_workspace_with_acl(user["id"], "test-ws")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "test-ws"
+        )
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
 
         async def fake_start(wid, workspace):
@@ -2177,12 +2186,14 @@ class TestHandleWorkspaceConnect:
         # Integer timeout (default 30m) should show as "30m" not "30.0m"
         assert "30m" in conn.pending_status_msg
 
-    async def test_connect_sends_service_command(self, user, agent_user):
+    async def test_connect_sends_service_command(
+        self, user, agent_user, app_state
+    ):
         app_state = _make_app_state()
         registry = app_state.container_registry
         sock = _mock_sock()
         workspace = await _create_workspace_with_acl(
-            user["id"], "cmd-ws", service_command="pi"
+            app_state, user["id"], "cmd-ws", service_command="pi"
         )
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
 
@@ -2209,16 +2220,18 @@ class TestHandleWorkspaceConnect:
         ready = [c for c in calls if c.get("type") == "container_ready"]
         assert ready[0]["serviceCommand"] == "pi"
 
-    async def test_connect_denied_no_acl(self, user):
+    async def test_connect_denied_no_acl(self, user, app_state):
         """User without ACL entry gets 'Permission denied'."""
         sock = _mock_sock()
-        workspace = await ws_mod.create_workspace(user["id"], "no-acl-ws")
+        workspace = await app_state.workspaces.create_workspace(
+            user["id"], "no-acl-ws"
+        )
         conn = _base_conn(user={"id": "other-user", "email": "x"}, ws=sock)
         await conn.handle_workspace_connect({"workspaceId": workspace["id"]})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Permission denied" in str(c) for c in calls)
 
-    async def test_connect_race_deleted(self, user):
+    async def test_connect_race_deleted(self, user, app_state):
         """ACL passes but workspace deleted before lookup."""
         from klangk_backend import model
 
@@ -2237,10 +2250,14 @@ class TestHandleWorkspaceConnect:
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Workspace not found" in str(c) for c in calls)
 
-    async def test_connect_container_start_valueerror(self, user, agent_user):
+    async def test_connect_container_start_valueerror(
+        self, user, agent_user, app_state
+    ):
         """ValueError from start_container is sent as an error, not a crash."""
         sock = _mock_sock()
-        workspace = await _create_workspace_with_acl(user["id"], "bad-mount")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "bad-mount"
+        )
         conn = _base_conn(user=user, ws=sock)
 
         with patch.object(
@@ -2282,13 +2299,15 @@ class TestHandleWorkspaceDisconnect:
 
 
 class TestStartWorkspaceContainer:
-    async def test_new_session(self, user):
+    async def test_new_session(self, user, app_state):
         app_state = _make_app_state()
         sockets = app_state.sockets
         registry = app_state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        workspace = await ws_mod.create_workspace(user["id"], "start-ws")
+        workspace = await app_state.workspaces.create_workspace(
+            user["id"], "start-ws"
+        )
 
         async def fake_start(*a, **kw):
             registry.track_activity("cid-1", workspace["id"])
@@ -2315,13 +2334,15 @@ class TestStartWorkspaceContainer:
         sockets.sessions.pop(workspace["id"], None)
         registry.states.pop(workspace["id"], None)
 
-    async def test_resolves_existing_handle(self, user):
+    async def test_resolves_existing_handle(self, user, app_state):
         app_state = _make_app_state()
         sockets = app_state.sockets
         registry = app_state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        workspace = await ws_mod.create_workspace(user["id"], "handle-ws")
+        workspace = await app_state.workspaces.create_workspace(
+            user["id"], "handle-ws"
+        )
         # Set a custom handle in the DB
         await model.set_user_handle(user["id"], "chris")
 
@@ -2344,13 +2365,15 @@ class TestStartWorkspaceContainer:
         sockets.sessions.pop(workspace["id"], None)
         registry.states.pop(workspace["id"], None)
 
-    async def test_idle_callback_ws_error(self, user):
+    async def test_idle_callback_ws_error(self, user, app_state):
         app_state = _make_app_state()
         sockets = app_state.sockets
         registry = app_state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        workspace = await ws_mod.create_workspace(user["id"], "idle-ws")
+        workspace = await app_state.workspaces.create_workspace(
+            user["id"], "idle-ws"
+        )
 
         async def fake_start(*a, **kw):
             registry.track_activity("cid-3", workspace["id"])
@@ -2375,14 +2398,16 @@ class TestStartWorkspaceContainer:
         sockets.sessions.pop(workspace["id"], None)
         registry.states.pop(workspace["id"], None)
 
-    async def test_clears_pending_status_msg(self, user):
+    async def test_clears_pending_status_msg(self, user, app_state):
         app_state = _make_app_state()
         sockets = app_state.sockets
         registry = app_state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.pending_status_msg = "stale message from prior connect"
-        workspace = await ws_mod.create_workspace(user["id"], "pending-ws")
+        workspace = await app_state.workspaces.create_workspace(
+            user["id"], "pending-ws"
+        )
 
         async def fake_start(*a, **kw):
             registry.track_activity("cid-p", workspace["id"])
@@ -2438,11 +2463,11 @@ class TestHandleWebsocketDispatch:
         )
         websocket.accept.assert_awaited_once()
 
-    async def test_dispatch_terminal_stop(self, user):
+    async def test_dispatch_terminal_stop(self, user, app_state):
         websocket = await self._run_commands(user, [{"cmd": "terminal_stop"}])
         websocket.accept.assert_awaited_once()
 
-    async def test_dispatch_terminal_window_commands(self, user):
+    async def test_dispatch_terminal_window_commands(self, user, app_state):
         for cmd in (
             "terminal_new_window",
             "terminal_select_window",
@@ -2453,40 +2478,40 @@ class TestHandleWebsocketDispatch:
             websocket = await self._run_commands(user, [{"cmd": cmd}])
             websocket.accept.assert_awaited_once()
 
-    async def test_dispatch_restart_container(self, user):
+    async def test_dispatch_restart_container(self, user, app_state):
         websocket = await self._run_commands(
             user, [{"cmd": "restart_container"}]
         )
         calls = [c[0][0] for c in websocket.send_json.call_args_list]
         assert any("Not connected" in str(c) for c in calls)
 
-    async def test_dispatch_workspace_connect(self, user):
+    async def test_dispatch_workspace_connect(self, user, app_state):
         websocket = await self._run_commands(
             user, [{"cmd": "workspace_connect"}]
         )
         calls = [c[0][0] for c in websocket.send_json.call_args_list]
         assert any("Missing" in str(c) for c in calls)
 
-    async def test_dispatch_set_handle(self, user):
+    async def test_dispatch_set_handle(self, user, app_state):
         websocket = await self._run_commands(
             user, [{"cmd": "set_handle", "handle": "alice"}]
         )
         calls = [c[0][0] for c in websocket.send_json.call_args_list]
         assert any("Not connected" in str(c) for c in calls)
 
-    async def test_dispatch_workspace_disconnect(self, user):
+    async def test_dispatch_workspace_disconnect(self, user, app_state):
         websocket = await self._run_commands(
             user, [{"cmd": "workspace_disconnect"}]
         )
         websocket.accept.assert_awaited_once()
 
-    async def test_dispatch_browser_reattach(self, user):
+    async def test_dispatch_browser_reattach(self, user, app_state):
         websocket = await self._run_commands(
             user, [{"cmd": "browser_reattach", "browser_id": "bid-x"}]
         )
         websocket.accept.assert_awaited_once()
 
-    async def test_container_survives_disconnect(self, user):
+    async def test_container_survives_disconnect(self, user, app_state):
         """Container should NOT be killed on disconnect — idle timeout handles it."""
         app_state = _make_app_state()
         registry = app_state.container_registry
@@ -2495,7 +2520,9 @@ class TestHandleWebsocketDispatch:
         token = auth_mod.create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
 
-        workspace = await ws_mod.create_workspace(user["id"], "stop-ws")
+        workspace = await app_state.workspaces.create_workspace(
+            user["id"], "stop-ws"
+        )
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps(
@@ -2605,7 +2632,7 @@ class TestHandleWebsocket:
 
         websocket.accept.assert_awaited_once()
 
-    async def test_runtime_error_treated_as_disconnect(self, user):
+    async def test_runtime_error_treated_as_disconnect(self, user, app_state):
         app_state = _make_app_state()
         from klangk_backend import auth as auth_mod
 
@@ -2621,7 +2648,7 @@ class TestHandleWebsocket:
 
         websocket.accept.assert_awaited_once()
 
-    async def test_invalid_json(self, user):
+    async def test_invalid_json(self, user, app_state):
         app_state = _make_app_state()
         from klangk_backend import auth as auth_mod
 
@@ -2636,7 +2663,7 @@ class TestHandleWebsocket:
         calls = [c[0][0] for c in websocket.send_json.call_args_list]
         assert any("Invalid JSON" in str(c) for c in calls)
 
-    async def test_unknown_command(self, user):
+    async def test_unknown_command(self, user, app_state):
         app_state = _make_app_state()
         from klangk_backend import auth as auth_mod
 
@@ -2654,7 +2681,7 @@ class TestHandleWebsocket:
         calls = [c[0][0] for c in websocket.send_json.call_args_list]
         assert any("Unknown command" in str(c) for c in calls)
 
-    async def test_ui_ready_with_pending(self, user):
+    async def test_ui_ready_with_pending(self, user, app_state):
         app_state = _make_app_state()
         sockets = app_state.sockets
         registry = app_state.container_registry
@@ -2662,7 +2689,9 @@ class TestHandleWebsocket:
 
         token = auth_mod.create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
-        workspace = await _create_workspace_with_acl(user["id"], "ui-ready-ws")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "ui-ready-ws"
+        )
 
         async def fake_start(self_arg, wid, ws_obj):
             self_arg.container_id = "cid"
@@ -5245,14 +5274,18 @@ class TestHandleRestartContainer:
         mock_cleanup.assert_not_called()
         mock_start.assert_not_called()
 
-    async def test_restart_deny_leaves_other_connections_untouched(self, user):
+    async def test_restart_deny_leaves_other_connections_untouched(
+        self, user, app_state
+    ):
         """A spectator's denied restart must not change other users'
         container_id or otherwise disrupt their session (issue #873)."""
         app_state = _make_app_state()
         sockets = app_state.sockets
         sock1 = _mock_sock(headers={"host": "localhost:8997"})
         sock2 = _mock_sock()
-        ws = await _create_workspace_with_acl(user["id"], "restart-deny")
+        ws = await _create_workspace_with_acl(
+            app_state, user["id"], "restart-deny"
+        )
         conn1 = _base_conn(user=user, ws=sock1, app_state=app_state)
         conn2 = _base_conn(user=user, ws=sock2, app_state=app_state)
         conn1.workspace_id = ws["id"]
@@ -5283,11 +5316,13 @@ class TestHandleRestartContainer:
             sockets.connections.pop(sock2, None)
             sockets.sessions.pop(ws["id"], None)
 
-    async def test_restart_success(self, user):
+    async def test_restart_success(self, user, app_state):
         app_state = _make_app_state()
         registry = app_state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
-        workspace = await _create_workspace_with_acl(user["id"], "restart-ws")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "restart-ws"
+        )
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = workspace["id"]
         conn.container_id = "cid-old"
@@ -5349,7 +5384,7 @@ class TestHandleRestartContainer:
 
         with (
             patch.object(
-                ws_mod,
+                app_state.workspaces,
                 "get_workspace",
                 return_value=None,
             ),
@@ -5364,13 +5399,15 @@ class TestHandleRestartContainer:
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("not found" in str(c) for c in calls)
 
-    async def test_restart_fractional_timeout(self, user, monkeypatch):
+    async def test_restart_fractional_timeout(
+        self, user, monkeypatch, app_state
+    ):
         app_state = _make_app_state()
         registry = app_state.container_registry
         monkeypatch.setattr(container, "IDLE_TIMEOUT_SECONDS", 90)
         sock = _mock_sock(headers={"host": "localhost:8997"})
         workspace = await _create_workspace_with_acl(
-            user["id"], "restart-frac"
+            app_state, user["id"], "restart-frac"
         )
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = workspace["id"]
@@ -5412,11 +5449,13 @@ class TestHandleRestartContainer:
         assert len(ready) == 1
         assert "1.5m" in ready[0]["event"]["value"]["reason"]
 
-    async def test_restart_cleanup_error(self, user):
+    async def test_restart_cleanup_error(self, user, app_state):
         app_state = _make_app_state()
         registry = app_state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
-        workspace = await _create_workspace_with_acl(user["id"], "restart-err")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "restart-err"
+        )
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = workspace["id"]
         conn.container_id = "cid-err"
@@ -5459,12 +5498,12 @@ class TestHandleRestartContainer:
         ]
         assert len(ready) == 1
 
-    async def test_restart_cleanup_ws_disconnect(self, user):
+    async def test_restart_cleanup_ws_disconnect(self, user, app_state):
         app_state = _make_app_state()
         registry = app_state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         workspace = await _create_workspace_with_acl(
-            user["id"], "restart-disc"
+            app_state, user["id"], "restart-disc"
         )
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = workspace["id"]
@@ -5508,13 +5547,17 @@ class TestHandleRestartContainer:
         ]
         assert len(ready) == 1
 
-    async def test_restart_updates_other_connections_container_id(self, user):
+    async def test_restart_updates_other_connections_container_id(
+        self, user, app_state
+    ):
         app_state = _make_app_state()
         sockets = app_state.sockets
         registry = app_state.container_registry
         sock1 = _mock_sock(headers={"host": "localhost:8997"})
         sock2 = _mock_sock()
-        workspace = await _create_workspace_with_acl(user["id"], "restart-cid")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "restart-cid"
+        )
         conn1 = _base_conn(user=user, ws=sock1, app_state=app_state)
         conn2 = _base_conn(user=user, ws=sock2, app_state=app_state)
         conn1.workspace_id = workspace["id"]
@@ -5597,7 +5640,9 @@ class TestHandleShutdownContainer:
             for m in sent
         )
 
-    async def test_shutdown_deny_does_not_clear_other_connections(self, user):
+    async def test_shutdown_deny_does_not_clear_other_connections(
+        self, user, app_state
+    ):
         """A spectator's denied shutdown must not clear other users'
         container_id (which would disrupt their session) — issue #873."""
         app_state = _make_app_state()
@@ -5605,7 +5650,9 @@ class TestHandleShutdownContainer:
         registry = app_state.container_registry
         sock1 = _mock_sock()
         sock2 = _mock_sock()
-        ws = await _create_workspace_with_acl(user["id"], "shutdown-deny")
+        ws = await _create_workspace_with_acl(
+            app_state, user["id"], "shutdown-deny"
+        )
         conn1 = _base_conn(user=user, ws=sock1, app_state=app_state)
         conn2 = _base_conn(user=user, ws=sock2, app_state=app_state)
         conn1.workspace_id = ws["id"]
@@ -5647,14 +5694,16 @@ class TestHandleShutdownContainer:
             for m in sent
         )
 
-    async def test_shutdown_broadcasts_stopped(self, user):
+    async def test_shutdown_broadcasts_stopped(self, user, app_state):
         app_state = _make_app_state()
         sockets = app_state.sockets
         registry = app_state.container_registry
         sock1 = _mock_sock()
         sock2 = _mock_sock()
         conn = _base_conn(user=user, ws=sock1, app_state=app_state)
-        ws = await _create_workspace_with_acl(user["id"], "shutdown-ws")
+        ws = await _create_workspace_with_acl(
+            app_state, user["id"], "shutdown-ws"
+        )
         conn.workspace_id = ws["id"]
         conn.container_id = "cid"
 
@@ -5683,14 +5732,16 @@ class TestHandleShutdownContainer:
 
         sockets.sessions.pop(ws["id"], None)
 
-    async def test_shutdown_stops_agent_session(self, user):
+    async def test_shutdown_stops_agent_session(self, user, app_state):
         """handle_shutdown_container stops the agent RPC subprocess."""
         app_state = _make_app_state()
         sockets = app_state.sockets
         registry = app_state.container_registry
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        ws = await _create_workspace_with_acl(user["id"], "shutdown-agent")
+        ws = await _create_workspace_with_acl(
+            app_state, user["id"], "shutdown-agent"
+        )
         conn.workspace_id = ws["id"]
         conn.container_id = "cid"
 
@@ -5719,7 +5770,9 @@ class TestHandleShutdownContainer:
             registry.on_workspace_killed = old_cb
             sockets.sessions.pop(ws["id"], None)
 
-    async def test_shutdown_clears_other_connections_container_id(self, user):
+    async def test_shutdown_clears_other_connections_container_id(
+        self, user, app_state
+    ):
         app_state = _make_app_state()
         sockets = app_state.sockets
         registry = app_state.container_registry
@@ -5727,7 +5780,9 @@ class TestHandleShutdownContainer:
         sock2 = _mock_sock()
         conn1 = _base_conn(user=user, ws=sock1, app_state=app_state)
         conn2 = _base_conn(user=user, ws=sock2, app_state=app_state)
-        ws = await _create_workspace_with_acl(user["id"], "shutdown-cid")
+        ws = await _create_workspace_with_acl(
+            app_state, user["id"], "shutdown-cid"
+        )
         conn1.workspace_id = ws["id"]
         conn1.container_id = "old-cid"
         conn2.workspace_id = ws["id"]
@@ -5752,13 +5807,15 @@ class TestHandleShutdownContainer:
         sockets.connections.pop(sock2, None)
         sockets.sessions.pop(ws["id"], None)
 
-    async def test_shutdown_handles_stop_error(self, user):
+    async def test_shutdown_handles_stop_error(self, user, app_state):
         app_state = _make_app_state()
         sockets = app_state.sockets
         registry = app_state.container_registry
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        ws = await _create_workspace_with_acl(user["id"], "shutdown-err")
+        ws = await _create_workspace_with_acl(
+            app_state, user["id"], "shutdown-err"
+        )
         conn.workspace_id = ws["id"]
         conn.container_id = "cid"
 
@@ -7789,7 +7846,7 @@ class TestShareWindowHandlers:
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Permission" in c.get("message", "") for c in calls)
 
-    async def test_create_shared_terminal_empty_name(self, user):
+    async def test_create_shared_terminal_empty_name(self, user, app_state):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         conn.container_id = "cid"
@@ -7800,7 +7857,7 @@ class TestShareWindowHandlers:
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Name" in c.get("message", "") for c in calls)
 
-    async def test_create_shared_terminal_error(self, user):
+    async def test_create_shared_terminal_error(self, user, app_state):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         conn.container_id = "cid"
@@ -7822,7 +7879,9 @@ class TestShareWindowHandlers:
         conn = _base_conn()
         await conn.handle_list_shared_terminals()
 
-    async def test_list_shared_terminals_permission_denied(self, user):
+    async def test_list_shared_terminals_permission_denied(
+        self, user, app_state
+    ):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         conn.workspace_id = "ws-1"
@@ -7831,7 +7890,7 @@ class TestShareWindowHandlers:
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Permission" in c.get("message", "") for c in calls)
 
-    async def test_list_shared_terminals_no_session(self, user):
+    async def test_list_shared_terminals_no_session(self, user, app_state):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         conn.workspace_id = "no-session"
@@ -7841,10 +7900,10 @@ class TestShareWindowHandlers:
         shared = [c for c in calls if c.get("type") == "shared_terminals"]
         assert shared[0]["terminals"] == []
 
-    async def test_has_perm_checks_acl(self, user, temp_data_dir):
+    async def test_has_perm_checks_acl(self, user, temp_data_dir, app_state):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
-        ws = await _create_workspace_with_acl(user["id"], "perm-ws")
+        ws = await _create_workspace_with_acl(app_state, user["id"], "perm-ws")
         conn.workspace_id = ws["id"]
         assert await conn._has_perm("view")
 
@@ -8145,7 +8204,7 @@ class TestSharedTerminalController:
         await ctrl.create_shared_terminal({"name": "x"})
         assert "Permission" in sock.send_json.call_args[0][0]["message"]
 
-    async def test_create_shared_terminal_empty_name(self, user):
+    async def test_create_shared_terminal_empty_name(self, user, app_state):
         ctrl, sock, _ = self._controller(user=user)
         await ctrl.create_shared_terminal({"name": "  "})
         assert "Name" in sock.send_json.call_args[0][0]["message"]
@@ -8589,7 +8648,7 @@ class TestFindWindow:
         finally:
             sockets.sessions.pop("ws-find", None)
 
-    async def test_shared_true_rejects_unshared_window(self, user):
+    async def test_shared_true_rejects_unshared_window(self, user, app_state):
         """A present-but-unshared window is treated as not found."""
         app_state = _make_app_state()
         sockets = app_state.sockets
@@ -8609,7 +8668,7 @@ class TestFindWindow:
         finally:
             sockets.sessions.pop("ws-find", None)
 
-    async def test_custom_error_message(self, user):
+    async def test_custom_error_message(self, user, app_state):
         app_state = _make_app_state()
         sockets = app_state.sockets
         sock, conn, session = self._setup(user, [], app_state=app_state)
@@ -8638,7 +8697,9 @@ class TestFractionalTimeout:
         registry = app_state.container_registry
         monkeypatch.setattr(container, "IDLE_TIMEOUT_SECONDS", 90)
         sock = _mock_sock()
-        workspace = await _create_workspace_with_acl(user["id"], "frac-ws")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "frac-ws"
+        )
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
 
         async def fake_start(wid, workspace):
@@ -9416,12 +9477,14 @@ class TestChatSend:
             wshandler.agent_tasks.clear()
             wshandler.agent_conversations.pop(workspace["id"], None)
 
-    async def test_chat_history_on_connect(self, user, agent_user):
+    async def test_chat_history_on_connect(self, user, agent_user, app_state):
         app_state = _make_app_state()
         registry = app_state.container_registry
         from klangk_backend import model
 
-        workspace = await _create_workspace_with_acl(user["id"], "chat-ws")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "chat-ws"
+        )
         await model.add_chat_message(
             workspace["id"], "uid-other", "someone@test.com", "old message"
         )
@@ -9454,7 +9517,7 @@ class TestChatSend:
         assert len(history[0]["messages"]) == 1
         assert history[0]["messages"][0]["message"] == "old message"
 
-    async def test_chat_load_more(self, workspace, user):
+    async def test_chat_load_more(self, workspace, user, app_state):
         from klangk_backend import model
 
         msgs = []
@@ -9482,7 +9545,9 @@ class TestChatSend:
         await conn.handle_chat_load_more({"before_id": "x"})
         sock.send_json.assert_not_called()
 
-    async def test_chat_load_more_no_before_id(self, workspace, user):
+    async def test_chat_load_more_no_before_id(
+        self, workspace, user, app_state
+    ):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         conn.workspace_id = workspace["id"]
@@ -9491,12 +9556,14 @@ class TestChatSend:
 
 
 class TestPresence:
-    async def test_presence_list_on_connect(self, user, agent_user):
+    async def test_presence_list_on_connect(self, user, agent_user, app_state):
         """Joining user receives presence_list with current users."""
         app_state = _make_app_state()
         sockets = app_state.sockets
         registry = app_state.container_registry
-        workspace = await _create_workspace_with_acl(user["id"], "pres-ws")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "pres-ws"
+        )
 
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
@@ -9540,7 +9607,7 @@ class TestPresence:
         from klangk_backend import model
 
         workspace = await _create_workspace_with_acl(
-            user["id"], "pres-join-ws"
+            app_state, user["id"], "pres-join-ws"
         )
 
         # First user connects
@@ -9610,13 +9677,15 @@ class TestPresence:
             sockets.connections.pop(sock1, None)
             sockets.connections.pop(sock2, None)
 
-    async def test_presence_leave_broadcast(self, user):
+    async def test_presence_leave_broadcast(self, user, app_state):
         """Remaining subscribers receive presence_leave after debounce."""
         app_state = _make_app_state()
         sockets = app_state.sockets
         from klangk_backend import model
 
-        workspace = await _create_workspace_with_acl(user["id"], "pres-lv-ws")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "pres-lv-ws"
+        )
 
         sock1 = _mock_sock()
         sock2 = _mock_sock()
@@ -9670,7 +9739,7 @@ class TestPresence:
         from klangk_backend import model
 
         workspace = await _create_workspace_with_acl(
-            user["id"], "pres-debounce-ws"
+            app_state, user["id"], "pres-debounce-ws"
         )
 
         sock1 = _mock_sock()  # observer
@@ -9763,13 +9832,15 @@ class TestPresence:
             sockets.connections.pop(sock2, None)
             sockets.connections.pop(sock3, None)
 
-    async def test_presence_leave_multi_tab(self, user):
+    async def test_presence_leave_multi_tab(self, user, app_state):
         """No presence_leave if user has another connection in workspace."""
         app_state = _make_app_state()
         sockets = app_state.sockets
         from klangk_backend import model
 
-        workspace = await _create_workspace_with_acl(user["id"], "pres-mt-ws")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "pres-mt-ws"
+        )
 
         sock1 = _mock_sock()
         sock2 = _mock_sock()
@@ -9811,11 +9882,13 @@ class TestPresence:
 
 
 class TestRefreshUserHandle:
-    async def test_refresh_updates_connections_and_broadcasts(self, user):
+    async def test_refresh_updates_connections_and_broadcasts(
+        self, user, app_state
+    ):
         app_state = _make_app_state()
         sockets = app_state.sockets
         workspace = await _create_workspace_with_acl(
-            user["id"], "handle-refresh-ws"
+            app_state, user["id"], "handle-refresh-ws"
         )
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
@@ -9851,12 +9924,14 @@ class TestRefreshUserHandle:
 
 
 class TestChatDelete:
-    async def test_chat_delete_broadcasts_update(self, user):
+    async def test_chat_delete_broadcasts_update(self, user, app_state):
         app_state = _make_app_state()
         sockets = app_state.sockets
         from klangk_backend import model
 
-        workspace = await ws_mod.create_workspace(user["id"], "chat-del-ws")
+        workspace = await app_state.workspaces.create_workspace(
+            user["id"], "chat-del-ws"
+        )
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = workspace["id"]
@@ -9880,10 +9955,12 @@ class TestChatDelete:
 
         sockets.sessions.pop(workspace["id"], None)
 
-    async def test_chat_delete_wrong_user_ignored(self, user):
+    async def test_chat_delete_wrong_user_ignored(self, user, app_state):
         from klangk_backend import model
 
-        workspace = await ws_mod.create_workspace(user["id"], "chat-del-ws2")
+        workspace = await app_state.workspaces.create_workspace(
+            user["id"], "chat-del-ws2"
+        )
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.workspace_id = workspace["id"]
@@ -10081,7 +10158,7 @@ class TestDispatchBrowserRequestStreamTo:
         finally:
             sockets.sessions.pop("ws-stream-to", None)
 
-    async def test_loop_dispatches_browser_chunk(self, user):
+    async def test_loop_dispatches_browser_chunk(self, user, app_state):
         app_state = _make_app_state()
         sockets = app_state.sockets
         from klangk_backend import auth as auth_mod
@@ -10104,10 +10181,13 @@ class TestDispatchBrowserRequestStreamTo:
 
 
 class TestUiReadySharedTerminals:
-    async def test_ui_ready_sends_shared_terminals(self, user, temp_data_dir):
-        from klangk_backend import workspaces
+    async def test_ui_ready_sends_shared_terminals(
+        self, user, temp_data_dir, app_state
+    ):
 
-        ws = await workspaces.create_workspace(user["id"], "ui-shared")
+        ws = await app_state.workspaces.create_workspace(
+            user["id"], "ui-shared"
+        )
         async with _conn_in_workspace(
             {"id": user["id"], "email": user["email"]},
             ws["id"],
@@ -10127,12 +10207,15 @@ class TestUiReadySharedTerminals:
                 for m in sent
             )
 
-    async def test_ui_ready_sends_container_ready(self, user, temp_data_dir):
+    async def test_ui_ready_sends_container_ready(
+        self, user, temp_data_dir, app_state
+    ):
         app_state = _make_app_state()
         sockets = app_state.sockets
-        from klangk_backend import workspaces
 
-        ws = await workspaces.create_workspace(user["id"], "ui-ready-cr")
+        ws = await app_state.workspaces.create_workspace(
+            user["id"], "ui-ready-cr"
+        )
         sock = _mock_sock()
         conn = _base_conn(
             user={"id": user["id"], "email": user["email"]},
@@ -10161,11 +10244,13 @@ class TestUiReadySharedTerminals:
 
 
 class TestTokenRenewal:
-    async def test_renewal_creates_new_token(self, user):
+    async def test_renewal_creates_new_token(self, user, app_state):
         """Token renewal loop creates a new token and pushes it."""
         app_state = _make_app_state()
         sockets = app_state.sockets
-        workspace = await _create_workspace_with_acl(user["id"], "renew-ws")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "renew-ws"
+        )
         session = sockets.get_or_create_session(workspace["id"], app_state)
         session.container_id = "test-cid"
 
@@ -10199,11 +10284,13 @@ class TestTokenRenewal:
         finally:
             sockets.sessions.pop(workspace["id"], None)
 
-    async def test_renewal_retries_on_failure(self, user):
+    async def test_renewal_retries_on_failure(self, user, app_state):
         """Token renewal retries after failure."""
         app_state = _make_app_state()
         sockets = app_state.sockets
-        workspace = await _create_workspace_with_acl(user["id"], "retry-ws")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "retry-ws"
+        )
         session = sockets.get_or_create_session(workspace["id"], app_state)
         session.container_id = "test-cid"
 
@@ -10249,7 +10336,7 @@ class TestTokenRenewal:
         finally:
             sockets.sessions.pop(workspace["id"], None)
 
-    async def test_reset_cancels_token_renewal_task(self, user):
+    async def test_reset_cancels_token_renewal_task(self, user, app_state):
         """reset() cancels the token renewal task (issue #871).
 
         Without cancellation the renewal loop keeps running after a
@@ -10258,7 +10345,9 @@ class TestTokenRenewal:
         """
         app_state = _make_app_state()
         sockets = app_state.sockets
-        workspace = await _create_workspace_with_acl(user["id"], "leak-ws")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "leak-ws"
+        )
         session = sockets.get_or_create_session(workspace["id"], app_state)
         session.container_id = "test-cid"
 
@@ -10293,12 +10382,16 @@ class TestTokenRenewal:
         finally:
             sockets.sessions.pop(workspace["id"], None)
 
-    async def test_concurrent_add_subscriber_no_duplicate_renewal(self, user):
+    async def test_concurrent_add_subscriber_no_duplicate_renewal(
+        self, user, app_state
+    ):
         """Two concurrent add_subscriber calls must not create duplicate
         renewal tasks (#1299)."""
         app_state = _make_app_state()
         sockets = app_state.sockets
-        workspace = await _create_workspace_with_acl(user["id"], "race-ws")
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "race-ws"
+        )
         session = sockets.get_or_create_session(workspace["id"], app_state)
 
         try:
@@ -10483,7 +10576,7 @@ class TestSSHAgentDispatch:
             await handle_websocket(websocket, app_state)
         mock.assert_awaited_once()
 
-    async def test_dispatch_list_shared_terminals(self, user):
+    async def test_dispatch_list_shared_terminals(self, user, app_state):
         app_state = _make_app_state()
         from klangk_backend import auth as auth_mod
 
@@ -10503,7 +10596,7 @@ class TestSSHAgentDispatch:
             await handle_websocket(websocket, app_state)
         mock.assert_awaited_once()
 
-    async def test_dispatch_chat_agent_abort(self, user):
+    async def test_dispatch_chat_agent_abort(self, user, app_state):
         app_state = _make_app_state()
         from klangk_backend import auth as auth_mod
 
@@ -10523,12 +10616,16 @@ class TestSSHAgentDispatch:
 
 
 class TestStartAgentIfNeeded:
-    async def test_starts_agent_and_broadcasts_presence(self, user, db):
+    async def test_starts_agent_and_broadcasts_presence(
+        self, user, db, app_state
+    ):
         app_state = _make_app_state()
         sockets = app_state.sockets
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        workspace = await ws_mod.create_workspace(user["id"], "agent-ws")
+        workspace = await app_state.workspaces.create_workspace(
+            user["id"], "agent-ws"
+        )
         conn.workspace_id = workspace["id"]
 
         session = sockets.get_or_create_session(workspace["id"], app_state)
@@ -10548,7 +10645,7 @@ class TestStartAgentIfNeeded:
             await session.remove_subscriber(sock)
             sockets.sessions.pop(workspace["id"], None)
 
-    async def test_start_agent_logs_on_failure(self, user, db):
+    async def test_start_agent_logs_on_failure(self, user, db, app_state):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         conn.workspace_id = "ws-fail"
@@ -10562,10 +10659,12 @@ class TestStartAgentIfNeeded:
 
 
 class TestHandleChatAgentAbort:
-    async def test_cancels_running_task(self, user, db):
+    async def test_cancels_running_task(self, user, db, app_state):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
-        workspace = await ws_mod.create_workspace(user["id"], "abort-ws")
+        workspace = await app_state.workspaces.create_workspace(
+            user["id"], "abort-ws"
+        )
         conn.workspace_id = workspace["id"]
 
         async def slow():
@@ -10588,16 +10687,18 @@ class TestHandleChatAgentAbort:
                 except asyncio.CancelledError:
                     pass
 
-    async def test_abort_no_workspace(self, user, db):
+    async def test_abort_no_workspace(self, user, db, app_state):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         conn.workspace_id = None
         await conn.handle_chat_agent_abort()
 
-    async def test_abort_no_task(self, user, db):
+    async def test_abort_no_task(self, user, db, app_state):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
-        workspace = await ws_mod.create_workspace(user["id"], "abort-none")
+        workspace = await app_state.workspaces.create_workspace(
+            user["id"], "abort-none"
+        )
         conn.workspace_id = workspace["id"]
         wshandler.agent_tasks.pop(workspace["id"], None)
         await conn.handle_chat_agent_abort()
@@ -10635,8 +10736,12 @@ class TestHandleChatAgentAbort:
 
 
 class TestPresenceIncludesAgent:
-    async def test_agent_in_presence_when_running(self, user, agent_user):
-        workspace = await ws_mod.create_workspace(user["id"], "pres-ws")
+    async def test_agent_in_presence_when_running(
+        self, user, agent_user, app_state
+    ):
+        workspace = await app_state.workspaces.create_workspace(
+            user["id"], "pres-ws"
+        )
         async with _conn_in_workspace(user, workspace["id"]) as (
             sock,
             conn,
@@ -10654,11 +10759,13 @@ class TestPresenceIncludesAgent:
             assert model.AGENT_USER_ID in ids
 
     async def test_agent_not_in_presence_when_running_in_other_workspace(
-        self, user, agent_user
+        self, user, agent_user, app_state
     ):
         """Agent running in a different workspace must not appear in this
         workspace's presence list (regression for #870)."""
-        workspace = await ws_mod.create_workspace(user["id"], "pres-ws")
+        workspace = await app_state.workspaces.create_workspace(
+            user["id"], "pres-ws"
+        )
         async with _conn_in_workspace(user, workspace["id"]) as (
             sock,
             conn,

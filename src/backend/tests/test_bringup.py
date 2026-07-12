@@ -35,7 +35,7 @@ class TestBringup:
                 setup_state="complete",
                 app_state=_app_state,
             )
-        mock_home.assert_awaited_once_with("ws-id", "cid", _app_state.podman)
+        mock_home.assert_awaited_once_with("ws-id", "cid", _app_state)
         _app_state.terminal.ensure_service_session.assert_awaited_once_with(
             "cid",
             "/home/clanker",
@@ -53,7 +53,7 @@ class TestBringup:
             await bringup.bringup(
                 "ws-id", "cid", None, "complete", app_state=_app_state
             )
-        mock_home.assert_awaited_once_with("ws-id", "cid", _app_state.podman)
+        mock_home.assert_awaited_once_with("ws-id", "cid", _app_state)
         _app_state.terminal.ensure_service_session.assert_not_awaited()
 
     async def test_skips_service_command_when_empty(self):

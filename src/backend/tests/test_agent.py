@@ -10,6 +10,7 @@ from klangk_backend.agent import (
     AgentError,
     AgentProcessDied,
     AgentSession,
+    AgentSetupError,
     any_running,
     ensure_agent_home,
     get_session,
@@ -71,9 +72,11 @@ def _make_app_state(cid="cid"):
     mock_registry = MagicMock()
     mock_registry.get_state.return_value = _FakeContainerState(cid)
     mock_pod = MagicMock()
-    return types.SimpleNamespace(
+    app_state = types.SimpleNamespace(
         container_registry=mock_registry, podman=mock_pod
     )
+    app_state.workspaces = MagicMock()
+    return app_state
 
 
 def _make_session(workspace_id="ws-id"):
@@ -836,15 +839,8 @@ class TestGetSession:
 
 
 class TestEnsureAgentHome:
-    """Direct tests for the eager-provisioning function (#1157).
-
-    Called from start_workspace at container bring-up (every exec
-    process inherits $KLANGK_AGENT_HOME) and again from chat-start, which
-    caches the result per AgentSession (see TestEnsureHome).
-    """
-
     async def test_provisions_home_and_runs_setup(self, tmp_path):
-        from klangk_backend import model, workspaces
+        from klangk_backend import model
 
         fake_ws = {"user_id": "owner1"}
         fake_home = tmp_path / "home"
@@ -853,32 +849,31 @@ class TestEnsureAgentHome:
         mock_proc.communicate = AsyncMock(return_value=(b"", b""))
         mock_proc.returncode = 0
 
+        ws = MagicMock()
+        ws.home_path.return_value = fake_home
+        ws.ensure_home_symlink = AsyncMock(
+            return_value=("/home/clanker", True)
+        )
+        ws.populate_home_skel = AsyncMock()
+        app_state = MagicMock()
+        app_state.workspaces = ws
+        app_state.podman = _mock_pod
+
         with (
             patch.object(model, "get_workspace_by_id", return_value=fake_ws),
-            patch.object(workspaces, "home_path", return_value=fake_home),
-            patch.object(
-                workspaces,
-                "ensure_home_symlink",
-                new_callable=AsyncMock,
-                return_value=("/home/clanker", True),
-            ) as mock_symlink,
-            patch.object(
-                workspaces, "populate_home_skel", new_callable=AsyncMock
-            ) as mock_skel,
             patch(
                 "asyncio.create_subprocess_exec",
                 return_value=mock_proc,
             ) as mock_exec,
         ):
-            result = await ensure_agent_home("ws1", "cid", _mock_pod)
+            result = await ensure_agent_home("ws1", "cid", app_state)
 
         assert result == "/home/clanker"
-        mock_symlink.assert_called_once()
+        ws.ensure_home_symlink.assert_awaited_once()
         # Skeleton files only on first creation (created=True).
-        mock_skel.assert_awaited_once_with(
+        ws.populate_home_skel.assert_awaited_once_with(
             "cid",
             "00000000-0000-0000-0000-000000000001",
-            _mock_pod,
         )
         # klangk-setup-pi --force re-writes Pi config each time.  It's
         # invoked by its full install path (bare-name resolution isn't
@@ -895,7 +890,7 @@ class TestEnsureAgentHome:
         the lazy chat-start path retries on first mention (#1162).
         The return value (container home) is unaffected by the rc.
         """
-        from klangk_backend import agent, model, workspaces
+        from klangk_backend import agent, model
 
         fake_home = tmp_path / "home"
         fake_home.mkdir()
@@ -905,71 +900,73 @@ class TestEnsureAgentHome:
         )
         mock_proc.returncode = 127  # script missing / crashed
 
+        ws = MagicMock()
+        ws.home_path.return_value = fake_home
+        ws.ensure_home_symlink = AsyncMock(
+            return_value=("/home/clanker", True)
+        )
+        ws.populate_home_skel = AsyncMock()
+        app_state = MagicMock()
+        app_state.workspaces = ws
+        app_state.podman = _mock_pod
+
         with (
             patch.object(
                 model, "get_workspace_by_id", return_value={"user_id": "o"}
-            ),
-            patch.object(workspaces, "home_path", return_value=fake_home),
-            patch.object(
-                workspaces,
-                "ensure_home_symlink",
-                new_callable=AsyncMock,
-                return_value=("/home/clanker", True),
-            ),
-            patch.object(
-                workspaces, "populate_home_skel", new_callable=AsyncMock
             ),
             patch("asyncio.create_subprocess_exec", return_value=mock_proc),
         ):
             # Must NOT raise -- provisioning is best-effort.
-            result = await agent.ensure_agent_home("ws1", "cid", _mock_pod)
+            result = await agent.ensure_agent_home("ws1", "cid", app_state)
 
         assert result == "/home/clanker"
 
     async def test_skips_skel_when_home_already_exists(self, tmp_path):
-        from klangk_backend import model, workspaces
+        from klangk_backend import model
 
-        # created=False -> home dir already existed, no skel needed.
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+
+        ws = MagicMock()
+        ws.home_path.return_value = fake_home
+        # created=False means the user dir already exists -> no skel
+        ws.ensure_home_symlink = AsyncMock(
+            return_value=("/home/clanker", False)
+        )
+        ws.populate_home_skel = AsyncMock()
+        app_state = MagicMock()
+        app_state.workspaces = ws
+        app_state.podman = _mock_pod
+
         with (
             patch.object(
                 model, "get_workspace_by_id", return_value={"user_id": "o"}
             ),
-            patch.object(workspaces, "home_path", return_value=tmp_path),
-            patch.object(
-                workspaces,
-                "ensure_home_symlink",
-                new_callable=AsyncMock,
-                return_value=("/home/clanker", False),
-            ),
-            patch.object(
-                workspaces, "populate_home_skel", new_callable=AsyncMock
-            ) as mock_skel,
-            patch(
-                "asyncio.create_subprocess_exec",
-                return_value=AsyncMock(
-                    communicate=AsyncMock(return_value=(b"", b""))
-                ),
-            ),
         ):
-            result = await ensure_agent_home("ws1", "cid", _mock_pod)
+            result = await ensure_agent_home("ws1", "cid", app_state)
 
         assert result == "/home/clanker"
-        mock_skel.assert_not_awaited()
+        # created=False -> skel should NOT be called
+        ws.populate_home_skel.assert_not_awaited()
 
-    async def test_raises_when_workspace_missing(self):
+    async def test_workspace_not_found_raises(self):
         from klangk_backend import model
-        from klangk_backend.agent import AgentSetupError
+
+        ws = MagicMock()
+        app_state = MagicMock()
+        app_state.workspaces = ws
+        app_state.podman = _mock_pod
 
         with patch.object(model, "get_workspace_by_id", return_value=None):
-            with pytest.raises(AgentSetupError, match="not found in database"):
-                await ensure_agent_home("ws-gone", "cid", _mock_pod)
+            with pytest.raises(AgentSetupError, match="not found"):
+                await ensure_agent_home("ws-gone", "cid", app_state)
 
 
 class TestEnsureHome:
     async def test_ensure_home_creates_dir_and_runs_login_shell(
         self, tmp_path
     ):
-        from klangk_backend import model, workspaces
+        from klangk_backend import model
 
         session = AgentSession("ws1", app_state=_make_app_state())
 
@@ -981,28 +978,20 @@ class TestEnsureHome:
         mock_proc.communicate = AsyncMock(return_value=(b"", b""))
         mock_proc.returncode = 0
 
+        ws = MagicMock()
+        ws.home_path.return_value = fake_home
+        ws.ensure_home_symlink = AsyncMock(
+            return_value=("/home/clanker", True)
+        )
+        ws.populate_home_skel = AsyncMock()
+        session.app_state.workspaces = ws
+
         with (
             patch.object(
                 model,
                 "get_workspace_by_id",
                 return_value=fake_ws,
             ),
-            patch.object(
-                workspaces,
-                "home_path",
-                return_value=fake_home,
-            ),
-            patch.object(
-                workspaces,
-                "ensure_home_symlink",
-                new_callable=AsyncMock,
-                return_value=("/home/clanker", True),
-            ) as mock_symlink,
-            patch.object(
-                workspaces,
-                "populate_home_skel",
-                new_callable=AsyncMock,
-            ) as mock_skel,
             patch(
                 "asyncio.create_subprocess_exec",
                 return_value=mock_proc,
@@ -1012,11 +1001,10 @@ class TestEnsureHome:
 
         assert result == "/home/clanker"
         assert session._home_ready is True
-        mock_symlink.assert_called_once()
-        mock_skel.assert_awaited_once_with(
+        ws.ensure_home_symlink.assert_awaited_once()
+        ws.populate_home_skel.assert_awaited_once_with(
             "cid",
             "00000000-0000-0000-0000-000000000001",
-            session.app_state.podman,
         )
 
     async def test_ensure_home_cached(self):
