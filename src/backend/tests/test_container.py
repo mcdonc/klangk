@@ -41,7 +41,7 @@ def _make_app_state(registry=None, sockets=None):
     # #1480: container.py reaches set_workspace_token via app_state.terminal.
     from klangk_backend.terminal import Terminal
 
-    app_state.terminal = Terminal(app_state.podman, registry)
+    app_state.terminal = Terminal(app_state)
     return app_state
 
 

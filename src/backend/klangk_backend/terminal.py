@@ -24,7 +24,7 @@ from collections.abc import AsyncGenerator
 from .podman import Podman, subprocess_env
 from .exceptions import TerminalError
 from .model.workspaces import SETUP_STATE_COMPLETE
-from .util import BoundedOutputQueue, resolve_env_value
+from .util import BoundedOutputQueue
 
 logger = logging.getLogger(__name__)
 
@@ -51,19 +51,6 @@ def validate_window_name(name: str) -> None:
             "Window name may only contain letters, digits,"
             " spaces, hyphens, underscores, and dots"
         )
-
-
-def terminal_tmux_enabled() -> bool:
-    """Whether new terminal sessions are wrapped in tmux.
-
-    Defaults to enabled (the historical behaviour).  Set
-    ``KLANGK_DISABLE_TMUX`` to a truthy value (``1``/``true``/``yes``) to
-    drop users straight into a plain login shell instead.  Note this only
-    affects the default per-user terminal; shared/joined terminals are
-    built on tmux session groups and always use tmux regardless.
-    """
-    val = resolve_env_value("KLANGK_DISABLE_TMUX", "") or ""
-    return val.lower() not in ("1", "true", "yes")
 
 
 # Backend env vars stripped from the in-container shell.
@@ -230,14 +217,34 @@ class Terminal:
     :class:`~klangk_backend.podman.Podman` dependency.
 
     Constructed once in :func:`build_app` and stored on
-    ``app.state.terminal`` (#1480). The podman instance carries the
-    resolved binary path + CLI wrappers; the registry provides the
-    per-container service-firing lock (#1188).
+    ``app.state.terminal`` (#1480). Reaches its dependencies — podman
+    (resolved binary path + CLI wrappers), the container registry
+    (per-container service-firing lock, #1188), and settings — through a
+    single ``app_state`` reference rather than three separate ctor args.
     """
 
-    def __init__(self, podman: Podman, registry):
-        self.podman = podman
-        self._registry = registry
+    def __init__(self, app_state=None):
+        self._app_state = app_state
+
+    @property
+    def podman(self) -> Podman:
+        return self._app_state.podman
+
+    @property
+    def registry(self):
+        return self._app_state.container_registry
+
+    def tmux_enabled(self) -> bool:
+        """Whether new terminal sessions are wrapped in tmux.
+
+        Defaults to enabled (the historical behaviour).  Set
+        ``KLANGK_DISABLE_TMUX`` to a truthy value (``1``/``true``/``yes``) to
+        drop users straight into a plain login shell instead.  Note this only
+        affects the default per-user terminal; shared/joined terminals are
+        built on tmux session groups and always use tmux regardless.
+        """
+        val = (self._app_state.settings.disable_tmux or "").lower()
+        return val not in ("1", "true", "yes")
 
     # --- tmux session / window queries ---
 
@@ -382,7 +389,7 @@ class Terminal:
         # collaborator) cannot interleave: the second waits, then observes
         # the window exists and no-ops. This also bounds the partial-failure
         # window from #1186.
-        async with self._registry.get_service_session_lock(container_id):
+        async with self.registry.get_service_session_lock(container_id):
             await self._ensure_tmux_session(
                 container_id, SERVICE_SESSION, agent_home
             )
@@ -439,7 +446,7 @@ class Terminal:
                 # on a successful send-keys; the except path below never
                 # launched the command, so it must not start the grace
                 # window.
-                self._registry.mark_service_started(container_id)
+                self.registry.mark_service_started(container_id)
             except Exception:
                 logger.warning(
                     "Failed to send service command to %s", SERVICE_SESSION
@@ -881,7 +888,7 @@ class TerminalSession:
             self.session_name
             and not self.join_session
             and not self.socket_path
-            and terminal_tmux_enabled()
+            and self._terminal.tmux_enabled()
         ):
             await self._terminal.ensure_base_session(
                 self.container_id,
@@ -901,7 +908,7 @@ class TerminalSession:
             socket_path=self.socket_path,
             join_session=self.join_session,
             read_only=self.read_only,
-            tmux_enabled=terminal_tmux_enabled(),
+            tmux_enabled=self._terminal.tmux_enabled(),
             ssh_agent_socket=self.ssh_agent_socket,
         )
         work_dir = "/home"

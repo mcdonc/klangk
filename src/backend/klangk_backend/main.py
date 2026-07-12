@@ -756,11 +756,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     app.state.podman = podman_inst
     app.state.container_registry.podman = podman_inst
     app.state.container_registry.app_state = app.state
-    # #1480: Terminal(podman, registry) groups the ~25 tmux-session
-    # management functions that share a Podman dependency.
-    app.state.terminal = terminal.Terminal(
-        podman_inst, app.state.container_registry
-    )
+    # #1480: Terminal(app_state) groups the ~25 tmux-session
+    # management functions that share a Podman dependency. Reaches podman,
+    # the registry, and settings through the single app_state reference.
+    app.state.terminal = terminal.Terminal(app.state)
     # WebSocketState reaches the registry through its own app_state
     # back-reference (send_service_health_snapshot / reset_workspace).
     # The unit-test fixtures set this explicitly; build_app must too, or

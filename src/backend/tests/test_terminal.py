@@ -7,6 +7,7 @@ lifecycle/queue logic against an injected fake shell.
 
 import asyncio
 import contextlib
+import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,7 +22,6 @@ from klangk_backend.terminal import (
     build_shell_command,
     make_shell_process,
     validate_window_name,
-    terminal_tmux_enabled,
 )
 
 SHELL_FACTORY = "klangk_backend.terminal.make_shell_process"
@@ -36,7 +36,16 @@ _mock_pod = MagicMock()
 _mock_registry = MagicMock()
 _mock_registry.get_service_session_lock.return_value = asyncio.Lock()
 _mock_registry.mark_service_started = MagicMock()
-_terminal = Terminal(_mock_pod, _mock_registry)
+# Minimal app_state carrying podman + registry + settings so Terminal can
+# reach all three through its single ctor arg (#1480).
+_mock_settings = MagicMock()
+_mock_settings.disable_tmux = None
+_app_state = types.SimpleNamespace(
+    podman=_mock_pod,
+    container_registry=_mock_registry,
+    settings=_mock_settings,
+)
+_terminal = Terminal(_app_state)
 
 
 class TestShellProcessFactory:
@@ -156,10 +165,8 @@ class TestStart:
         assert s._running is True
         await s.stop()
 
-    async def test_start_uses_plain_shell_when_tmux_disabled(
-        self, monkeypatch
-    ):
-        monkeypatch.setenv("KLANGK_DISABLE_TMUX", "1")
+    async def test_start_uses_plain_shell_when_tmux_disabled(self):
+        _mock_settings.disable_tmux = "1"
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
             s = TerminalSession("cid", session_name="uid", terminal=_terminal)
@@ -962,19 +969,19 @@ class TestBuildShellCommandJoinSession:
 
 
 class TestTerminalTmuxEnabled:
-    def test_default_enabled(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_DISABLE_TMUX", raising=False)
-        assert terminal_tmux_enabled() is True
+    def test_default_enabled(self):
+        _mock_settings.disable_tmux = None
+        assert _terminal.tmux_enabled() is True
 
     @pytest.mark.parametrize("val", ["1", "true", "TRUE", "yes", "Yes"])
-    def test_truthy_disables(self, monkeypatch, val):
-        monkeypatch.setenv("KLANGK_DISABLE_TMUX", val)
-        assert terminal_tmux_enabled() is False
+    def test_truthy_disables(self, val):
+        _mock_settings.disable_tmux = val
+        assert _terminal.tmux_enabled() is False
 
     @pytest.mark.parametrize("val", ["", "0", "false", "no", "off"])
-    def test_other_values_keep_enabled(self, monkeypatch, val):
-        monkeypatch.setenv("KLANGK_DISABLE_TMUX", val)
-        assert terminal_tmux_enabled() is True
+    def test_other_values_keep_enabled(self, val):
+        _mock_settings.disable_tmux = val
+        assert _terminal.tmux_enabled() is True
 
 
 class TestBuildShellCommandTmuxDisabled:
