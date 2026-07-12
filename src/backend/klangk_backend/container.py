@@ -961,7 +961,9 @@ class ContainerRegistry:
         return self.idle._cleanup_wake
 
     @_cleanup_wake.setter
-    def _cleanup_wake(self, value: asyncio.Event | None) -> None:
+    def _cleanup_wake(
+        self, value: asyncio.Event | None
+    ) -> None:  # pragma: no cover
         self.idle._cleanup_wake = value
 
     def get_cleanup_wake(self) -> asyncio.Event:

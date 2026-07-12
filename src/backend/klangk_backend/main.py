@@ -748,6 +748,11 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     app.state.sockets = sockets
     app.state.container_registry.sockets = sockets
     app.state.container_registry.app_state = app.state
+    # WebSocketState reaches the registry through its own app_state
+    # back-reference (send_service_health_snapshot / reset_workspace).
+    # The unit-test fixtures set this explicitly; build_app must too, or
+    # every WS connect crashes on the health snapshot (#1475).
+    sockets.app_state = app.state
     agent.get_workspace_session = sockets.get_session
 
     app.add_middleware(

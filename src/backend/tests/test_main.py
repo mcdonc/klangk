@@ -340,6 +340,45 @@ class TestLifespan:
             mock_shutdown.assert_awaited_once()
             mock_remove.assert_called_once()
 
+    async def test_lifespan_workspace_killed_resets_state(
+        self, db, monkeypatch
+    ):
+        """The workspace-killed callback threads app.state into
+        reset_workspace_state (sockets, workspace_id) — #1475."""
+        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
+        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+        monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
+        monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
+        app = FastAPI()
+        app_state = _make_app_state()
+        app.state.container_registry = app_state.container_registry
+        app.state.sockets = app_state.sockets
+        app.state.settings = app_state.settings
+        app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
+        registry = app_state.container_registry
+        with (
+            patch.object(
+                registry,
+                "adopt_orphaned_containers",
+                new_callable=AsyncMock,
+            ),
+            patch.object(registry, "start_cleanup_loop"),
+            patch.object(registry, "shutdown", new_callable=AsyncMock),
+            patch("klangk_backend.main.check_pid_file", return_value=None),
+            patch("klangk_backend.main.write_pid_file"),
+            patch("klangk_backend.main.remove_pid_file"),
+            patch(
+                "klangk_backend.main.wshandler.reset_workspace_state",
+                new_callable=AsyncMock,
+            ) as mock_reset,
+        ):
+            async with main.lifespan(app):
+                # The closure registered by the lifespan threads app.state
+                # into reset_workspace_state: (sockets, workspace_id).
+                assert registry.on_workspace_killed is not None
+                await registry.on_workspace_killed("ws-killed")
+        mock_reset.assert_awaited_once_with(app.state.sockets, "ws-killed")
+
     async def test_lifespan_refuses_if_pid_alive(self, db, monkeypatch):
         monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
