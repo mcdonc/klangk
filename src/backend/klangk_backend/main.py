@@ -345,7 +345,7 @@ def remove_pid_file() -> None:
         pass
 
 
-async def startup() -> None:
+async def startup(registry) -> None:
     """Container-side startup (self-healing on re-run).
 
     Warms podman, adopts/reaps leftover containers, launches the idle
@@ -355,16 +355,16 @@ async def startup() -> None:
     ``auto_start`` re-creates stopped containers -- so re-running this
     after ``runtime_shutdown`` is exactly the SIGHUP restart path.
     """
-    await container.registry.prewarm_podman()
-    await container.registry.adopt_orphaned_containers()
-    container.registry.start_cleanup_loop()
-    container.registry.start_health_loop()
+    await registry.prewarm_podman()
+    await registry.adopt_orphaned_containers()
+    registry.start_cleanup_loop()
+    registry.start_health_loop()
     n = await workspaces.auto_start_workspaces()
     if n:  # pragma: no cover
         logger.info("Auto-started %d workspace(s)", n)
 
 
-async def runtime_shutdown() -> None:
+async def runtime_shutdown(registry) -> None:
     """Stop the runtime, keeping the HTTP listener and DB alive.
 
     Drops every WebSocket client (code 1012 = "reconnect"), tears down
@@ -376,7 +376,7 @@ async def runtime_shutdown() -> None:
     await wshandler.disconnect_all_websockets()
     await agent.stop_all_sessions()
     wshandler.clear_agent_mention_state()
-    await container.registry.shutdown()
+    await registry.shutdown()
 
 
 async def process_shutdown() -> None:
@@ -510,7 +510,7 @@ class NginxWatchdog:
 _restart_lock: asyncio.Lock | None = None
 
 
-async def restart_runtime() -> None:
+async def restart_runtime(registry, nginx_watchdog) -> None:
     """Graceful runtime restart: stop containers, keep the listener.
 
     Triggered by SIGHUP.  Closes all WebSocket clients (code 1012),
@@ -524,12 +524,12 @@ async def restart_runtime() -> None:
         _restart_lock = asyncio.Lock()
     async with _restart_lock:
         logger.info("SIGHUP: restarting runtime (keeping HTTP listener)")
-        await runtime_shutdown()
-        await startup()
+        await runtime_shutdown(registry)
+        await startup(registry)
         logger.info("SIGHUP: runtime restarted")
 
 
-def on_sighup() -> None:
+def on_sighup(registry, nginx_watchdog) -> None:
     """Schedule a runtime restart on the running event loop.
 
     Signal callbacks can't be async, so this just creates a task.  The
@@ -539,7 +539,7 @@ def on_sighup() -> None:
         loop = asyncio.get_running_loop()
     except RuntimeError:  # pragma: no cover - no loop during shutdown
         return
-    loop.create_task(restart_runtime())
+    loop.create_task(restart_runtime(registry, nginx_watchdog))
 
 
 @asynccontextmanager
@@ -578,11 +578,12 @@ async def lifespan(app: FastAPI):
     oidc.load_login_hook()
     await seed_default_user()
     await seed_agent_user()
-    container.registry.set_on_workspace_killed(wshandler.reset_workspace_state)
-    container.registry.set_on_container_status_changed(
+    registry = app.state.container_registry
+    registry.set_on_workspace_killed(wshandler.reset_workspace_state)
+    registry.set_on_container_status_changed(
         wshandler.state.notify_container_status
     )
-    await startup()
+    await startup(registry)
     # Start nginx (only when bound to a UDS — klangkd; no-op for TCP tests).
     # Rendered + owned by Python (#1396); replaces scripts/nginx.sh.
     await app.state.nginx_watchdog.start()
@@ -593,13 +594,18 @@ async def lifespan(app: FastAPI):
     # an in-place runtime restart that keeps the HTTP listener up
     # (#1212).
     loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGHUP, on_sighup)
+    loop.add_signal_handler(
+        signal.SIGHUP,
+        on_sighup,
+        app.state.container_registry,
+        app.state.nginx_watchdog,
+    )
     try:
         yield
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
         await app.state.nginx_watchdog.stop()
-        await runtime_shutdown()
+        await runtime_shutdown(registry)
         await process_shutdown()
         logger.info("Klangk backend stopped")
 
@@ -726,10 +732,18 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     app.state.settings = settings
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
-    app.state.container_registry = container.ContainerRegistry(settings)
+    app.state.container_registry = container.registry
+    container.registry.settings = settings
     # Slice 2b (#1463): nginx watchdog is an owned instance with start/stop
     # lifecycle methods called by the lifespan.
     app.state.nginx_watchdog = NginxWatchdog(settings)
+    # Slice 2c (#1464): wire the WebSocketState instance onto the registry so
+    # HealthMonitor (and anything else in the container subsystem) can
+    # broadcast through it via self._registry.connections — no module global,
+    # no lazy import. wshandler.state stays as a transitional shim for other
+    # callers (WS layer, API endpoints); it dies in Slice 2d (#1465).
+    app.state.container_registry.connections = wshandler.state
+    app.state.connections = wshandler.state
 
     app.add_middleware(
         CORSMiddleware,
@@ -767,8 +781,16 @@ def get_settings_dep(request: Request) -> KlangkSettings:
     return request.app.state.settings
 
 
-# --- ASGI app (the only global) ---
-# Module-level shim for uvicorn's ``klangk_backend.main:app`` string import.
-# klangkd and tests construct their own app via ``build_app()``; this exists
-# solely so ``uvicorn.run("klangk_backend.main:app")`` keeps working.
-app = build_app(get_settings())
+# --- ASGI app ---
+# No module-level ``app = build_app(...)``: that eagerly constructed a
+# ``ContainerRegistry`` at import time, separate from the one klangkd / the
+# lifespan use — two registries, and the health loop ran on the wrong one
+# (#1464). Instead, klangkd constructs the app explicitly (build_app(settings))
+# and passes the object to uvicorn. The lazy ``__getattr__`` below covers the
+# ``uvicorn klangk_backend.main:app`` string-import path used by E2E tests.
+
+
+def __getattr__(name):
+    if name == "app":
+        return build_app(get_settings())
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

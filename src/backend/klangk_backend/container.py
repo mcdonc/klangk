@@ -519,6 +519,16 @@ class HealthMonitor:
         self._registry = registry
         self.health_task: asyncio.Task | None = None
 
+    @property
+    def _connections(self):
+        """The WebSocketState instance the monitor broadcasts through (#1464).
+
+        Reached via the registry's ``connections`` attribute, set by
+        ``build_app()`` in production and on the module-level shim in
+        ``container.py``. No lazy import — the registry owns the reference.
+        """
+        return self._registry.connections
+
     def _setup_complete(self, state: ContainerState) -> bool:
         """True if health checks may run for this workspace.
 
@@ -680,11 +690,8 @@ class HealthMonitor:
         ``seq`` (#1175 item 4) bumped on every emit so a reconnecting
         consumer can detect a missed transition.
         """
-        # Imported lazily to avoid an import cycle with wshandler.
-        from .wshandler import state as _ws_state  # noqa: allow-deferred-import
-
         state.health_seq += 1
-        _ws_state.notify_service_health(
+        self._connections.notify_service_health(
             state.workspace_id,
             healthy=status == "healthy",
             message=message,
@@ -707,11 +714,8 @@ class HealthMonitor:
         and ``healthy=False`` *before* the state is dropped, so a single
         stream is a single source of truth.
         """
-        # Imported lazily to avoid an import cycle with wshandler.
-        from .wshandler import state as _ws_state  # noqa: allow-deferred-import
-
         state.health_seq += 1
-        _ws_state.notify_service_health(
+        self._connections.notify_service_health(
             state.workspace_id,
             healthy=False,
             message=None,
@@ -746,11 +750,8 @@ class HealthMonitor:
             self._send_heartbeats()
 
     def _send_heartbeats(self) -> None:
-        """Fan health heartbeats to opt-in connections (lazy ws import)."""
-        # Imported lazily to avoid an import cycle with wshandler.
-        from .wshandler import state as _ws_state  # noqa: allow-deferred-import
-
-        _ws_state.send_health_heartbeats()
+        """Fan health heartbeats to opt-in connections."""
+        self._connections.send_health_heartbeats()
 
     def start_health_loop(self) -> None:
         if self.health_task is None:
@@ -786,6 +787,11 @@ class ContainerRegistry:
         self.browsers = BrowserRouter()
         self.idle = IdleMonitor(self)
         self.health = HealthMonitor(self)
+
+        # The WebSocketState instance (set by build_app after construction,
+        # #1464). The HealthMonitor reaches it via self._registry.connections.
+        # wshandler.state stays as a transitional shim (dies in Slice 2d / #1465).
+        self.connections = None
 
     # --- Service-session locks (#1188, moved from terminal.py, #1426) ---
     # The dict still physically lives in terminal.py (terminal.py can't import

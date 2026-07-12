@@ -288,6 +288,7 @@ class TestLifespan:
         monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
         monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
         app = FastAPI()
+        app.state.container_registry = main.container.registry
         app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
         with (
             patch.object(
@@ -370,7 +371,7 @@ class TestStartupShutdownRestart:
                 return_value=0,
             ) as mock_autostart,
         ):
-            await main.startup()
+            await main.startup(main.container.registry)
         mock_prewarm.assert_awaited_once()
         mock_adopt.assert_awaited_once()
         mock_cleanup.assert_called_once()
@@ -394,7 +395,7 @@ class TestStartupShutdownRestart:
                 main.container.registry, "shutdown", new_callable=AsyncMock
             ) as mock_shutdown,
         ):
-            await main.runtime_shutdown()
+            await main.runtime_shutdown(main.container.registry)
         mock_disc.assert_awaited_once()
         mock_stop_agents.assert_awaited_once()
         mock_clear.assert_called_once()
@@ -414,6 +415,8 @@ class TestStartupShutdownRestart:
 
     async def test_restart_runtime_runs_shutdown_then_startup(self):
         main._restart_lock = None  # force fresh lock creation
+        reg = main.container.registry
+        wd = main.NginxWatchdog(KlangkSettings(env={}))
         with (
             patch(
                 "klangk_backend.main.runtime_shutdown", new_callable=AsyncMock
@@ -422,9 +425,9 @@ class TestStartupShutdownRestart:
                 "klangk_backend.main.startup", new_callable=AsyncMock
             ) as mock_up,
         ):
-            await main.restart_runtime()
-        mock_down.assert_awaited_once()
-        mock_up.assert_awaited_once()
+            await main.restart_runtime(reg, wd)
+        mock_down.assert_awaited_once_with(reg)
+        mock_up.assert_awaited_once_with(reg)
         # Lock was created and is now held-free.
         assert main._restart_lock is not None
 
@@ -435,13 +438,15 @@ class TestStartupShutdownRestart:
         # order-dependent and broken in isolation — #1242.)
         main._restart_lock = asyncio.Lock()
         existing = main._restart_lock
+        reg = main.container.registry
+        wd = main.NginxWatchdog(KlangkSettings(env={}))
         with (
             patch(
                 "klangk_backend.main.runtime_shutdown", new_callable=AsyncMock
             ),
             patch("klangk_backend.main.startup", new_callable=AsyncMock),
         ):
-            await main.restart_runtime()
+            await main.restart_runtime(reg, wd)
         # Same lock object reused, not replaced.
         assert main._restart_lock is existing
 
@@ -450,14 +455,16 @@ class TestStartupShutdownRestart:
         main._restart_lock = None
         order = []
 
-        async def fake_shutdown():
+        async def fake_shutdown(reg):
             order.append("down-start")
             await asyncio.sleep(0.01)
             order.append("down-end")
 
-        async def fake_startup():
+        async def fake_startup(reg):
             order.append("up")
 
+        reg = main.container.registry
+        wd = main.NginxWatchdog(KlangkSettings(env={}))
         with (
             patch(
                 "klangk_backend.main.runtime_shutdown",
@@ -466,7 +473,7 @@ class TestStartupShutdownRestart:
             patch("klangk_backend.main.startup", side_effect=fake_startup),
         ):
             await asyncio.gather(
-                main.restart_runtime(), main.restart_runtime()
+                main.restart_runtime(reg, wd), main.restart_runtime(reg, wd)
             )
         # Two complete down-start...down-end...up cycles, never interleaved.
         assert order == [
@@ -480,14 +487,16 @@ class TestStartupShutdownRestart:
 
     async def test_on_sighup_schedules_restart(self):
         """on_sighup creates a task that runs restart_runtime."""
+        reg = main.container.registry
+        wd = main.NginxWatchdog(KlangkSettings(env={}))
         with patch(
             "klangk_backend.main.restart_runtime", new_callable=AsyncMock
         ) as mock_restart:
-            main.on_sighup()
+            main.on_sighup(reg, wd)
             # Let the scheduled task run.
             await asyncio.sleep(0)
             await asyncio.sleep(0)
-        mock_restart.assert_awaited_once()
+        mock_restart.assert_awaited_once_with(reg, wd)
 
     async def test_lifespan_registers_sighup_handler(self, db, monkeypatch):
         """The lifespan installs (and removes) a SIGHUP handler."""
@@ -496,6 +505,7 @@ class TestStartupShutdownRestart:
         monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
         monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
         app = FastAPI()
+        app.state.container_registry = main.container.registry
         app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
         loop = asyncio.get_running_loop()
         with (
