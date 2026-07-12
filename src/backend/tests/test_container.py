@@ -19,16 +19,16 @@ def _make_app_state(registry=None, sockets=None):
     from klangk_backend.wshandler.session import WebSocketState
 
     settings = KlangkSettings(env={})
-    if registry is None:
-        registry = container.ContainerRegistry(settings)
     if sockets is None:
         sockets = WebSocketState()
 
     app_state = types.SimpleNamespace(
-        container_registry=registry,
         sockets=sockets,
         settings=settings,
     )
+    if registry is None:
+        registry = container.ContainerRegistry(app_state)
+    app_state.container_registry = registry
     registry.sockets = sockets
     registry.app_state = app_state
     sockets.app_state = app_state
@@ -65,34 +65,37 @@ def _stub_bringup(monkeypatch):
 
 
 class TestParseIdleTimeout:
-    def test_default_values(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_IDLE_TIMEOUT_SECONDS", raising=False)
-        timeout, interval = container.parse_idle_timeout()
-        assert timeout == 30 * 60
-        assert interval == max(10, min(60, timeout // 3))
+    def _registry(self, env):
+        import types as types_mod
+        from klangk_backend.settings import KlangkSettings
 
-    def test_custom_value(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_IDLE_TIMEOUT_SECONDS", "120")
-        timeout, interval = container.parse_idle_timeout()
-        assert timeout == 120
-        assert interval == max(10, min(60, 120 // 3))
+        settings = KlangkSettings(env=env)
+        app_state = types_mod.SimpleNamespace(settings=settings)
+        return container.ContainerRegistry(app_state)
 
-    def test_invalid_value_uses_default(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_IDLE_TIMEOUT_SECONDS", "not_a_number")
-        timeout, interval = container.parse_idle_timeout()
-        assert timeout == 30 * 60
+    def test_default_values(self):
+        reg = self._registry({})
+        assert reg.idle_timeout_seconds == 30 * 60
+        assert reg.check_interval_seconds == max(10, min(60, 30 * 60 // 3))
 
-    def test_small_value_clamps_interval(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_IDLE_TIMEOUT_SECONDS", "15")
-        timeout, interval = container.parse_idle_timeout()
-        assert timeout == 15
-        assert interval == 10  # clamped to min 10
+    def test_custom_value(self):
+        reg = self._registry({"KLANGK_IDLE_TIMEOUT_SECONDS": "120"})
+        assert reg.idle_timeout_seconds == 120
+        assert reg.check_interval_seconds == max(10, min(60, 120 // 3))
 
-    def test_large_value_clamps_interval(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_IDLE_TIMEOUT_SECONDS", "3600")
-        timeout, interval = container.parse_idle_timeout()
-        assert timeout == 3600
-        assert interval == 60  # clamped to max 60
+    def test_invalid_value_uses_default(self):
+        reg = self._registry({"KLANGK_IDLE_TIMEOUT_SECONDS": "not_a_number"})
+        assert reg.idle_timeout_seconds == 30 * 60
+
+    def test_small_value_clamps_interval(self):
+        reg = self._registry({"KLANGK_IDLE_TIMEOUT_SECONDS": "15"})
+        assert reg.idle_timeout_seconds == 15
+        assert reg.check_interval_seconds == 10  # clamped to min 10
+
+    def test_large_value_clamps_interval(self):
+        reg = self._registry({"KLANGK_IDLE_TIMEOUT_SECONDS": "3600"})
+        assert reg.idle_timeout_seconds == 3600
+        assert reg.check_interval_seconds == 60  # clamped to max 60
 
 
 class TestSslCertDir:
@@ -142,18 +145,34 @@ class TestSslCertDir:
 
 
 class TestImagePullPolicy:
-    def test_default_is_never(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_IMAGE_PULL_POLICY", raising=False)
-        assert container.image_pull_policy() == "never"
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
-    def test_valid_override(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_IMAGE_PULL_POLICY", "missing")
-        assert container.image_pull_policy() == "missing"
+    def test_default_is_never(self):
+        assert self.registry.image_pull_policy() == "never"
 
-    def test_invalid_falls_back_to_never(self, monkeypatch, caplog):
-        monkeypatch.setenv("KLANGK_IMAGE_PULL_POLICY", "sometimes")
+    def test_valid_override(self):
+        # Rebuild registry with env override
+        import types as types_mod
+        from klangk_backend.settings import KlangkSettings
+
+        settings = KlangkSettings(env={"KLANGK_IMAGE_PULL_POLICY": "missing"})
+        app_state = types_mod.SimpleNamespace(settings=settings)
+        reg = container.ContainerRegistry(app_state)
+        assert reg.image_pull_policy() == "missing"
+
+    def test_invalid_falls_back_to_never(self, caplog):
+        import types as types_mod
+        from klangk_backend.settings import KlangkSettings
+
+        settings = KlangkSettings(
+            env={"KLANGK_IMAGE_PULL_POLICY": "sometimes"}
+        )
+        app_state = types_mod.SimpleNamespace(settings=settings)
+        reg = container.ContainerRegistry(app_state)
         with caplog.at_level("WARNING"):
-            assert container.image_pull_policy() == "never"
+            assert reg.image_pull_policy() == "never"
         assert "Invalid KLANGK_IMAGE_PULL_POLICY" in caplog.text
 
 
@@ -307,22 +326,26 @@ class TestIdleCallbacks:
 
 
 class TestPortAllocation:
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
+
     async def test_allocate_ports(self, workspace):
         ports = await model.find_and_allocate_ports(
-            workspace["id"], 3, container.PORT_RANGE_START
+            workspace["id"], 3, self.registry.port_range_start
         )
         assert len(ports) == 3
-        assert all(p >= container.PORT_RANGE_START for p in ports)
+        assert all(p >= self.registry.port_range_start for p in ports)
 
     async def test_allocate_ports_avoids_used(self, workspace, user):
         # Allocate some ports for workspace 1
         ports1 = await model.find_and_allocate_ports(
-            workspace["id"], 3, container.PORT_RANGE_START
+            workspace["id"], 3, self.registry.port_range_start
         )
         # Create second workspace and allocate
         ws2 = await model.create_workspace(user["id"], "ws2")
         ports2 = await model.find_and_allocate_ports(
-            ws2["id"], 3, container.PORT_RANGE_START
+            ws2["id"], 3, self.registry.port_range_start
         )
         # No overlap
         assert set(ports1).isdisjoint(set(ports2))
@@ -331,7 +354,7 @@ class TestPortAllocation:
         app_state = _make_app_state()
         registry = app_state.container_registry
         allocated = await model.find_and_allocate_ports(
-            workspace["id"], 2, container.PORT_RANGE_START
+            workspace["id"], 2, self.registry.port_range_start
         )
         retrieved = await registry.get_workspace_ports(workspace["id"])
         assert retrieved == sorted(allocated)
@@ -344,29 +367,42 @@ class TestPortAllocation:
 
 
 class TestDnsConfig:
-    def test_no_env_returns_empty(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_DNS_SERVERS", raising=False)
-        assert container.container_dns_config() == []
+    def _registry(self, env):
+        import types as types_mod
+        from klangk_backend.settings import KlangkSettings
 
-    def test_single_server(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_DNS_SERVERS", "100.100.100.100")
-        assert container.container_dns_config() == ["100.100.100.100"]
+        settings = KlangkSettings(env=env)
+        app_state = types_mod.SimpleNamespace(settings=settings)
+        return container.ContainerRegistry(app_state)
 
-    def test_multiple_servers(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_DNS_SERVERS", "100.100.100.100, 8.8.8.8")
-        assert container.container_dns_config() == [
-            "100.100.100.100",
-            "8.8.8.8",
-        ]
+    def test_no_env_returns_empty(self):
+        assert self._registry({}).container_dns_config() == []
 
-    def test_empty_string(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_DNS_SERVERS", "")
-        assert container.container_dns_config() == []
+    def test_single_server(self):
+        assert self._registry(
+            {"KLANGK_DNS_SERVERS": "100.100.100.100"}
+        ).container_dns_config() == ["100.100.100.100"]
+
+    def test_multiple_servers(self):
+        result = self._registry(
+            {"KLANGK_DNS_SERVERS": "100.100.100.100, 8.8.8.8"}
+        ).container_dns_config()
+        assert result == ["100.100.100.100", "8.8.8.8"]
+
+    def test_empty_string(self):
+        assert (
+            self._registry({"KLANGK_DNS_SERVERS": ""}).container_dns_config()
+            == []
+        )
 
 
 class TestConstants:
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
+
     def test_port_range_start(self):
-        assert container.PORT_RANGE_START == 9000
+        assert self.registry.port_range_start == 9000
 
     def test_container_port_start(self):
         assert container.CONTAINER_PORT_START == 8000
@@ -378,25 +414,48 @@ class TestConstants:
 class TestPortsPerWorkspaceCap:
     """KLANGK_HOSTED_PORTS_PER_WORKSPACE resolver (#1237)."""
 
-    def test_default_when_unset(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", raising=False)
-        assert container.ports_per_workspace_cap() == 5
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
-    def test_override(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "3")
-        assert container.ports_per_workspace_cap() == 3
+    def _registry(self, env):
+        import types as types_mod
+        from klangk_backend.settings import KlangkSettings
 
-    def test_zero_disables(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "0")
-        assert container.ports_per_workspace_cap() == 0
+        settings = KlangkSettings(env=env)
+        app_state = types_mod.SimpleNamespace(settings=settings)
+        return container.ContainerRegistry(app_state)
+
+    def test_default_when_unset(self):
+        assert self._registry({}).ports_per_workspace_cap() == 5
+
+    def test_override(self):
+        assert (
+            self._registry(
+                {"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "3"}
+            ).ports_per_workspace_cap()
+            == 3
+        )
+
+    def test_zero_disables(self):
+        assert (
+            self._registry(
+                {"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "0"}
+            ).ports_per_workspace_cap()
+            == 0
+        )
 
     def test_garbage_falls_back_to_default(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "abc")
-        assert container.ports_per_workspace_cap() == 5
+        monkeypatch.setattr(
+            self.registry.settings, "hosted_ports_per_workspace", "abc"
+        )
+        assert self.registry.ports_per_workspace_cap() == 5
 
     def test_negative_clamped_to_zero(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "-2")
-        assert container.ports_per_workspace_cap() == 0
+        monkeypatch.setattr(
+            self.registry.settings, "hosted_ports_per_workspace", "-2"
+        )
+        assert self.registry.ports_per_workspace_cap() == 0
 
 
 # --- Container lifecycle tests (mocked) ---
@@ -483,7 +542,7 @@ class TestStartContainer:
         assert "!ALL" in str(call.args[1])
 
     async def test_sudo_enabled(self, workspace, monkeypatch):
-        monkeypatch.setenv("KLANGK_ALLOW_SUDO", "true")
+        monkeypatch.setattr(self.registry.settings, "allow_sudo", "true")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -493,7 +552,7 @@ class TestStartContainer:
         assert "NOPASSWD:ALL" in str(call.args[1])
 
     async def test_sudo_disabled(self, workspace, monkeypatch):
-        monkeypatch.setenv("KLANGK_ALLOW_SUDO", "0")
+        monkeypatch.setattr(self.registry.settings, "allow_sudo", "0")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -501,7 +560,7 @@ class TestStartContainer:
         assert "!ALL" in str(_sudo_call(p).args[1])
 
     async def test_sudo_disabled_false(self, workspace, monkeypatch):
-        monkeypatch.setenv("KLANGK_ALLOW_SUDO", "false")
+        monkeypatch.setattr(self.registry.settings, "allow_sudo", "false")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -510,7 +569,7 @@ class TestStartContainer:
 
     async def test_sudo_toggled_off_to_on(self, workspace, monkeypatch):
         """Start with sudo disabled, restart with sudo enabled."""
-        monkeypatch.setenv("KLANGK_ALLOW_SUDO", "false")
+        monkeypatch.setattr(self.registry.settings, "allow_sudo", "false")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -520,7 +579,7 @@ class TestStartContainer:
         # "Restart" — remove container state so start_container creates a new one
         self.registry.states.clear()
         await model.update_workspace_container(workspace["id"], None)
-        monkeypatch.setenv("KLANGK_ALLOW_SUDO", "true")
+        monkeypatch.setattr(self.registry.settings, "allow_sudo", "true")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -529,7 +588,7 @@ class TestStartContainer:
 
     async def test_sudo_toggled_on_to_off(self, workspace, monkeypatch):
         """Start with sudo enabled, restart with sudo disabled."""
-        monkeypatch.setenv("KLANGK_ALLOW_SUDO", "true")
+        monkeypatch.setattr(self.registry.settings, "allow_sudo", "true")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -538,7 +597,7 @@ class TestStartContainer:
 
         self.registry.states.clear()
         await model.update_workspace_container(workspace["id"], None)
-        monkeypatch.setenv("KLANGK_ALLOW_SUDO", "false")
+        monkeypatch.setattr(self.registry.settings, "allow_sudo", "false")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -642,8 +701,8 @@ class TestStartContainer:
 
     async def test_llm_proxy_env_vars(self, workspace, monkeypatch):
         """Container gets proxy URL, not real API keys."""
-        monkeypatch.setenv("KLANGK_LLM_MODEL", "gemma4:31b")
-        monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
+        monkeypatch.setattr(self.registry.settings, "llm_model", "gemma4:31b")
+        monkeypatch.setattr(self.registry.settings, "nginx_port", "8995")
 
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -701,7 +760,9 @@ class TestStartContainer:
         assert p.create_container.call_args.kwargs["pull"] == "never"
 
     async def test_pull_policy_from_env(self, workspace, monkeypatch):
-        monkeypatch.setenv("KLANGK_IMAGE_PULL_POLICY", "missing")
+        monkeypatch.setattr(
+            self.registry.settings, "image_pull_policy", "missing"
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -798,7 +859,7 @@ class TestStartContainer:
 
     async def test_terminal_banner_custom(self, workspace, monkeypatch):
         """Deployer can set a terminal banner via env var."""
-        monkeypatch.setattr(container, "TERMINAL_BANNER", "Custom warning")
+        monkeypatch.setattr(self.registry, "terminal_banner", "Custom warning")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
@@ -880,7 +941,7 @@ class TestStartContainer:
     async def test_excess_ports_trimmed(self, workspace):
         # Pre-allocate more ports than needed
         await model.find_and_allocate_ports(
-            workspace["id"], 5, container.PORT_RANGE_START
+            workspace["id"], 5, self.registry.port_range_start
         )
         with patch_podman(self.registry):
             await self.registry.start_container(
@@ -894,7 +955,9 @@ class TestStartContainer:
 
     async def test_cap_clamps_allocation_down(self, workspace, monkeypatch):
         """KLANGK_HOSTED_PORTS_PER_WORKSPACE clamps num_ports down (#1237)."""
-        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "3")
+        monkeypatch.setattr(
+            self.registry.settings, "hosted_ports_per_workspace", "3"
+        )
         with patch_podman(self.registry):
             await self.registry.start_container(
                 workspace["id"],
@@ -909,9 +972,11 @@ class TestStartContainer:
         self, workspace, monkeypatch
     ):
         """cap=0 trims an existing workspace's allocations on next start."""
-        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "0")
+        monkeypatch.setattr(
+            self.registry.settings, "hosted_ports_per_workspace", "0"
+        )
         await model.find_and_allocate_ports(
-            workspace["id"], 5, container.PORT_RANGE_START
+            workspace["id"], 5, self.registry.port_range_start
         )
         with patch_podman(self.registry):
             await self.registry.start_container(
@@ -925,7 +990,9 @@ class TestStartContainer:
 
     async def test_cap_zero_omits_hosting_env(self, workspace, monkeypatch):
         """cap=0 suppresses KLANGK_PORT_MAPPINGS / KLANGK_HOSTING_* (#1237)."""
-        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "0")
+        monkeypatch.setattr(
+            self.registry.settings, "hosted_ports_per_workspace", "0"
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
@@ -950,7 +1017,9 @@ class TestStartContainer:
         so a cap of 0 must keep port_allocations empty from the start —
         not just trim on the container's first start.
         """
-        monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "0")
+        monkeypatch.setattr(
+            self.registry.settings, "hosted_ports_per_workspace", "0"
+        )
         await self.registry.allocate_ports(workspace["id"], 5)
         assert await self.registry.get_workspace_ports(workspace["id"]) == []
 
@@ -981,7 +1050,7 @@ class TestStartContainer:
                 "/tmp/home",
             )
         args, kwargs = p.create_container.call_args
-        assert args[1] == container.IMAGE_NAME
+        assert args[1] == self.registry.image_name
         assert kwargs["labels"]["klangk.managed"] == "true"
         assert kwargs["labels"]["klangk.workspace-id"] == workspace["id"]
         assert kwargs["init"] is True
@@ -1037,7 +1106,7 @@ class TestStartContainerPortConflict:
     async def test_port_conflict_removes_stale_and_retries(self, workspace):
         # Pre-allocate ports so we know exactly which ones the workspace gets.
         allocated = await model.find_and_allocate_ports(
-            workspace["id"], 5, container.PORT_RANGE_START
+            workspace["id"], 5, self.registry.port_range_start
         )
         conflict_port = allocated[0]
 
@@ -1078,7 +1147,7 @@ class TestStartContainerPortConflict:
 
     async def test_port_conflict_skips_own_container(self, workspace):
         allocated = await model.find_and_allocate_ports(
-            workspace["id"], 5, container.PORT_RANGE_START
+            workspace["id"], 5, self.registry.port_range_start
         )
         conflict_port = allocated[0]
 
@@ -1142,7 +1211,7 @@ class TestStartContainerPortConflict:
     async def test_port_conflict_stale_vanished(self, workspace):
         """Stale container gone by the time we inspect it."""
         await model.find_and_allocate_ports(
-            workspace["id"], 5, container.PORT_RANGE_START
+            workspace["id"], 5, self.registry.port_range_start
         )
         start_calls = []
 
@@ -1170,7 +1239,7 @@ class TestStartContainerPortConflict:
     async def test_port_conflict_bad_port_bindings(self, workspace):
         """Malformed HostPort values don't crash the retry."""
         await model.find_and_allocate_ports(
-            workspace["id"], 5, container.PORT_RANGE_START
+            workspace["id"], 5, self.registry.port_range_start
         )
         start_calls = []
 
@@ -1204,7 +1273,7 @@ class TestStartContainerPortConflict:
     async def test_port_conflict_remove_error_logged(self, workspace):
         """Error removing stale container is logged, not raised."""
         allocated = await model.find_and_allocate_ports(
-            workspace["id"], 5, container.PORT_RANGE_START
+            workspace["id"], 5, self.registry.port_range_start
         )
         conflict_port = allocated[0]
         start_calls = []
@@ -1253,123 +1322,142 @@ class TestStartContainerPortConflict:
 
 
 class TestValidateMountSpec:
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
+
     def test_valid_bind_mount(self):
-        assert container.validate_mount_spec("/host:/container") is None
+        assert self.registry.validate_mount_spec("/host:/container") is None
 
     def test_valid_volume_mount(self):
-        assert container.validate_mount_spec("vol-name:/data") is None
+        assert self.registry.validate_mount_spec("vol-name:/data") is None
 
     def test_valid_with_options(self):
-        assert container.validate_mount_spec("/host:/container:ro") is None
+        assert self.registry.validate_mount_spec("/host:/container:ro") is None
 
     def test_valid_with_multiple_options(self):
         assert (
-            container.validate_mount_spec("/host:/container:ro,nocopy") is None
+            self.registry.validate_mount_spec("/host:/container:ro,nocopy")
+            is None
         )
 
     def test_no_colon(self):
-        err = container.validate_mount_spec("nocolon")
+        err = self.registry.validate_mount_spec("nocolon")
         assert err is not None
         assert "expected" in err.lower()
 
     def test_too_many_colons(self):
-        err = container.validate_mount_spec("a:b:c:d")
+        err = self.registry.validate_mount_spec("a:b:c:d")
         assert err is not None
 
     def test_empty_source(self):
-        err = container.validate_mount_spec(":/container")
+        err = self.registry.validate_mount_spec(":/container")
         assert err is not None
         assert "source is empty" in err.lower()
 
     def test_relative_container_path(self):
-        err = container.validate_mount_spec("/host:relative")
+        err = self.registry.validate_mount_spec("/host:relative")
         assert err is not None
         assert "absolute" in err.lower()
 
     def test_unknown_option(self):
-        err = container.validate_mount_spec("/host:/container:bogus")
+        err = self.registry.validate_mount_spec("/host:/container:bogus")
         assert err is not None
         assert "unknown option" in err.lower()
 
     def test_validate_mounts_list(self):
-        assert container.validate_mounts(["/a:/b", "vol:/c"]) is None
+        assert self.registry.validate_mounts(["/a:/b", "vol:/c"]) is None
 
     def test_validate_mounts_list_with_error(self):
-        err = container.validate_mounts(["/a:/b", "bad"])
+        err = self.registry.validate_mounts(["/a:/b", "bad"])
         assert err is not None
 
 
 class TestAllowedMountRoots:
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
+
     def test_bind_mount_allowed(self, monkeypatch):
         monkeypatch.setattr(
-            container, "ALLOWED_MOUNT_ROOTS", ["/home", "/data"]
+            self.registry, "allowed_mount_roots", ["/home", "/data"]
         )
-        assert container.validate_mount_spec("/home/user/src:/work") is None
+        assert (
+            self.registry.validate_mount_spec("/home/user/src:/work") is None
+        )
 
     def test_bind_mount_exact_root(self, monkeypatch):
-        monkeypatch.setattr(container, "ALLOWED_MOUNT_ROOTS", ["/home"])
-        assert container.validate_mount_spec("/home:/work") is None
+        monkeypatch.setattr(self.registry, "allowed_mount_roots", ["/home"])
+        assert self.registry.validate_mount_spec("/home:/work") is None
 
     def test_bind_mount_denied(self, monkeypatch):
         monkeypatch.setattr(
-            container, "ALLOWED_MOUNT_ROOTS", ["/home", "/data"]
+            self.registry, "allowed_mount_roots", ["/home", "/data"]
         )
-        err = container.validate_mount_spec("/etc/passwd:/etc/passwd:ro")
+        err = self.registry.validate_mount_spec("/etc/passwd:/etc/passwd:ro")
         assert err is not None
         assert "allowed root" in err.lower()
 
     def test_bind_mount_traversal_denied(self, monkeypatch):
-        monkeypatch.setattr(container, "ALLOWED_MOUNT_ROOTS", ["/home"])
-        err = container.validate_mount_spec("/home/../etc:/work")
+        monkeypatch.setattr(self.registry, "allowed_mount_roots", ["/home"])
+        err = self.registry.validate_mount_spec("/home/../etc:/work")
         assert err is not None
         assert "allowed root" in err.lower()
 
     def test_named_volume_always_allowed(self, monkeypatch):
-        monkeypatch.setattr(container, "ALLOWED_MOUNT_ROOTS", ["/home"])
-        assert container.validate_mount_spec("my-volume:/data") is None
+        monkeypatch.setattr(self.registry, "allowed_mount_roots", ["/home"])
+        assert self.registry.validate_mount_spec("my-volume:/data") is None
 
     def test_no_restriction_when_empty(self, monkeypatch):
-        monkeypatch.setattr(container, "ALLOWED_MOUNT_ROOTS", [])
-        assert container.validate_mount_spec("/etc/shadow:/secrets") is None
+        monkeypatch.setattr(self.registry, "allowed_mount_roots", [])
+        assert (
+            self.registry.validate_mount_spec("/etc/shadow:/secrets") is None
+        )
 
     def test_multiple_roots(self, monkeypatch):
         monkeypatch.setattr(
-            container, "ALLOWED_MOUNT_ROOTS", ["/home", "/data", "/opt"]
+            self.registry, "allowed_mount_roots", ["/home", "/data", "/opt"]
         )
-        assert container.validate_mount_spec("/data/files:/work") is None
-        assert container.validate_mount_spec("/opt/app:/app") is None
-        err = container.validate_mount_spec("/var/log:/logs")
+        assert self.registry.validate_mount_spec("/data/files:/work") is None
+        assert self.registry.validate_mount_spec("/opt/app:/app") is None
+        err = self.registry.validate_mount_spec("/var/log:/logs")
         assert err is not None
 
 
 class TestProtectedPaths:
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
+
     def test_docker_socket_blocked(self, monkeypatch):
-        monkeypatch.setattr(container, "ALLOWED_MOUNT_ROOTS", ["/"])
-        err = container.validate_mount_spec(
+        monkeypatch.setattr(self.registry, "allowed_mount_roots", ["/"])
+        err = self.registry.validate_mount_spec(
             "/var/run/docker.sock:/var/run/docker.sock"
         )
         assert err is not None
         assert "protected" in err.lower()
 
     def test_podman_socket_blocked(self, monkeypatch):
-        monkeypatch.setattr(container, "ALLOWED_MOUNT_ROOTS", ["/"])
-        err = container.validate_mount_spec(
+        monkeypatch.setattr(self.registry, "allowed_mount_roots", ["/"])
+        err = self.registry.validate_mount_spec(
             "/run/podman/podman.sock:/run/podman/podman.sock"
         )
         assert err is not None
         assert "protected" in err.lower()
 
     def test_data_dir_blocked(self, monkeypatch):
-        monkeypatch.setattr(container, "ALLOWED_MOUNT_ROOTS", ["/"])
-        monkeypatch.setenv("KLANGK_DATA_DIR", "/srv/klangk/data")
-        err = container.validate_mount_spec(
+        monkeypatch.setattr(self.registry, "allowed_mount_roots", ["/"])
+        monkeypatch.setattr(
+            self.registry.settings, "data_dir", "/srv/klangk/data"
+        )
+        err = self.registry.validate_mount_spec(
             "/srv/klangk/data/workspaces:/loot"
         )
         assert err is not None
         assert "protected" in err.lower()
 
     def test_protected_blocked_even_without_allowlist(self):
-        err = container.validate_mount_spec(
+        err = self.registry.validate_mount_spec(
             "/var/run/docker.sock:/var/run/docker.sock"
         )
         assert err is not None
@@ -1379,7 +1467,7 @@ class TestProtectedPaths:
         """Symlinks to protected paths are resolved and blocked."""
         link = tmp_path / "sneaky-sock"
         link.symlink_to("/var/run/docker.sock")
-        err = container.validate_mount_spec(f"{link}:/mnt/sock")
+        err = self.registry.validate_mount_spec(f"{link}:/mnt/sock")
         assert err is not None
         assert "protected" in err.lower()
 
@@ -1399,11 +1487,11 @@ class TestProtectedPaths:
             link.symlink_to(str(target))
 
             monkeypatch.setattr(
-                container,
-                "ALLOWED_MOUNT_ROOTS",
+                self.registry,
+                "allowed_mount_roots",
                 [str(allowed)],
             )
-            err = container.validate_mount_spec(f"{link}:/mnt/data")
+            err = self.registry.validate_mount_spec(f"{link}:/mnt/data")
             assert err is None
 
     def test_symlink_outside_allowed_root_blocked(self, monkeypatch):
@@ -1420,11 +1508,11 @@ class TestProtectedPaths:
             link.symlink_to(str(outside))
 
             monkeypatch.setattr(
-                container,
-                "ALLOWED_MOUNT_ROOTS",
+                self.registry,
+                "allowed_mount_roots",
                 [str(allowed)],
             )
-            err = container.validate_mount_spec(f"{link}:/mnt/data")
+            err = self.registry.validate_mount_spec(f"{link}:/mnt/data")
             assert err is not None
             assert "allowed root" in err.lower()
 
@@ -1978,7 +2066,7 @@ class TestCleanupIdleContainers:
         # Set activity far in the past
         self.registry.track_activity("cid", "ws-1")
         self.registry.states["ws-1"].last_activity = (
-            time.time() - container.IDLE_TIMEOUT_SECONDS - 100
+            time.time() - self.registry.idle_timeout_seconds - 100
         )
 
         with patch_podman(self.registry) as p:
@@ -1998,7 +2086,7 @@ class TestCleanupIdleContainers:
     async def test_idle_calls_workspace_killed_callback(self):
         self.registry.track_activity("cid", "ws-killed")
         self.registry.states["ws-killed"].last_activity = (
-            time.time() - container.IDLE_TIMEOUT_SECONDS - 100
+            time.time() - self.registry.idle_timeout_seconds - 100
         )
 
         killed_cb = AsyncMock()
@@ -2022,7 +2110,7 @@ class TestCleanupIdleContainers:
     async def test_idle_workspace_killed_callback_error(self):
         self.registry.track_activity("cid", "ws-err")
         self.registry.states["ws-err"].last_activity = (
-            time.time() - container.IDLE_TIMEOUT_SECONDS - 100
+            time.time() - self.registry.idle_timeout_seconds - 100
         )
 
         killed_cb = AsyncMock(side_effect=RuntimeError("boom"))
@@ -2063,7 +2151,7 @@ class TestCleanupIdleContainers:
     async def test_idle_callback_invoked(self):
         self.registry.track_activity("cid", "ws-1")
         self.registry.states["ws-1"].last_activity = (
-            time.time() - container.IDLE_TIMEOUT_SECONDS - 100
+            time.time() - self.registry.idle_timeout_seconds - 100
         )
 
         callback_called = []
@@ -2088,7 +2176,7 @@ class TestCleanupIdleContainers:
     async def test_idle_callback_error_handled(self):
         self.registry.track_activity("cid", "ws-1")
         self.registry.states["ws-1"].last_activity = (
-            time.time() - container.IDLE_TIMEOUT_SECONDS - 100
+            time.time() - self.registry.idle_timeout_seconds - 100
         )
 
         async def bad_callback(ws_id):
@@ -2397,7 +2485,7 @@ def _health_registry(ws_state=None):
 
     Constructs a fresh registry via ``_make_app_state`` and wires its
     ``sockets`` to the given WebSocketState (or a fresh one by default).
-    HealthMonitor reaches sockets via ``self._registry.sockets``.
+    HealthMonitor reaches sockets via ``self.registry.sockets``.
     """
     app_state = _make_app_state(sockets=ws_state)
     return app_state.container_registry
@@ -2412,13 +2500,16 @@ def _health_state(
     setup_state="complete",
     health_status=None,
     in_startup_grace=False,
+    registry=None,
 ):
     """Build a ContainerState wired up for health checks.
 
     *in_startup_grace* defaults to False so the core healthy/unhealthy
     tests exercise post-grace behavior; the startup-grace tests opt in.
     """
-    st = container.ContainerState(workspace_id, container_id)
+    if registry is None:
+        registry = _health_registry()
+    st = container.ContainerState(workspace_id, container_id, registry)
     st.health_check = health_check
     st.owner_id = owner_id
     st.setup_state = setup_state
@@ -2429,6 +2520,10 @@ def _health_state(
 
 
 class TestHealthMonitorRunOne:
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
+
     """_run_one: rc 0 → healthy, non-zero/error → unhealthy (with reason)."""
 
     async def test_exit_zero_is_healthy(self):
@@ -2436,19 +2531,17 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         exec_mock = AsyncMock(return_value=(0, "", ""))
         with (
-            patch.object(
-                monitor._registry.podman, "exec_container", exec_mock
-            ),
+            patch.object(monitor.registry.podman, "exec_container", exec_mock),
             patch.object(
                 model, "get_user_handle", AsyncMock(return_value="owner")
             ),
             patch.object(
-                monitor._registry.app_state.workspaces,
+                monitor.registry.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor._registry.app_state.workspaces,
+                monitor.registry.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2461,7 +2554,7 @@ class TestHealthMonitorRunOne:
         assert call.args[0] == "cid1234567890"
         assert call.kwargs["user"] == "klangk"
         assert call.kwargs["extra_env"] == {"HOME": "/home/klangk"}
-        assert call.kwargs["timeout"] == container.HEALTH_CHECK_TIMEOUT_SECONDS
+        assert call.kwargs["timeout"] == self.registry.health_check_timeout
         # The health check runs as a NON-login bash shell (bash -c) on
         # purpose: it sources nothing, so the probe is deterministic and
         # decoupled from the user's interactive ~/.profile / ~/.bashrc.
@@ -2478,7 +2571,7 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor._registry.podman,
+                monitor.registry.podman,
                 "exec_container",
                 AsyncMock(return_value=(1, "", "curl: connection refused")),
             ),
@@ -2486,12 +2579,12 @@ class TestHealthMonitorRunOne:
                 model, "get_user_handle", AsyncMock(return_value="owner")
             ),
             patch.object(
-                monitor._registry.app_state.workspaces,
+                monitor.registry.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor._registry.app_state.workspaces,
+                monitor.registry.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2508,7 +2601,7 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor._registry.podman,
+                monitor.registry.podman,
                 "exec_container",
                 AsyncMock(return_value=(2, "all good on stdout", "")),
             ),
@@ -2516,12 +2609,12 @@ class TestHealthMonitorRunOne:
                 model, "get_user_handle", AsyncMock(return_value="owner")
             ),
             patch.object(
-                monitor._registry.app_state.workspaces,
+                monitor.registry.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor._registry.app_state.workspaces,
+                monitor.registry.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2538,7 +2631,7 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor._registry.podman,
+                monitor.registry.podman,
                 "exec_container",
                 AsyncMock(return_value=(127, "", "")),
             ),
@@ -2546,12 +2639,12 @@ class TestHealthMonitorRunOne:
                 model, "get_user_handle", AsyncMock(return_value="owner")
             ),
             patch.object(
-                monitor._registry.app_state.workspaces,
+                monitor.registry.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor._registry.app_state.workspaces,
+                monitor.registry.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2578,7 +2671,7 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor._registry.podman,
+                monitor.registry.podman,
                 "exec_container",
                 AsyncMock(side_effect=podman.PodmanError(500, "boom")),
             ),
@@ -2586,12 +2679,12 @@ class TestHealthMonitorRunOne:
                 model, "get_user_handle", AsyncMock(return_value="owner")
             ),
             patch.object(
-                monitor._registry.app_state.workspaces,
+                monitor.registry.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor._registry.app_state.workspaces,
+                monitor.registry.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2606,7 +2699,7 @@ class TestHealthMonitorRunOne:
         monitor = _health_registry().health
         st = _health_state(owner_id=None)
         with patch.object(
-            monitor._registry.podman, "exec_container"
+            monitor.registry.podman, "exec_container"
         ) as exec_mock:
             status, message = await monitor._run_one(st)
         assert status == "unhealthy"
@@ -2622,7 +2715,7 @@ class TestHealthMonitorRunOne:
                 model, "get_user_handle", AsyncMock(return_value=None)
             ),
             patch.object(
-                monitor._registry.podman, "exec_container"
+                monitor.registry.podman, "exec_container"
             ) as exec_mock,
         ):
             status, message = await monitor._run_one(st)
@@ -2858,6 +2951,10 @@ class TestHealthMonitorStartupGrace:
 
 
 class TestHealthMonitorLoopSkips:
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
+
     """run_health_loop skips setup-incomplete and checkless workspaces."""
 
     async def test_skips_setup_incomplete(self):
@@ -2870,7 +2967,7 @@ class TestHealthMonitorLoopSkips:
                 patch.object(
                     monitor, "_check_workspace", AsyncMock()
                 ) as check,
-                patch.object(container, "HEALTH_CHECK_INTERVAL_SECONDS", 0.01),
+                patch.object(reg, "health_check_interval", 0.01),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
                 await asyncio.sleep(0.05)
@@ -2893,7 +2990,7 @@ class TestHealthMonitorLoopSkips:
                 patch.object(
                     monitor, "_check_workspace", AsyncMock()
                 ) as check,
-                patch.object(container, "HEALTH_CHECK_INTERVAL_SECONDS", 0.01),
+                patch.object(reg, "health_check_interval", 0.01),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
                 await asyncio.sleep(0.05)
@@ -2916,7 +3013,7 @@ class TestHealthMonitorLoopSkips:
                 patch.object(
                     monitor, "_check_workspace", AsyncMock()
                 ) as check,
-                patch.object(container, "HEALTH_CHECK_INTERVAL_SECONDS", 0.01),
+                patch.object(reg, "health_check_interval", 0.01),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
                 await asyncio.sleep(0.05)
@@ -3067,7 +3164,9 @@ class TestHealthMonitorDeath:
         )
         reg.states[st.workspace_id] = st
         reg._cid_to_wsid[st.container_id] = st.workspace_id
-        st.last_activity = time.time() - container.IDLE_TIMEOUT_SECONDS - 100
+        st.last_activity = (
+            time.time() - self.registry.idle_timeout_seconds - 100
+        )
 
         try:
             reg.sockets.connections[sock] = SimpleNamespace(
@@ -3097,6 +3196,10 @@ class TestHealthMonitorDeath:
 
 
 class TestHealthLoopHeartbeat:
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
+
     """run_health_loop ticks a heartbeat each sweep (#1175 item 3b).
 
     Emitting from the loop (not a standalone task) ties heartbeat
@@ -3113,7 +3216,7 @@ class TestHealthLoopHeartbeat:
             )
             with (
                 patch.object(monitor, "_check_workspace", AsyncMock()),
-                patch.object(container, "HEALTH_CHECK_INTERVAL_SECONDS", 0.01),
+                patch.object(reg, "health_check_interval", 0.01),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
                 await asyncio.sleep(0.05)
@@ -3197,21 +3300,58 @@ class TestRegistryServiceSessionLocks:
         assert reg.prune_service_session_locks({"a", "b"}) == 0
 
     def test_registry_takes_settings(self):
-        """ContainerRegistry.__init__ accepts settings (#1426)."""
+        """ContainerRegistry.__init__ accepts app_state (#1426, #1487)."""
         from klangk_backend.settings import KlangkSettings
+        import types as types_mod
 
-        reg = container.ContainerRegistry(KlangkSettings(env={}))
+        settings = KlangkSettings(env={})
+        app_state = types_mod.SimpleNamespace(settings=settings)
+        reg = container.ContainerRegistry(app_state)
         assert reg.settings is not None
+        assert reg.app_state is app_state
 
 
 class TestRegistryConnections:
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
+
     """HealthMonitor reaches WebSocketState via the registry, not a module global (#1464)."""
 
     def test_connections_property_reads_from_registry(self):
-        """The _connections property returns self._registry.sockets."""
+        """The connections property returns self.registry.sockets."""
         from klangk_backend.wshandler.session import WebSocketState
 
         ws_state = WebSocketState()
         app_state = _make_app_state(sockets=ws_state)
         reg = app_state.container_registry
-        assert reg.health._connections is ws_state
+        assert reg.health.connections is ws_state
+
+
+class TestRegistrySettingsDerived:
+    """Settings-derived attrs on ContainerRegistry (#1487)."""
+
+    def _registry(self, env):
+        import types as types_mod
+        from klangk_backend.settings import KlangkSettings
+
+        settings = KlangkSettings(env=env)
+        app_state = types_mod.SimpleNamespace(settings=settings)
+        return container.ContainerRegistry(app_state)
+
+    def test_allowed_images_from_settings(self):
+        reg = self._registry({"KLANGK_ALLOWED_IMAGES": "foo,bar"})
+        assert "foo" in reg.allowed_images
+        assert "bar" in reg.allowed_images
+        assert reg.image_name in reg.allowed_images  # default always allowed
+
+    def test_allowed_mount_roots_from_settings(self):
+        reg = self._registry({"KLANGK_ALLOWED_MOUNT_ROOTS": "/home,/data"})
+        assert any(r.endswith("/home") for r in reg.allowed_mount_roots)
+        assert any(r.endswith("/data") for r in reg.allowed_mount_roots)
+
+    def test_set_idle_timeout(self):
+        reg = self._registry({})
+        reg.set_idle_timeout(120)
+        assert reg.idle_timeout_seconds == 120
+        assert reg.check_interval_seconds == max(10, min(60, 120 // 3))

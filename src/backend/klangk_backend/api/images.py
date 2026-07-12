@@ -11,7 +11,6 @@ from pydantic import BaseModel
 
 from .. import (
     auth,
-    container,
     model,
 )
 from ..podman import PodmanError as PodmanError
@@ -23,10 +22,13 @@ router = APIRouter()
 
 
 @router.get("/images")
-async def list_images(_user: dict = Depends(auth.get_current_user)):
+async def list_images(
+    _user: dict = Depends(auth.get_current_user),
+    app_state=Depends(get_app_state_dep),
+):
     return {
-        "default": container.IMAGE_NAME,
-        "allowed": sorted(container.ALLOWED_IMAGES),
+        "default": app_state.container_registry.image_name,
+        "allowed": sorted(app_state.container_registry.allowed_images),
     }
 
 

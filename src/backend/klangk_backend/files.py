@@ -42,7 +42,7 @@ def validate_path(path: str) -> str:
 
 
 async def list_files(
-    container_id: str, path: str = "/", podman=None
+    container_id: str, path: str = "/", *, podman
 ) -> list[dict]:
     """List files and directories at the given path inside the container."""
     path = validate_path(path)
@@ -99,7 +99,7 @@ async def list_files(
     return entries
 
 
-async def stat_path(container_id: str, path: str, podman=None) -> dict | None:
+async def stat_path(container_id: str, path: str, podman) -> dict | None:
     """Stat a single path.  Returns ``{"is_dir": bool, "size": int}``
     or ``None`` if the path does not exist."""
     path = validate_path(path)
@@ -122,7 +122,7 @@ async def stat_path(container_id: str, path: str, podman=None) -> dict | None:
     return {"is_dir": is_dir, "size": size}
 
 
-async def read_file(container_id: str, path: str, podman=None) -> str | None:
+async def read_file(container_id: str, path: str, podman) -> str | None:
     """Read file contents as text.  Returns None if missing or > 1 MB."""
     path = validate_path(path)
     info = await stat_path(container_id, path, podman)
@@ -141,7 +141,7 @@ async def read_file(container_id: str, path: str, podman=None) -> str | None:
 
 
 def stream_file(
-    container_id: str, path: str, podman=None
+    container_id: str, path: str, podman
 ) -> AsyncGenerator[bytes, None]:
     """Stream file contents as raw bytes for download."""
     path = validate_path(path)
@@ -153,7 +153,7 @@ def stream_file(
 
 
 def stream_dir_tar(
-    container_id: str, path: str, podman=None
+    container_id: str, path: str, podman
 ) -> AsyncGenerator[bytes, None]:
     """Stream a directory as a tar.gz archive for download."""
     path = validate_path(path)
@@ -172,7 +172,7 @@ def stream_dir_tar(
     )
 
 
-async def delete_path(container_id: str, path: str, podman=None) -> str:
+async def delete_path(container_id: str, path: str, podman) -> str:
     """Delete a file or directory.  Returns the path deleted."""
     path = validate_path(path)
     # Check existence first
@@ -194,7 +194,7 @@ async def delete_path(container_id: str, path: str, podman=None) -> str:
 
 
 async def rename_path(
-    container_id: str, old_path: str, new_path: str, podman=None
+    container_id: str, old_path: str, new_path: str, podman
 ) -> str:
     """Rename/move a file or directory.  Returns the new path."""
     old_path = validate_path(old_path)
@@ -234,7 +234,7 @@ async def rename_path(
 
 
 async def write_file(
-    container_id: str, path: str, content: bytes, podman=None
+    container_id: str, path: str, content: bytes, podman
 ) -> str:
     """Write file contents.  Returns the path written."""
     path = validate_path(path)

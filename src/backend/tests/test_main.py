@@ -23,13 +23,13 @@ def _make_app_state(settings=None):
     """Build a minimal app_state for tests."""
     if settings is None:
         settings = KlangkSettings(env={})
-    registry = ContainerRegistry(settings)
     sockets = WebSocketState()
     app_state = types.SimpleNamespace(
-        container_registry=registry,
         sockets=sockets,
         settings=settings,
     )
+    registry = ContainerRegistry(app_state)
+    app_state.container_registry = registry
     registry.sockets = sockets
     registry.app_state = app_state
     sockets.app_state = app_state

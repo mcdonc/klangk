@@ -88,16 +88,16 @@ def _make_app_state(registry=None, sockets=None):
     from klangk_backend.container import ContainerRegistry
 
     settings = KlangkSettings(env={})
-    if registry is None:
-        registry = ContainerRegistry(settings)
     if sockets is None:
         sockets = WebSocketState()
 
     app_state = types.SimpleNamespace(
-        container_registry=registry,
         sockets=sockets,
         settings=settings,
     )
+    if registry is None:
+        registry = ContainerRegistry(app_state)
+    app_state.container_registry = registry
     registry.sockets = sockets
     registry.app_state = app_state
     sockets.app_state = app_state
@@ -4703,8 +4703,10 @@ class TestServiceHealthSnapshot:
     """send_service_health_snapshot replays current health to one socket
     on connect, closing the steady-state-unhealthy hole (#1175 item 1)."""
 
-    def _state(self, ws_id, *, health_check, health_status, message=None):
-        cs = container.ContainerState(ws_id, f"cid-{ws_id}")
+    def _state(
+        self, ws_id, *, registry, health_check, health_status, message=None
+    ):
+        cs = container.ContainerState(ws_id, f"cid-{ws_id}", registry)
         cs.health_check = health_check
         cs.health_status = health_status
         cs.health_message = message
@@ -4721,11 +4723,13 @@ class TestServiceHealthSnapshot:
             registry.states.clear()
             registry.states["ws-healthy"] = self._state(
                 "ws-healthy",
+                registry=registry,
                 health_check="true",
                 health_status="healthy",
             )
             registry.states["ws-sick"] = self._state(
                 "ws-sick",
+                registry=registry,
                 health_check="curl localhost",
                 health_status="unhealthy",
                 message="conn refused",
@@ -4733,12 +4737,14 @@ class TestServiceHealthSnapshot:
             # health check configured but never polled yet
             registry.states["ws-unchecked"] = self._state(
                 "ws-unchecked",
+                registry=registry,
                 health_check="true",
                 health_status=None,
             )
             # no health check at all (plain dev workspace)
             registry.states["ws-nocheck"] = self._state(
                 "ws-nocheck",
+                registry=registry,
                 health_check=None,
                 health_status=None,
             )
@@ -4770,6 +4776,7 @@ class TestServiceHealthSnapshot:
             registry.states.clear()
             registry.states["ws-1"] = self._state(
                 "ws-1",
+                registry=registry,
                 health_check="true",
                 health_status="healthy",
             )
@@ -4793,11 +4800,13 @@ class TestServiceHealthSnapshot:
             registry.states.clear()
             registry.states["ws-1"] = self._state(
                 "ws-1",
+                registry=registry,
                 health_check="true",
                 health_status="healthy",
             )
             registry.states["ws-2"] = self._state(
                 "ws-2",
+                registry=registry,
                 health_check="true",
                 health_status="unhealthy",
             )
@@ -4904,8 +4913,8 @@ class TestNotifyServiceHealthForwarding:
 class TestServiceHealthSnapshotFields:
     """send_service_health_snapshot carries running/seq/checked_at."""
 
-    def _state(self, ws_id, *, checked_at=None, seq=0):
-        cs = container.ContainerState(ws_id, f"cid-{ws_id}")
+    def _state(self, ws_id, *, registry, checked_at=None, seq=0):
+        cs = container.ContainerState(ws_id, f"cid-{ws_id}", registry)
         cs.health_check = "true"
         cs.health_status = "unhealthy"
         cs.health_message = "down"
@@ -4922,7 +4931,7 @@ class TestServiceHealthSnapshotFields:
         try:
             registry.states.clear()
             registry.states["ws-1"] = self._state(
-                "ws-1", checked_at=1_700_000_000.0, seq=5
+                "ws-1", registry=registry, checked_at=1_700_000_000.0, seq=5
             )
             sockets.send_service_health_snapshot(sock)
         finally:
@@ -5404,7 +5413,9 @@ class TestHandleRestartContainer:
     ):
         app_state = _make_app_state()
         registry = app_state.container_registry
-        monkeypatch.setattr(container, "IDLE_TIMEOUT_SECONDS", 90)
+        monkeypatch.setattr(
+            app_state.container_registry, "idle_timeout_seconds", 90
+        )
         sock = _mock_sock(headers={"host": "localhost:8997"})
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "restart-frac"
@@ -8695,7 +8706,9 @@ class TestFractionalTimeout:
     ):
         app_state = _make_app_state()
         registry = app_state.container_registry
-        monkeypatch.setattr(container, "IDLE_TIMEOUT_SECONDS", 90)
+        monkeypatch.setattr(
+            app_state.container_registry, "idle_timeout_seconds", 90
+        )
         sock = _mock_sock()
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "frac-ws"

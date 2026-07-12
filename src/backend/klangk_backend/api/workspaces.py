@@ -28,7 +28,6 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 from .. import (
     acl,
     auth,
-    container,
     model,
     wshandler,
 )
@@ -180,14 +179,17 @@ async def create_workspace(
             detail="Auto-start is not enabled on this server"
             " (set KLANGK_ALLOW_AUTOSTART=1)",
         )
-    if body.image and body.image not in container.ALLOWED_IMAGES:
+    if (
+        body.image
+        and body.image not in app_state.container_registry.allowed_images
+    ):
         raise HTTPException(
             status_code=400,
             detail=f"Image {body.image!r} is not allowed. "
-            f"Allowed: {sorted(container.ALLOWED_IMAGES)}",
+            f"Allowed: {sorted(app_state.container_registry.allowed_images)}",
         )
     if body.mounts:
-        mount_err = container.validate_mounts(body.mounts)
+        mount_err = app_state.container_registry.validate_mounts(body.mounts)
         if mount_err:
             raise HTTPException(status_code=400, detail=mount_err)
     try:
@@ -257,14 +259,16 @@ async def update_workspace(
             " (set KLANGK_ALLOW_AUTOSTART=1)",
         )
     if "image" in fields and fields["image"] is not None:
-        if fields["image"] not in container.ALLOWED_IMAGES:
+        if fields["image"] not in app_state.container_registry.allowed_images:
             raise HTTPException(
                 status_code=400,
                 detail=f"Image {fields['image']!r} is not allowed. "
-                f"Allowed: {sorted(container.ALLOWED_IMAGES)}",
+                f"Allowed: {sorted(app_state.container_registry.allowed_images)}",
             )
     if "mounts" in fields and fields["mounts"]:
-        mount_err = container.validate_mounts(fields["mounts"])
+        mount_err = app_state.container_registry.validate_mounts(
+            fields["mounts"]
+        )
         if mount_err:
             raise HTTPException(status_code=400, detail=mount_err)
     if not fields:
@@ -586,7 +590,7 @@ async def _stream_upload_to_tempfile(file: UploadFile) -> str:
 
 
 async def _extract_archive_metadata(
-    archive_path: str, name: str | None
+    archive_path: str, name: str | None, app_state
 ) -> dict:
     """Read workspace.json from the archive and return sanitized metadata."""
     result = await asyncio.to_thread(
@@ -616,11 +620,11 @@ async def _extract_archive_metadata(
         )
 
     image = metadata.get("image")
-    if image and image not in container.ALLOWED_IMAGES:
+    if image and image not in app_state.container_registry.allowed_images:
         image = None
 
     mounts = metadata.get("mounts")
-    if mounts and container.validate_mounts(mounts):
+    if mounts and app_state.container_registry.validate_mounts(mounts):
         mounts = None
 
     # Validate provenance: reject archives without instance_id or from a
@@ -712,7 +716,7 @@ async def import_workspace(
     archive_path = await _stream_upload_to_tempfile(file)
     ws = None
     try:
-        meta = await _extract_archive_metadata(archive_path, name)
+        meta = await _extract_archive_metadata(archive_path, name, app_state)
 
         try:
             ws = await app_state.workspaces.create_workspace(

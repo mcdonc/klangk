@@ -223,7 +223,7 @@ class Terminal:
     single ``app_state`` reference rather than three separate ctor args.
     """
 
-    def __init__(self, app_state=None):
+    def __init__(self, app_state):
         self._app_state = app_state
 
     @property
