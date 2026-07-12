@@ -868,6 +868,7 @@ class TerminalSession:
                 self.session_name,
                 user_home=self.user_home,
                 ssh_agent_socket=self.ssh_agent_socket,
+                podman=self._podman,
             )
         env = build_environment(
             self.user_home,
