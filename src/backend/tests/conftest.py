@@ -61,18 +61,15 @@ def temp_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("KLANGK_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", str(tmp_path / "customize"))
     monkeypatch.delenv("KLANGK_IMAGE_PULL_POLICY", raising=False)
-    # Re-import to pick up the new env var.  The engine state lives on
-    # ``model.db`` (where ``ensure_engine`` reads it), so the globals
-    # must be rebound there — setting them on the package would not be
-    # seen by the core helpers.
+    # Rebuild the DB instance from the new env so the engine cache and
+    # db_path point at the per-test temp dir (#1452: no import-time globals
+    # to rebind — construct a fresh DB from settings).
     import klangk_backend.model as us
     import klangk_backend.model.db as us_core
     import klangk_backend.workspaces as wm
+    from klangk_backend.settings import KlangkSettings
 
-    us_core.data_dir = tmp_path
-    us_core.DB_PATH = tmp_path / "klangk.db"
-    # Reset the SQLAlchemy engine so it reconnects to the new DB path.
-    us_core.engine = None
+    us_core.set_db(us_core.DB(KlangkSettings(os.environ)))
     wm.data_dir = tmp_path
     wm.WORKSPACES_ROOT = tmp_path / "workspaces"
     # Clear agent caches so each test starts fresh.

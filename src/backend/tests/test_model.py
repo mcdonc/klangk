@@ -14,8 +14,9 @@ class TestMigration:
     async def test_migrate_old_schema(self, temp_data_dir):
         """Migrates a pre-OIDC database: password_hash NOT NULL, no
         provider/external_id columns."""
-        db = await aiosqlite.connect(str(model.db.DB_PATH))
-        model.db.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        db_path = model.db.get_default_db().db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = await aiosqlite.connect(str(db_path))
         try:
             await db.execute("""
                 CREATE TABLE users (
@@ -55,8 +56,9 @@ class TestMigration:
 
     async def test_migrate_workspaces_adds_auto_start(self, temp_data_dir):
         """Migrates a workspaces table missing the auto_start column."""
-        db = await aiosqlite.connect(str(model.db.DB_PATH))
-        model.db.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        db_path = model.db.get_default_db().db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = await aiosqlite.connect(str(db_path))
         try:
             await db.execute("""
                 CREATE TABLE users (
@@ -117,8 +119,9 @@ class TestMigration:
     ):
         """init_db renames the legacy default_command column to service_command
         (#1203), preserving existing data."""
-        db = await aiosqlite.connect(str(model.db.DB_PATH))
-        model.db.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        db_path = model.db.get_default_db().db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = await aiosqlite.connect(str(db_path))
         try:
             await db.execute("""
                 CREATE TABLE users (
@@ -185,8 +188,9 @@ class TestMigration:
         so a DB created before they shipped lacked them. init_db must add
         them on upgrade (NULL by default) without touching existing rows.
         """
-        db = await aiosqlite.connect(str(model.db.DB_PATH))
-        model.db.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        db_path = model.db.get_default_db().db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = await aiosqlite.connect(str(db_path))
         try:
             await db.execute("""
                 CREATE TABLE users (
@@ -1847,3 +1851,45 @@ class TestInstanceId:
         """get_instance_id raises before resolve_instance_id is called."""
         with pytest.raises(RuntimeError, match="not yet resolved"):
             model.get_instance_id()
+
+
+class TestDB:
+    """Tests for the DB(settings) class (#1452)."""
+
+    def test_db_derives_path_from_settings(self, temp_data_dir):
+        """DB computes db_path from settings.data_dir, not import-time globals."""
+        from klangk_backend.model.db import DB
+        from klangk_backend.settings import KlangkSettings
+        import os
+
+        db = DB(KlangkSettings(os.environ))
+        assert str(db.db_path).endswith("klangk.db")
+        assert db.engine is None
+
+    def test_get_default_db_lazy_constructs(self, temp_data_dir):
+        """get_default_db lazily constructs a DB from settings when _db is None."""
+        from klangk_backend.model import db as db_mod
+
+        saved = db_mod._db
+        try:
+            db_mod._db = None
+            result = db_mod.get_default_db()
+            assert result is not None
+            assert result.db_path.name == "klangk.db"
+        finally:
+            db_mod._db = saved
+
+    def test_set_db_replaces_instance(self, temp_data_dir):
+        """set_db replaces the module-level DB instance."""
+        from klangk_backend.model import db as db_mod
+        from klangk_backend.model.db import DB
+        from klangk_backend.settings import KlangkSettings
+        import os
+
+        saved = db_mod._db
+        try:
+            new_db = DB(KlangkSettings(os.environ))
+            db_mod.set_db(new_db)
+            assert db_mod.get_default_db() is new_db
+        finally:
+            db_mod.set_db(saved)
