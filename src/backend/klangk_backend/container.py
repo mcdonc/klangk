@@ -5,7 +5,7 @@ import logging
 import os
 import time
 
-from . import auth, bringup, model, plugins, podman, terminal, util
+from . import auth, bringup, model, plugins, podman, util
 from .podman import PodmanError
 from .settings import KlangkSettings
 
@@ -1373,7 +1373,7 @@ class ContainerRegistry:
         # Write the workspace token so container processes can
         # authenticate without an env-var restart.
         workspace_token = auth.create_workspace_token(workspace_id)
-        await terminal.set_workspace_token(cid, workspace_token, self.podman)
+        await self.app_state.terminal.set_workspace_token(cid, workspace_token)
 
         # Block until the entrypoint's one-time setup is done. ``podman
         # start`` returns when the entrypoint has *begun*, not finished;
