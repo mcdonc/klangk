@@ -8,7 +8,6 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .. import auth
 from .safe_websocket import SafeWebSocket, SlowClientError
 from .helpers import send_error, log_ws_msg
-from .session import state
 from .connection import Connection
 
 logger = logging.getLogger(__name__)
@@ -68,7 +67,7 @@ _WS_STATE_COMMANDS: dict[str, str] = {
 }
 
 
-async def handle_websocket(websocket: WebSocket) -> None:
+async def handle_websocket(websocket: WebSocket, app_state) -> None:
     """Main WebSocket handler."""
     # Authenticate via query param
     token = websocket.query_params.get("token")
@@ -88,13 +87,13 @@ async def handle_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
     safe_ws = SafeWebSocket(websocket)
     safe_ws.start_sender()
-    conn = Connection(safe_ws, user)
-    state.connections[safe_ws] = conn
+    conn = Connection(safe_ws, user, app_state)
+    app_state.sockets.connections[safe_ws] = conn
     # Replay current health of every health-checked workspace so a
     # pure-WS consumer (e.g. ``klangkc monitor``) sees steady-state
     # status immediately instead of being blind until the next
     # transition (#1175 item 1).
-    state.send_service_health_snapshot(safe_ws)
+    app_state.sockets.send_service_health_snapshot(safe_ws)
 
     try:
         while True:
@@ -119,7 +118,7 @@ async def handle_websocket(websocket: WebSocket) -> None:
             else:
                 state_method = _WS_STATE_COMMANDS.get(cmd)
                 if state_method is not None:
-                    getattr(state, state_method)(msg, safe_ws)
+                    getattr(app_state.sockets, state_method)(msg, safe_ws)
                 else:
                     send_error(safe_ws, f"Unknown command: {cmd}")
 
@@ -138,4 +137,4 @@ async def handle_websocket(websocket: WebSocket) -> None:
         await conn.cleanup()
         # Container is intentionally left running — idle timeout will clean it up.
         # This allows instant reconnection when navigating back to the workspace.
-        state.connections.pop(safe_ws, None)
+        app_state.sockets.connections.pop(safe_ws, None)

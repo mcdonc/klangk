@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+import types
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,28 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from klangk_backend import bringup, container, model, plugins, podman
+
+
+def _make_app_state(registry=None, sockets=None):
+    """Build a minimal app_state for tests."""
+    from klangk_backend.settings import KlangkSettings
+    from klangk_backend.wshandler.session import WebSocketState
+
+    settings = KlangkSettings(env={})
+    if registry is None:
+        registry = container.ContainerRegistry(settings)
+    if sockets is None:
+        sockets = WebSocketState()
+
+    app_state = types.SimpleNamespace(
+        container_registry=registry,
+        sockets=sockets,
+        settings=settings,
+    )
+    registry.sockets = sockets
+    registry.app_state = app_state
+    sockets.app_state = app_state
+    return app_state
 
 
 @pytest.fixture(autouse=True)
@@ -121,102 +144,94 @@ class TestImagePullPolicy:
 
 class TestActivityTracking:
     def setup_method(self):
-        container.registry.states.clear()
-
-    def teardown_method(self):
-        container.registry.states.clear()
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
     def testtrack_activity(self):
-        container.registry.track_activity("cid-1", "ws-1")
-        assert "ws-1" in container.registry.states
-        state = container.registry.states["ws-1"]
+        self.registry.track_activity("cid-1", "ws-1")
+        assert "ws-1" in self.registry.states
+        state = self.registry.states["ws-1"]
         assert state.container_id == "cid-1"
         assert state.last_activity <= time.time()
 
     def test_record_activity_updates_time(self):
-        container.registry.track_activity("cid-1", "ws-1")
-        old_time = container.registry.states["ws-1"].last_activity
+        self.registry.track_activity("cid-1", "ws-1")
+        old_time = self.registry.states["ws-1"].last_activity
         time.sleep(0.01)
-        container.registry.record_activity("cid-1")
-        new_time = container.registry.states["ws-1"].last_activity
+        self.registry.record_activity("cid-1")
+        new_time = self.registry.states["ws-1"].last_activity
         assert new_time > old_time
 
     def test_record_activity_unknown_container(self):
         # Should not raise
-        container.registry.record_activity("nonexistent")
-        assert "nonexistent" not in container.registry.states
+        self.registry.record_activity("nonexistent")
+        assert "nonexistent" not in self.registry.states
 
     def testtrack_activity_overwrites(self):
-        container.registry.track_activity("cid-1", "ws-1")
-        container.registry.track_activity("cid-1", "ws-2")
-        assert container.registry.states["ws-2"].container_id == "cid-1"
+        self.registry.track_activity("cid-1", "ws-1")
+        self.registry.track_activity("cid-1", "ws-2")
+        assert self.registry.states["ws-2"].container_id == "cid-1"
 
     def test_track_activity_same_workspace_updates_container(self):
-        container.registry.track_activity("cid-1", "ws-1")
-        container.registry.track_activity("cid-1", "ws-1")
-        assert container.registry.states["ws-1"].container_id == "cid-1"
+        self.registry.track_activity("cid-1", "ws-1")
+        self.registry.track_activity("cid-1", "ws-1")
+        assert self.registry.states["ws-1"].container_id == "cid-1"
 
     def test_track_activity_fires_status_changed_on_new(self):
         calls = []
-        container.registry.set_on_container_status_changed(
+        self.registry.set_on_container_status_changed(
             lambda ws_id, running: calls.append((ws_id, running))
         )
         try:
-            container.registry.track_activity("cid-new", "ws-new")
+            self.registry.track_activity("cid-new", "ws-new")
             assert calls == [("ws-new", True)]
             # Second call for same workspace should NOT fire again
-            container.registry.track_activity("cid-new", "ws-new")
+            self.registry.track_activity("cid-new", "ws-new")
             assert calls == [("ws-new", True)]
         finally:
-            container.registry.on_container_status_changed = None
+            self.registry.on_container_status_changed = None
 
     async def test_remove_state_cleans_up_reverse_mapping(self):
-        container.registry.track_activity("cid-rm", "ws-rm")
-        assert "cid-rm" in container.registry._cid_to_wsid
-        await container.registry.remove_state("ws-rm")
-        assert "ws-rm" not in container.registry.states
-        assert "cid-rm" not in container.registry._cid_to_wsid
+        self.registry.track_activity("cid-rm", "ws-rm")
+        assert "cid-rm" in self.registry._cid_to_wsid
+        await self.registry.remove_state("ws-rm")
+        assert "ws-rm" not in self.registry.states
+        assert "cid-rm" not in self.registry._cid_to_wsid
 
     async def test_remove_state_retains_workspace_lock(self):
         # remove_state must NOT pop _workspace_locks[ws] (#1258): doing so
         # would let a subsequent _get_workspace_lock hand out a fresh,
         # non-mutually-exclusive lock object while a coroutine may still be
         # waiting on the original. The lock entry is cheap to retain.
-        lock = container.registry._get_workspace_lock("ws-lock-rm")
-        assert "ws-lock-rm" in container.registry._workspace_locks
-        await container.registry.remove_state("ws-lock-rm")
-        assert "ws-lock-rm" in container.registry._workspace_locks
-        assert container.registry._workspace_locks["ws-lock-rm"] is lock
+        lock = self.registry._get_workspace_lock("ws-lock-rm")
+        assert "ws-lock-rm" in self.registry._workspace_locks
+        await self.registry.remove_state("ws-lock-rm")
+        assert "ws-lock-rm" in self.registry._workspace_locks
+        assert self.registry._workspace_locks["ws-lock-rm"] is lock
 
     def test_get_state_returns_state(self):
-        container.registry.track_activity("cid-1", "ws-1")
-        state = container.registry.get_state("ws-1")
+        self.registry.track_activity("cid-1", "ws-1")
+        state = self.registry.get_state("ws-1")
         assert state is not None
         assert state.container_id == "cid-1"
 
     def test_get_state_returns_none_for_unknown(self):
-        assert container.registry.get_state("nonexistent") is None
+        assert self.registry.get_state("nonexistent") is None
 
     def test_track_activity_stores_health_metadata(self):
         # health_check, owner_id, and setup_state are cached on the
         # ContainerState for the health monitor to read on each poll.
-        container.registry.track_activity(
+        self.registry.track_activity(
             "cid-hm",
             "ws-hm",
             health_check="curl -sf http://localhost:8080/health",
             owner_id="uid-owner",
             setup_state="complete",
         )
-        try:
-            state = container.registry.states["ws-hm"]
-            assert state.health_check == (
-                "curl -sf http://localhost:8080/health"
-            )
-            assert state.owner_id == "uid-owner"
-            assert state.setup_state == "complete"
-        finally:
-            container.registry.states.pop("ws-hm", None)
-            container.registry._cid_to_wsid.pop("cid-hm", None)
+        state = self.registry.states["ws-hm"]
+        assert state.health_check == ("curl -sf http://localhost:8080/health")
+        assert state.owner_id == "uid-owner"
+        assert state.setup_state == "complete"
 
 
 def _noop_callback(ws):
@@ -225,63 +240,54 @@ def _noop_callback(ws):
 
 class TestIdleCallbacks:
     def setup_method(self):
-        container.registry.states.clear()
-
-    def teardown_method(self):
-        container.registry.states.clear()
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
     def test_on_idle_stop_registers(self):
-        container.registry.track_activity("cid-1", "ws-1")
-        container.registry.on_idle_stop("ws-1", _noop_callback)
-        assert (
-            _noop_callback in container.registry.states["ws-1"].idle_callbacks
-        )
+        self.registry.track_activity("cid-1", "ws-1")
+        self.registry.on_idle_stop("ws-1", _noop_callback)
+        assert _noop_callback in self.registry.states["ws-1"].idle_callbacks
 
     def test_multiple_callbacks(self):
         def cb2(ws):
             pass
 
-        container.registry.track_activity("cid-1", "ws-1")
-        container.registry.on_idle_stop("ws-1", _noop_callback)
-        container.registry.on_idle_stop("ws-1", cb2)
-        assert len(container.registry.states["ws-1"].idle_callbacks) == 2
+        self.registry.track_activity("cid-1", "ws-1")
+        self.registry.on_idle_stop("ws-1", _noop_callback)
+        self.registry.on_idle_stop("ws-1", cb2)
+        assert len(self.registry.states["ws-1"].idle_callbacks) == 2
 
     def test_remove_idle_callback(self):
-        container.registry.track_activity("cid-1", "ws-1")
-        container.registry.on_idle_stop("ws-1", _noop_callback)
-        container.registry.remove_idle_callback("ws-1", _noop_callback)
+        self.registry.track_activity("cid-1", "ws-1")
+        self.registry.on_idle_stop("ws-1", _noop_callback)
+        self.registry.remove_idle_callback("ws-1", _noop_callback)
         assert (
-            _noop_callback
-            not in container.registry.states["ws-1"].idle_callbacks
+            _noop_callback not in self.registry.states["ws-1"].idle_callbacks
         )
 
     def test_remove_idle_callback_not_registered(self):
-        container.registry.track_activity("cid-1", "ws-1")
-        container.registry.remove_idle_callback("ws-1", _noop_callback)
+        self.registry.track_activity("cid-1", "ws-1")
+        self.registry.remove_idle_callback("ws-1", _noop_callback)
         assert (
-            _noop_callback
-            not in container.registry.states["ws-1"].idle_callbacks
+            _noop_callback not in self.registry.states["ws-1"].idle_callbacks
         )
 
     def test_remove_idle_callback_unknown_workspace(self):
-        container.registry.remove_idle_callback("nonexistent", _noop_callback)
-        assert "nonexistent" not in container.registry.states
+        self.registry.remove_idle_callback("nonexistent", _noop_callback)
+        assert "nonexistent" not in self.registry.states
 
     def test_callbacks_per_workspace(self):
         def cb2(ws):
             pass
 
-        container.registry.track_activity("cid-1", "ws-1")
-        container.registry.track_activity("cid-2", "ws-2")
-        container.registry.on_idle_stop("ws-1", _noop_callback)
-        container.registry.on_idle_stop("ws-2", cb2)
+        self.registry.track_activity("cid-1", "ws-1")
+        self.registry.track_activity("cid-2", "ws-2")
+        self.registry.on_idle_stop("ws-1", _noop_callback)
+        self.registry.on_idle_stop("ws-2", cb2)
+        assert _noop_callback in self.registry.states["ws-1"].idle_callbacks
+        assert cb2 in self.registry.states["ws-2"].idle_callbacks
         assert (
-            _noop_callback in container.registry.states["ws-1"].idle_callbacks
-        )
-        assert cb2 in container.registry.states["ws-2"].idle_callbacks
-        assert (
-            _noop_callback
-            not in container.registry.states["ws-2"].idle_callbacks
+            _noop_callback not in self.registry.states["ws-2"].idle_callbacks
         )
 
 
@@ -307,16 +313,18 @@ class TestPortAllocation:
         assert set(ports1).isdisjoint(set(ports2))
 
     async def test_get_workspace_ports(self, workspace):
+        app_state = _make_app_state()
+        registry = app_state.container_registry
         allocated = await model.find_and_allocate_ports(
             workspace["id"], 2, container.PORT_RANGE_START
         )
-        retrieved = await container.registry.get_workspace_ports(
-            workspace["id"]
-        )
+        retrieved = await registry.get_workspace_ports(workspace["id"])
         assert retrieved == sorted(allocated)
 
     async def test_get_workspace_ports_empty(self, workspace):
-        ports = await container.registry.get_workspace_ports(workspace["id"])
+        app_state = _make_app_state()
+        registry = app_state.container_registry
+        ports = await registry.get_workspace_ports(workspace["id"])
         assert ports == []
 
 
@@ -431,14 +439,12 @@ def _sudo_call(p):
 
 class TestStartContainer:
     def setup_method(self):
-        container.registry.states.clear()
-
-    def teardown_method(self):
-        container.registry.states.clear()
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
     async def test_create_new_container(self, workspace):
         with patch_podman() as p:
-            cid, status = await container.registry.start_container(
+            cid, status = await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -446,12 +452,12 @@ class TestStartContainer:
         assert cid == "new-cid"
         assert status == "created"
         p.start_container.assert_awaited_once_with("new-cid")
-        assert workspace["id"] in container.registry.states
+        assert workspace["id"] in self.registry.states
 
     async def test_sudo_disabled_by_default(self, workspace, monkeypatch):
         monkeypatch.delenv("KLANGK_ALLOW_SUDO", raising=False)
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         call = _sudo_call(p)
@@ -461,7 +467,7 @@ class TestStartContainer:
     async def test_sudo_enabled(self, workspace, monkeypatch):
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "true")
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         call = _sudo_call(p)
@@ -471,7 +477,7 @@ class TestStartContainer:
     async def test_sudo_disabled(self, workspace, monkeypatch):
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "0")
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         assert "!ALL" in str(_sudo_call(p).args[1])
@@ -479,7 +485,7 @@ class TestStartContainer:
     async def test_sudo_disabled_false(self, workspace, monkeypatch):
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "false")
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         assert "!ALL" in str(_sudo_call(p).args[1])
@@ -488,17 +494,17 @@ class TestStartContainer:
         """Start with sudo disabled, restart with sudo enabled."""
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "false")
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         assert "!ALL" in str(_sudo_call(p).args[1])
 
         # "Restart" — remove container state so start_container creates a new one
-        container.registry.states.clear()
+        self.registry.states.clear()
         await model.update_workspace_container(workspace["id"], None)
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "true")
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         assert "NOPASSWD:ALL" in str(_sudo_call(p).args[1])
@@ -507,16 +513,16 @@ class TestStartContainer:
         """Start with sudo enabled, restart with sudo disabled."""
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "true")
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         assert "NOPASSWD:ALL" in str(_sudo_call(p).args[1])
 
-        container.registry.states.clear()
+        self.registry.states.clear()
         await model.update_workspace_container(workspace["id"], None)
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "false")
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         assert "!ALL" in str(_sudo_call(p).args[1])
@@ -529,12 +535,12 @@ class TestStartContainer:
             start_container=AsyncMock(side_effect=RuntimeError("boom"))
         ):
             with pytest.raises(RuntimeError, match="boom"):
-                await container.registry.start_container(
+                await self.registry.start_container(
                     workspace["id"], "/tmp/ws", "/tmp/home"
                 )
         ws = await model.get_workspace(workspace["id"], user["id"])
         assert ws["container_id"] == "new-cid"
-        assert workspace["id"] in container.registry.states
+        assert workspace["id"] in self.registry.states
 
     async def test_cancel_during_start_still_persists(self, workspace, user):
         # The connecting client can disconnect mid-startup, cancelling this
@@ -551,7 +557,7 @@ class TestStartContainer:
             start_container=AsyncMock(side_effect=slow_start)
         ) as p:
             task = asyncio.create_task(
-                container.registry.start_container(
+                self.registry.start_container(
                     workspace["id"], "/tmp/ws", "/tmp/home"
                 )
             )
@@ -565,11 +571,11 @@ class TestStartContainer:
         ws = await model.get_workspace(workspace["id"], user["id"])
         assert ws["container_id"] == "new-cid"
         p.start_container.assert_awaited_once_with("new-cid")
-        assert workspace["id"] in container.registry.states
+        assert workspace["id"] in self.registry.states
 
     async def test_reuse_running_container(self, workspace):
         with patch_podman(inspect_container=_running(True)) as p:
-            cid, status = await container.registry.start_container(
+            cid, status = await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -582,7 +588,7 @@ class TestStartContainer:
 
     async def test_recreate_stopped_container(self, workspace):
         with patch_podman(inspect_container=_running(False)) as p:
-            cid, status = await container.registry.start_container(
+            cid, status = await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -595,7 +601,7 @@ class TestStartContainer:
     async def test_missing_container_creates_new(self, workspace):
         # inspect_container returns None (default) → treated as gone.
         with patch_podman() as p:
-            cid, status = await container.registry.start_container(
+            cid, status = await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -607,7 +613,7 @@ class TestStartContainer:
 
     async def test_disallowed_image_raises(self, workspace):
         with pytest.raises(ValueError, match="not in the allowed list"):
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/work", "/home", image="evil:latest"
             )
 
@@ -617,7 +623,7 @@ class TestStartContainer:
         monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
 
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -652,7 +658,7 @@ class TestStartContainer:
                 terminal, "set_workspace_token", new_callable=AsyncMock
             ) as mock_set,
         ):
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         mock_set.assert_called_once()
@@ -663,7 +669,7 @@ class TestStartContainer:
 
     async def test_pull_policy_default_never(self, workspace):
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         assert p.create_container.call_args.kwargs["pull"] == "never"
@@ -671,7 +677,7 @@ class TestStartContainer:
     async def test_pull_policy_from_env(self, workspace, monkeypatch):
         monkeypatch.setenv("KLANGK_IMAGE_PULL_POLICY", "missing")
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         assert p.create_container.call_args.kwargs["pull"] == "missing"
@@ -679,7 +685,7 @@ class TestStartContainer:
     async def test_config_mount_added(self, workspace):
         """Container gets read-only config mount when config_path is set."""
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -691,7 +697,7 @@ class TestStartContainer:
     async def test_no_config_mount_without_config_path(self, workspace):
         """Container has no config mount when config_path is not set."""
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -702,7 +708,7 @@ class TestStartContainer:
     async def test_home_mounted_at_slash_home(self, workspace):
         """Home path is mounted at /home (not /home/klangk)."""
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -712,7 +718,7 @@ class TestStartContainer:
 
     async def test_hosting_env_vars(self, workspace):
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -743,7 +749,7 @@ class TestStartContainer:
         monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
         monkeypatch.setenv("KLANGK_NGINX_PORT", "8996")
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -756,7 +762,7 @@ class TestStartContainer:
     async def test_terminal_banner_default_empty(self, workspace):
         """Default terminal banner is empty, so env var is not passed."""
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -768,7 +774,7 @@ class TestStartContainer:
         """Deployer can set a terminal banner via env var."""
         monkeypatch.setattr(container, "TERMINAL_BANNER", "Custom warning")
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -785,7 +791,7 @@ class TestStartContainer:
         (ssl_dir / "corp-ca.pem").write_text("-----BEGIN CERTIFICATE-----")
         monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(ssl_dir))
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -804,7 +810,7 @@ class TestStartContainer:
         """Without KLANGK_SSL_CERT_DIR there is no mount and no trust env."""
         monkeypatch.delenv("KLANGK_SSL_CERT_DIR", raising=False)
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -823,7 +829,7 @@ class TestStartContainer:
         (ssl_dir / "notes.txt").write_text("not a cert")
         monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(ssl_dir))
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -835,14 +841,14 @@ class TestStartContainer:
 
     async def test_port_allocation_on_create(self, workspace):
         with patch_podman():
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
                 num_ports=3,
             )
         # Ports should have been allocated
-        ports = await container.registry.get_workspace_ports(workspace["id"])
+        ports = await self.registry.get_workspace_ports(workspace["id"])
         assert len(ports) == 3
 
     async def test_excess_ports_trimmed(self, workspace):
@@ -851,26 +857,26 @@ class TestStartContainer:
             workspace["id"], 5, container.PORT_RANGE_START
         )
         with patch_podman():
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
                 num_ports=2,
             )
-        ports = await container.registry.get_workspace_ports(workspace["id"])
+        ports = await self.registry.get_workspace_ports(workspace["id"])
         assert len(ports) == 2
 
     async def test_cap_clamps_allocation_down(self, workspace, monkeypatch):
         """KLANGK_HOSTED_PORTS_PER_WORKSPACE clamps num_ports down (#1237)."""
         monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "3")
         with patch_podman():
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
                 num_ports=5,  # DB default; cap is 3
             )
-        ports = await container.registry.get_workspace_ports(workspace["id"])
+        ports = await self.registry.get_workspace_ports(workspace["id"])
         assert len(ports) == 3
 
     async def test_cap_zero_releases_existing_ports(
@@ -882,20 +888,20 @@ class TestStartContainer:
             workspace["id"], 5, container.PORT_RANGE_START
         )
         with patch_podman():
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
                 num_ports=5,
             )
-        ports = await container.registry.get_workspace_ports(workspace["id"])
+        ports = await self.registry.get_workspace_ports(workspace["id"])
         assert ports == []
 
     async def test_cap_zero_omits_hosting_env(self, workspace, monkeypatch):
         """cap=0 suppresses KLANGK_PORT_MAPPINGS / KLANGK_HOSTING_* (#1237)."""
         monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "0")
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -919,10 +925,8 @@ class TestStartContainer:
         not just trim on the container's first start.
         """
         monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "0")
-        await container.registry.allocate_ports(workspace["id"], 5)
-        assert (
-            await container.registry.get_workspace_ports(workspace["id"]) == []
-        )
+        await self.registry.allocate_ports(workspace["id"], 5)
+        assert await self.registry.get_workspace_ports(workspace["id"]) == []
 
     async def test_hosting_env_present_when_enabled(
         self, workspace, monkeypatch
@@ -930,7 +934,7 @@ class TestStartContainer:
         """Sanity: with the default cap, hosting env is injected as before."""
         monkeypatch.delenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", raising=False)
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -945,7 +949,7 @@ class TestStartContainer:
 
     async def test_container_config_structure(self, workspace):
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -959,7 +963,7 @@ class TestStartContainer:
 
     async def test_create_container_with_extra_env(self, workspace):
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -985,7 +989,7 @@ class TestStartContainer:
         )
         monkeypatch.setattr(plugins, "_values", {"PLUGIN_VAR": "plugin-val"})
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         env_list = p.create_container.call_args.kwargs["env"]
@@ -997,10 +1001,8 @@ class TestStartContainerPortConflict:
     """Test retry logic when a stale container holds a port."""
 
     def setup_method(self):
-        container.registry.states.clear()
-
-    def teardown_method(self):
-        container.registry.states.clear()
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
     async def test_port_conflict_removes_stale_and_retries(self, workspace):
         # Pre-allocate ports so we know exactly which ones the workspace gets.
@@ -1035,7 +1037,7 @@ class TestStartContainerPortConflict:
             ),
             inspect_container=AsyncMock(return_value=stale_info),
         ) as p:
-            cid, status = await container.registry.start_container(
+            cid, status = await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         assert status == "created"
@@ -1071,7 +1073,7 @@ class TestStartContainerPortConflict:
                 }
             ),
         ) as p:
-            cid, _ = await container.registry.start_container(
+            cid, _ = await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         # Should not have tried to remove its own container
@@ -1099,7 +1101,7 @@ class TestStartContainerPortConflict:
                 }
             ),
         ):
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         # other-cid doesn't hold our ports — should not be removed
@@ -1123,7 +1125,7 @@ class TestStartContainerPortConflict:
             ),
             inspect_container=AsyncMock(return_value=None),
         ) as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         # gone-cid vanished — no remove attempted
@@ -1160,7 +1162,7 @@ class TestStartContainerPortConflict:
                 }
             ),
         ):
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
 
@@ -1195,7 +1197,7 @@ class TestStartContainerPortConflict:
                 side_effect=podman.PodmanError(500, "removal in progress")
             ),
         ):
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
 
@@ -1208,7 +1210,7 @@ class TestStartContainerPortConflict:
             ),
             pytest.raises(podman.PodmanError, match="some other error"),
         ):
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
 
@@ -1391,11 +1393,15 @@ class TestProtectedPaths:
 
 
 class TestExtraMountsVolumeCreation:
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
+
     async def test_auto_creates_named_volume(self, workspace):
         """Named volumes (no leading /) are auto-created with klangk labels."""
         # inspect_volume returns None (default) → volume is created.
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -1422,7 +1428,7 @@ class TestExtraMountsVolumeCreation:
                 }
             )
         ) as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -1442,7 +1448,7 @@ class TestExtraMountsVolumeCreation:
             )
         ):
             with pytest.raises(ValueError, match="not managed by this"):
-                await container.registry.start_container(
+                await self.registry.start_container(
                     workspace["id"],
                     "/tmp/ws",
                     "/tmp/home",
@@ -1455,7 +1461,7 @@ class TestExtraMountsVolumeCreation:
             inspect_volume=AsyncMock(return_value={"Name": "bare"})
         ):
             with pytest.raises(ValueError, match="not managed by this"):
-                await container.registry.start_container(
+                await self.registry.start_container(
                     workspace["id"],
                     "/tmp/ws",
                     "/tmp/home",
@@ -1476,7 +1482,7 @@ class TestExtraMountsVolumeCreation:
             )
         ):
             with pytest.raises(ValueError, match="belongs to another user"):
-                await container.registry.start_container(
+                await self.registry.start_container(
                     workspace["id"],
                     "/tmp/ws",
                     "/tmp/home",
@@ -1496,7 +1502,7 @@ class TestExtraMountsVolumeCreation:
                 }
             )
         ) as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -1511,7 +1517,7 @@ class TestExtraMountsVolumeCreation:
         """Bind mounts (starting with /) are not treated as volumes."""
         monkeypatch.setattr("os.path.exists", lambda p: True)
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -1523,7 +1529,7 @@ class TestExtraMountsVolumeCreation:
         """Mount spec with options (host:container:ro) — source starts with /."""
         monkeypatch.setattr("os.path.exists", lambda p: True)
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -1535,7 +1541,7 @@ class TestExtraMountsVolumeCreation:
     async def test_volume_mount_with_options(self, workspace):
         """Named volume with options (vol:container:ro) — auto-creates."""
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -1549,7 +1555,7 @@ class TestExtraMountsVolumeCreation:
         """A mount source containing slashes is a bind mount, not a volume."""
         monkeypatch.setattr("os.path.exists", lambda p: True)
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -1567,7 +1573,7 @@ class TestExtraMountsVolumeCreation:
             ),
             pytest.raises(podman.PodmanError),
         ):
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -1580,7 +1586,7 @@ class TestExtraMountsVolumeCreation:
         """Mount source with special/binary-like chars is a bind mount."""
         monkeypatch.setattr("os.path.exists", lambda p: True)
         with patch_podman() as p:
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
                 "/tmp/home",
@@ -1593,7 +1599,7 @@ class TestExtraMountsVolumeCreation:
         """A bind mount with a non-existent source path is refused."""
         with patch_podman():
             with pytest.raises(ValueError, match="does not exist"):
-                await container.registry.start_container(
+                await self.registry.start_container(
                     workspace["id"],
                     "/tmp/ws",
                     "/tmp/home",
@@ -1610,38 +1616,32 @@ class TestExtraMountsVolumeCreation:
             ),
             pytest.raises(RuntimeError, match="podman broke"),
         ):
-            await container.registry.start_container(
+            await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
 
         # No browser registrations should remain for this workspace
-        for bid, (ws_id, _sock) in container.registry._browsers.items():
+        for bid, (ws_id, _sock) in self.registry._browsers.items():
             assert ws_id != workspace["id"]
 
 
 class TestStopContainer:
     def setup_method(self):
-        container.registry.states.clear()
-        container.registry._cid_to_wsid.clear()
-        container.registry._workspace_locks.clear()
-
-    def teardown_method(self):
-        container.registry.states.clear()
-        container.registry._cid_to_wsid.clear()
-        container.registry._workspace_locks.clear()
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
     async def test_stop_running(self):
-        container.registry.track_activity("cid", "ws")
-        lock = container.registry._get_workspace_lock("ws")
+        self.registry.track_activity("cid", "ws")
+        lock = self.registry._get_workspace_lock("ws")
 
         with patch_podman() as p:
-            await container.registry.stop_and_remove_container("cid")
+            await self.registry.stop_and_remove_container("cid")
         p.remove_container.assert_awaited_once_with("cid")
-        assert "ws" not in container.registry.states
-        assert "cid" not in container.registry._cid_to_wsid
+        assert "ws" not in self.registry.states
+        assert "cid" not in self.registry._cid_to_wsid
         # The workspace lock entry is deliberately retained (#1258).
-        assert "ws" in container.registry._workspace_locks
-        assert container.registry._workspace_locks["ws"] is lock
+        assert "ws" in self.registry._workspace_locks
+        assert self.registry._workspace_locks["ws"] is lock
 
     async def test_stop_prunes_orphaned_service_session_locks(self):
         # stop_and_remove_container sweeps the per-container service-firing
@@ -1652,14 +1652,14 @@ class TestStopContainer:
         try:
             # Tracked container (being stopped) + two orphaned entries whose
             # containers are no longer in the registry.
-            container.registry.track_activity("alive", "ws-alive")
+            self.registry.track_activity("alive", "ws-alive")
             terminal.get_service_session_lock("alive")
             terminal.get_service_session_lock("orphan-a")
             terminal.get_service_session_lock("orphan-b")
             assert len(terminal._service_session_locks) == 3
 
             with patch_podman():
-                await container.registry.stop_and_remove_container("alive")
+                await self.registry.stop_and_remove_container("alive")
 
             # The stopped container's entry and the orphans are gone; the dict
             # is empty because no container remains tracked.
@@ -1668,46 +1668,46 @@ class TestStopContainer:
             terminal._service_session_locks.clear()
 
     async def test_stop_podman_error(self):
-        container.registry.track_activity("cid", "ws")
-        container.registry._get_workspace_lock("ws")
+        self.registry.track_activity("cid", "ws")
+        self.registry._get_workspace_lock("ws")
 
         with patch_podman(
             remove_container=AsyncMock(
                 side_effect=podman.PodmanError(404, "gone")
             )
         ):
-            await container.registry.stop_and_remove_container("cid")
+            await self.registry.stop_and_remove_container("cid")
         # Should still remove from tracking
-        assert "ws" not in container.registry.states
-        assert "cid" not in container.registry._cid_to_wsid
+        assert "ws" not in self.registry.states
+        assert "cid" not in self.registry._cid_to_wsid
         # The workspace lock entry is deliberately retained (#1258).
-        assert "ws" in container.registry._workspace_locks
+        assert "ws" in self.registry._workspace_locks
 
     async def test_stop_serializes_under_workspace_lock(self):
         # stop_and_remove_container must acquire the workspace lock before
         # mutating state, so it cannot tear down a registry entry while a
         # start_container holds the lock (#1258).
-        container.registry.track_activity("cid", "ws")
-        lock = container.registry._get_workspace_lock("ws")
+        self.registry.track_activity("cid", "ws")
+        lock = self.registry._get_workspace_lock("ws")
 
         with patch_podman():
             async with lock:
                 # While the lock is held (as start_container would hold
                 # it), stop must not be able to remove state.
                 task = asyncio.create_task(
-                    container.registry.stop_and_remove_container("cid")
+                    self.registry.stop_and_remove_container("cid")
                 )
                 # Yield repeatedly so the stop task has a chance to run;
                 # it should be blocked on the lock.
                 for _ in range(5):
                     await asyncio.sleep(0)
                 assert not task.done()
-                assert "ws" in container.registry.states
-                assert container.registry._cid_to_wsid.get("cid") == "ws"
+                assert "ws" in self.registry.states
+                assert self.registry._cid_to_wsid.get("cid") == "ws"
             # Releasing the lock lets stop proceed and clean up.
             await task
-        assert "ws" not in container.registry.states
-        assert "cid" not in container.registry._cid_to_wsid
+        assert "ws" not in self.registry.states
+        assert "cid" not in self.registry._cid_to_wsid
 
     async def test_stop_skips_teardown_when_container_rebound(
         self, monkeypatch
@@ -1716,11 +1716,11 @@ class TestStopContainer:
         # container while stop waits for the lock. When stop finally
         # acquires the lock, container_id no longer maps to this ws, so it
         # must NOT tear down the fresh state or revoke its browsers.
-        container.registry.track_activity("cid-old", "ws")
-        lock = container.registry._get_workspace_lock("ws")
+        self.registry.track_activity("cid-old", "ws")
+        lock = self.registry._get_workspace_lock("ws")
         revoked = []
         monkeypatch.setattr(
-            container.registry,
+            self.registry,
             "revoke_workspace_browsers",
             lambda wid: revoked.append(wid),
         )
@@ -1730,22 +1730,22 @@ class TestStopContainer:
                 # Start stop; it runs podman (instant), peeks cid-old->ws,
                 # then blocks on the lock we hold.
                 task = asyncio.create_task(
-                    container.registry.stop_and_remove_container("cid-old")
+                    self.registry.stop_and_remove_container("cid-old")
                 )
                 for _ in range(5):
                     await asyncio.sleep(0)
                 # While stop is blocked, a racing start re-binds the
                 # workspace to a new container (track_activity drops the
                 # old cid reverse-mapping).
-                container.registry.track_activity("cid-new", "ws")
+                self.registry.track_activity("cid-new", "ws")
             # Releasing the lock lets stop acquire it; under the lock the
             # re-check sees cid-old no longer maps to ws, so it bails.
             await task
         # The new container's state survives untouched.
-        assert "ws" in container.registry.states
-        assert container.registry.states["ws"].container_id == "cid-new"
-        assert container.registry._cid_to_wsid.get("cid-new") == "ws"
-        assert "cid-old" not in container.registry._cid_to_wsid
+        assert "ws" in self.registry.states
+        assert self.registry.states["ws"].container_id == "cid-new"
+        assert self.registry._cid_to_wsid.get("cid-new") == "ws"
+        assert "cid-old" not in self.registry._cid_to_wsid
         # Browsers for the still-alive workspace were not revoked. (Without
         # the under-lock re-check, stop would have already torn the old
         # state down and revoked browsers before the rebind.)
@@ -1755,129 +1755,115 @@ class TestStopContainer:
         # Regression for the lock-replacement race: even after stop tears
         # down state, _get_workspace_lock must return the SAME lock object,
         # so a subsequent start serializes against any in-flight acquirer.
-        container.registry.track_activity("cid", "ws")
-        lock_before = container.registry._get_workspace_lock("ws")
+        self.registry.track_activity("cid", "ws")
+        lock_before = self.registry._get_workspace_lock("ws")
 
         with patch_podman():
-            await container.registry.stop_and_remove_container("cid")
-        assert "ws" in container.registry._workspace_locks
-        lock_after = container.registry._get_workspace_lock("ws")
+            await self.registry.stop_and_remove_container("cid")
+        assert "ws" in self.registry._workspace_locks
+        lock_after = self.registry._get_workspace_lock("ws")
         assert lock_after is lock_before
 
 
 class TestRemoveContainer:
     def setup_method(self):
-        container.registry.states.clear()
-        container.registry._cid_to_wsid.clear()
-        container.registry._workspace_locks.clear()
-
-    def teardown_method(self):
-        container.registry.states.clear()
-        container.registry._cid_to_wsid.clear()
-        container.registry._workspace_locks.clear()
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
     async def test_remove(self):
-        container.registry.track_activity("cid", "ws")
-        lock = container.registry._get_workspace_lock("ws")
+        self.registry.track_activity("cid", "ws")
+        lock = self.registry._get_workspace_lock("ws")
 
         with patch_podman() as p:
-            await container.registry.stop_and_remove_container("cid")
+            await self.registry.stop_and_remove_container("cid")
         p.remove_container.assert_awaited_once_with("cid")
-        assert "ws" not in container.registry.states
-        assert "cid" not in container.registry._cid_to_wsid
+        assert "ws" not in self.registry.states
+        assert "cid" not in self.registry._cid_to_wsid
         # The workspace lock entry is deliberately retained (#1258).
-        assert "ws" in container.registry._workspace_locks
-        assert container.registry._workspace_locks["ws"] is lock
+        assert "ws" in self.registry._workspace_locks
+        assert self.registry._workspace_locks["ws"] is lock
 
     async def test_remove_podman_error(self):
-        container.registry.track_activity("cid", "ws")
-        container.registry._get_workspace_lock("ws")
+        self.registry.track_activity("cid", "ws")
+        self.registry._get_workspace_lock("ws")
 
         with patch_podman(
             remove_container=AsyncMock(
                 side_effect=podman.PodmanError(404, "gone")
             )
         ):
-            await container.registry.stop_and_remove_container("cid")
-        assert "ws" not in container.registry.states
-        assert "cid" not in container.registry._cid_to_wsid
+            await self.registry.stop_and_remove_container("cid")
+        assert "ws" not in self.registry.states
+        assert "cid" not in self.registry._cid_to_wsid
         # The workspace lock entry is deliberately retained (#1258).
-        assert "ws" in container.registry._workspace_locks
+        assert "ws" in self.registry._workspace_locks
 
 
 class TestStopUserContainers:
     def setup_method(self):
-        container.registry.states.clear()
-
-    def teardown_method(self):
-        container.registry.states.clear()
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
     async def test_stop_user_containers(self, user, workspace):
         # Set container_id on the workspace
         await model.update_workspace_container(workspace["id"], "cid")
-        container.registry.track_activity("cid", workspace["id"])
+        self.registry.track_activity("cid", workspace["id"])
 
         with patch_podman() as p:
-            await container.registry.stop_user_containers(user["id"])
+            await self.registry.stop_user_containers(user["id"])
         p.remove_container.assert_awaited_once_with("cid")
-        assert workspace["id"] not in container.registry.states
+        assert workspace["id"] not in self.registry.states
 
     async def test_stop_user_calls_workspace_killed(self, user, workspace):
         await model.update_workspace_container(workspace["id"], "cid")
-        container.registry.track_activity("cid", workspace["id"])
+        self.registry.track_activity("cid", workspace["id"])
 
         killed_cb = AsyncMock()
-        old_cb = container.registry.on_workspace_killed
-        container.registry.on_workspace_killed = killed_cb
+        old_cb = self.registry.on_workspace_killed
+        self.registry.on_workspace_killed = killed_cb
 
         with patch_podman():
-            await container.registry.stop_user_containers(user["id"])
+            await self.registry.stop_user_containers(user["id"])
 
         killed_cb.assert_awaited_once_with(workspace["id"])
-        container.registry.on_workspace_killed = old_cb
+        self.registry.on_workspace_killed = old_cb
 
     async def test_stop_user_no_containers(self, user):
         with patch_podman() as p:
-            await container.registry.stop_user_containers(user["id"])
+            await self.registry.stop_user_containers(user["id"])
         p.remove_container.assert_not_awaited()
 
 
 class TestShutdown:
     def setup_method(self):
-        container.registry.states.clear()
-        container.registry._cid_to_wsid.clear()
-        container.registry.cleanup_task = None
-
-    def teardown_method(self):
-        container.registry.states.clear()
-        container.registry._cid_to_wsid.clear()
-        container.registry.cleanup_task = None
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
     async def test_shutdown_skips_in_container(self):
         """When running inside a container, shutdown skips cleanup."""
-        container.registry.track_activity("cid", "ws")
+        self.registry.track_activity("cid", "ws")
         with patch("os.path.exists", return_value=True):
-            await container.registry.shutdown()
+            await self.registry.shutdown()
         # Container should still be tracked (not cleaned up)
-        assert "ws" in container.registry.states
+        assert "ws" in self.registry.states
 
     async def test_shutdown_stops_tracked(self):
         # list_containers returns the tracked cid; it should be skipped in
         # the orphan loop (already tracked) but still removed via tracking.
-        container.registry.track_activity("cid", "ws")
+        self.registry.track_activity("cid", "ws")
 
         with patch_podman(
             list_containers=AsyncMock(return_value=[{"Id": "cid"}])
         ) as p:
-            await container.registry.shutdown()
+            await self.registry.shutdown()
         p.remove_container.assert_awaited_once_with("cid")
-        assert "ws" not in container.registry.states
+        assert "ws" not in self.registry.states
 
     async def test_shutdown_stops_orphans(self):
         with patch_podman(
             list_containers=AsyncMock(return_value=[{"Id": "orphan-cid"}])
         ) as p:
-            await container.registry.shutdown()
+            await self.registry.shutdown()
         p.remove_container.assert_awaited_once_with("orphan-cid")
 
     async def test_shutdown_cancels_cleanup_task(self):
@@ -1886,12 +1872,12 @@ class TestShutdown:
             await asyncio.sleep(999)
 
         task = asyncio.create_task(fake_cleanup())
-        container.registry.cleanup_task = task
+        self.registry.cleanup_task = task
 
         with patch_podman():
-            await container.registry.shutdown()
+            await self.registry.shutdown()
         assert task.cancelled()
-        assert container.registry.cleanup_task is None
+        assert self.registry.cleanup_task is None
 
     async def test_shutdown_cancels_health_task(self):
         # A running health loop task is cancelled on shutdown.
@@ -1913,13 +1899,13 @@ class TestShutdown:
                 side_effect=OSError("podman connection refused")
             )
         ):
-            await container.registry.shutdown()
+            await self.registry.shutdown()
         # Should not raise
 
     async def test_shutdown_no_podman(self):
         with patch_podman():
-            await container.registry.shutdown()
-        assert container.registry.cleanup_task is None
+            await self.registry.shutdown()
+        assert self.registry.cleanup_task is None
 
     async def test_shutdown_orphan_remove_error(self):
         """Orphan container that errors on removal is handled gracefully."""
@@ -1929,34 +1915,28 @@ class TestShutdown:
                 side_effect=podman.PodmanError(500, "remove failed")
             ),
         ) as p:
-            await container.registry.shutdown()
+            await self.registry.shutdown()
         # Attempted removal and did not raise
         p.remove_container.assert_awaited_once_with("orphan-cid")
 
 
 class TestCleanupIdleContainers:
     def setup_method(self):
-        container.registry.states.clear()
-        container.registry._cleanup_wake = None
-
-    def teardown_method(self):
-        container.registry.states.clear()
-        container.registry._cleanup_wake = None
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
     async def test_idle_container_stopped(self):
         # Set activity far in the past
-        container.registry.track_activity("cid", "ws-1")
-        container.registry.states["ws-1"].last_activity = (
+        self.registry.track_activity("cid", "ws-1")
+        self.registry.states["ws-1"].last_activity = (
             time.time() - container.IDLE_TIMEOUT_SECONDS - 100
         )
 
         with patch_podman() as p:
-            task = asyncio.create_task(
-                container.registry.cleanup_idle_containers()
-            )
+            task = asyncio.create_task(self.registry.cleanup_idle_containers())
             # Let the task enter the Event wait, then wake it
             await asyncio.sleep(0.05)
-            container.registry.get_cleanup_wake().set()
+            self.registry.get_cleanup_wake().set()
             await asyncio.sleep(0.05)
             task.cancel()
             try:
@@ -1964,24 +1944,22 @@ class TestCleanupIdleContainers:
             except asyncio.CancelledError:
                 pass
         p.remove_container.assert_awaited()
-        assert "ws-1" not in container.registry.states
+        assert "ws-1" not in self.registry.states
 
     async def test_idle_calls_workspace_killed_callback(self):
-        container.registry.track_activity("cid", "ws-killed")
-        container.registry.states["ws-killed"].last_activity = (
+        self.registry.track_activity("cid", "ws-killed")
+        self.registry.states["ws-killed"].last_activity = (
             time.time() - container.IDLE_TIMEOUT_SECONDS - 100
         )
 
         killed_cb = AsyncMock()
-        old_cb = container.registry.on_workspace_killed
-        container.registry.on_workspace_killed = killed_cb
+        old_cb = self.registry.on_workspace_killed
+        self.registry.on_workspace_killed = killed_cb
 
         with patch_podman():
-            task = asyncio.create_task(
-                container.registry.cleanup_idle_containers()
-            )
+            task = asyncio.create_task(self.registry.cleanup_idle_containers())
             await asyncio.sleep(0.05)
-            container.registry.get_cleanup_wake().set()
+            self.registry.get_cleanup_wake().set()
             await asyncio.sleep(0.05)
             task.cancel()
             try:
@@ -1990,24 +1968,22 @@ class TestCleanupIdleContainers:
                 pass
 
         killed_cb.assert_awaited_once_with("ws-killed")
-        container.registry.on_workspace_killed = old_cb
+        self.registry.on_workspace_killed = old_cb
 
     async def test_idle_workspace_killed_callback_error(self):
-        container.registry.track_activity("cid", "ws-err")
-        container.registry.states["ws-err"].last_activity = (
+        self.registry.track_activity("cid", "ws-err")
+        self.registry.states["ws-err"].last_activity = (
             time.time() - container.IDLE_TIMEOUT_SECONDS - 100
         )
 
         killed_cb = AsyncMock(side_effect=RuntimeError("boom"))
-        old_cb = container.registry.on_workspace_killed
-        container.registry.on_workspace_killed = killed_cb
+        old_cb = self.registry.on_workspace_killed
+        self.registry.on_workspace_killed = killed_cb
 
         with patch_podman():
-            task = asyncio.create_task(
-                container.registry.cleanup_idle_containers()
-            )
+            task = asyncio.create_task(self.registry.cleanup_idle_containers())
             await asyncio.sleep(0.05)
-            container.registry.get_cleanup_wake().set()
+            self.registry.get_cleanup_wake().set()
             await asyncio.sleep(0.05)
             task.cancel()
             try:
@@ -2017,17 +1993,15 @@ class TestCleanupIdleContainers:
 
         # Should not raise — error is logged
         killed_cb.assert_awaited_once()
-        container.registry.on_workspace_killed = old_cb
+        self.registry.on_workspace_killed = old_cb
 
     async def test_active_container_not_stopped(self):
-        container.registry.track_activity("cid", "ws-1")
+        self.registry.track_activity("cid", "ws-1")
 
         with patch_podman():
-            task = asyncio.create_task(
-                container.registry.cleanup_idle_containers()
-            )
+            task = asyncio.create_task(self.registry.cleanup_idle_containers())
             await asyncio.sleep(0.05)
-            container.registry.get_cleanup_wake().set()
+            self.registry.get_cleanup_wake().set()
             await asyncio.sleep(0.05)
             task.cancel()
             try:
@@ -2035,11 +2009,11 @@ class TestCleanupIdleContainers:
             except asyncio.CancelledError:
                 pass
         # Container should still be tracked
-        assert "ws-1" in container.registry.states
+        assert "ws-1" in self.registry.states
 
     async def test_idle_callback_invoked(self):
-        container.registry.track_activity("cid", "ws-1")
-        container.registry.states["ws-1"].last_activity = (
+        self.registry.track_activity("cid", "ws-1")
+        self.registry.states["ws-1"].last_activity = (
             time.time() - container.IDLE_TIMEOUT_SECONDS - 100
         )
 
@@ -2048,14 +2022,12 @@ class TestCleanupIdleContainers:
         async def on_idle(ws_id):
             callback_called.append(ws_id)
 
-        container.registry.on_idle_stop("ws-1", on_idle)
+        self.registry.on_idle_stop("ws-1", on_idle)
 
         with patch_podman():
-            task = asyncio.create_task(
-                container.registry.cleanup_idle_containers()
-            )
+            task = asyncio.create_task(self.registry.cleanup_idle_containers())
             await asyncio.sleep(0.05)
-            container.registry.get_cleanup_wake().set()
+            self.registry.get_cleanup_wake().set()
             await asyncio.sleep(0.05)
             task.cancel()
             try:
@@ -2065,22 +2037,20 @@ class TestCleanupIdleContainers:
         assert callback_called == ["ws-1"]
 
     async def test_idle_callback_error_handled(self):
-        container.registry.track_activity("cid", "ws-1")
-        container.registry.states["ws-1"].last_activity = (
+        self.registry.track_activity("cid", "ws-1")
+        self.registry.states["ws-1"].last_activity = (
             time.time() - container.IDLE_TIMEOUT_SECONDS - 100
         )
 
         async def bad_callback(ws_id):
             raise RuntimeError("callback broke")
 
-        container.registry.on_idle_stop("ws-1", bad_callback)
+        self.registry.on_idle_stop("ws-1", bad_callback)
 
         with patch_podman() as p:
-            task = asyncio.create_task(
-                container.registry.cleanup_idle_containers()
-            )
+            task = asyncio.create_task(self.registry.cleanup_idle_containers())
             await asyncio.sleep(0.05)
-            container.registry.get_cleanup_wake().set()
+            self.registry.get_cleanup_wake().set()
             await asyncio.sleep(0.05)
             task.cancel()
             try:
@@ -2092,20 +2062,20 @@ class TestCleanupIdleContainers:
 
     async def test_per_workspace_timeout_uses_event_wait(self):
         """When per-workspace timeouts exist, cleanup uses Event-based wait."""
-        container.registry.track_activity("cid", "ws-fast")
-        container.registry.states["ws-fast"].last_activity = time.time() - 100
-        container.registry.states["ws-fast"].idle_timeout = 5
+        self.registry.track_activity("cid", "ws-fast")
+        self.registry.states["ws-fast"].last_activity = time.time() - 100
+        self.registry.states["ws-fast"].idle_timeout = 5
 
         try:
             with patch_podman() as p:
                 # The Event-based wait will timeout after max(2, 5//2)=2s,
                 # then check containers. We cancel after one iteration.
                 task = asyncio.create_task(
-                    container.registry.cleanup_idle_containers()
+                    self.registry.cleanup_idle_containers()
                 )
                 await asyncio.sleep(0.1)  # Let it start
                 # Wake it immediately via the event
-                container.registry.get_cleanup_wake().set()
+                self.registry.get_cleanup_wake().set()
                 await asyncio.sleep(0.1)  # Let it process
                 task.cancel()
                 try:
@@ -2114,13 +2084,13 @@ class TestCleanupIdleContainers:
                     pass
             p.remove_container.assert_awaited()
         finally:
-            container.registry.states.clear()
+            self.registry.states.clear()
 
     async def test_per_workspace_timeout_event_timeout(self):
         """Event-based wait times out when no wake signal is sent."""
-        container.registry.track_activity("cid", "ws-fast")
-        container.registry.states["ws-fast"].last_activity = time.time() - 100
-        container.registry.states["ws-fast"].idle_timeout = 4
+        self.registry.track_activity("cid", "ws-fast")
+        self.registry.states["ws-fast"].last_activity = time.time() - 100
+        self.registry.states["ws-fast"].idle_timeout = 4
 
         try:
             with patch_podman() as p:
@@ -2146,40 +2116,45 @@ class TestCleanupIdleContainers:
 
                 with patch("asyncio.wait_for", side_effect=patched_wait_for):
                     try:
-                        await container.registry.cleanup_idle_containers()
+                        await self.registry.cleanup_idle_containers()
                     except asyncio.CancelledError:
                         pass
             p.remove_container.assert_awaited()
         finally:
-            container.registry.states.clear()
+            self.registry.states.clear()
 
 
 class TestStartCleanupLoop:
     def setup_method(self):
-        container.registry.cleanup_task = None
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
     def teardown_method(self):
-        if container.registry.cleanup_task:
-            container.registry.cleanup_task.cancel()
-            container.registry.cleanup_task = None
+        if self.registry.cleanup_task:
+            self.registry.cleanup_task.cancel()
+            self.registry.cleanup_task = None
 
     async def test_start_creates_task(self):
-        container.registry.start_cleanup_loop()
-        assert container.registry.cleanup_task is not None
-        container.registry.cleanup_task.cancel()
+        self.registry.start_cleanup_loop()
+        assert self.registry.cleanup_task is not None
+        self.registry.cleanup_task.cancel()
 
     async def test_start_idempotent(self):
-        container.registry.start_cleanup_loop()
-        task1 = container.registry.cleanup_task
-        container.registry.start_cleanup_loop()
-        assert container.registry.cleanup_task is task1
-        container.registry.cleanup_task.cancel()
+        self.registry.start_cleanup_loop()
+        task1 = self.registry.cleanup_task
+        self.registry.start_cleanup_loop()
+        assert self.registry.cleanup_task is task1
+        self.registry.cleanup_task.cancel()
 
 
 class TestPrewarmPodman:
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
+
     async def test_prewarm_creates_and_removes(self):
         with patch_podman() as p:
-            await container.registry.prewarm_podman()
+            await self.registry.prewarm_podman()
         p.create_container.assert_awaited_once()
         p.remove_container.assert_awaited_once_with("new-cid")
 
@@ -2189,16 +2164,14 @@ class TestPrewarmPodman:
                 side_effect=podman.PodmanError(500, "boom")
             )
         ):
-            await container.registry.prewarm_podman()
+            await self.registry.prewarm_podman()
         # Should not raise
 
 
 class TestAdoptOrphanedContainers:
     def setup_method(self):
-        container.registry.states.clear()
-
-    def teardown_method(self):
-        container.registry.states.clear()
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
     async def test_removes_orphaned_containers(self):
         with patch_podman(
@@ -2212,9 +2185,9 @@ class TestAdoptOrphanedContainers:
             ),
             remove_container=AsyncMock(),
         ) as mocks:
-            await container.registry.adopt_orphaned_containers()
+            await self.registry.adopt_orphaned_containers()
         # Orphaned containers are removed, not adopted.
-        assert "ws-orphan" not in container.registry.states
+        assert "ws-orphan" not in self.registry.states
         mocks.remove_container.assert_awaited_once_with("orphan-123")
 
     async def test_removes_orphan_without_labels(self):
@@ -2224,22 +2197,19 @@ class TestAdoptOrphanedContainers:
             ),
             remove_container=AsyncMock(),
         ) as mocks:
-            await container.registry.adopt_orphaned_containers()
-        assert "unknown" not in container.registry.states
+            await self.registry.adopt_orphaned_containers()
+        assert "unknown" not in self.registry.states
         mocks.remove_container.assert_awaited_once_with("orphan-x")
 
     async def test_skips_already_tracked(self):
-        container.registry.track_activity("tracked-456", "ws-tracked")
+        self.registry.track_activity("tracked-456", "ws-tracked")
         with patch_podman(
             list_containers=AsyncMock(return_value=[{"Id": "tracked-456"}]),
             remove_container=AsyncMock(),
         ) as mocks:
-            await container.registry.adopt_orphaned_containers()
+            await self.registry.adopt_orphaned_containers()
         # Already tracked → not removed.
-        assert (
-            container.registry.states["ws-tracked"].container_id
-            == "tracked-456"
-        )
+        assert self.registry.states["ws-tracked"].container_id == "tracked-456"
         mocks.remove_container.assert_not_awaited()
 
     async def test_podman_error_handled(self):
@@ -2248,7 +2218,7 @@ class TestAdoptOrphanedContainers:
                 side_effect=podman.PodmanError(500, "fail")
             )
         ):
-            await container.registry.adopt_orphaned_containers()
+            await self.registry.adopt_orphaned_containers()
         # Should not raise
 
     async def test_remove_podman_error_handled(self):
@@ -2266,93 +2236,96 @@ class TestAdoptOrphanedContainers:
                 side_effect=podman.PodmanError(500, "remove failed")
             ),
         ) as mocks:
-            await container.registry.adopt_orphaned_containers()
+            await self.registry.adopt_orphaned_containers()
         mocks.remove_container.assert_awaited_once_with("orphan-bad")
         # Container was not adopted — just skipped after failed removal.
-        assert "ws-bad" not in container.registry.states
+        assert "ws-bad" not in self.registry.states
 
 
 class TestBrowserRegistry:
     def setup_method(self):
-        container.registry._browsers.clear()
-
-    def teardown_method(self):
-        container.registry._browsers.clear()
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
     def test_register_and_resolve(self):
         sock = object()
-        container.registry.register_browser("bid-1", "ws-1", sock)
-        assert container.registry.resolve_browser("bid-1") == ("ws-1", sock)
+        self.registry.register_browser("bid-1", "ws-1", sock)
+        assert self.registry.resolve_browser("bid-1") == ("ws-1", sock)
 
     def test_resolve_unknown(self):
-        assert container.registry.resolve_browser("nonexistent") is None
+        assert self.registry.resolve_browser("nonexistent") is None
 
     def test_register_idempotent(self):
         sock1 = object()
         sock2 = object()
-        container.registry.register_browser("bid-1", "ws-1", sock1)
-        container.registry.register_browser("bid-1", "ws-1", sock2)
-        assert container.registry.resolve_browser("bid-1") == ("ws-1", sock2)
+        self.registry.register_browser("bid-1", "ws-1", sock1)
+        self.registry.register_browser("bid-1", "ws-1", sock2)
+        assert self.registry.resolve_browser("bid-1") == ("ws-1", sock2)
 
     def test_revoke_workspace_browsers(self):
         sock1 = object()
         sock2 = object()
-        container.registry.register_browser("bid-1", "ws-1", sock1)
-        container.registry.register_browser("bid-2", "ws-1", sock2)
-        container.registry.revoke_workspace_browsers("ws-1")
-        assert container.registry.resolve_browser("bid-1") is None
-        assert container.registry.resolve_browser("bid-2") is None
+        self.registry.register_browser("bid-1", "ws-1", sock1)
+        self.registry.register_browser("bid-2", "ws-1", sock2)
+        self.registry.revoke_workspace_browsers("ws-1")
+        assert self.registry.resolve_browser("bid-1") is None
+        assert self.registry.resolve_browser("bid-2") is None
 
     def test_revoke_browser_by_sock(self):
         sock1 = object()
         sock2 = object()
-        container.registry.register_browser("bid-1", "ws-1", sock1)
-        container.registry.register_browser("bid-2", "ws-1", sock2)
-        container.registry.revoke_browser(sock1)
-        assert container.registry.resolve_browser("bid-1") is None
-        assert container.registry.resolve_browser("bid-2") == ("ws-1", sock2)
+        self.registry.register_browser("bid-1", "ws-1", sock1)
+        self.registry.register_browser("bid-2", "ws-1", sock2)
+        self.registry.revoke_browser(sock1)
+        assert self.registry.resolve_browser("bid-1") is None
+        assert self.registry.resolve_browser("bid-2") == ("ws-1", sock2)
 
     def test_revoke_browser_no_match(self):
         sock = object()
         other_sock = object()
-        container.registry.register_browser("bid-1", "ws-1", sock)
-        container.registry.revoke_browser(other_sock)
-        assert container.registry.resolve_browser("bid-1") == ("ws-1", sock)
+        self.registry.register_browser("bid-1", "ws-1", sock)
+        self.registry.revoke_browser(other_sock)
+        assert self.registry.resolve_browser("bid-1") == ("ws-1", sock)
 
     def test_multiple_browsers_same_workspace(self):
         sock1 = object()
         sock2 = object()
-        container.registry.register_browser("bid-1", "ws-1", sock1)
-        container.registry.register_browser("bid-2", "ws-1", sock2)
-        assert container.registry.resolve_browser("bid-1") == ("ws-1", sock1)
-        assert container.registry.resolve_browser("bid-2") == ("ws-1", sock2)
+        self.registry.register_browser("bid-1", "ws-1", sock1)
+        self.registry.register_browser("bid-2", "ws-1", sock2)
+        assert self.registry.resolve_browser("bid-1") == ("ws-1", sock1)
+        assert self.registry.resolve_browser("bid-2") == ("ws-1", sock2)
 
 
 class TestWorkspaceIdFor:
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
+
     def test_returns_workspace_id(self):
-        container.registry.track_activity("cid-lookup", "ws-lookup")
+        self.registry.track_activity("cid-lookup", "ws-lookup")
         try:
-            assert (
-                container.registry.workspace_id_for("cid-lookup")
-                == "ws-lookup"
-            )
+            assert self.registry.workspace_id_for("cid-lookup") == "ws-lookup"
         finally:
-            container.registry.states.pop("ws-lookup", None)
-            container.registry._cid_to_wsid.pop("cid-lookup", None)
+            self.registry.states.pop("ws-lookup", None)
+            self.registry._cid_to_wsid.pop("cid-lookup", None)
 
     def test_returns_none_for_unknown(self):
-        assert container.registry.workspace_id_for("nonexistent") is None
+        assert self.registry.workspace_id_for("nonexistent") is None
 
 
 class TestTrackActivityContainerChanged:
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
+
     def test_updates_reverse_mapping_on_container_change(self):
-        container.registry.track_activity("old-cid", "ws-chg")
-        assert container.registry._cid_to_wsid.get("old-cid") == "ws-chg"
-        container.registry.track_activity("new-cid", "ws-chg")
-        assert container.registry._cid_to_wsid.get("new-cid") == "ws-chg"
-        assert "old-cid" not in container.registry._cid_to_wsid
-        container.registry.states.pop("ws-chg", None)
-        container.registry._cid_to_wsid.pop("new-cid", None)
+        self.registry.track_activity("old-cid", "ws-chg")
+        assert self.registry._cid_to_wsid.get("old-cid") == "ws-chg"
+        self.registry.track_activity("new-cid", "ws-chg")
+        assert self.registry._cid_to_wsid.get("new-cid") == "ws-chg"
+        assert "old-cid" not in self.registry._cid_to_wsid
+        self.registry.states.pop("ws-chg", None)
+        self.registry._cid_to_wsid.pop("new-cid", None)
 
 
 def _mock_sock_for_health():
@@ -2367,18 +2340,12 @@ def _mock_sock_for_health():
 def _health_registry(ws_state=None):
     """A ContainerRegistry wired for health-monitor tests (#1464).
 
-    Constructs a fresh registry (not the module shim) and wires its
-    ``connections`` to the given WebSocketState (or the module-global
-    ``wshandler.state`` by default). HealthMonitor reaches connections via
-    ``self._registry.connections`` — no lazy import, no module global on the
-    production path.
+    Constructs a fresh registry via ``_make_app_state`` and wires its
+    ``sockets`` to the given WebSocketState (or a fresh one by default).
+    HealthMonitor reaches sockets via ``self._registry.sockets``.
     """
-    from klangk_backend.settings import KlangkSettings
-    from klangk_backend.wshandler import state as _ws_state
-
-    reg = container.ContainerRegistry(KlangkSettings(env={}))
-    reg.connections = ws_state or _ws_state
-    return reg
+    app_state = _make_app_state(sockets=ws_state)
+    return app_state.container_registry
 
 
 def _health_state(
@@ -2682,6 +2649,10 @@ class TestHealthMonitorStartupGrace:
     yet ready to accept connections" the very first poll produced.
     """
 
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
+
     async def test_unhealthy_during_grace_is_suppressed(self):
         monitor = _health_registry().health
         st = _health_state(health_status=None, in_startup_grace=True)
@@ -2758,35 +2729,34 @@ class TestHealthMonitorStartupGrace:
         # The registry proxy resolves container_id -> workspace and
         # resets that workspace's anchor; unknown containers no-op.
         st = _health_state(in_startup_grace=False)
-        container.registry.states[st.workspace_id] = st
-        container.registry._cid_to_wsid[st.container_id] = st.workspace_id
+        self.registry.states[st.workspace_id] = st
+        self.registry._cid_to_wsid[st.container_id] = st.workspace_id
         try:
             assert st.service_started_at == 0.0
-            container.registry.mark_service_started(st.container_id)
+            self.registry.mark_service_started(st.container_id)
             assert time.time() - st.service_started_at < 1
             # Unknown container is a safe no-op.
-            container.registry.mark_service_started("no-such-cid")
+            self.registry.mark_service_started("no-such-cid")
         finally:
-            container.registry.states.pop(st.workspace_id, None)
-            container.registry._cid_to_wsid.pop(st.container_id, None)
+            self.registry.states.pop(st.workspace_id, None)
+            self.registry._cid_to_wsid.pop(st.container_id, None)
 
     """_broadcast fans out to ALL connections, not just the session."""
 
     def test_fans_out_via_notify_service_health(self):
-        from klangk_backend.wshandler import state as _ws_state
-
-        monitor = _health_registry().health
+        reg = _health_registry()
+        monitor = reg.health
         sock = _mock_sock_for_health()
         st = _health_state(health_status="unhealthy")
         try:
-            _ws_state.connections[sock] = SimpleNamespace(
+            reg.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             # No WorkspaceSession registered for this workspace — yet
             # the event must still reach the connection.
             monitor._broadcast(st, "unhealthy", "connection refused")
         finally:
-            _ws_state.connections.pop(sock, None)
+            reg.sockets.connections.pop(sock, None)
         sock.send_json.assert_called_once_with(
             {
                 "type": "service_health",
@@ -2878,20 +2848,19 @@ class TestHealthMonitorBroadcastSeq:
     """_broadcast bumps per-workspace seq and forwards live fields."""
 
     def test_bumps_seq_each_emit_and_forwards_fields(self):
-        from klangk_backend.wshandler import state as _ws_state
-
-        monitor = _health_registry().health
+        reg = _health_registry()
+        monitor = reg.health
         sock = _mock_sock_for_health()
         st = _health_state(health_status="unhealthy")
         st.health_checked_at = 1_700_000_000.0
         try:
-            _ws_state.connections[sock] = SimpleNamespace(
+            reg.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             monitor._broadcast(st, "unhealthy", "connection refused")
             monitor._broadcast(st, "unhealthy", "connection refused")
         finally:
-            _ws_state.connections.pop(sock, None)
+            reg.sockets.connections.pop(sock, None)
         frames = [c[0][0] for c in sock.send_json.call_args_list]
         assert len(frames) == 2
         # Monotonic seq across emits; live frames are running=True.
@@ -2909,21 +2878,24 @@ class TestHealthMonitorDeath:
     A dying container otherwise looks like "healthy, then silence" on
     the service_health stream (#1175 item 2)."""
 
-    def test_broadcast_death_emits_terminal_frame(self):
-        from klangk_backend.wshandler import state as _ws_state
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
-        monitor = _health_registry().health
+    def test_broadcast_death_emits_terminal_frame(self):
+        reg = _health_registry()
+        monitor = reg.health
         sock = _mock_sock_for_health()
         st = _health_state(health_status="healthy")
         st.health_checked_at = 1_700_000_000.0
         st.health_seq = 4
         try:
-            _ws_state.connections[sock] = SimpleNamespace(
+            reg.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             monitor.broadcast_death(st)
         finally:
-            _ws_state.connections.pop(sock, None)
+            reg.sockets.connections.pop(sock, None)
         frame = sock.send_json.call_args[0][0]
         assert frame["type"] == "service_health"
         assert frame["healthy"] is False
@@ -2938,9 +2910,7 @@ class TestHealthMonitorDeath:
     ):
         # A container death fans a terminal service_health frame to
         # subscribers BEFORE the on_workspace_killed callback drops state.
-        from klangk_backend.wshandler import state as _ws_state
-
-        reg = _health_registry(_ws_state)
+        reg = _health_registry()
         sock = _mock_sock_for_health()
         st = _health_state(health_status="healthy")
         reg.states[st.workspace_id] = st
@@ -2952,13 +2922,13 @@ class TestHealthMonitorDeath:
             seen_state_present.append(wid in reg.states)
 
         try:
-            _ws_state.connections[sock] = SimpleNamespace(
+            reg.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             reg.set_on_workspace_killed(on_killed)
             await reg.notify_workspace_killed(st.workspace_id)
         finally:
-            _ws_state.connections.pop(sock, None)
+            reg.sockets.connections.pop(sock, None)
             reg.states.pop(st.workspace_id, None)
             reg.set_on_workspace_killed(None)
         frame = sock.send_json.call_args[0][0]
@@ -2969,33 +2939,29 @@ class TestHealthMonitorDeath:
     async def test_notify_workspace_killed_skips_non_health_checked(self):
         # A workspace with no health_check never appeared on the stream,
         # so its death emits no terminal frame.
-        from klangk_backend.wshandler import state as _ws_state
-
         sock = _mock_sock_for_health()
         st = _health_state(health_check=None)
-        container.registry.states[st.workspace_id] = st
+        self.registry.states[st.workspace_id] = st
         try:
-            _ws_state.connections[sock] = SimpleNamespace(
+            self.registry.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
-            await container.registry.notify_workspace_killed(st.workspace_id)
+            await self.registry.notify_workspace_killed(st.workspace_id)
         finally:
-            _ws_state.connections.pop(sock, None)
-            container.registry.states.pop(st.workspace_id, None)
+            self.registry.sockets.connections.pop(sock, None)
+            self.registry.states.pop(st.workspace_id, None)
         sock.send_json.assert_not_called()
 
     async def test_notify_workspace_killed_no_state_no_emit(self):
         # If the state is already gone (double-kill), nothing to emit.
-        from klangk_backend.wshandler import state as _ws_state
-
         sock = _mock_sock_for_health()
         try:
-            _ws_state.connections[sock] = SimpleNamespace(
+            self.registry.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
-            await container.registry.notify_workspace_killed("no-such-ws")
+            await self.registry.notify_workspace_killed("no-such-ws")
         finally:
-            _ws_state.connections.pop(sock, None)
+            self.registry.sockets.connections.pop(sock, None)
         sock.send_json.assert_not_called()
 
     async def test_idle_cleanup_emits_death_frame(self):
@@ -3006,9 +2972,7 @@ class TestHealthMonitorDeath:
         notify_workspace_killed (which reads state for the death frame),
         so the frame was silently skipped.
         """
-        from klangk_backend.wshandler import state as _ws_state
-
-        reg = _health_registry(_ws_state)
+        reg = _health_registry()
         sock = _mock_sock_for_health()
         st = _health_state(
             workspace_id="ws-idle-death",
@@ -3020,13 +2984,11 @@ class TestHealthMonitorDeath:
         st.last_activity = time.time() - container.IDLE_TIMEOUT_SECONDS - 100
 
         try:
-            _ws_state.connections[sock] = SimpleNamespace(
+            reg.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             with patch_podman():
-                task = asyncio.create_task(
-                    reg.cleanup_idle_containers()
-                )
+                task = asyncio.create_task(reg.cleanup_idle_containers())
                 await asyncio.sleep(0.05)
                 reg.get_cleanup_wake().set()
                 await asyncio.sleep(0.05)
@@ -3036,7 +2998,7 @@ class TestHealthMonitorDeath:
                 except asyncio.CancelledError:
                     pass
         finally:
-            _ws_state.connections.pop(sock, None)
+            reg.sockets.connections.pop(sock, None)
             reg.states.pop(st.workspace_id, None)
             reg._cid_to_wsid.pop(st.container_id, None)
 
@@ -3055,12 +3017,11 @@ class TestHealthLoopHeartbeat:
     presence to the loop being alive."""
 
     async def test_heartbeats_sent_each_tick_to_opted_in(self):
-        from klangk_backend.wshandler import state as _ws_state
-
-        monitor = _health_registry().health
+        reg = _health_registry()
+        monitor = reg.health
         sock = _mock_sock_for_health()
         try:
-            _ws_state.connections[sock] = SimpleNamespace(
+            reg.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"},
                 wants_health_heartbeat=True,
             )
@@ -3076,7 +3037,7 @@ class TestHealthLoopHeartbeat:
                 except asyncio.CancelledError:
                     pass
         finally:
-            _ws_state.connections.pop(sock, None)
+            reg.sockets.connections.pop(sock, None)
         frames = [c[0][0] for c in sock.send_json.call_args_list]
         assert frames  # at least one heartbeat over ~5 ticks
         assert all(f["type"] == "service_health_heartbeat" for f in frames)
@@ -3089,6 +3050,8 @@ class TestRegistryServiceSessionLockDelegates:
         from klangk_backend import terminal
 
         terminal._service_session_locks.clear()
+        app_state = _make_app_state()
+        self.registry = app_state.container_registry
 
     def teardown_method(self):
         from klangk_backend import terminal
@@ -3098,14 +3061,14 @@ class TestRegistryServiceSessionLockDelegates:
     def test_get_via_registry(self):
         from klangk_backend import terminal
 
-        reg = container.registry
+        reg = self.registry
         lock = reg.get_service_session_lock("cid")
         assert lock is terminal.get_service_session_lock("cid")
 
     def test_clear_via_registry(self):
         from klangk_backend import terminal
 
-        reg = container.registry
+        reg = self.registry
         reg.get_service_session_lock("cid")
         assert "cid" in terminal._service_session_locks
         reg.clear_service_session_lock("cid")
@@ -3114,7 +3077,7 @@ class TestRegistryServiceSessionLockDelegates:
     def test_prune_via_registry(self):
         from klangk_backend import terminal
 
-        reg = container.registry
+        reg = self.registry
         reg.get_service_session_lock("alive")
         reg.get_service_session_lock("dead")
         removed = reg.prune_service_session_locks({"alive"})
@@ -3133,11 +3096,10 @@ class TestRegistryConnections:
     """HealthMonitor reaches WebSocketState via the registry, not a module global (#1464)."""
 
     def test_connections_property_reads_from_registry(self):
-        """The _connections property returns self._registry.connections."""
-        from klangk_backend.settings import KlangkSettings
+        """The _connections property returns self._registry.sockets."""
         from klangk_backend.wshandler.session import WebSocketState
 
         ws_state = WebSocketState()
-        reg = container.ContainerRegistry(KlangkSettings(env={}))
-        reg.connections = ws_state
+        app_state = _make_app_state(sockets=ws_state)
+        reg = app_state.container_registry
         assert reg.health._connections is ws_state

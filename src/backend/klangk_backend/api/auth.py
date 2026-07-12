@@ -22,6 +22,7 @@ from .. import (
     oidc,
     wshandler,
 )
+from ._common import get_app_state_dep
 from ..settings import get_settings
 from ..util import (
     client_is_loopback,
@@ -437,6 +438,7 @@ class ChangeHandleRequest(auth.BaseModel):
 async def change_handle(
     req: ChangeHandleRequest,
     user: dict = Depends(auth.get_current_user),
+    app_state=Depends(get_app_state_dep),
 ):
     """Change the current user's handle. Requires password confirmation."""
     stored = await model.get_user_by_email(user["email"])
@@ -455,7 +457,9 @@ async def change_handle(
         await model.set_user_handle(user["id"], req.handle)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    await wshandler.refresh_user_handle(user["id"], req.handle)
+    await wshandler.refresh_user_handle(
+        app_state.sockets, user["id"], req.handle
+    )
     return {"status": "updated", "handle": req.handle}
 
 

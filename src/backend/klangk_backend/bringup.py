@@ -1,10 +1,10 @@
 """Container bring-up: provision agent home, fire the service command.
 
-This is the single choke point reached after ``container.registry.
-start_container`` creates a *fresh* container (status ``"created"``).
-``container`` cannot import ``agent`` directly (``agent`` already
-imports ``container`` for ``registry.get_state``), so the
-bring-up step lives here to keep that boundary clean.
+This is the single choke point reached after
+``ContainerRegistry.start_container`` creates a *fresh* container
+(status ``"created"``). ``container`` cannot import ``agent``
+directly (``agent`` already imports ``container``), so the bring-up
+step lives here to keep that boundary clean.
 
 ``ensure_service_session`` is idempotent (per-container lock +
 window-exists check), so calling this on every fresh create is safe:
@@ -23,6 +23,7 @@ async def bringup(
     container_id: str,
     service_command: str | None,
     setup_state: str | None,
+    app_state=None,
 ) -> None:
     """Provision the agent home and fire the service command.
 
@@ -37,4 +38,5 @@ async def bringup(
         agent_home,
         service_command,
         setup_state=setup_state,
+        app_state=app_state,
     )

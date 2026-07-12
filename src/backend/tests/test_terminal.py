@@ -7,7 +7,7 @@ lifecycle/queue logic against an injected fake shell.
 
 import asyncio
 import contextlib
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1337,7 +1337,12 @@ class TestEnsureServiceSession:
         """Firing the service command resets the health-check startup-grace
         anchor so the monitor gives the freshly-launched service time to
         boot before a failing poll can flag it unhealthy."""
+        import types
+
         from klangk_backend.terminal import ensure_service_session
+
+        mock_registry = MagicMock()
+        app_state = types.SimpleNamespace(container_registry=mock_registry)
 
         with (
             patch(
@@ -1352,19 +1357,24 @@ class TestEnsureServiceSession:
                 "klangk_backend.terminal.podman.exec_container",
                 new=AsyncMock(side_effect=[(0, "", ""), (0, "", "")]),
             ),
-            patch(
-                "klangk_backend.container.registry.mark_service_started"
-            ) as mock_mark,
         ):
             await ensure_service_session(
-                "cid", "/home/clanker", "openclaw gateway"
+                "cid",
+                "/home/clanker",
+                "openclaw gateway",
+                app_state=app_state,
             )
-        mock_mark.assert_called_once_with("cid")
+        mock_registry.mark_service_started.assert_called_once_with("cid")
 
     async def test_existing_window_does_not_reset_grace_anchor(self):
         """The no-op path (service-cmd window already exists) never
         re-launched the service, so it must not restart the grace window."""
+        import types
+
         from klangk_backend.terminal import ensure_service_session
+
+        mock_registry = MagicMock()
+        app_state = types.SimpleNamespace(container_registry=mock_registry)
 
         with (
             patch(
@@ -1379,19 +1389,24 @@ class TestEnsureServiceSession:
                 "klangk_backend.terminal.podman.exec_container",
                 new=AsyncMock(),
             ),
-            patch(
-                "klangk_backend.container.registry.mark_service_started"
-            ) as mock_mark,
         ):
             await ensure_service_session(
-                "cid", "/home/clanker", "openclaw gateway"
+                "cid",
+                "/home/clanker",
+                "openclaw gateway",
+                app_state=app_state,
             )
-        mock_mark.assert_not_called()
+        mock_registry.mark_service_started.assert_not_called()
 
     async def test_send_keys_failure_does_not_reset_grace_anchor(self):
         """If send-keys itself failed the command never launched, so the
         grace anchor must not advance (no service is booting)."""
+        import types
+
         from klangk_backend.terminal import ensure_service_session
+
+        mock_registry = MagicMock()
+        app_state = types.SimpleNamespace(container_registry=mock_registry)
 
         with (
             patch(
@@ -1412,12 +1427,14 @@ class TestEnsureServiceSession:
                     ]
                 ),
             ),
-            patch(
-                "klangk_backend.container.registry.mark_service_started"
-            ) as mock_mark,
         ):
-            await ensure_service_session("cid", "/home/clanker", "cmd")
-        mock_mark.assert_not_called()
+            await ensure_service_session(
+                "cid",
+                "/home/clanker",
+                "cmd",
+                app_state=app_state,
+            )
+        mock_registry.mark_service_started.assert_not_called()
 
     async def test_concurrent_fires_create_window_exactly_once(self):
         """#1188: two concurrent ensure_service_session calls for the SAME

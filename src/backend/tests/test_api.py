@@ -13,6 +13,7 @@ import httpx
 from httpx import AsyncClient, ASGITransport
 
 from klangk_backend import (
+    agent,
     api,
     auth,
     container,
@@ -23,6 +24,9 @@ from klangk_backend import (
     workspaces as ws_mod,
     wshandler,
 )
+from klangk_backend.container import ContainerRegistry
+from klangk_backend.settings import KlangkSettings
+from klangk_backend.wshandler.session import WebSocketState
 
 
 @pytest.fixture
@@ -32,10 +36,33 @@ async def app(db):
     from klangk_backend.util import API_PREFIX
     from klangk_backend.main import register_exception_handlers
 
+    settings = KlangkSettings(env={})
+    registry = ContainerRegistry(settings)
+    sockets = WebSocketState()
+    app.state.settings = settings
+    app.state.container_registry = registry
+    app.state.sockets = sockets
+    registry.sockets = sockets
+    registry.app_state = app.state
+    sockets.app_state = app.state
+    agent.get_workspace_session = sockets.get_session
+
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)
     register_exception_handlers(app)
     return app
+
+
+@pytest.fixture
+def registry(app):
+    """Shortcut to the ContainerRegistry on app.state."""
+    return app.state.container_registry
+
+
+@pytest.fixture
+def sockets(app):
+    """Shortcut to the WebSocketState on app.state."""
+    return app.state.sockets
 
 
 @pytest.fixture
@@ -151,10 +178,10 @@ class TestWorkspaceChat:
         assert data["message_type"] == model.MSG_AGENT
         assert data["workspace_id"] == workspace["id"]
 
-    async def test_broadcasts_to_websocket(self, client, user):
+    async def test_broadcasts_to_websocket(self, client, user, sockets):
         workspace = await model.create_workspace(user["id"], "bcast-ws")
         token = auth.create_workspace_token(workspace["id"])
-        session = wshandler.state.get_or_create_session(workspace["id"])
+        session = sockets.get_or_create_session(workspace["id"])
         mock_sock = MagicMock()
         session.subscribers.add(mock_sock)
 
@@ -169,7 +196,7 @@ class TestWorkspaceChat:
         assert sent["type"] == "chat_message"
         assert sent["message"] == "broadcast test"
 
-        wshandler.state.sessions.pop(workspace["id"], None)
+        sockets.sessions.pop(workspace["id"], None)
 
     async def test_missing_auth(self, client):
         resp = await client.post(
@@ -596,13 +623,13 @@ class TestAuthRoutes:
         )
         assert resp.status_code == 401
 
-    async def test_logout(self, client, user):
+    async def test_logout(self, client, user, registry):
         headers = await _auth_headers(client)
         # Logout must NOT stop the user's containers (#1235): the idle timeout
         # is the only thing that stops containers (#301). Guard against a
         # regression of the old logout_user holdover.
         with patch.object(
-            container.registry,
+            registry,
             "stop_and_remove_container",
             new_callable=AsyncMock,
         ) as mock_stop:
@@ -1229,7 +1256,7 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         assert resp.json() == []
 
-    async def test_list_includes_running_status(self, client, user):
+    async def test_list_includes_running_status(self, client, user, registry):
         headers = await _auth_headers(client)
         resp = await client.post(
             "/api/v1/workspaces", headers=headers, json={"name": "run-test"}
@@ -1242,9 +1269,7 @@ class TestWorkspaceRoutes:
         assert ws["running"] is False
 
         # Simulate running container
-        from klangk_backend import container
-
-        container.registry.track_activity("fake-cid", ws_id)
+        registry.track_activity("fake-cid", ws_id)
         try:
             resp = await client.get(
                 "/api/v1/workspaces?limit=10", headers=headers
@@ -1253,14 +1278,14 @@ class TestWorkspaceRoutes:
             ws = next(w for w in items if w["id"] == ws_id)
             assert ws["running"] is True
         finally:
-            await container.registry.remove_state(ws_id)
+            await registry.remove_state(ws_id)
 
         # Also works for bare list (no pagination params)
         resp = await client.get("/api/v1/workspaces", headers=headers)
         ws = next(w for w in resp.json() if w["id"] == ws_id)
         assert ws["running"] is False
 
-    async def test_list_includes_live_health(self, client, user):
+    async def test_list_includes_live_health(self, client, user, registry):
         """List payload carries live health for a steady-state failure (#1173).
 
         The health monitor only broadcasts ``service_health`` on a
@@ -1278,10 +1303,8 @@ class TestWorkspaceRoutes:
         ws_id = resp.json()["id"]
 
         # Simulate a running container that is steadily unhealthy.
-        from klangk_backend import container
-
-        container.registry.track_activity("cid-health", ws_id)
-        state = container.registry.get_state(ws_id)
+        registry.track_activity("cid-health", ws_id)
+        state = registry.get_state(ws_id)
         assert state is not None
         state.health_status = "unhealthy"
         state.health_message = "gateway refused connection"
@@ -1305,7 +1328,7 @@ class TestWorkspaceRoutes:
             assert ws["health"] == "healthy"
             assert ws["health_message"] is None
         finally:
-            await container.registry.remove_state(ws_id)
+            await registry.remove_state(ws_id)
 
         # Stopped workspace: no health fields beyond running=False.
         resp = await client.get("/api/v1/workspaces?limit=10", headers=headers)
@@ -1522,7 +1545,7 @@ class TestWorkspaceRoutes:
         assert "allowed" in data
         assert data["default"] in data["allowed"]
 
-    async def test_delete_workspace(self, client, user):
+    async def test_delete_workspace(self, client, user, registry):
         headers = await _auth_headers(client)
         create_resp = await client.post(
             "/api/v1/workspaces", headers=headers, json={"name": "doomed"}
@@ -1530,7 +1553,7 @@ class TestWorkspaceRoutes:
         ws_id = create_resp.json()["id"]
 
         with patch.object(
-            api.container.registry,
+            registry,
             "stop_and_remove_container",
             new_callable=AsyncMock,
         ):
@@ -1564,7 +1587,9 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 404
 
-    async def test_delete_workspace_with_container(self, client, user):
+    async def test_delete_workspace_with_container(
+        self, client, user, registry
+    ):
         headers = await _auth_headers(client)
         create_resp = await client.post(
             "/api/v1/workspaces",
@@ -1577,7 +1602,7 @@ class TestWorkspaceRoutes:
 
         with (
             patch.object(
-                api.container.registry,
+                registry,
                 "stop_and_remove_container",
                 new_callable=AsyncMock,
             ) as mock_rm,
@@ -1594,7 +1619,9 @@ class TestWorkspaceRoutes:
         mock_stop_agent.assert_awaited_once_with(ws_id)
         mock_rm.assert_awaited_once_with("fake-container-id")
 
-    async def test_delete_workspace_cleans_up_groups(self, client, user):
+    async def test_delete_workspace_cleans_up_groups(
+        self, client, user, registry
+    ):
         headers = await _auth_headers(client)
         create_resp = await client.post(
             "/api/v1/workspaces",
@@ -1613,7 +1640,7 @@ class TestWorkspaceRoutes:
         assert len(acl) > 0
 
         with patch.object(
-            api.container.registry,
+            registry,
             "stop_and_remove_container",
             new_callable=AsyncMock,
         ):
@@ -1631,10 +1658,10 @@ class TestWorkspaceRoutes:
         acl = await model.get_acl_entries(f"/workspaces/{ws_id}")
         assert len(acl) == 0
 
-    async def test_create_notifies_creator(self, client, user):
+    async def test_create_notifies_creator(self, client, user, sockets):
         headers = await _auth_headers(client)
         with patch.object(
-            wshandler.state,
+            sockets,
             "notify_user_workspaces_changed",
         ) as mock_notify:
             resp = await client.post(
@@ -1645,7 +1672,9 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         mock_notify.assert_called_once_with(user["id"])
 
-    async def test_delete_notifies_deleter_and_owner(self, client, user):
+    async def test_delete_notifies_deleter_and_owner(
+        self, client, user, registry, sockets
+    ):
         headers = await _auth_headers(client)
         create_resp = await client.post(
             "/api/v1/workspaces",
@@ -1656,12 +1685,12 @@ class TestWorkspaceRoutes:
 
         with (
             patch.object(
-                api.container.registry,
+                registry,
                 "stop_and_remove_container",
                 new_callable=AsyncMock,
             ),
             patch.object(
-                wshandler.state,
+                sockets,
                 "notify_user_workspaces_changed",
             ) as mock_notify,
         ):
@@ -1672,7 +1701,7 @@ class TestWorkspaceRoutes:
         # Deleter is the owner here, so exactly one notify call for them.
         mock_notify.assert_called_once_with(user["id"])
 
-    async def test_restart_workspace(self, client, user):
+    async def test_restart_workspace(self, client, user, registry):
         headers = await _auth_headers(client)
         create_resp = await client.post(
             "/api/v1/workspaces", headers=headers, json={"name": "restart-me"}
@@ -1680,11 +1709,11 @@ class TestWorkspaceRoutes:
         ws_id = create_resp.json()["id"]
 
         # Simulate a running container so the stop path is exercised.
-        api.container.registry.track_activity("cid-restart", ws_id)
+        registry.track_activity("cid-restart", ws_id)
 
         with (
             patch.object(
-                api.container.registry,
+                registry,
                 "stop_and_remove_container",
                 new_callable=AsyncMock,
             ) as mock_stop,
@@ -1705,7 +1734,7 @@ class TestWorkspaceRoutes:
         mock_start.assert_awaited_once()
 
         # Clean up registry state.
-        api.container.registry.states.pop(ws_id, None)
+        registry.states.pop(ws_id, None)
 
     async def test_restart_not_found(self, client, user):
         headers = await _auth_headers(client)
@@ -1723,7 +1752,7 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 404
 
-    async def test_workspace_status_running(self, client, user):
+    async def test_workspace_status_running(self, client, user, registry):
         headers = await _auth_headers(client)
         create_resp = await client.post(
             "/api/v1/workspaces",
@@ -1733,7 +1762,7 @@ class TestWorkspaceRoutes:
         ws_id = create_resp.json()["id"]
 
         # Simulate a running container.
-        api.container.registry.track_activity("cid-status", ws_id)
+        registry.track_activity("cid-status", ws_id)
 
         resp = await client.get(
             f"/api/v1/workspaces/{ws_id}/status",
@@ -1749,8 +1778,8 @@ class TestWorkspaceRoutes:
         assert isinstance(data["ports"], list)
 
         # Clean up registry state.
-        api.container.registry.states.pop(ws_id, None)
-        api.container.registry._cid_to_wsid.pop("cid-status", None)
+        registry.states.pop(ws_id, None)
+        registry._cid_to_wsid.pop("cid-status", None)
 
     async def test_workspace_status_not_running(self, client, user):
         headers = await _auth_headers(client)
@@ -1826,12 +1855,11 @@ class TestWorkspaceRoutes:
         assert match[0]["service_command"] == "pi"
 
     async def test_update_workspace_propagates_to_live_state(
-        self, client, user
+        self, client, user, registry
     ):
         # Editing setup_state/health_check on a workspace whose
         # container is live updates the cached ContainerState so the
         # health monitor picks it up without a restart (#1015).
-        import klangk_backend.container as container
 
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -1842,13 +1870,13 @@ class TestWorkspaceRoutes:
         ws_id = resp.json()["id"]
 
         # Simulate a running container by registering a live state.
-        container.registry.track_activity(
+        registry.track_activity(
             "cid-live",
             ws_id,
             health_check="old-cmd",
             setup_state="pending",
         )
-        live = container.registry.get_state(ws_id)
+        live = registry.get_state(ws_id)
         live.health_status = "healthy"  # will be reset on edit
         live.health_message = "stale reason"  # also reset on edit (#1088)
         try:
@@ -1868,7 +1896,7 @@ class TestWorkspaceRoutes:
             assert live.health_checked_at is None
             assert live.health_message is None
         finally:
-            await container.registry.remove_state(ws_id)
+            await registry.remove_state(ws_id)
 
     async def test_update_workspace_no_permission(self, client, user):
         headers = await _auth_headers(client)
@@ -2267,7 +2295,9 @@ class TestWorkspaceSharingRoutes:
         assert len(resp.json()) == 1
         assert resp.json()[0]["email"] == "other@example.com"
 
-    async def test_add_member_notifies_owner_and_target(self, client, user):
+    async def test_add_member_notifies_owner_and_target(
+        self, client, user, sockets
+    ):
         headers = await _auth_headers(client)
         other = await self._create_other_user()
         resp = await client.post(
@@ -2275,7 +2305,7 @@ class TestWorkspaceSharingRoutes:
         )
         ws_id = resp.json()["id"]
         with patch.object(
-            wshandler.state, "notify_user_workspaces_changed"
+            sockets, "notify_user_workspaces_changed"
         ) as mock_notify:
             resp = await client.post(
                 f"/api/v1/workspaces/{ws_id}/members",
@@ -2287,7 +2317,7 @@ class TestWorkspaceSharingRoutes:
         assert notified == {user["id"], other["id"]}
 
     async def test_remove_member_notifies_owner_and_removed(
-        self, client, user
+        self, client, user, sockets
     ):
         headers = await _auth_headers(client)
         other = await self._create_other_user()
@@ -2301,7 +2331,7 @@ class TestWorkspaceSharingRoutes:
             json={"email": "other@example.com"},
         )
         with patch.object(
-            wshandler.state, "notify_user_workspaces_changed"
+            sockets, "notify_user_workspaces_changed"
         ) as mock_notify:
             resp = await client.delete(
                 f"/api/v1/workspaces/{ws_id}/members/{other['id']}",
@@ -2311,7 +2341,9 @@ class TestWorkspaceSharingRoutes:
         notified = {call.args[0] for call in mock_notify.call_args_list}
         assert notified == {user["id"], other["id"]}
 
-    async def test_add_to_role_notifies_owner_and_target(self, client, user):
+    async def test_add_to_role_notifies_owner_and_target(
+        self, client, user, sockets
+    ):
         headers = await _auth_headers(client)
         other = await self._create_other_user()
         resp = await client.post(
@@ -2319,7 +2351,7 @@ class TestWorkspaceSharingRoutes:
         )
         ws_id = resp.json()["id"]
         with patch.object(
-            wshandler.state, "notify_user_workspaces_changed"
+            sockets, "notify_user_workspaces_changed"
         ) as mock_notify:
             resp = await client.post(
                 f"/api/v1/workspaces/{ws_id}/roles/collaborators",
@@ -2331,7 +2363,7 @@ class TestWorkspaceSharingRoutes:
         assert notified == {user["id"], other["id"]}
 
     async def test_remove_from_role_notifies_owner_and_member(
-        self, client, user
+        self, client, user, sockets
     ):
         headers = await _auth_headers(client)
         other = await self._create_other_user()
@@ -2345,7 +2377,7 @@ class TestWorkspaceSharingRoutes:
             json={"email": "other@example.com"},
         )
         with patch.object(
-            wshandler.state, "notify_user_workspaces_changed"
+            sockets, "notify_user_workspaces_changed"
         ) as mock_notify:
             resp = await client.delete(
                 f"/api/v1/workspaces/{ws_id}"
@@ -2356,7 +2388,9 @@ class TestWorkspaceSharingRoutes:
         notified = {call.args[0] for call in mock_notify.call_args_list}
         assert notified == {user["id"], other["id"]}
 
-    async def test_change_role_notifies_owner_and_target(self, client, user):
+    async def test_change_role_notifies_owner_and_target(
+        self, client, user, sockets
+    ):
         headers = await _auth_headers(client)
         other = await self._create_other_user()
         resp = await client.post(
@@ -2364,7 +2398,7 @@ class TestWorkspaceSharingRoutes:
         )
         ws_id = resp.json()["id"]
         with patch.object(
-            wshandler.state, "notify_user_workspaces_changed"
+            sockets, "notify_user_workspaces_changed"
         ) as mock_notify:
             resp = await client.patch(
                 f"/api/v1/workspaces/{ws_id}/roles",
@@ -3598,10 +3632,12 @@ class TestBrowserBridge:
         assert resp.status_code == 401
         assert "expired" in resp.json()["detail"].lower()
 
-    async def test_browser_id_routes_to_correct_tab(self, client, user):
+    async def test_browser_id_routes_to_correct_tab(
+        self, client, user, registry, sockets
+    ):
         """Browser ID routes to the specific browser tab."""
         mock_sock = MagicMock()
-        container.registry.register_browser("bid-conn", "ws-conn", mock_sock)
+        registry.register_browser("bid-conn", "ws-conn", mock_sock)
         mock_session = AsyncMock()
         mock_session.browser_subscribers = {mock_sock}
         mock_session.dispatch_browser_request_to = AsyncMock(
@@ -3609,7 +3645,7 @@ class TestBrowserBridge:
         )
         try:
             with patch.object(
-                wshandler.state,
+                sockets,
                 "get_session",
                 return_value=mock_session,
             ):
@@ -3624,17 +3660,19 @@ class TestBrowserBridge:
                 mock_sock, {"action": "fetch"}, timeout=30.0
             )
         finally:
-            container.registry.revoke_workspace_browsers("ws-conn")
+            registry.revoke_workspace_browsers("ws-conn")
 
-    async def test_browser_not_subscribed_returns_502(self, client, user):
+    async def test_browser_not_subscribed_returns_502(
+        self, client, user, registry, sockets
+    ):
         """Returns 502 when target not in browser_subscribers."""
         mock_sock = MagicMock()
-        container.registry.register_browser("bid-nosub", "ws-nosub", mock_sock)
+        registry.register_browser("bid-nosub", "ws-nosub", mock_sock)
         mock_session = AsyncMock()
         mock_session.browser_subscribers = set()
         try:
             with patch.object(
-                wshandler.state,
+                sockets,
                 "get_session",
                 return_value=mock_session,
             ):
@@ -3646,13 +3684,11 @@ class TestBrowserBridge:
             assert resp.status_code == 502
             assert "Browser connection not available" in resp.json()["detail"]
         finally:
-            container.registry.revoke_workspace_browsers("ws-nosub")
+            registry.revoke_workspace_browsers("ws-nosub")
 
-    async def test_no_session_returns_502(self, client, user):
+    async def test_no_session_returns_502(self, client, user, registry):
         mock_sock = MagicMock()
-        container.registry.register_browser(
-            "bid-nosess", "ws-nosess", mock_sock
-        )
+        registry.register_browser("bid-nosess", "ws-nosess", mock_sock)
         try:
             resp = await client.post(
                 "/api/v1/browser-delegate",
@@ -3662,11 +3698,13 @@ class TestBrowserBridge:
             assert resp.status_code == 502
             assert "No browser client" in resp.json()["detail"]
         finally:
-            container.registry.revoke_workspace_browsers("ws-nosess")
+            registry.revoke_workspace_browsers("ws-nosess")
 
-    async def test_dispatch_error_returns_502(self, client, user):
+    async def test_dispatch_error_returns_502(
+        self, client, user, registry, sockets
+    ):
         mock_sock = MagicMock()
-        container.registry.register_browser("bid-err", "ws-err", mock_sock)
+        registry.register_browser("bid-err", "ws-err", mock_sock)
         mock_session = AsyncMock()
         mock_session.browser_subscribers = {mock_sock}
         mock_session.dispatch_browser_request_to = AsyncMock(
@@ -3676,7 +3714,7 @@ class TestBrowserBridge:
         )
         try:
             with patch.object(
-                wshandler.state, "get_session", return_value=mock_session
+                sockets, "get_session", return_value=mock_session
             ):
                 resp = await client.post(
                     "/api/v1/browser-delegate",
@@ -3686,14 +3724,14 @@ class TestBrowserBridge:
             assert resp.status_code == 502
             assert "timeout" in resp.json()["detail"].lower()
         finally:
-            container.registry.revoke_workspace_browsers("ws-err")
+            registry.revoke_workspace_browsers("ws-err")
 
-    async def test_stream_endpoint_relays_ndjson(self, client, user):
+    async def test_stream_endpoint_relays_ndjson(
+        self, client, user, registry, sockets
+    ):
         """The streaming endpoint relays the generator's NDJSON to the caller."""
         mock_sock = MagicMock()
-        container.registry.register_browser(
-            "bid-stream", "ws-stream", mock_sock
-        )
+        registry.register_browser("bid-stream", "ws-stream", mock_sock)
 
         async def fake_stream():
             yield '{"type": "chunk", "delta": "a"}\n'
@@ -3708,7 +3746,7 @@ class TestBrowserBridge:
         )
         try:
             with patch.object(
-                wshandler.state, "get_session", return_value=mock_session
+                sockets, "get_session", return_value=mock_session
             ):
                 resp = await client.post(
                     "/api/v1/browser-delegate/stream",
@@ -3723,7 +3761,7 @@ class TestBrowserBridge:
             assert '"done"' in resp.text
             mock_session.dispatch_browser_request_stream_to.assert_called_once()
         finally:
-            container.registry.revoke_workspace_browsers("ws-stream")
+            registry.revoke_workspace_browsers("ws-stream")
 
 
 # --- Volume routes ---
@@ -3935,18 +3973,22 @@ class TestFileRoutes:
 
     CID = "cid-file-test"
 
+    @pytest.fixture(autouse=True)
+    def _bind_registry(self, registry):
+        self._registry = registry
+
     async def _create_workspace(self, client, headers):
         resp = await client.post(
             "/api/v1/workspaces", headers=headers, json={"name": "file-ws"}
         )
         ws_id = resp.json()["id"]
         # Simulate a running container
-        container.registry.track_activity(self.CID, ws_id)
+        self._registry.track_activity(self.CID, ws_id)
         return ws_id
 
     def _cleanup(self, ws_id):
-        container.registry.states.pop(ws_id, None)
-        container.registry._cid_to_wsid.pop(self.CID, None)
+        self._registry.states.pop(ws_id, None)
+        self._registry._cid_to_wsid.pop(self.CID, None)
 
     async def test_list_files(self, client, user):
         headers = await _auth_headers(client)
@@ -4020,11 +4062,11 @@ class TestFileRoutes:
         finally:
             self._cleanup(ws_id)
 
-    async def test_upload_records_activity(self, client, user):
+    async def test_upload_records_activity(self, client, user, registry):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
-            container.registry.states[ws_id].last_activity = 0.0
+            self._registry.states[ws_id].last_activity = 0.0
             with patch(
                 "klangk_backend.files.podman.exec_container",
                 new_callable=AsyncMock,
@@ -4035,7 +4077,7 @@ class TestFileRoutes:
                     headers=headers,
                     files={"file": ("test.txt", b"data", "text/plain")},
                 )
-            assert container.registry.states[ws_id].last_activity > 0.0
+            assert self._registry.states[ws_id].last_activity > 0.0
         finally:
             self._cleanup(ws_id)
 
@@ -4506,14 +4548,14 @@ class TestFileRoutes:
 
 
 class TestSetIdleTimeout:
-    async def test_set_idle_timeout_global(self, db):
+    async def test_set_idle_timeout_global(self, db, app, registry):
         """Setting global idle timeout changes the module-level variable."""
         original_timeout = container.IDLE_TIMEOUT_SECONDS
         try:
             container.IDLE_TIMEOUT_SECONDS = 42
             assert container.IDLE_TIMEOUT_SECONDS == 42
             # Per-workspace lookup falls back to global
-            assert container.registry.get_workspace_idle_timeout("any") == 42
+            assert registry.get_workspace_idle_timeout("any") == 42
         finally:
             container.IDLE_TIMEOUT_SECONDS = original_timeout
 
@@ -4526,32 +4568,32 @@ class TestSetIdleTimeout:
         resp = await client.get("/api/v1/test/idle-timeout")
         assert resp.status_code in (404, 405)
 
-    async def test_set_idle_timeout_per_workspace(self, db):
+    async def test_set_idle_timeout_per_workspace(self, db, app, registry):
         """Per-workspace idle timeout should not affect global."""
         original_timeout = container.IDLE_TIMEOUT_SECONDS
         try:
-            container.registry.track_activity("cid-test", "ws-test")
-            container.registry.set_workspace_idle_timeout("ws-test", 5)
-            assert (
-                container.registry.get_workspace_idle_timeout("ws-test") == 5
-            )
+            registry.track_activity("cid-test", "ws-test")
+            registry.set_workspace_idle_timeout("ws-test", 5)
+            assert registry.get_workspace_idle_timeout("ws-test") == 5
             assert container.IDLE_TIMEOUT_SECONDS == original_timeout
             # Unknown workspace returns global default
             assert (
-                container.registry.get_workspace_idle_timeout("ws-other")
+                registry.get_workspace_idle_timeout("ws-other")
                 == original_timeout
             )
         finally:
-            container.registry.states.pop("ws-test", None)
+            registry.states.pop("ws-test", None)
 
-    async def test_cleanup_loop_adapts_to_short_timeout(self, db):
+    async def test_cleanup_loop_adapts_to_short_timeout(
+        self, db, app, registry
+    ):
         """Cleanup loop interval adapts when per-workspace timeouts exist."""
         try:
-            container.registry.track_activity("cid-fast", "ws-fast")
-            container.registry.set_workspace_idle_timeout("ws-fast", 6)
+            registry.track_activity("cid-fast", "ws-fast")
+            registry.set_workspace_idle_timeout("ws-fast", 6)
             # With a 6s per-workspace timeout, the minimum is 6, so
             # the loop should sleep max(2, 6//2) = 3 seconds.
-            state = container.registry.states["ws-fast"]
+            state = registry.states["ws-fast"]
             assert state.idle_timeout == 6
             # Global CHECK_INTERVAL_SECONDS should be unchanged
             assert (
@@ -4559,7 +4601,7 @@ class TestSetIdleTimeout:
                 == container.parse_idle_timeout()[1]
             )
         finally:
-            container.registry.states.pop("ws-fast", None)
+            registry.states.pop("ws-fast", None)
 
 
 # --- Roles ---
@@ -4871,11 +4913,11 @@ class TestAdminEndpoints:
         )
         assert resp.status_code == 403
 
-    async def test_delete_user(self, client, admin_user, user):
+    async def test_delete_user(self, client, admin_user, user, registry):
         headers = await self._admin_headers(client)
         with (
             patch.object(
-                container.registry,
+                registry,
                 "stop_user_containers",
                 new_callable=AsyncMock,
             ),
@@ -4918,7 +4960,7 @@ class TestAdminEndpoints:
         assert "system agent" in resp.json()["detail"]
 
     async def test_delete_user_cascades_workspaces(
-        self, client, admin_user, user
+        self, client, admin_user, user, registry
     ):
         """Deleting a user cascades to their ws_mod."""
         headers = await self._admin_headers(client)
@@ -4938,7 +4980,7 @@ class TestAdminEndpoints:
         assert ws_resp.status_code == 200
         # Delete the user
         with patch.object(
-            container.registry,
+            registry,
             "stop_user_containers",
             new_callable=AsyncMock,
         ):
@@ -6188,7 +6230,7 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 400
         assert "missing instance_id" in resp.json()["detail"]
 
-    async def test_import_notifies_importer(self, client, user):
+    async def test_import_notifies_importer(self, client, user, sockets):
         import io
         import json
         import tarfile
@@ -6203,7 +6245,7 @@ class TestWorkspaceExportImport:
 
         headers = await self._user_headers(client)
         with patch.object(
-            wshandler.state, "notify_user_workspaces_changed"
+            sockets, "notify_user_workspaces_changed"
         ) as mock_notify:
             resp = await client.post(
                 "/api/v1/workspaces/import",
@@ -7654,7 +7696,9 @@ class TestOIDCAuthModeGuards:
     async def test_login_blocked_when_oidc_only(
         self, client, monkeypatch, user
     ):
-        monkeypatch.setattr(api.oidc, "password_login_allowed", lambda *args: False)
+        monkeypatch.setattr(
+            api.oidc, "password_login_allowed", lambda *args: False
+        )
         resp = await client.post(
             "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
@@ -7665,7 +7709,9 @@ class TestOIDCAuthModeGuards:
     async def test_register_blocked_when_oidc_only(
         self, client, monkeypatch, db
     ):
-        monkeypatch.setattr(api.oidc, "password_login_allowed", lambda *args: False)
+        monkeypatch.setattr(
+            api.oidc, "password_login_allowed", lambda *args: False
+        )
         resp = await client.post(
             "/api/v1/auth/register",
             json={"email": "new@example.com", "password": "testpass"},
@@ -7673,7 +7719,9 @@ class TestOIDCAuthModeGuards:
         assert resp.status_code == 403
 
     async def test_login_allowed_when_both(self, client, monkeypatch, user):
-        monkeypatch.setattr(api.oidc, "password_login_allowed", lambda *args: True)
+        monkeypatch.setattr(
+            api.oidc, "password_login_allowed", lambda *args: True
+        )
         resp = await client.post(
             "/api/v1/auth/login",
             json={"email": "testuser@example.com", "password": "testpass"},
@@ -7683,7 +7731,9 @@ class TestOIDCAuthModeGuards:
 
 class TestOIDCLogin:
     async def test_oidc_login_not_enabled(self, client, monkeypatch):
-        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda *args: False)
+        monkeypatch.setattr(
+            api.oidc, "oidc_login_allowed", lambda *args: False
+        )
         resp = await client.get("/api/v1/auth/oidc/test/login")
         assert resp.status_code == 404
 
@@ -8487,7 +8537,9 @@ class TestHandleEndpoints:
         updated = await model.get_user_by_id(user["id"])
         assert updated["handle"] == "newhandle"
 
-    async def test_change_handle_refreshes_presence(self, client, user):
+    async def test_change_handle_refreshes_presence(
+        self, client, user, sockets
+    ):
         headers = await _auth_headers(client)
         with patch.object(
             api.wshandler,
@@ -8500,7 +8552,9 @@ class TestHandleEndpoints:
                 headers=headers,
             )
         assert resp.status_code == 200
-        mock_refresh.assert_awaited_once_with(user["id"], "freshhandle")
+        mock_refresh.assert_awaited_once_with(
+            sockets, user["id"], "freshhandle"
+        )
 
     async def test_change_handle_invalid_empty(self, client, user):
         headers = await _auth_headers(client)
@@ -8584,7 +8638,7 @@ class TestHandleEndpoints:
         assert updated["handle"] == "admin-set-handle"
 
     async def test_admin_change_handle_refreshes_presence(
-        self, client, admin_user, user
+        self, client, admin_user, user, sockets
     ):
         admin_resp = await client.post(
             "/api/v1/auth/login",
@@ -8604,7 +8658,9 @@ class TestHandleEndpoints:
                 headers=admin_headers,
             )
         assert resp.status_code == 200
-        mock_refresh.assert_awaited_once_with(user["id"], "admin-refreshed")
+        mock_refresh.assert_awaited_once_with(
+            sockets, user["id"], "admin-refreshed"
+        )
 
     async def test_admin_change_user_handle_invalid(
         self, client, admin_user, user

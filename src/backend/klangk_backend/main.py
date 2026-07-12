@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import bcrypt
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -345,7 +345,7 @@ def remove_pid_file() -> None:
         pass
 
 
-async def startup(registry) -> None:
+async def startup(app_state) -> None:
     """Container-side startup (self-healing on re-run).
 
     Warms podman, adopts/reaps leftover containers, launches the idle
@@ -355,16 +355,17 @@ async def startup(registry) -> None:
     ``auto_start`` re-creates stopped containers -- so re-running this
     after ``runtime_shutdown`` is exactly the SIGHUP restart path.
     """
+    registry = app_state.container_registry
     await registry.prewarm_podman()
     await registry.adopt_orphaned_containers()
     registry.start_cleanup_loop()
     registry.start_health_loop()
-    n = await workspaces.auto_start_workspaces()
+    n = await workspaces.auto_start_workspaces(app_state)
     if n:  # pragma: no cover
         logger.info("Auto-started %d workspace(s)", n)
 
 
-async def runtime_shutdown(registry) -> None:
+async def runtime_shutdown(app_state) -> None:
     """Stop the runtime, keeping the HTTP listener and DB alive.
 
     Drops every WebSocket client (code 1012 = "reconnect"), tears down
@@ -373,10 +374,10 @@ async def runtime_shutdown(registry) -> None:
     normal process-shutdown path and the SIGHUP restart path -- the
     difference is only whether ``startup()`` runs again afterwards.
     """
-    await wshandler.disconnect_all_websockets()
+    await wshandler.disconnect_all_websockets(app_state.sockets)
     await agent.stop_all_sessions()
     wshandler.clear_agent_mention_state()
-    await registry.shutdown()
+    await app_state.container_registry.shutdown()
 
 
 async def process_shutdown() -> None:
@@ -510,7 +511,7 @@ class NginxWatchdog:
 _restart_lock: asyncio.Lock | None = None
 
 
-async def restart_runtime(registry, nginx_watchdog) -> None:
+async def restart_runtime(app_state, nginx_watchdog) -> None:
     """Graceful runtime restart: stop containers, keep the listener.
 
     Triggered by SIGHUP.  Closes all WebSocket clients (code 1012),
@@ -524,12 +525,12 @@ async def restart_runtime(registry, nginx_watchdog) -> None:
         _restart_lock = asyncio.Lock()
     async with _restart_lock:
         logger.info("SIGHUP: restarting runtime (keeping HTTP listener)")
-        await runtime_shutdown(registry)
-        await startup(registry)
+        await runtime_shutdown(app_state)
+        await startup(app_state)
         logger.info("SIGHUP: runtime restarted")
 
 
-def on_sighup(registry, nginx_watchdog) -> None:
+def on_sighup(app_state, nginx_watchdog) -> None:
     """Schedule a runtime restart on the running event loop.
 
     Signal callbacks can't be async, so this just creates a task.  The
@@ -539,7 +540,7 @@ def on_sighup(registry, nginx_watchdog) -> None:
         loop = asyncio.get_running_loop()
     except RuntimeError:  # pragma: no cover - no loop during shutdown
         return
-    loop.create_task(restart_runtime(registry, nginx_watchdog))
+    loop.create_task(restart_runtime(app_state, nginx_watchdog))
 
 
 @asynccontextmanager
@@ -579,11 +580,15 @@ async def lifespan(app: FastAPI):
     await seed_default_user()
     await seed_agent_user()
     registry = app.state.container_registry
-    registry.set_on_workspace_killed(wshandler.reset_workspace_state)
+
+    async def _on_workspace_killed(ws_id):
+        await wshandler.reset_workspace_state(app.state.sockets, ws_id)
+
+    registry.set_on_workspace_killed(_on_workspace_killed)
     registry.set_on_container_status_changed(
-        wshandler.state.notify_container_status
+        app.state.sockets.notify_container_status
     )
-    await startup(registry)
+    await startup(app.state)
     # Start nginx (only when bound to a UDS — klangkd; no-op for TCP tests).
     # Rendered + owned by Python (#1396); replaces scripts/nginx.sh.
     await app.state.nginx_watchdog.start()
@@ -597,7 +602,7 @@ async def lifespan(app: FastAPI):
     loop.add_signal_handler(
         signal.SIGHUP,
         on_sighup,
-        app.state.container_registry,
+        app.state,
         app.state.nginx_watchdog,
     )
     try:
@@ -605,7 +610,7 @@ async def lifespan(app: FastAPI):
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
         await app.state.nginx_watchdog.stop()
-        await runtime_shutdown(registry)
+        await runtime_shutdown(app.state)
         await process_shutdown()
         logger.info("Klangk backend stopped")
 
@@ -726,24 +731,29 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     Constructs the FastAPI app, wires middleware, routers, exception
     handlers, the WebSocket endpoint, and static files. The ASGI app is the
     *only* global; everything else is reached per-request via
-    :func:`get_settings_dep` (or ``app.state`` for non-request code).
+    :func:`get_app_state_dep` (or ``app.state`` for non-request code).
     """
     app = FastAPI(title="Klangk", lifespan=lifespan)
     app.state.settings = settings
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
-    app.state.container_registry = container.registry
-    container.registry.settings = settings
+    app.state.container_registry = container.ContainerRegistry(settings)
     # Slice 2b (#1463): nginx watchdog is an owned instance with start/stop
     # lifecycle methods called by the lifespan.
     app.state.nginx_watchdog = NginxWatchdog(settings)
-    # Slice 2c (#1464): wire the WebSocketState instance onto the registry so
-    # HealthMonitor (and anything else in the container subsystem) can
-    # broadcast through it via self._registry.connections — no module global,
-    # no lazy import. wshandler.state stays as a transitional shim for other
-    # callers (WS layer, API endpoints); it dies in Slice 2d (#1465).
-    app.state.container_registry.connections = wshandler.state
-    app.state.connections = wshandler.state
+    # Slice 2c (#1475): the WebSocketState is an owned instance wired onto
+    # app.state.sockets. The registry and agent module reach it through
+    # explicit references — no module-level singleton.
+    sockets = wshandler.WebSocketState()
+    app.state.sockets = sockets
+    app.state.container_registry.sockets = sockets
+    app.state.container_registry.app_state = app.state
+    # WebSocketState reaches the registry through its own app_state
+    # back-reference (send_service_health_snapshot / reset_workspace).
+    # The unit-test fixtures set this explicitly; build_app must too, or
+    # every WS connect crashes on the health snapshot (#1475).
+    sockets.app_state = app.state
+    agent.get_workspace_session = sockets.get_session
 
     app.add_middleware(
         CORSMiddleware,
@@ -760,7 +770,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
 
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):  # pragma: no cover
-        await handle_websocket(ws)
+        await handle_websocket(ws, app.state)
 
     frontend_dir = (
         Path(__file__).parent.parent.parent / "frontend" / "build" / "web"
@@ -771,14 +781,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     return app
 
 
-def get_settings_dep(request: Request) -> KlangkSettings:
-    """Per-request bridge to ``app.state.settings`` (no global read).
-
-    Request handlers obtain the frozen settings via
-    ``settings: KlangkSettings = Depends(get_settings_dep)`` instead of
-    calling the module-level ``get_settings()`` singleton (#1426).
-    """
-    return request.app.state.settings
+# Re-export from _common so existing callers (e.g. tests) that do
+# ``from klangk_backend.main import get_app_state_dep`` keep working.
+# The canonical home is ``api._common`` (avoids main <-> api circular import).
+from .api._common import get_app_state_dep  # noqa: F401, E402
 
 
 # --- ASGI app ---

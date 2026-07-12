@@ -1,16 +1,34 @@
 """Tests for workspaces: workspace lifecycle, directory management, port allocation."""
 
 import os
+import types
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from klangk_backend import workspaces as ws_mod, container
+from klangk_backend.container import ContainerRegistry
+from klangk_backend.settings import KlangkSettings
+
+
+@pytest.fixture
+def app_state():
+    """Build a minimal app_state with a real ContainerRegistry."""
+    settings = KlangkSettings(env={})
+    registry = ContainerRegistry(settings)
+    state = types.SimpleNamespace(
+        container_registry=registry,
+        settings=settings,
+    )
+    registry.app_state = state
+    return state
 
 
 class TestCreateWorkspace:
-    async def test_creates_workspace_and_dirs(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "my-ws")
+    async def test_creates_workspace_and_dirs(self, user, app_state):
+        ws = await ws_mod.create_workspace(
+            user["id"], "my-ws", app_state=app_state
+        )
         assert ws["name"] == "my-ws"
         assert ws["user_id"] == user["id"]
         assert "id" in ws
@@ -27,25 +45,35 @@ class TestCreateWorkspace:
         assert users_dir.exists()
         assert users_dir.is_dir()
 
-    async def test_allocates_ports(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "ported")
-        ports = await container.registry.get_workspace_ports(ws["id"])
+    async def test_allocates_ports(self, user, app_state):
+        ws = await ws_mod.create_workspace(
+            user["id"], "ported", app_state=app_state
+        )
+        registry = app_state.container_registry
+        ports = await registry.get_workspace_ports(ws["id"])
         assert len(ports) == ws["num_ports"]
         assert all(p >= container.PORT_RANGE_START for p in ports)
 
-    async def test_duplicate_name_fails(self, user):
-        await ws_mod.create_workspace(user["id"], "unique")
+    async def test_duplicate_name_fails(self, user, app_state):
+        await ws_mod.create_workspace(
+            user["id"], "unique", app_state=app_state
+        )
         with pytest.raises(Exception):
-            await ws_mod.create_workspace(user["id"], "unique")
+            await ws_mod.create_workspace(
+                user["id"], "unique", app_state=app_state
+            )
 
-    async def test_invalid_setup_state_rejected(self, user):
+    async def test_invalid_setup_state_rejected(self, user, app_state):
         """Invalid setup_state raises ValueError (#1033)."""
         from klangk_backend import model
 
         # Service layer (goes through create_workspace_with_acl).
         with pytest.raises(ValueError, match="Invalid setup_state"):
             await ws_mod.create_workspace(
-                user["id"], "bad-state", setup_state="bogus"
+                user["id"],
+                "bad-state",
+                setup_state="bogus",
+                app_state=app_state,
             )
         # Row-only model primitive validates the same way.
         with pytest.raises(ValueError, match="Invalid setup_state"):
@@ -53,46 +81,55 @@ class TestCreateWorkspace:
                 user["id"], "bad-row", setup_state="bogus"
             )
 
-    async def test_setup_state_defaults_to_complete(self, user):
+    async def test_setup_state_defaults_to_complete(self, user, app_state):
         """Workspaces without a setup command default to 'complete'."""
-        ws = await ws_mod.create_workspace(user["id"], "default-state")
+        ws = await ws_mod.create_workspace(
+            user["id"], "default-state", app_state=app_state
+        )
         assert ws["setup_state"] == "complete"
 
-    async def test_allocate_ports_failure_cleans_up(self, user):
+    async def test_allocate_ports_failure_cleans_up(self, user, app_state):
         """If allocate_ports raises, DB record and directories are removed."""
+        registry = app_state.container_registry
         with patch.object(
-            container.registry,
+            registry,
             "allocate_ports",
             new_callable=AsyncMock,
             side_effect=RuntimeError("port exhaustion"),
         ):
             with pytest.raises(RuntimeError, match="port exhaustion"):
-                await ws_mod.create_workspace(user["id"], "boom")
+                await ws_mod.create_workspace(
+                    user["id"], "boom", app_state=app_state
+                )
 
         # DB record should have been cleaned up
         result = await ws_mod.list_workspaces(user["id"])
         assert all(ws["name"] != "boom" for ws in result["items"])
 
         # Name should be reusable (proves full cleanup)
-        ws = await ws_mod.create_workspace(user["id"], "boom")
+        ws = await ws_mod.create_workspace(
+            user["id"], "boom", app_state=app_state
+        )
         assert ws["name"] == "boom"
 
 
-async def test_update_workspace_invalid_setup_state_rejected(user):
+async def test_update_workspace_invalid_setup_state_rejected(user, app_state):
     """update_workspace rejects an invalid setup_state (#1033)."""
     from klangk_backend.model import update_workspace
 
-    ws = await ws_mod.create_workspace(user["id"], "upd-state")
+    ws = await ws_mod.create_workspace(
+        user["id"], "upd-state", app_state=app_state
+    )
     with pytest.raises(ValueError, match="Invalid setup_state"):
         await update_workspace(ws["id"], ws["user_id"], setup_state="bogus")
 
 
-async def test_update_workspace_sets_setup_state(user):
+async def test_update_workspace_sets_setup_state(user, app_state):
     """update_workspace can transition setup_state (#1033)."""
     from klangk_backend.model import get_workspace, update_workspace
 
     ws = await ws_mod.create_workspace(
-        user["id"], "upd-ok", setup_state="pending"
+        user["id"], "upd-ok", setup_state="pending", app_state=app_state
     )
     assert ws["setup_state"] == "pending"
     await update_workspace(ws["id"], ws["user_id"], setup_state="complete")
@@ -177,9 +214,9 @@ class TestListWorkspaces:
             "next_offset": None,
         }
 
-    async def test_list_multiple(self, user):
-        await ws_mod.create_workspace(user["id"], "ws-a")
-        await ws_mod.create_workspace(user["id"], "ws-b")
+    async def test_list_multiple(self, user, app_state):
+        await ws_mod.create_workspace(user["id"], "ws-a", app_state=app_state)
+        await ws_mod.create_workspace(user["id"], "ws-b", app_state=app_state)
         result = await ws_mod.list_workspaces(user["id"])
         names = [ws["name"] for ws in result["items"]]
         assert "ws-a" in names
@@ -188,8 +225,10 @@ class TestListWorkspaces:
 
 
 class TestGetWorkspace:
-    async def test_get_existing(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "findme")
+    async def test_get_existing(self, user, app_state):
+        ws = await ws_mod.create_workspace(
+            user["id"], "findme", app_state=app_state
+        )
         found = await ws_mod.get_workspace(ws["id"], user["id"])
         assert found is not None
         assert found["name"] == "findme"
@@ -198,15 +237,19 @@ class TestGetWorkspace:
         found = await ws_mod.get_workspace("fake-id", user["id"])
         assert found is None
 
-    async def test_get_wrong_user(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "mine")
+    async def test_get_wrong_user(self, user, app_state):
+        ws = await ws_mod.create_workspace(
+            user["id"], "mine", app_state=app_state
+        )
         found = await ws_mod.get_workspace(ws["id"], "other-user")
         assert found is None
 
 
 class TestDeleteWorkspace:
-    async def test_delete_removes_db_and_dirs(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "doomed")
+    async def test_delete_removes_db_and_dirs(self, user, app_state):
+        ws = await ws_mod.create_workspace(
+            user["id"], "doomed", app_state=app_state
+        )
         data_path = ws_mod.workspace_path(ws["id"])
         home_dir = ws_mod.home_path(ws["id"])
         (data_path / "file.txt").write_text("hello")
@@ -222,17 +265,22 @@ class TestDeleteWorkspace:
         deleted = await ws_mod.delete_workspace("fake-id", user["id"])
         assert deleted is False
 
-    async def test_delete_cascades_ports(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "ported")
-        ports_before = await container.registry.get_workspace_ports(ws["id"])
+    async def test_delete_cascades_ports(self, user, app_state):
+        ws = await ws_mod.create_workspace(
+            user["id"], "ported", app_state=app_state
+        )
+        registry = app_state.container_registry
+        ports_before = await registry.get_workspace_ports(ws["id"])
         assert len(ports_before) > 0
 
         await ws_mod.delete_workspace(ws["id"], user["id"])
-        ports_after = await container.registry.get_workspace_ports(ws["id"])
+        ports_after = await registry.get_workspace_ports(ws["id"])
         assert ports_after == []
 
-    async def test_delete_missing_dirs_ok(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "no-dirs")
+    async def test_delete_missing_dirs_ok(self, user, app_state):
+        ws = await ws_mod.create_workspace(
+            user["id"], "no-dirs", app_state=app_state
+        )
         home_dir = ws_mod.home_path(ws["id"])
         import shutil
 
@@ -267,8 +315,10 @@ class TestHostPaths:
 
 
 class TestEnsureHomeSymlink:
-    async def test_creates_symlink(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "symlink-ws")
+    async def test_creates_symlink(self, user, app_state):
+        ws = await ws_mod.create_workspace(
+            user["id"], "symlink-ws", app_state=app_state
+        )
         home = ws_mod.home_path(ws["id"])
         result, created = await ws_mod.ensure_home_symlink(
             home, "alice", "uid-1"
@@ -280,8 +330,10 @@ class TestEnsureHomeSymlink:
         assert os.readlink(symlink) == ".users/uid-1"
         assert (home / ".users" / "uid-1").is_dir()
 
-    async def test_idempotent(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "symlink-ws2")
+    async def test_idempotent(self, user, app_state):
+        ws = await ws_mod.create_workspace(
+            user["id"], "symlink-ws2", app_state=app_state
+        )
         home = ws_mod.home_path(ws["id"])
         await ws_mod.ensure_home_symlink(home, "bob", "uid-1")
         result, created = await ws_mod.ensure_home_symlink(
@@ -290,8 +342,10 @@ class TestEnsureHomeSymlink:
         assert result == "/home/bob"
         assert created is False
 
-    async def test_rename_removes_old_symlink(self, user):
-        ws = await ws_mod.create_workspace(user["id"], "symlink-ws3")
+    async def test_rename_removes_old_symlink(self, user, app_state):
+        ws = await ws_mod.create_workspace(
+            user["id"], "symlink-ws3", app_state=app_state
+        )
         home = ws_mod.home_path(ws["id"])
         await ws_mod.ensure_home_symlink(home, "alice", "uid-1")
         result, created = await ws_mod.ensure_home_symlink(
@@ -302,12 +356,14 @@ class TestEnsureHomeSymlink:
         assert not (home / "alice").exists()
         assert (home / "alicia").is_symlink()
 
-    async def test_replaces_stale_symlink_from_import(self, user):
+    async def test_replaces_stale_symlink_from_import(self, user, app_state):
         """Imported workspace has a symlink for a different user ID.
 
         The old user's files should be adopted into the new user dir.
         """
-        ws = await ws_mod.create_workspace(user["id"], "symlink-ws4")
+        ws = await ws_mod.create_workspace(
+            user["id"], "symlink-ws4", app_state=app_state
+        )
         home = ws_mod.home_path(ws["id"])
         # Simulate imported workspace: symlink for old user ID with files.
         (home / ".users").mkdir(parents=True, exist_ok=True)
@@ -358,34 +414,33 @@ class TestPopulateHomeSkel:
 
 
 class TestAutoStartWorkspaces:
-    async def test_returns_zero_when_env_not_set(self, user):
+    async def test_returns_zero_when_env_not_set(self, user, app_state):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("KLANGK_ALLOW_AUTOSTART", None)
-            result = await ws_mod.auto_start_workspaces()
+            result = await ws_mod.auto_start_workspaces(app_state)
         assert result == 0
 
-    async def test_starts_auto_start_workspaces(self, user):
+    async def test_starts_auto_start_workspaces(self, user, app_state):
+        registry = app_state.container_registry
         ws1 = await ws_mod.create_workspace(
-            user["id"], "auto-ws1", auto_start=True
+            user["id"], "auto-ws1", auto_start=True, app_state=app_state
         )
         ws2 = await ws_mod.create_workspace(
-            user["id"], "auto-ws2", auto_start=True
+            user["id"], "auto-ws2", auto_start=True, app_state=app_state
         )
-        await ws_mod.create_workspace(user["id"], "normal-ws")
+        await ws_mod.create_workspace(
+            user["id"], "normal-ws", app_state=app_state
+        )
 
         # Pre-populate states so idle_timeout can be set.
         from klangk_backend.container import ContainerState
 
-        container.registry.states[ws1["id"]] = ContainerState(
-            ws1["id"], "cid-1"
-        )
-        container.registry.states[ws2["id"]] = ContainerState(
-            ws2["id"], "cid-2"
-        )
+        registry.states[ws1["id"]] = ContainerState(ws1["id"], "cid-1")
+        registry.states[ws2["id"]] = ContainerState(ws2["id"], "cid-2")
         try:
             with patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}):
                 with patch.object(
-                    container.registry,
+                    registry,
                     "start_container",
                     new_callable=AsyncMock,
                     return_value=("cid-abc", "started"),
@@ -394,26 +449,29 @@ class TestAutoStartWorkspaces:
                         "klangk_backend.workspaces.asyncio.sleep",
                         new_callable=AsyncMock,
                     ) as mock_sleep:
-                        result = await ws_mod.auto_start_workspaces()
+                        result = await ws_mod.auto_start_workspaces(app_state)
             assert result == 2
             assert mock_start.await_count == 2
             mock_sleep.assert_awaited_once()
-            assert container.registry.states[ws1["id"]].idle_timeout == 0
-            assert container.registry.states[ws2["id"]].idle_timeout == 0
+            assert registry.states[ws1["id"]].idle_timeout == 0
+            assert registry.states[ws2["id"]].idle_timeout == 0
         finally:
-            container.registry.states.pop(ws1["id"], None)
-            container.registry.states.pop(ws2["id"], None)
+            registry.states.pop(ws1["id"], None)
+            registry.states.pop(ws2["id"], None)
 
-    async def test_handles_start_failure_gracefully(self, user):
-        await ws_mod.create_workspace(user["id"], "fail-ws", auto_start=True)
+    async def test_handles_start_failure_gracefully(self, user, app_state):
+        registry = app_state.container_registry
+        await ws_mod.create_workspace(
+            user["id"], "fail-ws", auto_start=True, app_state=app_state
+        )
         with patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}):
             with patch.object(
-                container.registry,
+                registry,
                 "start_container",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("container failed"),
             ):
-                result = await ws_mod.auto_start_workspaces()
+                result = await ws_mod.auto_start_workspaces(app_state)
         assert result == 0
 
 
@@ -427,21 +485,23 @@ class TestStartWorkspace:
     workspace dict and delegates to registry.start_container.
     """
 
-    async def test_unpacks_dict_and_starts_container(self, user):
+    async def test_unpacks_dict_and_starts_container(self, user, app_state):
+        registry = app_state.container_registry
         ws = await ws_mod.create_workspace(
             user["id"],
             "start-ws",
             auto_start=True,
             service_command="openclaw gateway",
+            app_state=app_state,
         )
         try:
             with patch.object(
-                container.registry,
+                registry,
                 "start_container",
                 new_callable=AsyncMock,
                 return_value=("cid-x", "created"),
             ) as mock_start:
-                cid, status = await ws_mod.start_workspace(ws)
+                cid, status = await ws_mod.start_workspace(ws, app_state)
             assert cid == "cid-x"
             assert status == "created"
             mock_start.assert_awaited_once()
@@ -451,30 +511,31 @@ class TestStartWorkspace:
                 "openclaw gateway"
             )
         finally:
-            container.registry.states.pop(ws["id"], None)
+            registry.states.pop(ws["id"], None)
 
-    async def test_does_not_pin_idle_timeout(self, user):
+    async def test_does_not_pin_idle_timeout(self, user, app_state):
         """Only the boot path (auto_start_workspaces) pins idle_timeout."""
+        registry = app_state.container_registry
         ws = await ws_mod.create_workspace(
-            user["id"], "start-ws-no-idle", auto_start=True
+            user["id"],
+            "start-ws-no-idle",
+            auto_start=True,
+            app_state=app_state,
         )
         from klangk_backend.container import ContainerState
 
         # Registry default idle timeout is non-zero; start_workspace
         # must not clobber it.
         default_timeout = ContainerState(ws["id"], "cid-y").idle_timeout
-        container.registry.states[ws["id"]] = ContainerState(ws["id"], "cid-y")
+        registry.states[ws["id"]] = ContainerState(ws["id"], "cid-y")
         try:
             with patch.object(
-                container.registry,
+                registry,
                 "start_container",
                 new_callable=AsyncMock,
                 return_value=("cid-y", "created"),
             ):
-                await ws_mod.start_workspace(ws)
-            assert (
-                container.registry.states[ws["id"]].idle_timeout
-                == default_timeout
-            )
+                await ws_mod.start_workspace(ws, app_state)
+            assert registry.states[ws["id"]].idle_timeout == default_timeout
         finally:
-            container.registry.states.pop(ws["id"], None)
+            registry.states.pop(ws["id"], None)

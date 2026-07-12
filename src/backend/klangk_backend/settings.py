@@ -171,7 +171,9 @@ class _EnvDictSource(EnvSettingsSource):
     passed to :class:`KlangkSettings`.
     """
 
-    def __init__(self, settings_cls: type[BaseSettings], env: Mapping[str, str]):
+    def __init__(
+        self, settings_cls: type[BaseSettings], env: Mapping[str, str]
+    ):
         self._env = env
         super().__init__(settings_cls)
 
@@ -445,6 +447,7 @@ class KlangkSettings(BaseSettings):
 # ---------------------------------------------------------------------------
 # Singleton with env-change-detection cache + config-file path
 # ---------------------------------------------------------------------------
+
 
 def get_settings() -> KlangkSettings:
     """Return a fresh ``KlangkSettings`` from the live environment.

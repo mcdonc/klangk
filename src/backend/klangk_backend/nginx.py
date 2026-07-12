@@ -204,9 +204,7 @@ def compute_client_max_body_size(settings: KlangkSettings) -> str:
 
     The setting is in bytes (default 500 MB); nginx wants ``Nm``. Minimum 1m.
     """
-    raw = (
-        resolve_indirection(settings.file_upload_size_max) or "524288000"
-    )
+    raw = resolve_indirection(settings.file_upload_size_max) or "524288000"
     try:
         bytes_ = int(str(raw))
     except (TypeError, ValueError):
@@ -268,7 +266,9 @@ def _build_hosted_block(settings: KlangkSettings) -> str:
     )
 
 
-def _build_llm_block(acl: str, resolvers: str, settings: KlangkSettings) -> str:
+def _build_llm_block(
+    acl: str, resolvers: str, settings: KlangkSettings
+) -> str:
     """The /llm-proxy/ location, only when ``KLANGK_LLM_BASE_URL`` is set.
 
     Containers hit this instead of the real endpoint, so they never see the
@@ -528,7 +528,9 @@ http {{
     return conf
 
 
-def write_config(upstream: str, conf_path: str | Path, settings: KlangkSettings) -> str:
+def write_config(
+    upstream: str, conf_path: str | Path, settings: KlangkSettings
+) -> str:
     """Render the config and write it to ``conf_path`` (returns the text).
 
     Written mode ``0600`` because the rendered config may embed secrets

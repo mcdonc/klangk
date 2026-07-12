@@ -17,9 +17,9 @@ from pydantic import BaseModel
 
 from .. import (
     acl,
-    container,
     files,
 )
+from ._common import get_app_state_dep
 from ..util import (
     sanitize_disposition_name,
 )
@@ -33,9 +33,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _require_container(workspace_id: str) -> str:
+def _require_container(workspace_id: str, container_registry) -> str:
     """Return the container_id for a running workspace, or raise 409."""
-    state = container.registry.get_state(workspace_id)
+    state = container_registry.get_state(workspace_id)
     if state is None:
         raise HTTPException(status_code=409, detail="Container not running")
     state.record_activity()
@@ -47,8 +47,9 @@ async def list_files(
     workspace_id: str,
     path: str = "/",
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
+    app_state=Depends(get_app_state_dep),
 ):
-    cid = _require_container(workspace_id)
+    cid = _require_container(workspace_id, app_state.container_registry)
     try:
         return await files.list_files(cid, path)
     except ValueError as e:
@@ -60,8 +61,9 @@ async def read_file(
     workspace_id: str,
     path: str,
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
+    app_state=Depends(get_app_state_dep),
 ):
-    cid = _require_container(workspace_id)
+    cid = _require_container(workspace_id, app_state.container_registry)
     try:
         content = await files.read_file(cid, path)
     except ValueError as e:
@@ -78,8 +80,9 @@ async def delete_file(
     workspace_id: str,
     path: str,
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
+    app_state=Depends(get_app_state_dep),
 ):
-    cid = _require_container(workspace_id)
+    cid = _require_container(workspace_id, app_state.container_registry)
     try:
         deleted = await files.delete_path(cid, path)
     except ValueError as e:
@@ -101,8 +104,9 @@ async def rename_file(
     workspace_id: str,
     body: RenameFileRequest,
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
+    app_state=Depends(get_app_state_dep),
 ):
-    cid = _require_container(workspace_id)
+    cid = _require_container(workspace_id, app_state.container_registry)
     try:
         renamed = await files.rename_path(cid, body.old_path, body.new_path)
     except ValueError as e:
@@ -123,8 +127,9 @@ async def download_file(
     workspace_id: str,
     path: str,
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
+    app_state=Depends(get_app_state_dep),
 ):
-    cid = _require_container(workspace_id)
+    cid = _require_container(workspace_id, app_state.container_registry)
     try:
         info = await files.stat_path(cid, path)
     except ValueError as e:
@@ -155,8 +160,9 @@ async def upload_file(
     file: UploadFile,
     path: str = "",
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
+    app_state=Depends(get_app_state_dep),
 ):
-    cid = _require_container(workspace_id)
+    cid = _require_container(workspace_id, app_state.container_registry)
 
     filename = path if path else posixpath.basename(file.filename or "")
     if not filename:  # pragma: no cover
