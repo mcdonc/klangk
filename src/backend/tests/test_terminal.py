@@ -1169,6 +1169,18 @@ class TestEnsureServiceSession:
     identity (#1133 D6). _ensure_tmux_session and service_cmd_window_exists
     are mocked to isolate the firing logic from tmux-session internals."""
 
+    def setup_method(self):
+        # ensure_service_session reaches its per-container firing lock via
+        # app_state.container_registry (#1478). Build one real registry per
+        # test so concurrent same-container calls share the lock dict.
+        import types
+
+        from klangk_backend.container import ContainerRegistry
+        from klangk_backend.settings import KlangkSettings
+
+        registry = ContainerRegistry(KlangkSettings(env={}))
+        self.app_state = types.SimpleNamespace(container_registry=registry)
+
     async def test_creates_window_and_sends_command(self):
         """A fresh service session fires the service command in its
         ``service-cmd`` window -> ``service:service-cmd``."""
@@ -1189,7 +1201,10 @@ class TestEnsureServiceSession:
             ) as mock_exec,
         ):
             await ensure_service_session(
-                "cid", "/home/clanker", "openclaw gateway"
+                "cid",
+                "/home/clanker",
+                "openclaw gateway",
+                app_state=self.app_state,
             )
         cmds = [c.args[1] for c in mock_exec.call_args_list]
         # service-cmd window created in the service session.
@@ -1224,7 +1239,10 @@ class TestEnsureServiceSession:
             ),
         ):
             await ensure_service_session(
-                "cid", "/home/clanker", "openclaw gateway"
+                "cid",
+                "/home/clanker",
+                "openclaw gateway",
+                app_state=self.app_state,
             )
         mock_ensure.assert_awaited_once_with(
             "cid", SERVICE_SESSION, "/home/clanker"
@@ -1249,7 +1267,10 @@ class TestEnsureServiceSession:
             ) as mock_exec,
         ):
             await ensure_service_session(
-                "cid", "/home/clanker", "openclaw gateway"
+                "cid",
+                "/home/clanker",
+                "openclaw gateway",
+                app_state=self.app_state,
             )
         cmds = [c.args[1] for c in mock_exec.call_args_list]
         assert not any("new-window" in c for c in cmds)
@@ -1278,6 +1299,7 @@ class TestEnsureServiceSession:
                 "/home/clanker",
                 "openclaw gateway",
                 setup_state="pending",
+                app_state=self.app_state,
             )
         cmds = [c.args[1] for c in mock_exec.call_args_list]
         assert not any("new-window" in c for c in cmds)
@@ -1302,7 +1324,9 @@ class TestEnsureServiceSession:
             ),
             patch("klangk_backend.terminal.logger") as mock_logger,
         ):
-            await ensure_service_session("cid", "/home/clanker", "cmd")
+            await ensure_service_session(
+                "cid", "/home/clanker", "cmd", app_state=self.app_state
+            )
         mock_logger.warning.assert_called()
 
     async def test_send_keys_failure_logs_warning(self):
@@ -1330,7 +1354,9 @@ class TestEnsureServiceSession:
             ),
             patch("klangk_backend.terminal.logger") as mock_logger,
         ):
-            await ensure_service_session("cid", "/home/clanker", "cmd")
+            await ensure_service_session(
+                "cid", "/home/clanker", "cmd", app_state=self.app_state
+            )
         mock_logger.warning.assert_called()
 
     async def test_firing_resets_health_grace_anchor(self):
@@ -1494,10 +1520,16 @@ class TestEnsureServiceSession:
         ):
             await asyncio.gather(
                 terminal.ensure_service_session(
-                    "cid", "/home/clanker", "openclaw gateway"
+                    "cid",
+                    "/home/clanker",
+                    "openclaw gateway",
+                    app_state=self.app_state,
                 ),
                 terminal.ensure_service_session(
-                    "cid", "/home/clanker", "openclaw gateway"
+                    "cid",
+                    "/home/clanker",
+                    "openclaw gateway",
+                    app_state=self.app_state,
                 ),
             )
 
@@ -1544,10 +1576,16 @@ class TestEnsureServiceSession:
         ):
             await asyncio.gather(
                 terminal.ensure_service_session(
-                    "cid-a", "/home/clanker", "cmd-a"
+                    "cid-a",
+                    "/home/clanker",
+                    "cmd-a",
+                    app_state=self.app_state,
                 ),
                 terminal.ensure_service_session(
-                    "cid-b", "/home/clanker", "cmd-b"
+                    "cid-b",
+                    "/home/clanker",
+                    "cmd-b",
+                    app_state=self.app_state,
                 ),
             )
 
@@ -1583,7 +1621,9 @@ class TestEnsureServiceSession:
             ) as mock_exec,
             patch("klangk_backend.terminal.logger"),
         ):
-            await ensure_service_session("cid", "/home/clanker", "cmd")
+            await ensure_service_session(
+                "cid", "/home/clanker", "cmd", app_state=self.app_state
+            )
 
         # The third exec call must be the kill-window cleanup targeting
         # the service-cmd window we just created.
@@ -1619,99 +1659,11 @@ class TestEnsureServiceSession:
             ),
             patch("klangk_backend.terminal.logger") as mock_logger,
         ):
-            await ensure_service_session("cid", "/home/clanker", "cmd")
+            await ensure_service_session(
+                "cid", "/home/clanker", "cmd", app_state=self.app_state
+            )
         # Both the send-keys failure and the cleanup failure are warned.
         assert mock_logger.warning.call_count == 2
-
-
-class TestServiceSessionLock:
-    """Unit coverage for the per-container firing-lock helpers added in #1188."""
-
-    def setup_method(self):
-        from klangk_backend import terminal
-
-        terminal._service_session_locks.clear()
-
-    def teardown_method(self):
-        from klangk_backend import terminal
-
-        terminal._service_session_locks.clear()
-
-    def test_get_lock_returns_same_lock_for_same_container(self):
-        from klangk_backend.terminal import get_service_session_lock
-
-        lock_a = get_service_session_lock("cid")
-        lock_b = get_service_session_lock("cid")
-        assert lock_a is lock_b
-
-    def test_get_lock_returns_distinct_locks_per_container(self):
-        from klangk_backend.terminal import get_service_session_lock
-
-        lock_a = get_service_session_lock("cid-a")
-        lock_b = get_service_session_lock("cid-b")
-        assert lock_a is not lock_b
-
-    def test_clear_lock_removes_entry(self):
-        from klangk_backend.terminal import (
-            get_service_session_lock,
-            _service_session_locks,
-            clear_service_session_lock,
-        )
-
-        get_service_session_lock("cid")
-        assert "cid" in _service_session_locks
-        clear_service_session_lock("cid")
-        assert "cid" not in _service_session_locks
-
-    def test_clear_lock_is_noop_for_unknown_container(self):
-        from klangk_backend.terminal import clear_service_session_lock
-
-        # Must not raise for a container that never registered a lock.
-        clear_service_session_lock("never-seen")
-
-    def test_prune_removes_entries_for_untracked_containers(self):
-        from klangk_backend.terminal import (
-            _service_session_locks,
-            get_service_session_lock,
-            prune_service_session_locks,
-        )
-
-        get_service_session_lock("alive")
-        get_service_session_lock("dead-a")
-        get_service_session_lock("dead-b")
-        assert len(_service_session_locks) == 3
-
-        removed = prune_service_session_locks({"alive"})
-        assert removed == 2
-        assert set(_service_session_locks) == {"alive"}
-
-    async def test_prune_keeps_held_lock_even_if_untracked(self):
-        from klangk_backend.terminal import (
-            _service_session_locks,
-            get_service_session_lock,
-            prune_service_session_locks,
-        )
-
-        held = get_service_session_lock("held-but-orphaned")
-        await held.acquire()  # simulate an in-flight service-command fire
-        try:
-            removed = prune_service_session_locks(set())
-            # Not pruned: recreating its lock would not serialize against the
-            # in-flight fire (#1188 duplicate-window race).
-            assert removed == 0
-            assert "held-but-orphaned" in _service_session_locks
-        finally:
-            held.release()
-
-    def test_prune_noop_when_all_tracked(self):
-        from klangk_backend.terminal import (
-            get_service_session_lock,
-            prune_service_session_locks,
-        )
-
-        get_service_session_lock("a")
-        get_service_session_lock("b")
-        assert prune_service_session_locks({"a", "b"}) == 0
 
 
 class TestServiceSessionHelpers:

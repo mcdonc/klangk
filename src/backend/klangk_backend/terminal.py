@@ -102,58 +102,10 @@ SERVICE_CMD_WINDOW = "service-cmd"
 # dying because it is just a tmux session) (#1133 D6).
 SERVICE_SESSION = "service"
 
-# Per-container locks serializing the read-then-write firing sequence in
-# ensure_service_session (#1188). Two unserialized callers -- the boot path
-# (workspaces.start_workspace) and the per-connection path
-# (wshandler _fire_service_command) -- could both observe
-# service_cmd_window_exists -> False before either's new-window landed, and
-# since tmux permits duplicate window names, both would create a service-cmd
-# window. The lock makes the window-exists -> new-window -> send-keys sequence
-# atomic per container, so unrelated workspaces fire concurrently but the
-# same workspace fires exactly once. Entries are cleared on container teardown
-# via clear_service_session_lock().
-_service_session_locks: dict[str, asyncio.Lock] = {}
-
-
-def get_service_session_lock(container_id: str) -> asyncio.Lock:
-    """Get or create the per-container lock for service-command firing."""
-    if container_id not in _service_session_locks:
-        _service_session_locks[container_id] = asyncio.Lock()
-    return _service_session_locks[container_id]
-
-
-def clear_service_session_lock(container_id: str) -> None:
-    """Drop the per-container firing lock for a torn-down container.
-
-    Called from container teardown so the lock dict does not grow unbounded
-    with container churn. Safe to call when no lock exists for the id.
-    """
-    _service_session_locks.pop(container_id, None)
-
-
-def prune_service_session_locks(active_container_ids: set[str]) -> int:
-    """Remove lock entries for containers no longer tracked by the registry.
-
-    Bounds the ``_service_session_locks`` dict against unbounded growth from
-    container churn (#1351): explicit :func:`clear_service_session_lock`
-    calls cover the normal teardown path, but a racing re-bind in
-    ``stop_and_remove_container`` can leave an entry whose container is gone.
-    This opportunistic sweep removes any entry whose container id is no longer
-    in *active_container_ids*.
-
-    Entries whose lock is currently held are skipped: recreating a fresh
-    ``asyncio.Lock`` for an in-flight service-command fire would not serialize
-    against the held one, reopening the duplicate-window race the lock exists
-    to prevent. Returns the number of entries pruned.
-    """
-    stale = [
-        cid
-        for cid, lock in _service_session_locks.items()
-        if cid not in active_container_ids and not lock.locked()
-    ]
-    for cid in stale:
-        del _service_session_locks[cid]
-    return len(stale)
+# The per-container service-firing lock lives on ContainerRegistry as
+# _service_session_locks (#1188, #1478). It used to live here at module scope;
+# terminal.ensure_service_session now reaches it via
+# app_state.container_registry.get_service_session_lock().
 
 
 async def has_tmux_session(container_id: str, session_name: str) -> bool:
@@ -304,18 +256,21 @@ async def ensure_service_session(
     window-exists check makes it a no-op after the first fire.
 
     The window-exists -> new-window -> send-keys sequence is serialized
-    per container via :func:`get_service_session_lock` (#1188): without
+    per container via the registry's service-session lock (#1188): without
     it the boot path and the per-connection path could both pass the
     existence check before either created the window, producing two
     duplicate-named ``service-cmd`` windows (tmux allows duplicate
     names), leaving later ``send-keys -t service:service-cmd`` ambiguous.
+    The lock is reached via ``app_state.container_registry`` (#1478).
     """
     # Hold the per-container lock across the entire read-modify-write so
     # a concurrent caller (boot vs first terminal_start, owner vs
     # collaborator) cannot interleave: the second waits, then observes
     # the window exists and no-ops. This also bounds the partial-failure
     # window from #1186.
-    async with get_service_session_lock(container_id):
+    async with app_state.container_registry.get_service_session_lock(
+        container_id
+    ):
         await _ensure_tmux_session(container_id, SERVICE_SESSION, agent_home)
         if not (
             should_fire_service_command(service_command, setup_state)

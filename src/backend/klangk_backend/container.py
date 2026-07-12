@@ -779,6 +779,12 @@ class ContainerRegistry:
         self._cid_to_wsid: dict[str, str] = {}
         # Per-workspace locks to serialize container creation.
         self._workspace_locks: dict[str, asyncio.Lock] = {}
+        # Per-container locks serializing the service-command fire
+        # sequence (window-exists -> new-window -> send-keys) so the boot
+        # path and the per-connection path can't both create a duplicate
+        # ``service-cmd`` tmux window (#1188). Owned here, not in
+        # terminal.py — terminal reaches it via app_state (#1478).
+        self._service_session_locks: dict[str, asyncio.Lock] = {}
         self.on_workspace_killed = None
         self.on_container_status_changed = None
 
@@ -797,26 +803,53 @@ class ContainerRegistry:
         # #1464). The HealthMonitor reaches it via self._registry.sockets.
         self.sockets = None
 
-    # --- Service-session locks (#1188, moved from terminal.py, #1426) ---
-    # The dict still physically lives in terminal.py (terminal.py can't import
-    # container — circular) and the terminal functions operate on it. These
-    # methods delegate so the registry is the single API surface; the dict
-    # moves fully in Slice 2d (#1465) when tests stop reaching into
-    # terminal._service_session_locks directly.
+    # --- Service-session locks (#1188, #1478) ---
+    # The per-container firing-lock dict lives here on the registry. It used
+    # to live at module scope in terminal.py (terminal.py couldn't import
+    # container — circular); #1477 removed that constraint by threading
+    # app_state through ensure_service_session, so the registry now owns the
+    # dict and terminal reaches it via app_state.container_registry.
 
     def get_service_session_lock(self, container_id: str) -> asyncio.Lock:
         """Get or create the per-container lock for service-command firing."""
-        return terminal.get_service_session_lock(container_id)
+        if container_id not in self._service_session_locks:
+            self._service_session_locks[container_id] = asyncio.Lock()
+        return self._service_session_locks[container_id]
 
     def clear_service_session_lock(self, container_id: str) -> None:
-        """Drop the per-container firing lock for a torn-down container."""
-        terminal.clear_service_session_lock(container_id)
+        """Drop the per-container firing lock for a torn-down container.
+
+        Called from container teardown so the lock dict does not grow
+        unbounded with container churn. Safe to call when no lock exists
+        for the id.
+        """
+        self._service_session_locks.pop(container_id, None)
 
     def prune_service_session_locks(
         self, active_container_ids: set[str]
     ) -> int:
-        """Remove lock entries for containers no longer tracked (#1351)."""
-        return terminal.prune_service_session_locks(active_container_ids)
+        """Remove lock entries for containers no longer tracked (#1351).
+
+        Bounds the ``_service_session_locks`` dict against unbounded growth
+        from container churn: explicit :func:`clear_service_session_lock`
+        calls cover the normal teardown path, but a racing re-bind in
+        ``stop_and_remove_container`` can leave an entry whose container is
+        gone. This opportunistic sweep removes any entry whose container id
+        is no longer in *active_container_ids*.
+
+        Entries whose lock is currently held are skipped: recreating a fresh
+        ``asyncio.Lock`` for an in-flight service-command fire would not
+        serialize against the held one, reopening the duplicate-window race
+        the lock exists to prevent. Returns the number of entries pruned.
+        """
+        stale = [
+            cid
+            for cid, lock in self._service_session_locks.items()
+            if cid not in active_container_ids and not lock.locked()
+        ]
+        for cid in stale:
+            del self._service_session_locks[cid]
+        return len(stale)
 
     def workspace_id_for(self, container_id: str) -> str | None:
         """Return the workspace_id for a container, or None."""
