@@ -592,7 +592,9 @@ class TerminalController:
                 # fire. Done before window sync so discovery picks it up.
                 await ctrl._fire_service_command()
                 if browser_id:
-                    await attach_browser(conn.container_id, browser_id)
+                    await attach_browser(
+                        conn.container_id, browser_id, conn.app_state.podman
+                    )
                 if not await conn.activate_session(session, cols, rows):
                     return
                 conn.sock.send_json({"type": "terminal_started"})
@@ -643,7 +645,9 @@ class TerminalController:
             self._conn.user.get("email"),
             self._conn.workspace_id,
         )
-        await attach_browser(self._conn.container_id, browser_id)
+        await attach_browser(
+            self._conn.container_id, browser_id, self._conn.app_state.podman
+        )
 
     async def input(self, msg: dict) -> None:
         t0 = time.monotonic()

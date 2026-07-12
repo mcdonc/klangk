@@ -888,7 +888,7 @@ class TerminalSession:
         argv = _build_exec_argv(self.container_id, env, shell_cmd, work_dir)
 
         logger.info("Terminal exec argv: %s", argv)
-        shell = make_shell_process()
+        shell = make_shell_process(self._podman)
         try:
             await shell.start(argv, rows, cols)
         except Exception:

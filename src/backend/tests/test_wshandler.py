@@ -1545,7 +1545,7 @@ class TestHandleTerminalStart:
         assert conn.browser_id == "bid-new"
         assert registry.resolve_browser("bid-new") == ("ws", sock)
         assert registry.resolve_browser("bid-old") is None
-        mock_attach.assert_awaited_once_with("cid", "bid-new")
+        mock_attach.assert_awaited_once_with("cid", "bid-new", _mock_pod)
 
         registry.revoke_workspace_browsers("ws")
 
@@ -6720,7 +6720,7 @@ class TestTerminalController:
             await ctrl.browser_reattach({"browser_id": "bid"})
         rev.assert_called_once_with(conn.sock)
         reg.assert_called_once_with("bid", "ws-1", conn.sock)
-        attach.assert_awaited_once_with("cid", "bid")
+        attach.assert_awaited_once_with("cid", "bid", _mock_pod)
         assert conn.browser_id == "bid"
 
     # --- tmux_session_name ---
