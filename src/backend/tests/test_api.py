@@ -21,6 +21,7 @@ from klangk_backend import (
     workspaces as ws_mod,
 )
 from klangk_backend.container import ContainerRegistry
+from klangk_backend import emailsvc as emailsvc_mod
 from klangk_backend import oidc as oidc_mod
 from klangk_backend import plugins as plugins_mod
 from klangk_backend.settings import KlangkSettings
@@ -60,6 +61,7 @@ async def app(db, temp_data_dir):
     app.state.workspaces = ws_mod.Workspaces(app.state)
     app.state.agents = agent.Agents(app.state)
     app.state.agents.get_workspace_session = sockets.get_session
+    app.state.email = emailsvc_mod.EmailService(app.state)
 
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)
@@ -491,7 +493,7 @@ class TestAuthRoutes:
         )
         token = login_resp.json()["access_token"]
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_verification_email",
             new_callable=AsyncMock,
         ):
@@ -513,7 +515,7 @@ class TestAuthRoutes:
         ``ensure_home_symlink`` failed on first workspace connect.
         """
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_verification_email",
             new_callable=AsyncMock,
         ):
@@ -542,7 +544,7 @@ class TestAuthRoutes:
     async def test_register_unauthenticated(self, client, db):
         """Registration is open — no auth required (verification gates access)."""
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_verification_email",
             new_callable=AsyncMock,
         ):
@@ -556,7 +558,7 @@ class TestAuthRoutes:
     async def test_register_email_send_failure_rolls_back(self, client, db):
         """If verification email fails, user creation is rolled back."""
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_verification_email",
             new_callable=AsyncMock,
             side_effect=RuntimeError("sendmail not found"),
@@ -844,7 +846,7 @@ class TestResendVerification:
     async def test_resend_success(self, client, db):
         await self._create_unverified_user()
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_verification_email",
             new_callable=AsyncMock,
         ) as mock_send:
@@ -908,7 +910,7 @@ class TestResendVerification:
         api.resend_timestamps.pop("unverified@example.com", None)
         await self._create_unverified_user()
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_verification_email",
             new_callable=AsyncMock,
         ):
@@ -935,7 +937,9 @@ class TestResendVerification:
         api.resend_timestamps.clear()
         await self._create_unverified_user()
         with patch.object(
-            api.emailsvc, "send_verification_email", new_callable=AsyncMock
+            emailsvc_mod.EmailService,
+            "send_verification_email",
+            new_callable=AsyncMock,
         ):
             resp1 = await client.post(
                 "/api/v1/auth/resend-verification",
@@ -979,7 +983,7 @@ class TestForgotPassword:
     async def test_forgot_sends_email(self, client, db):
         await self._create_user()
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_password_reset_email",
             new_callable=AsyncMock,
         ) as mock_send:
@@ -1003,7 +1007,7 @@ class TestForgotPassword:
     async def test_forgot_rate_limited(self, client, db):
         await self._create_user()
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_password_reset_email",
             new_callable=AsyncMock,
         ):
@@ -1022,7 +1026,9 @@ class TestForgotPassword:
         api.reset_timestamps.clear()
         await self._create_user()
         with patch.object(
-            api.emailsvc, "send_password_reset_email", new_callable=AsyncMock
+            emailsvc_mod.EmailService,
+            "send_password_reset_email",
+            new_callable=AsyncMock,
         ):
             resp1 = await client.post(
                 "/api/v1/auth/forgot-password",
@@ -1181,7 +1187,7 @@ class TestChangeEmail:
     async def test_change_email_success(self, client, user):
         headers = await _auth_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_verification_email",
             new_callable=AsyncMock,
         ) as mock_send:
@@ -4920,8 +4926,11 @@ class TestAdminEndpoints:
         self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
-        with patch("klangk_backend.api.admin.emailsvc") as mock_email:
-            mock_email.send_verification_email = AsyncMock()
+        with patch.object(
+            emailsvc_mod.EmailService,
+            "send_verification_email",
+            new_callable=AsyncMock,
+        ) as mock_email:
             resp = await client.post(
                 "/api/v1/admin/users",
                 headers=headers,
@@ -4934,7 +4943,7 @@ class TestAdminEndpoints:
         data = resp.json()
         assert data["email"] == "verify@example.com"
         assert data["status"] == "pending_verification"
-        mock_email.send_verification_email.assert_called_once()
+        mock_email.assert_called_once()
         # User should exist but not be verified, with a derived handle
         # (regression: #1256 — this branch used to INSERT without a handle).
         user = await model.get_user_by_email("verify@example.com")
@@ -7177,7 +7186,7 @@ class TestInvitations:
     async def test_send_invitation(self, client, admin_user):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ) as mock_send:
@@ -7221,7 +7230,7 @@ class TestInvitations:
     async def test_send_invitation_duplicate_pending(self, client, admin_user):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):
@@ -7265,7 +7274,7 @@ class TestInvitations:
     async def test_list_invitations(self, client, admin_user):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):
@@ -7300,7 +7309,7 @@ class TestInvitations:
     ):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):
@@ -7323,7 +7332,7 @@ class TestInvitations:
     ):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):
@@ -7357,7 +7366,7 @@ class TestInvitations:
     async def test_list_invitations_sort_by_email(self, client, admin_user):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):
@@ -7416,7 +7425,7 @@ class TestInvitations:
     ):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):
@@ -7445,7 +7454,7 @@ class TestInvitations:
     async def test_list_invitations_filter_by_email(self, client, admin_user):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):
@@ -7485,7 +7494,7 @@ class TestInvitations:
     async def test_revoke_invitation(self, client, admin_user):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):
@@ -7517,7 +7526,7 @@ class TestInvitations:
     async def test_resend_invitation(self, client, admin_user):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):
@@ -7528,7 +7537,7 @@ class TestInvitations:
             )
         inv_id = create_resp.json()["id"]
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ) as mock_resend:
@@ -7549,7 +7558,7 @@ class TestInvitations:
     async def test_resend_revoked(self, client, admin_user):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):
@@ -7570,7 +7579,7 @@ class TestInvitations:
     async def test_accept_invite(self, client, admin_user):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):
@@ -7609,7 +7618,7 @@ class TestInvitations:
     async def test_accept_invite_already_accepted(self, client, admin_user):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):
@@ -7637,7 +7646,7 @@ class TestInvitations:
     async def test_accept_invite_short_password(self, client, admin_user):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):
@@ -7661,7 +7670,7 @@ class TestInvitations:
     ):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):
@@ -7689,7 +7698,7 @@ class TestInvitations:
     ):
         headers = await self._admin_headers(client)
         with patch.object(
-            api.emailsvc,
+            emailsvc_mod.EmailService,
             "send_invitation_email",
             new_callable=AsyncMock,
         ):

@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from klangk_backend import (
     agent as agent_mod,
+    emailsvc as emailsvc_mod,
     main,
     model,
     oidc,
@@ -49,6 +50,7 @@ def _make_app_state(settings=None):
     app_state.plugins = plugins.Plugins(app_state)
     app_state.workspaces = workspaces.Workspaces(app_state)
     app_state.agents = agent_mod.Agents(app_state)
+    app_state.email = emailsvc_mod.EmailService(app_state)
     return app_state
 
 
@@ -380,6 +382,7 @@ class TestLifespan:
         app.state.plugins = plugins.Plugins(app.state)
         app.state.workspaces = workspaces.Workspaces(app.state)
         app.state.agents = agent_mod.Agents(app.state)
+        app.state.email = emailsvc_mod.EmailService(app.state)
         registry = app_state.container_registry
         with (
             patch.object(
@@ -426,6 +429,7 @@ class TestLifespan:
         app.state.plugins = plugins.Plugins(app.state)
         app.state.workspaces = workspaces.Workspaces(app.state)
         app.state.agents = agent_mod.Agents(app.state)
+        app.state.email = emailsvc_mod.EmailService(app.state)
         registry = app_state.container_registry
         with (
             patch.object(
@@ -649,6 +653,7 @@ class TestStartupShutdownRestart:
         app.state.plugins = plugins.Plugins(app.state)
         app.state.workspaces = workspaces.Workspaces(app.state)
         app.state.agents = agent_mod.Agents(app.state)
+        app.state.email = emailsvc_mod.EmailService(app.state)
         registry = app_state.container_registry
         loop = asyncio.get_running_loop()
         with (

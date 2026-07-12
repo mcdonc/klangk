@@ -17,7 +17,6 @@ from pydantic import BaseModel
 
 from .. import (
     auth,
-    emailsvc,
     model,
     wshandler,
 )
@@ -68,6 +67,7 @@ async def verify_workspace_token(request: Request):
 async def register(
     req: auth.RegisterRequest,
     request: Request,
+    app_state=Depends(get_app_state_dep),
 ):
     if not request.app.state.oidc.password_login_allowed():
         raise HTTPException(
@@ -117,7 +117,9 @@ async def register(
         )
         logger.info("User inserted (uncommitted): %s", req.email)
         await send_email(
-            emailsvc.send_verification_email(req.email, verification_url),
+            app_state.email.send_verification_email(
+                req.email, verification_url
+            ),
             req.email,
             "verification email",
         )
@@ -167,6 +169,7 @@ RESEND_COOLDOWN_SECONDS = 60
 async def resend_verification(
     req: auth.LoginRequest,
     request: Request,
+    app_state=Depends(get_app_state_dep),
 ):
     """Resend verification email. Requires email+password to prevent abuse."""
     user = await model.get_user_by_email(req.email)
@@ -200,7 +203,7 @@ async def resend_verification(
         f"{proto}://{hostname}{base_path}/#/verify?token={verification_token}"
     )
     await send_email(
-        emailsvc.send_verification_email(req.email, verification_url),
+        app_state.email.send_verification_email(req.email, verification_url),
         req.email,
         "verification email",
     )
@@ -216,7 +219,11 @@ RESET_COOLDOWN_SECONDS = 60
 
 
 @router.post("/auth/forgot-password")
-async def forgot_password(req: ForgotPasswordRequest, request: Request):
+async def forgot_password(
+    req: ForgotPasswordRequest,
+    request: Request,
+    app_state=Depends(get_app_state_dep),
+):
     """Send a password reset email if the account exists."""
     user = await model.get_user_by_email(req.email)
     if user is None:
@@ -242,7 +249,7 @@ async def forgot_password(req: ForgotPasswordRequest, request: Request):
         f"{proto}://{hostname}{base_path}/#/reset-password?token={reset_token}"
     )
     await send_email(
-        emailsvc.send_password_reset_email(req.email, reset_url),
+        app_state.email.send_password_reset_email(req.email, reset_url),
         req.email,
         "password reset email",
     )
@@ -391,6 +398,7 @@ async def change_email(
     req: ChangeEmailRequest,
     request: Request,
     user: dict = Depends(auth.get_current_user),
+    app_state=Depends(get_app_state_dep),
 ):
     """Change email. Requires password. Marks account as unverified."""
     stored = await model.get_user_by_email(user["email"])
@@ -423,7 +431,7 @@ async def change_email(
     token = auth.create_verification_token(user["id"])
     url = f"{proto}://{hostname}{base_path}/#/verify?token={token}"
     await send_email(
-        emailsvc.send_verification_email(req.email, url),
+        app_state.email.send_verification_email(req.email, url),
         req.email,
         "verification email",
     )

@@ -15,7 +15,6 @@ from pydantic import BaseModel
 from .. import (
     acl,
     auth,
-    emailsvc,
     model,
     wshandler,
 )
@@ -50,6 +49,7 @@ async def send_invitation(
     req: SendInviteRequest,
     request: Request,
     admin: dict = Depends(acl.has_permission("admin")),
+    app_state=Depends(get_app_state_dep),
 ):
     """Send an invitation email (admin only)."""
     if not auth.invitations_enabled():
@@ -81,7 +81,9 @@ async def send_invitation(
     )
 
     await send_email(
-        emailsvc.send_invitation_email(req.email, invite_url, admin["email"]),
+        app_state.email.send_invitation_email(
+            req.email, invite_url, admin["email"]
+        ),
         req.email,
         "invitation email",
     )
@@ -134,6 +136,7 @@ async def resend_invitation(
     invitation_id: str,
     request: Request,
     admin: dict = Depends(acl.has_permission("admin")),
+    app_state=Depends(get_app_state_dep),
 ):
     """Resend an invitation email (admin only)."""
     invitation = await model.get_invitation(invitation_id)
@@ -152,7 +155,7 @@ async def resend_invitation(
     )
 
     await send_email(
-        emailsvc.send_invitation_email(
+        app_state.email.send_invitation_email(
             invitation["email"], invite_url, admin["email"]
         ),
         invitation["email"],
@@ -187,6 +190,7 @@ async def admin_create_user(
     req: AdminCreateUserRequest,
     request: Request,
     admin: dict = Depends(acl.has_permission("admin")),
+    app_state=Depends(get_app_state_dep),
 ):
     """Create a user (admin only).
 
@@ -220,7 +224,9 @@ async def admin_create_user(
                 db, user_id, req.email, password_hash
             )
             await send_email(
-                emailsvc.send_verification_email(req.email, verification_url),
+                app_state.email.send_verification_email(
+                    req.email, verification_url
+                ),
                 req.email,
                 "verification email",
             )

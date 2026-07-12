@@ -17,6 +17,7 @@ from fastapi import WebSocketDisconnect
 
 from klangk_backend import (
     agent as agent_mod,
+    emailsvc as emailsvc_mod,
     model,
     wshandler,
     container,
@@ -109,6 +110,7 @@ def _make_app_state(registry=None, sockets=None):
     app_state.terminal = _mock_term
     app_state.workspaces = ws_mod.Workspaces(app_state)
     app_state.agents = agent_mod.Agents(app_state)
+    app_state.email = emailsvc_mod.EmailService(app_state)
     return app_state
 
 
