@@ -1646,26 +1646,25 @@ class TestStopContainer:
     async def test_stop_prunes_orphaned_service_session_locks(self):
         # stop_and_remove_container sweeps the per-container service-firing
         # lock dict so it does not grow unbounded with container churn (#1351).
-        from klangk_backend import terminal
-
-        terminal._service_session_locks.clear()
+        locks = self.registry._service_session_locks
+        locks.clear()
         try:
             # Tracked container (being stopped) + two orphaned entries whose
             # containers are no longer in the registry.
             self.registry.track_activity("alive", "ws-alive")
-            terminal.get_service_session_lock("alive")
-            terminal.get_service_session_lock("orphan-a")
-            terminal.get_service_session_lock("orphan-b")
-            assert len(terminal._service_session_locks) == 3
+            self.registry.get_service_session_lock("alive")
+            self.registry.get_service_session_lock("orphan-a")
+            self.registry.get_service_session_lock("orphan-b")
+            assert len(locks) == 3
 
             with patch_podman():
                 await self.registry.stop_and_remove_container("alive")
 
             # The stopped container's entry and the orphans are gone; the dict
             # is empty because no container remains tracked.
-            assert terminal._service_session_locks == {}
+            assert locks == {}
         finally:
-            terminal._service_session_locks.clear()
+            locks.clear()
 
     async def test_stop_podman_error(self):
         self.registry.track_activity("cid", "ws")
@@ -3043,46 +3042,72 @@ class TestHealthLoopHeartbeat:
         assert all(f["type"] == "service_health_heartbeat" for f in frames)
 
 
-class TestRegistryServiceSessionLockDelegates:
-    """The registry delegates service-session-lock ops to terminal (#1426 2a)."""
+class TestRegistryServiceSessionLocks:
+    """The registry owns the per-container service-firing lock dict
+    (#1188, #1478). It used to live at module scope in terminal.py and
+    the registry delegated; now the dict is ``self._service_session_locks``
+    and terminal reaches it via app_state."""
 
     def setup_method(self):
-        from klangk_backend import terminal
-
-        terminal._service_session_locks.clear()
         app_state = _make_app_state()
         self.registry = app_state.container_registry
+        self.registry._service_session_locks.clear()
 
     def teardown_method(self):
-        from klangk_backend import terminal
+        self.registry._service_session_locks.clear()
 
-        terminal._service_session_locks.clear()
-
-    def test_get_via_registry(self):
-        from klangk_backend import terminal
-
+    def test_get_lock_returns_same_lock_for_same_container(self):
         reg = self.registry
-        lock = reg.get_service_session_lock("cid")
-        assert lock is terminal.get_service_session_lock("cid")
+        lock_a = reg.get_service_session_lock("cid")
+        lock_b = reg.get_service_session_lock("cid")
+        assert lock_a is lock_b
 
-    def test_clear_via_registry(self):
-        from klangk_backend import terminal
+    def test_get_lock_returns_distinct_locks_per_container(self):
+        reg = self.registry
+        lock_a = reg.get_service_session_lock("cid-a")
+        lock_b = reg.get_service_session_lock("cid-b")
+        assert lock_a is not lock_b
 
+    def test_clear_lock_removes_entry(self):
         reg = self.registry
         reg.get_service_session_lock("cid")
-        assert "cid" in terminal._service_session_locks
+        assert "cid" in reg._service_session_locks
         reg.clear_service_session_lock("cid")
-        assert "cid" not in terminal._service_session_locks
+        assert "cid" not in reg._service_session_locks
 
-    def test_prune_via_registry(self):
-        from klangk_backend import terminal
+    def test_clear_lock_is_noop_for_unknown_container(self):
+        # Must not raise for a container that never registered a lock.
+        self.registry.clear_service_session_lock("never-seen")
 
+    def test_prune_removes_entries_for_untracked_containers(self):
         reg = self.registry
         reg.get_service_session_lock("alive")
-        reg.get_service_session_lock("dead")
+        reg.get_service_session_lock("dead-a")
+        reg.get_service_session_lock("dead-b")
+        assert len(reg._service_session_locks) == 3
+
         removed = reg.prune_service_session_locks({"alive"})
-        assert removed == 1
-        assert "dead" not in terminal._service_session_locks
+        assert removed == 2
+        assert set(reg._service_session_locks) == {"alive"}
+
+    async def test_prune_keeps_held_lock_even_if_untracked(self):
+        reg = self.registry
+        held = reg.get_service_session_lock("held-but-orphaned")
+        await held.acquire()  # simulate an in-flight service-command fire
+        try:
+            removed = reg.prune_service_session_locks(set())
+            # Not pruned: recreating its lock would not serialize against the
+            # in-flight fire (#1188 duplicate-window race).
+            assert removed == 0
+            assert "held-but-orphaned" in reg._service_session_locks
+        finally:
+            held.release()
+
+    def test_prune_noop_when_all_tracked(self):
+        reg = self.registry
+        reg.get_service_session_lock("a")
+        reg.get_service_session_lock("b")
+        assert reg.prune_service_session_locks({"a", "b"}) == 0
 
     def test_registry_takes_settings(self):
         """ContainerRegistry.__init__ accepts settings (#1426)."""
