@@ -19,7 +19,6 @@ from klangk_backend import (
     model,
     podman,
     workspaces as ws_mod,
-    wshandler,
 )
 from klangk_backend.container import ContainerRegistry
 from klangk_backend import oidc as oidc_mod
@@ -59,7 +58,8 @@ async def app(db, temp_data_dir):
     app.state.oidc = oidc_mod.OIDC(app.state)
     app.state.plugins = plugins_mod.Plugins(app.state)
     app.state.workspaces = ws_mod.Workspaces(app.state)
-    agent.get_workspace_session = sockets.get_session
+    app.state.agents = agent.Agents(app.state)
+    app.state.agents.get_workspace_session = sockets.get_session
 
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)
@@ -1637,7 +1637,7 @@ class TestWorkspaceRoutes:
                 new_callable=AsyncMock,
             ) as mock_rm,
             patch.object(
-                wshandler.agent,
+                app.state.agents,
                 "stop_session",
                 new_callable=AsyncMock,
             ) as mock_stop_agent,

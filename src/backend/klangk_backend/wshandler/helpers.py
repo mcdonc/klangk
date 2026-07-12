@@ -2,7 +2,7 @@
 
 import logging
 
-from .. import agent, model
+from .. import model
 from .safe_websocket import SafeWebSocket
 from .constants import log_ws_msg
 from .session import WebSocketState
@@ -32,7 +32,7 @@ async def get_presence_list(
             )
     # Include agent only if its RPC process is alive in this workspace.
 
-    if agent.is_running(workspace_id):
+    if sockets.app_state.agents.is_running(workspace_id):
         agent_user = await model.get_agent_user()
         users.append(
             {

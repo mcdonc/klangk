@@ -3,6 +3,12 @@
 Manages a long-lived ``pi --mode rpc`` subprocess per workspace
 container, sending prompts and collecting responses via JSONL over
 stdin/stdout of a ``podman exec`` session.
+
+#1486: the module-level ``_agents`` dict, ``_agents_lock``, and
+``get_workspace_session`` callback have been promoted to an
+``Agents(app_state)`` instance on ``app.state.agents``, following
+the same pattern as ``ContainerRegistry``, ``OIDC``, ``Plugins``,
+etc.
 """
 
 import asyncio
@@ -48,111 +54,263 @@ class AgentSetupError(AgentError):
     """Raised when the agent's home directory cannot be set up."""
 
 
-# Registry of active agent sessions keyed by workspace ID.
-_agents: dict[str, "AgentSession"] = {}
-_agents_lock = asyncio.Lock()
+def ephemeral_system_message(
+    workspace_id: str,
+    agent_email: str,
+    agent_handle: str,
+    text: str,
+) -> dict:
+    """Build a transient agent presence system message for live broadcast.
 
-# Callback to get a workspace session for broadcasting.
-# Set by wshandler at import time to break the circular dependency.
-get_workspace_session = None
-
-
-def is_disabled() -> bool:
-    """True if the chat agent has been disabled by an admin.
-
-    When disabled, the ``pi --mode rpc`` subprocess is never spawned —
-    see ``ensure_started``, which consults this before creating the
-    process.  Resolved at call time so tests can toggle it via
-    ``monkeypatch.setenv``.
+    Mirrors the shape returned by [model.add_chat_message] so the frontend
+    renders it the same as a persisted system message, but is never written
+    to chat history — agent presence transitions (disconnect/reconnect) are
+    driven by container lifecycle (idle-stop, restart, crash) and would
+    otherwise pollute history with stale, unbalanced "has disconnected"
+    entries.  ``id`` is a synthetic prefix so the frontend can dedupe;
+    ``created_at`` is empty (the frontend tolerates that).
     """
-    return util.resolve_env_bool("KLANGK_AGENT_DISABLED")
+    return {
+        "id": f"ephemeral-agent-{workspace_id}-{int(time.monotonic() * 1000)}",
+        "workspace_id": workspace_id,
+        "user_id": model.AGENT_USER_ID,
+        "user_email": agent_email,
+        "user_handle": agent_handle,
+        "message": text,
+        "message_type": model.MSG_SYSTEM,
+        "created_at": "",
+        "mentions": [],
+    }
 
 
-async def ensure_agent_home(
-    workspace_id: str, container_id: str, app_state
-) -> str:
-    """Eagerly provision the agent's home directory with Pi config.
+class Agents:
+    """Registry of active agent sessions, owned by ``app.state.agents``.
 
-    Creates ``/home/.users/{AGENT_USER_ID}`` on the host bind-mount and
-    populates it via ``klangk-setup-pi`` (the same path real users
-    take).  Returns the container path, e.g. ``/home/clanker``.
-
-    Idempotent: ``ensure_home_symlink`` is a no-op when the symlink
-    already exists (skeleton files only on first creation), and
-    ``klangk-setup-pi --force`` re-writes Pi config to pick up env-var
-    changes.  Called eagerly at container bring-up (so
-    ``$KLANGK_AGENT_HOME`` points at a populated directory for every
-    process) and again from chat-start, which caches the result per
-    ``AgentSession``.
+    Replaces the former module-level ``_agents`` dict, ``_agents_lock``,
+    and ``get_workspace_session`` callback (#1486).
     """
-    ws = await model.get_workspace_by_id(workspace_id)
-    if not ws:
-        raise AgentSetupError(
-            f"Workspace {workspace_id} not found in database"
-        )
-    workspace_home = app_state.workspaces.home_path(workspace_id)
 
-    agent_handle = await model.agent_handle()
-    container_home, created = await app_state.workspaces.ensure_home_symlink(
-        workspace_home, agent_handle, model.AGENT_USER_ID
-    )
-    if created:
-        await app_state.workspaces.populate_home_skel(
-            container_id, model.AGENT_USER_ID
+    def __init__(self, app_state) -> None:
+        self.app_state = app_state
+        self._agents: dict[str, "AgentSession"] = {}
+        self._agents_lock = asyncio.Lock()
+        self.get_workspace_session = None
+
+    def is_disabled(self) -> bool:
+        """True if the chat agent has been disabled by an admin.
+
+        When disabled, the ``pi --mode rpc`` subprocess is never spawned —
+        see ``AgentSession.ensure_started``, which consults this before
+        creating the process.  Resolved at call time so tests can toggle
+        it via ``monkeypatch.setenv``.
+        """
+        return util.resolve_env_bool("KLANGK_AGENT_DISABLED")
+
+    async def ensure_agent_home(
+        self, workspace_id: str, container_id: str
+    ) -> str:
+        """Eagerly provision the agent's home directory with Pi config.
+
+        Creates ``/home/.users/{AGENT_USER_ID}`` on the host bind-mount and
+        populates it via ``klangk-setup-pi`` (the same path real users
+        take).  Returns the container path, e.g. ``/home/clanker``.
+
+        Idempotent: ``ensure_home_symlink`` is a no-op when the symlink
+        already exists (skeleton files only on first creation), and
+        ``klangk-setup-pi --force`` re-writes Pi config to pick up env-var
+        changes.  Called eagerly at container bring-up (so
+        ``$KLANGK_AGENT_HOME`` points at a populated directory for every
+        process) and again from chat-start, which caches the result per
+        ``AgentSession``.
+        """
+        ws = await model.get_workspace_by_id(workspace_id)
+        if not ws:
+            raise AgentSetupError(
+                f"Workspace {workspace_id} not found in database"
+            )
+        workspace_home = self.app_state.workspaces.home_path(workspace_id)
+
+        agent_handle = await model.agent_handle()
+        (
+            container_home,
+            created,
+        ) = await self.app_state.workspaces.ensure_home_symlink(
+            workspace_home, agent_handle, model.AGENT_USER_ID
+        )
+        if created:
+            await self.app_state.workspaces.populate_home_skel(
+                container_id, model.AGENT_USER_ID
+            )
+
+        # Run klangk-setup-pi to populate ~/.pi/agent/ with models.json,
+        # settings.json, etc.  Unlike real users, the agent has no
+        # personal preferences — --force deletes settings.json first so
+        # it picks up the current KLANGK_LLM_MODEL env var.
+        proc = await asyncio.create_subprocess_exec(
+            self.app_state.podman.bin,
+            "exec",
+            "-u",
+            "klangk",
+            "-e",
+            f"HOME={container_home}",
+            container_id,
+            "/opt/klangk/bin/klangk-setup-pi",
+            "--force",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=subprocess_env(),
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode != 0:
+            logger.warning(
+                "klangk-setup-pi exited %s for container %s; agent home at "
+                "%s may be incomplete (chat will retry on first mention):\n"
+                "stdout: %s\nstderr: %s",
+                proc.returncode,
+                container_id,
+                container_home,
+                stdout.decode(errors="replace") if stdout else "",
+                stderr.decode(errors="replace") if stderr else "",
+            )
+        else:
+            logger.info(
+                "Agent home ready at %s for container %s",
+                container_home,
+                container_id,
+            )
+        return container_home
+
+    async def get_session(self, workspace_id: str) -> "AgentSession":
+        """Get or create an AgentSession for the given workspace.
+
+        The session resolves the current container ID from the container
+        registry on each startup, so it automatically picks up container
+        restarts without needing to be told the new ID.
+
+        Serialized with ``stop_session`` via ``_agents_lock`` so that a new
+        session is never installed for a container that ``stop_session`` has
+        already torn down (#1298).
+        """
+        async with self._agents_lock:
+            session = self._agents.get(workspace_id)
+            if session is None:
+                session = AgentSession(workspace_id, agents=self)
+                self._agents[workspace_id] = session
+            return session
+
+    def is_running(self, workspace_id: str) -> bool:
+        """Return True if an agent subprocess is alive for this workspace."""
+        session = self._agents.get(workspace_id)
+        if session is None:
+            return False
+        return session._proc is not None and session._proc.returncode is None
+
+    def any_running(self) -> bool:
+        """Return True if any agent subprocess is alive."""
+        return any(
+            s._proc is not None and s._proc.returncode is None
+            for s in self._agents.values()
         )
 
-    # Run klangk-setup-pi to populate ~/.pi/agent/ with models.json,
-    # settings.json, etc.  Unlike real users, the agent has no
-    # personal preferences — --force deletes settings.json first so
-    # it picks up the current KLANGK_LLM_MODEL env var.
-    proc = await asyncio.create_subprocess_exec(
-        app_state.podman.bin,
-        "exec",
-        "-u",
-        "klangk",
-        "-e",
-        f"HOME={container_home}",
-        container_id,
-        "/opt/klangk/bin/klangk-setup-pi",
-        "--force",
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=subprocess_env(),
-    )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-    # Check the return code but do NOT fail the container bring-up over a
-    # provisioning hiccup: the workspace stays usable, and the lazy
-    # chat-start path (AgentSession._ensure_home) will retry on first
-    # mention.  Surface the failure loudly, though, so it's not silently
-    # swallowed (a previous silent-unconditional "ready" log hid a
-    # missing ~/.pi/agent entirely). #1162
-    if proc.returncode != 0:
-        logger.warning(
-            "klangk-setup-pi exited %s for container %s; agent home at "
-            "%s may be incomplete (chat will retry on first mention):\n"
-            "stdout: %s\nstderr: %s",
-            proc.returncode,
-            container_id,
-            container_home,
-            stdout.decode(errors="replace") if stdout else "",
-            stderr.decode(errors="replace") if stderr else "",
+    async def stop_session(self, workspace_id: str) -> None:
+        """Stop and remove the agent session for a workspace.
+
+        Serialized with ``get_session`` via ``_agents_lock`` so that a
+        concurrent ``get_session`` cannot install a new session for a
+        container that is being torn down (#1298).
+        """
+        async with self._agents_lock:
+            session = self._agents.pop(workspace_id, None)
+            if session:
+                await session.stop()
+
+    async def stop_all_sessions(self) -> None:
+        """Stop and remove every active agent session.
+
+        Used by the SIGHUP runtime-restart path: each agent session is a
+        Pi RPC subprocess attached to a container that is about to be
+        stopped, so they must be torn down before the containers go.
+        """
+        for ws_id in list(self._agents.keys()):
+            await self.stop_session(ws_id)
+
+    async def broadcast_agent_disconnect(self, workspace_id: str) -> None:
+        """Broadcast a disconnect system message when the agent process dies.
+
+        Ephemeral only — sent to currently-connected subscribers, never
+        written to chat history.
+        """
+        if not workspace_id:
+            return
+        if await model.get_workspace_by_id(workspace_id) is None:
+            return
+        agent_handle = await model.agent_handle()
+        agent_email = await model.agent_email()
+        sys_msg = ephemeral_system_message(
+            workspace_id,
+            agent_email,
+            agent_handle,
+            f"{agent_handle} has disconnected",
         )
-    else:
-        logger.info(
-            "Agent home ready at %s for container %s",
-            container_home,
-            container_id,
+        session = (
+            self.get_workspace_session(workspace_id)
+            if self.get_workspace_session
+            else None
         )
-    return container_home
+        if session:
+            session.broadcast({"type": "agent_thinking", "thinking": False})
+            session.broadcast({"type": "chat_message", **sys_msg})
+            session.broadcast(
+                {
+                    "type": "presence_leave",
+                    "user_id": model.AGENT_USER_ID,
+                    "user_email": agent_email,
+                    "user_handle": agent_handle,
+                }
+            )
+
+    async def broadcast_agent_reconnect(self, workspace_id: str) -> None:
+        """Broadcast a reconnect system message after auto-restart.
+
+        Ephemeral only — see ``broadcast_agent_disconnect``.
+        """
+        if not workspace_id:
+            return
+        if await model.get_workspace_by_id(workspace_id) is None:
+            return
+        agent_handle = await model.agent_handle()
+        agent_email = await model.agent_email()
+        sys_msg = ephemeral_system_message(
+            workspace_id,
+            agent_email,
+            agent_handle,
+            f"{agent_handle} has reconnected",
+        )
+        session = (
+            self.get_workspace_session(workspace_id)
+            if self.get_workspace_session
+            else None
+        )
+        if session:
+            session.broadcast({"type": "chat_message", **sys_msg})
+            session.broadcast(
+                {
+                    "type": "presence_join",
+                    "user_id": model.AGENT_USER_ID,
+                    "user_email": agent_email,
+                    "user_handle": agent_handle,
+                }
+            )
 
 
 class AgentSession:
     """Wraps a ``pi --mode rpc`` subprocess inside a container."""
 
-    def __init__(self, workspace_id: str, app_state=None) -> None:
+    def __init__(self, workspace_id: str, agents: Agents) -> None:
         self.workspace_id = workspace_id
-        self.app_state = app_state
+        self.agents = agents
+        self.app_state = agents.app_state
         self._proc: asyncio.subprocess.Process | None = None
         # Serializes prompt round-trips so two concurrent prompts can't
         # interleave their stdin writes / stdout reads on one subprocess.
@@ -189,15 +347,15 @@ class AgentSession:
     async def _ensure_home(self, container_id: str) -> str:
         """Ensure the agent has a home directory with Pi config (cached).
 
-        Thin per-instance cache over :func:`ensure_agent_home`.  The
+        Thin per-instance cache over ``Agents.ensure_agent_home``.  The
         actual provisioning — and the eager bring-up call site — live
         there.  Returns the container path, e.g. ``/home/clanker``.
         """
         if self._home_ready:
             handle = await model.agent_handle()
             return f"/home/{handle}"
-        container_home = await ensure_agent_home(
-            self.workspace_id, container_id, self.app_state
+        container_home = await self.agents.ensure_agent_home(
+            self.workspace_id, container_id
         )
         self._home_ready = True
         return container_home
@@ -205,7 +363,7 @@ class AgentSession:
     async def ensure_started(self) -> asyncio.subprocess.Process:
         if self._proc is not None and self._proc.returncode is None:
             return self._proc
-        if is_disabled():
+        if self.agents.is_disabled():
             # Admin kill switch: refuse to spawn the subprocess.  This is
             # the single place the env var is enforced — if it's set, the
             # agent never runs for any workspace.
@@ -297,7 +455,7 @@ class AgentSession:
             f": {stderr_text}" if stderr_text else "",
         )
 
-        await broadcast_agent_disconnect(self.workspace_id)
+        await self.agents.broadcast_agent_disconnect(self.workspace_id)
         # Auto-restart after a brief delay to avoid tight loops
         self._restart_attempts += 1
         if self._restart_attempts > 2:
@@ -322,7 +480,7 @@ class AgentSession:
             return
         try:
             await self.ensure_started()
-            await broadcast_agent_reconnect(self.workspace_id)
+            await self.agents.broadcast_agent_reconnect(self.workspace_id)
         except Exception:
             logger.exception(
                 "Failed to auto-restart agent for workspace %s",
@@ -557,163 +715,3 @@ class AgentSession:
             except ProcessLookupError:  # pragma: no cover
                 pass
         self._proc = None
-
-
-async def get_session(workspace_id: str, app_state=None) -> AgentSession:
-    """Get or create an AgentSession for the given workspace.
-
-    The session resolves the current container ID from the container
-    registry on each startup, so it automatically picks up container
-    restarts without needing to be told the new ID.
-
-    Serialized with ``stop_session`` via ``_agents_lock`` so that a new
-    session is never installed for a container that ``stop_session`` has
-    already torn down (#1298).
-    """
-    async with _agents_lock:
-        session = _agents.get(workspace_id)
-        if session is None:
-            session = AgentSession(workspace_id, app_state=app_state)
-            _agents[workspace_id] = session
-        return session
-
-
-def is_running(workspace_id: str) -> bool:
-    """Return True if an agent subprocess is alive for this workspace."""
-    session = _agents.get(workspace_id)
-    if session is None:
-        return False
-    return session._proc is not None and session._proc.returncode is None
-
-
-def any_running() -> bool:
-    """Return True if any agent subprocess is alive."""
-    return any(
-        s._proc is not None and s._proc.returncode is None
-        for s in _agents.values()
-    )
-
-
-async def stop_session(workspace_id: str) -> None:
-    """Stop and remove the agent session for a workspace.
-
-    Serialized with ``get_session`` via ``_agents_lock`` so that a
-    concurrent ``get_session`` cannot install a new session for a
-    container that is being torn down (#1298).
-    """
-    async with _agents_lock:
-        session = _agents.pop(workspace_id, None)
-        if session:
-            await session.stop()
-
-
-async def stop_all_sessions() -> None:
-    """Stop and remove every active agent session.
-
-    Used by the SIGHUP runtime-restart path: each agent session is a
-    Pi RPC subprocess attached to a container that is about to be
-    stopped, so they must be torn down before the containers go.
-    """
-    for ws_id in list(_agents.keys()):
-        await stop_session(ws_id)
-
-
-def ephemeral_system_message(
-    workspace_id: str,
-    agent_email: str,
-    agent_handle: str,
-    text: str,
-) -> dict:
-    """Build a transient agent presence system message for live broadcast.
-
-    Mirrors the shape returned by [model.add_chat_message] so the frontend
-    renders it the same as a persisted system message, but is never written
-    to chat history — agent presence transitions (disconnect/reconnect) are
-    driven by container lifecycle (idle-stop, restart, crash) and would
-    otherwise pollute history with stale, unbalanced "has disconnected"
-    entries.  ``id`` is a synthetic prefix so the frontend can dedupe;
-    ``created_at`` is empty (the frontend tolerates that).
-    """
-    return {
-        "id": f"ephemeral-agent-{workspace_id}-{int(time.monotonic() * 1000)}",
-        "workspace_id": workspace_id,
-        "user_id": model.AGENT_USER_ID,
-        "user_email": agent_email,
-        "user_handle": agent_handle,
-        "message": text,
-        "message_type": model.MSG_SYSTEM,
-        "created_at": "",
-        "mentions": [],
-    }
-
-
-async def broadcast_agent_disconnect(workspace_id: str) -> None:
-    """Broadcast a disconnect system message when the agent process dies.
-
-    Ephemeral only — sent to currently-connected subscribers, never written
-    to chat history.  The agent subprocess lives inside the workspace
-    container, so it dies on every container idle-stop / restart; persisting
-    "has disconnected" made those lifecycle events linger in chat history
-    and surface as a stale leading message on the next visit, with no
-    symmetric persisted "has connected" to balance them.
-    """
-    if not workspace_id:
-        return
-    # Workspace may have been deleted — skip if gone.
-    if await model.get_workspace_by_id(workspace_id) is None:
-        return
-    agent_handle = await model.agent_handle()
-    agent_email = await model.agent_email()
-    sys_msg = ephemeral_system_message(
-        workspace_id,
-        agent_email,
-        agent_handle,
-        f"{agent_handle} has disconnected",
-    )
-    session = (
-        get_workspace_session(workspace_id) if get_workspace_session else None
-    )
-    if session:
-        session.broadcast({"type": "agent_thinking", "thinking": False})
-        session.broadcast({"type": "chat_message", **sys_msg})
-        session.broadcast(
-            {
-                "type": "presence_leave",
-                "user_id": model.AGENT_USER_ID,
-                "user_email": agent_email,
-                "user_handle": agent_handle,
-            }
-        )
-
-
-async def broadcast_agent_reconnect(workspace_id: str) -> None:
-    """Broadcast a reconnect system message after auto-restart.
-
-    Ephemeral only — see [broadcast_agent_disconnect].
-    """
-    if not workspace_id:
-        return
-    # Workspace may have been deleted — skip if gone.
-    if await model.get_workspace_by_id(workspace_id) is None:
-        return
-    agent_handle = await model.agent_handle()
-    agent_email = await model.agent_email()
-    sys_msg = ephemeral_system_message(
-        workspace_id,
-        agent_email,
-        agent_handle,
-        f"{agent_handle} has reconnected",
-    )
-    session = (
-        get_workspace_session(workspace_id) if get_workspace_session else None
-    )
-    if session:
-        session.broadcast({"type": "chat_message", **sys_msg})
-        session.broadcast(
-            {
-                "type": "presence_join",
-                "user_id": model.AGENT_USER_ID,
-                "user_email": agent_email,
-                "user_handle": agent_handle,
-            }
-        )

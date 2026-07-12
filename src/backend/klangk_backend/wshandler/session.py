@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from .. import agent, auth, model
+from .. import auth, model
 from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
 from .constants import (
     agent_conversations,
@@ -583,7 +583,7 @@ class WebSocketState:
         agent_conversations.pop(workspace_id, None)
         cancel_agent_task(workspace_id)
         # Stop the Pi RPC subprocess so it doesn't outlive the container.
-        await agent.stop_session(workspace_id)
+        await self.app_state.agents.stop_session(workspace_id)
 
     def notify_container_status(
         self, workspace_id: str, running: bool

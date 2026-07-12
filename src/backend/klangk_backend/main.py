@@ -378,7 +378,7 @@ async def runtime_shutdown(app_state) -> None:
     difference is only whether ``startup()`` runs again afterwards.
     """
     await wshandler.disconnect_all_websockets(app_state.sockets)
-    await agent.stop_all_sessions()
+    await app_state.agents.stop_all_sessions()
     wshandler.clear_agent_mention_state()
     await app_state.container_registry.shutdown()
 
@@ -783,7 +783,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # The unit-test fixtures set this explicitly; build_app must too, or
     # every WS connect crashes on the health snapshot (#1475).
     sockets.app_state = app.state
-    agent.get_workspace_session = sockets.get_session
+    # #1486: Agents(app_state) owns the per-workspace Pi RPC sessions
+    # (previously module globals _agents/_agents_lock/get_workspace_session).
+    app.state.agents = agent.Agents(app.state)
+    app.state.agents.get_workspace_session = sockets.get_session
 
     app.add_middleware(
         CORSMiddleware,

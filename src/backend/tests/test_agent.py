@@ -11,14 +11,7 @@ from klangk_backend.agent import (
     AgentProcessDied,
     AgentSession,
     AgentSetupError,
-    any_running,
-    ensure_agent_home,
-    get_session,
-    is_disabled,
-    is_running,
-    stop_all_sessions,
-    stop_session,
-    _agents,
+    Agents,
 )
 
 # Mock Podman instance for ensure_agent_home tests (#1468).
@@ -32,18 +25,11 @@ class _FakeContainerState:
 
 
 @pytest.fixture(autouse=True)
-def _clear_agents():
-    _agents.clear()
-    yield
-    _agents.clear()
-
-
-@pytest.fixture(autouse=True)
 def _mock_container_registry():
     """Provide a default container registry state for all agent tests.
 
     Agent code accesses ``self.app_state.container_registry.get_state()``.
-    The ``_make_session`` helper wires a fake app_state with a mock
+    The ``_make_agents`` helper wires a fake app_state with a mock
     registry whose ``get_state`` returns a ``_FakeContainerState``.
     This fixture is kept as a no-op for structural compatibility.
     """
@@ -79,10 +65,18 @@ def _make_app_state(cid="cid"):
     return app_state
 
 
+def _make_agents(cid="cid"):
+    """Create an Agents instance with a fake app_state."""
+    app_state = _make_app_state(cid)
+    agents = Agents(app_state)
+    app_state.agents = agents
+    return agents
+
+
 def _make_session(workspace_id="ws-id"):
     """Create an AgentSession with home setup already done."""
-    app_state = _make_app_state()
-    s = AgentSession(workspace_id, app_state=app_state)
+    agents = _make_agents()
+    s = AgentSession(workspace_id, agents=agents)
     s._home_ready = True
     s._last_container_id = "cid"
     return s
@@ -124,21 +118,25 @@ class TestAgentDisabled:
 
     async def test_is_disabled_defaults_false(self, monkeypatch):
         monkeypatch.delenv("KLANGK_AGENT_DISABLED", raising=False)
-        assert is_disabled() is False
+        agents = _make_agents()
+        assert agents.is_disabled() is False
 
     async def test_is_disabled_true_when_set(self, monkeypatch):
         monkeypatch.setenv("KLANGK_AGENT_DISABLED", "1")
-        assert is_disabled() is True
+        agents = _make_agents()
+        assert agents.is_disabled() is True
 
     async def test_is_disabled_truthy_variants(self, monkeypatch):
+        agents = _make_agents()
         for val in ("1", "true", "YES", "True"):
             monkeypatch.setenv("KLANGK_AGENT_DISABLED", val)
-            assert is_disabled() is True, val
+            assert agents.is_disabled() is True, val
 
     async def test_is_disabled_falsy_variants(self, monkeypatch):
+        agents = _make_agents()
         for val in ("0", "false", "no", ""):
             monkeypatch.setenv("KLANGK_AGENT_DISABLED", val)
-            assert is_disabled() is False, val
+            assert agents.is_disabled() is False, val
 
     async def test_ensure_started_refuses_when_disabled(self, monkeypatch):
         """The subprocess is never spawned when disabled."""
@@ -618,8 +616,11 @@ class TestAgentSession:
         not permanently give up (the bug from #895)."""
         from klangk_backend import model
 
-        session = _make_session("ws-recover")
-        _agents["ws-recover"] = session
+        agents = _make_agents()
+        session = AgentSession("ws-recover", agents=agents)
+        session._home_ready = True
+        session._last_container_id = "cid"
+        agents._agents["ws-recover"] = session
         # Simulate 3 prior deaths: counter near the limit (one more death
         # would brick the agent without the reset).
         session._restart_attempts = 2
@@ -637,16 +638,14 @@ class TestAgentSession:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
+        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+
         with (
             patch.object(
                 model,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
-            ),
-            patch(
-                "klangk_backend.agent.get_workspace_session",
-                return_value=MagicMock(),
             ),
             patch.object(
                 session,
@@ -785,22 +784,22 @@ class TestAgentSession:
 
 class TestGetSession:
     async def test_creates_new_session(self):
-        app_state = _make_app_state()
-        session = await get_session("ws-1", app_state=app_state)
+        agents = _make_agents()
+        session = await agents.get_session("ws-1")
         assert session.workspace_id == "ws-1"
-        assert "ws-1" in _agents
+        assert "ws-1" in agents._agents
 
     async def test_reuses_existing_session(self):
-        app_state = _make_app_state()
-        s1 = await get_session("ws-1", app_state=app_state)
-        s2 = await get_session("ws-1", app_state=app_state)
+        agents = _make_agents()
+        s1 = await agents.get_session("ws-1")
+        s2 = await agents.get_session("ws-1")
         assert s1 is s2
 
     async def test_get_session_blocked_during_stop(self):
         """get_session must not install a session while stop_session is
         tearing one down for the same workspace (#1298)."""
-        app_state = _make_app_state()
-        session = await get_session("ws-race", app_state=app_state)
+        agents = _make_agents()
+        session = await agents.get_session("ws-race")
         session._proc = AsyncMock()
         session._proc.returncode = None
         session._proc.kill = MagicMock()
@@ -819,7 +818,7 @@ class TestGetSession:
         session.stop = slow_stop  # type: ignore[assignment]
 
         async def do_get():
-            s = await get_session("ws-race", app_state=app_state)
+            s = await agents.get_session("ws-race")
             order.append("get_done")
             return s
 
@@ -827,7 +826,7 @@ class TestGetSession:
         # would see the workspace missing from _agents (already popped) and
         # install a brand-new session before stop finishes.
         _, new_session = await asyncio.gather(
-            stop_session("ws-race"),
+            agents.stop_session("ws-race"),
             do_get(),
         )
 
@@ -835,7 +834,7 @@ class TestGetSession:
         assert order == ["stop_begin", "stop_end", "get_done"]
         # The returned session is a fresh one (not the stopped one).
         assert new_session is not session
-        assert "ws-race" in _agents
+        assert "ws-race" in agents._agents
 
 
 class TestEnsureAgentHome:
@@ -855,9 +854,10 @@ class TestEnsureAgentHome:
             return_value=("/home/clanker", True)
         )
         ws.populate_home_skel = AsyncMock()
-        app_state = MagicMock()
-        app_state.workspaces = ws
-        app_state.podman = _mock_pod
+
+        agents = _make_agents()
+        agents.app_state.workspaces = ws
+        agents.app_state.podman = _mock_pod
 
         with (
             patch.object(model, "get_workspace_by_id", return_value=fake_ws),
@@ -866,7 +866,7 @@ class TestEnsureAgentHome:
                 return_value=mock_proc,
             ) as mock_exec,
         ):
-            result = await ensure_agent_home("ws1", "cid", app_state)
+            result = await agents.ensure_agent_home("ws1", "cid")
 
         assert result == "/home/clanker"
         ws.ensure_home_symlink.assert_awaited_once()
@@ -875,10 +875,6 @@ class TestEnsureAgentHome:
             "cid",
             "00000000-0000-0000-0000-000000000001",
         )
-        # klangk-setup-pi --force re-writes Pi config each time.  It's
-        # invoked by its full install path (bare-name resolution isn't
-        # reliable across podman/OCI runtimes) -- matching the existing
-        # klangk-setup-home pattern.
         argv = mock_exec.call_args.args
         assert "/opt/klangk/bin/klangk-setup-pi" in argv
         assert "--force" in argv
@@ -890,7 +886,7 @@ class TestEnsureAgentHome:
         the lazy chat-start path retries on first mention (#1162).
         The return value (container home) is unaffected by the rc.
         """
-        from klangk_backend import agent, model
+        from klangk_backend import model
 
         fake_home = tmp_path / "home"
         fake_home.mkdir()
@@ -906,9 +902,10 @@ class TestEnsureAgentHome:
             return_value=("/home/clanker", True)
         )
         ws.populate_home_skel = AsyncMock()
-        app_state = MagicMock()
-        app_state.workspaces = ws
-        app_state.podman = _mock_pod
+
+        agents = _make_agents()
+        agents.app_state.workspaces = ws
+        agents.app_state.podman = _mock_pod
 
         with (
             patch.object(
@@ -917,7 +914,7 @@ class TestEnsureAgentHome:
             patch("asyncio.create_subprocess_exec", return_value=mock_proc),
         ):
             # Must NOT raise -- provisioning is best-effort.
-            result = await agent.ensure_agent_home("ws1", "cid", app_state)
+            result = await agents.ensure_agent_home("ws1", "cid")
 
         assert result == "/home/clanker"
 
@@ -934,16 +931,17 @@ class TestEnsureAgentHome:
             return_value=("/home/clanker", False)
         )
         ws.populate_home_skel = AsyncMock()
-        app_state = MagicMock()
-        app_state.workspaces = ws
-        app_state.podman = _mock_pod
+
+        agents = _make_agents()
+        agents.app_state.workspaces = ws
+        agents.app_state.podman = _mock_pod
 
         with (
             patch.object(
                 model, "get_workspace_by_id", return_value={"user_id": "o"}
             ),
         ):
-            result = await ensure_agent_home("ws1", "cid", app_state)
+            result = await agents.ensure_agent_home("ws1", "cid")
 
         assert result == "/home/clanker"
         # created=False -> skel should NOT be called
@@ -952,14 +950,12 @@ class TestEnsureAgentHome:
     async def test_workspace_not_found_raises(self):
         from klangk_backend import model
 
-        ws = MagicMock()
-        app_state = MagicMock()
-        app_state.workspaces = ws
-        app_state.podman = _mock_pod
+        agents = _make_agents()
+        agents.app_state.podman = _mock_pod
 
         with patch.object(model, "get_workspace_by_id", return_value=None):
             with pytest.raises(AgentSetupError, match="not found"):
-                await ensure_agent_home("ws-gone", "cid", app_state)
+                await agents.ensure_agent_home("ws-gone", "cid")
 
 
 class TestEnsureHome:
@@ -968,7 +964,8 @@ class TestEnsureHome:
     ):
         from klangk_backend import model
 
-        session = AgentSession("ws1", app_state=_make_app_state())
+        agents = _make_agents()
+        session = AgentSession("ws1", agents=agents)
 
         fake_ws = {"user_id": "owner1"}
         fake_home = tmp_path / "home"
@@ -1008,7 +1005,8 @@ class TestEnsureHome:
         )
 
     async def test_ensure_home_cached(self):
-        session = AgentSession("ws-id", app_state=_make_app_state())
+        agents = _make_agents()
+        session = AgentSession("ws-id", agents=agents)
         session._home_ready = True
         result = await session._ensure_home("cid")
         assert result == "/home/clanker"
@@ -1017,7 +1015,8 @@ class TestEnsureHome:
         from klangk_backend import model
         from klangk_backend.agent import AgentSetupError
 
-        session = AgentSession("ws-gone", app_state=_make_app_state())
+        agents = _make_agents()
+        session = AgentSession("ws-gone", agents=agents)
 
         with patch.object(model, "get_workspace_by_id", return_value=None):
             with pytest.raises(AgentSetupError, match="not found in database"):
@@ -1026,78 +1025,88 @@ class TestEnsureHome:
 
 class TestStopSession:
     async def test_stop_existing(self):
-        session = await get_session("ws-1", app_state=_make_app_state())
+        agents = _make_agents()
+        session = await agents.get_session("ws-1")
         session._proc = AsyncMock()
         session._proc.returncode = None
         session._proc.kill = MagicMock()
         session._proc.wait = AsyncMock()
 
-        await stop_session("ws-1")
-        assert "ws-1" not in _agents
+        await agents.stop_session("ws-1")
+        assert "ws-1" not in agents._agents
 
     async def test_stop_nonexistent(self):
-        await stop_session("no-such-ws")  # should not raise
+        agents = _make_agents()
+        await agents.stop_session("no-such-ws")  # should not raise
 
 
 class TestStopAllSessions:
     async def test_stops_every_session(self):
-        app_state = _make_app_state()
+        agents = _make_agents()
         for ws_id in ("ws-a", "ws-b"):
-            session = await get_session(ws_id, app_state=app_state)
+            session = await agents.get_session(ws_id)
             session._proc = AsyncMock()
             session._proc.returncode = None
             session._proc.kill = MagicMock()
             session._proc.wait = AsyncMock()
 
-        assert len(_agents) == 2
-        await stop_all_sessions()
-        assert _agents == {}
+        assert len(agents._agents) == 2
+        await agents.stop_all_sessions()
+        assert agents._agents == {}
 
     async def test_empty_is_noop(self):
-        await stop_all_sessions()
-        assert _agents == {}
+        agents = _make_agents()
+        await agents.stop_all_sessions()
+        assert agents._agents == {}
 
 
 class TestIsRunning:
     def test_no_session(self):
-        assert not is_running("ws-id")
+        agents = _make_agents()
+        assert not agents.is_running("ws-id")
 
     def test_no_proc(self):
-        _agents["ws-id"] = _make_session()
-        assert not is_running("ws-id")
+        agents = _make_agents()
+        agents._agents["ws-id"] = _make_session()
+        assert not agents.is_running("ws-id")
 
     def test_proc_alive(self):
+        agents = _make_agents()
         s = _make_session()
         s._proc = MagicMock()
         s._proc.returncode = None
-        _agents["ws-id"] = s
-        assert is_running("ws-id")
+        agents._agents["ws-id"] = s
+        assert agents.is_running("ws-id")
 
     def test_proc_dead(self):
+        agents = _make_agents()
         s = _make_session()
         s._proc = MagicMock()
         s._proc.returncode = 1
-        _agents["ws-id"] = s
-        assert not is_running("ws-id")
+        agents._agents["ws-id"] = s
+        assert not agents.is_running("ws-id")
 
 
 class TestAnyRunning:
     def test_empty(self):
-        assert not any_running()
+        agents = _make_agents()
+        assert not agents.any_running()
 
     def test_one_alive(self):
+        agents = _make_agents()
         s = _make_session()
         s._proc = MagicMock()
         s._proc.returncode = None
-        _agents["ws-id"] = s
-        assert any_running()
+        agents._agents["ws-id"] = s
+        assert agents.any_running()
 
     def test_all_dead(self):
+        agents = _make_agents()
         s = _make_session()
         s._proc = MagicMock()
         s._proc.returncode = 0
-        _agents["ws-id"] = s
-        assert not any_running()
+        agents._agents["ws-id"] = s
+        assert not agents.any_running()
 
 
 class TestSpawnSerialization:
@@ -1156,7 +1165,10 @@ class TestSpawnSerialization:
 class TestMonitorProcess:
     async def test_monitor_broadcasts_on_death(self):
         from klangk_backend import model
-        from klangk_backend.agent import broadcast_agent_disconnect
+
+        agents = _make_agents()
+        mock_session = MagicMock()
+        agents.get_workspace_session = MagicMock(return_value=mock_session)
 
         with (
             patch.object(
@@ -1170,14 +1182,8 @@ class TestMonitorProcess:
                 "add_chat_message",
                 new_callable=AsyncMock,
             ) as mock_chat,
-            patch(
-                "klangk_backend.agent.get_workspace_session"
-            ) as mock_get_session,
         ):
-            mock_session = MagicMock()
-            mock_get_session.return_value = mock_session
-
-            await broadcast_agent_disconnect("ws-mon")
+            await agents.broadcast_agent_disconnect("ws-mon")
 
             # Presence transitions must NOT be persisted to chat history
             # (they'd linger as stale "has disconnected" on the next visit).
@@ -1191,16 +1197,14 @@ class TestMonitorProcess:
             assert chat_broadcast["message_type"] == model.MSG_SYSTEM
 
     async def test_broadcast_no_workspace(self):
-        from klangk_backend.agent import broadcast_agent_disconnect
-
+        agents = _make_agents()
         # Should not raise when workspace_id is empty
-        await broadcast_agent_disconnect("")
+        await agents.broadcast_agent_disconnect("")
 
     async def test_broadcast_disconnect_deleted_workspace(self):
-        from klangk_backend.agent import broadcast_agent_disconnect
-
+        agents = _make_agents()
         # Should not raise when workspace has been deleted
-        await broadcast_agent_disconnect("deleted-ws-id")
+        await agents.broadcast_agent_disconnect("deleted-ws-id")
 
     async def test_stop_cancels_monitor(self):
         session = _make_session()
@@ -1220,8 +1224,11 @@ class TestMonitorProcess:
     async def test_monitor_auto_restarts(self):
         from klangk_backend import model
 
-        session = _make_session("ws-restart")
-        _agents["ws-restart"] = session
+        agents = _make_agents()
+        session = AgentSession("ws-restart", agents=agents)
+        session._home_ready = True
+        session._last_container_id = "cid"
+        agents._agents["ws-restart"] = session
 
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
@@ -1230,16 +1237,14 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
+        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+
         with (
             patch.object(
                 model,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
-            ),
-            patch(
-                "klangk_backend.agent.get_workspace_session",
-                return_value=MagicMock(),
             ),
             patch.object(
                 session,
@@ -1258,8 +1263,11 @@ class TestMonitorProcess:
     async def test_monitor_gives_up_after_max_retries(self):
         from klangk_backend import model
 
-        session = _make_session("ws-giveup")
-        _agents["ws-giveup"] = session
+        agents = _make_agents()
+        session = AgentSession("ws-giveup", agents=agents)
+        session._home_ready = True
+        session._last_container_id = "cid"
+        agents._agents["ws-giveup"] = session
         session._restart_attempts = 2  # already at limit
 
         mock_proc = AsyncMock()
@@ -1269,16 +1277,14 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
+        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+
         with (
             patch.object(
                 model,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
-            ),
-            patch(
-                "klangk_backend.agent.get_workspace_session",
-                return_value=MagicMock(),
             ),
             patch.object(
                 session,
@@ -1316,8 +1322,11 @@ class TestMonitorProcess:
         from klangk_backend import model
         import logging
 
-        session = _make_session("ws-stderr")
-        _agents["ws-stderr"] = session
+        agents = _make_agents()
+        session = AgentSession("ws-stderr", agents=agents)
+        session._home_ready = True
+        session._last_container_id = "cid"
+        agents._agents["ws-stderr"] = session
         session._restart_attempts = 2  # will give up
 
         mock_proc = AsyncMock()
@@ -1328,16 +1337,14 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
+        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+
         with (
             patch.object(
                 model,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
-            ),
-            patch(
-                "klangk_backend.agent.get_workspace_session",
-                return_value=MagicMock(),
             ),
             caplog.at_level(logging.WARNING, logger="klangk_backend.agent"),
         ):
@@ -1351,8 +1358,11 @@ class TestMonitorProcess:
         """Monitor handles stderr read errors gracefully."""
         from klangk_backend import model
 
-        session = _make_session("ws-stderr-err")
-        _agents["ws-stderr-err"] = session
+        agents = _make_agents()
+        session = AgentSession("ws-stderr-err", agents=agents)
+        session._home_ready = True
+        session._last_container_id = "cid"
+        agents._agents["ws-stderr-err"] = session
         session._restart_attempts = 2
 
         mock_proc = AsyncMock()
@@ -1362,16 +1372,14 @@ class TestMonitorProcess:
         mock_proc.stderr.read = AsyncMock(side_effect=OSError("broken pipe"))
         session._proc = mock_proc
 
+        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+
         with (
             patch.object(
                 model,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
-            ),
-            patch(
-                "klangk_backend.agent.get_workspace_session",
-                return_value=MagicMock(),
             ),
         ):
             await session._monitor_process(mock_proc)
@@ -1380,8 +1388,11 @@ class TestMonitorProcess:
     async def test_monitor_restart_failure_logged(self):
         from klangk_backend import model
 
-        session = _make_session("ws-fail")
-        _agents["ws-fail"] = session
+        agents = _make_agents()
+        session = AgentSession("ws-fail", agents=agents)
+        session._home_ready = True
+        session._last_container_id = "cid"
+        agents._agents["ws-fail"] = session
 
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
@@ -1390,16 +1401,14 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
+        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+
         with (
             patch.object(
                 model,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
-            ),
-            patch(
-                "klangk_backend.agent.get_workspace_session",
-                return_value=MagicMock(),
             ),
             patch.object(
                 session,
@@ -1416,7 +1425,10 @@ class TestMonitorProcess:
 
     async def test_broadcast_reconnect(self):
         from klangk_backend import model
-        from klangk_backend.agent import broadcast_agent_reconnect
+
+        agents = _make_agents()
+        mock_session = MagicMock()
+        agents.get_workspace_session = MagicMock(return_value=mock_session)
 
         with (
             patch.object(
@@ -1430,14 +1442,8 @@ class TestMonitorProcess:
                 "add_chat_message",
                 new_callable=AsyncMock,
             ) as mock_chat,
-            patch(
-                "klangk_backend.agent.get_workspace_session"
-            ) as mock_get_session,
         ):
-            mock_session = MagicMock()
-            mock_get_session.return_value = mock_session
-
-            await broadcast_agent_reconnect("ws-rc")
+            await agents.broadcast_agent_reconnect("ws-rc")
 
             # Reconnect is ephemeral too — never persisted.
             mock_chat.assert_not_awaited()
@@ -1448,23 +1454,24 @@ class TestMonitorProcess:
             assert chat_broadcast["message_type"] == model.MSG_SYSTEM
 
     async def test_broadcast_reconnect_no_workspace(self):
-        from klangk_backend.agent import broadcast_agent_reconnect
-
-        await broadcast_agent_reconnect("")
+        agents = _make_agents()
+        await agents.broadcast_agent_reconnect("")
 
     async def test_broadcast_reconnect_deleted_workspace(self):
-        from klangk_backend.agent import broadcast_agent_reconnect
-
+        agents = _make_agents()
         # Should not raise when workspace has been deleted
-        await broadcast_agent_reconnect("deleted-ws-id")
+        await agents.broadcast_agent_reconnect("deleted-ws-id")
 
     async def test_monitor_skips_restart_if_container_gone(self, caplog):
         """Monitor does not restart when the container has been removed."""
         from klangk_backend import model
         import logging
 
-        session = _make_session("ws-gone")
-        _agents["ws-gone"] = session
+        agents = _make_agents()
+        session = AgentSession("ws-gone", agents=agents)
+        session._home_ready = True
+        session._last_container_id = "cid"
+        agents._agents["ws-gone"] = session
 
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
@@ -1473,16 +1480,14 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
+        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+
         with (
             patch.object(
                 model,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
-            ),
-            patch(
-                "klangk_backend.agent.get_workspace_session",
-                return_value=MagicMock(),
             ),
             patch.object(
                 session.app_state.container_registry,
@@ -1507,8 +1512,11 @@ class TestMonitorProcess:
     async def test_monitor_skips_restart_if_already_restarted(self):
         from klangk_backend import model
 
-        session = _make_session("ws-skip")
-        _agents["ws-skip"] = session
+        agents = _make_agents()
+        session = AgentSession("ws-skip", agents=agents)
+        session._home_ready = True
+        session._last_container_id = "cid"
+        agents._agents["ws-skip"] = session
 
         dead_proc = AsyncMock()
         dead_proc.returncode = 1
@@ -1521,16 +1529,14 @@ class TestMonitorProcess:
             # Simulate something else restarting the proc during sleep
             session._proc = AsyncMock()
 
+        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+
         with (
             patch.object(
                 model,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
-            ),
-            patch(
-                "klangk_backend.agent.get_workspace_session",
-                return_value=MagicMock(),
             ),
             patch(
                 "klangk_backend.agent.asyncio.sleep",

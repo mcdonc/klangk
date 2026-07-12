@@ -13,7 +13,14 @@ from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
-from klangk_backend import main, model, oidc, plugins, workspaces
+from klangk_backend import (
+    agent as agent_mod,
+    main,
+    model,
+    oidc,
+    plugins,
+    workspaces,
+)
 from klangk_backend.container import ContainerRegistry
 from klangk_backend.settings import KlangkSettings
 from klangk_backend.wshandler.session import WebSocketState
@@ -41,6 +48,7 @@ def _make_app_state(settings=None):
     app_state.oidc = oidc.OIDC(app_state)
     app_state.plugins = plugins.Plugins(app_state)
     app_state.workspaces = workspaces.Workspaces(app_state)
+    app_state.agents = agent_mod.Agents(app_state)
     return app_state
 
 
@@ -371,6 +379,7 @@ class TestLifespan:
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
         app.state.workspaces = workspaces.Workspaces(app.state)
+        app.state.agents = agent_mod.Agents(app.state)
         registry = app_state.container_registry
         with (
             patch.object(
@@ -416,6 +425,7 @@ class TestLifespan:
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
         app.state.workspaces = workspaces.Workspaces(app.state)
+        app.state.agents = agent_mod.Agents(app.state)
         registry = app_state.container_registry
         with (
             patch.object(
@@ -507,8 +517,9 @@ class TestStartupShutdownRestart:
                 "klangk_backend.main.wshandler.disconnect_all_websockets",
                 new_callable=AsyncMock,
             ) as mock_disc,
-            patch(
-                "klangk_backend.main.agent.stop_all_sessions",
+            patch.object(
+                app_state.agents,
+                "stop_all_sessions",
                 new_callable=AsyncMock,
             ) as mock_stop_agents,
             patch(
@@ -637,6 +648,7 @@ class TestStartupShutdownRestart:
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
         app.state.workspaces = workspaces.Workspaces(app.state)
+        app.state.agents = agent_mod.Agents(app.state)
         registry = app_state.container_registry
         loop = asyncio.get_running_loop()
         with (
