@@ -16,7 +16,6 @@ from klangk_backend import (
     agent,
     api,
     auth,
-    container,
     model,
     podman,
     workspaces as ws_mod,
@@ -47,9 +46,9 @@ async def app(db, temp_data_dir):
             "KLANGK_CUSTOMIZE_DIR": str(temp_data_dir / "customize"),
         }
     )
-    registry = ContainerRegistry(settings)
-    sockets = WebSocketState()
     app.state.settings = settings
+    registry = ContainerRegistry(app.state)
+    sockets = WebSocketState()
     app.state.container_registry = registry
     app.state.sockets = sockets
     registry.sockets = sockets
@@ -1768,7 +1767,7 @@ class TestWorkspaceRoutes:
         # Clean up registry state.
         registry.states.pop(ws_id, None)
 
-    async def test_restart_not_found(self, client, user):
+    async def test_restart_not_found(self, client, user, app):
         headers = await _auth_headers(client)
         fake_id = "fake-restart-id"
         await model.add_acl_entry(
@@ -1784,7 +1783,7 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 404
 
-    async def test_workspace_status_running(self, client, user, registry):
+    async def test_workspace_status_running(self, client, user, registry, app):
         headers = await _auth_headers(client)
         create_resp = await client.post(
             "/api/v1/workspaces",
@@ -1806,7 +1805,10 @@ class TestWorkspaceRoutes:
         assert data["container_id"] == "cid-status"
         assert data["health"] is None  # placeholder
         assert isinstance(data["idle_seconds"], (int, float))
-        assert data["idle_timeout"] == api.container.IDLE_TIMEOUT_SECONDS
+        assert (
+            data["idle_timeout"]
+            == app.state.container_registry.idle_timeout_seconds
+        )
         assert isinstance(data["ports"], list)
 
         # Clean up registry state.
@@ -4531,7 +4533,7 @@ class TestFileRoutes:
         finally:
             self._cleanup(ws_id)
 
-    async def test_download_nonexistent_workspace(self, client, user):
+    async def test_download_nonexistent_workspace(self, client, user, app):
         headers = await _auth_headers(client)
         resp = await client.get(
             "/api/v1/workspaces/fake-id/files/download?path=/f.txt",
@@ -4539,7 +4541,7 @@ class TestFileRoutes:
         )
         assert resp.status_code == 403
 
-    async def test_download_traversal(self, client, user):
+    async def test_download_traversal(self, client, user, app):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
@@ -4551,7 +4553,7 @@ class TestFileRoutes:
         finally:
             self._cleanup(ws_id)
 
-    async def test_read_nonexistent_workspace(self, client, user):
+    async def test_read_nonexistent_workspace(self, client, user, app):
         headers = await _auth_headers(client)
         resp = await client.get(
             "/api/v1/workspaces/fake-id/files/content?path=/f.txt",
@@ -4559,7 +4561,7 @@ class TestFileRoutes:
         )
         assert resp.status_code == 403
 
-    async def test_upload_write_fails(self, client, user):
+    async def test_upload_write_fails(self, client, user, app):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
@@ -4579,7 +4581,7 @@ class TestFileRoutes:
         finally:
             self._cleanup(ws_id)
 
-    async def test_upload_traversal(self, client, user):
+    async def test_upload_traversal(self, client, user, app):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
@@ -4599,16 +4601,18 @@ class TestFileRoutes:
 class TestSetIdleTimeout:
     async def test_set_idle_timeout_global(self, db, app, registry):
         """Setting global idle timeout changes the module-level variable."""
-        original_timeout = container.IDLE_TIMEOUT_SECONDS
+        original_timeout = app.state.container_registry.idle_timeout_seconds
         try:
-            container.IDLE_TIMEOUT_SECONDS = 42
-            assert container.IDLE_TIMEOUT_SECONDS == 42
+            app.state.container_registry.idle_timeout_seconds = 42
+            assert app.state.container_registry.idle_timeout_seconds == 42
             # Per-workspace lookup falls back to global
             assert registry.get_workspace_idle_timeout("any") == 42
         finally:
-            container.IDLE_TIMEOUT_SECONDS = original_timeout
+            app.state.container_registry.idle_timeout_seconds = (
+                original_timeout
+            )
 
-    async def test_endpoint_missing_without_test_mode(self, client):
+    async def test_endpoint_missing_without_test_mode(self, client, app):
         """Without KLANGK_TEST_MODE, the endpoints should not exist."""
         resp = await client.post(
             "/api/v1/test/set-idle-timeout", json={"seconds": 10}
@@ -4619,12 +4623,15 @@ class TestSetIdleTimeout:
 
     async def test_set_idle_timeout_per_workspace(self, db, app, registry):
         """Per-workspace idle timeout should not affect global."""
-        original_timeout = container.IDLE_TIMEOUT_SECONDS
+        original_timeout = app.state.container_registry.idle_timeout_seconds
         try:
             registry.track_activity("cid-test", "ws-test")
             registry.set_workspace_idle_timeout("ws-test", 5)
             assert registry.get_workspace_idle_timeout("ws-test") == 5
-            assert container.IDLE_TIMEOUT_SECONDS == original_timeout
+            assert (
+                app.state.container_registry.idle_timeout_seconds
+                == original_timeout
+            )
             # Unknown workspace returns global default
             assert (
                 registry.get_workspace_idle_timeout("ws-other")
@@ -4646,8 +4653,8 @@ class TestSetIdleTimeout:
             assert state.idle_timeout == 6
             # Global CHECK_INTERVAL_SECONDS should be unchanged
             assert (
-                container.CHECK_INTERVAL_SECONDS
-                == container.parse_idle_timeout()[1]
+                app.state.container_registry.check_interval_seconds
+                == app.state.container_registry._parse_idle_timeout()[1]
             )
         finally:
             registry.states.pop("ws-fast", None)

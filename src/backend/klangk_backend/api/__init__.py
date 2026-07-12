@@ -133,7 +133,9 @@ if resolve_env_value("KLANGK_TEST_MODE"):  # pragma: no cover
                     workspace_id
                 )
             }
-        return {"idle_timeout_seconds": container.IDLE_TIMEOUT_SECONDS}
+        return {
+            "idle_timeout_seconds": app_state.container_registry.idle_timeout_seconds
+        }
 
     class SetIdleTimeoutRequest(BaseModel):
         seconds: int
@@ -152,8 +154,7 @@ if resolve_env_value("KLANGK_TEST_MODE"):  # pragma: no cover
                 workspace_id, seconds
             )
         else:
-            container.IDLE_TIMEOUT_SECONDS = seconds
-            container.CHECK_INTERVAL_SECONDS = max(10, min(60, seconds // 3))
+            app_state.container_registry.set_idle_timeout(seconds)
         return {"idle_timeout_seconds": seconds}
 
     @router.get("/test/workspace-token/{workspace_id}")

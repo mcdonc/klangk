@@ -464,7 +464,9 @@ class Connection:
             f"{container_name}{ports_str}",
             "created": f"Created new container {container_name}{ports_str}",
         }.get(status, "Container ready")
-        status_msg += format_idle_timeout(container.IDLE_TIMEOUT_SECONDS)
+        status_msg += format_idle_timeout(
+            self.app_state.container_registry.idle_timeout_seconds
+        )
 
         self.sock.send_json(
             {
@@ -557,7 +559,9 @@ class Connection:
         container_name, ports_str = format_container_info(workspace_id, ports)
         status_msg = f"Container restarted {container_name}{ports_str}"
 
-        timeout_mins = container.IDLE_TIMEOUT_SECONDS / 60
+        timeout_mins = (
+            self.app_state.container_registry.idle_timeout_seconds / 60
+        )
         if timeout_mins == int(timeout_mins):
             status_msg += f" — idle timeout: {int(timeout_mins)}m"
         else:

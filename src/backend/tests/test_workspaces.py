@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from klangk_backend import workspaces as ws_mod, container
+from klangk_backend import workspaces as ws_mod
 
 
 class TestCreateWorkspace:
@@ -32,7 +32,9 @@ class TestCreateWorkspace:
         registry = app_state.container_registry
         ports = await registry.get_workspace_ports(ws["id"])
         assert len(ports) == ws["num_ports"]
-        assert all(p >= container.PORT_RANGE_START for p in ports)
+        assert all(
+            p >= app_state.container_registry.port_range_start for p in ports
+        )
 
     async def test_duplicate_name_fails(self, user, app_state):
         await app_state.workspaces.create_workspace(user["id"], "unique")

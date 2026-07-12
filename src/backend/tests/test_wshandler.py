@@ -88,16 +88,16 @@ def _make_app_state(registry=None, sockets=None):
     from klangk_backend.container import ContainerRegistry
 
     settings = KlangkSettings(env={})
-    if registry is None:
-        registry = ContainerRegistry(settings)
     if sockets is None:
         sockets = WebSocketState()
 
     app_state = types.SimpleNamespace(
-        container_registry=registry,
         sockets=sockets,
         settings=settings,
     )
+    if registry is None:
+        registry = ContainerRegistry(app_state)
+    app_state.container_registry = registry
     registry.sockets = sockets
     registry.app_state = app_state
     sockets.app_state = app_state
@@ -5404,7 +5404,9 @@ class TestHandleRestartContainer:
     ):
         app_state = _make_app_state()
         registry = app_state.container_registry
-        monkeypatch.setattr(container, "IDLE_TIMEOUT_SECONDS", 90)
+        monkeypatch.setattr(
+            app_state.container_registry, "idle_timeout_seconds", 90
+        )
         sock = _mock_sock(headers={"host": "localhost:8997"})
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "restart-frac"
@@ -8695,7 +8697,9 @@ class TestFractionalTimeout:
     ):
         app_state = _make_app_state()
         registry = app_state.container_registry
-        monkeypatch.setattr(container, "IDLE_TIMEOUT_SECONDS", 90)
+        monkeypatch.setattr(
+            app_state.container_registry, "idle_timeout_seconds", 90
+        )
         sock = _mock_sock()
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "frac-ws"
