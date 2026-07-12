@@ -31,7 +31,7 @@ async def bringup(
     Idempotent via :func:`terminal.ensure_service_session`.
     """
     agent_home = await agent.ensure_agent_home(
-        workspace_id, container_id, app_state.podman
+        workspace_id, container_id, app_state
     )
     if not service_command:
         return

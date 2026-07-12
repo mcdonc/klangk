@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 
 from .. import acl as _acl
-from .. import agent, auth, container, model, workspaces
+from .. import agent, auth, container, model
 from ..terminal import TerminalSession
 from ..podman import ExecSession
 from ..util import derive_hosting_info
@@ -279,19 +279,25 @@ class Connection:
         self, workspace_id: str, workspace: dict
     ) -> None:
         """Start/restart container for a workspace."""
-        host_path = str(workspaces.get_workspace_host_path(workspace_id))
-        home_path = str(workspaces.get_home_host_path(workspace_id))
-        cfg_path = str(workspaces.get_config_host_path(workspace_id))
+        host_path = str(
+            self.app_state.workspaces.get_workspace_host_path(workspace_id)
+        )
+        home_path = str(
+            self.app_state.workspaces.get_home_host_path(workspace_id)
+        )
+        cfg_path = str(
+            self.app_state.workspaces.get_config_host_path(workspace_id)
+        )
 
         # Ensure the per-user home symlink exists BEFORE starting the
         # container, because mounts under /home/{handle}/ need the
         # symlink in place so podman doesn't auto-create a real dir.
         handle = await model.get_user_handle(self.user["id"])
-        workspace_home = workspaces.home_path(workspace_id)
+        workspace_home = self.app_state.workspaces.home_path(workspace_id)
         (
             self._user_home,
             self._home_created,
-        ) = await workspaces.ensure_home_symlink(
+        ) = await self.app_state.workspaces.ensure_home_symlink(
             workspace_home, handle, self.user["id"]
         )
 
@@ -363,8 +369,8 @@ class Connection:
         # Populate skeleton if this is a new user home (symlink was
         # created above, before container start).
         if self._home_created:
-            await workspaces.populate_home_skel(
-                container_id, self.user["id"], self.app_state.podman
+            await self.app_state.workspaces.populate_home_skel(
+                container_id, self.user["id"]
             )
 
         logger.info("Container ready for workspace %s", workspace_id)
@@ -420,7 +426,7 @@ class Connection:
         ):
             send_error(self.sock, "Permission denied")
             return
-        workspace = await workspaces.get_workspace(workspace_id)
+        workspace = await self.app_state.workspaces.get_workspace(workspace_id)
         if workspace is None:
             send_error(self.sock, "Workspace not found")
             return
@@ -528,7 +534,7 @@ class Connection:
             logger.warning("Cleanup error during restart: %s", e)
 
         if workspace is None:
-            workspace = await workspaces.get_workspace(
+            workspace = await self.app_state.workspaces.get_workspace(
                 workspace_id, user["id"]
             )
         if workspace is None:
@@ -867,15 +873,19 @@ class Connection:
             # Update the per-workspace symlink.
             workspace = self.workspace
             if workspace:
-                workspace_home = workspaces.home_path(self.workspace_id)
-                container_home, created = await workspaces.ensure_home_symlink(
+                workspace_home = self.app_state.workspaces.home_path(
+                    self.workspace_id
+                )
+                (
+                    container_home,
+                    created,
+                ) = await self.app_state.workspaces.ensure_home_symlink(
                     workspace_home, handle, self.user["id"]
                 )
                 if created and self.container_id:
-                    await workspaces.populate_home_skel(
+                    await self.app_state.workspaces.populate_home_skel(
                         self.container_id,
                         self.user["id"],
-                        self.app_state.podman,
                     )
                 self._user_home = container_home
             self.sock.send_json(

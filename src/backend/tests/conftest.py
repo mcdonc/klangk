@@ -66,12 +66,9 @@ def temp_data_dir(tmp_path, monkeypatch):
     # to rebind — construct a fresh DB from settings).
     import klangk_backend.model as us
     import klangk_backend.model.db as us_core
-    import klangk_backend.workspaces as wm
     from klangk_backend.settings import KlangkSettings
 
     us_core.set_db(us_core.DB(KlangkSettings(os.environ)))
-    wm.data_dir = tmp_path
-    wm.WORKSPACES_ROOT = tmp_path / "workspaces"
     # Clear agent caches so each test starts fresh.
     us.clear_agent_cache()
     # Set a deterministic instance ID for tests that don't use the db
@@ -186,6 +183,32 @@ async def admin_user(admin_group):
     )
     await us.add_user_to_group(user["id"], admin_group["id"])
     return user
+
+
+@pytest.fixture
+def app_state(temp_data_dir):
+    """Build a minimal app_state with owned instances wired (#1484).
+
+    Shared across all test files — each test file that needs app_state
+    requests it rather than defining its own. Built fresh per test from
+    the temp_data_dir's settings so every owned instance points at the
+    per-test tmp dir.
+    """
+    import types
+
+    from klangk_backend.settings import KlangkSettings
+    from klangk_backend.container import ContainerRegistry
+    from klangk_backend.workspaces import Workspaces
+
+    settings = KlangkSettings(os.environ)
+    registry = ContainerRegistry(settings)
+    state = types.SimpleNamespace(
+        container_registry=registry,
+        settings=settings,
+    )
+    registry.app_state = state
+    state.workspaces = Workspaces(state)
+    return state
 
 
 @pytest.fixture

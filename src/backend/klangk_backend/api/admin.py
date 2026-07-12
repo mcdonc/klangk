@@ -18,7 +18,6 @@ from .. import (
     emailsvc,
     model,
     wshandler,
-    workspaces,
 )
 from ._common import get_app_state_dep
 from ..model import (
@@ -249,6 +248,7 @@ async def list_user_workspaces(
     limit: int | None = Query(None, ge=1, le=200),
     offset: int | None = Query(None, ge=0),
     admin: dict = Depends(acl.has_permission("admin")),
+    app_state=Depends(get_app_state_dep),
 ):
     """List workspaces owned by a user (admin only).
 
@@ -259,7 +259,7 @@ async def list_user_workspaces(
     user = await model.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    return await workspaces.list_workspaces(
+    return await app_state.workspaces.list_workspaces(
         user_id, limit=limit or 100, offset=offset or 0
     )
 
@@ -278,7 +278,7 @@ async def delete_user(
     # Stop all containers for this user before deleting
     await app_state.container_registry.stop_user_containers(user_id)
     # Archive workspace data before deletion
-    await workspaces.archive_user_data(user_id, user["email"])
+    await app_state.workspaces.archive_user_data(user_id, user["email"])
     deleted = await model.delete_user(user_id)
     if not deleted:  # pragma: no cover — race between get and delete
         raise HTTPException(status_code=404, detail="User not found")

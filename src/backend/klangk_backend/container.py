@@ -598,10 +598,9 @@ class HealthMonitor:
         # Resolve the owner's container home the same way
         # start_workspace does, so the check runs in the right
         # HOME rather than as root in /.
-        from . import workspaces as _wm  # noqa: allow-deferred-import
-
-        ws_home = _wm.home_path(state.workspace_id)
-        user_home, _created = await _wm.ensure_home_symlink(
+        ws = self._registry.app_state.workspaces
+        ws_home = ws.home_path(state.workspace_id)
+        user_home, _created = await ws.ensure_home_symlink(
             ws_home, handle, owner_id
         )
         cid_short = state.container_id[:12]

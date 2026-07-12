@@ -34,13 +34,19 @@ _mock_pod = MagicMock()
 
 
 @pytest.fixture
-async def app(db):
+async def app(db, temp_data_dir):
     """Create a minimal FastAPI app with just the API router."""
     app = FastAPI()
     from klangk_backend.util import API_PREFIX
     from klangk_backend.main import register_exception_handlers
 
-    settings = KlangkSettings(env={"KLANGK_AUTH_MODES": "password"})
+    settings = KlangkSettings(
+        env={
+            "KLANGK_AUTH_MODES": "password",
+            "KLANGK_DATA_DIR": str(temp_data_dir),
+            "KLANGK_CUSTOMIZE_DIR": str(temp_data_dir / "customize"),
+        }
+    )
     registry = ContainerRegistry(settings)
     sockets = WebSocketState()
     app.state.settings = settings
@@ -53,6 +59,7 @@ async def app(db):
     registry.podman = _mock_pod
     app.state.oidc = oidc_mod.OIDC(app.state)
     app.state.plugins = plugins_mod.Plugins(app.state)
+    app.state.workspaces = ws_mod.Workspaces(app.state)
     agent.get_workspace_session = sockets.get_session
 
     app.include_router(api.root_router)
@@ -1507,12 +1514,13 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 400
         assert "Auto-start is not enabled" in resp.json()["detail"]
 
-    async def test_create_auto_start_allowed_with_env(self, client, user):
+    async def test_create_auto_start_allowed_with_env(self, client, app, user):
         headers = await _auth_headers(client)
         with (
             patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}),
-            patch(
-                "klangk_backend.workspaces.start_workspace",
+            patch.object(
+                app.state.workspaces,
+                "start_workspace",
                 new_callable=AsyncMock,
             ) as mock_start,
         ):
@@ -1525,12 +1533,15 @@ class TestWorkspaceRoutes:
         assert resp.json()["auto_start"] is True
         mock_start.assert_awaited_once()
 
-    async def test_create_auto_start_eager_failure_logged(self, client, user):
+    async def test_create_auto_start_eager_failure_logged(
+        self, client, app, user
+    ):
         headers = await _auth_headers(client)
         with (
             patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}),
-            patch(
-                "klangk_backend.workspaces.start_workspace",
+            patch.object(
+                app.state.workspaces,
+                "start_workspace",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("podman broke"),
             ),
@@ -1721,7 +1732,7 @@ class TestWorkspaceRoutes:
         # Deleter is the owner here, so exactly one notify call for them.
         mock_notify.assert_called_once_with(user["id"])
 
-    async def test_restart_workspace(self, client, user, registry):
+    async def test_restart_workspace(self, client, app, user, registry):
         headers = await _auth_headers(client)
         create_resp = await client.post(
             "/api/v1/workspaces", headers=headers, json={"name": "restart-me"}
@@ -1737,8 +1748,9 @@ class TestWorkspaceRoutes:
                 "stop_and_remove_container",
                 new_callable=AsyncMock,
             ) as mock_stop,
-            patch(
-                "klangk_backend.workspaces.start_workspace",
+            patch.object(
+                app.state.workspaces,
+                "start_workspace",
                 new_callable=AsyncMock,
             ) as mock_start,
         ):
@@ -4950,7 +4962,7 @@ class TestAdminEndpoints:
         )
         assert resp.status_code == 403
 
-    async def test_delete_user(self, client, admin_user, user, registry):
+    async def test_delete_user(self, client, app, admin_user, user, registry):
         headers = await self._admin_headers(client)
         with (
             patch.object(
@@ -4958,7 +4970,11 @@ class TestAdminEndpoints:
                 "stop_user_containers",
                 new_callable=AsyncMock,
             ),
-            patch.object(ws_mod, "archive_user_data", new_callable=AsyncMock),
+            patch.object(
+                app.state.workspaces,
+                "archive_user_data",
+                new_callable=AsyncMock,
+            ),
         ):
             resp = await client.delete(
                 f"/api/v1/admin/users/{user['id']}", headers=headers
@@ -5606,7 +5622,7 @@ class TestAdminResourceACL:
         )
         assert resp.status_code == 200
 
-    async def test_get_resource_acl_requires_admin(self, client, user):
+    async def test_get_resource_acl_requires_admin(self, client, app, user):
         headers = await _auth_headers(client)
         resp = await client.get(
             "/api/v1/admin/acl/resource?resource=/workspaces", headers=headers
@@ -5680,13 +5696,13 @@ class TestAdminResourceACL:
 
 
 class TestSafePath:
-    def test_valid_path(self, temp_data_dir):
-        path = ws_mod.safe_path("user1", "home", "ws1")
-        assert path == ws_mod.WORKSPACES_ROOT / "user1" / "home" / "ws1"
+    def test_valid_path(self, temp_data_dir, app):
+        path = app.state.workspaces.safe_path("user1", "home", "ws1")
+        assert path == app.state.workspaces.root / "user1" / "home" / "ws1"
 
-    def test_traversal_raises(self, temp_data_dir):
+    def test_traversal_raises(self, temp_data_dir, app):
         with pytest.raises(ValueError, match="Path traversal blocked"):
-            ws_mod.safe_path("..", "..", "etc", "passwd")
+            app.state.workspaces.safe_path("..", "..", "etc", "passwd")
 
 
 class TestSanitizeFilename:
@@ -5705,14 +5721,14 @@ class TestSanitizeFilename:
 
 
 class TestRmtree:
-    def test_removes_directory(self, temp_data_dir):
+    def test_removes_directory(self, temp_data_dir, app):
         d = temp_data_dir / "workspaces" / "toremove"
         d.mkdir(parents=True)
         (d / "file.txt").write_text("data")
         ws_mod.rmtree(d, "test")
         assert not d.exists()
 
-    def test_logs_errors(self, temp_data_dir, caplog):
+    def test_logs_errors(self, temp_data_dir, caplog, app):
         """Logs warnings on individual file removal failures."""
         d = temp_data_dir / "workspaces" / "failremove"
         d.mkdir(parents=True)
@@ -5730,12 +5746,12 @@ class TestRmtree:
 
 
 class TestBuildWorkspaceArchive:
-    async def test_builds_importable_archive(self, temp_data_dir):
+    async def test_builds_importable_archive(self, temp_data_dir, app):
         """Archive contains workspace.json and home/ directory."""
         import json
         import subprocess
 
-        ws_root = ws_mod.WORKSPACES_ROOT
+        ws_root = app.state.workspaces.root
         ws_root.mkdir(parents=True, exist_ok=True)
         home_dir = ws_root / "user1" / "home" / "ws1"
         home_dir.mkdir(parents=True)
@@ -5744,7 +5760,7 @@ class TestBuildWorkspaceArchive:
         metadata = {"name": "myws", "image": None, "num_ports": 5}
         archive_path = ws_root / "test.tar.gz"
 
-        result = await ws_mod.build_workspace_archive(
+        result = await app.state.workspaces.build_workspace_archive(
             metadata, home_dir, archive_path
         )
         assert result is True
@@ -5769,25 +5785,25 @@ class TestBuildWorkspaceArchive:
         meta = json.loads(meta_out.stdout)
         assert meta["name"] == "myws"
 
-    async def test_builds_archive_without_home(self, temp_data_dir):
+    async def test_builds_archive_without_home(self, temp_data_dir, app):
         """Archive works when home directory doesn't exist."""
-        ws_root = ws_mod.WORKSPACES_ROOT
+        ws_root = app.state.workspaces.root
         ws_root.mkdir(parents=True, exist_ok=True)
         home_dir = ws_root / "nonexistent"
         metadata = {"name": "empty"}
         archive_path = ws_root / "empty.tar.gz"
 
-        result = await ws_mod.build_workspace_archive(
+        result = await app.state.workspaces.build_workspace_archive(
             metadata, home_dir, archive_path
         )
         assert result is True
         assert archive_path.exists()
 
-    async def test_excludes_external_symlinks(self, temp_data_dir):
+    async def test_excludes_external_symlinks(self, temp_data_dir, app):
         """Symlinks pointing outside home_dir are excluded."""
         import subprocess
 
-        ws_root = ws_mod.WORKSPACES_ROOT
+        ws_root = app.state.workspaces.root
         ws_root.mkdir(parents=True, exist_ok=True)
         home_dir = ws_root / "user1" / "home" / "ws1"
         home_dir.mkdir(parents=True)
@@ -5798,7 +5814,7 @@ class TestBuildWorkspaceArchive:
         metadata = {"name": "test"}
         archive_path = ws_root / "symtest.tar.gz"
 
-        result = await ws_mod.build_workspace_archive(
+        result = await app.state.workspaces.build_workspace_archive(
             metadata, home_dir, archive_path
         )
         assert result is True
@@ -5814,9 +5830,9 @@ class TestBuildWorkspaceArchive:
         assert any("external_link" in m for m in members)
         assert any("relative_link" in m for m in members)
 
-    async def test_tar_failure_returns_false(self, temp_data_dir):
+    async def test_tar_failure_returns_false(self, temp_data_dir, app):
         """Returns False when tar exits non-zero."""
-        ws_root = ws_mod.WORKSPACES_ROOT
+        ws_root = app.state.workspaces.root
         ws_root.mkdir(parents=True, exist_ok=True)
         home_dir = ws_root / "home"
         home_dir.mkdir()
@@ -5828,14 +5844,14 @@ class TestBuildWorkspaceArchive:
         mock_proc.returncode = 1
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            result = await ws_mod.build_workspace_archive(
+            result = await app.state.workspaces.build_workspace_archive(
                 metadata, home_dir, archive_path
             )
         assert result is False
 
-    async def test_oserror_returns_false(self, temp_data_dir):
+    async def test_oserror_returns_false(self, temp_data_dir, app):
         """Returns False when tar cannot be started."""
-        ws_root = ws_mod.WORKSPACES_ROOT
+        ws_root = app.state.workspaces.root
         ws_root.mkdir(parents=True, exist_ok=True)
         home_dir = ws_root / "home"
         metadata = {"name": "fail"}
@@ -5844,25 +5860,36 @@ class TestBuildWorkspaceArchive:
         with patch(
             "asyncio.create_subprocess_exec", side_effect=OSError("no tar")
         ):
-            result = await ws_mod.build_workspace_archive(
+            result = await app.state.workspaces.build_workspace_archive(
                 metadata, home_dir, archive_path
             )
         assert result is False
 
-    async def test_path_outside_workspaces_root_rejected(self, temp_data_dir):
+    async def test_path_outside_workspaces_root_rejected(
+        self, temp_data_dir, app
+    ):
         """Returns False if paths are outside WORKSPACES_ROOT."""
         home_dir = temp_data_dir / "outside"
         home_dir.mkdir(parents=True)
         metadata = {"name": "bad"}
         archive_path = temp_data_dir / "bad.tar.gz"
 
-        result = await ws_mod.build_workspace_archive(
+        result = await app.state.workspaces.build_workspace_archive(
             metadata, home_dir, archive_path
         )
         assert result is False
 
 
 class TestWorkspaceMetadata:
+    def _ws(self):
+        """Build a Workspaces instance for testing (#1484)."""
+        from klangk_backend.settings import KlangkSettings
+        import types as types_mod
+
+        return ws_mod.Workspaces(
+            types_mod.SimpleNamespace(settings=KlangkSettings(env={}))
+        )
+
     def test_extracts_metadata(self):
         from klangk_backend.model.instance import get_instance_id
 
@@ -5875,7 +5902,7 @@ class TestWorkspaceMetadata:
             "env": {"FOO": "bar"},
             "num_ports": 3,
         }
-        meta = ws_mod.workspace_metadata(ws)
+        meta = self._ws().workspace_metadata(ws)
         assert meta == {
             "name": "myws",
             "instance_id": get_instance_id(),
@@ -5889,29 +5916,33 @@ class TestWorkspaceMetadata:
         }
 
     def test_defaults_num_ports(self):
-        meta = ws_mod.workspace_metadata({"name": "x"})
+        meta = self._ws().workspace_metadata({"name": "x"})
         assert meta["num_ports"] == 5
 
     def test_includes_instance_id(self):
         from klangk_backend.model.instance import get_instance_id
 
-        meta = ws_mod.workspace_metadata({"name": "x"})
+        meta = self._ws().workspace_metadata({"name": "x"})
         assert meta["instance_id"] == get_instance_id()
 
 
 class TestArchiveUserData:
-    async def test_archive_creates_importable_tarballs(self, user, workspace):
+    async def test_archive_creates_importable_tarballs(
+        self, user, workspace, app
+    ):
         """Creates one .tar.gz per workspace in export format."""
         import json
         import subprocess
 
         # Put a file in the workspace home directory
-        home_dir = ws_mod.home_path(workspace["id"])
+        home_dir = app.state.workspaces.home_path(workspace["id"])
         home_dir.mkdir(parents=True, exist_ok=True)
         (home_dir / "hello.txt").write_text("test content")
 
-        ws_dir = ws_mod.WORKSPACES_ROOT / workspace["id"]
-        result = await ws_mod.archive_user_data(user["id"], user["email"])
+        ws_dir = app.state.workspaces.root / workspace["id"]
+        result = await app.state.workspaces.archive_user_data(
+            user["id"], user["email"]
+        )
         assert len(result) == 1
         archive = result[0]
         assert archive.exists()
@@ -5937,46 +5968,56 @@ class TestArchiveUserData:
         members = listing.stdout.strip().split("\n")
         assert any(m.startswith("home/") or m == "home" for m in members)
 
-    async def test_archive_multiple_workspaces(self, user):
+    async def test_archive_multiple_workspaces(self, user, app):
         """Creates separate archives for each workspace."""
         ws1 = await model.create_workspace(user["id"], "ws-one")
         ws2 = await model.create_workspace(user["id"], "ws-two")
 
         for ws in [ws1, ws2]:
-            home = ws_mod.home_path(ws["id"])
+            home = app.state.workspaces.home_path(ws["id"])
             home.mkdir(parents=True, exist_ok=True)
             (home / "file.txt").write_text("data")
 
-        result = await ws_mod.archive_user_data(user["id"], user["email"])
+        result = await app.state.workspaces.archive_user_data(
+            user["id"], user["email"]
+        )
         assert len(result) == 2
         names = {a.name for a in result}
         assert any("ws-one" in n for n in names)
         assert any("ws-two" in n for n in names)
 
-    async def test_archive_paginates_more_than_one_page(self, user):
+    async def test_archive_paginates_more_than_one_page(self, user, app):
         """Archival pages through every workspace when there are >10."""
         for i in range(12):
             ws = await model.create_workspace(user["id"], f"ws-{i:02d}")
-            home = ws_mod.home_path(ws["id"])
+            home = app.state.workspaces.home_path(ws["id"])
             home.mkdir(parents=True, exist_ok=True)
             (home / "file.txt").write_text("data")
 
-        result = await ws_mod.archive_user_data(user["id"], user["email"])
+        result = await app.state.workspaces.archive_user_data(
+            user["id"], user["email"]
+        )
         assert len(result) == 12
 
-    async def test_archive_no_data_dir(self, user):
+    async def test_archive_no_data_dir(self, user, app):
         """Returns empty list if user has no data directory."""
-        result = await ws_mod.archive_user_data(user["id"], user["email"])
+        result = await app.state.workspaces.archive_user_data(
+            user["id"], user["email"]
+        )
         assert result == []
 
-    async def test_archive_no_workspaces(self, user):
+    async def test_archive_no_workspaces(self, user, app):
         """Returns empty list if user has no workspaces."""
-        result = await ws_mod.archive_user_data(user["id"], user["email"])
+        result = await app.state.workspaces.archive_user_data(
+            user["id"], user["email"]
+        )
         assert result == []
 
-    async def test_archive_tar_failure_skips_workspace(self, user, workspace):
+    async def test_archive_tar_failure_skips_workspace(
+        self, user, workspace, app
+    ):
         """Skips workspaces where tar fails, doesn't remove workspace dir."""
-        home_dir = ws_mod.home_path(workspace["id"])
+        home_dir = app.state.workspaces.home_path(workspace["id"])
         home_dir.mkdir(parents=True, exist_ok=True)
 
         mock_proc = AsyncMock()
@@ -5984,34 +6025,36 @@ class TestArchiveUserData:
         mock_proc.returncode = 1
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            result = await ws_mod.archive_user_data(user["id"], user["email"])
+            result = await app.state.workspaces.archive_user_data(
+                user["id"], user["email"]
+            )
         assert result == []
         # Workspace dir not removed since no archives were created
-        ws_dir = ws_mod.WORKSPACES_ROOT / workspace["id"]
+        ws_dir = app.state.workspaces.root / workspace["id"]
         assert ws_dir.exists()
 
-    async def test_archive_sanitizes_email(self, user, workspace):
+    async def test_archive_sanitizes_email(self, user, workspace, app):
         """Email with path separators is sanitized in archive filename."""
-        home_dir = ws_mod.home_path(workspace["id"])
+        home_dir = app.state.workspaces.home_path(workspace["id"])
         home_dir.mkdir(parents=True, exist_ok=True)
 
-        result = await ws_mod.archive_user_data(
+        result = await app.state.workspaces.archive_user_data(
             user["id"], "user/../../etc/passwd"
         )
         assert len(result) == 1
         archive = result[0]
         assert archive.resolve().is_relative_to(
-            ws_mod.WORKSPACES_ROOT.resolve()
+            app.state.workspaces.root.resolve()
         )
         # Slashes are replaced with underscores
         assert "/" not in archive.name
         assert "\\" not in archive.name
 
-    async def test_archive_path_traversal_blocked(self, user, workspace):
+    async def test_archive_path_traversal_blocked(self, user, workspace, app):
         """Skips workspace if archive path would escape WORKSPACES_ROOT."""
         from pathlib import PosixPath
 
-        home_dir = ws_mod.home_path(workspace["id"])
+        home_dir = app.state.workspaces.home_path(workspace["id"])
         home_dir.mkdir(parents=True, exist_ok=True)
 
         orig_is_relative_to = PosixPath.is_relative_to
@@ -6022,7 +6065,9 @@ class TestArchiveUserData:
             return orig_is_relative_to(self, other)
 
         with patch.object(PosixPath, "is_relative_to", fake_is_relative_to):
-            result = await ws_mod.archive_user_data(user["id"], user["email"])
+            result = await app.state.workspaces.archive_user_data(
+                user["id"], user["email"]
+            )
         assert result == []
 
 
@@ -6052,7 +6097,7 @@ class TestWorkspaceExportImport:
         d.update(overrides)
         return d
 
-    async def test_export_workspace(self, client, admin_user, user):
+    async def test_export_workspace(self, client, admin_user, user, app):
         # Create a workspace as regular user
         headers = await self._user_headers(client)
         resp = await client.post(
@@ -6062,9 +6107,8 @@ class TestWorkspaceExportImport:
         ws = resp.json()
 
         # Write a file into the workspace home dir
-        import klangk_backend.workspaces as ws_mod
 
-        home = ws_mod.home_path(ws["id"])
+        home = app.state.workspaces.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
         (home / "work").mkdir(exist_ok=True)
         (home / "work" / "hello.txt").write_text("hello world")
@@ -6094,7 +6138,7 @@ class TestWorkspaceExportImport:
             assert metadata["name"] == "export-test"
             assert "instance_id" in metadata
 
-    async def test_export_requires_admin(self, client, user):
+    async def test_export_requires_admin(self, client, user, app):
         headers = await self._user_headers(client)
         resp = await client.post(
             "/api/v1/workspaces", headers=headers, json={"name": "no-export"}
@@ -6107,14 +6151,14 @@ class TestWorkspaceExportImport:
         )
         assert resp.status_code == 403
 
-    async def test_export_not_found(self, client, admin_user):
+    async def test_export_not_found(self, client, admin_user, app):
         headers = await self._admin_headers(client)
         resp = await client.get(
             "/api/v1/workspaces/nonexistent-id/export", headers=headers
         )
         assert resp.status_code == 404
 
-    async def test_import_workspace(self, client, admin_user, user):
+    async def test_import_workspace(self, client, admin_user, user, app):
         # Create and export a workspace
         headers = await self._user_headers(client)
         resp = await client.post(
@@ -6128,9 +6172,7 @@ class TestWorkspaceExportImport:
         )
         ws = resp.json()
 
-        import klangk_backend.workspaces as ws_mod
-
-        home = ws_mod.home_path(ws["id"])
+        home = app.state.workspaces.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
         (home / "work").mkdir(exist_ok=True)
         (home / "work" / "data.txt").write_text("test data")
@@ -6159,7 +6201,7 @@ class TestWorkspaceExportImport:
         assert imported["name"] == "imported-ws"
 
         # Verify the home dir was extracted
-        new_home = ws_mod.home_path(imported["id"])
+        new_home = app.state.workspaces.home_path(imported["id"])
         assert (new_home / "work" / "data.txt").exists()
         assert (new_home / "work" / "data.txt").read_text() == "test data"
 
@@ -6364,7 +6406,7 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 200
         ws = resp.json()
 
-        home = ws_mod.home_path(ws["id"])
+        home = app.state.workspaces.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
         (home / "f.txt").write_text("x")
 
@@ -6498,7 +6540,7 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 200
         assert resp.json()["name"] == "img-fallback"
 
-    async def test_import_invalid_mounts_dropped(self, client, user):
+    async def test_import_invalid_mounts_dropped(self, client, app, user):
         """Archive with invalid mounts drops them silently."""
         import io
         import json
@@ -6525,7 +6567,7 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 200
         assert resp.json()["name"] == "mount-drop"
 
-    async def test_import_home_root_member_skipped(self, client, user):
+    async def test_import_home_root_member_skipped(self, client, user, app):
         """The bare 'home/' directory entry is skipped during extraction."""
         import io
         import json
@@ -6560,10 +6602,8 @@ class TestWorkspaceExportImport:
         )
         assert resp.status_code == 200
 
-        import klangk_backend.workspaces as ws_mod
-
         ws = resp.json()
-        home = ws_mod.home_path(ws["id"])
+        home = app.state.workspaces.home_path(ws["id"])
         assert (home / "test.txt").exists()
 
     async def test_export_streams_valid_tarball(
@@ -6576,9 +6616,7 @@ class TestWorkspaceExportImport:
         )
         ws = resp.json()
 
-        import klangk_backend.workspaces as ws_mod
-
-        home = ws_mod.home_path(ws["id"])
+        home = app.state.workspaces.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
         (home / "work").mkdir(exist_ok=True)
         (home / "work" / "file.txt").write_text("streamed content")
@@ -6601,7 +6639,9 @@ class TestWorkspaceExportImport:
             assert "workspace.json" in names
             assert any("file.txt" in n for n in names)
 
-    async def test_export_large_file_chunks(self, client, admin_user, user):
+    async def test_export_large_file_chunks(
+        self, client, admin_user, user, app
+    ):
         """Export with large files triggers the write buffer flush path."""
         headers = await self._user_headers(client)
         resp = await client.post(
@@ -6611,9 +6651,7 @@ class TestWorkspaceExportImport:
         )
         ws = resp.json()
 
-        import klangk_backend.workspaces as ws_mod
-
-        home = ws_mod.home_path(ws["id"])
+        home = app.state.workspaces.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
         (home / "work").mkdir(exist_ok=True)
         # Write a large file with random data (incompressible, so gzip
@@ -6647,9 +6685,7 @@ class TestWorkspaceExportImport:
         )
         ws = resp.json()
 
-        import klangk_backend.workspaces as ws_mod
-
-        home = ws_mod.home_path(ws["id"])
+        home = app.state.workspaces.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
         (home / "work").mkdir(exist_ok=True)
         (home / "work" / "f.txt").write_text("data")
@@ -6673,7 +6709,7 @@ class TestWorkspaceExportImport:
         # Falls back to 0 * 0.4 = 0, clamped to 1
         assert resp.headers["x-estimated-size"] == "1"
 
-    async def test_export_empty_workspace(self, client, admin_user, user):
+    async def test_export_empty_workspace(self, client, app, admin_user, user):
         """Export of workspace with no home dir still works."""
         headers = await self._user_headers(client)
         resp = await client.post(
@@ -6744,9 +6780,7 @@ class TestWorkspaceExportImport:
         )
         ws = resp.json()
 
-        import klangk_backend.workspaces as ws_mod
-
-        home = ws_mod.home_path(ws["id"])
+        home = app.state.workspaces.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
         (home / "work").mkdir(exist_ok=True)
         (home / "work" / "real.txt").write_text("real file")
@@ -6773,7 +6807,9 @@ class TestWorkspaceExportImport:
             assert ext[0].issym()
             assert ext[0].linkname == "/etc/passwd"
 
-    async def test_export_import_deep_nesting(self, client, admin_user, user):
+    async def test_export_import_deep_nesting(
+        self, client, admin_user, user, app
+    ):
         """Export and import a workspace with deep directory nesting."""
         import random
         import tarfile
@@ -6784,9 +6820,7 @@ class TestWorkspaceExportImport:
         )
         ws = resp.json()
 
-        import klangk_backend.workspaces as ws_mod
-
-        home = ws_mod.home_path(ws["id"])
+        home = app.state.workspaces.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
 
         # Create a deep directory structure with files at various depths
@@ -6858,7 +6892,7 @@ class TestWorkspaceExportImport:
         assert imported["name"] == "deep-imported"
 
         # Verify all files survived
-        imported_home = ws_mod.home_path(imported["id"])
+        imported_home = app.state.workspaces.home_path(imported["id"])
         for rel, content in expected_files.items():
             file_path = imported_home / rel
             assert file_path.exists(), f"Missing after import: {rel}"

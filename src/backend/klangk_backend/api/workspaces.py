@@ -31,7 +31,6 @@ from .. import (
     container,
     model,
     wshandler,
-    workspaces,
 )
 from ._common import get_app_state_dep
 from ..model import (
@@ -114,7 +113,7 @@ async def list_workspaces(
     (name substring) apply in both shapes.
     """
     bare = limit is None and offset is None
-    result = await workspaces.list_workspaces(
+    result = await app_state.workspaces.list_workspaces(
         user["id"],
         limit=BARE_LIST_LIMIT if bare else limit,
         offset=offset or 0,
@@ -192,7 +191,7 @@ async def create_workspace(
         if mount_err:
             raise HTTPException(status_code=400, detail=mount_err)
     try:
-        ws = await workspaces.create_workspace(
+        ws = await app_state.workspaces.create_workspace(
             user["id"],
             body.name,
             image=body.image,
@@ -202,7 +201,6 @@ async def create_workspace(
             env=body.env,
             setup_state=body.setup_state or "complete",
             health_check=body.health_check,
-            app_state=app_state,
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -219,7 +217,7 @@ async def create_workspace(
     # so workspaces whose setup.sh hasn't run yet defer until complete.
     if body.auto_start:
         try:
-            await workspaces.start_workspace(ws, app_state)
+            await app_state.workspaces.start_workspace(ws)
         except Exception:
             logger.warning(
                 "Eager start failed for workspace %s",
@@ -313,7 +311,7 @@ async def duplicate_workspace(
     if source is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
-        ws = await workspaces.create_workspace(
+        ws = await app_state.workspaces.create_workspace(
             user["id"],
             body.name,
             image=source.get("image"),
@@ -322,7 +320,6 @@ async def duplicate_workspace(
             mounts=source.get("mounts"),
             env=source.get("env"),
             health_check=source.get("health_check"),
-            app_state=app_state,
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -362,7 +359,7 @@ async def delete_workspace(
         await app_state.container_registry.stop_and_remove_container(cid)
     await wshandler.reset_workspace_state(app_state.sockets, workspace_id)
 
-    deleted = await workspaces.delete_workspace(
+    deleted = await app_state.workspaces.delete_workspace(
         workspace_id, workspace["user_id"]
     )
     if not deleted:  # pragma: no cover — race between get and delete
@@ -406,7 +403,7 @@ async def restart_workspace(
     await wshandler.reset_workspace_state(app_state.sockets, workspace_id)
     # Start a fresh container; the service command fires via the
     # create choke point in start_container.
-    await workspaces.start_workspace(workspace, app_state)
+    await app_state.workspaces.start_workspace(workspace)
     return {"status": "restarted"}
 
 
@@ -478,6 +475,7 @@ async def workspace_status(
 async def export_workspace(
     workspace_id: str,
     admin: dict = Depends(acl.has_permission("admin", admin_resource)),
+    app_state=Depends(get_app_state_dep),
 ):
     """Export a workspace as a .tar.gz archive (admin only).
 
@@ -491,10 +489,10 @@ async def export_workspace(
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    home_dir = workspaces.home_path(workspace_id)
+    home_dir = app_state.workspaces.home_path(workspace_id)
     ws_name = workspace["name"]
 
-    metadata = workspaces.workspace_metadata(workspace)
+    metadata = app_state.workspaces.workspace_metadata(workspace)
 
     # Estimate uncompressed size for client progress display.
     estimated_size = 0
@@ -525,7 +523,9 @@ async def export_workspace(
             with open(meta_file, "w") as f:
                 json.dump(metadata, f, indent=2)
 
-            tar_args = workspaces.build_export_tar_args("-", tmpdir, home_dir)
+            tar_args = app_state.workspaces.build_export_tar_args(
+                "-", tmpdir, home_dir
+            )
 
             proc = await asyncio.create_subprocess_exec(
                 *tar_args,
@@ -661,10 +661,10 @@ async def _extract_archive_metadata(
 
 
 async def _extract_home_directory(
-    archive_path: str, user_id: int, ws_id: int
+    archive_path: str, user_id: int, ws_id: int, app_state
 ) -> None:
     """Extract the ``home/`` tree from *archive_path* into the workspace home."""
-    home_dir = workspaces.home_path(ws_id)
+    home_dir = app_state.workspaces.home_path(ws_id)
     home_dir.mkdir(parents=True, exist_ok=True)
     check = await asyncio.to_thread(
         subprocess.run,
@@ -715,7 +715,7 @@ async def import_workspace(
         meta = await _extract_archive_metadata(archive_path, name)
 
         try:
-            ws = await workspaces.create_workspace(
+            ws = await app_state.workspaces.create_workspace(
                 user["id"],
                 meta["name"],
                 image=meta["image"],
@@ -724,7 +724,6 @@ async def import_workspace(
                 mounts=meta["mounts"],
                 env=meta["env"],
                 health_check=meta["health_check"],
-                app_state=app_state,
             )
         except SAIntegrityError:
             raise HTTPException(
@@ -733,16 +732,18 @@ async def import_workspace(
             )
 
         try:
-            await _extract_home_directory(archive_path, user["id"], ws["id"])
+            await _extract_home_directory(
+                archive_path, user["id"], ws["id"], app_state
+            )
         except HTTPException:
-            await workspaces.delete_workspace(ws["id"], user["id"])
+            await app_state.workspaces.delete_workspace(ws["id"], user["id"])
             raise
 
     except HTTPException:
         raise
     except (json.JSONDecodeError, subprocess.TimeoutExpired):
         if ws:
-            await workspaces.delete_workspace(ws["id"], user["id"])
+            await app_state.workspaces.delete_workspace(ws["id"], user["id"])
         raise HTTPException(
             status_code=400, detail="Invalid or corrupt archive"
         )
