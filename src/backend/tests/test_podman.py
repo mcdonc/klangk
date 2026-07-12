@@ -7,6 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from klangk_backend import podman
+from klangk_backend.settings import KlangkSettings
+
+# Instance whose methods the tests exercise (#1468: the ~20 free
+# functions became Podman methods; classify/PodmanError stay module-level).
+_p = podman.Podman(KlangkSettings(env={}))
 
 EXEC = "klangk_backend.podman.asyncio.create_subprocess_exec"
 
@@ -82,7 +87,7 @@ class TestClassify:
 class TestRun:
     async def test_success(self):
         with patch(EXEC, _exec(("hello\n", "", 0))) as m:
-            rc, out, err = await podman.run(["version"])
+            rc, out, err = await _p.run(["version"])
         assert (rc, out, err) == (0, "hello\n", "")
         assert m.call_args.args[0] == "podman"
         assert m.call_args.kwargs["stdin"] is None
@@ -90,33 +95,33 @@ class TestRun:
     async def test_check_raises_with_classified_status(self):
         with patch(EXEC, _exec(("", "no such container x", 1))):
             with pytest.raises(podman.PodmanError) as exc:
-                await podman.run(["start", "x"])
+                await _p.run(["start", "x"])
         assert exc.value.status == 404
         assert "no such container" in exc.value.message
 
     async def test_check_raises_empty_stderr_fallback(self):
         with patch(EXEC, _exec(("", "", 5))):
             with pytest.raises(podman.PodmanError) as exc:
-                await podman.run(["boom"])
+                await _p.run(["boom"])
         assert exc.value.status == 500
         assert exc.value.message == "podman boom"
 
     async def test_no_check_returns_nonzero(self):
         with patch(EXEC, _exec(("", "bad", 2))):
-            rc, out, err = await podman.run(["x"], check=False)
+            rc, out, err = await _p.run(["x"], check=False)
         assert rc == 2
 
     async def test_stdin_data_uses_pipe(self):
         proc = _procs(("", "", 0))[0]
         with patch(EXEC, AsyncMock(return_value=proc)) as m:
-            await podman.run(["x"], stdin_data=b"payload")
+            await _p.run(["x"], stdin_data=b"payload")
         assert m.call_args.kwargs["stdin"] is not None
         proc.stdin.write.assert_called_once_with(b"payload")
         proc.stdin.close.assert_called_once()
 
     async def test_returncode_none_treated_as_zero(self):
         with patch(EXEC, _exec(("ok", "", None))):
-            rc, _out, _err = await podman.run(["x"], check=False)
+            rc, _out, _err = await _p.run(["x"], check=False)
         assert rc == 0
 
     async def test_timeout_kills_process(self):
@@ -136,7 +141,7 @@ class TestRun:
         proc.kill = MagicMock(side_effect=do_kill)
 
         with patch(EXEC, AsyncMock(return_value=proc)):
-            rc, _out, err = await podman.run(
+            rc, _out, err = await _p.run(
                 ["rm", "-f", "cid"], check=False, timeout=0.1
             )
         assert rc == -1
@@ -161,7 +166,7 @@ class TestRun:
 
         with patch(EXEC, AsyncMock(return_value=proc)):
             with pytest.raises(podman.PodmanError) as exc:
-                await podman.run(["rm", "-f", "cid"], timeout=0.1)
+                await _p.run(["rm", "-f", "cid"], timeout=0.1)
         assert exc.value.status == 500
         assert "timed out" in exc.value.message
 
@@ -172,23 +177,23 @@ class TestRun:
 class TestInspectContainer:
     async def test_missing_returns_none(self):
         with patch(EXEC, _exec(("", "no such container", 1))):
-            assert await podman.inspect_container("c") is None
+            assert await _p.inspect_container("c") is None
 
     async def test_found_returns_first(self):
         payload = json.dumps([{"State": {"Running": True}}])
         with patch(EXEC, _exec((payload, "", 0))):
-            info = await podman.inspect_container("c")
+            info = await _p.inspect_container("c")
         assert info["State"]["Running"] is True
 
     async def test_empty_list_returns_none(self):
         with patch(EXEC, _exec(("[]", "", 0))):
-            assert await podman.inspect_container("c") is None
+            assert await _p.inspect_container("c") is None
 
 
 class TestCreateContainer:
     async def test_minimal(self):
         with patch(EXEC, _exec(("abc123\n", "", 0))) as m:
-            cid = await podman.create_container("n", "img", replace=False)
+            cid = await _p.create_container("n", "img", replace=False)
         assert cid == "abc123"
         assert _args(m) == [
             "create",
@@ -200,7 +205,7 @@ class TestCreateContainer:
 
     async def test_all_flags(self):
         with patch(EXEC, _exec(("id\n", "", 0))) as m:
-            await podman.create_container(
+            await _p.create_container(
                 "n",
                 "img",
                 labels={"a": "1"},
@@ -243,7 +248,7 @@ class TestCreateContainer:
 
     async def test_pull_policy_override(self):
         with patch(EXEC, _exec(("id\n", "", 0))) as m:
-            await podman.create_container(
+            await _p.create_container(
                 "n", "img", pull="missing", replace=False
             )
         args = _args(m)
@@ -254,25 +259,25 @@ class TestCreateContainer:
 class TestStartContainer:
     async def test_start(self):
         with patch(EXEC, _exec(("", "", 0))) as m:
-            await podman.start_container("cid")
+            await _p.start_container("cid")
         assert _args(m) == ["start", "cid"]
 
 
 class TestExecContainer:
     async def test_basic(self):
         with patch(EXEC, _exec(("out", "", 0))) as m:
-            rc, out, err = await podman.exec_container("cid", ["ls", "/"])
+            rc, out, err = await _p.exec_container("cid", ["ls", "/"])
         assert _args(m) == ["exec", "cid", "ls", "/"]
         assert (rc, out, err) == (0, "out", "")
 
     async def test_with_user(self):
         with patch(EXEC, _exec(("", "", 0))) as m:
-            await podman.exec_container("cid", ["id"], user="root")
+            await _p.exec_container("cid", ["id"], user="root")
         assert _args(m) == ["exec", "-u", "root", "cid", "id"]
 
     async def test_nonzero_returned(self):
         with patch(EXEC, _exec(("", "fail", 1))):
-            rc, _out, err = await podman.exec_container("cid", ["false"])
+            rc, _out, err = await _p.exec_container("cid", ["false"])
         assert rc == 1
         assert err == "fail"
 
@@ -280,7 +285,7 @@ class TestExecContainer:
 class TestWaitForContainerReady:
     async def test_returns_when_sentinel_appears(self):
         with patch(EXEC, _exec(("", "", 0))) as m:
-            result = await podman.wait_for_container_ready("cid")
+            result = await _p.wait_for_container_ready("cid")
         assert result is None
         # One podman exec spinning on the sentinel until it exists.
         assert _args(m) == [
@@ -296,7 +301,7 @@ class TestWaitForContainerReady:
         # appeared, so wait_for_container_ready raises PodmanError(500).
         with patch(EXEC, _exec(("", "timed out", -1))):
             with pytest.raises(podman.PodmanError) as exc:
-                await podman.wait_for_container_ready("cid", timeout=0.5)
+                await _p.wait_for_container_ready("cid", timeout=0.5)
         assert exc.value.status == 500
         assert "cid" in exc.value.message
         assert "0.5s" in exc.value.message
@@ -305,7 +310,7 @@ class TestWaitForContainerReady:
 class TestExecContainerWithStdin:
     async def test_stdin_data_adds_interactive_flag(self):
         with patch(EXEC, _exec(("ok", "", 0))) as m:
-            rc, out, err = await podman.exec_container(
+            rc, out, err = await _p.exec_container(
                 "cid", ["cat"], stdin_data=b"hello"
             )
         assert _args(m) == ["exec", "-i", "cid", "cat"]
@@ -313,11 +318,11 @@ class TestExecContainerWithStdin:
 
     async def test_timeout_passed(self):
         with patch(EXEC, _exec(("", "", 0))):
-            await podman.exec_container("cid", ["ls"], timeout=60.0)
+            await _p.exec_container("cid", ["ls"], timeout=60.0)
 
     async def test_extra_env_adds_flags_before_container(self):
         with patch(EXEC, _exec(("", "", 0))) as m:
-            await podman.exec_container(
+            await _p.exec_container(
                 "cid",
                 ["env"],
                 extra_env={"HOME": "/home/x", "FOO": "bar"},
@@ -335,7 +340,7 @@ class TestExecContainerWithStdin:
 
     async def test_extra_env_with_user_and_stdin(self):
         with patch(EXEC, _exec(("", "", 0))) as m:
-            await podman.exec_container(
+            await _p.exec_container(
                 "cid",
                 ["sh"],
                 user="root",
@@ -357,7 +362,7 @@ class TestExecContainerWithStdin:
 class TestExecContainerBytes:
     async def test_returns_raw_bytes(self):
         with patch(EXEC, _exec(("binary\x00data", "", 0))) as m:
-            rc, out, err = await podman.exec_container_bytes(
+            rc, out, err = await _p.exec_container_bytes(
                 "cid", ["cat", "/bin/x"]
             )
         assert _args(m) == ["exec", "cid", "cat", "/bin/x"]
@@ -367,14 +372,12 @@ class TestExecContainerBytes:
 
     async def test_with_user(self):
         with patch(EXEC, _exec(("", "", 0))) as m:
-            await podman.exec_container_bytes(
-                "cid", ["cat", "/f"], user="klangk"
-            )
+            await _p.exec_container_bytes("cid", ["cat", "/f"], user="klangk")
         assert _args(m) == ["exec", "-u", "klangk", "cid", "cat", "/f"]
 
     async def test_extra_env_adds_flags_before_container(self):
         with patch(EXEC, _exec(("", "", 0))) as m:
-            await podman.exec_container_bytes(
+            await _p.exec_container_bytes(
                 "cid", ["env"], extra_env={"HOME": "/home/x"}
             )
         assert _args(m) == [
@@ -387,7 +390,7 @@ class TestExecContainerBytes:
 
     async def test_nonzero_returned(self):
         with patch(EXEC, _exec(("", "err", 1))):
-            rc, out, err = await podman.exec_container_bytes("cid", ["false"])
+            rc, out, err = await _p.exec_container_bytes("cid", ["false"])
         assert rc == 1
         assert out == b""
         assert err == "err"
@@ -410,7 +413,7 @@ class TestExecContainerBytes:
             return mock_proc
 
         with patch(EXEC, AsyncMock(side_effect=side_effect)):
-            rc, out, err = await podman.exec_container_bytes(
+            rc, out, err = await _p.exec_container_bytes(
                 "cid", ["sleep", "999"], timeout=0.001
             )
         assert rc == -1
@@ -418,7 +421,7 @@ class TestExecContainerBytes:
 
     async def test_stdin_data(self):
         with patch(EXEC, _exec(("ok", "", 0))) as m:
-            await podman.exec_container("cid", ["cat"], stdin_data=b"input")
+            await _p.exec_container("cid", ["cat"], stdin_data=b"input")
         # The -i flag is added for stdin
         assert _args(m) == ["exec", "-i", "cid", "cat"]
 
@@ -428,7 +431,7 @@ class TestRunRaw:
 
     async def test_stdin_data(self):
         with patch(EXEC, _exec(("out", "", 0))):
-            rc, out, err = await podman.run_raw(
+            rc, out, err = await _p.run_raw(
                 ["exec", "cid", "cat"], stdin_data=b"hello"
             )
         assert rc == 0
@@ -437,7 +440,7 @@ class TestRunRaw:
     async def test_check_raises_on_error(self):
         with patch(EXEC, _exec(("", "fail", 1))):
             with pytest.raises(podman.PodmanError):
-                await podman.run_raw(["exec", "cid", "false"], check=True)
+                await _p.run_raw(["exec", "cid", "false"], check=True)
 
 
 class TestExecContainerStream:
@@ -452,7 +455,7 @@ class TestExecContainerStream:
 
         with patch(EXEC, AsyncMock(return_value=mock_proc)):
             result = []
-            async for chunk in podman.exec_container_stream(
+            async for chunk in _p.exec_container_stream(
                 "cid", ["tar", "-czf", "-"]
             ):
                 result.append(chunk)
@@ -466,7 +469,7 @@ class TestExecContainerStream:
         mock_proc.wait = AsyncMock(return_value=0)
 
         with patch(EXEC, AsyncMock(return_value=mock_proc)) as m:
-            async for _ in podman.exec_container_stream(
+            async for _ in _p.exec_container_stream(
                 "cid", ["cat", "/f"], user="klangk"
             ):
                 pass
@@ -487,7 +490,7 @@ class TestExecContainerStream:
         mock_proc.wait = AsyncMock(return_value=0)
 
         with patch(EXEC, AsyncMock(return_value=mock_proc)) as m:
-            async for _ in podman.exec_container_stream(
+            async for _ in _p.exec_container_stream(
                 "cid", ["env"], extra_env={"HOME": "/home/x"}
             ):
                 pass
@@ -510,7 +513,7 @@ class TestExecContainerStream:
         mock_proc.wait = AsyncMock(return_value=-9)
 
         with patch(EXEC, AsyncMock(return_value=mock_proc)):
-            gen = podman.exec_container_stream("cid", ["cat"])
+            gen = _p.exec_container_stream("cid", ["cat"])
             await gen.__anext__()
             await gen.aclose()
         mock_proc.kill.assert_called_once()
@@ -524,7 +527,7 @@ class TestExecContainerStream:
 
         with patch(EXEC, AsyncMock(return_value=mock_proc)):
             with pytest.raises(podman.PodmanError):
-                async for _ in podman.exec_container_stream("cid", ["cat"]):
+                async for _ in _p.exec_container_stream("cid", ["cat"]):
                     pass
 
     async def test_nonzero_exit_with_output_does_not_raise(self):
@@ -536,7 +539,7 @@ class TestExecContainerStream:
 
         with patch(EXEC, AsyncMock(return_value=mock_proc)):
             chunks = []
-            async for chunk in podman.exec_container_stream("cid", ["tar"]):
+            async for chunk in _p.exec_container_stream("cid", ["tar"]):
                 chunks.append(chunk)
         assert chunks == [b"partial"]
 
@@ -544,28 +547,28 @@ class TestExecContainerStream:
 class TestRemoveContainer:
     async def test_force_default(self):
         with patch(EXEC, _exec(("", "", 0))) as m:
-            await podman.remove_container("cid")
+            await _p.remove_container("cid")
         assert _args(m) == ["rm", "-f", "cid"]
 
     async def test_no_force(self):
         with patch(EXEC, _exec(("", "", 0))) as m:
-            await podman.remove_container("cid", force=False)
+            await _p.remove_container("cid", force=False)
         assert _args(m) == ["rm", "cid"]
 
     async def test_missing_is_ignored(self):
         with patch(EXEC, _exec(("", "no such container", 1))):
-            await podman.remove_container("cid")  # no raise
+            await _p.remove_container("cid")  # no raise
 
     async def test_other_error_raises(self):
         with patch(EXEC, _exec(("", "in use", 1))):
             with pytest.raises(podman.PodmanError) as exc:
-                await podman.remove_container("cid")
+                await _p.remove_container("cid")
         assert exc.value.status == 409
 
     async def test_other_error_empty_stderr_fallback(self):
         with patch(EXEC, _exec(("", "", 1))):
             with pytest.raises(podman.PodmanError) as exc:
-                await podman.remove_container("cid")
+                await _p.remove_container("cid")
         assert exc.value.message == "podman rm"
 
 
@@ -573,7 +576,7 @@ class TestListContainers:
     async def test_parses_json(self):
         payload = json.dumps([{"Id": "a", "Labels": {"k": "v"}}])
         with patch(EXEC, _exec((payload, "", 0))) as m:
-            result = await podman.list_containers("k=v")
+            result = await _p.list_containers("k=v")
         assert result[0]["Id"] == "a"
         assert _args(m) == [
             "ps",
@@ -586,7 +589,7 @@ class TestListContainers:
 
     async def test_empty_output(self):
         with patch(EXEC, _exec(("  \n", "", 0))):
-            assert await podman.list_containers("k=v") == []
+            assert await _p.list_containers("k=v") == []
 
 
 # --- volumes ---
@@ -595,31 +598,31 @@ class TestListContainers:
 class TestInspectVolume:
     async def test_missing(self):
         with patch(EXEC, _exec(("", "no such volume", 1))):
-            assert await podman.inspect_volume("v") is None
+            assert await _p.inspect_volume("v") is None
 
     async def test_found(self):
         payload = json.dumps([{"Name": "v", "CreatedAt": "now"}])
         with patch(EXEC, _exec((payload, "", 0))):
-            info = await podman.inspect_volume("v")
+            info = await _p.inspect_volume("v")
         assert info["Name"] == "v"
 
     async def test_empty_list(self):
         with patch(EXEC, _exec(("[]", "", 0))):
-            assert await podman.inspect_volume("v") is None
+            assert await _p.inspect_volume("v") is None
 
 
 class TestCreateVolume:
     async def test_with_labels(self):
         info = json.dumps([{"Name": "v", "CreatedAt": "t"}])
         with patch(EXEC, _exec(("v\n", "", 0), (info, "", 0))) as m:
-            result = await podman.create_volume("v", {"a": "1"})
+            result = await _p.create_volume("v", {"a": "1"})
         assert result["Name"] == "v"
         assert ["--label", "a=1"] == _args(m, 0)[2:4]
 
     async def test_without_labels(self):
         info = json.dumps([{"Name": "v", "CreatedAt": "t"}])
         with patch(EXEC, _exec(("v\n", "", 0), (info, "", 0))) as m:
-            await podman.create_volume("v")
+            await _p.create_volume("v")
         assert _args(m, 0) == ["volume", "create", "v"]
 
 
@@ -627,33 +630,33 @@ class TestListVolumes:
     async def test_parses(self):
         payload = json.dumps([{"Name": "v"}])
         with patch(EXEC, _exec((payload, "", 0))):
-            assert (await podman.list_volumes("k=v"))[0]["Name"] == "v"
+            assert (await _p.list_volumes("k=v"))[0]["Name"] == "v"
 
     async def test_empty(self):
         with patch(EXEC, _exec(("", "", 0))):
-            assert await podman.list_volumes("k=v") == []
+            assert await _p.list_volumes("k=v") == []
 
 
 class TestRemoveVolume:
     async def test_success(self):
         with patch(EXEC, _exec(("", "", 0))) as m:
-            await podman.remove_volume("v")
+            await _p.remove_volume("v")
         assert _args(m) == ["volume", "rm", "v"]
 
     async def test_not_found(self):
         with patch(EXEC, _exec(("", "no such volume", 1))):
             with pytest.raises(podman.PodmanError) as exc:
-                await podman.remove_volume("v")
+                await _p.remove_volume("v")
         assert exc.value.status == 404
 
     async def test_in_use(self):
         with patch(EXEC, _exec(("", "volume is being used", 1))):
             with pytest.raises(podman.PodmanError) as exc:
-                await podman.remove_volume("v")
+                await _p.remove_volume("v")
         assert exc.value.status == 409
 
     async def test_empty_stderr_fallback(self):
         with patch(EXEC, _exec(("", "", 1))):
             with pytest.raises(podman.PodmanError) as exc:
-                await podman.remove_volume("v")
+                await _p.remove_volume("v")
         assert exc.value.message == "podman volume rm"

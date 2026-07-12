@@ -8,7 +8,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from . import container, model, podman
+from . import container, model
 from .model.instance import get_instance_id
 from .util import resolve_env_bool, resolve_env_value
 
@@ -404,6 +404,7 @@ async def ensure_home_symlink(
 async def populate_home_skel(
     container_id: str,
     user_id: str,
+    podman=None,
 ) -> None:
     """Copy /etc/skel into a new user's home directory inside the container.
 

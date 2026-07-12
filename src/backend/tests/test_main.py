@@ -33,6 +33,11 @@ def _make_app_state(settings=None):
     registry.sockets = sockets
     registry.app_state = app_state
     sockets.app_state = app_state
+    # #1468: container.py / agent.py reach the CLI wrappers via self.podman.
+    from klangk_backend.podman import Podman
+
+    registry.podman = Podman(settings)
+    app_state.podman = registry.podman
     return app_state
 
 

@@ -20,6 +20,10 @@ from klangk_backend.agent import (
     _agents,
 )
 
+# Mock Podman instance for ensure_agent_home tests (#1468).
+_mock_pod = MagicMock()
+_mock_pod.bin = "podman"
+
 
 class _FakeContainerState:
     def __init__(self, container_id="cid"):
@@ -66,7 +70,10 @@ def _make_app_state(cid="cid"):
 
     mock_registry = MagicMock()
     mock_registry.get_state.return_value = _FakeContainerState(cid)
-    return types.SimpleNamespace(container_registry=mock_registry)
+    mock_pod = MagicMock()
+    return types.SimpleNamespace(
+        container_registry=mock_registry, podman=mock_pod
+    )
 
 
 def _make_session(workspace_id="ws-id"):
@@ -82,7 +89,7 @@ def _fake_stdin() -> AsyncMock:
     """A mocked subprocess stdin (``asyncio.StreamWriter``).
 
     ``write`` and ``is_closing`` are *synchronous* on the real writer, so they
-    must be plain ``MagicMock``\ s.  A bare ``AsyncMock`` makes them return
+    must be plain ``MagicMock`` instances.  A bare ``AsyncMock`` makes them return
     coroutines that ``send_prompt``/``_send_abort`` never await, leaking
     ``RuntimeWarning: coroutine ... was never awaited`` (#1251).  ``drain`` is a
     real coroutine, so it stays an ``AsyncMock``.
@@ -863,13 +870,15 @@ class TestEnsureAgentHome:
                 return_value=mock_proc,
             ) as mock_exec,
         ):
-            result = await ensure_agent_home("ws1", "cid")
+            result = await ensure_agent_home("ws1", "cid", _mock_pod)
 
         assert result == "/home/clanker"
         mock_symlink.assert_called_once()
         # Skeleton files only on first creation (created=True).
         mock_skel.assert_awaited_once_with(
-            "cid", "00000000-0000-0000-0000-000000000001"
+            "cid",
+            "00000000-0000-0000-0000-000000000001",
+            _mock_pod,
         )
         # klangk-setup-pi --force re-writes Pi config each time.  It's
         # invoked by its full install path (bare-name resolution isn't
@@ -913,7 +922,7 @@ class TestEnsureAgentHome:
             patch("asyncio.create_subprocess_exec", return_value=mock_proc),
         ):
             # Must NOT raise -- provisioning is best-effort.
-            result = await agent.ensure_agent_home("ws1", "cid")
+            result = await agent.ensure_agent_home("ws1", "cid", _mock_pod)
 
         assert result == "/home/clanker"
 
@@ -942,7 +951,7 @@ class TestEnsureAgentHome:
                 ),
             ),
         ):
-            result = await ensure_agent_home("ws1", "cid")
+            result = await ensure_agent_home("ws1", "cid", _mock_pod)
 
         assert result == "/home/clanker"
         mock_skel.assert_not_awaited()
@@ -953,7 +962,7 @@ class TestEnsureAgentHome:
 
         with patch.object(model, "get_workspace_by_id", return_value=None):
             with pytest.raises(AgentSetupError, match="not found in database"):
-                await ensure_agent_home("ws-gone", "cid")
+                await ensure_agent_home("ws-gone", "cid", _mock_pod)
 
 
 class TestEnsureHome:
@@ -962,7 +971,7 @@ class TestEnsureHome:
     ):
         from klangk_backend import model, workspaces
 
-        session = AgentSession("ws1")
+        session = AgentSession("ws1", app_state=_make_app_state())
 
         fake_ws = {"user_id": "owner1"}
         fake_home = tmp_path / "home"
@@ -1005,11 +1014,13 @@ class TestEnsureHome:
         assert session._home_ready is True
         mock_symlink.assert_called_once()
         mock_skel.assert_awaited_once_with(
-            "cid", "00000000-0000-0000-0000-000000000001"
+            "cid",
+            "00000000-0000-0000-0000-000000000001",
+            session.app_state.podman,
         )
 
     async def test_ensure_home_cached(self):
-        session = AgentSession("ws-id")
+        session = AgentSession("ws-id", app_state=_make_app_state())
         session._home_ready = True
         result = await session._ensure_home("cid")
         assert result == "/home/clanker"
@@ -1018,7 +1029,7 @@ class TestEnsureHome:
         from klangk_backend import model
         from klangk_backend.agent import AgentSetupError
 
-        session = AgentSession("ws-gone")
+        session = AgentSession("ws-gone", app_state=_make_app_state())
 
         with patch.object(model, "get_workspace_by_id", return_value=None):
             with pytest.raises(AgentSetupError, match="not found in database"):

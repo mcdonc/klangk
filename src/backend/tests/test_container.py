@@ -32,6 +32,12 @@ def _make_app_state(registry=None, sockets=None):
     registry.sockets = sockets
     registry.app_state = app_state
     sockets.app_state = app_state
+    # #1468: container.py reaches the CLI wrappers via self.podman.
+    if registry.podman is None:
+        from klangk_backend.podman import Podman
+
+        registry.podman = Podman(settings)
+        app_state.podman = registry.podman
     return app_state
 
 
@@ -388,11 +394,13 @@ class TestPortsPerWorkspaceCap:
 
 
 @contextmanager
-def patch_podman(**overrides):
+def patch_podman(registry=None, **overrides):
     """Patch the podman.* calls container.py makes.
 
-    Yields a namespace of the AsyncMocks so tests can assert on them.
-    Override any default by passing ``name=AsyncMock(...)``.
+    container.py reaches the CLI wrappers via ``self.registry.podman.X``
+    (#1468); this patches the methods on that instance. Yields a namespace
+    of the AsyncMocks so tests can assert on them. Override any default by
+    passing ``name=AsyncMock(...)``.
     """
     defaults = {
         "inspect_container": AsyncMock(return_value=None),
@@ -408,9 +416,10 @@ def patch_podman(**overrides):
         ),
     }
     mocks = {**defaults, **overrides}
+    target = registry.podman if registry is not None else podman
     with ExitStack() as stack:
         for name, mock in mocks.items():
-            stack.enter_context(patch.object(podman, name, mock))
+            stack.enter_context(patch.object(target, name, mock))
         yield SimpleNamespace(**mocks)
 
 
@@ -443,7 +452,7 @@ class TestStartContainer:
         self.registry = app_state.container_registry
 
     async def test_create_new_container(self, workspace):
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             cid, status = await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -456,7 +465,7 @@ class TestStartContainer:
 
     async def test_sudo_disabled_by_default(self, workspace, monkeypatch):
         monkeypatch.delenv("KLANGK_ALLOW_SUDO", raising=False)
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
@@ -466,7 +475,7 @@ class TestStartContainer:
 
     async def test_sudo_enabled(self, workspace, monkeypatch):
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "true")
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
@@ -476,7 +485,7 @@ class TestStartContainer:
 
     async def test_sudo_disabled(self, workspace, monkeypatch):
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "0")
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
@@ -484,7 +493,7 @@ class TestStartContainer:
 
     async def test_sudo_disabled_false(self, workspace, monkeypatch):
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "false")
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
@@ -493,7 +502,7 @@ class TestStartContainer:
     async def test_sudo_toggled_off_to_on(self, workspace, monkeypatch):
         """Start with sudo disabled, restart with sudo enabled."""
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "false")
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
@@ -503,7 +512,7 @@ class TestStartContainer:
         self.registry.states.clear()
         await model.update_workspace_container(workspace["id"], None)
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "true")
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
@@ -512,7 +521,7 @@ class TestStartContainer:
     async def test_sudo_toggled_on_to_off(self, workspace, monkeypatch):
         """Start with sudo enabled, restart with sudo disabled."""
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "true")
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
@@ -521,7 +530,7 @@ class TestStartContainer:
         self.registry.states.clear()
         await model.update_workspace_container(workspace["id"], None)
         monkeypatch.setenv("KLANGK_ALLOW_SUDO", "false")
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
@@ -532,7 +541,8 @@ class TestStartContainer:
         # record so the next connect can inspect/recreate it rather than
         # orphaning a created-but-unrecorded container.
         with patch_podman(
-            start_container=AsyncMock(side_effect=RuntimeError("boom"))
+            self.registry,
+            start_container=AsyncMock(side_effect=RuntimeError("boom")),
         ):
             with pytest.raises(RuntimeError, match="boom"):
                 await self.registry.start_container(
@@ -554,7 +564,7 @@ class TestStartContainer:
             await release.wait()
 
         with patch_podman(
-            start_container=AsyncMock(side_effect=slow_start)
+            self.registry, start_container=AsyncMock(side_effect=slow_start)
         ) as p:
             task = asyncio.create_task(
                 self.registry.start_container(
@@ -574,7 +584,9 @@ class TestStartContainer:
         assert workspace["id"] in self.registry.states
 
     async def test_reuse_running_container(self, workspace):
-        with patch_podman(inspect_container=_running(True)) as p:
+        with patch_podman(
+            self.registry, inspect_container=_running(True)
+        ) as p:
             cid, status = await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -587,7 +599,9 @@ class TestStartContainer:
         p.create_container.assert_not_awaited()
 
     async def test_recreate_stopped_container(self, workspace):
-        with patch_podman(inspect_container=_running(False)) as p:
+        with patch_podman(
+            self.registry, inspect_container=_running(False)
+        ) as p:
             cid, status = await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -600,7 +614,7 @@ class TestStartContainer:
 
     async def test_missing_container_creates_new(self, workspace):
         # inspect_container returns None (default) → treated as gone.
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             cid, status = await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -622,7 +636,7 @@ class TestStartContainer:
         monkeypatch.setenv("KLANGK_LLM_MODEL", "gemma4:31b")
         monkeypatch.setenv("KLANGK_NGINX_PORT", "8995")
 
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -653,7 +667,7 @@ class TestStartContainer:
         from klangk_backend import auth, terminal
 
         with (
-            patch_podman(),
+            patch_podman(self.registry),
             patch.object(
                 terminal, "set_workspace_token", new_callable=AsyncMock
             ) as mock_set,
@@ -662,13 +676,13 @@ class TestStartContainer:
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         mock_set.assert_called_once()
-        cid, token = mock_set.call_args.args
+        cid, token, _podman = mock_set.call_args.args
         assert cid == "new-cid"
         decoded_ws = auth.decode_workspace_token(token)
         assert decoded_ws == workspace["id"]
 
     async def test_pull_policy_default_never(self, workspace):
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
@@ -676,7 +690,7 @@ class TestStartContainer:
 
     async def test_pull_policy_from_env(self, workspace, monkeypatch):
         monkeypatch.setenv("KLANGK_IMAGE_PULL_POLICY", "missing")
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
@@ -684,7 +698,7 @@ class TestStartContainer:
 
     async def test_config_mount_added(self, workspace):
         """Container gets read-only config mount when config_path is set."""
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -696,7 +710,7 @@ class TestStartContainer:
 
     async def test_no_config_mount_without_config_path(self, workspace):
         """Container has no config mount when config_path is not set."""
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -707,7 +721,7 @@ class TestStartContainer:
 
     async def test_home_mounted_at_slash_home(self, workspace):
         """Home path is mounted at /home (not /home/klangk)."""
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -717,7 +731,7 @@ class TestStartContainer:
         assert "/tmp/home:/home" in binds
 
     async def test_hosting_env_vars(self, workspace):
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -748,7 +762,7 @@ class TestStartContainer:
         monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
         monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
         monkeypatch.setenv("KLANGK_NGINX_PORT", "8996")
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -761,7 +775,7 @@ class TestStartContainer:
 
     async def test_terminal_banner_default_empty(self, workspace):
         """Default terminal banner is empty, so env var is not passed."""
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -773,7 +787,7 @@ class TestStartContainer:
     async def test_terminal_banner_custom(self, workspace, monkeypatch):
         """Deployer can set a terminal banner via env var."""
         monkeypatch.setattr(container, "TERMINAL_BANNER", "Custom warning")
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -790,7 +804,7 @@ class TestStartContainer:
         ssl_dir.mkdir()
         (ssl_dir / "corp-ca.pem").write_text("-----BEGIN CERTIFICATE-----")
         monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(ssl_dir))
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -809,7 +823,7 @@ class TestStartContainer:
     ):
         """Without KLANGK_SSL_CERT_DIR there is no mount and no trust env."""
         monkeypatch.delenv("KLANGK_SSL_CERT_DIR", raising=False)
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -828,7 +842,7 @@ class TestStartContainer:
         ssl_dir.mkdir()
         (ssl_dir / "notes.txt").write_text("not a cert")
         monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(ssl_dir))
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -840,7 +854,7 @@ class TestStartContainer:
         assert not any(e.startswith("SSL_CERT_FILE=") for e in env)
 
     async def test_port_allocation_on_create(self, workspace):
-        with patch_podman():
+        with patch_podman(self.registry):
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -856,7 +870,7 @@ class TestStartContainer:
         await model.find_and_allocate_ports(
             workspace["id"], 5, container.PORT_RANGE_START
         )
-        with patch_podman():
+        with patch_podman(self.registry):
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -869,7 +883,7 @@ class TestStartContainer:
     async def test_cap_clamps_allocation_down(self, workspace, monkeypatch):
         """KLANGK_HOSTED_PORTS_PER_WORKSPACE clamps num_ports down (#1237)."""
         monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "3")
-        with patch_podman():
+        with patch_podman(self.registry):
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -887,7 +901,7 @@ class TestStartContainer:
         await model.find_and_allocate_ports(
             workspace["id"], 5, container.PORT_RANGE_START
         )
-        with patch_podman():
+        with patch_podman(self.registry):
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -900,7 +914,7 @@ class TestStartContainer:
     async def test_cap_zero_omits_hosting_env(self, workspace, monkeypatch):
         """cap=0 suppresses KLANGK_PORT_MAPPINGS / KLANGK_HOSTING_* (#1237)."""
         monkeypatch.setenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", "0")
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -933,7 +947,7 @@ class TestStartContainer:
     ):
         """Sanity: with the default cap, hosting env is injected as before."""
         monkeypatch.delenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", raising=False)
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -948,7 +962,7 @@ class TestStartContainer:
         assert "KLANGK_HOSTING_BASE_PATH" in env_dict
 
     async def test_container_config_structure(self, workspace):
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -962,7 +976,7 @@ class TestStartContainer:
         assert kwargs["interactive"] is True
 
     async def test_create_container_with_extra_env(self, workspace):
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -988,7 +1002,7 @@ class TestStartContainer:
             },
         )
         monkeypatch.setattr(plugins, "_values", {"PLUGIN_VAR": "plugin-val"})
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
@@ -1031,6 +1045,7 @@ class TestStartContainerPortConflict:
         }
 
         with patch_podman(
+            self.registry,
             start_container=AsyncMock(side_effect=start_side_effect),
             list_containers=AsyncMock(
                 return_value=[{"Id": "stale-cid", "Labels": {}}]
@@ -1059,6 +1074,7 @@ class TestStartContainerPortConflict:
                 raise podman.PodmanError(500, "port is already allocated")
 
         with patch_podman(
+            self.registry,
             start_container=AsyncMock(side_effect=start_side_effect),
             list_containers=AsyncMock(
                 return_value=[{"Id": "new-cid", "Labels": {}}]
@@ -1089,6 +1105,7 @@ class TestStartContainerPortConflict:
                 raise podman.PodmanError(500, "port is already allocated")
 
         with patch_podman(
+            self.registry,
             start_container=AsyncMock(side_effect=start_side_effect),
             list_containers=AsyncMock(
                 return_value=[{"Id": "other-cid", "Labels": {}}]
@@ -1119,6 +1136,7 @@ class TestStartContainerPortConflict:
                 raise podman.PodmanError(500, "port is already allocated")
 
         with patch_podman(
+            self.registry,
             start_container=AsyncMock(side_effect=start_side_effect),
             list_containers=AsyncMock(
                 return_value=[{"Id": "gone-cid", "Labels": {}}]
@@ -1146,6 +1164,7 @@ class TestStartContainerPortConflict:
                 raise podman.PodmanError(500, "port is already allocated")
 
         with patch_podman(
+            self.registry,
             start_container=AsyncMock(side_effect=start_side_effect),
             list_containers=AsyncMock(
                 return_value=[{"Id": "bad-cid", "Labels": {}}]
@@ -1180,6 +1199,7 @@ class TestStartContainerPortConflict:
                 raise podman.PodmanError(500, "port is already allocated")
 
         with patch_podman(
+            self.registry,
             start_container=AsyncMock(side_effect=start_side_effect),
             list_containers=AsyncMock(
                 return_value=[{"Id": "stuck-cid", "Labels": {}}]
@@ -1204,6 +1224,7 @@ class TestStartContainerPortConflict:
     async def test_non_port_conflict_error_raised(self, workspace):
         with (
             patch_podman(
+                self.registry,
                 start_container=AsyncMock(
                     side_effect=podman.PodmanError(500, "some other error")
                 ),
@@ -1400,7 +1421,7 @@ class TestExtraMountsVolumeCreation:
     async def test_auto_creates_named_volume(self, workspace):
         """Named volumes (no leading /) are auto-created with klangk labels."""
         # inspect_volume returns None (default) → volume is created.
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -1418,6 +1439,7 @@ class TestExtraMountsVolumeCreation:
     async def test_existing_volume_not_recreated(self, workspace):
         """Existing volumes owned by this instance and user are used as-is."""
         with patch_podman(
+            self.registry,
             inspect_volume=AsyncMock(
                 return_value={
                     "Name": "existing",
@@ -1426,7 +1448,7 @@ class TestExtraMountsVolumeCreation:
                         "klangk.user-id": "user-123",
                     },
                 }
-            )
+            ),
         ) as p:
             await self.registry.start_container(
                 workspace["id"],
@@ -1440,12 +1462,13 @@ class TestExtraMountsVolumeCreation:
     async def test_foreign_volume_rejected(self, workspace):
         """A named volume owned by another instance is refused."""
         with patch_podman(
+            self.registry,
             inspect_volume=AsyncMock(
                 return_value={
                     "Name": "stolen",
                     "Labels": {"klangk.instance": "someone-else"},
                 }
-            )
+            ),
         ):
             with pytest.raises(ValueError, match="not managed by this"):
                 await self.registry.start_container(
@@ -1458,7 +1481,8 @@ class TestExtraMountsVolumeCreation:
     async def test_unlabelled_volume_rejected(self, workspace):
         """A named volume with no klangk labels is refused."""
         with patch_podman(
-            inspect_volume=AsyncMock(return_value={"Name": "bare"})
+            self.registry,
+            inspect_volume=AsyncMock(return_value={"Name": "bare"}),
         ):
             with pytest.raises(ValueError, match="not managed by this"):
                 await self.registry.start_container(
@@ -1471,6 +1495,7 @@ class TestExtraMountsVolumeCreation:
     async def test_cross_user_volume_rejected(self, workspace):
         """A volume owned by another user is refused."""
         with patch_podman(
+            self.registry,
             inspect_volume=AsyncMock(
                 return_value={
                     "Name": "private",
@@ -1479,7 +1504,7 @@ class TestExtraMountsVolumeCreation:
                         "klangk.user-id": "user-other",
                     },
                 }
-            )
+            ),
         ):
             with pytest.raises(ValueError, match="belongs to another user"):
                 await self.registry.start_container(
@@ -1493,6 +1518,7 @@ class TestExtraMountsVolumeCreation:
     async def test_volume_without_user_label_allowed(self, workspace):
         """A volume with no user-id label (pre-existing) is allowed."""
         with patch_podman(
+            self.registry,
             inspect_volume=AsyncMock(
                 return_value={
                     "Name": "legacy",
@@ -1500,7 +1526,7 @@ class TestExtraMountsVolumeCreation:
                         "klangk.instance": model.get_instance_id(),
                     },
                 }
-            )
+            ),
         ) as p:
             await self.registry.start_container(
                 workspace["id"],
@@ -1516,7 +1542,7 @@ class TestExtraMountsVolumeCreation:
     ):
         """Bind mounts (starting with /) are not treated as volumes."""
         monkeypatch.setattr("os.path.exists", lambda p: True)
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -1528,7 +1554,7 @@ class TestExtraMountsVolumeCreation:
     async def test_mount_with_multiple_colons(self, workspace, monkeypatch):
         """Mount spec with options (host:container:ro) — source starts with /."""
         monkeypatch.setattr("os.path.exists", lambda p: True)
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -1540,7 +1566,7 @@ class TestExtraMountsVolumeCreation:
 
     async def test_volume_mount_with_options(self, workspace):
         """Named volume with options (vol:container:ro) — auto-creates."""
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -1554,7 +1580,7 @@ class TestExtraMountsVolumeCreation:
     ):
         """A mount source containing slashes is a bind mount, not a volume."""
         monkeypatch.setattr("os.path.exists", lambda p: True)
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -1567,9 +1593,10 @@ class TestExtraMountsVolumeCreation:
         """An error creating a named volume propagates to the caller."""
         with (
             patch_podman(
+                self.registry,
                 create_volume=AsyncMock(
                     side_effect=podman.PodmanError(500, "internal error")
-                )
+                ),
             ),
             pytest.raises(podman.PodmanError),
         ):
@@ -1585,7 +1612,7 @@ class TestExtraMountsVolumeCreation:
     ):
         """Mount source with special/binary-like chars is a bind mount."""
         monkeypatch.setattr("os.path.exists", lambda p: True)
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
                 "/tmp/ws",
@@ -1597,7 +1624,7 @@ class TestExtraMountsVolumeCreation:
 
     async def test_missing_bind_mount_source_rejected(self, workspace):
         """A bind mount with a non-existent source path is refused."""
-        with patch_podman():
+        with patch_podman(self.registry):
             with pytest.raises(ValueError, match="does not exist"):
                 await self.registry.start_container(
                     workspace["id"],
@@ -1610,9 +1637,10 @@ class TestExtraMountsVolumeCreation:
         """If container creation fails, the error propagates cleanly."""
         with (
             patch_podman(
+                self.registry,
                 create_container=AsyncMock(
                     side_effect=RuntimeError("podman broke")
-                )
+                ),
             ),
             pytest.raises(RuntimeError, match="podman broke"),
         ):
@@ -1634,7 +1662,7 @@ class TestStopContainer:
         self.registry.track_activity("cid", "ws")
         lock = self.registry._get_workspace_lock("ws")
 
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.stop_and_remove_container("cid")
         p.remove_container.assert_awaited_once_with("cid")
         assert "ws" not in self.registry.states
@@ -1657,7 +1685,7 @@ class TestStopContainer:
             self.registry.get_service_session_lock("orphan-b")
             assert len(locks) == 3
 
-            with patch_podman():
+            with patch_podman(self.registry):
                 await self.registry.stop_and_remove_container("alive")
 
             # The stopped container's entry and the orphans are gone; the dict
@@ -1671,9 +1699,10 @@ class TestStopContainer:
         self.registry._get_workspace_lock("ws")
 
         with patch_podman(
+            self.registry,
             remove_container=AsyncMock(
                 side_effect=podman.PodmanError(404, "gone")
-            )
+            ),
         ):
             await self.registry.stop_and_remove_container("cid")
         # Should still remove from tracking
@@ -1689,7 +1718,7 @@ class TestStopContainer:
         self.registry.track_activity("cid", "ws")
         lock = self.registry._get_workspace_lock("ws")
 
-        with patch_podman():
+        with patch_podman(self.registry):
             async with lock:
                 # While the lock is held (as start_container would hold
                 # it), stop must not be able to remove state.
@@ -1724,7 +1753,7 @@ class TestStopContainer:
             lambda wid: revoked.append(wid),
         )
 
-        with patch_podman():
+        with patch_podman(self.registry):
             async with lock:
                 # Start stop; it runs podman (instant), peeks cid-old->ws,
                 # then blocks on the lock we hold.
@@ -1757,7 +1786,7 @@ class TestStopContainer:
         self.registry.track_activity("cid", "ws")
         lock_before = self.registry._get_workspace_lock("ws")
 
-        with patch_podman():
+        with patch_podman(self.registry):
             await self.registry.stop_and_remove_container("cid")
         assert "ws" in self.registry._workspace_locks
         lock_after = self.registry._get_workspace_lock("ws")
@@ -1773,7 +1802,7 @@ class TestRemoveContainer:
         self.registry.track_activity("cid", "ws")
         lock = self.registry._get_workspace_lock("ws")
 
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.stop_and_remove_container("cid")
         p.remove_container.assert_awaited_once_with("cid")
         assert "ws" not in self.registry.states
@@ -1787,9 +1816,10 @@ class TestRemoveContainer:
         self.registry._get_workspace_lock("ws")
 
         with patch_podman(
+            self.registry,
             remove_container=AsyncMock(
                 side_effect=podman.PodmanError(404, "gone")
-            )
+            ),
         ):
             await self.registry.stop_and_remove_container("cid")
         assert "ws" not in self.registry.states
@@ -1808,7 +1838,7 @@ class TestStopUserContainers:
         await model.update_workspace_container(workspace["id"], "cid")
         self.registry.track_activity("cid", workspace["id"])
 
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.stop_user_containers(user["id"])
         p.remove_container.assert_awaited_once_with("cid")
         assert workspace["id"] not in self.registry.states
@@ -1821,14 +1851,14 @@ class TestStopUserContainers:
         old_cb = self.registry.on_workspace_killed
         self.registry.on_workspace_killed = killed_cb
 
-        with patch_podman():
+        with patch_podman(self.registry):
             await self.registry.stop_user_containers(user["id"])
 
         killed_cb.assert_awaited_once_with(workspace["id"])
         self.registry.on_workspace_killed = old_cb
 
     async def test_stop_user_no_containers(self, user):
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.stop_user_containers(user["id"])
         p.remove_container.assert_not_awaited()
 
@@ -1852,7 +1882,8 @@ class TestShutdown:
         self.registry.track_activity("cid", "ws")
 
         with patch_podman(
-            list_containers=AsyncMock(return_value=[{"Id": "cid"}])
+            self.registry,
+            list_containers=AsyncMock(return_value=[{"Id": "cid"}]),
         ) as p:
             await self.registry.shutdown()
         p.remove_container.assert_awaited_once_with("cid")
@@ -1860,7 +1891,8 @@ class TestShutdown:
 
     async def test_shutdown_stops_orphans(self):
         with patch_podman(
-            list_containers=AsyncMock(return_value=[{"Id": "orphan-cid"}])
+            self.registry,
+            list_containers=AsyncMock(return_value=[{"Id": "orphan-cid"}]),
         ) as p:
             await self.registry.shutdown()
         p.remove_container.assert_awaited_once_with("orphan-cid")
@@ -1873,7 +1905,7 @@ class TestShutdown:
         task = asyncio.create_task(fake_cleanup())
         self.registry.cleanup_task = task
 
-        with patch_podman():
+        with patch_podman(self.registry):
             await self.registry.shutdown()
         assert task.cancelled()
         assert self.registry.cleanup_task is None
@@ -1887,28 +1919,30 @@ class TestShutdown:
         reg = _health_registry()
         reg.health.health_task = task
 
-        with patch_podman():
+        with patch_podman(self.registry):
             await reg.shutdown()
         assert task.cancelled()
         assert reg.health.health_task is None
 
     async def test_shutdown_handles_podman_error(self):
         with patch_podman(
+            self.registry,
             list_containers=AsyncMock(
                 side_effect=OSError("podman connection refused")
-            )
+            ),
         ):
             await self.registry.shutdown()
         # Should not raise
 
     async def test_shutdown_no_podman(self):
-        with patch_podman():
+        with patch_podman(self.registry):
             await self.registry.shutdown()
         assert self.registry.cleanup_task is None
 
     async def test_shutdown_orphan_remove_error(self):
         """Orphan container that errors on removal is handled gracefully."""
         with patch_podman(
+            self.registry,
             list_containers=AsyncMock(return_value=[{"Id": "orphan-cid"}]),
             remove_container=AsyncMock(
                 side_effect=podman.PodmanError(500, "remove failed")
@@ -1931,7 +1965,7 @@ class TestCleanupIdleContainers:
             time.time() - container.IDLE_TIMEOUT_SECONDS - 100
         )
 
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             task = asyncio.create_task(self.registry.cleanup_idle_containers())
             # Let the task enter the Event wait, then wake it
             await asyncio.sleep(0.05)
@@ -1955,7 +1989,7 @@ class TestCleanupIdleContainers:
         old_cb = self.registry.on_workspace_killed
         self.registry.on_workspace_killed = killed_cb
 
-        with patch_podman():
+        with patch_podman(self.registry):
             task = asyncio.create_task(self.registry.cleanup_idle_containers())
             await asyncio.sleep(0.05)
             self.registry.get_cleanup_wake().set()
@@ -1979,7 +2013,7 @@ class TestCleanupIdleContainers:
         old_cb = self.registry.on_workspace_killed
         self.registry.on_workspace_killed = killed_cb
 
-        with patch_podman():
+        with patch_podman(self.registry):
             task = asyncio.create_task(self.registry.cleanup_idle_containers())
             await asyncio.sleep(0.05)
             self.registry.get_cleanup_wake().set()
@@ -1997,7 +2031,7 @@ class TestCleanupIdleContainers:
     async def test_active_container_not_stopped(self):
         self.registry.track_activity("cid", "ws-1")
 
-        with patch_podman():
+        with patch_podman(self.registry):
             task = asyncio.create_task(self.registry.cleanup_idle_containers())
             await asyncio.sleep(0.05)
             self.registry.get_cleanup_wake().set()
@@ -2023,7 +2057,7 @@ class TestCleanupIdleContainers:
 
         self.registry.on_idle_stop("ws-1", on_idle)
 
-        with patch_podman():
+        with patch_podman(self.registry):
             task = asyncio.create_task(self.registry.cleanup_idle_containers())
             await asyncio.sleep(0.05)
             self.registry.get_cleanup_wake().set()
@@ -2046,7 +2080,7 @@ class TestCleanupIdleContainers:
 
         self.registry.on_idle_stop("ws-1", bad_callback)
 
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             task = asyncio.create_task(self.registry.cleanup_idle_containers())
             await asyncio.sleep(0.05)
             self.registry.get_cleanup_wake().set()
@@ -2066,7 +2100,7 @@ class TestCleanupIdleContainers:
         self.registry.states["ws-fast"].idle_timeout = 5
 
         try:
-            with patch_podman() as p:
+            with patch_podman(self.registry) as p:
                 # The Event-based wait will timeout after max(2, 5//2)=2s,
                 # then check containers. We cancel after one iteration.
                 task = asyncio.create_task(
@@ -2092,7 +2126,7 @@ class TestCleanupIdleContainers:
         self.registry.states["ws-fast"].idle_timeout = 4
 
         try:
-            with patch_podman() as p:
+            with patch_podman(self.registry) as p:
                 # Patch wait_for to immediately raise TimeoutError (simulates
                 # the event not being set within the interval)
                 async def fast_timeout(coro, timeout):
@@ -2152,16 +2186,17 @@ class TestPrewarmPodman:
         self.registry = app_state.container_registry
 
     async def test_prewarm_creates_and_removes(self):
-        with patch_podman() as p:
+        with patch_podman(self.registry) as p:
             await self.registry.prewarm_podman()
         p.create_container.assert_awaited_once()
         p.remove_container.assert_awaited_once_with("new-cid")
 
     async def test_prewarm_handles_error(self):
         with patch_podman(
+            self.registry,
             create_container=AsyncMock(
                 side_effect=podman.PodmanError(500, "boom")
-            )
+            ),
         ):
             await self.registry.prewarm_podman()
         # Should not raise
@@ -2174,6 +2209,7 @@ class TestAdoptOrphanedContainers:
 
     async def test_removes_orphaned_containers(self):
         with patch_podman(
+            self.registry,
             list_containers=AsyncMock(
                 return_value=[
                     {
@@ -2191,6 +2227,7 @@ class TestAdoptOrphanedContainers:
 
     async def test_removes_orphan_without_labels(self):
         with patch_podman(
+            self.registry,
             list_containers=AsyncMock(
                 return_value=[{"Id": "orphan-x", "Labels": None}]
             ),
@@ -2203,6 +2240,7 @@ class TestAdoptOrphanedContainers:
     async def test_skips_already_tracked(self):
         self.registry.track_activity("tracked-456", "ws-tracked")
         with patch_podman(
+            self.registry,
             list_containers=AsyncMock(return_value=[{"Id": "tracked-456"}]),
             remove_container=AsyncMock(),
         ) as mocks:
@@ -2213,9 +2251,10 @@ class TestAdoptOrphanedContainers:
 
     async def test_podman_error_handled(self):
         with patch_podman(
+            self.registry,
             list_containers=AsyncMock(
                 side_effect=podman.PodmanError(500, "fail")
-            )
+            ),
         ):
             await self.registry.adopt_orphaned_containers()
         # Should not raise
@@ -2223,6 +2262,7 @@ class TestAdoptOrphanedContainers:
     async def test_remove_podman_error_handled(self):
         """When remove_container raises PodmanError, it is logged but not raised."""
         with patch_podman(
+            self.registry,
             list_containers=AsyncMock(
                 return_value=[
                     {
@@ -2380,7 +2420,9 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         exec_mock = AsyncMock(return_value=(0, "", ""))
         with (
-            patch.object(podman, "exec_container", exec_mock),
+            patch.object(
+                monitor._registry.podman, "exec_container", exec_mock
+            ),
             patch.object(
                 model, "get_user_handle", AsyncMock(return_value="owner")
             ),
@@ -2415,7 +2457,7 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                podman,
+                monitor._registry.podman,
                 "exec_container",
                 AsyncMock(return_value=(1, "", "curl: connection refused")),
             ),
@@ -2440,7 +2482,7 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                podman,
+                monitor._registry.podman,
                 "exec_container",
                 AsyncMock(return_value=(2, "all good on stdout", "")),
             ),
@@ -2465,7 +2507,7 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                podman,
+                monitor._registry.podman,
                 "exec_container",
                 AsyncMock(return_value=(127, "", "")),
             ),
@@ -2500,7 +2542,7 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                podman,
+                monitor._registry.podman,
                 "exec_container",
                 AsyncMock(side_effect=podman.PodmanError(500, "boom")),
             ),
@@ -2522,7 +2564,9 @@ class TestHealthMonitorRunOne:
     async def test_no_owner_is_unhealthy_with_reason(self):
         monitor = _health_registry().health
         st = _health_state(owner_id=None)
-        with patch.object(podman, "exec_container") as exec_mock:
+        with patch.object(
+            monitor._registry.podman, "exec_container"
+        ) as exec_mock:
             status, message = await monitor._run_one(st)
         assert status == "unhealthy"
         assert "owner" in message
@@ -2536,7 +2580,9 @@ class TestHealthMonitorRunOne:
             patch.object(
                 model, "get_user_handle", AsyncMock(return_value=None)
             ),
-            patch.object(podman, "exec_container") as exec_mock,
+            patch.object(
+                monitor._registry.podman, "exec_container"
+            ) as exec_mock,
         ):
             status, message = await monitor._run_one(st)
         assert status == "unhealthy"
@@ -2986,7 +3032,7 @@ class TestHealthMonitorDeath:
             reg.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
-            with patch_podman():
+            with patch_podman(self.registry):
                 task = asyncio.create_task(reg.cleanup_idle_containers())
                 await asyncio.sleep(0.05)
                 reg.get_cleanup_wake().set()

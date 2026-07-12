@@ -6,6 +6,7 @@ import os
 import time
 
 from . import auth, bringup, model, plugins, podman, terminal, util
+from .podman import PodmanError
 from .settings import KlangkSettings
 
 logger = logging.getLogger(__name__)
@@ -611,7 +612,7 @@ class HealthMonitor:
             state.health_check,
         )
         try:
-            rc, out, err = await podman.exec_container(
+            rc, out, err = await self._registry.podman.exec_container(
                 state.container_id,
                 # bash -c (NON-login): sources nothing, so the probe is
                 # deterministic and insulated from the user's interactive
@@ -802,6 +803,9 @@ class ContainerRegistry:
         # The WebSocketState instance (set by build_app after construction,
         # #1464). The HealthMonitor reaches it via self._registry.sockets.
         self.sockets = None
+        # The Podman instance (set by build_app after construction, #1468).
+        # Internal callers reach the CLI wrappers via self.podman.X.
+        self.podman = None
 
     # --- Service-session locks (#1188, #1478) ---
     # The per-container firing-lock dict lives here on the registry. It used
@@ -1096,7 +1100,7 @@ class ContainerRegistry:
         still running, or ``None`` if it was removed (or not found)
         and a new one should be created.
         """
-        info = await podman.inspect_container(existing_container_id)
+        info = await self.podman.inspect_container(existing_container_id)
         t_inspect = time.monotonic()
         logger.info(
             "workspace-open: check if old container still exists "
@@ -1123,7 +1127,7 @@ class ContainerRegistry:
                 time.monotonic() - t_start,
             )
             return existing_container_id, "connected"
-        await podman.remove_container(existing_container_id)
+        await self.podman.remove_container(existing_container_id)
         logger.info(
             "workspace-open: delete old stopped container (podman rm): %.3fs",
             time.monotonic() - t_inspect,
@@ -1254,6 +1258,7 @@ class ContainerRegistry:
     async def _ensure_volumes(
         extra_mounts: list[str] | None,
         user_id: str | None,
+        podman=None,
     ) -> None:
         """Create named volumes and validate bind-mount sources."""
         if not extra_mounts:
@@ -1324,7 +1329,7 @@ class ContainerRegistry:
         that hold conflicting ports.
         """
         t_create = time.monotonic()
-        cid = await podman.create_container(
+        cid = await self.podman.create_container(
             container_name, resolved_image, **create_kwargs
         )
         logger.info(
@@ -1341,12 +1346,14 @@ class ContainerRegistry:
         )
         t_podman_start = time.monotonic()
         try:
-            await podman.start_container(cid)
+            await self.podman.start_container(cid)
         except podman.PodmanError as exc:
             if "port is already allocated" not in exc.message:
                 raise
-            await self._resolve_port_conflict(cid, container_name, publish)
-            await podman.start_container(cid)
+            await self._resolve_port_conflict(
+                cid, container_name, publish, self.podman
+            )
+            await self.podman.start_container(cid)
         logger.info(
             "workspace-open: boot container (podman start): %.3fs",
             time.monotonic() - t_podman_start,
@@ -1357,7 +1364,7 @@ class ContainerRegistry:
             sudoers_rule = "klangk ALL=(ALL) NOPASSWD:ALL"
         else:
             sudoers_rule = "klangk ALL=(ALL) !ALL"
-        await podman.exec_container(
+        await self.podman.exec_container(
             cid,
             ["klangk-configure-sudo", sudoers_rule],
             user="root",
@@ -1366,7 +1373,7 @@ class ContainerRegistry:
         # Write the workspace token so container processes can
         # authenticate without an env-var restart.
         workspace_token = auth.create_workspace_token(workspace_id)
-        await terminal.set_workspace_token(cid, workspace_token)
+        await terminal.set_workspace_token(cid, workspace_token, self.podman)
 
         # Block until the entrypoint's one-time setup is done. ``podman
         # start`` returns when the entrypoint has *begun*, not finished;
@@ -1375,7 +1382,7 @@ class ContainerRegistry:
         # terminals, exec, agent, health check — gets a genuine readiness
         # guarantee regardless of shell, closing the race that previously
         # only the in-bashrc gate covered (and only for bash).
-        await podman.wait_for_container_ready(cid)
+        await self.podman.wait_for_container_ready(cid)
 
         return cid
 
@@ -1384,6 +1391,7 @@ class ContainerRegistry:
         cid: str,
         container_name: str,
         publish: list[tuple[int, int]],
+        podman=None,
     ) -> None:
         """Remove stale containers holding conflicting ports."""
         logger.warning(
@@ -1417,7 +1425,7 @@ class ContainerRegistry:
                         stale_id[:12],
                         bound & wanted_ports,
                     )
-                except podman.PodmanError as del_exc:
+                except PodmanError as del_exc:
                     logger.warning(
                         "Could not remove stale container %s: %s",
                         stale_id[:12],
@@ -1495,7 +1503,7 @@ class ContainerRegistry:
             extra_env,
             ssl_dir,
         )
-        await self._ensure_volumes(extra_mounts, user_id)
+        await self._ensure_volumes(extra_mounts, user_id, self.podman)
         binds = self._build_mounts(
             home_path, config_path, extra_mounts, ssl_dir
         )
@@ -1583,7 +1591,7 @@ class ContainerRegistry:
     async def stop_and_remove_container(self, container_id: str) -> None:
         """Stop and remove a container.
 
-        The slow ``podman.remove_container`` call runs *outside* the
+        The slow ``self.podman.remove_container`` call runs *outside* the
         workspace lock; only the registry-state teardown is serialized --
         under the same per-workspace lock :meth:`start_container` uses -- so
         a concurrent start for the same workspace cannot observe a
@@ -1602,7 +1610,7 @@ class ContainerRegistry:
         ever seen and is cleared on process restart.
         """
         try:
-            await podman.remove_container(container_id)
+            await self.podman.remove_container(container_id)
             logger.info("Stopped container %s", container_id)
         except podman.PodmanError as e:
             logger.warning(
@@ -1672,7 +1680,7 @@ class ContainerRegistry:
         """
         t0 = time.monotonic()
         try:
-            cid = await podman.create_container(
+            cid = await self.podman.create_container(
                 "klangk-prewarm",
                 IMAGE_NAME,
                 pull="never",
@@ -1680,7 +1688,7 @@ class ContainerRegistry:
                     "KLANGK_USERNS", "keep-id:uid=1000,gid=1000"
                 ),
             )
-            await podman.remove_container(cid)
+            await self.podman.remove_container(cid)
             logger.info("Podman pre-warmed in %.3fs", time.monotonic() - t0)
         except podman.PodmanError as e:
             logger.warning(
@@ -1691,7 +1699,7 @@ class ContainerRegistry:
 
     async def adopt_orphaned_containers(self) -> None:
         try:
-            containers = await podman.list_containers(
+            containers = await self.podman.list_containers(
                 f"klangk.instance={model.get_instance_id()}"
             )
             for c in containers:
@@ -1702,7 +1710,7 @@ class ContainerRegistry:
                         cid[:12],
                     )
                     try:
-                        await podman.remove_container(cid)
+                        await self.podman.remove_container(cid)
                     except podman.PodmanError as e:
                         logger.warning(
                             "Failed to remove orphaned container %s: %s",
@@ -1742,7 +1750,7 @@ class ContainerRegistry:
         tracked_ids = set(self._cid_to_wsid.keys())
         tasks = [self.stop_and_remove_container(cid) for cid in tracked_ids]
         try:
-            containers = await podman.list_containers(
+            containers = await self.podman.list_containers(
                 f"klangk.instance={model.get_instance_id()}"
             )
             for c in containers:

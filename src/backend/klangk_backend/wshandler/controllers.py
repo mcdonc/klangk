@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import WebSocketDisconnect
 
-from .. import model, podman, terminal
+from .. import model, terminal
 from ..exceptions import TerminalError
 from ..util import resolve_env_value
 from ..podman import ExecSession
@@ -63,12 +63,14 @@ class SshAgentForwarder:
         user_id = self._conn.user["id"]
         sock_path = f"/tmp/klangk-ssh-agent-{user_id}.sock"
         # Remove stale socket if it exists from a previous session.
-        await podman.exec_container(container_id, ["rm", "-f", sock_path])
+        await self._conn.app_state.podman.exec_container(
+            container_id, ["rm", "-f", sock_path]
+        )
         if _debug_agent:
             logger.info("[ssh-agent] starting socat at %s", sock_path)
         # Start socat: listen on the Unix socket, relay to stdin/stdout.
         proc = await asyncio.create_subprocess_exec(
-            podman._podman_bin(),
+            self._conn.app_state.podman.bin,
             "exec",
             "-i",
             container_id,
@@ -188,7 +190,7 @@ class SshAgentForwarder:
         container_id = self._conn.container_id
         if self.socket and container_id:
             try:
-                await podman.exec_container(
+                await self._conn.app_state.podman.exec_container(
                     container_id,
                     ["rm", "-f", self.socket],
                 )
@@ -249,7 +251,12 @@ class ExecController:
         # klangkc exec sends login=true; klangkc exec --raw and the
         # rsync transport send login=false. See #1041.
         login = bool(msg.get("login", False))
-        session = ExecSession(container_id, env=env, work_dir=work_dir)
+        session = ExecSession(
+            container_id,
+            self._conn.app_state.podman,
+            env=env,
+            work_dir=work_dir,
+        )
         await session.start(command, login=login)
         self.session = session
         self.task = asyncio.create_task(self.forward_output(session))
@@ -379,7 +386,9 @@ class TerminalController:
         sname = conn.tmux_session_name()
         ws_session = conn.app_state.sockets.get_session(conn.workspace_id)
 
-        windows = await terminal.list_windows(conn.container_id, sname)
+        windows = await terminal.list_windows(
+            conn.container_id, sname, conn.app_state.podman
+        )
         conn.sync_terminal_windows(windows)
         conn.sock.send_json({"type": "terminal_windows", "windows": windows})
         # Discover the agent's ``service:service-cmd`` window so it shows
@@ -468,7 +477,9 @@ class TerminalController:
             return False
         try:
             windows = await terminal.list_windows(
-                self._conn.container_id, terminal.SERVICE_SESSION
+                self._conn.container_id,
+                terminal.SERVICE_SESSION,
+                self._conn.app_state.podman,
             )
         except (TerminalError, OSError):
             return False  # service session doesn't exist yet
@@ -550,6 +561,7 @@ class TerminalController:
             user_id=self._conn.user["id"],
             user_handle=self._conn.user.get("handle"),
             ssh_agent_socket=self._conn._ssh_agent_socket,
+            podman=self._conn.app_state.podman,
         )
 
         browser_id = msg.get("browser_id")
@@ -580,7 +592,9 @@ class TerminalController:
                 # fire. Done before window sync so discovery picks it up.
                 await ctrl._fire_service_command()
                 if browser_id:
-                    await attach_browser(conn.container_id, browser_id)
+                    await attach_browser(
+                        conn.container_id, browser_id, conn.app_state.podman
+                    )
                 if not await conn.activate_session(session, cols, rows):
                     return
                 conn.sock.send_json({"type": "terminal_started"})
@@ -631,7 +645,9 @@ class TerminalController:
             self._conn.user.get("email"),
             self._conn.workspace_id,
         )
-        await attach_browser(self._conn.container_id, browser_id)
+        await attach_browser(
+            self._conn.container_id, browser_id, self._conn.app_state.podman
+        )
 
     async def input(self, msg: dict) -> None:
         t0 = time.monotonic()
@@ -774,7 +790,10 @@ class TerminalController:
         name = msg.get("name")
         try:
             windows = await terminal.new_window(
-                self._conn.container_id, session_name, name=name
+                self._conn.container_id,
+                session_name,
+                name=name,
+                podman=self._conn.app_state.podman,
             )
             logger.info(
                 "handle_terminal_new_window: %.3fs",
@@ -802,7 +821,10 @@ class TerminalController:
         target: int | str = msg.get("window_id") or msg.get("index", 0)
         try:
             await terminal.select_window(
-                self._conn.container_id, session_name, target
+                self._conn.container_id,
+                session_name,
+                target,
+                self._conn.app_state.podman,
             )
             logger.info(
                 "handle_terminal_select_window: target=%s %.3fs",
@@ -820,7 +842,10 @@ class TerminalController:
         index = msg.get("index", 0)
         try:
             windows = await terminal.close_window(
-                self._conn.container_id, session_name, index
+                self._conn.container_id,
+                session_name,
+                index,
+                self._conn.app_state.podman,
             )
             self.sync_terminal_windows(windows)
             self.notify_user_terminal_windows(windows)
@@ -839,10 +864,16 @@ class TerminalController:
             return
         try:
             await terminal.rename_window(
-                self._conn.container_id, session_name, index, name
+                self._conn.container_id,
+                session_name,
+                index,
+                name,
+                self._conn.app_state.podman,
             )
             windows = await terminal.list_windows(
-                self._conn.container_id, session_name
+                self._conn.container_id,
+                session_name,
+                self._conn.app_state.podman,
             )
             self.sync_terminal_windows(windows)
             self.notify_user_terminal_windows(windows)
@@ -863,7 +894,9 @@ class TerminalController:
         )
         try:
             windows = await terminal.list_windows(
-                self._conn.container_id, session_name
+                self._conn.container_id,
+                session_name,
+                self._conn.app_state.podman,
             )
             self._conn.sock.send_json(
                 {"type": "terminal_windows", "windows": windows}
@@ -1074,7 +1107,9 @@ class SharedTerminalController:
         # Kick spectators/collaborators
         try:
             await terminal.kill_joiner_sessions(
-                self._conn.container_id, session_name
+                self._conn.container_id,
+                session_name,
+                self._conn.app_state.podman,
             )
         except Exception:
             logger.debug("Failed to kill joiner sessions", exc_info=True)
@@ -1094,6 +1129,7 @@ class SharedTerminalController:
         session: TerminalSession,
         owner_user_id: str,
         window_id: str,
+        podman,
     ) -> None:
         """Select the target window in the joiner's tmux session.
 
@@ -1112,14 +1148,15 @@ class SharedTerminalController:
                         "-t",
                         f"{joiner_session}:{window_id}",
                     ],
+                    podman,
                 )
             except TerminalError:
                 await terminal.select_window(
-                    container_id, owner_user_id, window_id
+                    container_id, owner_user_id, window_id, podman
                 )
         else:
             await terminal.select_window(
-                container_id, owner_user_id, window_id
+                container_id, owner_user_id, window_id, podman
             )
 
     async def join_shared_terminal(self, msg: dict) -> None:
@@ -1186,6 +1223,7 @@ class SharedTerminalController:
             read_only=read_only,
             user_id=self._conn.user["id"],
             user_handle=self._conn.user.get("handle"),
+            podman=self._conn.app_state.podman,
         )
         self._conn.terminal_session = session
         conn = self._conn
@@ -1201,6 +1239,7 @@ class SharedTerminalController:
                     session,
                     join_target,
                     window_id,
+                    conn.app_state.podman,
                 )
                 if not await conn.activate_session(session, cols, rows):
                     return
@@ -1280,7 +1319,10 @@ class SharedTerminalController:
         session_name = self._conn.tmux_session_name()
         try:
             windows = await terminal.new_window(
-                self._conn.container_id, session_name, name=name
+                self._conn.container_id,
+                session_name,
+                name=name,
+                podman=self._conn.app_state.podman,
             )
         except Exception as e:
             send_error(
@@ -1347,10 +1389,15 @@ class SharedTerminalController:
         window_name = match["name"]
         try:
             await terminal.kill_joiner_sessions(
-                self._conn.container_id, owner_user_id
+                self._conn.container_id,
+                owner_user_id,
+                self._conn.app_state.podman,
             )
             await terminal.close_window(
-                self._conn.container_id, owner_user_id, window_id
+                self._conn.container_id,
+                owner_user_id,
+                window_id,
+                self._conn.app_state.podman,
             )
         except Exception as e:
             send_error(

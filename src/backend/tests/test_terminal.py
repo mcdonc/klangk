@@ -33,6 +33,11 @@ from klangk_backend.terminal import (
 
 SHELL_FACTORY = "klangk_backend.terminal.make_shell_process"
 
+# Mock Podman instance whose methods the tmux-function tests patch via
+# patch.object, then pass to the function under test as its ``podman``
+# arg (#1468).
+_mock_pod = MagicMock()
+
 
 class TestShellProcessFactory:
     """The factory + ctor are pure Python (no PTY); the OS methods that
@@ -125,7 +130,7 @@ def _drain_text(session):
 
 class TestInit:
     def test_initial_state(self):
-        s = TerminalSession("cid")
+        s = TerminalSession("cid", podman=_mock_pod)
         assert s.container_id == "cid"
         assert s._shell is None
         assert s._running is False
@@ -136,7 +141,7 @@ class TestStart:
     async def test_start_builds_exec_argv(self):
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start(120, 40)
 
         argv = fake.argv
@@ -156,7 +161,7 @@ class TestStart:
         monkeypatch.setenv("KLANGK_DISABLE_TMUX", "1")
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid", session_name="uid")
+            s = TerminalSession("cid", session_name="uid", podman=_mock_pod)
             await s.start(120, 40)
 
         argv = fake.argv
@@ -170,7 +175,7 @@ class TestStart:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "secret2")
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
 
         argv = fake.argv
@@ -182,7 +187,7 @@ class TestStart:
     async def test_no_command_override_by_default(self):
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
         assert not any("KLANGK_CMD_OVERRIDE" in a for a in fake.argv)
         await s.stop()
@@ -191,7 +196,7 @@ class TestStart:
         """browser_id is no longer passed as an env var (uses klangk-attach-browser)."""
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
         assert not any("KLANGK_BROWSER_ID" in a for a in fake.argv)
         assert not any("KLANGK_BRIDGE_TOKEN" in a for a in fake.argv)
@@ -206,6 +211,7 @@ class TestStart:
                 user_home="/home/alice",
                 user_id="uid-123",
                 user_handle="alice",
+                podman=_mock_pod,
             )
             await s.start(120, 40)
         assert "HOME=/home/alice" in fake.argv
@@ -228,7 +234,7 @@ class TestStart:
     async def test_no_user_home_by_default(self):
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
         assert not any(a.startswith("HOME=") for a in fake.argv)
         await s.stop()
@@ -236,7 +242,7 @@ class TestStart:
     async def test_start_failure_resets_running(self):
         fake = FakeShell(start_error=RuntimeError("spawn fail"))
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             try:
                 await s.start()
             except RuntimeError:
@@ -250,8 +256,9 @@ class TestStart:
         fake = FakeShell(block_after_chunks=True)
         with (
             _patch(fake),
-            patch(
-                "klangk_backend.terminal.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new_callable=AsyncMock,
             ) as mock_exec,
         ):
@@ -259,6 +266,7 @@ class TestStart:
                 "cid",
                 session_name="uid-123",
                 ssh_agent_socket="/tmp/agent.sock",
+                podman=_mock_pod,
             )
             await s.start(120, 40)
 
@@ -278,12 +286,13 @@ class TestStart:
 
 class TestAttachBrowser:
     async def test_runs_klangk_attach_browser(self):
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(0, "", ""),
         ) as mock_exec:
-            await attach_browser("cid-123", "bid-abc")
+            await attach_browser("cid-123", "bid-abc", podman=_mock_pod)
         mock_exec.assert_awaited_once_with(
             "cid-123",
             ["klangk-attach-browser", "bid-abc"],
@@ -292,23 +301,27 @@ class TestAttachBrowser:
         )
 
     async def test_logs_warning_on_failure(self):
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(1, "", "attach failed"),
         ):
             # Should not raise
-            await attach_browser("cid-123", "bid-abc")
+            await attach_browser("cid-123", "bid-abc", podman=_mock_pod)
 
 
 class TestSetWorkspaceToken:
     async def test_runs_klangk_set_workspace_token(self):
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(0, "", ""),
         ) as mock_exec:
-            await set_workspace_token("cid-123", "jwt-token-xyz")
+            await set_workspace_token(
+                "cid-123", "jwt-token-xyz", podman=_mock_pod
+            )
         mock_exec.assert_awaited_once_with(
             "cid-123",
             ["klangk-set-workspace-token", "jwt-token-xyz"],
@@ -317,19 +330,22 @@ class TestSetWorkspaceToken:
         )
 
     async def test_logs_warning_on_failure(self):
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(1, "", "set failed"),
         ):
-            await set_workspace_token("cid-123", "jwt-token-xyz")
+            await set_workspace_token(
+                "cid-123", "jwt-token-xyz", podman=_mock_pod
+            )
 
 
 class TestReadLoop:
     async def test_output_from_shell(self):
         fake = FakeShell(chunks=[b"prompt", b"hello world"])
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
 
         await asyncio.sleep(0.05)
@@ -340,7 +356,7 @@ class TestReadLoop:
     async def test_stream_end_signals_none(self):
         fake = FakeShell(chunks=[])  # immediate EOF
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
 
         await asyncio.sleep(0.05)
@@ -350,7 +366,7 @@ class TestReadLoop:
     async def test_read_loop_handles_exception(self):
         fake = FakeShell(chunks=[b"prompt", RuntimeError("connection lost")])
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
 
         await asyncio.sleep(0.05)
@@ -365,7 +381,7 @@ class TestReadLoop:
         # decoder must buffer the partial sequence and emit the intact glyph.
         fake = FakeShell(chunks=[b"\xe2\x94", b"\x80 done"])
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
 
         await asyncio.sleep(0.05)
@@ -379,7 +395,7 @@ class TestReadLoop:
         # as a single replacement char rather than silently dropped.
         fake = FakeShell(chunks=[b"ok\xe2\x94"])  # ends mid '─'
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
 
         await asyncio.sleep(0.05)
@@ -391,7 +407,7 @@ class TestWrite:
     async def test_write_sends_to_shell(self):
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
         await s.write("hello")
         assert fake.writes == [b"hello"]
@@ -400,13 +416,13 @@ class TestWrite:
     async def test_write_exception_suppressed(self):
         fake = FakeShell(block_after_chunks=True, write_error=OSError("broke"))
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
         await s.write("hello")  # should not raise
         await s.stop()
 
     async def test_write_when_stopped(self):
-        s = TerminalSession("cid")
+        s = TerminalSession("cid", podman=_mock_pod)
         await s.write("hello")  # no shell -> no-op
 
 
@@ -414,7 +430,7 @@ class TestResize:
     async def test_resize_calls_shell_resize(self):
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
         await s.resize(200, 50)
         assert fake.resizes == [(50, 200)]  # (rows, cols)
@@ -427,14 +443,14 @@ class TestResize:
             raise OSError("broke")
 
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
         fake.resize = boom
         await s.resize(200, 50)  # should not raise
         await s.stop()
 
     async def test_resize_when_stopped(self):
-        s = TerminalSession("cid")
+        s = TerminalSession("cid", podman=_mock_pod)
         await s.resize(80, 24)  # no shell -> no-op
 
 
@@ -442,7 +458,7 @@ class TestStop:
     async def test_stop_cleans_up(self):
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
         await s.stop()
         assert s._running is False
@@ -455,7 +471,7 @@ class TestStop:
             block_after_chunks=True, close_error=OSError("close fail")
         )
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
         await s.stop()  # should not raise
         assert s._shell is None
@@ -463,7 +479,7 @@ class TestStop:
     async def test_stop_cancels_blocked_read_loop(self):
         fake = FakeShell(chunks=[b"prompt"], block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
         await asyncio.sleep(0.05)  # consume prompt, then block on read
         await s.stop()
@@ -476,7 +492,7 @@ class TestStop:
 
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
 
         # Replace the read task with one that raises a non-CancelledError.
@@ -492,7 +508,7 @@ class TestStop:
         assert s._read_task is None
 
     async def test_stop_when_not_started(self):
-        s = TerminalSession("cid")
+        s = TerminalSession("cid", podman=_mock_pod)
         await s.stop()
 
     async def test_stop_kills_tmux_session_with_socket(self):
@@ -500,14 +516,18 @@ class TestStop:
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
             s = TerminalSession(
-                "cid", session_name="uid", socket_path="/tmp/s.sock"
+                "cid",
+                session_name="uid",
+                socket_path="/tmp/s.sock",
+                podman=_mock_pod,
             )
             await s.start()
         # Manually set tmux session name (normally set by build_shell_command
         # when join_session is used with a socket path)
         s.tmux_session_name = "uid-abc123"
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(0, "", ""),
         ) as mock_exec:
@@ -523,12 +543,16 @@ class TestStop:
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
             s = TerminalSession(
-                "cid", session_name="uid", socket_path="/tmp/s.sock"
+                "cid",
+                session_name="uid",
+                socket_path="/tmp/s.sock",
+                podman=_mock_pod,
             )
             await s.start()
         s.tmux_session_name = "uid-abc123"
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             side_effect=OSError("boom"),
         ):
@@ -540,7 +564,7 @@ class TestOutput:
     async def test_output_yields_data(self):
         fake = FakeShell(chunks=[b"prompt", b"output"])
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
 
         collected = []
@@ -552,7 +576,7 @@ class TestOutput:
 
     async def test_output_exits_when_running_cleared(self):
         """Sentinel dropped: output() exits via the _running check."""
-        s = TerminalSession("cid")
+        s = TerminalSession("cid", podman=_mock_pod)
         s._running = True
         s._read_task = None  # no task -> only _running governs exit
 
@@ -569,7 +593,7 @@ class TestOutput:
         """Sentinel dropped: output() exits via the _read_task.done() check."""
         fake = FakeShell(chunks=[])  # immediate EOF -> read task finishes
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
 
         await asyncio.sleep(0.05)
@@ -595,7 +619,7 @@ class TestIsAlive:
     async def test_alive_while_running(self):
         fake = FakeShell(chunks=[b"prompt"], block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
         assert s.is_alive is True
         await s.stop()
@@ -603,7 +627,7 @@ class TestIsAlive:
     async def test_not_alive_after_stream_ends(self):
         fake = FakeShell(chunks=[])  # EOF
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
         await asyncio.sleep(0.05)
         assert s.is_alive is False
@@ -612,7 +636,7 @@ class TestIsAlive:
     async def test_not_alive_after_stop(self):
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
-            s = TerminalSession("cid")
+            s = TerminalSession("cid", podman=_mock_pod)
             await s.start()
         await s.stop()
         assert s.is_alive is False
@@ -620,12 +644,15 @@ class TestIsAlive:
 
 class TestTmuxCommand:
     async def test_returns_stdout(self):
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(0, "output\n", ""),
         ) as mock_exec:
-            result = await tmux_command("cid", "sess", ["list-windows"])
+            result = await tmux_command(
+                "cid", "sess", ["list-windows"], podman=_mock_pod
+            )
         assert result == "output\n"
         mock_exec.assert_awaited_once_with(
             "cid",
@@ -635,19 +662,23 @@ class TestTmuxCommand:
         )
 
     async def test_raises_on_failure(self):
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(1, "", "error msg"),
         ) as mock_exec:
             with pytest.raises(TerminalError, match="error msg"):
-                await tmux_command("cid", "sess", ["bad-cmd"])
+                await tmux_command(
+                    "cid", "sess", ["bad-cmd"], podman=_mock_pod
+                )
         assert mock_exec.await_count == 1  # no retry on non-socket errors
 
     async def test_retries_on_socket_not_found(self):
         with (
-            patch(
-                "klangk_backend.terminal.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new_callable=AsyncMock,
                 side_effect=[
                     (1, "", "No such file or directory"),
@@ -656,7 +687,9 @@ class TestTmuxCommand:
             ) as mock_exec,
             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         ):
-            result = await tmux_command("cid", "sess", ["list-windows"])
+            result = await tmux_command(
+                "cid", "sess", ["list-windows"], podman=_mock_pod
+            )
         assert result == "ok\n"
         assert mock_exec.await_count == 2
         mock_sleep.assert_awaited_once_with(0.5)
@@ -669,7 +702,7 @@ class TestListWindows:
             "klangk_backend.terminal.tmux_command",
             return_value="@0|||0|||bash|||1\n@1|||1|||build|||0\n",
         ):
-            result = await list_windows("cid", "sess")
+            result = await list_windows("cid", "sess", podman=_mock_pod)
         assert result == [
             {"id": "@0", "index": 0, "name": "bash", "active": True},
             {"id": "@1", "index": 1, "name": "build", "active": False},
@@ -677,7 +710,7 @@ class TestListWindows:
 
     async def test_empty_session(self):
         with patch("klangk_backend.terminal.tmux_command", return_value=""):
-            result = await list_windows("cid", "sess")
+            result = await list_windows("cid", "sess", podman=_mock_pod)
         assert result == []
 
 
@@ -702,28 +735,31 @@ class TestValidateWindowName:
 
 class TestNewWindow:
     async def test_creates_window_auto_name(self):
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(0, "@0|||0|||1|||1\n", ""),
         ) as mock_exec:
-            result = await new_window("cid", "sess")
+            result = await new_window("cid", "sess", podman=_mock_pod)
         assert len(result) == 1
         assert result[0]["name"] == "1"
         assert mock_exec.call_args.args[1][:2] == ["bash", "-c"]
 
     async def test_auto_name_skips_existing(self):
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(0, "@0|||0|||1|||0\n@1|||1|||2|||1\n", ""),
         ):
-            result = await new_window("cid", "sess")
+            result = await new_window("cid", "sess", podman=_mock_pod)
         assert len(result) == 2
 
     async def test_creates_named_window(self):
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(
                 0,
@@ -731,7 +767,9 @@ class TestNewWindow:
                 "",
             ),
         ) as mock_exec:
-            result = await new_window("cid", "sess", name="build")
+            result = await new_window(
+                "cid", "sess", name="build", podman=_mock_pod
+            )
         assert len(result) == 2
         assert result[1]["name"] == "build"
         # the name is passed as a positional argv ($1), never interpolated
@@ -744,25 +782,29 @@ class TestNewWindow:
 
     async def test_rejects_shell_injection(self):
         with pytest.raises(ValueError, match="only contain"):
-            await new_window("cid", "sess", name="';rm -rf /;'")
+            await new_window(
+                "cid", "sess", name="';rm -rf /;'", podman=_mock_pod
+            )
 
     async def test_rejects_duplicate_name(self):
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(1, "DUPLICATE\n", ""),
         ):
             with pytest.raises(ValueError, match="already exists"):
-                await new_window("cid", "sess", name="build")
+                await new_window("cid", "sess", name="build", podman=_mock_pod)
 
     async def test_raises_on_tmux_error(self):
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(1, "", "session not found"),
         ):
             with pytest.raises(TerminalError, match="session not found"):
-                await new_window("cid", "sess")
+                await new_window("cid", "sess", podman=_mock_pod)
 
 
 class TestSelectWindow:
@@ -771,18 +813,18 @@ class TestSelectWindow:
             "klangk_backend.terminal.tmux_command",
             return_value="",
         ) as mock_cmd:
-            await select_window("cid", "sess", 2)
+            await select_window("cid", "sess", 2, podman=_mock_pod)
         mock_cmd.assert_called_once_with(
-            "cid", "sess", ["select-window", "-t", "sess:2"]
+            "cid", "sess", ["select-window", "-t", "sess:2"], _mock_pod
         )
 
     async def test_selects_by_window_id(self):
         with patch(
             "klangk_backend.terminal.tmux_command",
         ) as mock_cmd:
-            await select_window("cid", "sess", "@5")
+            await select_window("cid", "sess", "@5", podman=_mock_pod)
         mock_cmd.assert_called_once_with(
-            "cid", "sess", ["select-window", "-t", "@5"]
+            "cid", "sess", ["select-window", "-t", "@5"], _mock_pod
         )
 
 
@@ -798,9 +840,9 @@ class TestCloseWindow:
                 return_value=[{"index": 0, "name": "bash", "active": True}],
             ),
         ):
-            result = await close_window("cid", "sess", 1)
+            result = await close_window("cid", "sess", 1, podman=_mock_pod)
         mock_cmd.assert_called_once_with(
-            "cid", "sess", ["kill-window", "-t", "sess:1"]
+            "cid", "sess", ["kill-window", "-t", "sess:1"], _mock_pod
         )
         assert len(result) == 1
 
@@ -815,9 +857,9 @@ class TestCloseWindow:
                 return_value=[],
             ),
         ):
-            await close_window("cid", "sess", "@3")
+            await close_window("cid", "sess", "@3", podman=_mock_pod)
         mock_cmd.assert_called_once_with(
-            "cid", "sess", ["kill-window", "-t", "@3"]
+            "cid", "sess", ["kill-window", "-t", "@3"], _mock_pod
         )
 
 
@@ -835,14 +877,19 @@ class TestRenameWindow:
                 return_value="",
             ) as mock_cmd,
         ):
-            await rename_window("cid", "sess", 0, "build")
+            await rename_window("cid", "sess", 0, "build", podman=_mock_pod)
         mock_cmd.assert_called_once_with(
-            "cid", "sess", ["rename-window", "-t", "sess:0", "build"]
+            "cid",
+            "sess",
+            ["rename-window", "-t", "sess:0", "build"],
+            _mock_pod,
         )
 
     async def test_rejects_shell_injection(self):
         with pytest.raises(ValueError, match="only contain"):
-            await rename_window("cid", "sess", 0, "';rm -rf /;'")
+            await rename_window(
+                "cid", "sess", 0, "';rm -rf /;'", podman=_mock_pod
+            )
 
     async def test_rejects_duplicate_name(self):
         with patch(
@@ -853,7 +900,9 @@ class TestRenameWindow:
             ],
         ):
             with pytest.raises(ValueError, match="already exists"):
-                await rename_window("cid", "sess", 0, "build")
+                await rename_window(
+                    "cid", "sess", 0, "build", podman=_mock_pod
+                )
 
 
 class TestBuildEnvironment:
@@ -980,7 +1029,7 @@ class TestKillJoinerSessions:
                 "",  # kill carol
             ],
         ) as mock_cmd:
-            await kill_joiner_sessions("cid", "admin")
+            await kill_joiner_sessions("cid", "admin", podman=_mock_pod)
         # Should have called list-sessions + kill for bob and carol
         assert mock_cmd.call_count == 3
 
@@ -989,7 +1038,7 @@ class TestKillJoinerSessions:
             "klangk_backend.terminal.tmux_command",
             return_value="admin\n",
         ) as mock_cmd:
-            await kill_joiner_sessions("cid", "admin")
+            await kill_joiner_sessions("cid", "admin", podman=_mock_pod)
         # Only list-sessions, no kills
         assert mock_cmd.call_count == 1
 
@@ -1003,7 +1052,7 @@ class TestKillJoinerSessions:
                 "",  # kill carol succeeds
             ],
         ) as mock_cmd:
-            await kill_joiner_sessions("cid", "admin")
+            await kill_joiner_sessions("cid", "admin", podman=_mock_pod)
         assert mock_cmd.call_count == 3
 
     async def test_no_sessions(self):
@@ -1012,7 +1061,7 @@ class TestKillJoinerSessions:
             side_effect=TerminalError("no sessions"),
         ):
             # Should not raise
-            await kill_joiner_sessions("cid", "admin")
+            await kill_joiner_sessions("cid", "admin", podman=_mock_pod)
 
 
 class TestTerminalSessionJoin:
@@ -1025,6 +1074,7 @@ class TestTerminalSessionJoin:
                 session_name="joiner-uid",
                 user_home="/home/bob",
                 join_session="owner-uid",
+                podman=_mock_pod,
             )
             await s.start(80, 24)
         assert "-S" not in fake.argv
@@ -1041,6 +1091,7 @@ class TestTerminalSessionJoin:
                 user_home="/home/ceo",
                 join_session="owner-uid",
                 read_only=True,
+                podman=_mock_pod,
             )
             await s.start(80, 24)
         assert "switch-client" not in fake.argv
@@ -1053,12 +1104,15 @@ class TestEnsureBaseSession:
         """Skip creation if tmux has-session succeeds."""
         from klangk_backend.terminal import ensure_base_session
 
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(0, "", ""),  # has-session succeeds
         ) as mock_exec:
-            created = await ensure_base_session("cid", "my-session")
+            created = await ensure_base_session(
+                "cid", "my-session", podman=_mock_pod
+            )
         assert created is False
         mock_exec.assert_awaited_once()
         assert "has-session" in mock_exec.call_args.args[1]
@@ -1067,13 +1121,14 @@ class TestEnsureBaseSession:
         """Create detached session when has-session fails."""
         from klangk_backend.terminal import ensure_base_session
 
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             side_effect=[(1, "", ""), (0, "", "")],  # has fail, new ok
         ) as mock_exec:
             created = await ensure_base_session(
-                "cid", "my-session", user_home="/home/u"
+                "cid", "my-session", user_home="/home/u", podman=_mock_pod
             )
         assert created is True
         assert mock_exec.await_count == 2
@@ -1086,12 +1141,15 @@ class TestEnsureBaseSession:
         """Falls through to create if has-session raises."""
         from klangk_backend.terminal import ensure_base_session
 
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             side_effect=[OSError("boom"), (0, "", "")],
         ) as mock_exec:
-            created = await ensure_base_session("cid", "my-session")
+            created = await ensure_base_session(
+                "cid", "my-session", podman=_mock_pod
+            )
         assert created is True
         assert mock_exec.await_count == 2
 
@@ -1099,20 +1157,24 @@ class TestEnsureBaseSession:
         """Warning logged when new-session fails."""
         from klangk_backend.terminal import ensure_base_session
 
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             side_effect=[(1, "", ""), OSError("create failed")],
         ):
-            created = await ensure_base_session("cid", "my-session")
+            created = await ensure_base_session(
+                "cid", "my-session", podman=_mock_pod
+            )
         assert created is False
 
     async def test_env_args_passed(self):
         """HOME and SSH_AUTH_SOCK are passed as tmux -e flags."""
         from klangk_backend.terminal import ensure_base_session
 
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             side_effect=[(1, "", ""), (0, "", "")],
         ) as mock_exec:
@@ -1121,6 +1183,7 @@ class TestEnsureBaseSession:
                 "my-session",
                 user_home="/home/u",
                 ssh_agent_socket="/tmp/agent.sock",
+                podman=_mock_pod,
             )
         new_cmd = mock_exec.call_args_list[1].args[1]
         assert "HOME=/home/u" in new_cmd
@@ -1130,36 +1193,45 @@ class TestEnsureBaseSession:
         """service_cmd_window_exists returns False if list-windows raises."""
         from klangk_backend.terminal import service_cmd_window_exists
 
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             side_effect=OSError("boom"),
         ):
-            result = await service_cmd_window_exists("cid", "my-session")
+            result = await service_cmd_window_exists(
+                "cid", "my-session", podman=_mock_pod
+            )
         assert result is False
 
     async def test_service_cmd_window_exists_rc_nonzero_returns_false(self):
         """service_cmd_window_exists returns False if list-windows fails."""
         from klangk_backend.terminal import service_cmd_window_exists
 
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(1, "", ""),  # list-windows fails
         ):
-            result = await service_cmd_window_exists("cid", "my-session")
+            result = await service_cmd_window_exists(
+                "cid", "my-session", podman=_mock_pod
+            )
         assert result is False
 
     async def test_has_tmux_session_exception_returns_false(self):
         """has_tmux_session returns False if has-session raises."""
         from klangk_backend.terminal import has_tmux_session
 
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             side_effect=OSError("boom"),
         ):
-            result = await has_tmux_session("cid", "my-session")
+            result = await has_tmux_session(
+                "cid", "my-session", podman=_mock_pod
+            )
         assert result is False
 
 
@@ -1179,7 +1251,9 @@ class TestEnsureServiceSession:
         from klangk_backend.settings import KlangkSettings
 
         registry = ContainerRegistry(KlangkSettings(env={}))
-        self.app_state = types.SimpleNamespace(container_registry=registry)
+        self.app_state = types.SimpleNamespace(
+            container_registry=registry, podman=_mock_pod
+        )
 
     async def test_creates_window_and_sends_command(self):
         """A fresh service session fires the service command in its
@@ -1195,8 +1269,9 @@ class TestEnsureServiceSession:
                 "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
-            patch(
-                "klangk_backend.terminal.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new=AsyncMock(side_effect=[(0, "", ""), (0, "", "")]),
             ) as mock_exec,
         ):
@@ -1245,7 +1320,7 @@ class TestEnsureServiceSession:
                 app_state=self.app_state,
             )
         mock_ensure.assert_awaited_once_with(
-            "cid", SERVICE_SESSION, "/home/clanker"
+            "cid", SERVICE_SESSION, "/home/clanker", podman=_mock_pod
         )
 
     async def test_skips_when_window_already_exists(self):
@@ -1261,8 +1336,9 @@ class TestEnsureServiceSession:
                 "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=True),
             ),
-            patch(
-                "klangk_backend.terminal.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new=AsyncMock(),
             ) as mock_exec,
         ):
@@ -1289,8 +1365,9 @@ class TestEnsureServiceSession:
                 "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
-            patch(
-                "klangk_backend.terminal.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new=AsyncMock(),
             ) as mock_exec,
         ):
@@ -1318,8 +1395,9 @@ class TestEnsureServiceSession:
                 "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
-            patch(
-                "klangk_backend.terminal.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new=AsyncMock(side_effect=RuntimeError("tmux broke")),
             ),
             patch("klangk_backend.terminal.logger") as mock_logger,
@@ -1342,8 +1420,9 @@ class TestEnsureServiceSession:
                 "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
-            patch(
-                "klangk_backend.terminal.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new=AsyncMock(
                     side_effect=[
                         (0, "", ""),  # new-window succeeds
@@ -1368,7 +1447,9 @@ class TestEnsureServiceSession:
         from klangk_backend.terminal import ensure_service_session
 
         mock_registry = MagicMock()
-        app_state = types.SimpleNamespace(container_registry=mock_registry)
+        app_state = types.SimpleNamespace(
+            container_registry=mock_registry, podman=_mock_pod
+        )
 
         with (
             patch(
@@ -1379,8 +1460,9 @@ class TestEnsureServiceSession:
                 "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
-            patch(
-                "klangk_backend.terminal.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new=AsyncMock(side_effect=[(0, "", ""), (0, "", "")]),
             ),
         ):
@@ -1400,7 +1482,9 @@ class TestEnsureServiceSession:
         from klangk_backend.terminal import ensure_service_session
 
         mock_registry = MagicMock()
-        app_state = types.SimpleNamespace(container_registry=mock_registry)
+        app_state = types.SimpleNamespace(
+            container_registry=mock_registry, podman=_mock_pod
+        )
 
         with (
             patch(
@@ -1411,8 +1495,9 @@ class TestEnsureServiceSession:
                 "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=True),
             ),
-            patch(
-                "klangk_backend.terminal.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new=AsyncMock(),
             ),
         ):
@@ -1432,7 +1517,9 @@ class TestEnsureServiceSession:
         from klangk_backend.terminal import ensure_service_session
 
         mock_registry = MagicMock()
-        app_state = types.SimpleNamespace(container_registry=mock_registry)
+        app_state = types.SimpleNamespace(
+            container_registry=mock_registry, podman=_mock_pod
+        )
 
         with (
             patch(
@@ -1443,8 +1530,9 @@ class TestEnsureServiceSession:
                 "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
-            patch(
-                "klangk_backend.terminal.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new=AsyncMock(
                     side_effect=[
                         (0, "", ""),  # new-window succeeds
@@ -1488,7 +1576,7 @@ class TestEnsureServiceSession:
         # existence check during this yield; with the lock it cannot.
         _real_sleep = asyncio.sleep
 
-        async def fake_window_exists(cid, session):
+        async def fake_window_exists(cid, session, podman=None):
             return terminal.SERVICE_CMD_WINDOW in windows
 
         async def fake_exec(cid, argv, **kwargs):
@@ -1512,8 +1600,9 @@ class TestEnsureServiceSession:
                 "klangk_backend.terminal.service_cmd_window_exists",
                 side_effect=fake_window_exists,
             ),
-            patch(
-                "klangk_backend.terminal.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 side_effect=fake_exec,
             ),
             patch("klangk_backend.terminal.asyncio.sleep", new=AsyncMock()),
@@ -1548,7 +1637,7 @@ class TestEnsureServiceSession:
         new_window_calls = 0
         _real_sleep = asyncio.sleep
 
-        async def fake_window_exists(cid, session):
+        async def fake_window_exists(cid, session, podman=None):
             return terminal.SERVICE_CMD_WINDOW in windows.get(cid, set())
 
         async def fake_exec(cid, argv, **kwargs):
@@ -1568,8 +1657,9 @@ class TestEnsureServiceSession:
                 "klangk_backend.terminal.service_cmd_window_exists",
                 side_effect=fake_window_exists,
             ),
-            patch(
-                "klangk_backend.terminal.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 side_effect=fake_exec,
             ),
             patch("klangk_backend.terminal.asyncio.sleep", new=AsyncMock()),
@@ -1609,8 +1699,9 @@ class TestEnsureServiceSession:
                 "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
-            patch(
-                "klangk_backend.terminal.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new=AsyncMock(
                     side_effect=[
                         (0, "", ""),  # new-window succeeds
@@ -1647,8 +1738,9 @@ class TestEnsureServiceSession:
                 "klangk_backend.terminal.service_cmd_window_exists",
                 new=AsyncMock(return_value=False),
             ),
-            patch(
-                "klangk_backend.terminal.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new=AsyncMock(
                     side_effect=[
                         (0, "", ""),  # new-window succeeds
@@ -1673,22 +1765,34 @@ class TestServiceSessionHelpers:
     async def test_service_cmd_window_exists_true_when_present(self):
         from klangk_backend.terminal import service_cmd_window_exists
 
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(0, "bash\nservice-cmd\n", ""),
         ):
-            assert await service_cmd_window_exists("cid", "service") is True
+            assert (
+                await service_cmd_window_exists(
+                    "cid", "service", podman=_mock_pod
+                )
+                is True
+            )
 
     async def test_service_cmd_window_exists_false_when_absent(self):
         from klangk_backend.terminal import service_cmd_window_exists
 
-        with patch(
-            "klangk_backend.terminal.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(0, "bash\n", ""),
         ):
-            assert await service_cmd_window_exists("cid", "service") is False
+            assert (
+                await service_cmd_window_exists(
+                    "cid", "service", podman=_mock_pod
+                )
+                is False
+            )
 
     def test_should_fire_returns_false_without_service_command(self):
         from klangk_backend.terminal import should_fire_service_command

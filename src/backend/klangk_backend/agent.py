@@ -11,7 +11,8 @@ import logging
 import re
 import time
 
-from . import model, podman, util, workspaces
+from . import model, util, workspaces
+from .podman import subprocess_env
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
@@ -67,7 +68,9 @@ def is_disabled() -> bool:
     return util.resolve_env_bool("KLANGK_AGENT_DISABLED")
 
 
-async def ensure_agent_home(workspace_id: str, container_id: str) -> str:
+async def ensure_agent_home(
+    workspace_id: str, container_id: str, podman=None
+) -> str:
     """Eagerly provision the agent's home directory with Pi config.
 
     Creates ``/home/.users/{AGENT_USER_ID}`` on the host bind-mount and
@@ -94,14 +97,16 @@ async def ensure_agent_home(workspace_id: str, container_id: str) -> str:
         workspace_home, agent_handle, model.AGENT_USER_ID
     )
     if created:
-        await workspaces.populate_home_skel(container_id, model.AGENT_USER_ID)
+        await workspaces.populate_home_skel(
+            container_id, model.AGENT_USER_ID, podman
+        )
 
     # Run klangk-setup-pi to populate ~/.pi/agent/ with models.json,
     # settings.json, etc.  Unlike real users, the agent has no
     # personal preferences — --force deletes settings.json first so
     # it picks up the current KLANGK_LLM_MODEL env var.
     proc = await asyncio.create_subprocess_exec(
-        podman._podman_bin(),
+        podman.bin,
         "exec",
         "-u",
         "klangk",
@@ -113,7 +118,7 @@ async def ensure_agent_home(workspace_id: str, container_id: str) -> str:
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env=podman.subprocess_env(),
+        env=subprocess_env(),
     )
     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
     # Check the return code but do NOT fail the container bring-up over a
@@ -192,7 +197,7 @@ class AgentSession:
             handle = await model.agent_handle()
             return f"/home/{handle}"
         container_home = await ensure_agent_home(
-            self.workspace_id, container_id
+            self.workspace_id, container_id, self.app_state.podman
         )
         self._home_ready = True
         return container_home
@@ -254,13 +259,13 @@ class AgentSession:
                 container_id,
             )
             self._proc = await asyncio.create_subprocess_exec(
-                podman._podman_bin(),
+                self.app_state.podman.bin,
                 *argv,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
-                env=podman.subprocess_env(),
+                env=subprocess_env(),
             )
             self._monitor_task = asyncio.create_task(
                 self._monitor_process(self._proc)

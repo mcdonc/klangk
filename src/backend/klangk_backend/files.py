@@ -9,8 +9,6 @@ sandbox; ``validate_path`` provides defense-in-depth.
 import posixpath
 from collections.abc import AsyncGenerator
 
-from . import podman
-
 EXEC_USER = "klangk"
 
 # 255 is the common Linux NAME_MAX; reading at import time is fine.
@@ -43,7 +41,9 @@ def validate_path(path: str) -> str:
     return normalized
 
 
-async def list_files(container_id: str, path: str = "/") -> list[dict]:
+async def list_files(
+    container_id: str, path: str = "/", podman=None
+) -> list[dict]:
     """List files and directories at the given path inside the container."""
     path = validate_path(path)
     rc, out, _err = await podman.exec_container(
@@ -99,7 +99,7 @@ async def list_files(container_id: str, path: str = "/") -> list[dict]:
     return entries
 
 
-async def stat_path(container_id: str, path: str) -> dict | None:
+async def stat_path(container_id: str, path: str, podman=None) -> dict | None:
     """Stat a single path.  Returns ``{"is_dir": bool, "size": int}``
     or ``None`` if the path does not exist."""
     path = validate_path(path)
@@ -122,10 +122,10 @@ async def stat_path(container_id: str, path: str) -> dict | None:
     return {"is_dir": is_dir, "size": size}
 
 
-async def read_file(container_id: str, path: str) -> str | None:
+async def read_file(container_id: str, path: str, podman=None) -> str | None:
     """Read file contents as text.  Returns None if missing or > 1 MB."""
     path = validate_path(path)
-    info = await stat_path(container_id, path)
+    info = await stat_path(container_id, path, podman)
     if info is None or info["is_dir"]:
         return None
     if info["size"] > 1_000_000:
@@ -140,7 +140,9 @@ async def read_file(container_id: str, path: str) -> str | None:
     return out
 
 
-def stream_file(container_id: str, path: str) -> AsyncGenerator[bytes, None]:
+def stream_file(
+    container_id: str, path: str, podman=None
+) -> AsyncGenerator[bytes, None]:
     """Stream file contents as raw bytes for download."""
     path = validate_path(path)
     return podman.exec_container_stream(
@@ -151,7 +153,7 @@ def stream_file(container_id: str, path: str) -> AsyncGenerator[bytes, None]:
 
 
 def stream_dir_tar(
-    container_id: str, path: str
+    container_id: str, path: str, podman=None
 ) -> AsyncGenerator[bytes, None]:
     """Stream a directory as a tar.gz archive for download."""
     path = validate_path(path)
@@ -170,7 +172,7 @@ def stream_dir_tar(
     )
 
 
-async def delete_path(container_id: str, path: str) -> str:
+async def delete_path(container_id: str, path: str, podman=None) -> str:
     """Delete a file or directory.  Returns the path deleted."""
     path = validate_path(path)
     # Check existence first
@@ -191,7 +193,9 @@ async def delete_path(container_id: str, path: str) -> str:
     return path
 
 
-async def rename_path(container_id: str, old_path: str, new_path: str) -> str:
+async def rename_path(
+    container_id: str, old_path: str, new_path: str, podman=None
+) -> str:
     """Rename/move a file or directory.  Returns the new path."""
     old_path = validate_path(old_path)
     new_path = validate_path(new_path)
@@ -229,7 +233,9 @@ async def rename_path(container_id: str, old_path: str, new_path: str) -> str:
     return new_path
 
 
-async def write_file(container_id: str, path: str, content: bytes) -> str:
+async def write_file(
+    container_id: str, path: str, content: bytes, podman=None
+) -> str:
     """Write file contents.  Returns the path written."""
     path = validate_path(path)
     # mkdir -p + cat > file in one sh invocation.

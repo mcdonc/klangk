@@ -9,7 +9,11 @@ HTTP-like codes (404 not-found, 409 conflict/in-use) so callers can
 branch accordingly; anything else maps to 500.
 
 The binary is configurable via the ``podman_bin`` setting (defaults to
-``podman``).
+``podman``). The :class:`Podman` class takes ``KlangkSettings`` once
+(at construction, in :func:`build_app`) and carries the resolved binary
+path on ``self._bin`` — no ``get_settings()`` reacharound (#1468).
+Callers obtain the instance via ``app.state.podman`` (explicit threading,
+the same pattern as ``container_registry`` / ``sockets``).
 """
 
 import asyncio
@@ -20,14 +24,10 @@ import tempfile
 import time
 from collections.abc import AsyncGenerator
 
-from .settings import get_settings, resolve_indirection
+from .settings import KlangkSettings, resolve_indirection
 from .util import BoundedOutputQueue
 
 logger = logging.getLogger(__name__)
-
-
-def _podman_bin() -> str:
-    return resolve_indirection(get_settings().podman_bin) or "podman"
 
 
 def subprocess_env() -> dict[str, str]:
@@ -62,434 +62,462 @@ def classify(stderr: str) -> int:
     return 500
 
 
-async def run(
-    args: list[str],
-    *,
-    check: bool = True,
-    stdin_data: bytes | None = None,
-    timeout: float | None = 30.0,
-) -> tuple[int, str, str]:
-    """Run ``podman <args>`` and return ``(returncode, stdout, stderr)``.
+class Podman:
+    """Owns the resolved podman binary path and the ~20 CLI wrappers.
 
-    Output is captured to temp files rather than ``stdout=PIPE`` +
-    ``communicate()``.  Lifecycle commands such as ``podman start`` can
-    spawn long-lived helpers (``pasta``) that inherit pipe fds, blocking
-    ``communicate()`` forever.  Temp files avoid this.
-
-    *timeout* caps how long we wait for the process (default 30 s).
-    On timeout the process is killed and a ``PodmanError(500, ...)`` is
-    raised (unless *check* is False, in which case rc=-1 is returned).
+    Constructed once in :func:`build_app` and stored on
+    ``app.state.podman`` (#1468). The binary path is resolved once from
+    ``settings.podman_bin``; methods use ``self._bin`` instead of a
+    per-call ``get_settings()`` reacharound.
     """
-    cmd_label = f"podman {args[0]}" if args else "podman"
-    t0 = time.monotonic()
-    with (
-        tempfile.TemporaryFile() as out_f,
-        tempfile.TemporaryFile() as err_f,
-    ):
-        t1 = time.monotonic()
-        proc = await asyncio.create_subprocess_exec(
-            _podman_bin(),
-            *args,
-            stdin=(
-                asyncio.subprocess.PIPE if stdin_data is not None else None
-            ),
-            stdout=out_f,
-            stderr=err_f,
-            env=subprocess_env(),
-        )
-        t2 = time.monotonic()
-        if stdin_data is not None:
-            proc.stdin.write(stdin_data)
-            await proc.stdin.drain()
-            proc.stdin.close()
-        timed_out = False
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            timed_out = True
-            logger.warning(
-                "podman-timeout: %s exceeded %.1fs — killing",
-                cmd_label,
-                timeout,
+
+    def __init__(self, settings: KlangkSettings):
+        self._settings = settings
+        self._bin = resolve_indirection(settings.podman_bin) or "podman"
+
+    @property
+    def bin(self) -> str:
+        """The resolved podman binary path (for ``ExecSession`` etc.)."""
+        return self._bin
+
+    async def run(
+        self,
+        args: list[str],
+        *,
+        check: bool = True,
+        stdin_data: bytes | None = None,
+        timeout: float | None = 30.0,
+    ) -> tuple[int, str, str]:
+        """Run ``podman <args>`` and return ``(returncode, stdout, stderr)``.
+
+        Output is captured to temp files rather than ``stdout=PIPE`` +
+        ``communicate()``.  Lifecycle commands such as ``podman start`` can
+        spawn long-lived helpers (``pasta``) that inherit pipe fds, blocking
+        ``communicate()`` forever.  Temp files avoid this.
+
+        *timeout* caps how long we wait for the process (default 30 s).
+        On timeout the process is killed and a ``PodmanError(500, ...)`` is
+        raised (unless *check* is False, in which case rc=-1 is returned).
+        """
+        cmd_label = f"podman {args[0]}" if args else "podman"
+        t0 = time.monotonic()
+        with (
+            tempfile.TemporaryFile() as out_f,
+            tempfile.TemporaryFile() as err_f,
+        ):
+            t1 = time.monotonic()
+            proc = await asyncio.create_subprocess_exec(
+                self._bin,
+                *args,
+                stdin=(
+                    asyncio.subprocess.PIPE if stdin_data is not None else None
+                ),
+                stdout=out_f,
+                stderr=err_f,
+                env=subprocess_env(),
             )
-            proc.kill()
-            await proc.wait()
-        t3 = time.monotonic()
-        out_f.seek(0)
-        err_f.seek(0)
-        out = out_f.read().decode("utf-8", errors="replace")
-        err = err_f.read().decode("utf-8", errors="replace")
-    rc = proc.returncode or 0
-    if timed_out:
-        rc = -1
-        err = err or f"{cmd_label} timed out after {timeout}s"
-    elapsed = t3 - t0
-    logger.debug(
-        "podman-timing: %s tempfile=%.3fs spawn=%.3fs wait=%.3fs total=%.3fs",
-        cmd_label,
-        t1 - t0,
-        t2 - t1,
-        t3 - t2,
-        elapsed,
-    )
-    if elapsed > 2.0 and err.strip():  # pragma: no cover
-        logger.debug("podman-timing: %s stderr: %s", cmd_label, err.strip())
-    if check and rc != 0:
-        raise PodmanError(classify(err), err.strip() or f"podman {args[0]}")
-    return rc, out, err
-
-
-async def run_raw(
-    args: list[str],
-    *,
-    check: bool = True,
-    stdin_data: bytes | None = None,
-    timeout: float | None = 30.0,
-) -> tuple[int, bytes, str]:
-    """Like ``run`` but returns raw stdout bytes (for binary data)."""
-    cmd_label = f"podman {args[0]}" if args else "podman"
-    t0 = time.monotonic()
-    with (
-        tempfile.TemporaryFile() as out_f,
-        tempfile.TemporaryFile() as err_f,
-    ):
-        t1 = time.monotonic()
-        proc = await asyncio.create_subprocess_exec(
-            _podman_bin(),
-            *args,
-            stdin=(
-                asyncio.subprocess.PIPE if stdin_data is not None else None
-            ),
-            stdout=out_f,
-            stderr=err_f,
-            env=subprocess_env(),
+            t2 = time.monotonic()
+            if stdin_data is not None:
+                proc.stdin.write(stdin_data)
+                await proc.stdin.drain()
+                proc.stdin.close()
+            timed_out = False
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                timed_out = True
+                logger.warning(
+                    "podman-timeout: %s exceeded %.1fs — killing",
+                    cmd_label,
+                    timeout,
+                )
+                proc.kill()
+                await proc.wait()
+            t3 = time.monotonic()
+            out_f.seek(0)
+            err_f.seek(0)
+            out = out_f.read().decode("utf-8", errors="replace")
+            err = err_f.read().decode("utf-8", errors="replace")
+        rc = proc.returncode or 0
+        if timed_out:
+            rc = -1
+            err = err or f"{cmd_label} timed out after {timeout}s"
+        elapsed = t3 - t0
+        logger.debug(
+            "podman-timing: %s tempfile=%.3fs spawn=%.3fs wait=%.3fs"
+            " total=%.3fs",
+            cmd_label,
+            t1 - t0,
+            t2 - t1,
+            t3 - t2,
+            elapsed,
         )
-        t2 = time.monotonic()
-        if stdin_data is not None:
-            proc.stdin.write(stdin_data)
-            await proc.stdin.drain()
-            proc.stdin.close()
-        timed_out = False
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            timed_out = True
-            logger.warning(
-                "podman-timeout: %s exceeded %.1fs — killing",
-                cmd_label,
-                timeout,
+        if elapsed > 2.0 and err.strip():  # pragma: no cover
+            logger.debug(
+                "podman-timing: %s stderr: %s", cmd_label, err.strip()
             )
-            proc.kill()
-            await proc.wait()
-        t3 = time.monotonic()
-        out_f.seek(0)
-        err_f.seek(0)
-        out_bytes = out_f.read()
-        err = err_f.read().decode("utf-8", errors="replace")
-    rc = proc.returncode or 0
-    if timed_out:
-        rc = -1
-        err = err or f"{cmd_label} timed out after {timeout}s"
-    elapsed = t3 - t0
-    logger.debug(
-        "podman-timing: %s tempfile=%.3fs spawn=%.3fs wait=%.3fs total=%.3fs",
-        cmd_label,
-        t1 - t0,
-        t2 - t1,
-        t3 - t2,
-        elapsed,
-    )
-    if elapsed > 2.0 and err.strip():  # pragma: no cover
-        logger.debug("podman-timing: %s stderr: %s", cmd_label, err.strip())
-    if check and rc != 0:
-        raise PodmanError(classify(err), err.strip() or f"podman {args[0]}")
-    return rc, out_bytes, err
+        if check and rc != 0:
+            raise PodmanError(
+                classify(err), err.strip() or f"podman {args[0]}"
+            )
+        return rc, out, err
 
-
-# --- Containers ---
-
-
-async def inspect_container(container_id: str) -> dict | None:
-    """Return the inspect dict for a container, or None if it is gone."""
-    rc, out, _err = await run(
-        ["container", "inspect", container_id], check=False
-    )
-    if rc != 0:
-        return None
-    data = json.loads(out)
-    return data[0] if data else None
-
-
-async def create_container(
-    name: str,
-    image: str,
-    *,
-    labels: dict[str, str] | None = None,
-    binds: list[str] | None = None,
-    tmpfs: dict[str, str] | None = None,
-    publish: list[tuple[int, int]] | None = None,
-    add_hosts: list[str] | None = None,
-    dns: list[str] | None = None,
-    env: list[str] | None = None,
-    init: bool = False,
-    interactive: bool = False,
-    pull: str = "never",
-    replace: bool = True,
-    userns: str | None = None,
-) -> str:
-    """Create a container and return its id.
-
-    ``publish`` is a list of ``(host_port, container_port)`` pairs.
-    ``replace=True`` removes an existing container with the same name.
-    """
-    args = ["create", f"--pull={pull}", "--name", name]
-    if replace:
-        args.append("--replace")
-    if init:
-        args.append("--init")
-    if interactive:
-        args.append("-i")
-    if userns:
-        args += ["--userns", userns]
-    for key, value in (labels or {}).items():
-        args += ["--label", f"{key}={value}"]
-    for bind in binds or []:
-        args += ["-v", bind]
-    for path, opts in (tmpfs or {}).items():
-        args += ["--tmpfs", f"{path}:{opts}"]
-    for host_port, container_port in publish or []:
-        args += ["-p", f"{host_port}:{container_port}"]
-    for host in add_hosts or []:
-        args += ["--add-host", host]
-    for server in dns or []:
-        args += ["--dns", server]
-    for entry in env or []:
-        args += ["-e", entry]
-    args.append(image)
-    _rc, out, _err = await run(args, timeout=120.0)
-    return out.strip()
-
-
-async def start_container(container_id: str) -> None:
-    """Start a created container."""
-    await run(["start", container_id], timeout=120.0)
-
-
-async def wait_for_container_ready(
-    container_id: str, *, timeout: float = 60.0
-) -> None:
-    """Block until the container's entrypoint signals readiness.
-
-    ``podman start`` returns the moment the container reaches "running"
-    state — i.e. the entrypoint has *begun*, not finished. The entrypoint
-    creates ``/tmp/.klangk-ready`` once its one-time setup (on-entrypoint
-    plugin hooks) is done, so this blocks until that sentinel exists and
-    callers can treat the container as fully ready, not just started.
-
-    Implemented as a single ``podman exec`` that spins on the sentinel
-    file: one round-trip, no poll interval, so the only latency is the
-    irreducible entrypoint work itself.
-
-    Raises :class:`PodmanError` if the sentinel does not appear within
-    *timeout* seconds.
-    """
-    rc, _out, _err = await exec_container(
-        container_id,
-        [
-            "sh",
-            "-c",
-            "while [ ! -f /tmp/.klangk-ready ]; do sleep 0.1; done",
-        ],
-        timeout=timeout,
-    )
-    if rc != 0:
-        raise PodmanError(
-            500,
-            f"Container {container_id} did not become ready within "
-            f"{timeout}s (entrypoint did not create /tmp/.klangk-ready)",
+    async def run_raw(
+        self,
+        args: list[str],
+        *,
+        check: bool = True,
+        stdin_data: bytes | None = None,
+        timeout: float | None = 30.0,
+    ) -> tuple[int, bytes, str]:
+        """Like ``run`` but returns raw stdout bytes (for binary data)."""
+        cmd_label = f"podman {args[0]}" if args else "podman"
+        t0 = time.monotonic()
+        with (
+            tempfile.TemporaryFile() as out_f,
+            tempfile.TemporaryFile() as err_f,
+        ):
+            t1 = time.monotonic()
+            proc = await asyncio.create_subprocess_exec(
+                self._bin,
+                *args,
+                stdin=(
+                    asyncio.subprocess.PIPE if stdin_data is not None else None
+                ),
+                stdout=out_f,
+                stderr=err_f,
+                env=subprocess_env(),
+            )
+            t2 = time.monotonic()
+            if stdin_data is not None:
+                proc.stdin.write(stdin_data)
+                await proc.stdin.drain()
+                proc.stdin.close()
+            timed_out = False
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                timed_out = True
+                logger.warning(
+                    "podman-timeout: %s exceeded %.1fs — killing",
+                    cmd_label,
+                    timeout,
+                )
+                proc.kill()
+                await proc.wait()
+            t3 = time.monotonic()
+            out_f.seek(0)
+            err_f.seek(0)
+            out_bytes = out_f.read()
+            err = err_f.read().decode("utf-8", errors="replace")
+        rc = proc.returncode or 0
+        if timed_out:
+            rc = -1
+            err = err or f"{cmd_label} timed out after {timeout}s"
+        elapsed = t3 - t0
+        logger.debug(
+            "podman-timing: %s tempfile=%.3fs spawn=%.3fs wait=%.3fs"
+            " total=%.3fs",
+            cmd_label,
+            t1 - t0,
+            t2 - t1,
+            t3 - t2,
+            elapsed,
         )
+        if elapsed > 2.0 and err.strip():  # pragma: no cover
+            logger.debug(
+                "podman-timing: %s stderr: %s", cmd_label, err.strip()
+            )
+        if check and rc != 0:
+            raise PodmanError(
+                classify(err), err.strip() or f"podman {args[0]}"
+            )
+        return rc, out_bytes, err
 
+    # --- Containers ---
 
-def _exec_args(
-    container_id: str,
-    cmd: list[str],
-    *,
-    user: str | None = None,
-    interactive: bool = False,
-    extra_env: dict[str, str] | None = None,
-) -> list[str]:
-    """Build the ``podman exec`` argument list (without the leading binary).
+    async def inspect_container(self, container_id: str) -> dict | None:
+        """Return the inspect dict for a container, or None if it is gone."""
+        rc, out, _err = await self.run(
+            ["container", "inspect", container_id], check=False
+        )
+        if rc != 0:
+            return None
+        data = json.loads(out)
+        return data[0] if data else None
 
-    All options (``-i`` / ``-u`` / ``-e``) precede the container id and
-    command, matching ``podman exec [OPTIONS] CONTAINER [COMMAND...]``.
-    Centralized so the three ``exec_container*`` callers stay in sync and
-    there is a single place to add flags (e.g. ``extra_env``).
-    """
-    args = ["exec"]
-    if interactive:
-        args.append("-i")
-    if user:
-        args += ["-u", user]
-    if extra_env:
-        for key, value in extra_env.items():
-            args += ["-e", f"{key}={value}"]
-    args.append(container_id)
-    args.extend(cmd)
-    return args
+    async def create_container(
+        self,
+        name: str,
+        image: str,
+        *,
+        labels: dict[str, str] | None = None,
+        binds: list[str] | None = None,
+        tmpfs: dict[str, str] | None = None,
+        publish: list[tuple[int, int]] | None = None,
+        add_hosts: list[str] | None = None,
+        dns: list[str] | None = None,
+        env: list[str] | None = None,
+        init: bool = False,
+        interactive: bool = False,
+        pull: str = "never",
+        replace: bool = True,
+        userns: str | None = None,
+    ) -> str:
+        """Create a container and return its id.
 
+        ``publish`` is a list of ``(host_port, container_port)`` pairs.
+        ``replace=True`` removes an existing container with the same name.
+        """
+        args = ["create", f"--pull={pull}", "--name", name]
+        if replace:
+            args.append("--replace")
+        if init:
+            args.append("--init")
+        if interactive:
+            args.append("-i")
+        if userns:
+            args += ["--userns", userns]
+        for key, value in (labels or {}).items():
+            args += ["--label", f"{key}={value}"]
+        for bind in binds or []:
+            args += ["-v", bind]
+        for path, opts in (tmpfs or {}).items():
+            args += ["--tmpfs", f"{path}:{opts}"]
+        for host_port, container_port in publish or []:
+            args += ["-p", f"{host_port}:{container_port}"]
+        for host in add_hosts or []:
+            args += ["--add-host", host]
+        for server in dns or []:
+            args += ["--dns", server]
+        for entry in env or []:
+            args += ["-e", entry]
+        args.append(image)
+        _rc, out, _err = await self.run(args, timeout=120.0)
+        return out.strip()
 
-async def exec_container(
-    container_id: str,
-    cmd: list[str],
-    *,
-    user: str | None = None,
-    stdin_data: bytes | None = None,
-    extra_env: dict[str, str] | None = None,
-    timeout: float | None = 30.0,
-) -> tuple[int, str, str]:
-    """Run a command inside a running container.
+    async def start_container(self, container_id: str) -> None:
+        """Start a created container."""
+        await self.run(["start", container_id], timeout=120.0)
 
-    Returns ``(returncode, stdout, stderr)``.
-    """
-    args = _exec_args(
-        container_id,
-        cmd,
-        user=user,
-        interactive=stdin_data is not None,
-        extra_env=extra_env,
-    )
-    return await run(args, check=False, stdin_data=stdin_data, timeout=timeout)
+    async def wait_for_container_ready(
+        self, container_id: str, *, timeout: float = 60.0
+    ) -> None:
+        """Block until the container's entrypoint signals readiness.
 
+        ``podman start`` returns the moment the container reaches "running"
+        state — i.e. the entrypoint has *begun*, not finished. The entrypoint
+        creates ``/tmp/.klangk-ready`` once its one-time setup (on-entrypoint
+        plugin hooks) is done, so this blocks until that sentinel exists and
+        callers can treat the container as fully ready, not just started.
 
-async def exec_container_bytes(
-    container_id: str,
-    cmd: list[str],
-    *,
-    user: str | None = None,
-    extra_env: dict[str, str] | None = None,
-    timeout: float | None = 30.0,
-) -> tuple[int, bytes, str]:
-    """Like ``exec_container`` but returns raw stdout bytes (for binary data)."""
-    args = _exec_args(container_id, cmd, user=user, extra_env=extra_env)
-    return await run_raw(args, check=False, timeout=timeout)
+        Implemented as a single ``podman exec`` that spins on the sentinel
+        file: one round-trip, no poll interval, so the only latency is the
+        irreducible entrypoint work itself.
 
+        Raises :class:`PodmanError` if the sentinel does not appear within
+        *timeout* seconds.
+        """
+        rc, _out, _err = await self.exec_container(
+            container_id,
+            [
+                "sh",
+                "-c",
+                "while [ ! -f /tmp/.klangk-ready ]; do sleep 0.1; done",
+            ],
+            timeout=timeout,
+        )
+        if rc != 0:
+            raise PodmanError(
+                500,
+                f"Container {container_id} did not become ready within "
+                f"{timeout}s (entrypoint did not create /tmp/.klangk-ready)",
+            )
 
-async def exec_container_stream(
-    container_id: str,
-    cmd: list[str],
-    *,
-    user: str | None = None,
-    extra_env: dict[str, str] | None = None,
-    chunk_size: int = 64 * 1024,
-) -> AsyncGenerator[bytes, None]:
-    """Stream stdout from a command inside a container.
+    @staticmethod
+    def _exec_args(
+        container_id: str,
+        cmd: list[str],
+        *,
+        user: str | None = None,
+        interactive: bool = False,
+        extra_env: dict[str, str] | None = None,
+    ) -> list[str]:
+        """Build the ``podman exec`` argument list (without the leading binary).
 
-    Uses ``stdout=PIPE`` for true end-to-end streaming without buffering
-    to disk.  stderr is discarded to avoid pipe-buffer deadlocks (the
-    process would block if stderr fills while we only drain stdout).
-    """
-    args = _exec_args(container_id, cmd, user=user, extra_env=extra_env)
-    proc = await asyncio.create_subprocess_exec(
-        _podman_bin(),
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-        env=subprocess_env(),
-    )
-    yielded = False
-    try:
-        while True:
-            chunk = await proc.stdout.read(chunk_size)
-            if not chunk:
-                break
-            yielded = True
-            yield chunk
-    finally:
-        if proc.returncode is None:
-            proc.kill()
-        await proc.wait()
-    if proc.returncode != 0:
-        logger.warning(
-            "exec_container_stream command failed (rc=%d): %s %s",
-            proc.returncode,
+        All options (``-i`` / ``-u`` / ``-e``) precede the container id and
+        command, matching ``podman exec [OPTIONS] CONTAINER [COMMAND...]``.
+        Centralized so the three ``exec_container*`` callers stay in sync and
+        there is a single place to add flags (e.g. ``extra_env``).
+        """
+        args = ["exec"]
+        if interactive:
+            args.append("-i")
+        if user:
+            args += ["-u", user]
+        if extra_env:
+            for key, value in extra_env.items():
+                args += ["-e", f"{key}={value}"]
+        args.append(container_id)
+        args.extend(cmd)
+        return args
+
+    async def exec_container(
+        self,
+        container_id: str,
+        cmd: list[str],
+        *,
+        user: str | None = None,
+        stdin_data: bytes | None = None,
+        extra_env: dict[str, str] | None = None,
+        timeout: float | None = 30.0,
+    ) -> tuple[int, str, str]:
+        """Run a command inside a running container.
+
+        Returns ``(returncode, stdout, stderr)``.
+        """
+        args = self._exec_args(
             container_id,
             cmd,
+            user=user,
+            interactive=stdin_data is not None,
+            extra_env=extra_env,
         )
-        # Only abort the stream if no data was produced; if data was
-        # yielded the response is already in-flight and may be valid
-        # (e.g. tar exits 1 when files change during archiving).
-        if not yielded:
-            raise PodmanError(
+        return await self.run(
+            args, check=False, stdin_data=stdin_data, timeout=timeout
+        )
+
+    async def exec_container_bytes(
+        self,
+        container_id: str,
+        cmd: list[str],
+        *,
+        user: str | None = None,
+        extra_env: dict[str, str] | None = None,
+        timeout: float | None = 30.0,
+    ) -> tuple[int, bytes, str]:
+        """Like ``exec_container`` but returns raw stdout bytes."""
+        args = self._exec_args(
+            container_id, cmd, user=user, extra_env=extra_env
+        )
+        return await self.run_raw(args, check=False, timeout=timeout)
+
+    async def exec_container_stream(
+        self,
+        container_id: str,
+        cmd: list[str],
+        *,
+        user: str | None = None,
+        extra_env: dict[str, str] | None = None,
+        chunk_size: int = 64 * 1024,
+    ) -> AsyncGenerator[bytes, None]:
+        """Stream stdout from a command inside a container.
+
+        Uses ``stdout=PIPE`` for true end-to-end streaming without buffering
+        to disk.  stderr is discarded to avoid pipe-buffer deadlocks (the
+        process would block if stderr fills while we only drain stdout).
+        """
+        args = self._exec_args(
+            container_id, cmd, user=user, extra_env=extra_env
+        )
+        proc = await asyncio.create_subprocess_exec(
+            self._bin,
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=subprocess_env(),
+        )
+        yielded = False
+        try:
+            while True:
+                chunk = await proc.stdout.read(chunk_size)
+                if not chunk:
+                    break
+                yielded = True
+                yield chunk
+        finally:
+            if proc.returncode is None:
+                proc.kill()
+            await proc.wait()
+        if proc.returncode != 0:
+            logger.warning(
+                "exec_container_stream command failed (rc=%d): %s %s",
                 proc.returncode,
-                f"stream command exited with code {proc.returncode}",
+                container_id,
+                cmd,
             )
+            # Only abort the stream if no data was produced; if data was
+            # yielded the response is already in-flight and may be valid
+            # (e.g. tar exits 1 when files change during archiving).
+            if not yielded:
+                raise PodmanError(
+                    proc.returncode,
+                    f"stream command exited with code {proc.returncode}",
+                )
 
+    async def remove_container(
+        self, container_id: str, *, force: bool = True
+    ) -> None:
+        """Remove a container; never raises on 404."""
+        args = ["rm"]
+        if force:
+            args.append("-f")
+        args.append(container_id)
+        rc, _out, err = await self.run(args, check=False)
+        if rc != 0 and classify(err) != 404:
+            raise PodmanError(classify(err), err.strip() or "podman rm")
 
-async def remove_container(container_id: str, *, force: bool = True) -> None:
-    """Remove a container; never raises on 404."""
-    args = ["rm"]
-    if force:
-        args.append("-f")
-    args.append(container_id)
-    rc, _out, err = await run(args, check=False)
-    if rc != 0 and classify(err) != 404:
-        raise PodmanError(classify(err), err.strip() or "podman rm")
+    async def list_containers(self, label: str) -> list[dict]:
+        """List containers matching ``label`` (``key=value``)."""
+        _rc, out, _err = await self.run(
+            ["ps", "-a", "--filter", f"label={label}", "--format", "json"]
+        )
+        out = out.strip()
+        return json.loads(out) if out else []
 
+    # --- Volumes ---
 
-async def list_containers(label: str) -> list[dict]:
-    """List containers matching ``label`` (``key=value``)."""
-    _rc, out, _err = await run(
-        ["ps", "-a", "--filter", f"label={label}", "--format", "json"]
-    )
-    out = out.strip()
-    return json.loads(out) if out else []
+    async def inspect_volume(self, name: str) -> dict | None:
+        """Return a volume's inspect dict, or None if it does not exist."""
+        rc, out, _err = await self.run(
+            ["volume", "inspect", name], check=False
+        )
+        if rc != 0:
+            return None
+        data = json.loads(out)
+        return data[0] if data else None
 
+    async def create_volume(
+        self, name: str, labels: dict[str, str] | None = None
+    ) -> dict:
+        """Create a labelled volume and return its inspect dict."""
+        args = ["volume", "create"]
+        for key, value in (labels or {}).items():
+            args += ["--label", f"{key}={value}"]
+        args.append(name)
+        await self.run(args)
+        info = await self.inspect_volume(name)
+        if info is None:  # pragma: no cover
+            raise PodmanError(500, f"volume {name!r} vanished after create")
+        return info
 
-# --- Volumes ---
+    async def list_volumes(self, label: str) -> list[dict]:
+        """List volumes matching ``label`` (``key=value``)."""
+        _rc, out, _err = await self.run(
+            ["volume", "ls", "--filter", f"label={label}", "--format", "json"]
+        )
+        out = out.strip()
+        return json.loads(out) if out else []
 
+    async def remove_volume(self, name: str) -> None:
+        """Remove a volume.
 
-async def inspect_volume(name: str) -> dict | None:
-    """Return a volume's inspect dict, or None if it does not exist."""
-    rc, out, _err = await run(["volume", "inspect", name], check=False)
-    if rc != 0:
-        return None
-    data = json.loads(out)
-    return data[0] if data else None
-
-
-async def create_volume(
-    name: str, labels: dict[str, str] | None = None
-) -> dict:
-    """Create a labelled volume and return its inspect dict."""
-    args = ["volume", "create"]
-    for key, value in (labels or {}).items():
-        args += ["--label", f"{key}={value}"]
-    args.append(name)
-    await run(args)
-    info = await inspect_volume(name)
-    if info is None:  # pragma: no cover
-        raise PodmanError(500, f"volume {name!r} vanished after create")
-    return info
-
-
-async def list_volumes(label: str) -> list[dict]:
-    """List volumes matching ``label`` (``key=value``)."""
-    _rc, out, _err = await run(
-        ["volume", "ls", "--filter", f"label={label}", "--format", "json"]
-    )
-    out = out.strip()
-    return json.loads(out) if out else []
-
-
-async def remove_volume(name: str) -> None:
-    """Remove a volume.
-
-    Raises :class:`PodmanError` with status 404 or 409 so callers can
-    map them to HTTP responses.
-    """
-    rc, _out, err = await run(["volume", "rm", name], check=False)
-    if rc != 0:
-        raise PodmanError(classify(err), err.strip() or "podman volume rm")
+        Raises :class:`PodmanError` with status 404 or 409 so callers can
+        map them to HTTP responses.
+        """
+        rc, _out, err = await self.run(["volume", "rm", name], check=False)
+        if rc != 0:
+            raise PodmanError(classify(err), err.strip() or "podman volume rm")
 
 
 # --- Exec sessions ---
@@ -501,10 +529,12 @@ class ExecSession:
     def __init__(
         self,
         container_id: str,
+        podman: Podman,
         env: list[str] | None = None,
         work_dir: str = "/home/work",
     ):
         self.container_id = container_id
+        self._podman = podman
         self.env = env or []
         self.work_dir = work_dir
         self._proc: asyncio.subprocess.Process | None = None
@@ -547,7 +577,7 @@ class ExecSession:
         else:
             argv = command
         exec_cmd = [
-            _podman_bin(),
+            self._podman.bin,
             "exec",
             "-i",
             *env_flags,

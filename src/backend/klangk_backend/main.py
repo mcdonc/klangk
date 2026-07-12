@@ -24,6 +24,7 @@ from . import (
     nginx as nginx_mod,
     oidc,
     plugins,
+    podman,
     ssl_trust,
     workspaces,
     wshandler,
@@ -747,6 +748,12 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     sockets = wshandler.WebSocketState()
     app.state.sockets = sockets
     app.state.container_registry.sockets = sockets
+    # #1468: Podman(settings) owns the resolved binary path + the ~20 CLI
+    # wrappers. The registry reaches it via self.podman; terminal/files/etc.
+    # thread app.state.podman explicitly.
+    podman_inst = podman.Podman(settings)
+    app.state.podman = podman_inst
+    app.state.container_registry.podman = podman_inst
     app.state.container_registry.app_state = app.state
     # WebSocketState reaches the registry through its own app_state
     # back-reference (send_service_health_snapshot / reset_workspace).

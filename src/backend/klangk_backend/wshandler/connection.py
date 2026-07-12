@@ -363,7 +363,9 @@ class Connection:
         # Populate skeleton if this is a new user home (symlink was
         # created above, before container start).
         if self._home_created:
-            await workspaces.populate_home_skel(container_id, self.user["id"])
+            await workspaces.populate_home_skel(
+                container_id, self.user["id"], self.app_state.podman
+            )
 
         logger.info("Container ready for workspace %s", workspace_id)
 
@@ -871,7 +873,9 @@ class Connection:
                 )
                 if created and self.container_id:
                     await workspaces.populate_home_skel(
-                        self.container_id, self.user["id"]
+                        self.container_id,
+                        self.user["id"],
+                        self.app_state.podman,
                     )
                 self._user_home = container_home
             self.sock.send_json(
