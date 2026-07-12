@@ -16,7 +16,14 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from klangk_backend import api, auth, main, model, oidc as oidc_mod
+from klangk_backend import (
+    api,
+    auth,
+    main,
+    model,
+    oidc as oidc_mod,
+    plugins as plugins_mod,
+)
 from klangk_backend.settings import KlangkSettings
 from klangk_backend.main import register_exception_handlers
 from klangk_backend.util import API_PREFIX
@@ -50,6 +57,7 @@ async def mode_server(db, monkeypatch):
     app = FastAPI()
     app.state.settings = KlangkSettings(env={"KLANGK_AUTH_MODES": "none"})
     app.state.oidc = oidc_mod.OIDC(app.state)
+    app.state.plugins = plugins_mod.Plugins(app.state)
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)
     register_exception_handlers(app)

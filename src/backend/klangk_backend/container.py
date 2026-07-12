@@ -5,7 +5,7 @@ import logging
 import os
 import time
 
-from . import auth, bringup, model, plugins, podman, util
+from . import auth, bringup, model, podman, util
 from .podman import PodmanError
 from .settings import KlangkSettings
 
@@ -1245,7 +1245,7 @@ class ContainerRegistry:
         # ever needed. Emitted only when a trustable cert dir is present.
         env_vars.extend(ssl_env_vars(ssl_dir))
 
-        for k, v in plugins.container_env().items():
+        for k, v in self.app_state.plugins.container_env().items():
             env_vars.append(f"{k}={v}")
 
         if extra_env:
