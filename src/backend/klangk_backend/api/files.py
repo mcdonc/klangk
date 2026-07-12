@@ -51,7 +51,7 @@ async def list_files(
 ):
     cid = _require_container(workspace_id, app_state.container_registry)
     try:
-        return await files.list_files(cid, path)
+        return await files.list_files(cid, path, app_state.podman)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -65,7 +65,7 @@ async def read_file(
 ):
     cid = _require_container(workspace_id, app_state.container_registry)
     try:
-        content = await files.read_file(cid, path)
+        content = await files.read_file(cid, path, app_state.podman)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if content is None:
@@ -84,7 +84,7 @@ async def delete_file(
 ):
     cid = _require_container(workspace_id, app_state.container_registry)
     try:
-        deleted = await files.delete_path(cid, path)
+        deleted = await files.delete_path(cid, path, app_state.podman)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError:
@@ -108,7 +108,9 @@ async def rename_file(
 ):
     cid = _require_container(workspace_id, app_state.container_registry)
     try:
-        renamed = await files.rename_path(cid, body.old_path, body.new_path)
+        renamed = await files.rename_path(
+            cid, body.old_path, body.new_path, app_state.podman
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError:
@@ -131,7 +133,7 @@ async def download_file(
 ):
     cid = _require_container(workspace_id, app_state.container_registry)
     try:
-        info = await files.stat_path(cid, path)
+        info = await files.stat_path(cid, path, app_state.podman)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if info is None:
@@ -139,14 +141,14 @@ async def download_file(
     name = sanitize_disposition_name(posixpath.basename(path) or "download")
     if not info["is_dir"]:
         return StreamingResponse(
-            files.stream_file(cid, path),
+            files.stream_file(cid, path, app_state.podman),
             media_type="application/octet-stream",
             headers={
                 "Content-Disposition": f'attachment; filename="{name}"',
             },
         )
     return StreamingResponse(
-        files.stream_dir_tar(cid, path),
+        files.stream_dir_tar(cid, path, app_state.podman),
         media_type="application/gzip",
         headers={
             "Content-Disposition": f'attachment; filename="{name}.tar.gz"',
@@ -181,7 +183,9 @@ async def upload_file(
         buf.write(chunk)
 
     try:
-        saved_path = await files.write_file(cid, filename, buf.getvalue())
+        saved_path = await files.write_file(
+            cid, filename, buf.getvalue(), app_state.podman
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except OSError as e:

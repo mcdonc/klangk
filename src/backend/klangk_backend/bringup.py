@@ -30,7 +30,9 @@ async def bringup(
     Called at the single choke point: every freshly-created container.
     Idempotent via :func:`terminal.ensure_service_session`.
     """
-    agent_home = await agent.ensure_agent_home(workspace_id, container_id)
+    agent_home = await agent.ensure_agent_home(
+        workspace_id, container_id, app_state.podman
+    )
     if not service_command:
         return
     await terminal.ensure_service_session(

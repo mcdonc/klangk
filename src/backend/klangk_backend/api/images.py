@@ -13,8 +13,9 @@ from .. import (
     auth,
     container,
     model,
-    podman,
 )
+from ..podman import PodmanError as PodmanError
+from ._common import get_app_state_dep
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +34,11 @@ async def list_images(_user: dict = Depends(auth.get_current_user)):
 
 
 @router.get("/volumes")
-async def list_volumes(user: dict = Depends(auth.get_current_user)):
-    volumes = await podman.list_volumes(
+async def list_volumes(
+    user: dict = Depends(auth.get_current_user),
+    app_state=Depends(get_app_state_dep),
+):
+    volumes = await app_state.podman.list_volumes(
         f"klangk.instance={model.get_instance_id()}"
     )
     uid = user["id"]
@@ -56,12 +60,13 @@ class CreateVolumeRequest(BaseModel):
 async def create_volume(
     body: CreateVolumeRequest,
     user: dict = Depends(auth.get_current_user),
+    app_state=Depends(get_app_state_dep),
 ):
-    if await podman.inspect_volume(body.name) is not None:
+    if await app_state.podman.inspect_volume(body.name) is not None:
         raise HTTPException(
             status_code=409, detail=f"Volume {body.name!r} already exists"
         )
-    info = await podman.create_volume(
+    info = await app_state.podman.create_volume(
         body.name,
         {
             "klangk.managed": "true",
@@ -74,9 +79,11 @@ async def create_volume(
 
 @router.delete("/volumes/{name}")
 async def delete_volume(
-    name: str, user: dict = Depends(auth.get_current_user)
+    name: str,
+    user: dict = Depends(auth.get_current_user),
+    app_state=Depends(get_app_state_dep),
 ):
-    info = await podman.inspect_volume(name)
+    info = await app_state.podman.inspect_volume(name)
     if info is None:
         raise HTTPException(status_code=404, detail="Volume not found")
     labels = info.get("Labels") or {}
@@ -91,8 +98,8 @@ async def delete_volume(
             detail="Volume belongs to another user",
         )
     try:
-        await podman.remove_volume(name)
-    except podman.PodmanError as e:
+        await app_state.podman.remove_volume(name)
+    except PodmanError as e:
         if e.status == 404:
             raise HTTPException(
                 status_code=404, detail="Volume not found"

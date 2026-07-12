@@ -21,7 +21,7 @@ import termios
 import tty
 from collections.abc import AsyncGenerator
 
-from . import podman
+from .podman import subprocess_env
 from .exceptions import TerminalError
 from .model.workspaces import SETUP_STATE_COMPLETE
 from .util import BoundedOutputQueue, resolve_env_value
@@ -108,7 +108,9 @@ SERVICE_SESSION = "service"
 # app_state.container_registry.get_service_session_lock().
 
 
-async def has_tmux_session(container_id: str, session_name: str) -> bool:
+async def has_tmux_session(
+    container_id: str, session_name: str, podman
+) -> bool:
     """Return True if a tmux session named *session_name* exists."""
     try:
         rc, _, _ = await podman.exec_container(
@@ -123,7 +125,7 @@ async def has_tmux_session(container_id: str, session_name: str) -> bool:
 
 
 async def service_cmd_window_exists(
-    container_id: str, session_name: str
+    container_id: str, session_name: str, podman
 ) -> bool:
     """Return True if the ``service-cmd`` window exists in *session_name*.
 
@@ -182,6 +184,7 @@ async def _ensure_tmux_session(
     session_name: str,
     user_home: str | None = None,
     ssh_agent_socket: str | None = None,
+    podman=None,
 ) -> bool:
     """Ensure a detached base tmux session exists for *session_name*.
 
@@ -191,7 +194,7 @@ async def _ensure_tmux_session(
     not podman's), so the session's window-0 shell sources the right
     profile.
     """
-    if await has_tmux_session(container_id, session_name):
+    if await has_tmux_session(container_id, session_name, podman):
         return False
     env_args: list[str] = []
     if user_home is not None:
@@ -216,6 +219,7 @@ async def ensure_base_session(
     session_name: str,
     user_home: str | None = None,
     ssh_agent_socket: str | None = None,
+    podman=None,
 ) -> bool:
     """Ensure the firing user's base tmux session + window 0 exist.
 
@@ -227,7 +231,7 @@ async def ensure_base_session(
     regardless of setup state (#1133).
     """
     return await _ensure_tmux_session(
-        container_id, session_name, user_home, ssh_agent_socket
+        container_id, session_name, user_home, ssh_agent_socket, podman
     )
 
 
@@ -271,13 +275,17 @@ async def ensure_service_session(
     async with app_state.container_registry.get_service_session_lock(
         container_id
     ):
-        await _ensure_tmux_session(container_id, SERVICE_SESSION, agent_home)
+        await _ensure_tmux_session(
+            container_id, SERVICE_SESSION, agent_home, podman=app_state.podman
+        )
         if not (
             should_fire_service_command(service_command, setup_state)
-        ) or await service_cmd_window_exists(container_id, SERVICE_SESSION):
+        ) or await service_cmd_window_exists(
+            container_id, SERVICE_SESSION, app_state.podman
+        ):
             return
         try:
-            await podman.exec_container(
+            await app_state.podman.exec_container(
                 container_id,
                 [
                     "tmux",
@@ -303,7 +311,7 @@ async def ensure_service_session(
         # Same race as #1030.
         await asyncio.sleep(1)
         try:
-            await podman.exec_container(
+            await app_state.podman.exec_container(
                 container_id,
                 [
                     "tmux",
@@ -332,7 +340,7 @@ async def ensure_service_session(
             # into it. Kill it so the next fire re-runs the whole sequence
             # instead of no-op'ing forever on the half-created window (#1186).
             try:
-                await podman.exec_container(
+                await app_state.podman.exec_container(
                     container_id,
                     [
                         "tmux",
@@ -443,7 +451,7 @@ def _build_exec_argv(
     return argv
 
 
-async def attach_browser(container_id: str, browser_id: str) -> None:
+async def attach_browser(container_id: str, browser_id: str, podman) -> None:
     """Run ``klangk-attach-browser <browser_id>`` inside the container.
 
     This stores the browser ID in the tmux global environment so that
@@ -464,7 +472,7 @@ async def attach_browser(container_id: str, browser_id: str) -> None:
         )
 
 
-async def set_workspace_token(container_id: str, token: str) -> None:
+async def set_workspace_token(container_id: str, token: str, podman) -> None:
     """Write a workspace token to ``/run/klangk/workspace-token`` inside
     the container via ``klangk-set-workspace-token``.
     """
@@ -483,7 +491,7 @@ async def set_workspace_token(container_id: str, token: str) -> None:
 
 
 async def tmux_command(
-    container_id: str, session_name: str, args: list[str]
+    container_id: str, session_name: str, args: list[str], podman
 ) -> str:
     """Run a tmux command in the container and return stdout.
 
@@ -506,7 +514,9 @@ async def tmux_command(
     return ""  # pragma: no cover
 
 
-async def list_windows(container_id: str, session_name: str) -> list[dict]:
+async def list_windows(
+    container_id: str, session_name: str, podman
+) -> list[dict]:
     """List tmux windows for a session. Returns [{index, name}, ...]."""
     output = await tmux_command(
         container_id,
@@ -518,6 +528,7 @@ async def list_windows(container_id: str, session_name: str) -> list[dict]:
             "-F",
             "#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}",
         ],
+        podman,
     )
     windows = []
     for line in output.strip().splitlines():
@@ -535,7 +546,10 @@ async def list_windows(container_id: str, session_name: str) -> list[dict]:
 
 
 async def new_window(
-    container_id: str, session_name: str, name: str | None = None
+    container_id: str,
+    session_name: str,
+    name: str | None = None,
+    podman=None,
 ) -> list[dict]:
     """Create a new tmux window and return the updated window list.
 
@@ -600,7 +614,11 @@ async def new_window(
 
 
 async def rename_window(
-    container_id: str, session_name: str, index: int, name: str
+    container_id: str,
+    session_name: str,
+    index: int,
+    name: str,
+    podman,
 ) -> None:
     """Rename a tmux window.
 
@@ -608,18 +626,22 @@ async def rename_window(
     duplicates another window's name.
     """
     validate_window_name(name)
-    existing = await list_windows(container_id, session_name)
+    existing = await list_windows(container_id, session_name, podman)
     if any(w["name"] == name and w["index"] != index for w in existing):
         raise ValueError(f"Window name '{name}' already exists")
     await tmux_command(
         container_id,
         session_name,
         ["rename-window", "-t", f"{session_name}:{index}", name],
+        podman,
     )
 
 
 async def select_window(
-    container_id: str, session_name: str, target: int | str
+    container_id: str,
+    session_name: str,
+    target: int | str,
+    podman,
 ) -> None:
     """Switch the active tmux window.
 
@@ -636,11 +658,15 @@ async def select_window(
         container_id,
         session_name,
         ["select-window", "-t", t],
+        podman,
     )
 
 
 async def close_window(
-    container_id: str, session_name: str, target: int | str
+    container_id: str,
+    session_name: str,
+    target: int | str,
+    podman,
 ) -> list[dict]:
     """Close a tmux window and return the updated window list.
 
@@ -655,11 +681,14 @@ async def close_window(
         container_id,
         session_name,
         ["kill-window", "-t", t],
+        podman,
     )
-    return await list_windows(container_id, session_name)
+    return await list_windows(container_id, session_name, podman)
 
 
-async def kill_joiner_sessions(container_id: str, owner_handle: str) -> None:
+async def kill_joiner_sessions(
+    container_id: str, owner_handle: str, podman
+) -> None:
     """Kill all session-group sessions except the owner's own session.
 
     Used when unsharing to disconnect spectators/collaborators.
@@ -673,6 +702,7 @@ async def kill_joiner_sessions(container_id: str, owner_handle: str) -> None:
                 "-F",
                 "#{session_name}",
             ],
+            podman,
         )
         for session_name in output.strip().splitlines():
             if session_name != owner_handle:
@@ -681,6 +711,7 @@ async def kill_joiner_sessions(container_id: str, owner_handle: str) -> None:
                         container_id,
                         owner_handle,
                         ["kill-session", "-t", session_name],
+                        podman,
                     )
                 except TerminalError:
                     pass  # Session may have already exited
@@ -698,7 +729,8 @@ class ShellProcess:
     across all terminal sessions.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, podman=None) -> None:
+        self._podman = podman
         self._master_fd: int | None = None
         self._proc: asyncio.subprocess.Process | None = None
         self._read_event: asyncio.Event | None = None
@@ -711,13 +743,13 @@ class ShellProcess:
             tty.setraw(slave_fd)
             _set_winsize(master_fd, rows, cols)
             self._proc = await asyncio.create_subprocess_exec(
-                podman._podman_bin(),
+                self._podman.bin,
                 *argv,
                 stdin=slave_fd,
                 stdout=slave_fd,
                 stderr=slave_fd,
                 start_new_session=True,
-                env=podman.subprocess_env(),
+                env=subprocess_env(),
             )
         finally:
             os.close(slave_fd)
@@ -777,8 +809,8 @@ def _set_winsize(fd: int, rows: int, cols: int) -> None:  # pragma: no cover
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
-def make_shell_process() -> ShellProcess:
-    return ShellProcess()
+def make_shell_process(podman=None) -> ShellProcess:
+    return ShellProcess(podman)
 
 
 class TerminalSession:
@@ -795,8 +827,10 @@ class TerminalSession:
         user_id: str | None = None,
         user_handle: str | None = None,
         ssh_agent_socket: str | None = None,
+        podman=None,
     ):
         self.container_id = container_id
+        self._podman = podman
         self.session_name = session_name
         self.user_home = user_home
         self.socket_path = socket_path
@@ -873,7 +907,7 @@ class TerminalSession:
         # ignores the `-e` flags — the env var must be set explicitly.
         if self.ssh_agent_socket and self.session_name:
             try:
-                await podman.exec_container(
+                await self._podman.exec_container(
                     self.container_id,
                     [
                         "tmux",
@@ -1000,7 +1034,7 @@ class TerminalSession:
                 socket_args = (
                     ["-S", self.socket_path] if self.socket_path else []
                 )
-                await podman.exec_container(
+                await self._podman.exec_container(
                     self.container_id,
                     [
                         "tmux",

@@ -28,6 +28,10 @@ from klangk_backend.container import ContainerRegistry
 from klangk_backend.settings import KlangkSettings
 from klangk_backend.wshandler.session import WebSocketState
 
+# Mock Podman instance wired onto app.state.podman by the app fixture;
+# files/volume-API tests patch its methods via patch.object (#1468).
+_mock_pod = MagicMock()
+
 
 @pytest.fixture
 async def app(db):
@@ -45,6 +49,8 @@ async def app(db):
     registry.sockets = sockets
     registry.app_state = app.state
     sockets.app_state = app.state
+    app.state.podman = _mock_pod
+    registry.podman = _mock_pod
     agent.get_workspace_session = sockets.get_session
 
     app.include_router(api.root_router)
@@ -3782,7 +3788,7 @@ class TestVolumeRoutes:
     async def test_list_volumes(self, client, user):
         headers = await _auth_headers(client)
         with patch.object(
-            podman,
+            _mock_pod,
             "list_volumes",
             AsyncMock(
                 return_value=[
@@ -3818,9 +3824,9 @@ class TestVolumeRoutes:
         )
         with (
             patch.object(
-                podman, "inspect_volume", AsyncMock(return_value=None)
+                _mock_pod, "inspect_volume", AsyncMock(return_value=None)
             ),
-            patch.object(podman, "create_volume", mock_create),
+            patch.object(_mock_pod, "create_volume", mock_create),
         ):
             resp = await client.post(
                 "/api/v1/volumes",
@@ -3835,7 +3841,7 @@ class TestVolumeRoutes:
     async def test_create_duplicate_volume(self, client, user):
         headers = await _auth_headers(client)
         with patch.object(
-            podman,
+            _mock_pod,
             "inspect_volume",
             AsyncMock(return_value={"Name": "dup-vol"}),
         ):
@@ -3850,10 +3856,10 @@ class TestVolumeRoutes:
         headers = await _auth_headers(client)
         with (
             patch.object(
-                podman, "inspect_volume", AsyncMock(return_value=None)
+                _mock_pod, "inspect_volume", AsyncMock(return_value=None)
             ),
             patch.object(
-                podman,
+                _mock_pod,
                 "create_volume",
                 AsyncMock(side_effect=podman.PodmanError(500, "boom")),
             ),
@@ -3869,11 +3875,11 @@ class TestVolumeRoutes:
         headers = await _auth_headers(client)
         with (
             patch.object(
-                podman,
+                _mock_pod,
                 "inspect_volume",
                 AsyncMock(return_value=_managed_volume(user["id"])),
             ),
-            patch.object(podman, "remove_volume", AsyncMock()),
+            patch.object(_mock_pod, "remove_volume", AsyncMock()),
         ):
             resp = await client.delete(
                 "/api/v1/volumes/test-vol", headers=headers
@@ -3883,7 +3889,7 @@ class TestVolumeRoutes:
     async def test_delete_volume_not_found(self, client, user):
         headers = await _auth_headers(client)
         with patch.object(
-            podman, "inspect_volume", AsyncMock(return_value=None)
+            _mock_pod, "inspect_volume", AsyncMock(return_value=None)
         ):
             resp = await client.delete("/api/v1/volumes/nope", headers=headers)
         assert resp.status_code == 404
@@ -3891,7 +3897,7 @@ class TestVolumeRoutes:
     async def test_delete_volume_wrong_instance(self, client, user):
         headers = await _auth_headers(client)
         with patch.object(
-            podman,
+            _mock_pod,
             "inspect_volume",
             AsyncMock(return_value={"Labels": {"klangk.instance": "other"}}),
         ):
@@ -3903,7 +3909,7 @@ class TestVolumeRoutes:
     async def test_delete_volume_wrong_user(self, client, user):
         headers = await _auth_headers(client)
         with patch.object(
-            podman,
+            _mock_pod,
             "inspect_volume",
             AsyncMock(return_value=_managed_volume("someone-else")),
         ):
@@ -3917,12 +3923,12 @@ class TestVolumeRoutes:
         headers = await _auth_headers(client)
         with (
             patch.object(
-                podman,
+                _mock_pod,
                 "inspect_volume",
                 AsyncMock(return_value=_managed_volume(user["id"])),
             ),
             patch.object(
-                podman,
+                _mock_pod,
                 "remove_volume",
                 AsyncMock(side_effect=podman.PodmanError(404, "gone")),
             ),
@@ -3934,12 +3940,12 @@ class TestVolumeRoutes:
         headers = await _auth_headers(client)
         with (
             patch.object(
-                podman,
+                _mock_pod,
                 "inspect_volume",
                 AsyncMock(return_value=_managed_volume(user["id"])),
             ),
             patch.object(
-                podman,
+                _mock_pod,
                 "remove_volume",
                 AsyncMock(side_effect=podman.PodmanError(500, "internal")),
             ),
@@ -3951,12 +3957,12 @@ class TestVolumeRoutes:
         headers = await _auth_headers(client)
         with (
             patch.object(
-                podman,
+                _mock_pod,
                 "inspect_volume",
                 AsyncMock(return_value=_managed_volume(user["id"])),
             ),
             patch.object(
-                podman,
+                _mock_pod,
                 "remove_volume",
                 AsyncMock(side_effect=podman.PodmanError(409, "in use")),
             ),
@@ -3994,8 +4000,9 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
-            with patch(
-                "klangk_backend.files.podman.exec_container",
+            with patch.object(
+                _mock_pod,
+                "exec_container",
                 new_callable=AsyncMock,
                 return_value=(0, "f.txt\tf\t10\t0.0\t0.0\n", ""),
             ):
@@ -4032,8 +4039,9 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
-            with patch(
-                "klangk_backend.files.podman.exec_container",
+            with patch.object(
+                _mock_pod,
+                "exec_container",
                 new_callable=AsyncMock,
             ) as mock_exec:
                 # Upload: write_file calls exec once (sh -c)
@@ -4067,8 +4075,9 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
         try:
             self._registry.states[ws_id].last_activity = 0.0
-            with patch(
-                "klangk_backend.files.podman.exec_container",
+            with patch.object(
+                _mock_pod,
+                "exec_container",
                 new_callable=AsyncMock,
                 return_value=(0, "", ""),
             ):
@@ -4113,8 +4122,9 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
-            with patch(
-                "klangk_backend.files.podman.exec_container",
+            with patch.object(
+                _mock_pod,
+                "exec_container",
                 new_callable=AsyncMock,
                 return_value=(1, "", "No such file"),
             ):
@@ -4160,8 +4170,9 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
-            with patch(
-                "klangk_backend.files.podman.exec_container",
+            with patch.object(
+                _mock_pod,
+                "exec_container",
                 new_callable=AsyncMock,
             ) as mock_exec:
                 mock_exec.side_effect = [
@@ -4181,8 +4192,9 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
-            with patch(
-                "klangk_backend.files.podman.exec_container",
+            with patch.object(
+                _mock_pod,
+                "exec_container",
                 new_callable=AsyncMock,
                 return_value=(1, "", ""),
             ):
@@ -4216,8 +4228,9 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
-            with patch(
-                "klangk_backend.files.podman.exec_container",
+            with patch.object(
+                _mock_pod,
+                "exec_container",
                 new_callable=AsyncMock,
             ) as mock_exec:
                 mock_exec.side_effect = [
@@ -4243,8 +4256,9 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
-            with patch(
-                "klangk_backend.files.podman.exec_container",
+            with patch.object(
+                _mock_pod,
+                "exec_container",
                 new_callable=AsyncMock,
                 return_value=(1, "", ""),
             ):
@@ -4261,8 +4275,9 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
-            with patch(
-                "klangk_backend.files.podman.exec_container",
+            with patch.object(
+                _mock_pod,
+                "exec_container",
                 new_callable=AsyncMock,
             ) as mock_exec:
                 mock_exec.side_effect = [
@@ -4309,13 +4324,15 @@ class TestFileRoutes:
                 yield b"download me"
 
             with (
-                patch(
-                    "klangk_backend.files.podman.exec_container",
+                patch.object(
+                    _mock_pod,
+                    "exec_container",
                     new_callable=AsyncMock,
                     return_value=(0, "regular file\t11", ""),
                 ),
-                patch(
-                    "klangk_backend.files.podman.exec_container_stream",
+                patch.object(
+                    _mock_pod,
+                    "exec_container_stream",
                     side_effect=fake_stream,
                 ),
             ):
@@ -4339,13 +4356,15 @@ class TestFileRoutes:
                 yield b"data"
 
             with (
-                patch(
-                    "klangk_backend.files.podman.exec_container",
+                patch.object(
+                    _mock_pod,
+                    "exec_container",
                     new_callable=AsyncMock,
                     return_value=(0, "regular file\t4", ""),
                 ),
-                patch(
-                    "klangk_backend.files.podman.exec_container_stream",
+                patch.object(
+                    _mock_pod,
+                    "exec_container_stream",
                     side_effect=fake_stream,
                 ),
             ):
@@ -4371,13 +4390,15 @@ class TestFileRoutes:
                 yield b"tardata"
 
             with (
-                patch(
-                    "klangk_backend.files.podman.exec_container",
+                patch.object(
+                    _mock_pod,
+                    "exec_container",
                     new_callable=AsyncMock,
                     return_value=(0, "directory\t4096", ""),
                 ),
-                patch(
-                    "klangk_backend.files.podman.exec_container_stream",
+                patch.object(
+                    _mock_pod,
+                    "exec_container_stream",
                     side_effect=fake_stream,
                 ),
             ):
@@ -4395,8 +4416,9 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
-            with patch(
-                "klangk_backend.files.podman.exec_container",
+            with patch.object(
+                _mock_pod,
+                "exec_container",
                 new_callable=AsyncMock,
                 return_value=(1, "", "No such file"),
             ):
@@ -4515,8 +4537,9 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
-            with patch(
-                "klangk_backend.files.podman.exec_container",
+            with patch.object(
+                _mock_pod,
+                "exec_container",
                 new_callable=AsyncMock,
                 return_value=(1, "", "Read-only file system"),
             ):

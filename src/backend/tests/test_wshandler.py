@@ -60,6 +60,10 @@ def _trusted_default():
     }
 
 
+_mock_pod = MagicMock()
+_mock_pod.exec_container = AsyncMock(return_value=(0, "", ""))
+
+
 def _make_app_state(registry=None, sockets=None):
     """Build a minimal app_state for tests."""
     from klangk_backend.settings import KlangkSettings
@@ -79,6 +83,8 @@ def _make_app_state(registry=None, sockets=None):
     registry.sockets = sockets
     registry.app_state = app_state
     sockets.app_state = app_state
+    app_state.podman = _mock_pod
+    registry.podman = _mock_pod
     return app_state
 
 
@@ -1126,6 +1132,7 @@ class TestHandleTerminalStart:
             user_id="uid",
             user_handle="testuser",
             ssh_agent_socket=None,
+            podman=_mock_pod,
         )
         # Should have sent terminal_windows and shared_terminals
         sent = [c[0][0] for c in sock.send_json.call_args_list]
@@ -1626,6 +1633,7 @@ class TestHandleTerminalStart:
             user_id="uid",
             user_handle="testuser",
             ssh_agent_socket=None,
+            podman=_mock_pod,
         )
         mock_ess.assert_awaited_once_with(
             "cid",
@@ -1846,7 +1854,7 @@ class TestHandleSetHandle:
             new_callable=AsyncMock,
         ) as mock_skel:
             await conn.handle_set_handle({"handle": "alice"})
-        mock_skel.assert_awaited_once_with("cid", user["id"])
+        mock_skel.assert_awaited_once_with("cid", user["id"], _mock_pod)
         sent = sock.send_json.call_args_list
         assert any(
             call.args[0].get("type") == "handle_set"
@@ -3363,8 +3371,9 @@ class TestSSHAgentHandlers:
         mock_proc.kill = MagicMock()
         mock_proc.wait = AsyncMock()
         with (
-            patch(
-                "klangk_backend.wshandler.controllers.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new=AsyncMock(),
             ),
             patch(
@@ -3413,8 +3422,9 @@ class TestSSHAgentHandlers:
         conn._ssh_agent_proc = mock_proc
         conn._ssh_agent_socket = "/tmp/test.sock"
         conn._ssh_agent_task = asyncio.create_task(asyncio.sleep(999))
-        with patch(
-            "klangk_backend.wshandler.controllers.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new=AsyncMock(),
         ):
             await conn.handle_ssh_agent_stop()
@@ -3434,8 +3444,9 @@ class TestSSHAgentHandlers:
         conn._ssh_agent_proc = mock_proc
         conn._ssh_agent_socket = "/tmp/test.sock"
         conn._ssh_agent_task = asyncio.create_task(asyncio.sleep(999))
-        with patch(
-            "klangk_backend.wshandler.controllers.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new=AsyncMock(),
         ):
             await conn._stop_ssh_agent()
@@ -3516,6 +3527,7 @@ class TestSSHAgentHandlers:
             user_id="uid",
             user_handle="testuser",
             ssh_agent_socket="/tmp/klangk-ssh-agent-uid.sock",
+            podman=_mock_pod,
         )
 
 
@@ -3538,7 +3550,12 @@ class TestSshAgentForwarder:
                 "email": "testuser@example.com",
                 "handle": "testuser",
             }
-        conn = SimpleNamespace(sock=sock, user=user, container_id=container_id)
+        conn = SimpleNamespace(
+            sock=sock,
+            user=user,
+            container_id=container_id,
+            app_state=SimpleNamespace(podman=_mock_pod),
+        )
         return SshAgentForwarder(conn), sock
 
     @asynccontextmanager
@@ -3576,8 +3593,9 @@ class TestSshAgentForwarder:
         mock_proc.stdin = AsyncMock()
         with (
             patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
-            patch(
-                "klangk_backend.wshandler.controllers.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new=AsyncMock(),
             ),
             patch(
@@ -3613,8 +3631,9 @@ class TestSshAgentForwarder:
         mock_proc.stdin = AsyncMock()
         with (
             patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
-            patch(
-                "klangk_backend.wshandler.controllers.podman.exec_container",
+            patch.object(
+                _mock_pod,
+                "exec_container",
                 new=AsyncMock(),
             ),
             patch(
@@ -3834,8 +3853,9 @@ class TestSshAgentForwarder:
     async def test_stop_handles_socket_remove_oserror(self):
         fwd, _ = self._forwarder()
         fwd.socket = "/tmp/agent.sock"
-        with patch(
-            "klangk_backend.wshandler.controllers.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new=AsyncMock(side_effect=OSError("boom")),
         ) as exec_mock:
             with patch("klangk_backend.wshandler.controllers.logger") as lg:
@@ -3853,8 +3873,9 @@ class TestSshAgentForwarder:
         fwd.proc = mock_proc
         fwd.socket = None  # skip socket-removal branch
         fwd.task = asyncio.create_task(asyncio.sleep(999))
-        with patch(
-            "klangk_backend.wshandler.controllers.podman.exec_container",
+        with patch.object(
+            _mock_pod,
+            "exec_container",
             new=AsyncMock(),
         ):
             await fwd.stop()
@@ -5783,7 +5804,9 @@ class TestTerminalWindowHandlers:
             ],
         ) as mock_new:
             await conn.handle_terminal_new_window({"name": "build"})
-        mock_new.assert_called_once_with("cid", "uid", name="build")
+        mock_new.assert_called_once_with(
+            "cid", "uid", name="build", podman=_mock_pod
+        )
 
     async def test_new_window_error(self):
         sock = _mock_sock()
@@ -5807,7 +5830,7 @@ class TestTerminalWindowHandlers:
             "klangk_backend.terminal.select_window",
         ) as mock_sel:
             await conn.handle_terminal_select_window({"index": 2})
-        mock_sel.assert_called_once_with("cid", "uid", 2)
+        mock_sel.assert_called_once_with("cid", "uid", 2, _mock_pod)
 
     async def test_select_window_by_id(self):
         sock = _mock_sock()
@@ -5818,7 +5841,7 @@ class TestTerminalWindowHandlers:
             "klangk_backend.terminal.select_window",
         ) as mock_sel:
             await conn.handle_terminal_select_window({"window_id": "@3"})
-        mock_sel.assert_called_once_with("cid", "uid", "@3")
+        mock_sel.assert_called_once_with("cid", "uid", "@3", _mock_pod)
 
     async def test_select_window_error(self):
         sock = _mock_sock()
@@ -6396,7 +6419,7 @@ class TestTerminalController:
         ctrl.session = session
         with patch("klangk_backend.terminal.select_window") as sel:
             await ctrl.select_window({"window_id": "@2"})
-        sel.assert_called_once_with("cid", "grouped", "@2")
+        sel.assert_called_once_with("cid", "grouped", "@2", _mock_pod)
 
     async def test_select_window_falls_back_to_tmux_session_name(self):
         ctrl, _, _ = self._controller()
@@ -6405,7 +6428,7 @@ class TestTerminalController:
         ctrl.session = session
         with patch("klangk_backend.terminal.select_window") as sel:
             await ctrl.select_window({"index": 1})
-        sel.assert_called_once_with("cid", "uid", 1)
+        sel.assert_called_once_with("cid", "uid", 1, _mock_pod)
 
     # --- sync / notify helpers ---
 
@@ -7368,7 +7391,9 @@ class TestShareWindowHandlers:
                 await asyncio.sleep(0)
 
             # Fell back to select_window with bare @N
-            mock_select.assert_awaited_once_with("cid", owner["id"], "@0")
+            mock_select.assert_awaited_once_with(
+                "cid", owner["id"], "@0", _mock_pod
+            )
         finally:
             sockets.sessions.pop("ws-1", None)
             sockets.connections.pop(sock, None)
@@ -7424,7 +7449,9 @@ class TestShareWindowHandlers:
                 )
                 await asyncio.sleep(0)
 
-            mock_select.assert_awaited_once_with("cid", owner["id"], "@0")
+            mock_select.assert_awaited_once_with(
+                "cid", owner["id"], "@0", _mock_pod
+            )
         finally:
             sockets.sessions.pop("ws-1", None)
             sockets.connections.pop(sock, None)
@@ -7976,7 +8003,7 @@ class TestSharedTerminalController:
             with patch("klangk_backend.terminal.kill_joiner_sessions") as kill:
                 await ctrl.unshare_window({"window_id": "@0"})
             assert ws.terminal_windows[user["id"]][0]["shared"] is False
-            kill.assert_awaited_once_with("cid", "uid")
+            kill.assert_awaited_once_with("cid", "uid", _mock_pod)
         finally:
             sockets.sessions.pop("ws-1", None)
 
@@ -8190,8 +8217,8 @@ class TestSharedTerminalController:
                 await ctrl.delete_shared_terminal(
                     {"user_id": "owner-1", "window_id": "@0"}
                 )
-            kill.assert_awaited_once_with("cid", "owner-1")
-            close.assert_awaited_once_with("cid", "owner-1", "@0")
+            kill.assert_awaited_once_with("cid", "owner-1", _mock_pod)
+            close.assert_awaited_once_with("cid", "owner-1", "@0", _mock_pod)
             remaining = ws.terminal_windows["owner-1"]
             assert [w["id"] for w in remaining] == ["@1"]
             sent = [c[0][0] for c in sock.send_json.call_args_list]
@@ -10106,7 +10133,7 @@ class TestTokenRenewal:
                     pass
 
             assert mock_set.call_count >= 1
-            cid, token = mock_set.call_args.args
+            cid, token, _podman = mock_set.call_args.args
             assert cid == "test-cid"
             decoded = wshandler.auth.decode_workspace_token(token)
             assert decoded == workspace["id"]
@@ -10124,7 +10151,7 @@ class TestTokenRenewal:
         try:
             call_count = 0
 
-            async def fail_then_succeed(cid, token):
+            async def fail_then_succeed(cid, token, podman=None):
                 nonlocal call_count
                 call_count += 1
                 if call_count == 1:

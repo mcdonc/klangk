@@ -191,7 +191,9 @@ class WorkspaceSession:
 
             try:
                 new_token = auth.create_workspace_token(self.workspace_id)
-                await terminal.set_workspace_token(container_id, new_token)
+                await terminal.set_workspace_token(
+                    container_id, new_token, self.app_state.podman
+                )
                 self.workspace_token_expiry = datetime.now(
                     timezone.utc
                 ) + timedelta(hours=auth.WORKSPACE_TOKEN_EXPIRE_HOURS)

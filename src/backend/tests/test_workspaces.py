@@ -2,7 +2,7 @@
 
 import os
 import types
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -389,12 +389,14 @@ class TestEnsureHomeSymlink:
 class TestPopulateHomeSkel:
     async def test_execs_setup_home(self):
         """populate_home_skel runs podman exec with klangk-setup-home script."""
-        with patch(
-            "klangk_backend.workspaces.podman.exec_container",
+        mock_pod = MagicMock()
+        with patch.object(
+            mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             return_value=(0, "", ""),
         ) as mock_exec:
-            await ws_mod.populate_home_skel("cid-123", "uid-456")
+            await ws_mod.populate_home_skel("cid-123", "uid-456", mock_pod)
         mock_exec.assert_awaited_once_with(
             "cid-123",
             ["/opt/klangk/bin/klangk-setup-home", "/home/.users/uid-456"],
@@ -404,13 +406,15 @@ class TestPopulateHomeSkel:
 
     async def test_logs_warning_on_failure(self):
         """populate_home_skel logs but does not raise on failure."""
-        with patch(
-            "klangk_backend.workspaces.podman.exec_container",
+        mock_pod = MagicMock()
+        with patch.object(
+            mock_pod,
+            "exec_container",
             new_callable=AsyncMock,
             side_effect=OSError("podman not found"),
         ):
             # Should not raise
-            await ws_mod.populate_home_skel("cid-123", "uid-456")
+            await ws_mod.populate_home_skel("cid-123", "uid-456", mock_pod)
 
 
 class TestAutoStartWorkspaces:

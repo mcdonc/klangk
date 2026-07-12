@@ -9,9 +9,11 @@ with the right args, and that the service-command half is skipped when
 no command is configured.
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from klangk_backend import bringup
+
+_app_state = MagicMock()
 
 
 class TestBringup:
@@ -33,14 +35,15 @@ class TestBringup:
                 "cid",
                 "openclaw gateway",
                 setup_state="complete",
+                app_state=_app_state,
             )
-        mock_home.assert_awaited_once_with("ws-id", "cid")
+        mock_home.assert_awaited_once_with("ws-id", "cid", _app_state.podman)
         mock_service.assert_awaited_once_with(
             "cid",
             "/home/clanker",
             "openclaw gateway",
             setup_state="complete",
-            app_state=None,
+            app_state=_app_state,
         )
 
     async def test_skips_service_command_when_none(self):
@@ -56,8 +59,10 @@ class TestBringup:
                 new_callable=AsyncMock,
             ) as mock_service,
         ):
-            await bringup.bringup("ws-id", "cid", None, "complete")
-        mock_home.assert_awaited_once_with("ws-id", "cid")
+            await bringup.bringup(
+                "ws-id", "cid", None, "complete", app_state=_app_state
+            )
+        mock_home.assert_awaited_once_with("ws-id", "cid", _app_state.podman)
         mock_service.assert_not_awaited()
 
     async def test_skips_service_command_when_empty(self):
@@ -73,7 +78,9 @@ class TestBringup:
                 new_callable=AsyncMock,
             ) as mock_service,
         ):
-            await bringup.bringup("ws-id", "cid", "", "complete")
+            await bringup.bringup(
+                "ws-id", "cid", "", "complete", app_state=_app_state
+            )
         mock_service.assert_not_awaited()
 
     async def test_threads_setup_state_through_predicate(self):
@@ -95,14 +102,18 @@ class TestBringup:
             ) as mock_service,
         ):
             await bringup.bringup(
-                "ws-id", "cid", "openclaw gateway", setup_state="pending"
+                "ws-id",
+                "cid",
+                "openclaw gateway",
+                setup_state="pending",
+                app_state=_app_state,
             )
         mock_service.assert_awaited_once_with(
             "cid",
             "/home/clanker",
             "openclaw gateway",
             setup_state="pending",
-            app_state=None,
+            app_state=_app_state,
         )
 
     async def test_threads_none_setup_state(self):
@@ -118,11 +129,13 @@ class TestBringup:
                 new_callable=AsyncMock,
             ) as mock_service,
         ):
-            await bringup.bringup("ws-id", "cid", "openclaw gateway", None)
+            await bringup.bringup(
+                "ws-id", "cid", "openclaw gateway", None, app_state=_app_state
+            )
         mock_service.assert_awaited_once_with(
             "cid",
             "/home/clanker",
             "openclaw gateway",
             setup_state=None,
-            app_state=None,
+            app_state=_app_state,
         )
