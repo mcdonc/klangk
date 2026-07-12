@@ -19,11 +19,9 @@ from .. import (
     auth,
     emailsvc,
     model,
-    oidc,
     wshandler,
 )
 from ._common import get_app_state_dep
-from ..settings import get_settings
 from ..util import (
     client_is_loopback,
     derive_hosting_info,
@@ -71,7 +69,7 @@ async def register(
     req: auth.RegisterRequest,
     request: Request,
 ):
-    if not oidc.password_login_allowed(get_settings()):
+    if not request.app.state.oidc.password_login_allowed():
         raise HTTPException(
             status_code=403,
             detail="Password registration is disabled",
@@ -281,8 +279,11 @@ async def reset_password(req: ResetPasswordRequest):
 
 
 @router.post("/auth/login", response_model=auth.TokenResponse)
-async def login(req: auth.LoginRequest):
-    if not oidc.password_login_allowed(get_settings()):
+async def login(
+    req: auth.LoginRequest,
+    request: Request,
+):
+    if not request.app.state.oidc.password_login_allowed():
         raise HTTPException(
             status_code=403, detail="Password login is disabled"
         )
@@ -311,7 +312,7 @@ async def local_login(request: Request):
     appear to come from 127.0.0.1), the backend independently verifies
     the *effective* client is loopback via :func:`util.client_is_loopback`.
     """
-    if not oidc.local_login_allowed(get_settings()):
+    if not request.app.state.oidc.local_login_allowed():
         raise HTTPException(
             status_code=403,
             detail="Local login is not enabled (auth mode is not 'none')",
@@ -493,14 +494,16 @@ async def logout(
     result: dict = {"status": "ok"}
     db_user = await model.get_user_by_email(user["email"])
     if db_user and db_user.get("provider", "local") != "local":
-        provider = oidc.get_provider(db_user["provider"])
+        provider = request.app.state.oidc.get_provider(db_user["provider"])
         if provider:
             hostname, proto, base_path = derive_hosting_info(
                 request.headers,
                 request.client.host if request.client else None,
             )
             post_logout_uri = f"{proto}://{hostname}{base_path}/#/login"
-            logout_url = await oidc.build_logout_url(provider, post_logout_uri)
+            logout_url = await request.app.state.oidc.build_logout_url(
+                provider, post_logout_uri
+            )
             if logout_url:
                 result["oidc_logout_url"] = logout_url
     return result

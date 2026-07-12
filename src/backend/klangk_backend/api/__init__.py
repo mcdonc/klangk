@@ -55,7 +55,6 @@ from ._common import get_app_state_dep
 # name to the logic module after the submodule imports (see below) so the
 # instance endpoints reference klangk_backend.auth, not the route module.
 from .. import auth as _auth_logic
-from ..settings import get_settings
 from ..util import resolve_env_bool, resolve_env_value
 
 # Route submodules, aliased because their names collide with the logic
@@ -203,7 +202,7 @@ SUPPORT_EMAIL = resolve_env_value("KLANGK_SUPPORT_EMAIL") or ""
 
 
 @router.get("/config")
-async def get_config():
+async def get_config(app_state=Depends(get_app_state_dep)):
     config = {
         "registration_enabled": auth.registration_enabled(),
         "invitations_enabled": auth.invitations_enabled(),
@@ -213,8 +212,8 @@ async def get_config():
         "product_name": PRODUCT_NAME,
         "login_banner_title": LOGIN_BANNER_TITLE,
         "login_banner": LOGIN_BANNER,
-        "oidc_providers": oidc.list_providers(),
-        "auth_modes": oidc.auth_modes(get_settings()),
+        "oidc_providers": app_state.oidc.list_providers(),
+        "auth_modes": app_state.oidc.auth_modes(),
         "instance_id": model.get_instance_id(),
         # Whether per-workspace auto-start (start the container on server
         # boot) is permitted. The web UI gates its "Auto start" checkbox on

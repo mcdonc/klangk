@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
-from klangk_backend import main, model
+from klangk_backend import main, model, oidc
 from klangk_backend.container import ContainerRegistry
 from klangk_backend.settings import KlangkSettings
 from klangk_backend.wshandler.session import WebSocketState
@@ -93,64 +93,101 @@ class TestSeedDefaultUser:
 # --- no-auth bind safety gate (#1374) ---
 
 
+def _bind_safety_app_state(auth_mode=None):
+    """Build a minimal app_state whose oidc reads the given auth mode (#1450).
+
+    Pass the mode explicitly — the bind-safety tests exercise different
+    modes (password / none), and OIDC now reads ``settings.auth_modes`` at
+    construction instead of re-reading the env per call.
+    """
+    env = {"KLANGK_AUTH_MODES": auth_mode} if auth_mode else {}
+    settings = KlangkSettings(env=env)
+    app_state = types.SimpleNamespace(settings=settings)
+    app_state.oidc = oidc.OIDC(app_state)
+    return app_state
+
+
 class TestNoAuthBindSafety:
     """enforce_no_auth_bind_safety() — refuse none mode on a non-loopback
     bind unless explicitly overridden."""
 
     def test_noop_when_not_none_mode(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
         monkeypatch.setenv("KLANGK_LISTEN", "0.0.0.0")
         # Returns None, raises nothing.
-        assert main.enforce_no_auth_bind_safety() is None
+        assert (
+            main.enforce_no_auth_bind_safety(
+                _bind_safety_app_state(auth_mode="password")
+            )
+            is None
+        )
 
     def test_allows_loopback_ipv4(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
-        assert main.enforce_no_auth_bind_safety() is None
+        assert (
+            main.enforce_no_auth_bind_safety(
+                _bind_safety_app_state(auth_mode="none")
+            )
+            is None
+        )
 
     def test_allows_loopback_ipv6_and_localhost(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         for host in ("::1", "localhost"):
             monkeypatch.setenv("KLANGK_LISTEN", host)
-            assert main.enforce_no_auth_bind_safety() is None
+            assert (
+                main.enforce_no_auth_bind_safety(
+                    _bind_safety_app_state(auth_mode="none")
+                )
+                is None
+            )
 
     def test_allows_full_loopback_range(self, monkeypatch):
         """The whole 127.0.0.0/8 range is loopback (RFC 990), not just
         127.0.0.1 — ``127.0.0.2`` is a valid loopback bind and must be
         admitted (the original exact-match allowlist wrongly refused it)."""
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         for host in ("127.0.0.2", "127.255.255.254"):
             monkeypatch.setenv("KLANGK_LISTEN", host)
-            assert main.enforce_no_auth_bind_safety() is None
+            assert (
+                main.enforce_no_auth_bind_safety(
+                    _bind_safety_app_state(auth_mode="none")
+                )
+                is None
+            )
 
     def test_allows_loopback_default_when_listen_unset(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         monkeypatch.delenv("KLANGK_LISTEN", raising=False)
         # KLANGK_LISTEN defaults to 127.0.0.1 (#1375).
-        assert main.enforce_no_auth_bind_safety() is None
+        assert (
+            main.enforce_no_auth_bind_safety(
+                _bind_safety_app_state(auth_mode="none")
+            )
+            is None
+        )
 
     def test_refuses_ipv6_wildcard(self, monkeypatch):
         """``::`` binds every interface (incl. IPv6) and is NOT loopback —
         must be refused even though it isn't ``0.0.0.0``."""
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         monkeypatch.setenv("KLANGK_LISTEN", "::")
         with pytest.raises(SystemExit) as exc_info:
-            main.enforce_no_auth_bind_safety()
+            main.enforce_no_auth_bind_safety(
+                _bind_safety_app_state(auth_mode="none")
+            )
         assert "::" in str(exc_info.value)
 
     def test_refuses_non_loopback_hostname(self, monkeypatch):
         """A bare hostname (other than ``localhost``) is not an IP literal and
         not a recognized loopback name — fail-closed (refuse)."""
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         monkeypatch.setenv("KLANGK_LISTEN", "myhost")
         with pytest.raises(SystemExit):
-            main.enforce_no_auth_bind_safety()
+            main.enforce_no_auth_bind_safety(
+                _bind_safety_app_state(auth_mode="none")
+            )
 
     def test_refuses_non_loopback_bind(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         monkeypatch.setenv("KLANGK_LISTEN", "0.0.0.0")
         with pytest.raises(SystemExit) as exc_info:
-            main.enforce_no_auth_bind_safety()
+            main.enforce_no_auth_bind_safety(
+                _bind_safety_app_state(auth_mode="none")
+            )
         msg = str(exc_info.value)
         assert "KLANGK_AUTH_MODES=none" in msg
         assert "loopback" in msg
@@ -159,18 +196,26 @@ class TestNoAuthBindSafety:
 
     def test_allows_socket_path(self, monkeypatch):
         """A UDS path is safe — same-uid trust boundary (#1399)."""
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         monkeypatch.setenv("KLANGK_LISTEN", "/tmp/klangk.sock")
-        assert main.enforce_no_auth_bind_safety() is None
+        assert (
+            main.enforce_no_auth_bind_safety(
+                _bind_safety_app_state(auth_mode="none")
+            )
+            is None
+        )
 
     def test_override_flag_allows_non_loopback(self, monkeypatch, caplog):
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
         monkeypatch.setenv("KLANGK_LISTEN", "0.0.0.0")
         monkeypatch.setenv("KLANGK_ALLOW_INSECURE_NO_AUTH", "1")
         import logging
 
         with caplog.at_level(logging.WARNING):
-            assert main.enforce_no_auth_bind_safety() is None
+            assert (
+                main.enforce_no_auth_bind_safety(
+                    _bind_safety_app_state(auth_mode="none")
+                )
+                is None
+            )
         assert "non-loopback bind" in caplog.text
 
 
@@ -318,6 +363,7 @@ class TestLifespan:
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
         app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
+        app.state.oidc = oidc.OIDC(app.state)
         registry = app_state.container_registry
         with (
             patch.object(
@@ -360,6 +406,7 @@ class TestLifespan:
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
         app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
+        app.state.oidc = oidc.OIDC(app.state)
         registry = app_state.container_registry
         with (
             patch.object(
@@ -577,6 +624,7 @@ class TestStartupShutdownRestart:
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
         app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
+        app.state.oidc = oidc.OIDC(app.state)
         registry = app_state.container_registry
         loop = asyncio.get_running_loop()
         with (
