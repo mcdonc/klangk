@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from fastapi import WebSocketDisconnect
 
 from klangk_backend import (
+    agent as agent_mod,
     model,
     wshandler,
     container,
@@ -107,6 +108,7 @@ def _make_app_state(registry=None, sockets=None):
     # its methods via patch.object(_mock_term, ...).
     app_state.terminal = _mock_term
     app_state.workspaces = ws_mod.Workspaces(app_state)
+    app_state.agents = agent_mod.Agents(app_state)
     return app_state
 
 
@@ -4493,8 +4495,8 @@ class TestResetWorkspaceState:
         app_state = _make_app_state()
         sockets = app_state.sockets
         ws_id = "ws-agent-stop"
-        with patch(
-            "klangk_backend.agent.stop_session", new_callable=AsyncMock
+        with patch.object(
+            app_state.agents, "stop_session", new_callable=AsyncMock
         ) as mock_stop:
             await reset_workspace_state(sockets, ws_id)
             mock_stop.assert_awaited_once_with(ws_id)
@@ -5770,8 +5772,9 @@ class TestHandleShutdownContainer:
                     "stop_and_remove_container",
                     new_callable=AsyncMock,
                 ),
-                patch(
-                    "klangk_backend.agent.stop_session",
+                patch.object(
+                    app_state.agents,
+                    "stop_session",
                     new_callable=AsyncMock,
                 ) as mock_stop,
             ):
@@ -8982,8 +8985,9 @@ class TestChatFollowUp:
                 "time": time.monotonic(),
                 "interjected": False,
             }
-            with patch(
-                "klangk_backend.agent.get_session",
+            with patch.object(
+                app_state.agents,
+                "get_session",
                 return_value=mock_session,
             ):
                 await conn.handle_chat_send({"message": "what about now?"})
@@ -9023,8 +9027,9 @@ class TestChatFollowUp:
                 "time": time.monotonic(),
                 "interjected": True,
             }
-            with patch(
-                "klangk_backend.agent.get_session",
+            with patch.object(
+                app_state.agents,
+                "get_session",
                 return_value=mock_session,
             ):
                 await conn.handle_chat_send({"message": "still here?"})
@@ -9265,8 +9270,9 @@ class TestChatSend:
         session = sockets.get_or_create_session(workspace["id"], app_state)
         await session.add_subscriber(sock, "cid")
         try:
-            with patch(
-                "klangk_backend.agent.get_session",
+            with patch.object(
+                app_state.agents,
+                "get_session",
                 return_value=mock_session,
             ):
                 await conn.handle_chat_send(
@@ -9318,8 +9324,9 @@ class TestChatSend:
         session = sockets.get_or_create_session(workspace["id"], app_state)
         await session.add_subscriber(sock, "cid")
         try:
-            with patch(
-                "klangk_backend.agent.get_session",
+            with patch.object(
+                app_state.agents,
+                "get_session",
                 return_value=mock_session,
             ):
                 await conn.handle_chat_send({"message": "@clanker"})
@@ -9348,8 +9355,9 @@ class TestChatSend:
         session = sockets.get_or_create_session(workspace["id"], app_state)
         await session.add_subscriber(sock, "cid")
         try:
-            with patch(
-                "klangk_backend.agent.get_session",
+            with patch.object(
+                app_state.agents,
+                "get_session",
                 side_effect=RuntimeError("boom"),
             ):
                 await conn.handle_chat_send({"message": "@clanker help"})
@@ -9387,8 +9395,9 @@ class TestChatSend:
         session = sockets.get_or_create_session(workspace["id"], app_state)
         await session.add_subscriber(sock, "cid")
         try:
-            with patch(
-                "klangk_backend.agent.get_session",
+            with patch.object(
+                app_state.agents,
+                "get_session",
                 return_value=mock_session,
             ):
                 await conn.handle_chat_send({"message": "@clanker hello"})
@@ -10648,8 +10657,9 @@ class TestStartAgentIfNeeded:
         mock_agent_session.ensure_started = AsyncMock()
 
         try:
-            with patch(
-                "klangk_backend.agent.get_session",
+            with patch.object(
+                app_state.agents,
+                "get_session",
                 return_value=mock_agent_session,
             ):
                 await conn._start_agent_if_needed()
@@ -10663,8 +10673,9 @@ class TestStartAgentIfNeeded:
         conn = _base_conn(user=user, ws=sock)
         conn.workspace_id = "ws-fail"
 
-        with patch(
-            "klangk_backend.agent.get_session",
+        with patch.object(
+            conn.app_state.agents,
+            "get_session",
             side_effect=RuntimeError("nope"),
         ):
             # Should not raise
@@ -10761,8 +10772,9 @@ class TestPresenceIncludesAgent:
             session,
             app_state,
         ):
-            with patch(
-                "klangk_backend.agent.is_running",
+            with patch.object(
+                app_state.agents,
+                "is_running",
                 side_effect=lambda ws_id: ws_id == workspace["id"],
             ):
                 users = await get_presence_list(
@@ -10785,8 +10797,9 @@ class TestPresenceIncludesAgent:
             session,
             app_state,
         ):
-            with patch(
-                "klangk_backend.agent.is_running",
+            with patch.object(
+                app_state.agents,
+                "is_running",
                 side_effect=lambda ws_id: ws_id == "other-workspace",
             ):
                 users = await get_presence_list(
@@ -10847,8 +10860,9 @@ class TestAgentMentionOtherMsgsContext:
         await session.add_subscriber(sock, "cid")
 
         try:
-            with patch(
-                "klangk_backend.agent.get_session",
+            with patch.object(
+                app_state.agents,
+                "get_session",
                 return_value=mock_session,
             ):
                 await handle_agent_mention(
@@ -10912,8 +10926,9 @@ class TestAgentMentionAskerIdentity:
         await session.add_subscriber(sock, "cid")
 
         try:
-            with patch(
-                "klangk_backend.agent.get_session",
+            with patch.object(
+                app_state.agents,
+                "get_session",
                 return_value=mock_session,
             ):
                 await handle_agent_mention(

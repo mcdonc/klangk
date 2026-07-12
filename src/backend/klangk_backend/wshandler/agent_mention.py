@@ -4,7 +4,8 @@ import asyncio
 import logging
 import re
 
-from .. import agent, model
+from ..agent import AgentProcessDied, ephemeral_system_message
+from .. import model
 from .constants import (
     agent_conversations as agent_conversations,
     agent_tasks as agent_tasks,
@@ -156,16 +157,16 @@ async def handle_agent_mention(
         )
 
     try:
-        pi = await agent.get_session(workspace_id)
+        pi = await sockets.app_state.agents.get_session(workspace_id)
         response_text = await pi.send_prompt(prompt)
     except asyncio.CancelledError:  # pragma: no cover
         response_text = "Stopped."
-    except agent.AgentProcessDied:
+    except AgentProcessDied:
         logger.warning("Agent process died for workspace %s", workspace_id)
         # Broadcast an ephemeral (non-persisted) system message — agent
         # presence transitions are container-lifecycle events and must
         # not linger in chat history (no symmetric persisted "connected").
-        sys_msg = agent.ephemeral_system_message(
+        sys_msg = ephemeral_system_message(
             workspace_id,
             agent_email,
             agent_handle,

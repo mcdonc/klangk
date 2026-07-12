@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 
 from .. import acl as _acl
-from .. import agent, auth, container, model
+from .. import auth, container, model
 from ..terminal import TerminalSession
 from ..podman import ExecSession
 from ..util import derive_hosting_info
@@ -608,7 +608,7 @@ class Connection:
             logger.warning("Error stopping container: %s", e)
 
         # Stop the Pi RPC subprocess now that its container is gone.
-        await agent.stop_session(workspace_id)
+        await self.app_state.agents.stop_session(workspace_id)
 
         # Notify subscribers AFTER the container is fully stopped, so
         # reconnecting clients don't find a half-dead container.
@@ -823,8 +823,8 @@ class Connection:
     async def _start_agent_if_needed(self) -> None:
         """Start the Pi RPC agent so it shows in presence."""
         try:
-            session = await agent.get_session(
-                self.workspace_id, app_state=self.app_state
+            session = await self.app_state.agents.get_session(
+                self.workspace_id
             )
             await session.ensure_started()
             # Broadcast updated presence now that agent is alive

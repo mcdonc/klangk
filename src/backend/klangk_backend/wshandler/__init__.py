@@ -17,7 +17,6 @@ those submodules so existing call sites keep working unchanged, e.g.::
 # ``klangk_backend.wshandler.auth`` and ``wshandler.model`` keep
 # working — the old monolith imported them at module level.
 from .. import acl as _acl  # noqa: F401
-from .. import agent as agent  # noqa: F401
 from .. import auth as auth  # noqa: F401
 from .. import container as container  # noqa: F401
 from .. import model as model  # noqa: F401

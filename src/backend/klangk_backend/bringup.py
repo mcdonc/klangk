@@ -2,9 +2,9 @@
 
 This is the single choke point reached after
 ``ContainerRegistry.start_container`` creates a *fresh* container
-(status ``"created"``). ``container`` cannot import ``agent``
-directly (``agent`` already imports ``container``), so the bring-up
-step lives here to keep that boundary clean.
+(status ``"created"``).  Agent home provisioning and the service
+command are reached via ``app_state.agents`` and
+``app_state.terminal`` respectively.
 
 ``ensure_service_session`` is idempotent (per-container lock +
 window-exists check), so calling this on every fresh create is safe:
@@ -14,8 +14,6 @@ workspaces whose ``setup.sh`` has not run yet is handled by gating on
 ``"pending"`` at create, and the fire lands later once setup
 completes and the WS connect path runs.
 """
-
-from . import agent
 
 
 async def bringup(
@@ -30,8 +28,8 @@ async def bringup(
     Called at the single choke point: every freshly-created container.
     Idempotent via :func:`terminal.ensure_service_session`.
     """
-    agent_home = await agent.ensure_agent_home(
-        workspace_id, container_id, app_state
+    agent_home = await app_state.agents.ensure_agent_home(
+        workspace_id, container_id
     )
     if not service_command:
         return
