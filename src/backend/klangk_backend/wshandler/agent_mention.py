@@ -11,7 +11,7 @@ from .constants import (
     cancel_agent_task as cancel_agent_task,
     drop_agent_task_if_current as drop_agent_task_if_current,
 )
-from .session import state
+from .session import WebSocketState
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +87,7 @@ def asker_context_header(
 
 
 async def handle_agent_mention(
+    sockets: WebSocketState,
     workspace_id: str,
     container_id: str,
     user_text: str,
@@ -144,7 +145,7 @@ async def handle_agent_mention(
     agent_email = await model.agent_email()
 
     # Notify clients the agent is thinking
-    session = state.get_session(workspace_id)
+    session = sockets.get_session(workspace_id)
     if session:
         session.broadcast(
             {
@@ -170,7 +171,7 @@ async def handle_agent_mention(
             agent_handle,
             f"{agent_handle} has disconnected",
         )
-        session = state.get_session(workspace_id)
+        session = sockets.get_session(workspace_id)
         if session:
             session.broadcast({"type": "agent_thinking", "thinking": False})
             session.broadcast({"type": "chat_message", **sys_msg})
@@ -189,7 +190,7 @@ async def handle_agent_mention(
         response_text,
         message_type=model.MSG_AGENT,
     )
-    session = state.get_session(workspace_id)
+    session = sockets.get_session(workspace_id)
     if session:
         session.broadcast({"type": "agent_thinking", "thinking": False})
         session.broadcast({"type": "chat_message", **agent_msg})

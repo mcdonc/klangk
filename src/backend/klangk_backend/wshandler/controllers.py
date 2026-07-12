@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import WebSocketDisconnect
 
-from .. import container, model, podman, terminal
+from .. import model, podman, terminal
 from ..exceptions import TerminalError
 from ..util import resolve_env_value
 from ..podman import ExecSession
@@ -23,7 +23,6 @@ from ..terminal import (
 from .safe_websocket import SlowClientError, WS_ERRORS
 from .constants import MAX_INPUT_SIZE
 from .helpers import send_error, send_event, get_shared_terminals
-from .session import state
 
 if TYPE_CHECKING:
     from .connection import Connection  # noqa: allow-deferred-import
@@ -254,7 +253,7 @@ class ExecController:
         await session.start(command, login=login)
         self.session = session
         self.task = asyncio.create_task(self.forward_output(session))
-        container.registry.record_activity(container_id)
+        self._conn.app_state.container_registry.record_activity(container_id)
 
     async def input(self, msg: dict) -> None:
         session = self.session
@@ -266,7 +265,9 @@ class ExecController:
                 "exec_input too large (%d bytes), dropping", len(raw)
             )
             return
-        container.registry.record_activity(self._conn.container_id)
+        self._conn.app_state.container_registry.record_activity(
+            self._conn.container_id
+        )
         await session.write(raw)
 
     async def close_stdin(self) -> None:
@@ -308,7 +309,9 @@ class ExecController:
                     }
                 )
                 if self._conn.container_id:
-                    container.registry.record_activity(self._conn.container_id)
+                    self._conn.app_state.container_registry.record_activity(
+                        self._conn.container_id
+                    )
             # Process exited — send exit code
             self._conn.sock.send_json(
                 {
@@ -361,8 +364,10 @@ class TerminalController:
         env but don't register it for bridge routing.
         """
         if browser_id and browser_id != "klangkshell":
-            container.registry.revoke_browser(self._conn.sock)
-            container.registry.register_browser(
+            self._conn.app_state.container_registry.revoke_browser(
+                self._conn.sock
+            )
+            self._conn.app_state.container_registry.register_browser(
                 browser_id, self._conn.workspace_id, self._conn.sock
             )
         self._conn.browser_id = browser_id
@@ -372,7 +377,7 @@ class TerminalController:
         the window list and shared terminals to the client."""
         conn = self._conn
         sname = conn.tmux_session_name()
-        ws_session = state.get_session(conn.workspace_id)
+        ws_session = conn.app_state.sockets.get_session(conn.workspace_id)
 
         windows = await terminal.list_windows(conn.container_id, sname)
         conn.sync_terminal_windows(windows)
@@ -386,9 +391,13 @@ class TerminalController:
 
     def _send_shared_terminals(self) -> None:
         """Send the current shared terminal list to the client."""
-        ws_session = state.get_session(self._conn.workspace_id)
+        ws_session = self._conn.app_state.sockets.get_session(
+            self._conn.workspace_id
+        )
         if ws_session:
-            terminals = get_shared_terminals(ws_session)
+            terminals = get_shared_terminals(
+                ws_session, self._conn.app_state.sockets
+            )
             self._conn.sock.send_json(
                 {"type": "shared_terminals", "terminals": terminals}
             )
@@ -437,6 +446,7 @@ class TerminalController:
             agent_home,
             service_command,
             setup_state=setup_state,
+            app_state=self._conn.app_state,
         )
 
     async def _sync_service_windows(self, ws_session) -> bool:
@@ -581,16 +591,16 @@ class TerminalController:
                 ctrl._send_shared_terminals()
             except asyncio.CancelledError:
                 await session.stop()
-                container.registry.revoke_browser(conn.sock)
+                conn.app_state.container_registry.revoke_browser(conn.sock)
                 conn.browser_id = None
                 raise
             except (SlowClientError, WebSocketDisconnect):
                 await session.stop()
-                container.registry.revoke_browser(conn.sock)
+                conn.app_state.container_registry.revoke_browser(conn.sock)
                 conn.browser_id = None
             except Exception as e:
                 await session.stop()
-                container.registry.revoke_browser(conn.sock)
+                conn.app_state.container_registry.revoke_browser(conn.sock)
                 conn.browser_id = None
                 logger.exception("Terminal start failed: %s", e)
                 try:
@@ -610,8 +620,8 @@ class TerminalController:
         browser_id = msg.get("browser_id")
         if not browser_id or not self._conn.container_id:
             return
-        container.registry.revoke_browser(self._conn.sock)
-        container.registry.register_browser(
+        self._conn.app_state.container_registry.revoke_browser(self._conn.sock)
+        self._conn.app_state.container_registry.register_browser(
             browser_id, self._conn.workspace_id, self._conn.sock
         )
         self._conn.browser_id = browser_id
@@ -641,7 +651,9 @@ class TerminalController:
                 "terminal_input too large (%d bytes), dropping", len(data)
             )
             return
-        container.registry.record_activity(self._conn.container_id)
+        self._conn.app_state.container_registry.record_activity(
+            self._conn.container_id
+        )
         await session.write(data)
         elapsed = time.monotonic() - t0
         if elapsed > 0.1:  # pragma: no cover
@@ -668,7 +680,9 @@ class TerminalController:
     def sync_terminal_windows(self, windows: list[dict]) -> None:
         """Update in-memory terminal_windows from tmux list_windows result."""
 
-        ws_session = state.get_session(self._conn.workspace_id)
+        ws_session = self._conn.app_state.sockets.get_session(
+            self._conn.workspace_id
+        )
         if not ws_session:
             return
         user_id = self._conn.user["id"]
@@ -736,7 +750,9 @@ class TerminalController:
     def notify_user_terminal_windows(self, windows: list[dict]) -> None:
         """Send terminal_windows to all connections for this user."""
 
-        ws_session = state.get_session(self._conn.workspace_id)
+        ws_session = self._conn.app_state.sockets.get_session(
+            self._conn.workspace_id
+        )
         if not ws_session:
             self._conn.sock.send_json(
                 {"type": "terminal_windows", "windows": windows}
@@ -745,7 +761,7 @@ class TerminalController:
         user_id = self._conn.user["id"]
         msg = {"type": "terminal_windows", "windows": windows}
         for sock in list(ws_session.subscribers):
-            conn = state.connections.get(sock)
+            conn = self._conn.app_state.sockets.connections.get(sock)
             if conn and conn.user.get("id") == user_id:
                 sock.send_json(msg)
 
@@ -885,7 +901,9 @@ class TerminalController:
         # Without this, reattaching shows a blank screen because tmux
         # skips the redraw when the PTY size matches the default.
         await session.resize(cols, rows)
-        container.registry.record_activity(self._conn.container_id)
+        self._conn.app_state.container_registry.record_activity(
+            self._conn.container_id
+        )
         return True
 
     async def stop(self) -> None:
@@ -909,7 +927,9 @@ class TerminalController:
         await self.claim_and_stop()
         # Broadcast viewer change so other users see updated viewer list
         if was_viewing and self._conn.workspace_id:
-            ws_session = state.get_session(self._conn.workspace_id)
+            ws_session = self._conn.app_state.sockets.get_session(
+                self._conn.workspace_id
+            )
             if ws_session:
                 self._conn.broadcast_shared_terminals(ws_session)
         # Reset debounce so the next explicit start isn't blocked.
@@ -928,7 +948,9 @@ class TerminalController:
                     {"type": "terminal_output", "data": data}
                 )
                 if self._conn.container_id:
-                    container.registry.record_activity(self._conn.container_id)
+                    self._conn.app_state.container_registry.record_activity(
+                        self._conn.container_id
+                    )
             # Stream ended — the tmux session exited (not necessarily the
             # container). Don't send container_stopped; the idle timeout
             # or shutdown button handles actual container death.
@@ -1014,7 +1036,9 @@ class SharedTerminalController:
             send_error(self._conn.sock, "Window ID required")
             return
         user_id = self._conn.user["id"]
-        ws_session = state.get_session(self._conn.workspace_id)
+        ws_session = self._conn.app_state.sockets.get_session(
+            self._conn.workspace_id
+        )
         if not ws_session:
             return
         match = self.find_window(ws_session, user_id, window_id)
@@ -1038,7 +1062,9 @@ class SharedTerminalController:
             return
         user_id = self._conn.user["id"]
         session_name = self._conn.tmux_session_name()
-        ws_session = state.get_session(self._conn.workspace_id)
+        ws_session = self._conn.app_state.sockets.get_session(
+            self._conn.workspace_id
+        )
         if not ws_session:
             return
         match = self.find_window(ws_session, user_id, window_id)
@@ -1116,7 +1142,9 @@ class SharedTerminalController:
             send_error(self._conn.sock, "user_id and window_id required")
             return
 
-        ws_session = state.get_session(self._conn.workspace_id)
+        ws_session = self._conn.app_state.sockets.get_session(
+            self._conn.workspace_id
+        )
         if not ws_session:
             return
         match = self.find_window(
@@ -1184,7 +1212,7 @@ class SharedTerminalController:
                         "readOnly": read_only,
                     }
                 )
-                ws_sess = state.get_session(conn.workspace_id)
+                ws_sess = conn.app_state.sockets.get_session(conn.workspace_id)
                 if ws_sess:
                     conn.broadcast_shared_terminals(ws_sess)
             except asyncio.CancelledError:  # pragma: no cover
@@ -1207,7 +1235,9 @@ class SharedTerminalController:
         if not await self._conn._has_perm("spectate-on-shared-terminals"):
             send_error(self._conn.sock, "Permission denied")
             return
-        ws_session = state.get_session(self._conn.workspace_id)
+        ws_session = self._conn.app_state.sockets.get_session(
+            self._conn.workspace_id
+        )
         if not ws_session:
             self._conn.sock.send_json(
                 {"type": "shared_terminals", "terminals": []}
@@ -1217,14 +1247,18 @@ class SharedTerminalController:
         # was fired (e.g. auto-start) before anyone connected to discover
         # it (#1133).
         await self._conn.terminal._sync_service_windows(ws_session)
-        terminals = get_shared_terminals(ws_session)
+        terminals = get_shared_terminals(
+            ws_session, self._conn.app_state.sockets
+        )
         self._conn.sock.send_json(
             {"type": "shared_terminals", "terminals": terminals}
         )
 
     def broadcast_shared_terminals(self, ws_session) -> None:
         """Broadcast the current shared terminal list to all subscribers."""
-        terminals = get_shared_terminals(ws_session)
+        terminals = get_shared_terminals(
+            ws_session, self._conn.app_state.sockets
+        )
         ws_session.broadcast(
             {"type": "shared_terminals", "terminals": terminals}
         )
@@ -1256,7 +1290,9 @@ class SharedTerminalController:
         # Sync with tmux to get proper window_id, then mark the new
         # window as shared.
         self._conn.sync_terminal_windows(windows)
-        ws_session = state.get_session(self._conn.workspace_id)
+        ws_session = self._conn.app_state.sockets.get_session(
+            self._conn.workspace_id
+        )
         if not ws_session:
             return
         user_id = self._conn.user["id"]
@@ -1295,7 +1331,9 @@ class SharedTerminalController:
             ):
                 send_error(self._conn.sock, "Permission denied")
                 return
-        ws_session = state.get_session(self._conn.workspace_id)
+        ws_session = self._conn.app_state.sockets.get_session(
+            self._conn.workspace_id
+        )
         if not ws_session:
             return
         match = self.find_window(

@@ -40,6 +40,7 @@ class TestBringup:
             "/home/clanker",
             "openclaw gateway",
             setup_state="complete",
+            app_state=None,
         )
 
     async def test_skips_service_command_when_none(self):
@@ -101,6 +102,7 @@ class TestBringup:
             "/home/clanker",
             "openclaw gateway",
             setup_state="pending",
+            app_state=None,
         )
 
     async def test_threads_none_setup_state(self):
@@ -122,4 +124,5 @@ class TestBringup:
             "/home/clanker",
             "openclaw gateway",
             setup_state=None,
+            app_state=None,
         )

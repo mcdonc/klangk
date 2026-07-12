@@ -5,20 +5,22 @@ import logging
 from .. import agent, model
 from .safe_websocket import SafeWebSocket
 from .constants import log_ws_msg
-from .session import state
+from .session import WebSocketState
 
 logger = logging.getLogger(__name__)
 
 
-async def get_presence_list(workspace_id: str) -> list[dict]:
+async def get_presence_list(
+    workspace_id: str, sockets: WebSocketState
+) -> list[dict]:
     """Return deduplicated list of users connected to a workspace."""
-    session = state.get_session(workspace_id)
+    session = sockets.get_session(workspace_id)
     if not session:
         return []
     seen: set[str] = set()
     users: list[dict] = []
     for sock in session.subscribers:
-        conn = state.connections.get(sock)
+        conn = sockets.connections.get(sock)
         if conn and conn.user["id"] not in seen:
             seen.add(conn.user["id"])
             users.append(
@@ -42,12 +44,12 @@ async def get_presence_list(workspace_id: str) -> list[dict]:
     return users
 
 
-def get_shared_terminals(ws_session) -> list[dict]:
+def get_shared_terminals(ws_session, sockets: WebSocketState) -> list[dict]:
     """Collect all shared windows across all users in a workspace."""
     # Build viewer map: (owner_user_id, window_id) -> [{user_id, email}]
     viewer_map: dict[tuple[str, str], list[dict]] = {}
     for sock in ws_session.subscribers:
-        conn = state.connections.get(sock)
+        conn = sockets.connections.get(sock)
         if not conn or not conn.viewing_shared:
             continue
         key = (
@@ -69,7 +71,7 @@ def get_shared_terminals(ws_session) -> list[dict]:
             handle = ws_session.agent_handle
         else:
             for sock in ws_session.subscribers:
-                conn = state.connections.get(sock)
+                conn = sockets.connections.get(sock)
                 if conn and conn.user.get("id") == user_id:
                     handle = conn.user.get("handle")
                     break
@@ -95,29 +97,33 @@ def get_shared_terminals(ws_session) -> list[dict]:
     return terminals
 
 
-async def reset_workspace_state(workspace_id: str) -> None:
+async def reset_workspace_state(
+    sockets: WebSocketState, workspace_id: str
+) -> None:
     """Thin wrapper for backward compatibility with external callers."""
-    await state.reset_workspace(workspace_id)
+    await sockets.reset_workspace(workspace_id)
 
 
-async def disconnect_all_websockets() -> None:
+async def disconnect_all_websockets(sockets: WebSocketState) -> None:
     """Drop every WebSocket connection and clear all session state.
 
     Used by the SIGHUP runtime-restart path (see ``main.runtime_shutdown``).
     Connected clients are closed with code 1012 so they reconnect and
     rebuild state against the freshly-started containers.
     """
-    await state.disconnect_all()
+    await sockets.disconnect_all()
 
 
-async def refresh_user_handle(user_id: str, new_handle: str) -> None:
+async def refresh_user_handle(
+    sockets: WebSocketState, user_id: str, new_handle: str
+) -> None:
     """Update the cached handle on all active connections for a user,
     re-broadcast presence, and post a system chat message to each
     affected workspace."""
     old_handle: str | None = None
     affected_workspaces: set[str] = set()
     user_email: str = ""
-    for conn in list(state.connections.values()):
+    for conn in list(sockets.connections.values()):
         if conn.user["id"] == user_id:
             if old_handle is None:
                 old_handle = conn.user.get("handle", "")
@@ -126,9 +132,9 @@ async def refresh_user_handle(user_id: str, new_handle: str) -> None:
             if conn.workspace_id:
                 affected_workspaces.add(conn.workspace_id)
     for ws_id in affected_workspaces:
-        session = state.get_session(ws_id)
+        session = sockets.get_session(ws_id)
         if session:
-            presence = await get_presence_list(ws_id)
+            presence = await get_presence_list(ws_id, sockets)
             session.broadcast({"type": "presence_list", "users": presence})
             sys_msg = await model.add_chat_message(
                 ws_id,

@@ -15,12 +15,12 @@ from pydantic import BaseModel
 from .. import (
     acl,
     auth,
-    container,
     emailsvc,
     model,
     wshandler,
     workspaces,
 )
+from ._common import get_app_state_dep
 from ..model import (
     ACTION_ALLOW,
     PRINCIPAL_GROUP,
@@ -266,7 +266,9 @@ async def list_user_workspaces(
 
 @router.delete("/admin/users/{user_id}")
 async def delete_user(
-    user_id: str, admin: dict = Depends(acl.has_permission("admin"))
+    user_id: str,
+    admin: dict = Depends(acl.has_permission("admin")),
+    app_state=Depends(get_app_state_dep),
 ):
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
@@ -274,7 +276,7 @@ async def delete_user(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     # Stop all containers for this user before deleting
-    await container.registry.stop_user_containers(user_id)
+    await app_state.container_registry.stop_user_containers(user_id)
     # Archive workspace data before deletion
     await workspaces.archive_user_data(user_id, user["email"])
     deleted = await model.delete_user(user_id)
@@ -294,6 +296,7 @@ async def update_user(
     user_id: str,
     req: UpdateUserRequest,
     admin: dict = Depends(acl.has_permission("admin")),
+    app_state=Depends(get_app_state_dep),
 ):
     user = await model.get_user_by_id(user_id)
     if user is None:
@@ -309,7 +312,9 @@ async def update_user(
             await model.set_user_handle(user_id, req.handle)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        await wshandler.refresh_user_handle(user_id, req.handle)
+        await wshandler.refresh_user_handle(
+            app_state.sockets, user_id, req.handle
+        )
     return {"status": "updated"}
 
 

@@ -10,7 +10,6 @@ This package re-exports every public (and the few private) names from
 those submodules so existing call sites keep working unchanged, e.g.::
 
     from . import wshandler
-    wshandler.state.get_session(...)
     from .wshandler import handle_websocket, Connection
 """
 
@@ -47,7 +46,6 @@ from .safe_websocket import (
 from .session import (
     WebSocketState as WebSocketState,
     WorkspaceSession as WorkspaceSession,
-    state as state,
 )
 from .controllers import (
     ExecController as ExecController,

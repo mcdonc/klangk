@@ -11,7 +11,7 @@ import logging
 import re
 import time
 
-from . import container, model, podman, util, workspaces
+from . import model, podman, util, workspaces
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
@@ -145,8 +145,9 @@ async def ensure_agent_home(workspace_id: str, container_id: str) -> str:
 class AgentSession:
     """Wraps a ``pi --mode rpc`` subprocess inside a container."""
 
-    def __init__(self, workspace_id: str) -> None:
+    def __init__(self, workspace_id: str, app_state=None) -> None:
         self.workspace_id = workspace_id
+        self.app_state = app_state
         self._proc: asyncio.subprocess.Process | None = None
         # Serializes prompt round-trips so two concurrent prompts can't
         # interleave their stdin writes / stdout reads on one subprocess.
@@ -166,7 +167,7 @@ class AgentSession:
 
     def _resolve_container_id(self) -> str:
         """Look up the current container ID for this workspace."""
-        state = container.registry.get_state(self.workspace_id)
+        state = self.app_state.container_registry.get_state(self.workspace_id)
         if state is None:
             raise AgentError(
                 f"No container running for workspace {self.workspace_id}"
@@ -305,7 +306,10 @@ class AgentSession:
         if self._proc is not None:
             return  # something else already restarted it
         # If the container is gone (workspace deleted), don't restart.
-        if container.registry.get_state(self.workspace_id) is None:
+        if (
+            self.app_state.container_registry.get_state(self.workspace_id)
+            is None
+        ):
             logger.info(
                 "Container gone for workspace %s, not restarting agent",
                 self.workspace_id,
@@ -550,7 +554,7 @@ class AgentSession:
         self._proc = None
 
 
-async def get_session(workspace_id: str) -> AgentSession:
+async def get_session(workspace_id: str, app_state=None) -> AgentSession:
     """Get or create an AgentSession for the given workspace.
 
     The session resolves the current container ID from the container
@@ -564,7 +568,7 @@ async def get_session(workspace_id: str) -> AgentSession:
     async with _agents_lock:
         session = _agents.get(workspace_id)
         if session is None:
-            session = AgentSession(workspace_id)
+            session = AgentSession(workspace_id, app_state=app_state)
             _agents[workspace_id] = session
         return session
 

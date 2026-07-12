@@ -65,6 +65,16 @@ async def require_workspace_token(request: Request) -> str:
     return result
 
 
+def get_app_state_dep(request: Request):
+    """Per-request bridge to ``app.state`` (no global read).
+
+    Request handlers obtain app state via
+    ``app_state = Depends(get_app_state_dep)`` instead of
+    reaching for module-level globals (#1426, #1475).
+    """
+    return request.app.state
+
+
 class WorkspaceAclEntry(BaseModel):
     action: int  # 0=deny, 1=allow
     principal_type: int  # 0=system, 1=user, 2=group

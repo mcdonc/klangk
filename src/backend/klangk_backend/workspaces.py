@@ -247,6 +247,7 @@ async def create_workspace(
     env: dict[str, str] | None = None,
     setup_state: str | None = None,
     health_check: str | None = None,
+    app_state=None,
 ) -> dict:
     workspace = await model.create_workspace_with_acl(
         user_id,
@@ -268,15 +269,16 @@ async def create_workspace(
     terminals_dir = home / ".terminals"
     terminals_dir.mkdir(exist_ok=True)
     # Allocate ports at creation time so ranges are sequential
-    try:
-        await container.registry.allocate_ports(
-            workspace["id"], workspace["num_ports"]
-        )
-    except Exception:
-        # Clean up the DB record and directories on port allocation failure
-        await model.delete_workspace(workspace["id"], user_id)
-        await _async_rmtree(home, f"workspace {workspace['id']} rollback")
-        raise
+    if app_state is not None:
+        try:
+            await app_state.container_registry.allocate_ports(
+                workspace["id"], workspace["num_ports"]
+            )
+        except Exception:
+            # Clean up the DB record and directories on port allocation failure
+            await model.delete_workspace(workspace["id"], user_id)
+            await _async_rmtree(home, f"workspace {workspace['id']} rollback")
+            raise
     return workspace
 
 
@@ -428,11 +430,11 @@ async def populate_home_skel(
         )
 
 
-async def start_workspace(ws: dict) -> tuple[str, str]:
+async def start_workspace(ws: dict, app_state) -> tuple[str, str]:
     """Start a container for a workspace immediately.
 
-    Thin wrapper around ``container.registry.start_container`` that
-    unpacks the workspace dict. The agent home provisioning and the
+    Thin wrapper around ``app_state.container_registry.start_container``
+    that unpacks the workspace dict. The agent home provisioning and the
     service command firing happen at the single create choke point
     inside ``start_container`` (see ``bringup.bringup``, #1244), so
     they no longer live here.
@@ -447,7 +449,7 @@ async def start_workspace(ws: dict) -> tuple[str, str]:
     host_path = str(get_workspace_host_path(workspace_id))
     h_path = str(get_home_host_path(workspace_id))
     cfg_path = str(get_config_host_path(workspace_id))
-    cid, status = await container.registry.start_container(
+    cid, status = await app_state.container_registry.start_container(
         workspace_id,
         host_path,
         h_path,
@@ -465,7 +467,7 @@ async def start_workspace(ws: dict) -> tuple[str, str]:
     return cid, status
 
 
-async def auto_start_workspaces() -> int:
+async def auto_start_workspaces(app_state) -> int:
     """Start containers for all workspaces with auto_start enabled.
 
     Skipped entirely if ``KLANGK_ALLOW_AUTOSTART`` is not set.
@@ -480,12 +482,12 @@ async def auto_start_workspaces() -> int:
         if i > 0:
             await asyncio.sleep(random.uniform(0.5, 2.0))
         try:
-            cid, status = await start_workspace(ws)
+            cid, status = await start_workspace(ws, app_state)
             # Auto-started containers are boot services: pin them alive
             # so they do not idle out between user connections. Only the
             # boot path does this -- create/restart use the default idle
             # timeout (#1244).
-            state = container.registry.states.get(ws["id"])
+            state = app_state.container_registry.states.get(ws["id"])
             if state:
                 state.idle_timeout = 0
             logger.info(

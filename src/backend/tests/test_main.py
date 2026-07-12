@@ -4,6 +4,7 @@ import asyncio
 import os
 import signal
 import sqlite3
+import types
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,7 +14,26 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from klangk_backend import main, model
+from klangk_backend.container import ContainerRegistry
 from klangk_backend.settings import KlangkSettings
+from klangk_backend.wshandler.session import WebSocketState
+
+
+def _make_app_state(settings=None):
+    """Build a minimal app_state for tests."""
+    if settings is None:
+        settings = KlangkSettings(env={})
+    registry = ContainerRegistry(settings)
+    sockets = WebSocketState()
+    app_state = types.SimpleNamespace(
+        container_registry=registry,
+        sockets=sockets,
+        settings=settings,
+    )
+    registry.sockets = sockets
+    registry.app_state = app_state
+    sockets.app_state = app_state
+    return app_state
 
 
 # --- Seed default user ---
@@ -288,19 +308,21 @@ class TestLifespan:
         monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
         monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
         app = FastAPI()
-        app.state.container_registry = main.container.registry
+        app_state = _make_app_state()
+        app.state.container_registry = app_state.container_registry
+        app.state.sockets = app_state.sockets
+        app.state.settings = app_state.settings
         app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
+        registry = app_state.container_registry
         with (
             patch.object(
-                main.container.registry,
+                registry,
                 "adopt_orphaned_containers",
                 new_callable=AsyncMock,
             ) as mock_adopt,
+            patch.object(registry, "start_cleanup_loop") as mock_start,
             patch.object(
-                main.container.registry, "start_cleanup_loop"
-            ) as mock_start,
-            patch.object(
-                main.container.registry,
+                registry,
                 "shutdown",
                 new_callable=AsyncMock,
             ) as mock_shutdown,
@@ -348,30 +370,28 @@ class TestStartupShutdownRestart:
         main._restart_lock = None
 
     async def test_startup_calls_container_sequence(self):
+        app_state = _make_app_state()
+        registry = app_state.container_registry
         with (
             patch.object(
-                main.container.registry,
+                registry,
                 "prewarm_podman",
                 new_callable=AsyncMock,
             ) as mock_prewarm,
             patch.object(
-                main.container.registry,
+                registry,
                 "adopt_orphaned_containers",
                 new_callable=AsyncMock,
             ) as mock_adopt,
-            patch.object(
-                main.container.registry, "start_cleanup_loop"
-            ) as mock_cleanup,
-            patch.object(
-                main.container.registry, "start_health_loop"
-            ) as mock_health,
+            patch.object(registry, "start_cleanup_loop") as mock_cleanup,
+            patch.object(registry, "start_health_loop") as mock_health,
             patch(
                 "klangk_backend.main.workspaces.auto_start_workspaces",
                 new_callable=AsyncMock,
                 return_value=0,
             ) as mock_autostart,
         ):
-            await main.startup(main.container.registry)
+            await main.startup(app_state)
         mock_prewarm.assert_awaited_once()
         mock_adopt.assert_awaited_once()
         mock_cleanup.assert_called_once()
@@ -379,6 +399,8 @@ class TestStartupShutdownRestart:
         mock_autostart.assert_awaited_once()
 
     async def test_runtime_shutdown_tears_down_layers(self):
+        app_state = _make_app_state()
+        registry = app_state.container_registry
         with (
             patch(
                 "klangk_backend.main.wshandler.disconnect_all_websockets",
@@ -392,10 +414,10 @@ class TestStartupShutdownRestart:
                 "klangk_backend.main.wshandler.clear_agent_mention_state"
             ) as mock_clear,
             patch.object(
-                main.container.registry, "shutdown", new_callable=AsyncMock
+                registry, "shutdown", new_callable=AsyncMock
             ) as mock_shutdown,
         ):
-            await main.runtime_shutdown(main.container.registry)
+            await main.runtime_shutdown(app_state)
         mock_disc.assert_awaited_once()
         mock_stop_agents.assert_awaited_once()
         mock_clear.assert_called_once()
@@ -415,7 +437,7 @@ class TestStartupShutdownRestart:
 
     async def test_restart_runtime_runs_shutdown_then_startup(self):
         main._restart_lock = None  # force fresh lock creation
-        reg = main.container.registry
+        app_state = _make_app_state()
         wd = main.NginxWatchdog(KlangkSettings(env={}))
         with (
             patch(
@@ -425,9 +447,9 @@ class TestStartupShutdownRestart:
                 "klangk_backend.main.startup", new_callable=AsyncMock
             ) as mock_up,
         ):
-            await main.restart_runtime(reg, wd)
-        mock_down.assert_awaited_once_with(reg)
-        mock_up.assert_awaited_once_with(reg)
+            await main.restart_runtime(app_state, wd)
+        mock_down.assert_awaited_once_with(app_state)
+        mock_up.assert_awaited_once_with(app_state)
         # Lock was created and is now held-free.
         assert main._restart_lock is not None
 
@@ -438,7 +460,7 @@ class TestStartupShutdownRestart:
         # order-dependent and broken in isolation — #1242.)
         main._restart_lock = asyncio.Lock()
         existing = main._restart_lock
-        reg = main.container.registry
+        app_state = _make_app_state()
         wd = main.NginxWatchdog(KlangkSettings(env={}))
         with (
             patch(
@@ -446,7 +468,7 @@ class TestStartupShutdownRestart:
             ),
             patch("klangk_backend.main.startup", new_callable=AsyncMock),
         ):
-            await main.restart_runtime(reg, wd)
+            await main.restart_runtime(app_state, wd)
         # Same lock object reused, not replaced.
         assert main._restart_lock is existing
 
@@ -455,15 +477,15 @@ class TestStartupShutdownRestart:
         main._restart_lock = None
         order = []
 
-        async def fake_shutdown(reg):
+        async def fake_shutdown(app_state):
             order.append("down-start")
             await asyncio.sleep(0.01)
             order.append("down-end")
 
-        async def fake_startup(reg):
+        async def fake_startup(app_state):
             order.append("up")
 
-        reg = main.container.registry
+        app_state = _make_app_state()
         wd = main.NginxWatchdog(KlangkSettings(env={}))
         with (
             patch(
@@ -473,7 +495,8 @@ class TestStartupShutdownRestart:
             patch("klangk_backend.main.startup", side_effect=fake_startup),
         ):
             await asyncio.gather(
-                main.restart_runtime(reg, wd), main.restart_runtime(reg, wd)
+                main.restart_runtime(app_state, wd),
+                main.restart_runtime(app_state, wd),
             )
         # Two complete down-start...down-end...up cycles, never interleaved.
         assert order == [
@@ -487,16 +510,16 @@ class TestStartupShutdownRestart:
 
     async def test_on_sighup_schedules_restart(self):
         """on_sighup creates a task that runs restart_runtime."""
-        reg = main.container.registry
+        app_state = _make_app_state()
         wd = main.NginxWatchdog(KlangkSettings(env={}))
         with patch(
             "klangk_backend.main.restart_runtime", new_callable=AsyncMock
         ) as mock_restart:
-            main.on_sighup(reg, wd)
+            main.on_sighup(app_state, wd)
             # Let the scheduled task run.
             await asyncio.sleep(0)
             await asyncio.sleep(0)
-        mock_restart.assert_awaited_once_with(reg, wd)
+        mock_restart.assert_awaited_once_with(app_state, wd)
 
     async def test_lifespan_registers_sighup_handler(self, db, monkeypatch):
         """The lifespan installs (and removes) a SIGHUP handler."""
@@ -505,8 +528,12 @@ class TestStartupShutdownRestart:
         monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
         monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
         app = FastAPI()
-        app.state.container_registry = main.container.registry
+        app_state = _make_app_state()
+        app.state.container_registry = app_state.container_registry
+        app.state.sockets = app_state.sockets
+        app.state.settings = app_state.settings
         app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
+        registry = app_state.container_registry
         loop = asyncio.get_running_loop()
         with (
             patch.object(
@@ -516,14 +543,12 @@ class TestStartupShutdownRestart:
                 loop, "remove_signal_handler", new_callable=MagicMock
             ) as mock_remove,
             patch.object(
-                main.container.registry,
+                registry,
                 "adopt_orphaned_containers",
                 new_callable=AsyncMock,
             ),
-            patch.object(main.container.registry, "start_cleanup_loop"),
-            patch.object(
-                main.container.registry, "shutdown", new_callable=AsyncMock
-            ),
+            patch.object(registry, "start_cleanup_loop"),
+            patch.object(registry, "shutdown", new_callable=AsyncMock),
             patch("klangk_backend.main.check_pid_file", return_value=None),
             patch("klangk_backend.main.write_pid_file"),
             patch("klangk_backend.main.remove_pid_file"),
@@ -944,12 +969,13 @@ class TestBuildApp:
         assert isinstance(main.app, FastAPI)
 
 
-class TestGetSettingsDep:
-    """Tests for get_settings_dep per-request bridge (#1426)."""
+class TestGetAppStateDep:
+    """Tests for get_app_state_dep per-request bridge (#1426)."""
 
-    def test_returns_app_state_settings(self):
+    def test_returns_app_state(self):
         settings = KlangkSettings(env={})
         app = main.build_app(settings)
         request = MagicMock()
         request.app = app
-        assert main.get_settings_dep(request) is settings
+        app_state = main.get_app_state_dep(request)
+        assert app_state.settings is settings

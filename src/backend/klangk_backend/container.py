@@ -6,7 +6,7 @@ import os
 import time
 
 from . import auth, bringup, model, plugins, podman, terminal, util
-from .settings import KlangkSettings, get_settings
+from .settings import KlangkSettings
 
 logger = logging.getLogger(__name__)
 
@@ -523,11 +523,11 @@ class HealthMonitor:
     def _connections(self):
         """The WebSocketState instance the monitor broadcasts through (#1464).
 
-        Reached via the registry's ``connections`` attribute, set by
-        ``build_app()`` in production and on the module-level shim in
-        ``container.py``. No lazy import — the registry owns the reference.
+        Reached via the registry's ``sockets`` attribute, set by
+        ``build_app()`` in production. No lazy import — the registry owns
+        the reference.
         """
-        return self._registry.connections
+        return self._registry.sockets
 
     def _setup_complete(self, state: ContainerState) -> bool:
         """True if health checks may run for this workspace.
@@ -788,10 +788,14 @@ class ContainerRegistry:
         self.idle = IdleMonitor(self)
         self.health = HealthMonitor(self)
 
+        # Back-reference to ``app.state`` (set by ``build_app()`` after
+        # construction). Used to pass ``app_state`` to ``bringup.bringup``
+        # and other callees that need explicit dependency threading.
+        self.app_state = None
+
         # The WebSocketState instance (set by build_app after construction,
-        # #1464). The HealthMonitor reaches it via self._registry.connections.
-        # wshandler.state stays as a transitional shim (dies in Slice 2d / #1465).
-        self.connections = None
+        # #1464). The HealthMonitor reaches it via self._registry.sockets.
+        self.sockets = None
 
     # --- Service-session locks (#1188, moved from terminal.py, #1426) ---
     # The dict still physically lives in terminal.py (terminal.py can't import
@@ -1527,6 +1531,7 @@ class ContainerRegistry:
             container_id,
             service_command,
             setup_state,
+            app_state=self.app_state,
         )
         logger.info(
             "workspace-open: DONE — new container created and started: %.3fs",
@@ -1720,10 +1725,3 @@ class ContainerRegistry:
             logger.warning("Error listing orphaned containers: %s", e)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-
-
-# Module-level singleton
-# Transitional module-level shim (#1426 Slice 2a). Production constructs the
-# real instance in build_app() → app.state.container_registry; this exists so
-# the ~660 test references and unmigrated callers keep working. Dies in #1465.
-registry = ContainerRegistry(get_settings())

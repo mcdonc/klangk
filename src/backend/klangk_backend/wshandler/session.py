@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from .. import agent, auth, container, model, terminal
+from .. import agent, auth, model, terminal
 from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
 from .constants import (
     agent_conversations,
@@ -83,8 +83,9 @@ class WorkspaceSession:
     Created by the first WebSocket connection, cleaned up by the last.
     """
 
-    def __init__(self, workspace_id: str):
+    def __init__(self, workspace_id: str, app_state=None):
         self.workspace_id = workspace_id
+        self.app_state = app_state
         self.container_id: str | None = None
         self.subscribers: set[SafeWebSocket] = set()
         self.browser_subscribers: set[SafeWebSocket] = set()
@@ -224,27 +225,38 @@ class WorkspaceSession:
         request_id = str(uuid.uuid4())
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
-        state.pending_browser_requests[request_id] = (future, None)
+        self.app_state.sockets.pending_browser_requests[request_id] = (
+            future,
+            None,
+        )
 
         if not self.browser_subscribers:
-            state.pending_browser_requests.pop(request_id, None)
+            self.app_state.sockets.pending_browser_requests.pop(
+                request_id, None
+            )
             return {"error": "No browser client connected to this workspace"}
 
         message = {**request, "type": "browser_request", "id": request_id}
         log_ws_msg("BCAST", message)
         delivered = self.broadcast_to_browsers(message)
         if delivered == 0:
-            state.pending_browser_requests.pop(request_id, None)
+            self.app_state.sockets.pending_browser_requests.pop(
+                request_id, None
+            )
             return {"error": "No browser client connected to this workspace"}
 
         try:
             result = await asyncio.wait_for(future, timeout=timeout)
             return result
         except asyncio.TimeoutError:
-            state.pending_browser_requests.pop(request_id, None)
+            self.app_state.sockets.pending_browser_requests.pop(
+                request_id, None
+            )
             return {"error": "Browser client did not respond within timeout"}
         except asyncio.CancelledError:
-            state.pending_browser_requests.pop(request_id, None)
+            self.app_state.sockets.pending_browser_requests.pop(
+                request_id, None
+            )
             raise
 
     async def dispatch_browser_request_to(
@@ -259,24 +271,33 @@ class WorkspaceSession:
         request_id = str(uuid.uuid4())
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
-        state.pending_browser_requests[request_id] = (future, target_sock)
+        self.app_state.sockets.pending_browser_requests[request_id] = (
+            future,
+            target_sock,
+        )
 
         message = {**request, "type": "browser_request", "id": request_id}
         log_ws_msg("BCAST", message)
         try:
             target_sock.send_json(message)
         except WS_ERRORS:
-            state.pending_browser_requests.pop(request_id, None)
+            self.app_state.sockets.pending_browser_requests.pop(
+                request_id, None
+            )
             return {"error": "Browser connection not available"}
 
         try:
             result = await asyncio.wait_for(future, timeout=timeout)
             return result
         except asyncio.TimeoutError:
-            state.pending_browser_requests.pop(request_id, None)
+            self.app_state.sockets.pending_browser_requests.pop(
+                request_id, None
+            )
             return {"error": "Browser client did not respond within timeout"}
         except asyncio.CancelledError:
-            state.pending_browser_requests.pop(request_id, None)
+            self.app_state.sockets.pending_browser_requests.pop(
+                request_id, None
+            )
             raise
 
     async def dispatch_browser_request_stream_to(
@@ -295,7 +316,10 @@ class WorkspaceSession:
         """
         request_id = str(uuid.uuid4())
         queue: asyncio.Queue = asyncio.Queue()
-        state.streaming_browser_requests[request_id] = (queue, target_sock)
+        self.app_state.sockets.streaming_browser_requests[request_id] = (
+            queue,
+            target_sock,
+        )
         message = {
             **request,
             "type": "browser_request",
@@ -306,7 +330,9 @@ class WorkspaceSession:
         try:
             target_sock.send_json(message)
         except WS_ERRORS:
-            state.streaming_browser_requests.pop(request_id, None)
+            self.app_state.sockets.streaming_browser_requests.pop(
+                request_id, None
+            )
             yield (
                 json.dumps(
                     {
@@ -340,7 +366,9 @@ class WorkspaceSession:
                 if item["type"] != "chunk":
                     return
         finally:
-            state.streaming_browser_requests.pop(request_id, None)
+            self.app_state.sockets.streaming_browser_requests.pop(
+                request_id, None
+            )
 
     async def full_reset(self) -> None:
         """Clean up all shared state for this workspace.
@@ -348,8 +376,8 @@ class WorkspaceSession:
         Called when a container is killed externally (idle timeout,
         manual stop) so the next workspace_connect starts fresh.
         """
-        await state.remove_session(self.workspace_id)
-        await container.registry.remove_state(self.workspace_id)
+        await self.app_state.sockets.remove_session(self.workspace_id)
+        await self.app_state.container_registry.remove_state(self.workspace_id)
         logger.info("Reset workspace state for %s", self.workspace_id)
 
 
@@ -362,7 +390,8 @@ class WebSocketState:
     # WebSocket reconnection with backoff.
     PRESENCE_LEAVE_DELAY = 10.0  # seconds
 
-    def __init__(self) -> None:
+    def __init__(self, app_state=None) -> None:
+        self.app_state = app_state
         # Active connections: SafeWebSocket -> Connection
         self.connections: dict[SafeWebSocket, "Connection"] = {}
         # Active sessions keyed by workspace_id.
@@ -387,11 +416,13 @@ class WebSocketState:
     def get_session(self, workspace_id: str) -> WorkspaceSession | None:
         return self.sessions.get(workspace_id)
 
-    def get_or_create_session(self, workspace_id: str) -> WorkspaceSession:
+    def get_or_create_session(
+        self, workspace_id: str, app_state=None
+    ) -> WorkspaceSession:
         try:
             return self.sessions[workspace_id]
         except KeyError:
-            session = WorkspaceSession(workspace_id)
+            session = WorkspaceSession(workspace_id, app_state=app_state)
             return self.sessions.setdefault(workspace_id, session)
 
     async def remove_session(self, workspace_id: str) -> None:
@@ -421,7 +452,7 @@ class WebSocketState:
         Used by the SIGHUP runtime-restart path.  Connected clients are
         closed with code 1012 ("service restarted") so they reconnect
         and rebuild state against the freshly-started containers.
-        Deliberately leaves ``container.registry`` untouched -- the
+        Deliberately leaves the container registry untouched -- the
         registry needs its container-id -> workspace map intact for the
         subsequent ``registry.shutdown()`` to find containers to stop.
 
@@ -543,7 +574,7 @@ class WebSocketState:
         if session:
             await session.full_reset()
         else:
-            await container.registry.remove_state(workspace_id)
+            await self.app_state.container_registry.remove_state(workspace_id)
             logger.info("Reset workspace state for %s", workspace_id)
 
         # Clean up module-level agent state for this workspace.
@@ -643,7 +674,7 @@ class WebSocketState:
         from ``registry.states`` and thus skipped (the container-death
         hole is #1175 item 2).
         """
-        for cs in list(container.registry.states.values()):
+        for cs in list(self.app_state.container_registry.states.values()):
             if cs.health_check is None or cs.health_status is None:
                 continue
             try:
@@ -792,11 +823,3 @@ class WebSocketState:
         if expected_sock is not None and sender is not expected_sock:
             return
         queue.put_nowait({"type": "chunk", "delta": msg.get("delta", "")})
-
-
-state = WebSocketState()
-
-# Wire up the agent broadcast callback so agent.py can broadcast
-# to WebSocket sessions without importing wshandler (breaking the
-# agent ↔ wshandler circular dependency).
-agent.get_workspace_session = state.get_session

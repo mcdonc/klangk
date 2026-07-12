@@ -35,12 +35,14 @@ def _clear_agents():
 
 @pytest.fixture(autouse=True)
 def _mock_container_registry():
-    """Provide a default container registry state for all agent tests."""
-    with patch(
-        "klangk_backend.agent.container.registry.get_state",
-        return_value=_FakeContainerState("cid"),
-    ):
-        yield
+    """Provide a default container registry state for all agent tests.
+
+    Agent code accesses ``self.app_state.container_registry.get_state()``.
+    The ``_make_session`` helper wires a fake app_state with a mock
+    registry whose ``get_state`` returns a ``_FakeContainerState``.
+    This fixture is kept as a no-op for structural compatibility.
+    """
+    yield
 
 
 @pytest.fixture(autouse=True)
@@ -58,9 +60,19 @@ async def _seed_agent_db(db):
     model.clear_agent_cache()
 
 
+def _make_app_state(cid="cid"):
+    """Build a fake app_state with a mock container registry."""
+    import types
+
+    mock_registry = MagicMock()
+    mock_registry.get_state.return_value = _FakeContainerState(cid)
+    return types.SimpleNamespace(container_registry=mock_registry)
+
+
 def _make_session(workspace_id="ws-id"):
     """Create an AgentSession with home setup already done."""
-    s = AgentSession(workspace_id)
+    app_state = _make_app_state()
+    s = AgentSession(workspace_id, app_state=app_state)
     s._home_ready = True
     s._last_container_id = "cid"
     return s
@@ -763,19 +775,22 @@ class TestAgentSession:
 
 class TestGetSession:
     async def test_creates_new_session(self):
-        session = await get_session("ws-1")
+        app_state = _make_app_state()
+        session = await get_session("ws-1", app_state=app_state)
         assert session.workspace_id == "ws-1"
         assert "ws-1" in _agents
 
     async def test_reuses_existing_session(self):
-        s1 = await get_session("ws-1")
-        s2 = await get_session("ws-1")
+        app_state = _make_app_state()
+        s1 = await get_session("ws-1", app_state=app_state)
+        s2 = await get_session("ws-1", app_state=app_state)
         assert s1 is s2
 
     async def test_get_session_blocked_during_stop(self):
         """get_session must not install a session while stop_session is
         tearing one down for the same workspace (#1298)."""
-        session = await get_session("ws-race")
+        app_state = _make_app_state()
+        session = await get_session("ws-race", app_state=app_state)
         session._proc = AsyncMock()
         session._proc.returncode = None
         session._proc.kill = MagicMock()
@@ -794,7 +809,7 @@ class TestGetSession:
         session.stop = slow_stop  # type: ignore[assignment]
 
         async def do_get():
-            s = await get_session("ws-race")
+            s = await get_session("ws-race", app_state=app_state)
             order.append("get_done")
             return s
 
@@ -1012,7 +1027,7 @@ class TestEnsureHome:
 
 class TestStopSession:
     async def test_stop_existing(self):
-        session = await get_session("ws-1")
+        session = await get_session("ws-1", app_state=_make_app_state())
         session._proc = AsyncMock()
         session._proc.returncode = None
         session._proc.kill = MagicMock()
@@ -1027,8 +1042,9 @@ class TestStopSession:
 
 class TestStopAllSessions:
     async def test_stops_every_session(self):
+        app_state = _make_app_state()
         for ws_id in ("ws-a", "ws-b"):
-            session = await get_session(ws_id)
+            session = await get_session(ws_id, app_state=app_state)
             session._proc = AsyncMock()
             session._proc.returncode = None
             session._proc.kill = MagicMock()
@@ -1289,11 +1305,10 @@ class TestMonitorProcess:
         session._gave_up = True
         session._last_container_id = "old-cid"
         # Simulate container change — _resolve_container_id sees new ID.
-        with patch(
-            "klangk_backend.agent.container.registry.get_state",
-            return_value=_FakeContainerState("new-cid"),
-        ):
-            cid = session._resolve_container_id()
+        session.app_state.container_registry.get_state.return_value = (
+            _FakeContainerState("new-cid")
+        )
+        cid = session._resolve_container_id()
         assert cid == "new-cid"
         assert session._gave_up is False
         assert session._restart_attempts == 0
@@ -1470,8 +1485,9 @@ class TestMonitorProcess:
                 "klangk_backend.agent.get_workspace_session",
                 return_value=MagicMock(),
             ),
-            patch(
-                "klangk_backend.agent.container.registry.get_state",
+            patch.object(
+                session.app_state.container_registry,
+                "get_state",
                 return_value=None,
             ),
             patch(

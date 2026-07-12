@@ -46,6 +46,7 @@ from .. import (
     plugins,
     wshandler,
 )
+from ._common import get_app_state_dep
 
 # Imported under an alias: the ``from . import auth as _auth_routes`` line
 # below pulls in the api/auth.py *submodule*, and the import machinery writes
@@ -123,11 +124,14 @@ async def version():
 if resolve_env_value("KLANGK_TEST_MODE"):  # pragma: no cover
 
     @router.get("/test/idle-timeout")
-    async def get_idle_timeout(workspace_id: str | None = None):
+    async def get_idle_timeout(
+        workspace_id: str | None = None,
+        app_state=Depends(get_app_state_dep),
+    ):
         """Get the idle timeout (per-workspace or global default)."""
         if workspace_id:
             return {
-                "idle_timeout_seconds": container.registry.get_workspace_idle_timeout(
+                "idle_timeout_seconds": app_state.container_registry.get_workspace_idle_timeout(
                     workspace_id
                 )
             }
@@ -138,12 +142,15 @@ if resolve_env_value("KLANGK_TEST_MODE"):  # pragma: no cover
         workspace_id: str | None = None
 
     @router.post("/test/set-idle-timeout")
-    async def set_idle_timeout(body: SetIdleTimeoutRequest):
+    async def set_idle_timeout(
+        body: SetIdleTimeoutRequest,
+        app_state=Depends(get_app_state_dep),
+    ):
         """Set the idle timeout. Per-workspace if workspace_id given, else global."""
         seconds = body.seconds
         workspace_id = body.workspace_id
         if workspace_id:
-            container.registry.set_workspace_idle_timeout(
+            app_state.container_registry.set_workspace_idle_timeout(
                 workspace_id, seconds
             )
         else:
@@ -157,14 +164,20 @@ if resolve_env_value("KLANGK_TEST_MODE"):  # pragma: no cover
         return {"token": auth.create_workspace_token(workspace_id)}
 
     @router.get("/test/browsers/{workspace_id}")
-    async def get_browsers(workspace_id: str):
+    async def get_browsers(
+        workspace_id: str,
+        app_state=Depends(get_app_state_dep),
+    ):
         """Return all active browser registrations for a workspace (test only)."""
         browsers = []
-        for bid, (ws_id, sock) in container.registry._browsers.items():
+        for bid, (
+            ws_id,
+            sock,
+        ) in app_state.container_registry._browsers.items():
             if ws_id == workspace_id:
                 email = None
                 if sock is not None:
-                    conn = wshandler.state.connections.get(sock)
+                    conn = app_state.sockets.connections.get(sock)
                     if conn:
                         email = conn.user.get("email")
                 browsers.append({"browser_id": bid, "email": email})

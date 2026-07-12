@@ -11,8 +11,8 @@ from pydantic import BaseModel
 
 from .. import (
     model,
-    wshandler,
 )
+from ._common import get_app_state_dep
 from ._common import (
     require_workspace_token,
 )
@@ -30,6 +30,7 @@ class WorkspaceChatRequest(BaseModel):
 async def workspace_chat(
     body: WorkspaceChatRequest,
     workspace_id: str = Depends(require_workspace_token),
+    app_state=Depends(get_app_state_dep),
 ):
     """Post a chat message from a container using a workspace JWT.
 
@@ -51,7 +52,7 @@ async def workspace_chat(
         text,
         message_type=model.MSG_AGENT,
     )
-    session = wshandler.state.get_session(workspace_id)
+    session = app_state.sockets.get_session(workspace_id)
     if session:
         session.broadcast({"type": "chat_message", **chat_msg})
     return chat_msg

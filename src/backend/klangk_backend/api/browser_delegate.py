@@ -13,9 +13,9 @@ from fastapi.responses import (
 from pydantic import BaseModel
 
 from .. import (
-    container,
     wshandler,
 )
+from ._common import get_app_state_dep
 from ._common import (
     require_workspace_token,
 )
@@ -31,18 +31,20 @@ class BrowserDelegateRequest(BaseModel):
     browser_id: str
 
 
-def _resolve_bridge_target(body: BrowserDelegateRequest):
+def _resolve_bridge_target(
+    body: BrowserDelegateRequest, container_registry, sockets
+):
     """Resolve a browser ID to (session, target_sock, payload).
 
     Raises HTTPException (403/502) if the browser ID is unknown, the
     workspace has no session, or the target browser is not subscribed.
     """
-    resolved = container.registry.resolve_browser(body.browser_id)
+    resolved = container_registry.resolve_browser(body.browser_id)
     if resolved is None:
         raise HTTPException(status_code=403, detail="Unknown browser ID")
     workspace_id, target_sock = resolved
 
-    session = wshandler.state.get_session(workspace_id)
+    session = sockets.get_session(workspace_id)
     if not session:
         raise HTTPException(
             status_code=502,
@@ -61,6 +63,7 @@ def _resolve_bridge_target(body: BrowserDelegateRequest):
 async def browser_delegate(
     body: BrowserDelegateRequest,
     workspace_id: str = Depends(require_workspace_token),
+    app_state=Depends(get_app_state_dep),
 ):
     """Bridge endpoint for container processes to delegate actions to the browser.
 
@@ -68,7 +71,9 @@ async def browser_delegate(
     and includes it in the POST.  The backend resolves the ID to the
     specific browser tab's WebSocket and relays the request.
     """
-    session, target_sock, payload = _resolve_bridge_target(body)
+    session, target_sock, payload = _resolve_bridge_target(
+        body, app_state.container_registry, app_state.sockets
+    )
     # Credential get operations may wait for user interaction (PAT dialog
     # or OAuth device flow) — allow up to 15 minutes (matching GitHub's
     # device code expiry).
@@ -90,6 +95,7 @@ async def browser_delegate(
 async def browser_delegate_stream(
     body: BrowserDelegateRequest,
     workspace_id: str = Depends(require_workspace_token),
+    app_state=Depends(get_app_state_dep),
 ):
     """Streaming bridge: relay browser output chunks back as NDJSON.
 
@@ -98,7 +104,9 @@ async def browser_delegate_stream(
     to the caller immediately, so there is no single bounded round-trip — the
     only limit is the per-chunk idle timeout.
     """
-    session, target_sock, payload = _resolve_bridge_target(body)
+    session, target_sock, payload = _resolve_bridge_target(
+        body, app_state.container_registry, app_state.sockets
+    )
     return StreamingResponse(
         session.dispatch_browser_request_stream_to(
             target_sock, payload, wshandler.bridge_idle_timeout()

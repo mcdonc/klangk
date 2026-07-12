@@ -139,7 +139,7 @@ def main(  # pragma: no cover
     # "klangk_backend.main:app" string import). This avoids the module-level
     # ``app = build_app()`` global — there's one ``build_app(settings)`` call,
     # one registry, wired correctly (#1464).
-    from klangk_backend.main import build_app
+    from klangk_backend.main import build_app  # noqa: allow-deferred-import
 
     asgi_app = build_app(settings)
     uvicorn.run(
