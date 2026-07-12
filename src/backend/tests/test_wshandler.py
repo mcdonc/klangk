@@ -1261,7 +1261,6 @@ class TestHandleTerminalStart:
             "/home/clanker",
             "./serve",
             setup_state="complete",
-            app_state=app_state,
         )
         assert "service_command" not in MockTS.call_args.kwargs
 
@@ -1673,7 +1672,6 @@ class TestHandleTerminalStart:
             "/home/clanker",
             "pi",
             setup_state="complete",
-            app_state=app_state,
         )
 
         conn.terminal_task.cancel()
@@ -6698,7 +6696,6 @@ class TestTerminalController:
         """_fire_service_command reads fresh setup_state from the DB,
         resolves the agent home, and targets the service session (#1133)."""
         ctrl, _, conn = self._controller()
-        app_state = conn.app_state
         conn._service_command = "./run.sh"
         with (
             patch(
@@ -6721,7 +6718,6 @@ class TestTerminalController:
             "/home/clanker",
             "./run.sh",
             setup_state="complete",
-            app_state=app_state,
         )
 
     async def test_fire_service_command_no_service_command_noop(self):

@@ -454,7 +454,6 @@ class TerminalController:
             agent_home,
             service_command,
             setup_state=setup_state,
-            app_state=self._conn.app_state,
         )
 
     async def _sync_service_windows(self, ws_session) -> bool:

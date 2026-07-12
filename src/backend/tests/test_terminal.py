@@ -36,8 +36,12 @@ _mock_pod = MagicMock()
 _mock_registry = MagicMock()
 _mock_registry.get_service_session_lock.return_value = asyncio.Lock()
 _mock_registry.mark_service_started = MagicMock()
-# Minimal app_state carrying podman + registry + settings so Terminal can
-# reach all three through its single ctor arg (#1480).
+
+# These are rebuilt per-test by the _fresh_terminal fixture so a value a
+# test writes onto settings (e.g. disable_tmux) can't leak into the next
+# one. _mock_pod / _mock_registry stay module-scoped (their resets live
+# in per-class setup_method / patch.object auto-restore); only the
+# settings-bearing wrapper + Terminal are recreated.
 _mock_settings = MagicMock()
 _mock_settings.disable_tmux = None
 _app_state = types.SimpleNamespace(
@@ -46,6 +50,27 @@ _app_state = types.SimpleNamespace(
     settings=_mock_settings,
 )
 _terminal = Terminal(_app_state)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_terminal():
+    """Recreate settings (and the app_state/Terminal carrying it) per test.
+
+    Terminal.tmux_enabled() reads disable_tmux off settings instead of the
+    env (so monkeypatch.setenv no longer isolates it). Tests mutate that
+    attribute directly; without a fresh settings object each test, the
+    mutation leaks to whatever runs next in the same worker.
+    """
+    global _mock_settings, _app_state, _terminal
+    _mock_settings = MagicMock()
+    _mock_settings.disable_tmux = None
+    _app_state = types.SimpleNamespace(
+        podman=_mock_pod,
+        container_registry=_mock_registry,
+        settings=_mock_settings,
+    )
+    _terminal = Terminal(_app_state)
+    yield
 
 
 class TestShellProcessFactory:
