@@ -20,6 +20,7 @@ from . import (
     agent,
     auth,
     container,
+    emailsvc,
     model,
     nginx as nginx_mod,
     oidc,
@@ -787,6 +788,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # (previously module globals _agents/_agents_lock/get_workspace_session).
     app.state.agents = agent.Agents(app.state)
     app.state.agents.get_workspace_session = sockets.get_session
+    # #1483: EmailService(app_state) owns SMTP/sendmail transport + the
+    # Jinja template env (previously module-level functions reading
+    # resolve_env_value at call time).
+    app.state.email = emailsvc.EmailService(app.state)
 
     app.add_middleware(
         CORSMiddleware,

@@ -198,6 +198,7 @@ def app_state(temp_data_dir):
 
     from klangk_backend.settings import KlangkSettings
     from klangk_backend.container import ContainerRegistry
+    from klangk_backend.emailsvc import EmailService
     from klangk_backend.workspaces import Workspaces
 
     settings = KlangkSettings(os.environ)
@@ -206,6 +207,7 @@ def app_state(temp_data_dir):
     state.container_registry = registry
     registry.app_state = state
     state.workspaces = Workspaces(state)
+    state.email = EmailService(state)
     return state
 
 

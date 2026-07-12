@@ -19,6 +19,7 @@ from httpx import ASGITransport, AsyncClient
 from klangk_backend import (
     api,
     auth,
+    emailsvc as emailsvc_mod,
     main,
     model,
     oidc as oidc_mod,
@@ -58,6 +59,7 @@ async def mode_server(db, monkeypatch):
     app.state.settings = KlangkSettings(env={"KLANGK_AUTH_MODES": "none"})
     app.state.oidc = oidc_mod.OIDC(app.state)
     app.state.plugins = plugins_mod.Plugins(app.state)
+    app.state.email = emailsvc_mod.EmailService(app.state)
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)
     register_exception_handlers(app)
