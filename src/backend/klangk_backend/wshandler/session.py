@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from .. import agent, auth, model, terminal
+from .. import agent, auth, model
 from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
 from .constants import (
     agent_conversations,
@@ -191,8 +191,8 @@ class WorkspaceSession:
 
             try:
                 new_token = auth.create_workspace_token(self.workspace_id)
-                await terminal.set_workspace_token(
-                    container_id, new_token, self.app_state.podman
+                await self.app_state.terminal.set_workspace_token(
+                    container_id, new_token
                 )
                 self.workspace_token_expiry = datetime.now(
                     timezone.utc

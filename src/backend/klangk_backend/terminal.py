@@ -21,7 +21,7 @@ import termios
 import tty
 from collections.abc import AsyncGenerator
 
-from .podman import subprocess_env
+from .podman import Podman, subprocess_env
 from .exceptions import TerminalError
 from .model.workspaces import SETUP_STATE_COMPLETE
 from .util import BoundedOutputQueue, resolve_env_value
@@ -33,6 +33,11 @@ CONTAINER_USER = "klangk"
 
 _SAFE_WINDOW_NAME = re.compile(r"^[A-Za-z0-9 _.\-]+$")
 _MAX_WINDOW_NAME_LEN = 64
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers (no podman dependency — stay module-level)
+# ---------------------------------------------------------------------------
 
 
 def validate_window_name(name: str) -> None:
@@ -102,62 +107,6 @@ SERVICE_CMD_WINDOW = "service-cmd"
 # dying because it is just a tmux session) (#1133 D6).
 SERVICE_SESSION = "service"
 
-# The per-container service-firing lock lives on ContainerRegistry as
-# _service_session_locks (#1188, #1478). It used to live here at module scope;
-# terminal.ensure_service_session now reaches it via
-# app_state.container_registry.get_service_session_lock().
-
-
-async def has_tmux_session(
-    container_id: str, session_name: str, podman
-) -> bool:
-    """Return True if a tmux session named *session_name* exists."""
-    try:
-        rc, _, _ = await podman.exec_container(
-            container_id,
-            ["tmux", "has-session", "-t", session_name],
-            user=CONTAINER_USER,
-            timeout=5,
-        )
-    except Exception:
-        return False
-    return rc == 0
-
-
-async def service_cmd_window_exists(
-    container_id: str, session_name: str, podman
-) -> bool:
-    """Return True if the ``service-cmd`` window exists in *session_name*.
-
-    This is the ephemeral "has the service command already fired in
-    THIS container" check (#1033). Unlike ``setup_state`` it is
-    per-container: it resets on container recreation, so the boot path
-    re-fires the service command for an already-``complete`` workspace.
-    tmux allows duplicate window names, so we must inspect the list
-    rather than rely on ``new-window`` failing.
-    """
-    try:
-        rc, stdout, _ = await podman.exec_container(
-            container_id,
-            [
-                "tmux",
-                "list-windows",
-                "-t",
-                session_name,
-                "-F",
-                "#{window_name}",
-            ],
-            user=CONTAINER_USER,
-            timeout=5,
-        )
-    except Exception:
-        return False
-    if rc != 0:
-        return False
-    return SERVICE_CMD_WINDOW in {
-        line.strip() for line in stdout.splitlines() if line.strip()
-    }
-
 
 def should_fire_service_command(
     service_command: str | None, setup_state: str
@@ -171,192 +120,12 @@ def should_fire_service_command(
     there is no ``None`` case to handle here.
 
     The other half -- "the service-cmd window doesn't already exist" --
-    is checked by the caller via :func:`service_cmd_window_exists`,
+    is checked by the caller via :meth:`Terminal.service_cmd_window_exists`,
     since it is per-container and ephemeral.
     """
     if not service_command:
         return False
     return setup_state == SETUP_STATE_COMPLETE
-
-
-async def _ensure_tmux_session(
-    container_id: str,
-    session_name: str,
-    user_home: str | None = None,
-    ssh_agent_socket: str | None = None,
-    podman=None,
-) -> bool:
-    """Ensure a detached base tmux session exists for *session_name*.
-
-    Idempotent: returns ``True`` if the session was freshly created,
-    ``False`` if it already existed or could not be created. HOME and
-    SSH_AUTH_SOCK are passed as tmux ``-e`` flags (part of the command,
-    not podman's), so the session's window-0 shell sources the right
-    profile.
-    """
-    if await has_tmux_session(container_id, session_name, podman):
-        return False
-    env_args: list[str] = []
-    if user_home is not None:
-        env_args += ["-e", f"HOME={user_home}"]
-    if ssh_agent_socket is not None:
-        env_args += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
-    try:
-        await podman.exec_container(
-            container_id,
-            ["tmux", "new-session", "-d", "-s", session_name, *env_args],
-            user=CONTAINER_USER,
-            timeout=10,
-        )
-    except Exception:
-        logger.warning("Failed to create base tmux session %s", session_name)
-        return False
-    return True
-
-
-async def ensure_base_session(
-    container_id: str,
-    session_name: str,
-    user_home: str | None = None,
-    ssh_agent_socket: str | None = None,
-    podman=None,
-) -> bool:
-    """Ensure the firing user's base tmux session + window 0 exist.
-
-    Idempotent: returns ``True`` if the session was freshly created.
-    The service command no longer lives in any user's session -- it
-    runs in the standalone ``service`` session owned by the agent
-    identity (see :func:`ensure_service_session`), so this is purely
-    the interactive-shell session every ``terminal_start`` needs
-    regardless of setup state (#1133).
-    """
-    return await _ensure_tmux_session(
-        container_id, session_name, user_home, ssh_agent_socket, podman
-    )
-
-
-async def ensure_service_session(
-    container_id: str,
-    agent_home: str,
-    service_command: str,
-    setup_state: str = SETUP_STATE_COMPLETE,
-    app_state=None,
-) -> None:
-    """Ensure the standalone ``service`` session; maybe fire service-cmd.
-
-    The workspace's service command runs in a tmux session with a
-    CONSTANT name ``service`` (not the owner's id), with the
-    ``service-cmd`` window inside it -> ``service:service-cmd``. The
-    session is owned by the agent identity and decoupled from both the
-    owner's interactive session and the ``pi --mode rpc`` subprocess
-    lifecycle -- it survives the agent subprocess dying/restarting
-    because it is just a tmux session (#1133 D6).
-
-    *agent_home* (e.g. ``/home/clanker``) is the session's HOME. The
-    service command fires iff the predicate holds (configured AND setup
-    complete) AND the ``service-cmd`` window doesn't already exist
-    (exactly-once-per-container). Idempotent: safe to call from every
-    ``terminal_start`` (#1033) and the boot path alike -- the
-    window-exists check makes it a no-op after the first fire.
-
-    The window-exists -> new-window -> send-keys sequence is serialized
-    per container via the registry's service-session lock (#1188): without
-    it the boot path and the per-connection path could both pass the
-    existence check before either created the window, producing two
-    duplicate-named ``service-cmd`` windows (tmux allows duplicate
-    names), leaving later ``send-keys -t service:service-cmd`` ambiguous.
-    The lock is reached via ``app_state.container_registry`` (#1478).
-    """
-    # Hold the per-container lock across the entire read-modify-write so
-    # a concurrent caller (boot vs first terminal_start, owner vs
-    # collaborator) cannot interleave: the second waits, then observes
-    # the window exists and no-ops. This also bounds the partial-failure
-    # window from #1186.
-    async with app_state.container_registry.get_service_session_lock(
-        container_id
-    ):
-        await _ensure_tmux_session(
-            container_id, SERVICE_SESSION, agent_home, podman=app_state.podman
-        )
-        if not (
-            should_fire_service_command(service_command, setup_state)
-        ) or await service_cmd_window_exists(
-            container_id, SERVICE_SESSION, app_state.podman
-        ):
-            return
-        try:
-            await app_state.podman.exec_container(
-                container_id,
-                [
-                    "tmux",
-                    "new-window",
-                    "-d",
-                    "-t",
-                    SERVICE_SESSION,
-                    "-n",
-                    SERVICE_CMD_WINDOW,
-                ],
-                user=CONTAINER_USER,
-                timeout=5,
-            )
-        except Exception:
-            logger.warning(
-                "Failed to create %s window in %s",
-                SERVICE_CMD_WINDOW,
-                SERVICE_SESSION,
-            )
-            return
-        # The new window's shell needs a moment to source .profile / .bashrc
-        # before it can resolve PATH-dependent commands (nvm, openclaw, ...).
-        # Same race as #1030.
-        await asyncio.sleep(1)
-        try:
-            await app_state.podman.exec_container(
-                container_id,
-                [
-                    "tmux",
-                    "send-keys",
-                    "-t",
-                    f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
-                    service_command,
-                    "Enter",
-                ],
-                user=CONTAINER_USER,
-                timeout=5,
-            )
-            # The service command just fired -- reset the health-check
-            # startup-grace anchor so the monitor gives the service time
-            # to boot before a failing poll can flag it unhealthy (e.g.
-            # a gateway that isn't accepting connections yet).  Set only
-            # on a successful send-keys; the except path below never
-            # launched the command, so it must not start the grace
-            # window.
-            app_state.container_registry.mark_service_started(container_id)
-        except Exception:
-            logger.warning(
-                "Failed to send service command to %s", SERVICE_SESSION
-            )
-            # The window was created above but we never typed the command
-            # into it. Kill it so the next fire re-runs the whole sequence
-            # instead of no-op'ing forever on the half-created window (#1186).
-            try:
-                await app_state.podman.exec_container(
-                    container_id,
-                    [
-                        "tmux",
-                        "kill-window",
-                        "-t",
-                        f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
-                    ],
-                    user=CONTAINER_USER,
-                    timeout=5,
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to clean up %s window in %s",
-                    SERVICE_CMD_WINDOW,
-                    SERVICE_SESSION,
-                )
 
 
 def build_shell_command(
@@ -451,272 +220,513 @@ def _build_exec_argv(
     return argv
 
 
-async def attach_browser(container_id: str, browser_id: str, podman) -> None:
-    """Run ``klangk-attach-browser <browser_id>`` inside the container.
+# ---------------------------------------------------------------------------
+# Terminal — tmux-session management (cohesion over a shared Podman dep, #1480)
+# ---------------------------------------------------------------------------
 
-    This stores the browser ID in the tmux global environment so that
-    ``klangk-browser-id`` can read it dynamically.  Called after each
-    ``terminal_start`` (including re-attach after browser refresh).
+
+class Terminal:
+    """Groups the ~25 tmux-session management functions that share a
+    :class:`~klangk_backend.podman.Podman` dependency.
+
+    Constructed once in :func:`build_app` and stored on
+    ``app.state.terminal`` (#1480). The podman instance carries the
+    resolved binary path + CLI wrappers; the registry provides the
+    per-container service-firing lock (#1188).
     """
-    rc, _stdout, stderr = await podman.exec_container(
-        container_id,
-        ["klangk-attach-browser", browser_id],
-        user=CONTAINER_USER,
-        timeout=10,
-    )
-    if rc != 0:
-        logger.warning(
-            "klangk-attach-browser failed (rc=%d): %s",
-            rc,
-            stderr.strip(),
+
+    def __init__(self, podman: Podman, registry):
+        self.podman = podman
+        self._registry = registry
+
+    # --- tmux session / window queries ---
+
+    async def has_tmux_session(
+        self, container_id: str, session_name: str
+    ) -> bool:
+        """Return True if a tmux session named *session_name* exists."""
+        try:
+            rc, _, _ = await self.podman.exec_container(
+                container_id,
+                ["tmux", "has-session", "-t", session_name],
+                user=CONTAINER_USER,
+                timeout=5,
+            )
+        except Exception:
+            return False
+        return rc == 0
+
+    async def service_cmd_window_exists(
+        self, container_id: str, session_name: str
+    ) -> bool:
+        """Return True if the ``service-cmd`` window exists in *session_name*.
+
+        This is the ephemeral "has the service command already fired in
+        THIS container" check (#1033). Unlike ``setup_state`` it is
+        per-container: it resets on container recreation, so the boot path
+        re-fires the service command for an already-``complete`` workspace.
+        tmux allows duplicate window names, so we must inspect the list
+        rather than rely on ``new-window`` failing.
+        """
+        try:
+            rc, stdout, _ = await self.podman.exec_container(
+                container_id,
+                [
+                    "tmux",
+                    "list-windows",
+                    "-t",
+                    session_name,
+                    "-F",
+                    "#{window_name}",
+                ],
+                user=CONTAINER_USER,
+                timeout=5,
+            )
+        except Exception:
+            return False
+        if rc != 0:
+            return False
+        return SERVICE_CMD_WINDOW in {
+            line.strip() for line in stdout.splitlines() if line.strip()
+        }
+
+    async def _ensure_tmux_session(
+        self,
+        container_id: str,
+        session_name: str,
+        user_home: str | None = None,
+        ssh_agent_socket: str | None = None,
+    ) -> bool:
+        """Ensure a detached base tmux session exists for *session_name*.
+
+        Idempotent: returns ``True`` if the session was freshly created,
+        ``False`` if it already existed or could not be created. HOME and
+        SSH_AUTH_SOCK are passed as tmux ``-e`` flags (part of the command,
+        not podman's), so the session's window-0 shell sources the right
+        profile.
+        """
+        if await self.has_tmux_session(container_id, session_name):
+            return False
+        env_args: list[str] = []
+        if user_home is not None:
+            env_args += ["-e", f"HOME={user_home}"]
+        if ssh_agent_socket is not None:
+            env_args += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
+        try:
+            await self.podman.exec_container(
+                container_id,
+                ["tmux", "new-session", "-d", "-s", session_name, *env_args],
+                user=CONTAINER_USER,
+                timeout=10,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to create base tmux session %s", session_name
+            )
+            return False
+        return True
+
+    async def ensure_base_session(
+        self,
+        container_id: str,
+        session_name: str,
+        user_home: str | None = None,
+        ssh_agent_socket: str | None = None,
+    ) -> bool:
+        """Ensure the firing user's base tmux session + window 0 exist.
+
+        Idempotent: returns ``True`` if the session was freshly created.
+        The service command no longer lives in any user's session -- it
+        runs in the standalone ``service`` session owned by the agent
+        identity (see :meth:`ensure_service_session`), so this is purely
+        the interactive-shell session every ``terminal_start`` needs
+        regardless of setup state (#1133).
+        """
+        return await self._ensure_tmux_session(
+            container_id, session_name, user_home, ssh_agent_socket
         )
 
+    async def ensure_service_session(
+        self,
+        container_id: str,
+        agent_home: str,
+        service_command: str,
+        setup_state: str = SETUP_STATE_COMPLETE,
+    ) -> None:
+        """Ensure the standalone ``service`` session; maybe fire service-cmd.
 
-async def set_workspace_token(container_id: str, token: str, podman) -> None:
-    """Write a workspace token to ``/run/klangk/workspace-token`` inside
-    the container via ``klangk-set-workspace-token``.
-    """
-    rc, _stdout, stderr = await podman.exec_container(
-        container_id,
-        ["klangk-set-workspace-token", token],
-        user=CONTAINER_USER,
-        timeout=10,
-    )
-    if rc != 0:
-        logger.warning(
-            "klangk-set-workspace-token failed (rc=%d): %s",
-            rc,
-            stderr.strip(),
-        )
+        The workspace's service command runs in a tmux session with a
+        CONSTANT name ``service`` (not the owner's id), with the
+        ``service-cmd`` window inside it -> ``service:service-cmd``. The
+        session is owned by the agent identity and decoupled from both the
+        owner's interactive session and the ``pi --mode rpc`` subprocess
+        lifecycle -- it survives the agent subprocess dying/restarting
+        because it is just a tmux session (#1133 D6).
 
+        *agent_home* (e.g. ``/home/clanker``) is the session's HOME. The
+        service command fires iff the predicate holds (configured AND setup
+        complete) AND the ``service-cmd`` window doesn't already exist
+        (exactly-once-per-container). Idempotent: safe to call from every
+        ``terminal_start`` (#1033) and the boot path alike -- the
+        window-exists check makes it a no-op after the first fire.
 
-async def tmux_command(
-    container_id: str, session_name: str, args: list[str], podman
-) -> str:
-    """Run a tmux command in the container and return stdout.
+        The window-exists -> new-window -> send-keys sequence is serialized
+        per container via the registry's service-session lock (#1188): without
+        it the boot path and the per-connection path could both pass the
+        existence check before either created the window, producing two
+        duplicate-named ``service-cmd`` windows (tmux allows duplicate
+        names), leaving later ``send-keys -t service:service-cmd`` ambiguous.
+        """
+        # Hold the per-container lock across the entire read-modify-write so
+        # a concurrent caller (boot vs first terminal_start, owner vs
+        # collaborator) cannot interleave: the second waits, then observes
+        # the window exists and no-ops. This also bounds the partial-failure
+        # window from #1186.
+        async with self._registry.get_service_session_lock(container_id):
+            await self._ensure_tmux_session(
+                container_id, SERVICE_SESSION, agent_home
+            )
+            if not (
+                should_fire_service_command(service_command, setup_state)
+            ) or await self.service_cmd_window_exists(
+                container_id, SERVICE_SESSION
+            ):
+                return
+            try:
+                await self.podman.exec_container(
+                    container_id,
+                    [
+                        "tmux",
+                        "new-window",
+                        "-d",
+                        "-t",
+                        SERVICE_SESSION,
+                        "-n",
+                        SERVICE_CMD_WINDOW,
+                    ],
+                    user=CONTAINER_USER,
+                    timeout=5,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to create %s window in %s",
+                    SERVICE_CMD_WINDOW,
+                    SERVICE_SESSION,
+                )
+                return
+            # The new window's shell needs a moment to source .profile / .bashrc
+            # before it can resolve PATH-dependent commands (nvm, openclaw, ...).
+            # Same race as #1030.
+            await asyncio.sleep(1)
+            try:
+                await self.podman.exec_container(
+                    container_id,
+                    [
+                        "tmux",
+                        "send-keys",
+                        "-t",
+                        f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
+                        service_command,
+                        "Enter",
+                    ],
+                    user=CONTAINER_USER,
+                    timeout=5,
+                )
+                # The service command just fired -- reset the health-check
+                # startup-grace anchor so the monitor gives the service time
+                # to boot before a failing poll can flag it unhealthy (e.g.
+                # a gateway that isn't accepting connections yet).  Set only
+                # on a successful send-keys; the except path below never
+                # launched the command, so it must not start the grace
+                # window.
+                self._registry.mark_service_started(container_id)
+            except Exception:
+                logger.warning(
+                    "Failed to send service command to %s", SERVICE_SESSION
+                )
+                # The window was created above but we never typed the command
+                # into it. Kill it so the next fire re-runs the whole sequence
+                # instead of no-op'ing forever on the half-created window (#1186).
+                try:
+                    await self.podman.exec_container(
+                        container_id,
+                        [
+                            "tmux",
+                            "kill-window",
+                            "-t",
+                            f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
+                        ],
+                        user=CONTAINER_USER,
+                        timeout=5,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to clean up %s window in %s",
+                        SERVICE_CMD_WINDOW,
+                        SERVICE_SESSION,
+                    )
 
-    Retries up to 3 times on socket-not-found errors, which can occur
-    when the tmux server is still starting in a fresh container.
-    """
-    for attempt in range(3):
-        rc, stdout, stderr = await podman.exec_container(
+    # --- container-side helpers ---
+
+    async def attach_browser(self, container_id: str, browser_id: str) -> None:
+        """Run ``klangk-attach-browser <browser_id>`` inside the container.
+
+        This stores the browser ID in the tmux global environment so that
+        ``klangk-browser-id`` can read it dynamically.  Called after each
+        ``terminal_start`` (including re-attach after browser refresh).
+        """
+        rc, _stdout, stderr = await self.podman.exec_container(
             container_id,
-            ["tmux", *args],
+            ["klangk-attach-browser", browser_id],
             user=CONTAINER_USER,
             timeout=10,
         )
-        if rc == 0:
-            return stdout
-        if "No such file or directory" in stderr and attempt < 2:
-            await asyncio.sleep(0.5)
-            continue
-        raise TerminalError(f"tmux command failed: {stderr.strip()}")
-    return ""  # pragma: no cover
-
-
-async def list_windows(
-    container_id: str, session_name: str, podman
-) -> list[dict]:
-    """List tmux windows for a session. Returns [{index, name}, ...]."""
-    output = await tmux_command(
-        container_id,
-        session_name,
-        [
-            "list-windows",
-            "-t",
-            session_name,
-            "-F",
-            "#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}",
-        ],
-        podman,
-    )
-    windows = []
-    for line in output.strip().splitlines():
-        parts = line.split("|||")
-        if len(parts) >= 4:
-            windows.append(
-                {
-                    "id": parts[0],  # e.g. "@0" — unique, never reused
-                    "index": int(parts[1]),
-                    "name": parts[2],
-                    "active": parts[3] == "1",
-                }
+        if rc != 0:
+            logger.warning(
+                "klangk-attach-browser failed (rc=%d): %s",
+                rc,
+                stderr.strip(),
             )
-    return windows
 
-
-async def new_window(
-    container_id: str,
-    session_name: str,
-    name: str | None = None,
-    podman=None,
-) -> list[dict]:
-    """Create a new tmux window and return the updated window list.
-
-    If *name* is not provided, auto-generates a unique name.
-    Raises ``ValueError`` if *name* duplicates an existing window name.
-
-    Uses a single podman exec with a shell script to minimize
-    round-trips (list + create + list in one call).
-    """
-    if name is not None:
-        validate_window_name(name)
-        # Explicit name — check + create + list in one exec. The window
-        # name and session name are passed as positional argv ($1/$2),
-        # never interpolated into the script, so shell metacharacters in
-        # either are harmless (name is validated above regardless).
-        script = (
-            'name="$1"; sn="$2";'
-            ' existing=$(tmux list-windows -t "$sn"'
-            " -F '#{window_name}' 2>/dev/null);"
-            ' echo "$existing" | grep -qx "$name"'
-            " && echo 'DUPLICATE' && exit 1;"
-            ' tmux new-window -t "$sn" -n "$name";'
-            ' tmux list-windows -t "$sn"'
-            " -F '#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}'"
-        )
-        argv = ["bash", "-c", script, "bash", name, session_name]
-    else:
-        # Auto-name — find next number, create, list. session_name is $1.
-        script = (
-            'sn="$1";'
-            ' names=$(tmux list-windows -t "$sn"'
-            " -F '#{window_name}' 2>/dev/null);"
-            ' n=1; while echo "$names" | grep -qx "$n"; do n=$((n+1)); done;'
-            ' tmux new-window -t "$sn" -n "$n";'
-            ' tmux list-windows -t "$sn"'
-            " -F '#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}'"
-        )
-        argv = ["bash", "-c", script, "bash", session_name]
-    rc, output, stderr = await podman.exec_container(
-        container_id,
-        argv,
-        user=CONTAINER_USER,
-        timeout=10,
-    )
-    if rc != 0:
-        if "DUPLICATE" in output:
-            raise ValueError(f"Window name '{name}' already exists")
-        raise TerminalError(f"new_window failed: {stderr.strip()}")
-    windows = []
-    for line in output.strip().splitlines():
-        parts = line.split("|||")
-        if len(parts) >= 4:
-            windows.append(
-                {
-                    "id": parts[0],
-                    "index": int(parts[1]),
-                    "name": parts[2],
-                    "active": parts[3] == "1",
-                }
-            )
-    return windows
-
-
-async def rename_window(
-    container_id: str,
-    session_name: str,
-    index: int,
-    name: str,
-    podman,
-) -> None:
-    """Rename a tmux window.
-
-    Raises ``ValueError`` if *name* contains unsafe characters or
-    duplicates another window's name.
-    """
-    validate_window_name(name)
-    existing = await list_windows(container_id, session_name, podman)
-    if any(w["name"] == name and w["index"] != index for w in existing):
-        raise ValueError(f"Window name '{name}' already exists")
-    await tmux_command(
-        container_id,
-        session_name,
-        ["rename-window", "-t", f"{session_name}:{index}", name],
-        podman,
-    )
-
-
-async def select_window(
-    container_id: str,
-    session_name: str,
-    target: int | str,
-    podman,
-) -> None:
-    """Switch the active tmux window.
-
-    *target* can be a window index (int), window name (str), or
-    window id (``@N`` string — preferred, globally unique).
-    """
-    # Window IDs (@N) can be used directly as targets without
-    # a session prefix.
-    if isinstance(target, str) and target.startswith("@"):
-        t = target
-    else:
-        t = f"{session_name}:{target}"
-    await tmux_command(
-        container_id,
-        session_name,
-        ["select-window", "-t", t],
-        podman,
-    )
-
-
-async def close_window(
-    container_id: str,
-    session_name: str,
-    target: int | str,
-    podman,
-) -> list[dict]:
-    """Close a tmux window and return the updated window list.
-
-    *target* can be a window index (int), window name (str), or
-    window id (``@N`` string — preferred, globally unique).
-    """
-    if isinstance(target, str) and target.startswith("@"):
-        t = target
-    else:
-        t = f"{session_name}:{target}"
-    await tmux_command(
-        container_id,
-        session_name,
-        ["kill-window", "-t", t],
-        podman,
-    )
-    return await list_windows(container_id, session_name, podman)
-
-
-async def kill_joiner_sessions(
-    container_id: str, owner_handle: str, podman
-) -> None:
-    """Kill all session-group sessions except the owner's own session.
-
-    Used when unsharing to disconnect spectators/collaborators.
-    """
-    try:
-        output = await tmux_command(
+    async def set_workspace_token(self, container_id: str, token: str) -> None:
+        """Write a workspace token to ``/run/klangk/workspace-token`` inside
+        the container via ``klangk-set-workspace-token``.
+        """
+        rc, _stdout, stderr = await self.podman.exec_container(
             container_id,
-            owner_handle,
-            [
-                "list-sessions",
-                "-F",
-                "#{session_name}",
-            ],
-            podman,
+            ["klangk-set-workspace-token", token],
+            user=CONTAINER_USER,
+            timeout=10,
         )
-        for session_name in output.strip().splitlines():
-            if session_name != owner_handle:
-                try:
-                    await tmux_command(
-                        container_id,
-                        owner_handle,
-                        ["kill-session", "-t", session_name],
-                        podman,
-                    )
-                except TerminalError:
-                    pass  # Session may have already exited
-    except TerminalError:
-        pass  # No sessions
+        if rc != 0:
+            logger.warning(
+                "klangk-set-workspace-token failed (rc=%d): %s",
+                rc,
+                stderr.strip(),
+            )
+
+    # --- tmux command primitives ---
+
+    async def tmux_command(
+        self, container_id: str, session_name: str, args: list[str]
+    ) -> str:
+        """Run a tmux command in the container and return stdout.
+
+        Retries up to 3 times on socket-not-found errors, which can occur
+        when the tmux server is still starting in a fresh container.
+        """
+        for attempt in range(3):
+            rc, stdout, stderr = await self.podman.exec_container(
+                container_id,
+                ["tmux", *args],
+                user=CONTAINER_USER,
+                timeout=10,
+            )
+            if rc == 0:
+                return stdout
+            if "No such file or directory" in stderr and attempt < 2:
+                await asyncio.sleep(0.5)
+                continue
+            raise TerminalError(f"tmux command failed: {stderr.strip()}")
+        return ""  # pragma: no cover
+
+    async def list_windows(
+        self, container_id: str, session_name: str
+    ) -> list[dict]:
+        """List tmux windows for a session. Returns [{index, name}, ...]."""
+        output = await self.tmux_command(
+            container_id,
+            session_name,
+            [
+                "list-windows",
+                "-t",
+                session_name,
+                "-F",
+                "#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}",
+            ],
+        )
+        windows = []
+        for line in output.strip().splitlines():
+            parts = line.split("|||")
+            if len(parts) >= 4:
+                windows.append(
+                    {
+                        "id": parts[0],  # e.g. "@0" — unique, never reused
+                        "index": int(parts[1]),
+                        "name": parts[2],
+                        "active": parts[3] == "1",
+                    }
+                )
+        return windows
+
+    async def new_window(
+        self,
+        container_id: str,
+        session_name: str,
+        name: str | None = None,
+    ) -> list[dict]:
+        """Create a new tmux window and return the updated window list.
+
+        If *name* is not provided, auto-generates a unique name.
+        Raises ``ValueError`` if *name* duplicates an existing window name.
+
+        Uses a single podman exec with a shell script to minimize
+        round-trips (list + create + list in one call).
+        """
+        if name is not None:
+            validate_window_name(name)
+            # Explicit name — check + create + list in one exec. The window
+            # name and session name are passed as positional argv ($1/$2),
+            # never interpolated into the script, so shell metacharacters in
+            # either are harmless (name is validated above regardless).
+            script = (
+                'name="$1"; sn="$2";'
+                ' existing=$(tmux list-windows -t "$sn"'
+                " -F '#{window_name}' 2>/dev/null);"
+                ' echo "$existing" | grep -qx "$name"'
+                " && echo 'DUPLICATE' && exit 1;"
+                ' tmux new-window -t "$sn" -n "$name";'
+                ' tmux list-windows -t "$sn"'
+                " -F '#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}'"
+            )
+            argv = ["bash", "-c", script, "bash", name, session_name]
+        else:
+            # Auto-name — find next number, create, list. session_name is $1.
+            script = (
+                'sn="$1";'
+                ' names=$(tmux list-windows -t "$sn"'
+                " -F '#{window_name}' 2>/dev/null);"
+                ' n=1; while echo "$names" | grep -qx "$n"; do n=$((n+1)); done;'
+                ' tmux new-window -t "$sn" -n "$n";'
+                ' tmux list-windows -t "$sn"'
+                " -F '#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}'"
+            )
+            argv = ["bash", "-c", script, "bash", session_name]
+        rc, output, stderr = await self.podman.exec_container(
+            container_id,
+            argv,
+            user=CONTAINER_USER,
+            timeout=10,
+        )
+        if rc != 0:
+            if "DUPLICATE" in output:
+                raise ValueError(f"Window name '{name}' already exists")
+            raise TerminalError(f"new_window failed: {stderr.strip()}")
+        windows = []
+        for line in output.strip().splitlines():
+            parts = line.split("|||")
+            if len(parts) >= 4:
+                windows.append(
+                    {
+                        "id": parts[0],
+                        "index": int(parts[1]),
+                        "name": parts[2],
+                        "active": parts[3] == "1",
+                    }
+                )
+        return windows
+
+    async def rename_window(
+        self,
+        container_id: str,
+        session_name: str,
+        index: int,
+        name: str,
+    ) -> None:
+        """Rename a tmux window.
+
+        Raises ``ValueError`` if *name* contains unsafe characters or
+        duplicates another window's name.
+        """
+        validate_window_name(name)
+        existing = await self.list_windows(container_id, session_name)
+        if any(w["name"] == name and w["index"] != index for w in existing):
+            raise ValueError(f"Window name '{name}' already exists")
+        await self.tmux_command(
+            container_id,
+            session_name,
+            ["rename-window", "-t", f"{session_name}:{index}", name],
+        )
+
+    async def select_window(
+        self,
+        container_id: str,
+        session_name: str,
+        target: int | str,
+    ) -> None:
+        """Switch the active tmux window.
+
+        *target* can be a window index (int), window name (str), or
+        window id (``@N`` string — preferred, globally unique).
+        """
+        # Window IDs (@N) can be used directly as targets without
+        # a session prefix.
+        if isinstance(target, str) and target.startswith("@"):
+            t = target
+        else:
+            t = f"{session_name}:{target}"
+        await self.tmux_command(
+            container_id,
+            session_name,
+            ["select-window", "-t", t],
+        )
+
+    async def close_window(
+        self,
+        container_id: str,
+        session_name: str,
+        target: int | str,
+    ) -> list[dict]:
+        """Close a tmux window and return the updated window list.
+
+        *target* can be a window index (int), window name (str), or
+        window id (``@N`` string — preferred, globally unique).
+        """
+        if isinstance(target, str) and target.startswith("@"):
+            t = target
+        else:
+            t = f"{session_name}:{target}"
+        await self.tmux_command(
+            container_id,
+            session_name,
+            ["kill-window", "-t", t],
+        )
+        return await self.list_windows(container_id, session_name)
+
+    async def kill_joiner_sessions(
+        self, container_id: str, owner_handle: str
+    ) -> None:
+        """Kill all session-group sessions except the owner's own session.
+
+        Used when unsharing to disconnect spectators/collaborators.
+        """
+        try:
+            output = await self.tmux_command(
+                container_id,
+                owner_handle,
+                [
+                    "list-sessions",
+                    "-F",
+                    "#{session_name}",
+                ],
+            )
+            for session_name in output.strip().splitlines():
+                if session_name != owner_handle:
+                    try:
+                        await self.tmux_command(
+                            container_id,
+                            owner_handle,
+                            ["kill-session", "-t", session_name],
+                        )
+                    except TerminalError:
+                        pass  # Session may have already exited
+        except TerminalError:
+            pass  # No sessions
+
+
+# ---------------------------------------------------------------------------
+# Shell process (PTY layer — needs podman.bin, no Terminal ref)
+# ---------------------------------------------------------------------------
 
 
 class ShellProcess:
@@ -813,6 +823,11 @@ def make_shell_process(podman=None) -> ShellProcess:
     return ShellProcess(podman)
 
 
+# ---------------------------------------------------------------------------
+# Interactive terminal session (PTY shell — orchestrates Terminal + ShellProcess)
+# ---------------------------------------------------------------------------
+
+
 class TerminalSession:
     """Manages an interactive shell session over a PTY."""
 
@@ -827,10 +842,10 @@ class TerminalSession:
         user_id: str | None = None,
         user_handle: str | None = None,
         ssh_agent_socket: str | None = None,
-        podman=None,
+        terminal: Terminal | None = None,
     ):
         self.container_id = container_id
-        self._podman = podman
+        self._terminal = terminal
         self.session_name = session_name
         self.user_home = user_home
         self.socket_path = socket_path
@@ -846,6 +861,11 @@ class TerminalSession:
         self._running = False
         self._read_task: asyncio.Task | None = None
         self.tmux_session_name: str | None = None
+
+    @property
+    def _podman(self):
+        """Reach podman via the Terminal instance (#1480)."""
+        return self._terminal.podman
 
     async def start(
         self,
@@ -863,12 +883,11 @@ class TerminalSession:
             and not self.socket_path
             and terminal_tmux_enabled()
         ):
-            await ensure_base_session(
+            await self._terminal.ensure_base_session(
                 self.container_id,
                 self.session_name,
                 user_home=self.user_home,
                 ssh_agent_socket=self.ssh_agent_socket,
-                podman=self._podman,
             )
         env = build_environment(
             self.user_home,

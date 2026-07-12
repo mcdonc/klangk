@@ -10,13 +10,12 @@ from typing import TYPE_CHECKING
 
 from fastapi import WebSocketDisconnect
 
-from .. import model, terminal
+from .. import model
 from ..exceptions import TerminalError
 from ..util import resolve_env_value
 from ..podman import ExecSession
 from ..terminal import (
     TerminalSession,
-    attach_browser,
     SERVICE_CMD_WINDOW,
     SERVICE_SESSION,
 )
@@ -386,8 +385,8 @@ class TerminalController:
         sname = conn.tmux_session_name()
         ws_session = conn.app_state.sockets.get_session(conn.workspace_id)
 
-        windows = await terminal.list_windows(
-            conn.container_id, sname, conn.app_state.podman
+        windows = await conn.app_state.terminal.list_windows(
+            conn.container_id, sname
         )
         conn.sync_terminal_windows(windows)
         conn.sock.send_json({"type": "terminal_windows", "windows": windows})
@@ -450,7 +449,7 @@ class TerminalController:
         # (#1157) and persists in the bind-mount volume, so resolving the
         # path here is cheap and correct -- no provisioning needed.
         agent_home = f"/home/{await model.agent_handle()}"
-        await terminal.ensure_service_session(
+        await self._conn.app_state.terminal.ensure_service_session(
             self._conn.container_id,
             agent_home,
             service_command,
@@ -476,10 +475,9 @@ class TerminalController:
         if not self._conn.container_id:
             return False
         try:
-            windows = await terminal.list_windows(
+            windows = await self._conn.app_state.terminal.list_windows(
                 self._conn.container_id,
-                terminal.SERVICE_SESSION,
-                self._conn.app_state.podman,
+                SERVICE_SESSION,
             )
         except (TerminalError, OSError):
             return False  # service session doesn't exist yet
@@ -561,7 +559,7 @@ class TerminalController:
             user_id=self._conn.user["id"],
             user_handle=self._conn.user.get("handle"),
             ssh_agent_socket=self._conn._ssh_agent_socket,
-            podman=self._conn.app_state.podman,
+            terminal=self._conn.app_state.terminal,
         )
 
         browser_id = msg.get("browser_id")
@@ -592,8 +590,8 @@ class TerminalController:
                 # fire. Done before window sync so discovery picks it up.
                 await ctrl._fire_service_command()
                 if browser_id:
-                    await attach_browser(
-                        conn.container_id, browser_id, conn.app_state.podman
+                    await conn.app_state.terminal.attach_browser(
+                        conn.container_id, browser_id
                     )
                 if not await conn.activate_session(session, cols, rows):
                     return
@@ -645,8 +643,8 @@ class TerminalController:
             self._conn.user.get("email"),
             self._conn.workspace_id,
         )
-        await attach_browser(
-            self._conn.container_id, browser_id, self._conn.app_state.podman
+        await self._conn.app_state.terminal.attach_browser(
+            self._conn.container_id, browser_id
         )
 
     async def input(self, msg: dict) -> None:
@@ -789,11 +787,10 @@ class TerminalController:
         session_name = self.tmux_session_name()
         name = msg.get("name")
         try:
-            windows = await terminal.new_window(
+            windows = await self._conn.app_state.terminal.new_window(
                 self._conn.container_id,
                 session_name,
                 name=name,
-                podman=self._conn.app_state.podman,
             )
             logger.info(
                 "handle_terminal_new_window: %.3fs",
@@ -820,11 +817,10 @@ class TerminalController:
         # Prefer @N window_id (stable); fall back to index for compat.
         target: int | str = msg.get("window_id") or msg.get("index", 0)
         try:
-            await terminal.select_window(
+            await self._conn.app_state.terminal.select_window(
                 self._conn.container_id,
                 session_name,
                 target,
-                self._conn.app_state.podman,
             )
             logger.info(
                 "handle_terminal_select_window: target=%s %.3fs",
@@ -841,11 +837,10 @@ class TerminalController:
         session_name = self.tmux_session_name()
         index = msg.get("index", 0)
         try:
-            windows = await terminal.close_window(
+            windows = await self._conn.app_state.terminal.close_window(
                 self._conn.container_id,
                 session_name,
                 index,
-                self._conn.app_state.podman,
             )
             self.sync_terminal_windows(windows)
             self.notify_user_terminal_windows(windows)
@@ -863,17 +858,15 @@ class TerminalController:
             send_error(self._conn.sock, "Name required")
             return
         try:
-            await terminal.rename_window(
+            await self._conn.app_state.terminal.rename_window(
                 self._conn.container_id,
                 session_name,
                 index,
                 name,
-                self._conn.app_state.podman,
             )
-            windows = await terminal.list_windows(
+            windows = await self._conn.app_state.terminal.list_windows(
                 self._conn.container_id,
                 session_name,
-                self._conn.app_state.podman,
             )
             self.sync_terminal_windows(windows)
             self.notify_user_terminal_windows(windows)
@@ -893,10 +886,9 @@ class TerminalController:
             else self.tmux_session_name()
         )
         try:
-            windows = await terminal.list_windows(
+            windows = await self._conn.app_state.terminal.list_windows(
                 self._conn.container_id,
                 session_name,
-                self._conn.app_state.podman,
             )
             self._conn.sock.send_json(
                 {"type": "terminal_windows", "windows": windows}
@@ -1106,10 +1098,9 @@ class SharedTerminalController:
         match["shared"] = False
         # Kick spectators/collaborators
         try:
-            await terminal.kill_joiner_sessions(
+            await self._conn.app_state.terminal.kill_joiner_sessions(
                 self._conn.container_id,
                 session_name,
-                self._conn.app_state.podman,
             )
         except Exception:
             logger.debug("Failed to kill joiner sessions", exc_info=True)
@@ -1129,7 +1120,7 @@ class SharedTerminalController:
         session: TerminalSession,
         owner_user_id: str,
         window_id: str,
-        podman,
+        terminal,
     ) -> None:
         """Select the target window in the joiner's tmux session.
 
@@ -1148,15 +1139,14 @@ class SharedTerminalController:
                         "-t",
                         f"{joiner_session}:{window_id}",
                     ],
-                    podman,
                 )
             except TerminalError:
                 await terminal.select_window(
-                    container_id, owner_user_id, window_id, podman
+                    container_id, owner_user_id, window_id
                 )
         else:
             await terminal.select_window(
-                container_id, owner_user_id, window_id, podman
+                container_id, owner_user_id, window_id
             )
 
     async def join_shared_terminal(self, msg: dict) -> None:
@@ -1223,7 +1213,7 @@ class SharedTerminalController:
             read_only=read_only,
             user_id=self._conn.user["id"],
             user_handle=self._conn.user.get("handle"),
-            podman=self._conn.app_state.podman,
+            terminal=self._conn.app_state.terminal,
         )
         self._conn.terminal_session = session
         conn = self._conn
@@ -1239,7 +1229,7 @@ class SharedTerminalController:
                     session,
                     join_target,
                     window_id,
-                    conn.app_state.podman,
+                    conn.app_state.terminal,
                 )
                 if not await conn.activate_session(session, cols, rows):
                     return
@@ -1318,11 +1308,10 @@ class SharedTerminalController:
             return
         session_name = self._conn.tmux_session_name()
         try:
-            windows = await terminal.new_window(
+            windows = await self._conn.app_state.terminal.new_window(
                 self._conn.container_id,
                 session_name,
                 name=name,
-                podman=self._conn.app_state.podman,
             )
         except Exception as e:
             send_error(
@@ -1388,16 +1377,14 @@ class SharedTerminalController:
             return
         window_name = match["name"]
         try:
-            await terminal.kill_joiner_sessions(
+            await self._conn.app_state.terminal.kill_joiner_sessions(
                 self._conn.container_id,
                 owner_user_id,
-                self._conn.app_state.podman,
             )
-            await terminal.close_window(
+            await self._conn.app_state.terminal.close_window(
                 self._conn.container_id,
                 owner_user_id,
                 window_id,
-                self._conn.app_state.podman,
             )
         except Exception as e:
             send_error(

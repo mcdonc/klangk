@@ -15,7 +15,7 @@ workspaces whose ``setup.sh`` has not run yet is handled by gating on
 completes and the WS connect path runs.
 """
 
-from . import agent, terminal
+from . import agent
 
 
 async def bringup(
@@ -35,10 +35,9 @@ async def bringup(
     )
     if not service_command:
         return
-    await terminal.ensure_service_session(
+    await app_state.terminal.ensure_service_session(
         container_id,
         agent_home,
         service_command,
         setup_state=setup_state,
-        app_state=app_state,
     )

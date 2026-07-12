@@ -38,6 +38,10 @@ def _make_app_state(registry=None, sockets=None):
 
         registry.podman = Podman(settings)
         app_state.podman = registry.podman
+    # #1480: container.py reaches set_workspace_token via app_state.terminal.
+    from klangk_backend.terminal import Terminal
+
+    app_state.terminal = Terminal(app_state.podman, registry)
     return app_state
 
 
@@ -664,19 +668,22 @@ class TestStartContainer:
 
     async def test_workspace_token_written_to_container(self, workspace):
         """Workspace token is written to the container via set_workspace_token."""
-        from klangk_backend import auth, terminal
+        from klangk_backend import auth
 
         with (
             patch_podman(self.registry),
             patch.object(
-                terminal, "set_workspace_token", new_callable=AsyncMock
+                self.registry.app_state.terminal,
+                "set_workspace_token",
+                new_callable=AsyncMock,
             ) as mock_set,
         ):
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         mock_set.assert_called_once()
-        cid, token, _podman = mock_set.call_args.args
+        cid, token = mock_set.call_args.args
+        assert cid == "new-cid"
         assert cid == "new-cid"
         decoded_ws = auth.decode_workspace_token(token)
         assert decoded_ws == workspace["id"]
