@@ -69,7 +69,7 @@ def is_disabled() -> bool:
 
 
 async def ensure_agent_home(
-    workspace_id: str, container_id: str, app_state=None
+    workspace_id: str, container_id: str, app_state
 ) -> str:
     """Eagerly provision the agent's home directory with Pi config.
 

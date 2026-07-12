@@ -51,7 +51,7 @@ async def list_files(
 ):
     cid = _require_container(workspace_id, app_state.container_registry)
     try:
-        return await files.list_files(cid, path, app_state.podman)
+        return await files.list_files(cid, path, podman=app_state.podman)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

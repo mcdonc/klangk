@@ -155,7 +155,7 @@ def _is_loopback_bind(host: str) -> bool:
         return False
 
 
-def enforce_no_auth_bind_safety(app_state=None) -> None:
+def enforce_no_auth_bind_safety(app_state) -> None:
     """Refuse to start in ``none`` auth mode unless the bind is loopback.
 
     ``KLANGK_AUTH_MODES=none`` freely issues a token for the seeded default
@@ -740,7 +740,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     app.state.settings = settings
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
-    app.state.container_registry = container.ContainerRegistry(settings)
+    app.state.container_registry = container.ContainerRegistry(app.state)
     # Slice 2b (#1463): nginx watchdog is an owned instance with start/stop
     # lifecycle methods called by the lifespan.
     app.state.nginx_watchdog = NginxWatchdog(settings)

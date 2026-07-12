@@ -201,11 +201,9 @@ def app_state(temp_data_dir):
     from klangk_backend.workspaces import Workspaces
 
     settings = KlangkSettings(os.environ)
-    registry = ContainerRegistry(settings)
-    state = types.SimpleNamespace(
-        container_registry=registry,
-        settings=settings,
-    )
+    state = types.SimpleNamespace(settings=settings)
+    registry = ContainerRegistry(state)
+    state.container_registry = registry
     registry.app_state = state
     state.workspaces = Workspaces(state)
     return state

@@ -132,7 +132,7 @@ class Workspaces:
     import-time env read (the frozen-at-import hazard).
     """
 
-    def __init__(self, app_state=None):
+    def __init__(self, app_state):
         self.app_state = app_state
         self.settings = app_state.settings
         raw = self.settings.data_dir or str(Path.home() / ".klangk" / "data")

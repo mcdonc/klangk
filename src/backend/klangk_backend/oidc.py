@@ -174,7 +174,7 @@ class OIDC:
     don't leak across test runs (previously module globals).
     """
 
-    def __init__(self, app_state=None):
+    def __init__(self, app_state):
         self.app_state = app_state
         self.settings = app_state.settings
         self.providers: list[OIDCProvider] = []

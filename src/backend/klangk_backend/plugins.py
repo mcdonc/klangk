@@ -31,7 +31,7 @@ class Plugins:
     load time (honoring ``file:``/``cmd:`` prefixes for plugin secrets).
     """
 
-    def __init__(self, app_state=None):
+    def __init__(self, app_state):
         self.app_state = app_state
         self.settings = app_state.settings
         self.plugins_dir = self.settings.plugins_dir or os.path.join(

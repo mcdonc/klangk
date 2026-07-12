@@ -16,7 +16,6 @@ from klangk_backend import (
     agent,
     api,
     auth,
-    container,
     model,
     podman,
     workspaces as ws_mod,
@@ -47,9 +46,9 @@ async def app(db, temp_data_dir):
             "KLANGK_CUSTOMIZE_DIR": str(temp_data_dir / "customize"),
         }
     )
-    registry = ContainerRegistry(settings)
-    sockets = WebSocketState()
     app.state.settings = settings
+    registry = ContainerRegistry(app.state)
+    sockets = WebSocketState()
     app.state.container_registry = registry
     app.state.sockets = sockets
     registry.sockets = sockets
@@ -1784,7 +1783,7 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 404
 
-    async def test_workspace_status_running(self, client, user, registry):
+    async def test_workspace_status_running(self, client, user, registry, app):
         headers = await _auth_headers(client)
         create_resp = await client.post(
             "/api/v1/workspaces",
@@ -1806,7 +1805,10 @@ class TestWorkspaceRoutes:
         assert data["container_id"] == "cid-status"
         assert data["health"] is None  # placeholder
         assert isinstance(data["idle_seconds"], (int, float))
-        assert data["idle_timeout"] == api.container.IDLE_TIMEOUT_SECONDS
+        assert (
+            data["idle_timeout"]
+            == app.state.container_registry.idle_timeout_seconds
+        )
         assert isinstance(data["ports"], list)
 
         # Clean up registry state.
@@ -4599,14 +4601,16 @@ class TestFileRoutes:
 class TestSetIdleTimeout:
     async def test_set_idle_timeout_global(self, db, app, registry):
         """Setting global idle timeout changes the module-level variable."""
-        original_timeout = container.IDLE_TIMEOUT_SECONDS
+        original_timeout = app.state.container_registry.idle_timeout_seconds
         try:
-            container.IDLE_TIMEOUT_SECONDS = 42
-            assert container.IDLE_TIMEOUT_SECONDS == 42
+            app.state.container_registry.idle_timeout_seconds = 42
+            assert app.state.container_registry.idle_timeout_seconds == 42
             # Per-workspace lookup falls back to global
             assert registry.get_workspace_idle_timeout("any") == 42
         finally:
-            container.IDLE_TIMEOUT_SECONDS = original_timeout
+            app.state.container_registry.idle_timeout_seconds = (
+                original_timeout
+            )
 
     async def test_endpoint_missing_without_test_mode(self, client):
         """Without KLANGK_TEST_MODE, the endpoints should not exist."""
@@ -4619,12 +4623,15 @@ class TestSetIdleTimeout:
 
     async def test_set_idle_timeout_per_workspace(self, db, app, registry):
         """Per-workspace idle timeout should not affect global."""
-        original_timeout = container.IDLE_TIMEOUT_SECONDS
+        original_timeout = app.state.container_registry.idle_timeout_seconds
         try:
             registry.track_activity("cid-test", "ws-test")
             registry.set_workspace_idle_timeout("ws-test", 5)
             assert registry.get_workspace_idle_timeout("ws-test") == 5
-            assert container.IDLE_TIMEOUT_SECONDS == original_timeout
+            assert (
+                app.state.container_registry.idle_timeout_seconds
+                == original_timeout
+            )
             # Unknown workspace returns global default
             assert (
                 registry.get_workspace_idle_timeout("ws-other")
@@ -4646,8 +4653,8 @@ class TestSetIdleTimeout:
             assert state.idle_timeout == 6
             # Global CHECK_INTERVAL_SECONDS should be unchanged
             assert (
-                container.CHECK_INTERVAL_SECONDS
-                == container.parse_idle_timeout()[1]
+                app.state.container_registry.check_interval_seconds
+                == app.state.container_registry._parse_idle_timeout()[1]
             )
         finally:
             registry.states.pop("ws-fast", None)
@@ -5622,7 +5629,7 @@ class TestAdminResourceACL:
         )
         assert resp.status_code == 200
 
-    async def test_get_resource_acl_requires_admin(self, client, app, user):
+    async def test_get_resource_acl_requires_admin(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.get(
             "/api/v1/admin/acl/resource?resource=/workspaces", headers=headers
@@ -5721,14 +5728,14 @@ class TestSanitizeFilename:
 
 
 class TestRmtree:
-    def test_removes_directory(self, temp_data_dir, app):
+    def test_removes_directory(self, temp_data_dir):
         d = temp_data_dir / "workspaces" / "toremove"
         d.mkdir(parents=True)
         (d / "file.txt").write_text("data")
         ws_mod.rmtree(d, "test")
         assert not d.exists()
 
-    def test_logs_errors(self, temp_data_dir, caplog, app):
+    def test_logs_errors(self, temp_data_dir, caplog):
         """Logs warnings on individual file removal failures."""
         d = temp_data_dir / "workspaces" / "failremove"
         d.mkdir(parents=True)
@@ -6138,7 +6145,7 @@ class TestWorkspaceExportImport:
             assert metadata["name"] == "export-test"
             assert "instance_id" in metadata
 
-    async def test_export_requires_admin(self, client, user, app):
+    async def test_export_requires_admin(self, client, user):
         headers = await self._user_headers(client)
         resp = await client.post(
             "/api/v1/workspaces", headers=headers, json={"name": "no-export"}
@@ -6151,7 +6158,7 @@ class TestWorkspaceExportImport:
         )
         assert resp.status_code == 403
 
-    async def test_export_not_found(self, client, admin_user, app):
+    async def test_export_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.get(
             "/api/v1/workspaces/nonexistent-id/export", headers=headers
@@ -6540,7 +6547,7 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 200
         assert resp.json()["name"] == "img-fallback"
 
-    async def test_import_invalid_mounts_dropped(self, client, app, user):
+    async def test_import_invalid_mounts_dropped(self, client, user):
         """Archive with invalid mounts drops them silently."""
         import io
         import json
@@ -6709,7 +6716,7 @@ class TestWorkspaceExportImport:
         # Falls back to 0 * 0.4 = 0, clamped to 1
         assert resp.headers["x-estimated-size"] == "1"
 
-    async def test_export_empty_workspace(self, client, app, admin_user, user):
+    async def test_export_empty_workspace(self, client, admin_user, user):
         """Export of workspace with no home dir still works."""
         headers = await self._user_headers(client)
         resp = await client.post(
@@ -7706,7 +7713,7 @@ class TestInvitations:
         assert resp.status_code == 400
         assert "already exists" in resp.json()["detail"]
 
-    async def test_accept_invite_wrong_purpose_token(self, client, app, db):
+    async def test_accept_invite_wrong_purpose_token(self, client, db):
         # Use a verification token (wrong purpose)
         token = auth.create_verification_token("fake-user-id")
         resp = await client.post(
@@ -8591,7 +8598,7 @@ class TestOIDCLogout:
             == "https://idp.example.com/logout?x=1"
         )
 
-    async def test_logout_no_redirect_for_local_user(self, client, app, user):
+    async def test_logout_no_redirect_for_local_user(self, client, user):
         """Local user gets no oidc_logout_url."""
         login_resp = await client.post(
             "/api/v1/auth/login",

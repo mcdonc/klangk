@@ -7,52 +7,28 @@ import time
 
 from . import auth, bringup, model, podman, util
 from .podman import PodmanError
-from .settings import KlangkSettings
 
 logger = logging.getLogger(__name__)
 
 
-def container_dns_config() -> list[str]:
-    """Return DNS server list from KLANGK_DNS_SERVERS env var.
-
-    Set KLANGK_DNS_SERVERS to a comma-separated list of DNS server IPs
-    (e.g., "100.100.100.100,8.8.8.8" for Tailscale MagicDNS + Google).
-    Returns an empty list if not configured.
-    """
-    raw = util.resolve_env_value("KLANGK_DNS_SERVERS", "")
-    return [s.strip() for s in raw.split(",") if s.strip()]
+# --- Runtime SSL/CA certificate injection (#1181) -------------------------
+from .ssl_trust import (  # noqa: E402
+    SSL_MOUNT_DEST as _SSL_MOUNT_DEST,
+    ssl_cert_dir,
+    ssl_env_vars,
+)
 
 
-IMAGE_NAME = util.resolve_env_value("KLANGK_IMAGE_NAME", "klangk-workspace")
+# ---------------------------------------------------------------------------
+# Pure module-level constants (no settings reads — #1487 carve-out)
+# ---------------------------------------------------------------------------
 
-TERMINAL_BANNER = util.resolve_env_value("KLANGK_TERMINAL_BANNER", "")
+CONTAINER_PORT_START = 8000
+DEFAULT_PORTS_PER_WORKSPACE = 5
 
-_allowed_images_env = util.resolve_env_value("KLANGK_ALLOWED_IMAGES", "")
-ALLOWED_IMAGES: set[str] = {
-    img.strip() for img in _allowed_images_env.split(",") if img.strip()
-}
-ALLOWED_IMAGES.add(IMAGE_NAME)  # default image is always allowed
+HEALTH_MESSAGE_MAX_BYTES = 512
 
 _VALID_PULL_POLICIES = {"never", "missing", "always", "newer"}
-
-
-def image_pull_policy() -> str:
-    """Resolve the workspace-image pull policy from the environment.
-
-    Default ``never`` keeps airgapped behavior (image must already exist
-    locally).  Set ``KLANGK_IMAGE_PULL_POLICY=missing`` to pull from a
-    registry when the image isn't present.
-    """
-    policy = util.resolve_env_value("KLANGK_IMAGE_PULL_POLICY", "never")
-    if policy not in _VALID_PULL_POLICIES:
-        logger.warning(
-            "Invalid KLANGK_IMAGE_PULL_POLICY=%r (valid: %s); using 'never'.",
-            policy,
-            ", ".join(sorted(_VALID_PULL_POLICIES)),
-        )
-        return "never"
-    return policy
-
 
 _VALID_MOUNT_OPTIONS = {
     "ro",
@@ -64,16 +40,6 @@ _VALID_MOUNT_OPTIONS = {
     "cached",
     "delegated",
 }
-
-
-_allowed_mount_roots_env = util.resolve_env_value(
-    "KLANGK_ALLOWED_MOUNT_ROOTS", ""
-)
-ALLOWED_MOUNT_ROOTS: list[str] = [
-    os.path.realpath(p.strip())
-    for p in _allowed_mount_roots_env.split(",")
-    if p.strip()
-]
 
 _PROTECTED_PATHS = [
     "/var/run/docker.sock",
@@ -87,176 +53,13 @@ def _is_named_volume(source: str) -> bool:
     return "/" not in source and not source.startswith(".")
 
 
-def _is_protected(source: str) -> bool:
-    """True if source is a protected host path that must never be mounted.
-
-    Uses ``os.path.realpath`` to resolve symlinks — a symlink pointing
-    to a protected path (e.g. Docker socket) is still blocked.
-    """
-    resolved = os.path.realpath(source)
-    data_dir = os.path.realpath(
-        util.resolve_env_value(
-            "KLANGK_DATA_DIR", os.path.expanduser("~/.klangk/data")
-        )
-        or os.path.expanduser("~/.klangk/data")
-    )
-    for blocked in [*_PROTECTED_PATHS, data_dir]:
-        blocked = os.path.realpath(blocked)
-        if resolved == blocked or resolved.startswith(blocked + "/"):
-            return True
-    return False
-
-
-def validate_mount_spec(spec: str) -> str | None:
-    """Validate a container mount spec string.
-
-    Returns None if valid, or an error message string if invalid.
-    Valid forms: source:dest or source:dest:options
-    The container path (dest) must be absolute.
-    """
-    parts = spec.split(":")
-    if len(parts) < 2 or len(parts) > 3:
-        return f"Invalid mount {spec!r}: expected source:dest or source:dest:options"
-    source, dest = parts[0], parts[1]
-    if not source:
-        return f"Invalid mount {spec!r}: source is empty"
-    if not dest.startswith("/"):
-        return f"Invalid mount {spec!r}: container path must be absolute (start with /)"
-    if len(parts) == 3:
-        options = parts[2]
-        for opt in options.split(","):
-            if opt and opt not in _VALID_MOUNT_OPTIONS:
-                return f"Invalid mount {spec!r}: unknown option {opt!r}"
-    if not _is_named_volume(source):
-        if _is_protected(source):
-            return f"Invalid mount {spec!r}: source is a protected host path"
-        if ALLOWED_MOUNT_ROOTS:
-            resolved = os.path.realpath(source)
-            if not any(
-                resolved == root or resolved.startswith(root + "/")
-                for root in ALLOWED_MOUNT_ROOTS
-            ):
-                allowed = ", ".join(ALLOWED_MOUNT_ROOTS)
-                return (
-                    f"Invalid mount {spec!r}: bind mount source must be "
-                    f"under an allowed root ({allowed})"
-                )
-    return None
-
-
-def validate_mounts(mounts: list[str]) -> str | None:
-    """Validate a list of mount specs. Returns first error or None."""
-    for spec in mounts:
-        error = validate_mount_spec(spec)
-        if error:
-            return error
-    return None
-
-
-def parse_idle_timeout() -> tuple[int, int]:
-    default = 30 * 60
-    env_val = util.resolve_env_value("KLANGK_IDLE_TIMEOUT_SECONDS")
-    if env_val is not None:
-        try:
-            timeout = int(env_val)
-        except ValueError:
-            logger.warning(
-                "KLANGK_IDLE_TIMEOUT_SECONDS=%r is not a valid integer, "
-                "using default %d",
-                env_val,
-                default,
-            )
-            timeout = default
-    else:
-        timeout = default
-    interval = max(10, min(60, timeout // 3))
-    return timeout, interval
-
-
-IDLE_TIMEOUT_SECONDS, CHECK_INTERVAL_SECONDS = parse_idle_timeout()
-
-
-# --- Runtime SSL/CA certificate injection (#1181) -------------------------
-# The detection (ssl_cert_dir), container env vars (ssl_env_vars) and the
-# in-container mount/bundle paths live in :mod:`ssl_trust`, which also owns
-# the backend-process trust path.  See that module for the full design.
-from .ssl_trust import (  # noqa: E402
-    SSL_MOUNT_DEST as _SSL_MOUNT_DEST,
-    ssl_cert_dir,
-    ssl_env_vars,
-)
-
-PORT_RANGE_START = int(
-    util.resolve_env_value("KLANGK_PORT_RANGE_START") or "9000"
-)
-CONTAINER_PORT_START = 8000
-DEFAULT_PORTS_PER_WORKSPACE = 5
-
-
-def ports_per_workspace_cap() -> int:
-    """Server-wide ceiling on hosted-app ports per workspace.
-
-    ``KLANGK_HOSTED_PORTS_PER_WORKSPACE`` (default
-    ``DEFAULT_PORTS_PER_WORKSPACE``, currently 5). ``0`` disables
-    hosted-app serving entirely: no ports are allocated, no hosting env
-    is injected into containers, and the ``/hosted/`` nginx locations
-    return 404. Per-workspace values (#1238) are clamped *down* to this
-    cap; they may never exceed it.
-
-    Resolved live (not cached at import) so changing the env and
-    restarting containers takes effect on the next reconcile without a
-    backend restart.
-    """
-    raw = util.resolve_env_value("KLANGK_HOSTED_PORTS_PER_WORKSPACE") or str(
-        DEFAULT_PORTS_PER_WORKSPACE
-    )
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        logger.warning(
-            "KLANGK_HOSTED_PORTS_PER_WORKSPACE=%r is not an int; "
-            "using default %d",
-            raw,
-            DEFAULT_PORTS_PER_WORKSPACE,
-        )
-        return DEFAULT_PORTS_PER_WORKSPACE
-
-
-# Health-check polling interval (seconds) for HealthMonitor.  See #1015.
-HEALTH_CHECK_INTERVAL_SECONDS = int(
-    util.resolve_env_value("KLANGK_HEALTH_CHECK_INTERVAL") or "30"
-)
-# Per-invocation timeout for a single `podman exec` health check.
-HEALTH_CHECK_TIMEOUT_SECONDS = float(
-    util.resolve_env_value("KLANGK_HEALTH_CHECK_TIMEOUT") or "10"
-)
-# Startup grace period (seconds).  After a service begins starting,
-# failing health checks do NOT count as unhealthy until this much time
-# has elapsed -- mirroring Docker's HEALTHCHECK `--start-period`.  The
-# service command (a dev server, AI gateway, daemon) needs time to boot
-# after it's launched; without a grace window the very first poll fires
-# while it's still coming up and false-flags the workspace unhealthy
-# (e.g. "Gateway not yet ready to accept connections").  A *healthy*
-# result is still recorded immediately, so a fast-booting service shows
-# up as healthy as soon as it actually responds.  The window is anchored
-# to when the service command fires (see ``mark_service_started``) and
-# falls back to when the container state was first tracked, so
-# health-checked workspaces with no service command also get a grace.
-HEALTH_CHECK_STARTUP_GRACE_SECONDS = float(
-    util.resolve_env_value("KLANGK_HEALTH_CHECK_STARTUP_GRACE") or "30"
-)
-# Maximum bytes of check output retained as the failure reason (#1088).
-# A bounded tail keeps a verbose check from growing memory unbounded
-# across many workspaces while still capturing *why* it failed.
-HEALTH_MESSAGE_MAX_BYTES = 512
-
-
 class ContainerState:
     """Per-workspace container lifecycle state."""
 
-    def __init__(self, workspace_id: str, container_id: str):
+    def __init__(self, workspace_id: str, container_id: str, registry):
         self.workspace_id = workspace_id
         self.container_id = container_id
+        self.registry = registry
         self.last_activity = time.time()
         self.idle_timeout: int | None = None
         self.idle_callbacks: list = []
@@ -306,7 +109,7 @@ class ContainerState:
     def get_idle_timeout(self) -> int:
         if self.idle_timeout is not None:
             return self.idle_timeout
-        return IDLE_TIMEOUT_SECONDS
+        return self.registry.idle_timeout_seconds
 
 
 class PortAllocator:
@@ -316,18 +119,19 @@ class PortAllocator:
     port tracking.  Extracted from ``ContainerRegistry`` (issue #972).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, registry) -> None:
         self.port_lock: asyncio.Lock = asyncio.Lock()
+        self.registry = registry
 
     async def allocate_ports(self, workspace_id: str, count: int) -> list[int]:
         # Clamp to the server-wide cap (KLANGK_HOSTED_PORTS_PER_WORKSPACE)
         # so creation never allocates ports the deployer has disabled —
         # otherwise a cap of 0 would still leave orphan allocations
         # until the container's first start reconcile (#1237).
-        count = min(count, ports_per_workspace_cap())
+        count = min(count, self.registry.ports_per_workspace_cap())
         async with self.port_lock:
             return await model.find_and_allocate_ports(
-                workspace_id, count, PORT_RANGE_START
+                workspace_id, count, self.registry.port_range_start
             )
 
     async def get_workspace_ports(self, workspace_id: str) -> list[int]:
@@ -394,7 +198,7 @@ class IdleMonitor:
     """
 
     def __init__(self, registry: "ContainerRegistry") -> None:
-        self._registry = registry
+        self.registry = registry
         self.cleanup_task: asyncio.Task | None = None
         self._cleanup_wake: asyncio.Event | None = None
 
@@ -404,40 +208,40 @@ class IdleMonitor:
         return self._cleanup_wake
 
     def on_idle_stop(self, workspace_id: str, callback) -> None:
-        state = self._registry.states.get(workspace_id)
+        state = self.registry.states.get(workspace_id)
         if state:
             state.idle_callbacks.append(callback)
 
     def remove_idle_callback(self, workspace_id: str, callback) -> None:
-        state = self._registry.states.get(workspace_id)
+        state = self.registry.states.get(workspace_id)
         if state and callback in state.idle_callbacks:
             state.idle_callbacks.remove(callback)
 
     def set_workspace_idle_timeout(
         self, workspace_id: str, seconds: int
     ) -> None:
-        state = self._registry.states.get(workspace_id)
+        state = self.registry.states.get(workspace_id)
         if state:
             state.idle_timeout = seconds
             self.get_cleanup_wake().set()
 
     def get_workspace_idle_timeout(self, workspace_id: str) -> int:
-        state = self._registry.states.get(workspace_id)
+        state = self.registry.states.get(workspace_id)
         if state:
             return state.get_idle_timeout()
-        return IDLE_TIMEOUT_SECONDS
+        return self.registry.idle_timeout_seconds
 
     async def cleanup_idle_containers(self) -> None:
         while True:
             timeouts = [
                 s.idle_timeout
-                for s in self._registry.states.values()
+                for s in self.registry.states.values()
                 if s.idle_timeout is not None
             ]
             if timeouts:
                 interval = max(2, min(timeouts) // 2)
             else:
-                interval = CHECK_INTERVAL_SECONDS
+                interval = self.registry.check_interval_seconds
             wake = self.get_cleanup_wake()
             wake.clear()
             try:
@@ -446,7 +250,7 @@ class IdleMonitor:
                 pass
             now = time.time()
             to_stop = []
-            for ws_id, state in list(self._registry.states.items()):
+            for ws_id, state in list(self.registry.states.items()):
                 timeout = state.get_idle_timeout()
                 idle_secs = now - state.last_activity
                 logger.debug(
@@ -464,22 +268,22 @@ class IdleMonitor:
                     cid,
                     wid,
                 )
-                state = self._registry.states.get(wid)
+                state = self.registry.states.get(wid)
                 if state:
                     for cb in list(state.idle_callbacks):
                         try:
                             await cb(wid)
                         except Exception as e:
                             logger.error("Idle callback error: %s", e)
-                await self._registry.notify_workspace_killed(wid)
-                await self._registry.stop_and_remove_container(cid)
+                await self.registry.notify_workspace_killed(wid)
+                await self.registry.stop_and_remove_container(cid)
 
     def start_cleanup_loop(self) -> None:
         logger.info(
             "Instance: %s, idle timeout: %ds, check interval: %ds",
             model.get_instance_id(),
-            IDLE_TIMEOUT_SECONDS,
-            CHECK_INTERVAL_SECONDS,
+            self.registry.idle_timeout_seconds,
+            self.registry.check_interval_seconds,
         )
         if self.cleanup_task is None:
             self.cleanup_task = asyncio.create_task(
@@ -517,18 +321,18 @@ class HealthMonitor:
     """
 
     def __init__(self, registry: "ContainerRegistry") -> None:
-        self._registry = registry
+        self.registry = registry
         self.health_task: asyncio.Task | None = None
 
     @property
-    def _connections(self):
+    def connections(self):
         """The WebSocketState instance the monitor broadcasts through (#1464).
 
         Reached via the registry's ``sockets`` attribute, set by
         ``build_app()`` in production. No lazy import — the registry owns
         the reference.
         """
-        return self._registry.sockets
+        return self.registry.sockets
 
     def _setup_complete(self, state: ContainerState) -> bool:
         """True if health checks may run for this workspace.
@@ -553,7 +357,7 @@ class HealthMonitor:
         """
         return (
             time.time() - state.service_started_at
-            < HEALTH_CHECK_STARTUP_GRACE_SECONDS
+            < self.registry.health_check_startup_grace
         )
 
     async def _run_one(self, state: ContainerState) -> tuple[str, str]:
@@ -598,7 +402,7 @@ class HealthMonitor:
         # Resolve the owner's container home the same way
         # start_workspace does, so the check runs in the right
         # HOME rather than as root in /.
-        ws = self._registry.app_state.workspaces
+        ws = self.registry.app_state.workspaces
         ws_home = ws.home_path(state.workspace_id)
         user_home, _created = await ws.ensure_home_symlink(
             ws_home, handle, owner_id
@@ -611,7 +415,7 @@ class HealthMonitor:
             state.health_check,
         )
         try:
-            rc, out, err = await self._registry.podman.exec_container(
+            rc, out, err = await self.registry.podman.exec_container(
                 state.container_id,
                 # bash -c (NON-login): sources nothing, so the probe is
                 # deterministic and insulated from the user's interactive
@@ -622,7 +426,7 @@ class HealthMonitor:
                 ["bash", "-c", state.health_check],
                 user="klangk",
                 extra_env={"HOME": user_home},
-                timeout=HEALTH_CHECK_TIMEOUT_SECONDS,
+                timeout=self.registry.health_check_timeout,
             )
         except (podman.PodmanError, asyncio.TimeoutError, OSError) as e:
             return "unhealthy", f"{type(e).__name__}: {e}"
@@ -691,7 +495,7 @@ class HealthMonitor:
         consumer can detect a missed transition.
         """
         state.health_seq += 1
-        self._connections.notify_service_health(
+        self.connections.notify_service_health(
             state.workspace_id,
             healthy=status == "healthy",
             message=message,
@@ -715,7 +519,7 @@ class HealthMonitor:
         stream is a single source of truth.
         """
         state.health_seq += 1
-        self._connections.notify_service_health(
+        self.connections.notify_service_health(
             state.workspace_id,
             healthy=False,
             message=None,
@@ -733,8 +537,8 @@ class HealthMonitor:
         loop being alive -- if the loop stalls, the heartbeats stop.
         """
         while True:
-            await asyncio.sleep(HEALTH_CHECK_INTERVAL_SECONDS)
-            for state in list(self._registry.states.values()):
+            await asyncio.sleep(self.registry.health_check_interval)
+            for state in list(self.registry.states.values()):
                 if not state.health_check:
                     continue
                 if not self._setup_complete(state):
@@ -751,7 +555,7 @@ class HealthMonitor:
 
     def _send_heartbeats(self) -> None:
         """Fan health heartbeats to opt-in connections."""
-        self._connections.send_health_heartbeats()
+        self.connections.send_health_heartbeats()
 
     def start_health_loop(self) -> None:
         if self.health_task is None:
@@ -772,39 +576,174 @@ class ContainerRegistry:
     threading.
     """
 
-    def __init__(self, settings: "KlangkSettings | None" = None):
-        self.settings = settings
+    def __init__(self, app_state):
+        self.app_state = app_state
+        self.settings = app_state.settings
+
+        # --- settings-derived attrs (computed once, #1487) ---
+        s = self.settings
+        self.image_name: str = s.image_name or "klangk-workspace"
+        self.terminal_banner: str = s.terminal_banner or ""
+        self.allowed_images: set[str] = set()
+        if s.allowed_images:
+            self.allowed_images = {
+                img.strip()
+                for img in s.allowed_images.split(",")
+                if img.strip()
+            }
+        self.allowed_images.add(self.image_name)
+        self.allowed_mount_roots: list[str] = []
+        if s.allowed_mount_roots:
+            self.allowed_mount_roots = [
+                os.path.realpath(p.strip())
+                for p in s.allowed_mount_roots.split(",")
+                if p.strip()
+            ]
+        self.port_range_start: int = int(s.port_range_start or "9000")
+        self.idle_timeout_seconds, self.check_interval_seconds = (
+            self._parse_idle_timeout()
+        )
+        self.health_check_interval: float = float(
+            s.health_check_interval or "30"
+        )
+        self.health_check_timeout: float = float(
+            s.health_check_timeout or "10"
+        )
+        self.health_check_startup_grace: float = float(
+            s.health_check_startup_grace or "30"
+        )
+
         self.states: dict[str, ContainerState] = {}
-        # Reverse lookup: container_id -> workspace_id
         self._cid_to_wsid: dict[str, str] = {}
-        # Per-workspace locks to serialize container creation.
         self._workspace_locks: dict[str, asyncio.Lock] = {}
-        # Per-container locks serializing the service-command fire
-        # sequence (window-exists -> new-window -> send-keys) so the boot
-        # path and the per-connection path can't both create a duplicate
-        # ``service-cmd`` tmux window (#1188). Owned here, not in
-        # terminal.py — terminal reaches it via app_state (#1478).
         self._service_session_locks: dict[str, asyncio.Lock] = {}
         self.on_workspace_killed = None
         self.on_container_status_changed = None
 
         # Collaborators
-        self.ports = PortAllocator()
+        self.ports = PortAllocator(self)
         self.browsers = BrowserRouter()
         self.idle = IdleMonitor(self)
         self.health = HealthMonitor(self)
 
-        # Back-reference to ``app.state`` (set by ``build_app()`` after
-        # construction). Used to pass ``app_state`` to ``bringup.bringup``
-        # and other callees that need explicit dependency threading.
-        self.app_state = None
-
         # The WebSocketState instance (set by build_app after construction,
-        # #1464). The HealthMonitor reaches it via self._registry.sockets.
+        # #1464). The HealthMonitor reaches it via self.registry.sockets.
         self.sockets = None
         # The Podman instance (set by build_app after construction, #1468).
         # Internal callers reach the CLI wrappers via self.podman.X.
         self.podman = None
+
+    # --- settings-derived methods (were module functions, #1487) ---
+
+    def container_dns_config(self) -> list[str]:
+        """Return DNS server list from settings.dns_servers."""
+        raw = self.settings.dns_servers or ""
+        return [d.strip() for d in raw.split(",") if d.strip()]
+
+    def image_pull_policy(self) -> str:
+        """Resolve the workspace-image pull policy from settings."""
+        policy = self.settings.image_pull_policy or "never"
+        if policy not in _VALID_PULL_POLICIES:
+            logger.warning(
+                "Invalid KLANGK_IMAGE_PULL_POLICY=%r (valid: %s); using 'never'.",
+                policy,
+                ", ".join(sorted(_VALID_PULL_POLICIES)),
+            )
+            return "never"
+        return policy
+
+    def _is_protected(self, source: str) -> bool:
+        """True if source is a protected host path that must never be mounted."""
+        resolved = os.path.realpath(source)
+        data_dir = os.path.realpath(
+            self.settings.data_dir or os.path.expanduser("~/.klangk/data")
+        )
+        for blocked in [*_PROTECTED_PATHS, data_dir]:
+            blocked = os.path.realpath(blocked)
+            if resolved == blocked or resolved.startswith(blocked + "/"):
+                return True
+        return False
+
+    def validate_mount_spec(self, spec: str) -> str | None:
+        """Validate a container mount spec string."""
+        parts = spec.split(":")
+        if len(parts) < 2 or len(parts) > 3:
+            return f"Invalid mount {spec!r}: expected source:dest or source:dest:options"
+        source, dest = parts[0], parts[1]
+        if not source:
+            return f"Invalid mount {spec!r}: source is empty"
+        if not dest.startswith("/"):
+            return f"Invalid mount {spec!r}: container path must be absolute (start with /)"
+        if len(parts) == 3:
+            options = parts[2]
+            for opt in options.split(","):
+                if opt and opt not in _VALID_MOUNT_OPTIONS:
+                    return f"Invalid mount {spec!r}: unknown option {opt!r}"
+        if not _is_named_volume(source):
+            if self._is_protected(source):
+                return (
+                    f"Invalid mount {spec!r}: source is a protected host path"
+                )
+            if self.allowed_mount_roots:
+                resolved = os.path.realpath(source)
+                if not any(
+                    resolved == root or resolved.startswith(root + "/")
+                    for root in self.allowed_mount_roots
+                ):
+                    allowed = ", ".join(self.allowed_mount_roots)
+                    return (
+                        f"Invalid mount {spec!r}: bind mount source must be "
+                        f"under an allowed root ({allowed})"
+                    )
+        return None
+
+    def validate_mounts(self, mounts: list[str]) -> str | None:
+        """Validate a list of mount specs. Returns first error or None."""
+        for spec in mounts:
+            error = self.validate_mount_spec(spec)
+            if error:
+                return error
+        return None
+
+    def _parse_idle_timeout(self) -> tuple[int, int]:
+        default = 30 * 60
+        env_val = self.settings.idle_timeout_seconds
+        if env_val is not None:
+            try:
+                timeout = int(env_val)
+            except ValueError:
+                logger.warning(
+                    "KLANGK_IDLE_TIMEOUT_SECONDS=%r is not a valid integer, "
+                    "using default %d",
+                    env_val,
+                    default,
+                )
+                timeout = default
+        else:
+            timeout = default
+        interval = max(10, min(60, timeout // 3))
+        return timeout, interval
+
+    def ports_per_workspace_cap(self) -> int:
+        """Server-wide ceiling on hosted-app ports per workspace."""
+        raw = self.settings.hosted_ports_per_workspace or str(
+            DEFAULT_PORTS_PER_WORKSPACE
+        )
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            logger.warning(
+                "KLANGK_HOSTED_PORTS_PER_WORKSPACE=%r is not an int; "
+                "using default %d",
+                raw,
+                DEFAULT_PORTS_PER_WORKSPACE,
+            )
+            return DEFAULT_PORTS_PER_WORKSPACE
+
+    def set_idle_timeout(self, seconds: int) -> None:
+        """Set the global idle timeout (replaces api mutating module globals)."""
+        self.idle_timeout_seconds = seconds
+        self.check_interval_seconds = max(10, min(60, seconds // 3))
 
     # --- Service-session locks (#1188, #1478) ---
     # The per-container firing-lock dict lives here on the registry. It used
@@ -878,7 +817,7 @@ class ContainerRegistry:
         state = self.states.get(workspace_id)
         was_new = state is None
         if was_new:
-            state = ContainerState(workspace_id, container_id)
+            state = ContainerState(workspace_id, container_id, self)
             self.states[workspace_id] = state
         else:
             # Remove old reverse mapping if container changed
@@ -1148,14 +1087,14 @@ class ContainerRegistry:
         releases all of its allocations; the returned empty list then
         suppresses the hosting env in :meth:`_build_env` (#1237).
         """
-        num_ports = min(num_ports, ports_per_workspace_cap())
+        num_ports = min(num_ports, self.ports_per_workspace_cap())
         async with self.port_lock:
             host_ports = await model.get_workspace_ports(workspace_id)
             if len(host_ports) < num_ports:
                 new_ports = await model.find_and_allocate_ports(
                     workspace_id,
                     num_ports - len(host_ports),
-                    PORT_RANGE_START,
+                    self.port_range_start,
                 )
                 host_ports.extend(new_ports)
             elif len(host_ports) > num_ports:
@@ -1203,9 +1142,9 @@ class ContainerRegistry:
             if hosting_base_path is None:
                 hosting_base_path = b
         env_vars: list[str] = []
-        nginx_port = util.resolve_env_value("KLANGK_NGINX_PORT", "8995")
+        nginx_port = self.settings.nginx_port or "8995"
         proxy_url = f"http://host.containers.internal:{nginx_port}/llm-proxy"
-        llm_model = util.resolve_env_value("KLANGK_LLM_MODEL", "")
+        llm_model = self.settings.llm_model or ""
         env_vars.append(f"KLANGK_LLM_PROXY_URL={proxy_url}")
         if llm_model:
             env_vars.append(f"KLANGK_LLM_MODEL={llm_model}")
@@ -1235,8 +1174,8 @@ class ContainerRegistry:
         env_vars.append(
             f"KLANGK_BRIDGE_URL=http://host.containers.internal:{nginx_port}"
         )
-        if TERMINAL_BANNER:
-            env_vars.append(f"KLANGK_TERMINAL_BANNER={TERMINAL_BANNER}")
+        if self.terminal_banner:
+            env_vars.append(f"KLANGK_TERMINAL_BANNER={self.terminal_banner}")
 
         # Runtime SSL/CA trust (#1181): point OpenSSL/Python/curl/Node
         # at the bundle the entrypoint builds from the mounted certs.
@@ -1257,7 +1196,7 @@ class ContainerRegistry:
     async def _ensure_volumes(
         extra_mounts: list[str] | None,
         user_id: str | None,
-        podman=None,
+        podman,
     ) -> None:
         """Create named volumes and validate bind-mount sources."""
         if not extra_mounts:
@@ -1390,7 +1329,7 @@ class ContainerRegistry:
         cid: str,
         container_name: str,
         publish: list[tuple[int, int]],
-        podman=None,
+        podman,
     ) -> None:
         """Remove stale containers holding conflicting ports."""
         logger.warning(
@@ -1452,11 +1391,11 @@ class ContainerRegistry:
     ) -> tuple[str, str]:
         """Inner implementation of start_container (called under lock)."""
         t_start = time.monotonic()
-        resolved_image = image or IMAGE_NAME
-        if resolved_image not in ALLOWED_IMAGES:
+        resolved_image = image or self.image_name
+        if resolved_image not in self.allowed_images:
             raise ValueError(
                 f"Image {resolved_image!r} is not in the allowed "
-                f"list: {sorted(ALLOWED_IMAGES)}"
+                f"list: {sorted(self.allowed_images)}"
             )
 
         # Reuse a running container or remove a stopped one.
@@ -1513,7 +1452,11 @@ class ContainerRegistry:
         ]
         iid = model.get_instance_id()
         container_name = f"klangk-{iid}-{workspace_id[:12]}"
-        allow_sudo = util.resolve_env_bool("KLANGK_ALLOW_SUDO")
+        allow_sudo = (self.settings.allow_sudo or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
 
         create_kwargs = dict(
             labels={
@@ -1529,14 +1472,12 @@ class ContainerRegistry:
             },
             publish=publish,
             add_hosts=["host.containers.internal:host-gateway"],
-            dns=container_dns_config() or None,
+            dns=self.container_dns_config() or None,
             env=env_vars,
             init=True,
             interactive=True,
-            userns=util.resolve_env_value(
-                "KLANGK_USERNS", "keep-id:uid=1000,gid=1000"
-            ),
-            pull=image_pull_policy(),
+            userns=self.settings.userns or "keep-id:uid=1000,gid=1000",
+            pull=self.image_pull_policy(),
         )
 
         logger.info(
@@ -1681,11 +1622,9 @@ class ContainerRegistry:
         try:
             cid = await self.podman.create_container(
                 "klangk-prewarm",
-                IMAGE_NAME,
+                self.image_name,
                 pull="never",
-                userns=util.resolve_env_value(
-                    "KLANGK_USERNS", "keep-id:uid=1000,gid=1000"
-                ),
+                userns=self.settings.userns or "keep-id:uid=1000,gid=1000",
             )
             await self.podman.remove_container(cid)
             logger.info("Podman pre-warmed in %.3fs", time.monotonic() - t0)

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from klangk_backend import workspaces as ws_mod, container
+from klangk_backend import workspaces as ws_mod
 
 
 class TestCreateWorkspace:
@@ -32,7 +32,9 @@ class TestCreateWorkspace:
         registry = app_state.container_registry
         ports = await registry.get_workspace_ports(ws["id"])
         assert len(ports) == ws["num_ports"]
-        assert all(p >= container.PORT_RANGE_START for p in ports)
+        assert all(
+            p >= app_state.container_registry.port_range_start for p in ports
+        )
 
     async def test_duplicate_name_fails(self, user, app_state):
         await app_state.workspaces.create_workspace(user["id"], "unique")
@@ -410,8 +412,12 @@ class TestAutoStartWorkspaces:
         # Pre-populate states so idle_timeout can be set.
         from klangk_backend.container import ContainerState
 
-        registry.states[ws1["id"]] = ContainerState(ws1["id"], "cid-1")
-        registry.states[ws2["id"]] = ContainerState(ws2["id"], "cid-2")
+        registry.states[ws1["id"]] = ContainerState(
+            ws1["id"], "cid-1", registry
+        )
+        registry.states[ws2["id"]] = ContainerState(
+            ws2["id"], "cid-2", registry
+        )
         try:
             with patch.object(app_state.settings, "allow_autostart", "1"):
                 with patch.object(
@@ -501,8 +507,10 @@ class TestStartWorkspace:
 
         # Registry default idle timeout is non-zero; start_workspace
         # must not clobber it.
-        default_timeout = ContainerState(ws["id"], "cid-y").idle_timeout
-        registry.states[ws["id"]] = ContainerState(ws["id"], "cid-y")
+        default_timeout = ContainerState(
+            ws["id"], "cid-y", registry
+        ).idle_timeout
+        registry.states[ws["id"]] = ContainerState(ws["id"], "cid-y", registry)
         try:
             with patch.object(
                 registry,
