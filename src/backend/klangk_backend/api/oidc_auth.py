@@ -19,7 +19,6 @@ from .. import (
     model,
     oidc,
 )
-from ..settings import get_settings
 from ..util import (
     API_PREFIX,
     derive_hosting_info,
@@ -53,10 +52,11 @@ async def oidc_login(
     cli_redirect: str | None = None,
 ):
     """Redirect to the OIDC IdP for authentication."""
-    if not oidc.oidc_login_allowed(get_settings()):
+    oidc_inst = request.app.state.oidc
+    if not oidc_inst.oidc_login_allowed():
         raise HTTPException(status_code=404, detail="OIDC not enabled")
 
-    provider = oidc.get_provider(provider_id)
+    provider = oidc_inst.get_provider(provider_id)
     if provider is None:
         raise HTTPException(status_code=404, detail="Unknown OIDC provider")
 
@@ -75,7 +75,7 @@ async def oidc_login(
     )
     redirect_uri = f"{proto}://{hostname}{base_path}{API_PREFIX}/auth/oidc/{provider_id}/callback"
 
-    auth_url = await oidc.build_auth_url(
+    auth_url = await oidc_inst.build_auth_url(
         provider, redirect_uri, state, challenge
     )
 
@@ -124,14 +124,14 @@ def _validate_state_cookie(
     return cookie_data
 
 
-async def _exchange_and_validate_token(provider, code, cookie_data):
+async def _exchange_and_validate_token(oidc_inst, provider, code, cookie_data):
     """Exchange the authorization code for tokens and validate the ID token.
 
     Returns ``(claims, tokens)`` where *claims* contains at least ``sub``
     and ``email``.
     """
     try:
-        tokens = await oidc.exchange_code(
+        tokens = await oidc_inst.exchange_code(
             provider,
             code,
             cookie_data["redirect_uri"],
@@ -148,7 +148,7 @@ async def _exchange_and_validate_token(provider, code, cookie_data):
         raise HTTPException(status_code=502, detail="No ID token in response")
 
     try:
-        claims = await oidc.validate_id_token(
+        claims = await oidc_inst.validate_id_token(
             provider, id_token, access_token=tokens.get("access_token")
         )
     except Exception as exc:
@@ -243,13 +243,13 @@ async def oidc_callback(
         )
         raise HTTPException(status_code=400, detail="Login failed")
 
-    provider = oidc.get_provider(provider_id)
+    provider = request.app.state.oidc.get_provider(provider_id)
     if provider is None:
         raise HTTPException(status_code=404, detail="Unknown OIDC provider")
 
     cookie_data = _validate_state_cookie(request, provider_id, state)
     claims, tokens = await _exchange_and_validate_token(
-        provider, code, cookie_data
+        request.app.state.oidc, provider, code, cookie_data
     )
 
     email = claims["email"]
@@ -265,7 +265,7 @@ async def oidc_callback(
 
     # Call the OIDC login hook (if configured).
     try:
-        hook_groups = await oidc.call_login_hook(
+        hook_groups = await request.app.state.oidc.call_login_hook(
             provider, claims, email, tokens
         )
     except Exception:

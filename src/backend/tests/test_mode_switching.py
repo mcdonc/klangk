@@ -6,24 +6,28 @@ steps, then flipping the mode) and asserts the behaviour the
 *Auth Modes* guide promises a real operator. They exist precisely to keep
 the docs honest — if a documented flow stops working, these tests fail.
 
-Mode is read live from the environment on every request
-(``oidc.auth_modes(settings)``), so "restart with a different mode" is simulated by
-re-seeding (the real lifespan step that touches identity) against the *same*
-persistent test database, then changing ``KLANGK_AUTH_MODES`` and continuing
-to hit the same API.
+The auth mode is read from ``app.state.oidc.auth_modes()`` (#1450), which
+derives it from ``settings.auth_modes`` frozen at OIDC construction.  A
+mode switch is therefore simulated by rebuilding the OIDC instance (a
+"restart") after changing ``KLANGK_AUTH_MODES``.
 """
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from klangk_backend import api, auth, main, model
+from klangk_backend import api, auth, main, model, oidc as oidc_mod
+from klangk_backend.settings import KlangkSettings
 from klangk_backend.main import register_exception_handlers
 from klangk_backend.util import API_PREFIX
 
 DEFAULT_EMAIL = "admin@example.com"
 SEEDED_PASSWORD = "seeded-pw"
 NEW_PASSWORD = "rotated-by-admin"
+
+# Stashed by the ``mode_server`` fixture so ``_none`` / ``_password`` can
+# rebuild the OIDC instance after a mode flip (simulates a restart).
+_current_app = None
 
 
 @pytest.fixture
@@ -35,6 +39,7 @@ async def mode_server(db, monkeypatch):
     Returns ``(client, default_user)`` where ``default_user`` is the DB row
     for the seeded default user (so tests know its ``id`` / ``email``).
     """
+    global _current_app
     monkeypatch.setenv("KLANGK_DEFAULT_USER", DEFAULT_EMAIL)
     monkeypatch.setenv("KLANGK_DEFAULT_PASSWORD", SEEDED_PASSWORD)
     # Seed exactly as the lifespan does at startup.
@@ -43,23 +48,39 @@ async def mode_server(db, monkeypatch):
     assert default_user is not None, "seed_default_user must create the user"
 
     app = FastAPI()
+    app.state.settings = KlangkSettings(env={"KLANGK_AUTH_MODES": "none"})
+    app.state.oidc = oidc_mod.OIDC(app.state)
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)
     register_exception_handlers(app)
+    _current_app = app
 
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport, base_url="http://test"
     ) as client:
         yield client, default_user
+    _current_app = None
+
+
+def _set_mode(mode: str):
+    """Rebuild ``app.state.oidc`` with a new auth mode (#1450).
+
+    OIDC reads ``settings.auth_modes`` at construction; after a mode
+    change the instance must be rebuilt so the new mode takes effect
+    (same as a real server restart).
+    """
+    app = _current_app
+    app.state.settings = KlangkSettings(env={"KLANGK_AUTH_MODES": mode})
+    app.state.oidc = oidc_mod.OIDC(app.state)
 
 
 def _none(monkeypatch):
-    monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+    _set_mode("none")
 
 
 def _password(monkeypatch):
-    monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
+    _set_mode("password")
 
 
 # ---------------------------------------------------------------------------

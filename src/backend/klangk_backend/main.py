@@ -155,7 +155,7 @@ def _is_loopback_bind(host: str) -> bool:
         return False
 
 
-def enforce_no_auth_bind_safety() -> None:
+def enforce_no_auth_bind_safety(app_state=None) -> None:
     """Refuse to start in ``none`` auth mode unless the bind is loopback.
 
     ``KLANGK_AUTH_MODES=none`` freely issues a token for the seeded default
@@ -167,11 +167,12 @@ def enforce_no_auth_bind_safety() -> None:
     ``KLANGK_ALLOW_INSECURE_NO_AUTH=1`` when you knowingly expose a no-auth
     server (e.g. a throwaway VM on an isolated network). #1374.
 
-    Runs in the lifespan so ``auth_modes(settings)`` reads the resolved
-    setting (supports ``@file:`` indirection resolved at startup) — something a bash gate in the
-    old nginx.sh couldn't replicate.
+    Reads auth mode from ``app_state.oidc.auth_modes()`` (#1450) so the
+    setting (supports ``@file:`` indirection resolved at startup) is read
+    once at construction — something a bash gate in the old nginx.sh
+    couldn't replicate.
     """
-    if oidc.auth_modes(get_settings()) != "none":
+    if app_state.oidc.auth_modes() != "none":
         return
     host = resolve_env_value("KLANGK_LISTEN", "127.0.0.1") or "127.0.0.1"
     if _is_loopback_bind(host):
@@ -576,9 +577,9 @@ async def lifespan(app: FastAPI):
 
     auth.require_secure_jwt_secret()
     plugins.load()
-    oidc.init_providers()
-    enforce_no_auth_bind_safety()
-    oidc.load_login_hook()
+    app.state.oidc.init_providers()
+    enforce_no_auth_bind_safety(app.state)
+    app.state.oidc.load_login_hook()
     await seed_default_user()
     await seed_agent_user()
     registry = app.state.container_registry
@@ -760,6 +761,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # management functions that share a Podman dependency. Reaches podman,
     # the registry, and settings through the single app_state reference.
     app.state.terminal = terminal.Terminal(app.state)
+    # #1450: OIDC(app_state) owns the provider registry, discovery/JWKS
+    # caches, and login-hook state (previously module globals). Reaches
+    # config through self.settings.
+    app.state.oidc = oidc.OIDC(app.state)
     # WebSocketState reaches the registry through its own app_state
     # back-reference (send_service_health_snapshot / reset_workspace).
     # The unit-test fixtures set this explicitly; build_app must too, or

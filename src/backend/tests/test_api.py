@@ -18,13 +18,13 @@ from klangk_backend import (
     auth,
     container,
     model,
-    oidc,
     plugins,
     podman,
     workspaces as ws_mod,
     wshandler,
 )
 from klangk_backend.container import ContainerRegistry
+from klangk_backend import oidc as oidc_mod
 from klangk_backend.settings import KlangkSettings
 from klangk_backend.wshandler.session import WebSocketState
 
@@ -40,7 +40,7 @@ async def app(db):
     from klangk_backend.util import API_PREFIX
     from klangk_backend.main import register_exception_handlers
 
-    settings = KlangkSettings(env={})
+    settings = KlangkSettings(env={"KLANGK_AUTH_MODES": "password"})
     registry = ContainerRegistry(settings)
     sockets = WebSocketState()
     app.state.settings = settings
@@ -51,6 +51,7 @@ async def app(db):
     sockets.app_state = app.state
     app.state.podman = _mock_pod
     registry.podman = _mock_pod
+    app.state.oidc = oidc_mod.OIDC(app.state)
     agent.get_workspace_session = sockets.get_session
 
     app.include_router(api.root_router)
@@ -266,7 +267,7 @@ class TestVersion:
         assert "plugins" in data
 
     async def test_version_includes_plugins(
-        self, client, tmp_path, monkeypatch
+        self, client, app, tmp_path, monkeypatch
     ):
         monkeypatch.delenv("KLANGK_VERSION_FILE", raising=False)
         plugin_dir = tmp_path / "plugins" / "myplugin"
@@ -287,7 +288,7 @@ class TestVersion:
         assert plugins[0]["description"] == "A test plugin"
 
     async def test_version_includes_variant_when_present(
-        self, client, tmp_path, monkeypatch
+        self, client, app, tmp_path, monkeypatch
     ):
         # When version.json carries a "variant" field (a downstream product
         # identity string, set via KLANGK_VARIANT in generate-version.sh), the
@@ -306,7 +307,7 @@ class TestVersion:
         assert data["variant"] == "Custom 1.0.0"
 
     async def test_version_omits_variant_when_absent(
-        self, client, tmp_path, monkeypatch
+        self, client, app, tmp_path, monkeypatch
     ):
         # Stock klangk builds omit the variant field entirely (it is absent
         # from version.json, not null). The endpoint must not synthesize one —
@@ -375,7 +376,7 @@ class TestConfig:
         assert data["min_password_length"] == auth.MIN_PASSWORD_LENGTH
 
     async def test_get_config_logo_url_defaults_empty(
-        self, client, monkeypatch
+        self, client, app, monkeypatch
     ):
         # No KLANGK_LOGO_URL set -> empty string (UI renders default widget).
         monkeypatch.delenv("KLANGK_LOGO_URL", raising=False)
@@ -405,7 +406,7 @@ class TestConfig:
             assert data[key] == ""
 
     async def test_get_config_legal_links_reflect_env(
-        self, client, monkeypatch
+        self, client, app, monkeypatch
     ):
         # Each link is surfaced verbatim from its module constant (resolved
         # from env at import time, like PRODUCT_NAME / LOGIN_BANNER).
@@ -426,7 +427,7 @@ class TestConfig:
         assert data["support_email"] == "help@example.com"
 
     async def test_get_config_legal_links_are_plain_env_not_resolved(
-        self, client, monkeypatch, tmp_path
+        self, client, app, monkeypatch, tmp_path
     ):
         # Legal/support links are PUBLIC URLs shown to unauthenticated
         # users, so they must NOT get file:/cmd: secret resolution -- a
@@ -439,7 +440,7 @@ class TestConfig:
         assert resp.json()["terms_url"] == "file:///etc/shadow"
 
     async def test_get_config_logo_url_resolves_file_secret(
-        self, client, tmp_path, monkeypatch
+        self, client, app, tmp_path, monkeypatch
     ):
         # file:/cmd: resolution works like other secrets (#1152).
         secret = tmp_path / "logo_url"
@@ -669,9 +670,9 @@ class TestLocalLogin:
     """POST /api/v1/auth/local — no-login single-user mode token handout."""
 
     async def test_returns_token_for_seeded_default_user(
-        self, client, db, monkeypatch
+        self, client, app, db, monkeypatch
     ):
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")
         monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
         await model.create_user(
             "local@example.com",
@@ -688,8 +689,10 @@ class TestLocalLogin:
         claims = auth.decode_token(token)
         assert claims["email"] == "local@example.com"
 
-    async def test_token_authorizes_requests(self, client, db, monkeypatch):
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+    async def test_token_authorizes_requests(
+        self, client, app, db, monkeypatch
+    ):
+        monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")
         monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
         await model.create_user(
             "local@example.com",
@@ -707,30 +710,32 @@ class TestLocalLogin:
         assert resp.status_code == 200
         assert resp.json()["email"] == "local@example.com"
 
-    async def test_disabled_when_not_none_mode(self, client, db, monkeypatch):
+    async def test_disabled_when_not_none_mode(
+        self, client, app, db, monkeypatch
+    ):
         # In password mode (the explicit opposite of none) the endpoint refuses.
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
+        monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "password")
         resp = await client.post("/api/v1/auth/local")
         assert resp.status_code == 403
 
-    async def test_disabled_in_both_mode(self, client, db, monkeypatch):
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "both")
+    async def test_disabled_in_both_mode(self, client, app, db, monkeypatch):
+        monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "both")
         resp = await client.post("/api/v1/auth/local")
         assert resp.status_code == 403
 
     async def test_500_when_default_user_missing(
-        self, client, db, monkeypatch
+        self, client, app, db, monkeypatch
     ):
         # seed_default_user() runs in the lifespan, which the minimal test
         # app skips — so if it were somehow bypassed at runtime the endpoint
         # surfaces a 500 rather than minting a token for a ghost user.
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")
         monkeypatch.setenv("KLANGK_DEFAULT_USER", "ghost@example.com")
         resp = await client.post("/api/v1/auth/local")
         assert resp.status_code == 500
 
-    async def test_no_body_required(self, client, db, monkeypatch):
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+    async def test_no_body_required(self, client, app, db, monkeypatch):
+        monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")
         monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
         await model.create_user(
             "local@example.com",
@@ -750,11 +755,11 @@ class TestLocalLogin:
     # non-loopback X-Real-IP even when the immediate peer is loopback.
 
     async def test_rejects_nonloopback_real_client_via_nginx(
-        self, client, db, monkeypatch
+        self, client, app, db, monkeypatch
     ):
         """Front-proxy bypass: peer is loopback (nginx) but X-Real-IP is the
         real client (a workspace container) -> backend refuses independently."""
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")
         monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
         await model.create_user(
             "local@example.com",
@@ -769,12 +774,12 @@ class TestLocalLogin:
         assert "loopback" in resp.json()["detail"].lower()
 
     async def test_admits_loopback_real_client_via_nginx(
-        self, client, db, monkeypatch
+        self, client, app, db, monkeypatch
     ):
         """The benign mirror: peer loopback (nginx), X-Real-IP loopback (the
         operator's browser) -> admit. (ASGI test client peer is itself
         loopback, satisfying the trust gate that honors X-Real-IP.)"""
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
+        monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")
         monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
         await model.create_user(
             "local@example.com",
@@ -1594,7 +1599,7 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 404
 
     async def test_delete_workspace_with_container(
-        self, client, user, registry
+        self, client, app, user, registry
     ):
         headers = await _auth_headers(client)
         create_resp = await client.post(
@@ -1626,7 +1631,7 @@ class TestWorkspaceRoutes:
         mock_rm.assert_awaited_once_with("fake-container-id")
 
     async def test_delete_workspace_cleans_up_groups(
-        self, client, user, registry
+        self, client, app, user, registry
     ):
         headers = await _auth_headers(client)
         create_resp = await client.post(
@@ -1679,7 +1684,7 @@ class TestWorkspaceRoutes:
         mock_notify.assert_called_once_with(user["id"])
 
     async def test_delete_notifies_deleter_and_owner(
-        self, client, user, registry, sockets
+        self, client, app, user, registry, sockets
     ):
         headers = await _auth_headers(client)
         create_resp = await client.post(
@@ -1861,7 +1866,7 @@ class TestWorkspaceRoutes:
         assert match[0]["service_command"] == "pi"
 
     async def test_update_workspace_propagates_to_live_state(
-        self, client, user, registry
+        self, client, app, user, registry
     ):
         # Editing setup_state/health_check on a workspace whose
         # container is live updates the cached ContainerState so the
@@ -1933,7 +1938,7 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 404
 
     async def test_update_workspace_race_delete(
-        self, client, user, monkeypatch
+        self, client, app, user, monkeypatch
     ):
         """Workspace deleted between get and update returns 404."""
         headers = await _auth_headers(client)
@@ -2182,7 +2187,7 @@ class TestWorkspaceSharingRoutes:
         assert isinstance(resp.json(), list)
 
     async def test_list_shared_bare_path_not_capped_at_default(
-        self, client, user
+        self, client, app, user
     ):
         """Shared bare-list path returns more than the default of 10 (#1266).
 
@@ -2302,7 +2307,7 @@ class TestWorkspaceSharingRoutes:
         assert resp.json()[0]["email"] == "other@example.com"
 
     async def test_add_member_notifies_owner_and_target(
-        self, client, user, sockets
+        self, client, app, user, sockets
     ):
         headers = await _auth_headers(client)
         other = await self._create_other_user()
@@ -2323,7 +2328,7 @@ class TestWorkspaceSharingRoutes:
         assert notified == {user["id"], other["id"]}
 
     async def test_remove_member_notifies_owner_and_removed(
-        self, client, user, sockets
+        self, client, app, user, sockets
     ):
         headers = await _auth_headers(client)
         other = await self._create_other_user()
@@ -2348,7 +2353,7 @@ class TestWorkspaceSharingRoutes:
         assert notified == {user["id"], other["id"]}
 
     async def test_add_to_role_notifies_owner_and_target(
-        self, client, user, sockets
+        self, client, app, user, sockets
     ):
         headers = await _auth_headers(client)
         other = await self._create_other_user()
@@ -2369,7 +2374,7 @@ class TestWorkspaceSharingRoutes:
         assert notified == {user["id"], other["id"]}
 
     async def test_remove_from_role_notifies_owner_and_member(
-        self, client, user, sockets
+        self, client, app, user, sockets
     ):
         headers = await _auth_headers(client)
         other = await self._create_other_user()
@@ -2395,7 +2400,7 @@ class TestWorkspaceSharingRoutes:
         assert notified == {user["id"], other["id"]}
 
     async def test_change_role_notifies_owner_and_target(
-        self, client, user, sockets
+        self, client, app, user, sockets
     ):
         headers = await _auth_headers(client)
         other = await self._create_other_user()
@@ -2419,7 +2424,7 @@ class TestWorkspaceSharingRoutes:
         assert notified == {user["id"], other["id"]}
 
     async def test_change_role_allows_system_agent_removal(
-        self, client, user, db
+        self, client, app, user, db
     ):
         # role=None is removal-from-all-roles — harmless cleanup, so the
         # guard (which only fires on a grant) must let it through.
@@ -2608,7 +2613,7 @@ class TestWorkspaceACL:
         assert resp.status_code == 403
 
     async def test_get_workspace_acl_with_group(
-        self, client, admin_user, user
+        self, client, app, admin_user, user
     ):
         """ACL endpoint resolves group names."""
         headers = await _auth_headers(client)
@@ -3011,7 +3016,7 @@ class TestChangeWorkspaceRole:
         assert "Role group" in resp.json()["detail"]
 
     async def test_change_role_skips_missing_groups_on_remove(
-        self, client, user
+        self, client, app, user
     ):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -3639,7 +3644,7 @@ class TestBrowserBridge:
         assert "expired" in resp.json()["detail"].lower()
 
     async def test_browser_id_routes_to_correct_tab(
-        self, client, user, registry, sockets
+        self, client, app, user, registry, sockets
     ):
         """Browser ID routes to the specific browser tab."""
         mock_sock = MagicMock()
@@ -3669,7 +3674,7 @@ class TestBrowserBridge:
             registry.revoke_workspace_browsers("ws-conn")
 
     async def test_browser_not_subscribed_returns_502(
-        self, client, user, registry, sockets
+        self, client, app, user, registry, sockets
     ):
         """Returns 502 when target not in browser_subscribers."""
         mock_sock = MagicMock()
@@ -3707,7 +3712,7 @@ class TestBrowserBridge:
             registry.revoke_workspace_browsers("ws-nosess")
 
     async def test_dispatch_error_returns_502(
-        self, client, user, registry, sockets
+        self, client, app, user, registry, sockets
     ):
         mock_sock = MagicMock()
         registry.register_browser("bid-err", "ws-err", mock_sock)
@@ -3733,7 +3738,7 @@ class TestBrowserBridge:
             registry.revoke_workspace_browsers("ws-err")
 
     async def test_stream_endpoint_relays_ndjson(
-        self, client, user, registry, sockets
+        self, client, app, user, registry, sockets
     ):
         """The streaming endpoint relays the generator's NDJSON to the caller."""
         mock_sock = MagicMock()
@@ -4346,7 +4351,7 @@ class TestFileRoutes:
             self._cleanup(ws_id)
 
     async def test_download_file_strips_quotes_from_filename(
-        self, client, user
+        self, client, app, user
     ):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
@@ -4734,7 +4739,7 @@ class TestAdminEndpoints:
         assert body["total"] >= 2
 
     async def test_list_users_default_page_size_is_10(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         # Create 12 users so the default page is full but not exhaustive.
@@ -4749,7 +4754,7 @@ class TestAdminEndpoints:
         assert len(body["users"]) == 10
 
     async def test_list_users_pagination_across_pages(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         for i in range(5):
@@ -4824,7 +4829,7 @@ class TestAdminEndpoints:
         assert body["total"] == 1
 
     async def test_list_users_invalid_sort_falls_back_to_created(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         # An unknown sort column must not 500 (falls back to created_at).
@@ -4884,7 +4889,7 @@ class TestAdminEndpoints:
         assert "Password" in resp.json()["detail"]
 
     async def test_admin_create_user_send_verification_email(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         with patch("klangk_backend.api.admin.emailsvc") as mock_email:
@@ -4910,7 +4915,7 @@ class TestAdminEndpoints:
         assert user["handle"] == "verify"  # derived, not NULL
 
     async def test_admin_create_user_no_password_no_verify(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         resp = await client.post(
@@ -4983,7 +4988,7 @@ class TestAdminEndpoints:
         assert "system agent" in resp.json()["detail"]
 
     async def test_delete_user_cascades_workspaces(
-        self, client, admin_user, user, registry
+        self, client, app, admin_user, user, registry
     ):
         """Deleting a user cascades to their ws_mod."""
         headers = await self._admin_headers(client)
@@ -5091,7 +5096,7 @@ class TestAdminEndpoints:
         assert resp.status_code == 404
 
     async def test_update_agent_password_rejected(
-        self, client, admin_user, db
+        self, client, app, admin_user, db
     ):
         # Seed the agent user so it exists in the DB
         from klangk_backend.main import seed_agent_user
@@ -5166,7 +5171,7 @@ class TestGroupEndpoints:
         assert body["total"] >= 1
 
     async def test_list_groups_default_page_size_is_10(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         for i in range(12):
@@ -5180,7 +5185,7 @@ class TestGroupEndpoints:
         assert len(body["groups"]) == 10
 
     async def test_list_groups_pagination_across_pages(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         for i in range(5):
@@ -5248,7 +5253,7 @@ class TestGroupEndpoints:
         assert body["total"] == 1
 
     async def test_list_groups_invalid_sort_falls_back_to_name(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         # An unknown sort column must not 500 (falls back to name).
@@ -5503,7 +5508,7 @@ class TestACLEndpoints:
         assert "terminal" in perms
 
     async def test_my_permissions_for_resource_no_access(
-        self, client, admin_user, user
+        self, client, app, admin_user, user
     ):
         """User without specific ACE only gets inherited permissions."""
         headers = await _auth_headers(client)
@@ -5600,7 +5605,7 @@ class TestAdminResourceACL:
         assert resp.status_code == 403
 
     async def test_root_acl_rejects_removing_authenticated_view(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         # Try to save root ACL without Authenticated view
@@ -5620,7 +5625,7 @@ class TestAdminResourceACL:
         assert "locking out" in resp.json()["detail"]
 
     async def test_root_acl_accepts_wildcard_authenticated(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         # Authenticated with * should be accepted
@@ -5645,7 +5650,7 @@ class TestAdminResourceACL:
         assert resp.status_code == 200
 
     async def test_admin_acl_rejects_removing_all_group_access(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         # Try to save /admin ACL with no group Allow
@@ -6285,7 +6290,7 @@ class TestWorkspaceExportImport:
         mock_notify.assert_called_once_with(user["id"])
 
     async def test_import_runs_tar_off_event_loop(
-        self, client, admin_user, user
+        self, client, app, admin_user, user
     ):
         """Import runs tar subprocesses off the event loop (regression #1261).
 
@@ -6335,7 +6340,7 @@ class TestWorkspaceExportImport:
         assert all(t != loop_thread for t in seen)
 
     async def test_export_runs_size_estimate_off_event_loop(
-        self, client, admin_user, user
+        self, client, app, admin_user, user
     ):
         """Export's ``du`` size-estimate runs off the event loop (#1261)."""
         import subprocess
@@ -6553,7 +6558,7 @@ class TestWorkspaceExportImport:
         assert (home / "test.txt").exists()
 
     async def test_export_streams_valid_tarball(
-        self, client, admin_user, user
+        self, client, app, admin_user, user
     ):
         """Export streams a valid .tar.gz with size estimate header."""
         headers = await self._user_headers(client)
@@ -6624,7 +6629,7 @@ class TestWorkspaceExportImport:
             assert any("big.bin" in n for n in tar.getnames())
 
     async def test_export_du_failure_falls_back(
-        self, client, admin_user, user, monkeypatch
+        self, client, app, admin_user, user, monkeypatch
     ):
         """If du fails, estimated size defaults to minimum."""
         headers = await self._user_headers(client)
@@ -6678,7 +6683,7 @@ class TestWorkspaceExportImport:
         assert resp.headers["x-estimated-size"] == "1"
 
     async def test_import_upload_error_cleans_tempfile(
-        self, client, user, monkeypatch
+        self, client, app, user, monkeypatch
     ):
         """If the upload write fails, the temp file is cleaned up."""
         import klangk_backend.api.workspaces as api_mod
@@ -6719,7 +6724,7 @@ class TestWorkspaceExportImport:
         assert not os.path.exists(created_tmp[0])
 
     async def test_export_preserves_all_symlinks(
-        self, client, admin_user, user
+        self, client, app, admin_user, user
     ):
         """All symlinks are preserved in export (stored as links, not content)."""
         headers = await self._user_headers(client)
@@ -6925,7 +6930,7 @@ class TestWorkspaceExportImport:
         assert "PATH" not in env
 
     async def test_import_cleanup_on_extraction_failure(
-        self, client, user, monkeypatch
+        self, client, app, user, monkeypatch
     ):
         """If tar extraction fails, the workspace is cleaned up."""
         import json
@@ -7000,7 +7005,7 @@ class TestWorkspaceExportImport:
         assert "corrupt" in resp.json()["detail"].lower()
 
     async def test_import_timeout_cleans_up_workspace(
-        self, client, user, monkeypatch
+        self, client, app, user, monkeypatch
     ):
         """If tar extraction times out after workspace creation, cleanup occurs."""
         import json
@@ -7139,7 +7144,7 @@ class TestInvitations:
         mock_send.assert_called_once()
 
     async def test_send_invitation_disabled(
-        self, client, admin_user, monkeypatch
+        self, client, app, admin_user, monkeypatch
     ):
         headers = await self._admin_headers(client)
         monkeypatch.setattr(auth, "invitations_enabled", lambda: False)
@@ -7152,7 +7157,7 @@ class TestInvitations:
         assert "disabled" in resp.json()["detail"]
 
     async def test_send_invitation_existing_user(
-        self, client, admin_user, user
+        self, client, app, admin_user, user
     ):
         headers = await self._admin_headers(client)
         resp = await client.post(
@@ -7241,7 +7246,7 @@ class TestInvitations:
         assert body["pending_count"] >= 2
 
     async def test_list_invitations_default_page_size_is_10(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         with patch.object(
@@ -7264,7 +7269,7 @@ class TestInvitations:
         assert len(body["invitations"]) == 10
 
     async def test_list_invitations_pagination_across_pages(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         with patch.object(
@@ -7325,7 +7330,7 @@ class TestInvitations:
         assert emails[0] == "alpha@example.com"
 
     async def test_list_invitations_sort_by_invited_by(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         # Two invitations from two different inviters. Sorting by
         # ``invited_by`` must track the inviter's email (the value the UI
@@ -7357,7 +7362,7 @@ class TestInvitations:
         assert ours[0]["email"] == "alpha@example.com"
 
     async def test_list_invitations_sort_desc_reverses(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         with patch.object(
@@ -7416,7 +7421,7 @@ class TestInvitations:
         assert body["pending_count"] >= 2
 
     async def test_list_invitations_invalid_sort_falls_back_to_created(
-        self, client, admin_user
+        self, client, app, admin_user
     ):
         headers = await self._admin_headers(client)
         # An unknown sort column must not 500 (falls back to created_at).
@@ -7602,7 +7607,7 @@ class TestInvitations:
         assert "Password" in resp.json()["detail"]
 
     async def test_accept_invite_works_when_registration_disabled(
-        self, client, admin_user, monkeypatch
+        self, client, app, admin_user, monkeypatch
     ):
         headers = await self._admin_headers(client)
         with patch.object(
@@ -7630,7 +7635,7 @@ class TestInvitations:
         assert resp.json()["status"] == "accepted"
 
     async def test_accept_invite_email_already_registered(
-        self, client, admin_user, user
+        self, client, app, admin_user, user
     ):
         headers = await self._admin_headers(client)
         with patch.object(
@@ -7658,7 +7663,7 @@ class TestInvitations:
         assert resp.status_code == 400
         assert "already exists" in resp.json()["detail"]
 
-    async def test_accept_invite_wrong_purpose_token(self, client, db):
+    async def test_accept_invite_wrong_purpose_token(self, client, app, db):
         # Use a verification token (wrong purpose)
         token = auth.create_verification_token("fake-user-id")
         resp = await client.post(
@@ -7673,7 +7678,7 @@ class TestInvitations:
         assert "invitations_enabled" in resp.json()
 
     async def test_config_advertises_allow_autostart(
-        self, client, monkeypatch
+        self, client, app, monkeypatch
     ):
         # Default: flag unset -> not allowed, so the UI hides its checkbox.
         monkeypatch.delenv("KLANGK_ALLOW_AUTOSTART", raising=False)
@@ -7691,8 +7696,10 @@ class TestInvitations:
 
 
 class TestOIDCConfig:
-    async def test_config_includes_oidc_fields(self, client, monkeypatch):
-        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+    async def test_config_includes_oidc_fields(self, client, app, monkeypatch):
+        # Default (no auth mode set) is ``none`` (#1374). Patch the OIDC
+        # instance rather than the env (#1450).
+        monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
@@ -7702,13 +7709,13 @@ class TestOIDCConfig:
         # Production default (no OIDC, mode unset) is now ``none`` (#1374).
         assert data["auth_modes"] == "none"
 
-    async def test_config_with_providers(self, client, monkeypatch):
+    async def test_config_with_providers(self, client, app, monkeypatch):
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "list_providers",
             lambda: [{"id": "test", "display_name": "Test"}],
         )
-        monkeypatch.setattr(api.oidc, "auth_modes", lambda *args: "both")
+        monkeypatch.setattr(app.state.oidc, "auth_modes", lambda *args: "both")
         resp = await client.get("/api/v1/config")
         data = resp.json()
         assert len(data["oidc_providers"]) == 1
@@ -7717,10 +7724,10 @@ class TestOIDCConfig:
 
 class TestOIDCAuthModeGuards:
     async def test_login_blocked_when_oidc_only(
-        self, client, monkeypatch, user
+        self, client, app, monkeypatch, user
     ):
         monkeypatch.setattr(
-            api.oidc, "password_login_allowed", lambda *args: False
+            app.state.oidc, "password_login_allowed", lambda *args: False
         )
         resp = await client.post(
             "/api/v1/auth/login",
@@ -7730,10 +7737,10 @@ class TestOIDCAuthModeGuards:
         assert "disabled" in resp.json()["detail"]
 
     async def test_register_blocked_when_oidc_only(
-        self, client, monkeypatch, db
+        self, client, app, monkeypatch, db
     ):
         monkeypatch.setattr(
-            api.oidc, "password_login_allowed", lambda *args: False
+            app.state.oidc, "password_login_allowed", lambda *args: False
         )
         resp = await client.post(
             "/api/v1/auth/register",
@@ -7741,9 +7748,11 @@ class TestOIDCAuthModeGuards:
         )
         assert resp.status_code == 403
 
-    async def test_login_allowed_when_both(self, client, monkeypatch, user):
+    async def test_login_allowed_when_both(
+        self, client, app, monkeypatch, user
+    ):
         monkeypatch.setattr(
-            api.oidc, "password_login_allowed", lambda *args: True
+            app.state.oidc, "password_login_allowed", lambda *args: True
         )
         resp = await client.post(
             "/api/v1/auth/login",
@@ -7753,20 +7762,22 @@ class TestOIDCAuthModeGuards:
 
 
 class TestOIDCLogin:
-    async def test_oidc_login_not_enabled(self, client, monkeypatch):
+    async def test_oidc_login_not_enabled(self, client, app, monkeypatch):
         monkeypatch.setattr(
-            api.oidc, "oidc_login_allowed", lambda *args: False
+            app.state.oidc, "oidc_login_allowed", lambda *args: False
         )
         resp = await client.get("/api/v1/auth/oidc/test/login")
         assert resp.status_code == 404
 
-    async def test_unknown_provider(self, client, monkeypatch):
-        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda *args: True)
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: None)
+    async def test_unknown_provider(self, client, app, monkeypatch):
+        monkeypatch.setattr(
+            app.state.oidc, "oidc_login_allowed", lambda *args: True
+        )
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: None)
         resp = await client.get("/api/v1/auth/oidc/nope/login")
         assert resp.status_code == 404
 
-    async def test_invalid_cli_redirect(self, client, monkeypatch):
+    async def test_invalid_cli_redirect(self, client, app, monkeypatch):
         provider = api.oidc.OIDCProvider(
             id="test",
             display_name="Test",
@@ -7774,8 +7785,10 @@ class TestOIDCLogin:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda *args: True)
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(
+            app.state.oidc, "oidc_login_allowed", lambda *args: True
+        )
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
         resp = await client.get(
             "/api/v1/auth/oidc/test/login",
             params={"cli_redirect": "https://evil.com/steal"},
@@ -7783,7 +7796,7 @@ class TestOIDCLogin:
         assert resp.status_code == 400
         assert "localhost" in resp.json()["detail"]
 
-    async def test_oidc_login_redirects(self, client, monkeypatch):
+    async def test_oidc_login_redirects(self, client, app, monkeypatch):
         provider = api.oidc.OIDCProvider(
             id="test",
             display_name="Test",
@@ -7791,10 +7804,12 @@ class TestOIDCLogin:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "oidc_login_allowed", lambda *args: True)
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc, "oidc_login_allowed", lambda *args: True
+        )
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(
+            app.state.oidc,
             "build_auth_url",
             AsyncMock(return_value="https://idp.example.com/auth?foo=bar"),
         )
@@ -7809,7 +7824,7 @@ class TestOIDCLogin:
 
 
 class TestOIDCCallback:
-    async def _setup_callback(self, client, monkeypatch, db, claims=None):
+    async def _setup_callback(self, client, app, monkeypatch, db, claims=None):
         """Set up mocks for a successful OIDC callback test."""
         import json as json_mod
 
@@ -7820,9 +7835,9 @@ class TestOIDCCallback:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "exchange_code",
             AsyncMock(
                 return_value={
@@ -7839,7 +7854,7 @@ class TestOIDCCallback:
         if claims:
             default_claims.update(claims)
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "validate_id_token",
             AsyncMock(return_value=default_claims),
         )
@@ -7854,8 +7869,10 @@ class TestOIDCCallback:
         )
         return provider, cookie_data
 
-    async def test_callback_creates_user(self, client, monkeypatch, db):
-        _, cookie_data = await self._setup_callback(client, monkeypatch, db)
+    async def test_callback_creates_user(self, client, app, monkeypatch, db):
+        _, cookie_data = await self._setup_callback(
+            client, app, monkeypatch, db
+        )
         client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
@@ -7875,7 +7892,7 @@ class TestOIDCCallback:
         assert user["password_hash"] is None
 
     async def test_callback_syncs_groups_via_hook(
-        self, client, monkeypatch, db
+        self, client, app, monkeypatch, db
     ):
         """OIDC callback calls the group mapping hook and syncs memberships."""
 
@@ -7884,11 +7901,12 @@ class TestOIDCCallback:
                 return {"admin", "power-users"}
             return {"users"}
 
-        monkeypatch.setattr(api.oidc, "_login_hook", test_hook)
-        monkeypatch.setattr(api.oidc, "_login_hook_is_async", False)
+        monkeypatch.setattr(app.state.oidc, "login_hook", test_hook)
+        monkeypatch.setattr(app.state.oidc, "login_hook_is_async", False)
 
         _, cookie_data = await self._setup_callback(
             client,
+            app,
             monkeypatch,
             db,
             claims={
@@ -7916,10 +7934,11 @@ class TestOIDCCallback:
         assert len(sync_ids) == 2
 
     async def test_callback_links_existing_user(
-        self, client, monkeypatch, db, user
+        self, client, app, monkeypatch, db, user
     ):
         _, cookie_data = await self._setup_callback(
             client,
+            app,
             monkeypatch,
             db,
             claims={"sub": "new-sub", "email": "testuser@example.com"},
@@ -7937,8 +7956,10 @@ class TestOIDCCallback:
         assert linked is not None
         assert linked["id"] == user["id"]
 
-    async def test_callback_state_mismatch(self, client, monkeypatch, db):
-        _, cookie_data = await self._setup_callback(client, monkeypatch, db)
+    async def test_callback_state_mismatch(self, client, app, monkeypatch, db):
+        _, cookie_data = await self._setup_callback(
+            client, app, monkeypatch, db
+        )
         client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
@@ -7947,8 +7968,8 @@ class TestOIDCCallback:
         assert resp.status_code == 400
         assert "State mismatch" in resp.json()["detail"]
 
-    async def test_callback_missing_cookie(self, client, monkeypatch, db):
-        await self._setup_callback(client, monkeypatch, db)
+    async def test_callback_missing_cookie(self, client, app, monkeypatch, db):
+        await self._setup_callback(client, app, monkeypatch, db)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"code": "code", "state": "test-state"},
@@ -7956,7 +7977,7 @@ class TestOIDCCallback:
         assert resp.status_code == 400
         assert "cookie" in resp.json()["detail"].lower()
 
-    async def test_callback_idp_error(self, client, monkeypatch, db):
+    async def test_callback_idp_error(self, client, app, monkeypatch, db):
         provider = api.oidc.OIDCProvider(
             id="test",
             display_name="Test",
@@ -7964,7 +7985,7 @@ class TestOIDCCallback:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
             params={"error": "access_denied"},
@@ -7972,7 +7993,7 @@ class TestOIDCCallback:
         assert resp.status_code == 400
         assert resp.json()["detail"] == "Login failed"
 
-    async def test_callback_cli_redirect(self, client, monkeypatch, db):
+    async def test_callback_cli_redirect(self, client, app, monkeypatch, db):
         import json as json_mod
 
         provider = api.oidc.OIDCProvider(
@@ -7982,14 +8003,14 @@ class TestOIDCCallback:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "exchange_code",
             AsyncMock(return_value={"id_token": "idt", "access_token": "at"}),
         )
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "validate_id_token",
             AsyncMock(
                 return_value={
@@ -8019,7 +8040,7 @@ class TestOIDCCallback:
         )
 
     async def test_callback_tampered_cli_redirect_falls_back(
-        self, client, monkeypatch, db
+        self, client, app, monkeypatch, db
     ):
         """A tampered (non-localhost) cli_redirect in the unsigned state
         cookie must NOT receive the token — fall back to the web flow.
@@ -8036,14 +8057,14 @@ class TestOIDCCallback:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "exchange_code",
             AsyncMock(return_value={"id_token": "idt", "access_token": "at"}),
         )
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "validate_id_token",
             AsyncMock(
                 return_value={
@@ -8077,7 +8098,7 @@ class TestOIDCCallback:
         assert "token=" in location
 
     async def test_callback_token_exchange_failure(
-        self, client, monkeypatch, db
+        self, client, app, monkeypatch, db
     ):
         import json as json_mod
 
@@ -8088,13 +8109,13 @@ class TestOIDCCallback:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
         mock_request = httpx.Request("POST", "https://idp/token")
         mock_response = httpx.Response(
             400, text="bad request", request=mock_request
         )
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "exchange_code",
             AsyncMock(
                 side_effect=httpx.HTTPStatusError(
@@ -8117,7 +8138,7 @@ class TestOIDCCallback:
         )
         assert resp.status_code == 502
 
-    async def test_callback_no_id_token(self, client, monkeypatch, db):
+    async def test_callback_no_id_token(self, client, app, monkeypatch, db):
         import json as json_mod
 
         provider = api.oidc.OIDCProvider(
@@ -8127,9 +8148,9 @@ class TestOIDCCallback:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "exchange_code",
             AsyncMock(return_value={"access_token": "at"}),
         )
@@ -8149,7 +8170,9 @@ class TestOIDCCallback:
         assert resp.status_code == 502
         assert "No ID token" in resp.json()["detail"]
 
-    async def test_callback_invalid_id_token(self, client, monkeypatch, db):
+    async def test_callback_invalid_id_token(
+        self, client, app, monkeypatch, db
+    ):
         import json as json_mod
 
         provider = api.oidc.OIDCProvider(
@@ -8159,14 +8182,14 @@ class TestOIDCCallback:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "exchange_code",
             AsyncMock(return_value={"id_token": "bad", "access_token": "at"}),
         )
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "validate_id_token",
             AsyncMock(side_effect=Exception("bad token")),
         )
@@ -8186,7 +8209,7 @@ class TestOIDCCallback:
         assert resp.status_code == 502
         assert "validation failed" in resp.json()["detail"]
 
-    async def test_callback_missing_claims(self, client, monkeypatch, db):
+    async def test_callback_missing_claims(self, client, app, monkeypatch, db):
         import json as json_mod
 
         provider = api.oidc.OIDCProvider(
@@ -8196,14 +8219,14 @@ class TestOIDCCallback:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "exchange_code",
             AsyncMock(return_value={"id_token": "t", "access_token": "at"}),
         )
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "validate_id_token",
             AsyncMock(return_value={"sub": "s"}),  # no email
         )
@@ -8223,16 +8246,19 @@ class TestOIDCCallback:
         assert resp.status_code == 502
         assert "missing" in resp.json()["detail"].lower()
 
-    async def test_callback_login_hook_rejects(self, client, monkeypatch, db):
+    async def test_callback_login_hook_rejects(
+        self, client, app, monkeypatch, db
+    ):
         """A login validation hook can reject an OIDC login."""
 
         def reject_hook(provider, claims, email, tokens):
             raise ValueError("Denied by hook")
 
-        monkeypatch.setattr(oidc, "_login_hook", reject_hook)
-        monkeypatch.setattr(oidc, "_login_hook_is_async", False)
+        monkeypatch.setattr(app.state.oidc, "login_hook", reject_hook)
+        monkeypatch.setattr(app.state.oidc, "login_hook_is_async", False)
         _, cookie_data = await self._setup_callback(
             client,
+            app,
             monkeypatch,
             db,
         )
@@ -8247,11 +8273,12 @@ class TestOIDCCallback:
         assert await model.get_user_by_email("oidcuser@example.com") is None
 
     async def test_callback_rejects_unverified_email_by_default(
-        self, client, monkeypatch, db
+        self, client, app, monkeypatch, db
     ):
         """Unverified email is rejected when trust-email is false (default)."""
         _, cookie_data = await self._setup_callback(
             client,
+            app,
             monkeypatch,
             db,
             claims={"email_verified": False},
@@ -8267,18 +8294,19 @@ class TestOIDCCallback:
         assert await model.get_user_by_email("oidcuser@example.com") is None
 
     async def test_callback_rejects_missing_email_verified(
-        self, client, monkeypatch, db
+        self, client, app, monkeypatch, db
     ):
         """Missing email_verified claim is rejected (same as False)."""
         _, cookie_data = await self._setup_callback(
             client,
+            app,
             monkeypatch,
             db,
             claims={"sub": "no-ev-sub", "email": "noev@example.com"},
         )
         # Override claims to omit email_verified entirely
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "validate_id_token",
             AsyncMock(
                 return_value={
@@ -8296,11 +8324,12 @@ class TestOIDCCallback:
         assert resp.status_code == 403
 
     async def test_callback_trust_email_allows_unverified(
-        self, client, monkeypatch, db
+        self, client, app, monkeypatch, db
     ):
         """With trust-email: true, unverified emails are accepted."""
         provider, cookie_data = await self._setup_callback(
             client,
+            app,
             monkeypatch,
             db,
             claims={"email_verified": False},
@@ -8317,10 +8346,12 @@ class TestOIDCCallback:
             await model.get_user_by_email("oidcuser@example.com") is not None
         )
 
-    async def test_callback_returning_user(self, client, monkeypatch, db):
+    async def test_callback_returning_user(self, client, app, monkeypatch, db):
         """A user who already has the OIDC identity linked logs in without
         JIT provisioning or email lookup."""
-        _, cookie_data = await self._setup_callback(client, monkeypatch, db)
+        _, cookie_data = await self._setup_callback(
+            client, app, monkeypatch, db
+        )
         # First callback — creates the user via JIT provisioning.
         client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
@@ -8333,7 +8364,9 @@ class TestOIDCCallback:
         assert user is not None
 
         # Second callback — returning user, found by external ID.
-        _, cookie_data2 = await self._setup_callback(client, monkeypatch, db)
+        _, cookie_data2 = await self._setup_callback(
+            client, app, monkeypatch, db
+        )
         client.cookies.set("oidc_test", cookie_data2)
         resp2 = await client.get(
             "/api/v1/auth/oidc/test/callback",
@@ -8343,15 +8376,19 @@ class TestOIDCCallback:
         assert resp2.status_code == 302
         assert "token=" in resp2.headers["location"]
 
-    async def test_callback_unknown_provider(self, client, monkeypatch, db):
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: None)
+    async def test_callback_unknown_provider(
+        self, client, app, monkeypatch, db
+    ):
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: None)
         resp = await client.get(
             "/api/v1/auth/oidc/nope/callback",
             params={"code": "code", "state": "s"},
         )
         assert resp.status_code == 404
 
-    async def test_callback_invalid_cookie_json(self, client, monkeypatch, db):
+    async def test_callback_invalid_cookie_json(
+        self, client, app, monkeypatch, db
+    ):
         provider = api.oidc.OIDCProvider(
             id="test",
             display_name="Test",
@@ -8359,7 +8396,7 @@ class TestOIDCCallback:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
         client.cookies.set("oidc_test", "not-json")
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
@@ -8368,7 +8405,7 @@ class TestOIDCCallback:
         assert resp.status_code == 400
 
     async def test_callback_non_dict_cookie_json(
-        self, client, monkeypatch, db
+        self, client, app, monkeypatch, db
     ):
         """Non-dict JSON in the state cookie returns 400, not 500 (#1334)."""
         provider = api.oidc.OIDCProvider(
@@ -8378,7 +8415,7 @@ class TestOIDCCallback:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
         client.cookies.set("oidc_test", "[1, 2, 3]")
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
@@ -8390,7 +8427,7 @@ class TestOIDCCallback:
 class TestOIDCCallbackAgentGuard:
     """OIDC callback must never mint a session as the system agent (#1225)."""
 
-    async def _setup_callback(self, client, monkeypatch, db, claims=None):
+    async def _setup_callback(self, client, app, monkeypatch, db, claims=None):
         import json as json_mod
 
         provider = api.oidc.OIDCProvider(
@@ -8400,9 +8437,9 @@ class TestOIDCCallbackAgentGuard:
             client_id="klangk",
             client_secret="s",
         )
-        monkeypatch.setattr(api.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "exchange_code",
             AsyncMock(
                 return_value={
@@ -8419,7 +8456,7 @@ class TestOIDCCallbackAgentGuard:
         if claims:
             default_claims.update(claims)
         monkeypatch.setattr(
-            api.oidc,
+            app.state.oidc,
             "validate_id_token",
             AsyncMock(return_value=default_claims),
         )
@@ -8434,10 +8471,12 @@ class TestOIDCCallbackAgentGuard:
         return provider, cookie_data
 
     async def test_oidc_rejects_agent_email(
-        self, client, monkeypatch, db, agent_user
+        self, client, app, monkeypatch, db, agent_user
     ):
         """OIDC login with the agent's email is rejected with 403."""
-        _, cookie_data = await self._setup_callback(client, monkeypatch, db)
+        _, cookie_data = await self._setup_callback(
+            client, app, monkeypatch, db
+        )
         client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
@@ -8447,7 +8486,7 @@ class TestOIDCCallbackAgentGuard:
         assert "system agent" in resp.json()["detail"]
 
     async def test_oidc_rejects_agent_by_external_id(
-        self, client, monkeypatch, db, agent_user
+        self, client, app, monkeypatch, db, agent_user
     ):
         """OIDC login resolving the agent by external_id is rejected."""
         # The DB trigger blocks linking OIDC identity to the agent, so
@@ -8458,7 +8497,9 @@ class TestOIDCCallbackAgentGuard:
             "get_user_by_external_id",
             AsyncMock(return_value=agent),
         )
-        _, cookie_data = await self._setup_callback(client, monkeypatch, db)
+        _, cookie_data = await self._setup_callback(
+            client, app, monkeypatch, db
+        )
         client.cookies.set("oidc_test", cookie_data)
         resp = await client.get(
             "/api/v1/auth/oidc/test/callback",
@@ -8469,7 +8510,7 @@ class TestOIDCCallbackAgentGuard:
 
 
 class TestOIDCLogout:
-    async def test_logout_returns_oidc_logout_url(self, client, db):
+    async def test_logout_returns_oidc_logout_url(self, client, app, db):
         """OIDC user with logout_redirect gets IdP logout URL in response."""
         # Create OIDC user
         user = await model.create_user(
@@ -8491,9 +8532,11 @@ class TestOIDCLogout:
             logout_redirect=True,
         )
         with (
-            patch.object(api.oidc, "get_provider", return_value=provider),
             patch.object(
-                api.oidc,
+                app.state.oidc, "get_provider", return_value=provider
+            ),
+            patch.object(
+                app.state.oidc,
                 "build_logout_url",
                 AsyncMock(return_value="https://idp.example.com/logout?x=1"),
             ),
@@ -8505,7 +8548,7 @@ class TestOIDCLogout:
             == "https://idp.example.com/logout?x=1"
         )
 
-    async def test_logout_no_redirect_for_local_user(self, client, user):
+    async def test_logout_no_redirect_for_local_user(self, client, app, user):
         """Local user gets no oidc_logout_url."""
         login_resp = await client.post(
             "/api/v1/auth/login",
@@ -8518,7 +8561,7 @@ class TestOIDCLogout:
         assert resp.status_code == 200
         assert "oidc_logout_url" not in resp.json()
 
-    async def test_logout_no_redirect_when_disabled(self, client, db):
+    async def test_logout_no_redirect_when_disabled(self, client, app, db):
         """OIDC user with logout_redirect=false gets no URL."""
         user = await model.create_user(
             "oidc-nologout@example.com",
@@ -8538,7 +8581,9 @@ class TestOIDCLogout:
             client_secret="s",
             logout_redirect=False,
         )
-        with patch.object(api.oidc, "get_provider", return_value=provider):
+        with patch.object(
+            app.state.oidc, "get_provider", return_value=provider
+        ):
             resp = await client.post("/api/v1/auth/logout", headers=headers)
         assert resp.status_code == 200
         assert "oidc_logout_url" not in resp.json()
@@ -8561,7 +8606,7 @@ class TestHandleEndpoints:
         assert updated["handle"] == "newhandle"
 
     async def test_change_handle_refreshes_presence(
-        self, client, user, sockets
+        self, client, app, user, sockets
     ):
         headers = await _auth_headers(client)
         with patch.object(
@@ -8661,7 +8706,7 @@ class TestHandleEndpoints:
         assert updated["handle"] == "admin-set-handle"
 
     async def test_admin_change_handle_refreshes_presence(
-        self, client, admin_user, user, sockets
+        self, client, app, admin_user, user, sockets
     ):
         admin_resp = await client.post(
             "/api/v1/auth/login",
@@ -8686,7 +8731,7 @@ class TestHandleEndpoints:
         )
 
     async def test_admin_change_user_handle_invalid(
-        self, client, admin_user, user
+        self, client, app, admin_user, user
     ):
         admin_resp = await client.post(
             "/api/v1/auth/login",
