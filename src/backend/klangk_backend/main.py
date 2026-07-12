@@ -701,7 +701,7 @@ def setup_static_files(app: FastAPI, frontend_dir: Path) -> None:
     if candidate.is_dir():
         branding_dir = candidate
     else:
-        fallback = model.db.data_dir / "branding"
+        fallback = Path(get_settings().data_dir or "") / "branding"
         branding_dir = fallback if fallback.is_dir() else None
     if branding_dir is not None:
         logger.info("Branding served from %s", branding_dir)
@@ -769,6 +769,11 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # settings, not frozen at import), declarations, and resolved values
     # (previously module globals).
     app.state.plugins = plugins.Plugins(app.state)
+    # #1452: DB(settings) owns the engine cache + data dir (computed from
+    # settings, not frozen at import). Set as the module-level default so
+    # the model/ free functions (transaction/fetchone/get_db) reach it.
+    app.state.db = model.db.DB(settings)
+    model.db.set_db(app.state.db)
     # WebSocketState reaches the registry through its own app_state
     # back-reference (send_service_health_snapshot / reset_workspace).
     # The unit-test fixtures set this explicitly; build_app must too, or

@@ -19,18 +19,16 @@ target the owning submodule directly (``model.db`` for engine state,
 """
 
 from .db import (
-    DB_PATH,
+    DB,
     Connection,
     CursorResult,
     Row,
-    data_dir,
-    engine,
-    ensure_engine,
     fetchone,
-    make_engine,
     dispose_engine,
     get_db,
+    get_default_db,
     logger,
+    set_db,
     transaction,
 )
 from .schema import init_db
@@ -171,18 +169,16 @@ from .instance import (
 
 __all__ = (
     # db
-    "DB_PATH",
+    "DB",
     "Connection",
     "CursorResult",
     "Row",
-    "data_dir",
-    "engine",
-    "ensure_engine",
     "fetchone",
-    "make_engine",
     "dispose_engine",
     "get_db",
+    "get_default_db",
     "logger",
+    "set_db",
     "transaction",
     # schema
     "init_db",
