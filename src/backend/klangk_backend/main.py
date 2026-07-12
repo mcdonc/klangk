@@ -576,7 +576,7 @@ async def lifespan(app: FastAPI):
     setup_logfire(app)
 
     auth.require_secure_jwt_secret()
-    plugins.load()
+    app.state.plugins.load()
     app.state.oidc.init_providers()
     enforce_no_auth_bind_safety(app.state)
     app.state.oidc.load_login_hook()
@@ -765,6 +765,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # caches, and login-hook state (previously module globals). Reaches
     # config through self.settings.
     app.state.oidc = oidc.OIDC(app.state)
+    # #1451: Plugins(app_state) owns the plugins dir (computed from
+    # settings, not frozen at import), declarations, and resolved values
+    # (previously module globals).
+    app.state.plugins = plugins.Plugins(app.state)
     # WebSocketState reaches the registry through its own app_state
     # back-reference (send_service_health_snapshot / reset_workspace).
     # The unit-test fixtures set this explicitly; build_app must too, or

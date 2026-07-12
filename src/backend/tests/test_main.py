@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
-from klangk_backend import main, model, oidc
+from klangk_backend import main, model, oidc, plugins
 from klangk_backend.container import ContainerRegistry
 from klangk_backend.settings import KlangkSettings
 from klangk_backend.wshandler.session import WebSocketState
@@ -104,6 +104,7 @@ def _bind_safety_app_state(auth_mode=None):
     settings = KlangkSettings(env=env)
     app_state = types.SimpleNamespace(settings=settings)
     app_state.oidc = oidc.OIDC(app_state)
+    app_state.plugins = plugins.Plugins(app_state)
     return app_state
 
 
@@ -364,6 +365,7 @@ class TestLifespan:
         app.state.settings = app_state.settings
         app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
         app.state.oidc = oidc.OIDC(app.state)
+        app.state.plugins = plugins.Plugins(app.state)
         registry = app_state.container_registry
         with (
             patch.object(
@@ -407,6 +409,7 @@ class TestLifespan:
         app.state.settings = app_state.settings
         app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
         app.state.oidc = oidc.OIDC(app.state)
+        app.state.plugins = plugins.Plugins(app.state)
         registry = app_state.container_registry
         with (
             patch.object(
@@ -625,6 +628,7 @@ class TestStartupShutdownRestart:
         app.state.settings = app_state.settings
         app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
         app.state.oidc = oidc.OIDC(app.state)
+        app.state.plugins = plugins.Plugins(app.state)
         registry = app_state.container_registry
         loop = asyncio.get_running_loop()
         with (

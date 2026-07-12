@@ -18,13 +18,13 @@ from klangk_backend import (
     auth,
     container,
     model,
-    plugins,
     podman,
     workspaces as ws_mod,
     wshandler,
 )
 from klangk_backend.container import ContainerRegistry
 from klangk_backend import oidc as oidc_mod
+from klangk_backend import plugins as plugins_mod
 from klangk_backend.settings import KlangkSettings
 from klangk_backend.wshandler.session import WebSocketState
 
@@ -52,6 +52,7 @@ async def app(db):
     app.state.podman = _mock_pod
     registry.podman = _mock_pod
     app.state.oidc = oidc_mod.OIDC(app.state)
+    app.state.plugins = plugins_mod.Plugins(app.state)
     agent.get_workspace_session = sockets.get_session
 
     app.include_router(api.root_router)
@@ -276,8 +277,16 @@ class TestVersion:
             '{"name": "myplugin", "version": "1.2.3",'
             ' "description": "A test plugin"}'
         )
-        monkeypatch.setattr(
-            "klangk_backend.plugins._PLUGINS_DIR", str(tmp_path / "plugins")
+        # Rebuild the Plugins instance pointing at the tmp plugin dir
+        from klangk_backend.settings import KlangkSettings
+        import types as types_mod
+
+        app.state.plugins = app.state.plugins.__class__(
+            types_mod.SimpleNamespace(
+                settings=KlangkSettings(
+                    env={"KLANGK_PLUGINS_DIR": str(tmp_path / "plugins")}
+                )
+            )
         )
         resp = await client.get("/api/v1/version")
         assert resp.status_code == 200
@@ -337,10 +346,10 @@ class TestConfig:
         assert "login_banner" in data
         assert "instance_id" in data
 
-    async def test_get_config_includes_plugins(self, client, monkeypatch):
+    async def test_get_config_includes_plugins(self, client, app, monkeypatch):
         monkeypatch.setattr(
-            plugins,
-            "_declarations",
+            app.state.plugins,
+            "declarations",
             {
                 "MY_PLUGIN_VAR": {
                     "plugin": "test",
@@ -351,7 +360,7 @@ class TestConfig:
             },
         )
         monkeypatch.setattr(
-            plugins, "_values", {"MY_PLUGIN_VAR": "test-value"}
+            app.state.plugins, "values", {"MY_PLUGIN_VAR": "test-value"}
         )
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200

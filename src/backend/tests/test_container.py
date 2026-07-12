@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from klangk_backend import bringup, container, model, plugins, podman
+from klangk_backend import bringup, container, model, podman
 
 
 def _make_app_state(registry=None, sockets=None):
@@ -40,8 +40,10 @@ def _make_app_state(registry=None, sockets=None):
         app_state.podman = registry.podman
     # #1480: container.py reaches set_workspace_token via app_state.terminal.
     from klangk_backend.terminal import Terminal
+    from klangk_backend import plugins as plugins_mod
 
     app_state.terminal = Terminal(app_state)
+    app_state.plugins = plugins_mod.Plugins(app_state)
     return app_state
 
 
@@ -997,8 +999,8 @@ class TestStartContainer:
 
     async def test_plugins_env_injected(self, workspace, monkeypatch):
         monkeypatch.setattr(
-            plugins,
-            "_declarations",
+            self.registry.app_state.plugins,
+            "declarations",
             {
                 "PLUGIN_VAR": {
                     "plugin": "test",
@@ -1008,7 +1010,11 @@ class TestStartContainer:
                 }
             },
         )
-        monkeypatch.setattr(plugins, "_values", {"PLUGIN_VAR": "plugin-val"})
+        monkeypatch.setattr(
+            self.registry.app_state.plugins,
+            "values",
+            {"PLUGIN_VAR": "plugin-val"},
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"

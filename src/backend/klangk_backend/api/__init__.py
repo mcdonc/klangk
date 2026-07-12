@@ -43,7 +43,6 @@ from .. import (
     emailsvc,
     model,
     oidc,
-    plugins,
     wshandler,
 )
 from ._common import get_app_state_dep
@@ -102,19 +101,19 @@ async def empty():
 
 
 @router.get("/version")
-async def version():
+async def version(app_state=Depends(get_app_state_dep)):
     """Return build version info, plus loaded plugin metadata."""
     if version_file := resolve_env_value("KLANGK_VERSION_FILE", ""):
         if os.path.isfile(version_file):
             with open(version_file) as f:
                 info = json.load(f)
-            info["plugins"] = plugins.plugin_list()
+            info["plugins"] = app_state.plugins.plugin_list()
             return info
     return {
         "version": "dev",
         "commit": "unknown",
         "built_at": None,
-        "plugins": plugins.plugin_list(),
+        "plugins": app_state.plugins.plugin_list(),
     }
 
 
@@ -235,7 +234,7 @@ async def get_config(app_state=Depends(get_app_state_dep)):
         "support_url": SUPPORT_URL,
         "support_email": SUPPORT_EMAIL,
     }
-    config.update(plugins.frontend_config())
+    config.update(app_state.plugins.frontend_config())
     return config
 
 
