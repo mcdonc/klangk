@@ -26,9 +26,6 @@ from ..model import (
     PRINCIPAL_USER,
     SYSTEM_AUTHENTICATED,
 )
-from ..util import (
-    derive_hosting_info,
-)
 from ._common import (
     WorkspaceAclEntry,
     admin_resource,
@@ -73,7 +70,7 @@ async def send_invitation(
     invitation = await model.create_invitation(req.email, admin["id"])
     token = auth.create_invitation_token(invitation["id"], req.email)
 
-    hostname, proto, base_path = derive_hosting_info(
+    hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
     )
     invite_url = (
@@ -147,7 +144,7 @@ async def resend_invitation(
         )
 
     token = auth.create_invitation_token(invitation["id"], invitation["email"])
-    hostname, proto, base_path = derive_hosting_info(
+    hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
     )
     invite_url = (
@@ -210,8 +207,11 @@ async def admin_create_user(
         # password via the verification link.
         password_hash = auth.hash_password(uuid.uuid4().hex[:24])
 
-        hostname, proto, base_path = derive_hosting_info(
-            request.headers, request.client.host if request.client else None
+        hostname, proto, base_path = (
+            request.app.state.util.derive_hosting_info(
+                request.headers,
+                request.client.host if request.client else None,
+            )
         )
         verification_token = auth.create_verification_token(user_id)
         verification_url = (

@@ -525,3 +525,13 @@ class TestRequireDirsValidator:
         s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
         assert s.data_dir == os.path.join("/tmp/state", "data")
         assert s.plugins_dir == os.path.join("/tmp/state", "plugins")
+        assert s.customize_dir == os.path.join("/tmp/state", "custom")
+
+    def test_explicit_customize_dir_wins(self):
+        s = KlangkSettings(
+            env={
+                "KLANGK_STATE_DIR": "/tmp/state",
+                "KLANGK_CUSTOMIZE_DIR": "/explicit/custom",
+            }
+        )
+        assert s.customize_dir == "/explicit/custom"

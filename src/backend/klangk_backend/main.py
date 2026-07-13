@@ -28,6 +28,7 @@ from . import (
     podman,
     ssl_trust,
     terminal,
+    util as util_mod,
     workspaces,
     wshandler,
 )
@@ -36,7 +37,7 @@ from .settings import (
     get_settings,
 )
 from .api import root_router, router
-from .util import API_PREFIX, derive_hosting_info
+from .util import API_PREFIX
 from .model import (
     ACTION_ALLOW,
     ACTION_DENY,
@@ -47,7 +48,6 @@ from .model import (
 )
 from .model import AGENT_USER_ID
 from .util import (
-    customize_dir,
     resolve_env_bool,
     resolve_env_value,
 )
@@ -638,25 +638,6 @@ def setup_logfire(app: FastAPI) -> bool:
     return True
 
 
-def cors_origins() -> list[str]:
-    """Build the CORS allowed-origins list.
-
-    Priority: KLANGK_CORS_ORIGINS (comma-separated) > derived from the
-    hosting env vars (via derive_hosting_info) > bare localhost.
-
-    Consistent with hosted-app URL construction: the port comes from
-    KLANGK_HOSTING_HOSTNAME (which carries host[:port]); it is never
-    synthesized from KLANGK_NGINX_PORT (that is internal container
-    wiring, not the browser origin). Origins carry no path, so
-    KLANGK_HOSTING_BASE_PATH is ignored here.
-    """
-    explicit = resolve_env_value("KLANGK_CORS_ORIGINS")
-    if explicit:
-        return [o.strip() for o in explicit.split(",") if o.strip()]
-    hostname, proto, _ = derive_hosting_info(None, None)
-    return [f"{proto}://{hostname}"]
-
-
 async def _agent_principal_error_handler(request, exc):  # noqa: ARG001
     """Reject any operation that would make the agent an ACL principal.
 
@@ -696,11 +677,11 @@ def setup_static_files(app: FastAPI, frontend_dir: Path) -> None:
     """
     static_app = StaticFiles(directory=str(frontend_dir), html=True)
 
-    candidate = Path(customize_dir()) / "branding"
+    candidate = Path(app.state.util.customize_dir()) / "branding"
     if candidate.is_dir():
         branding_dir = candidate
     else:
-        fallback = Path(get_settings().data_dir) / "branding"
+        fallback = Path(app.state.settings.data_dir) / "branding"
         branding_dir = fallback if fallback.is_dir() else None
     if branding_dir is not None:
         logger.info("Branding served from %s", branding_dir)
@@ -790,10 +771,14 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # Jinja template env (previously module-level functions reading
     # resolve_env_value at call time).
     app.state.email = emailsvc.EmailService(app.state)
+    # #1503: Util(app_state) owns the proxy-trust / forwarded-header logic,
+    # hosting-info derivation, and customize-dir resolver (previously
+    # module-level functions + import-time globals in util.py).
+    app.state.util = util_mod.Util(app.state)
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=cors_origins(),
+        allow_origins=app.state.util.cors_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

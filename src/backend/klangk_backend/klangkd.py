@@ -30,7 +30,6 @@ import typer
 import uvicorn
 
 from klangk_backend.settings import KlangkSettings
-from klangk_backend.util import set_uds_mode
 
 # The default config-file location — a deployed klangkd finds its config here
 # with no args.  See #1395.
@@ -105,11 +104,6 @@ def main(  # pragma: no cover
     except FileNotFoundError:
         pass
     Path(uds_path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    # Arm the internal _UDS_MODE trust flag (util.py): over a UDS,
-    # request.client is None, and a None peer is the trusted reverse
-    # proxy (same-uid socket access). Set here, from the bind decision —
-    # not via a config field (#1422 retired KLANGK_UDS_MODE).
-    set_uds_mode(True)
     # Construct the app explicitly and pass the object to uvicorn (not the
     # "klangk_backend.main:app" string import). This avoids the module-level
     # ``app = build_app()`` global — there's one ``build_app(settings)`` call,
@@ -117,6 +111,11 @@ def main(  # pragma: no cover
     from klangk_backend.main import build_app  # noqa: allow-deferred-import
 
     asgi_app = build_app(settings)
+    # Arm the UDS trust flag on the Util instance: over a UDS,
+    # request.client is None, and a None peer is the trusted reverse
+    # proxy (same-uid socket access). Set here, from the bind decision —
+    # not via a config field (#1422 retired KLANGK_UDS_MODE).
+    asgi_app.state.util.set_uds_mode(True)
     uvicorn.run(
         asgi_app,
         uds=uds_path,

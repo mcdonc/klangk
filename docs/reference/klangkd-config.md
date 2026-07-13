@@ -95,7 +95,7 @@ hosting_hostname: klangk.example.com
 hosting_proto: https
 trusted_proxy_cidrs: "127.0.0.1,::1,10.0.0.0/8"
 
-# --- Storage (state_dir required; data_dir/plugins_dir derive from it) ---
+# --- Storage (required, no defaults) ---
 state_dir: /var/lib/klangk/state
 data_dir: /var/lib/klangk/data
 
@@ -231,7 +231,7 @@ listen: 127.0.0.1
 
 | Key                          | Default               | Env var                             |
 | ---------------------------- | --------------------- | ----------------------------------- |
-| `data_dir`                   | `<state_dir>/data`    | `KLANGK_DATA_DIR`                   |
+| `data_dir`                   | **required**          | `KLANGK_DATA_DIR`                   |
 | `state_dir`                  | **required**          | `KLANGK_STATE_DIR`                  |
 | `customize_dir`              |                       | `KLANGK_CUSTOMIZE_DIR`              |
 | `plugins_dir`                | `<state_dir>/plugins` | `KLANGK_PLUGINS_DIR`                |

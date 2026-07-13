@@ -5,7 +5,7 @@ import logging
 import os
 import time
 
-from . import auth, bringup, model, podman, util
+from . import auth, bringup, model, podman
 from .podman import PodmanError
 
 logger = logging.getLogger(__name__)
@@ -1129,7 +1129,7 @@ class ContainerRegistry:
             or hosting_proto is None
             or hosting_base_path is None
         ):
-            h, p, b = util.derive_hosting_info(None, None)
+            h, p, b = self.app_state.util.derive_hosting_info(None, None)
             # Use ``is None`` (not ``or``): an explicit empty base_path
             # (root deployment) is a legitimate value that must survive,
             # not be clobbered by the resolved floor.

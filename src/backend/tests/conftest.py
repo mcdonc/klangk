@@ -7,11 +7,11 @@ import tempfile
 # code executed inside SQLAlchemy's greenlet context is tracked.
 os.environ.setdefault("COVERAGE_CORE", "sysmon")
 
-# state_dir / data_dir are required (no defaults, #1461). Some modules read
-# config at import time (util.py's _REJECT_PROXY / _TRUSTED_PROXY_CIDRS — the
-# #1426 anti-pattern, not yet promoted). Set temp dirs in the env before any
-# such import runs during collection. The autouse `temp_data_dir` fixture
-# overrides these with per-test tmp dirs once tests start.
+# state_dir / data_dir are required (no defaults, #1461). auth.py still reads
+# config at import time (#1501 — Auth promotion not yet done); set temp dirs
+# in the env before any such import runs during collection. The autouse
+# `temp_data_dir` fixture overrides these with per-test tmp dirs once tests
+# start. util.py no longer triggers this (#1503), but auth.py does.
 os.environ.setdefault(
     "KLANGK_STATE_DIR", tempfile.mkdtemp(prefix="klangk-collect-state-")
 )
@@ -214,6 +214,7 @@ def app_state(temp_data_dir):
     from klangk_backend.settings import KlangkSettings
     from klangk_backend.container import ContainerRegistry
     from klangk_backend.emailsvc import EmailService
+    from klangk_backend.util import Util
     from klangk_backend.workspaces import Workspaces
 
     settings = KlangkSettings(os.environ)
@@ -223,6 +224,7 @@ def app_state(temp_data_dir):
     registry.app_state = state
     state.workspaces = Workspaces(state)
     state.email = EmailService(state)
+    state.util = Util(state)
     return state
 
 

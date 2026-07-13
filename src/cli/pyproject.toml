@@ -17,12 +17,13 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
     "pytest-xdist>=3.0.0",
+    "pytest-timeout>=2.3.0",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = "--capture=no --cov=klangkc --cov-report=term-missing --no-cov-on-fail --cov-fail-under=100"
+addopts = "--capture=no --cov=klangkc --cov-report=term-missing --no-cov-on-fail --cov-fail-under=100 --timeout=60"
 filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",
     "ignore:coroutine .* was never awaited:RuntimeWarning",

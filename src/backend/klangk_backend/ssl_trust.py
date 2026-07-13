@@ -30,6 +30,7 @@ import ssl
 import certifi
 
 from . import util
+from .settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +78,11 @@ def ssl_cert_dir() -> str | None:
     of certs).  Never raises — a misconfigured path simply disables
     runtime trust.
     """
-    raw = util.resolve_env_value("KLANGK_SSL_CERT_DIR")
+    settings = get_settings()
+    raw = settings.ssl_cert_dir
     if not raw:
-        candidate = os.path.join(util.customize_dir(), "certs")
+        customize = settings.customize_dir
+        candidate = os.path.join(customize, "certs")
         if os.path.isdir(candidate):
             raw = candidate
     if not raw:
