@@ -66,52 +66,54 @@ def temp_data_dir(tmp_path, monkeypatch):
     monkeypatch.delenv("KLANGK_IMAGE_PULL_POLICY", raising=False)
     # Rebuild the DB instance from the new env so the engine cache and
     # db_path point at the per-test temp dir (#1452: no import-time globals
-    # to rebind — construct a fresh DB from settings).
-    import klangk_backend.model as us
-    import klangk_backend.model.db as us_core
+    # to rebind — construct a fresh DB from settings; #1520: bind it via the
+    # ContextVar, not a module global).
+    import klangk_backend.model as model
+    from klangk_backend.model import db as db_mod
 
-    us_core.set_db(us_core.DB(KlangkSettings(os.environ)))
+    _db_token = db_mod.set_current_db(db_mod.DB(KlangkSettings(os.environ)))
     # Clear agent caches so each test starts fresh.
-    us.clear_agent_cache()
+    model.clear_agent_cache()
     # Set a deterministic instance ID for tests that don't use the db
     # fixture.  The db fixture overwrites this with a DB-resolved value.
     import klangk_backend.model.instance as inst
 
     inst._cache = "test"
-    return tmp_path
+    yield tmp_path
+    db_mod.reset_current_db(_db_token)
 
 
 @pytest.fixture
 async def db(temp_data_dir):
     """Initialize a fresh database and resolve instance ID."""
-    import klangk_backend.model as us
+    import klangk_backend.model as model
 
-    await us.init_db()
-    await us.resolve_instance_id()
+    await model.init_db()
+    await model.resolve_instance_id()
     return temp_data_dir
 
 
 @pytest.fixture
 async def agent_user(db):
     """Seed the chat agent user into the DB."""
-    import klangk_backend.model as us
+    import klangk_backend.model as model
 
-    async with us.transaction() as agent_db:
+    async with model.transaction() as agent_db:
         await agent_db.execute(
             "INSERT OR REPLACE INTO users"
             " (id, email, password_hash, verified, provider, handle)"
             " VALUES (?, ?, NULL, 1, 'system', ?)",
-            (us.AGENT_USER_ID, "clanker@example.com", "clanker"),
+            (model.AGENT_USER_ID, "clanker@example.com", "clanker"),
         )
-    us.clear_agent_cache()
+    model.clear_agent_cache()
 
 
 @pytest.fixture
 async def user(db):
     """Create a test user and return it."""
-    import klangk_backend.model as us
+    import klangk_backend.model as model
 
-    user = await us.create_user(
+    user = await model.create_user(
         "testuser@example.com", _TEST_PASSWORD_HASH, verified=True
     )
     return user
@@ -120,7 +122,7 @@ async def user(db):
 @pytest.fixture
 async def admin_group(db):
     """Create the admin group and seed default ACLs."""
-    import klangk_backend.model as us
+    import klangk_backend.model as model
     from klangk_backend.model import (
         ACTION_ALLOW,
         ACTION_DENY,
@@ -130,9 +132,9 @@ async def admin_group(db):
         SYSTEM_EVERYONE,
     )
 
-    group = await us.create_group("admin", description="Administrators")
+    group = await model.create_group("admin", description="Administrators")
     # Seed default ACLs
-    await us.add_acl_entry(
+    await model.add_acl_entry(
         "/",
         0,
         ACTION_ALLOW,
@@ -140,7 +142,7 @@ async def admin_group(db):
         PRINCIPAL_SYSTEM,
         system_principal=SYSTEM_AUTHENTICATED,
     )
-    await us.add_acl_entry(
+    await model.add_acl_entry(
         "/",
         1,
         ACTION_DENY,
@@ -148,7 +150,7 @@ async def admin_group(db):
         PRINCIPAL_SYSTEM,
         system_principal=SYSTEM_EVERYONE,
     )
-    await us.add_acl_entry(
+    await model.add_acl_entry(
         "/workspaces",
         0,
         ACTION_ALLOW,
@@ -156,7 +158,7 @@ async def admin_group(db):
         PRINCIPAL_SYSTEM,
         system_principal=SYSTEM_AUTHENTICATED,
     )
-    await us.add_acl_entry(
+    await model.add_acl_entry(
         "/admin",
         0,
         ACTION_ALLOW,
@@ -164,7 +166,7 @@ async def admin_group(db):
         PRINCIPAL_GROUP,
         group_id=group["id"],
     )
-    await us.add_acl_entry(
+    await model.add_acl_entry(
         "/admin",
         1,
         ACTION_DENY,
@@ -178,12 +180,12 @@ async def admin_group(db):
 @pytest.fixture
 async def admin_user(admin_group):
     """Create a test user in the admin group and return it."""
-    import klangk_backend.model as us
+    import klangk_backend.model as model
 
-    user = await us.create_user(
+    user = await model.create_user(
         "testadmin@example.com", _TEST_PASSWORD_HASH, verified=True
     )
-    await us.add_user_to_group(user["id"], admin_group["id"])
+    await model.add_user_to_group(user["id"], admin_group["id"])
     return user
 
 
@@ -220,7 +222,7 @@ def app_state(temp_data_dir):
 @pytest.fixture
 async def workspace(user):
     """Create a test workspace (without port allocation)."""
-    import klangk_backend.model as us
+    import klangk_backend.model as model
 
-    workspace = await us.create_workspace(user["id"], "test-workspace")
+    workspace = await model.create_workspace(user["id"], "test-workspace")
     return workspace

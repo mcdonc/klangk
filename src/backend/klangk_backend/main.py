@@ -380,10 +380,10 @@ async def runtime_shutdown(app_state) -> None:
     await app_state.container_registry.shutdown()
 
 
-async def process_shutdown() -> None:
+async def process_shutdown(app_state) -> None:
     """Full process teardown (run once, at the very end)."""
     remove_pid_file()
-    await model.dispose_engine()
+    await app_state.db.dispose_engine()
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +435,12 @@ def on_sighup(app_state, nginx_watchdog) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # #1520: bind app.state.db as the active DB for this lifespan's context
+    # before any DB access. Request/SIGHUP tasks inherit this context, so the
+    # model/ free functions (transaction/fetchone/get_db) reach the right DB
+    # without a module global. Reset on teardown so a follow-up bind (tests)
+    # starts clean.
+    _db_token = model.db.set_current_db(app.state.db)
     await model.init_db()
     await model.resolve_instance_id()
 
@@ -501,7 +507,8 @@ async def lifespan(app: FastAPI):
         loop.remove_signal_handler(signal.SIGHUP)
         await app.state.nginx_watchdog.stop()
         await runtime_shutdown(app.state)
-        await process_shutdown()
+        await process_shutdown(app.state)
+        model.db.reset_current_db(_db_token)
         logger.info("Klangk backend stopped")
 
 
@@ -642,10 +649,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # helpers.
     app.state.workspaces = workspaces.Workspaces(app.state)
     # #1452: DB(settings) owns the engine cache + data dir (computed from
-    # settings, not frozen at import). Set as the module-level default so
-    # the model/ free functions (transaction/fetchone/get_db) reach it.
+    # settings, not frozen at import). Bound as the active DB for the
+    # lifespan's context in the lifespan itself (#1520: no module-global
+    # backstop — the model/ free functions reach it via a ContextVar).
     app.state.db = model.db.DB(settings)
-    model.db.set_db(app.state.db)
     app.state.agents = agent.Agents(app.state)
     # #1483: EmailService(app_state) owns SMTP/sendmail transport + the
     # Jinja template env (previously module-level functions reading
