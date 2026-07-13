@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 
 from .. import acl as _acl
-from .. import auth, container, model
+from .. import container, model
 from ..terminal import TerminalSession
 from ..podman import ExecSession
 from .constants import (
@@ -338,7 +338,7 @@ class Connection:
             workspace_id, app_state=self.app_state
         )
         token_expiry = datetime.now(timezone.utc) + timedelta(
-            hours=auth.WORKSPACE_TOKEN_EXPIRE_HOURS
+            hours=self.app_state.auth.workspace_token_expire_hours
         )
         await session.add_subscriber(
             self.sock, container_id, token_expiry=token_expiry

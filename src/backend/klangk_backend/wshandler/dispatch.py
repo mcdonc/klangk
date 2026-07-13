@@ -75,8 +75,8 @@ async def handle_websocket(websocket: WebSocket, app_state) -> None:
         await websocket.close(code=4001, reason="Missing token")
         return
 
-    result = await auth.get_user_from_token(token)
-    if result is auth.TOKEN_EXPIRED:
+    result = await app_state.auth.get_user_from_token(token)
+    if result is auth.Auth.TOKEN_EXPIRED:
         await websocket.close(code=4002, reason="Token expired")
         return
     if result is None:

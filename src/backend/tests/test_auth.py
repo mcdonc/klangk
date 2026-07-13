@@ -11,6 +11,24 @@ from jose import jwt
 from klangk_backend import auth, model
 from klangk_backend.exceptions import ConfigurationError
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
+import types as _types
+
+from _helpers import make_settings
+from klangk_backend.auth import Auth
+
+
+def _auth(env=None):
+    """Build an Auth instance from explicit env (no os.environ)."""
+    return Auth(_types.SimpleNamespace(settings=make_settings(env)))
+
+
+def _req(auth=None):
+    """A request-like with app.state.auth for the FastAPI dep callables."""
+    if auth is None:
+        auth = _auth()
+    return _types.SimpleNamespace(
+        app=_types.SimpleNamespace(state=_types.SimpleNamespace(auth=auth))
+    )
 
 
 class TestPasswordHashing:
@@ -45,70 +63,47 @@ class TestPasswordHashing:
 class TestSecurityDefaults:
     """Lock in the hardened auth defaults introduced in #938.
 
-    These module-level constants are evaluated at import time from env
-    vars, so to assert the *production* defaults we spawn a subprocess
-    with the policy env vars stripped — independent of whatever the
-    test process (or a developer's shell) has set. A regression that
+    Auth reads settings at construction (#1501), so the production
+    defaults are asserted directly — no subprocess dance needed (that
+    was a workaround for the import-time globals). A regression that
     weakens either default fails here.
     """
 
     def test_hardened_defaults_when_env_unset(self):
-        import subprocess
-        import sys
-
-        code = (
-            "import os\n"
-            "for k in ('KLANGK_MIN_PASSWORD_LENGTH',"
-            " 'KLANGK_LOGIN_LOCKOUT_FAILURES'):\n"
-            "    os.environ.pop(k, None)\n"
-            "from klangk_backend import auth\n"
-            "print(auth.MIN_PASSWORD_LENGTH,"
-            " auth.LOGIN_LOCKOUT_FAILURES)\n"
-        )
-        env = {
-            k: v
-            for k, v in os.environ.items()
-            if k
-            not in (
-                "KLANGK_MIN_PASSWORD_LENGTH",
-                "KLANGK_LOGIN_LOCKOUT_FAILURES",
-            )
-        }
-        out = subprocess.check_output(
-            [sys.executable, "-c", code], env=env, text=True
-        ).strip()
-        # MIN_PASSWORD_LENGTH=8, LOGIN_LOCKOUT_FAILURES=5 (both on by
+        a = _auth()  # unset policy env -> production defaults
+        # min_password_length=8, login_lockout_failures=5 (both on by
         # default — brute-force protection and a sane password floor).
-        assert out == "8 5"
+        assert a.min_password_length == 8
+        assert a.login_lockout_failures == 5
 
 
 class TestValidatePasswordLength:
     def test_rejects_short_password(self):
         with pytest.raises(HTTPException) as exc_info:
-            auth.validate_password_length("")
+            _auth().validate_password_length("")
         assert exc_info.value.status_code == 400
         assert "at least" in exc_info.value.detail
 
     def test_rejects_over_72_bytes(self):
         with pytest.raises(HTTPException) as exc_info:
-            auth.validate_password_length("a" * 73)
+            _auth().validate_password_length("a" * 73)
         assert exc_info.value.status_code == 400
         assert "72 bytes" in exc_info.value.detail
 
     def test_rejects_multibyte_over_72_bytes(self):
         pw = "\u00e9" * 37  # 2 bytes each = 74 bytes
         with pytest.raises(HTTPException) as exc_info:
-            auth.validate_password_length(pw)
+            _auth().validate_password_length(pw)
         assert exc_info.value.status_code == 400
 
     def test_accepts_valid_password(self):
-        auth.validate_password_length("goodpass")
+        _auth().validate_password_length("goodpass")
 
 
 class TestJWT:
     def test_create_and_decode_token(self):
-        token = auth.create_token("user-123", "alice@example.com")
-        payload = auth.decode_token(token)
+        token = _auth().create_token("user-123", "alice@example.com")
+        payload = _auth().decode_token(token)
         assert payload["sub"] == "user-123"
         assert payload["email"] == "alice@example.com"
         assert "jti" in payload
@@ -118,14 +113,14 @@ class TestJWT:
         from jose import JWTError
 
         with pytest.raises(JWTError):
-            auth.decode_token("garbage.token.value")
+            _auth().decode_token("garbage.token.value")
 
 
 class TestRegister:
-    async def test_register_disabled(self, db, monkeypatch):
-        monkeypatch.setenv("KLANGK_DISABLE_REGISTRATION", "true")
+    async def test_register_disabled(self, db):
+        a = _auth({"KLANGK_DISABLE_REGISTRATION": "true"})
         with pytest.raises(HTTPException) as exc_info:
-            await auth.register(
+            await a.register(
                 auth.RegisterRequest(
                     email="blocked@example.com", password="pass1234"
                 )
@@ -133,7 +128,7 @@ class TestRegister:
         assert exc_info.value.status_code == 403
 
     async def test_register_success(self, db):
-        result = await auth.register(
+        result = await _auth().register(
             auth.RegisterRequest(email="new@example.com", password="pass1234")
         )
         assert result.user_id
@@ -141,7 +136,7 @@ class TestRegister:
         assert result.access_token is None  # unverified, no token
 
     async def test_register_verified(self, db):
-        result = await auth.register(
+        result = await _auth().register(
             auth.RegisterRequest(
                 email="verified@example.com", password="pass1234"
             ),
@@ -151,11 +146,11 @@ class TestRegister:
         assert result.email == "verified@example.com"
 
     async def test_register_duplicate_email(self, db):
-        await auth.register(
+        await _auth().register(
             auth.RegisterRequest(email="dup@example.com", password="pass1234")
         )
         with pytest.raises(HTTPException) as exc_info:
-            await auth.register(
+            await _auth().register(
                 auth.RegisterRequest(
                     email="dup@example.com", password="pass5678"
                 )
@@ -173,7 +168,7 @@ class TestRegister:
             ),
         ):
             with pytest.raises(HTTPException) as exc_info:
-                await auth.register(
+                await _auth().register(
                     auth.RegisterRequest(
                         email="race@example.com", password="pass1234"
                     )
@@ -183,38 +178,37 @@ class TestRegister:
 
     async def test_register_invalid_email(self, db):
         with pytest.raises(HTTPException) as exc_info:
-            await auth.register(
+            await _auth().register(
                 auth.RegisterRequest(email="not-an-email", password="pass1234")
             )
         assert exc_info.value.status_code == 400
 
     async def test_register_short_password(self, db):
         with pytest.raises(HTTPException) as exc_info:
-            await auth.register(
+            await _auth().register(
                 auth.RegisterRequest(email="valid@example.com", password="abc")
             )
         assert exc_info.value.status_code == 400
 
-    async def test_register_password_length_configurable(
-        self, db, monkeypatch
-    ):
-        """MIN_PASSWORD_LENGTH can be overridden via env var."""
-        monkeypatch.setattr(auth, "MIN_PASSWORD_LENGTH", 8)
+    async def test_register_password_length_configurable(self, db):
+        """min_password_length is read from settings at construction."""
+        # A non-default floor (10): 9 chars fails, 10 succeeds.
+        a = _auth({"KLANGK_MIN_PASSWORD_LENGTH": "10"})
         with pytest.raises(HTTPException) as exc_info:
-            await auth.register(
+            await a.register(
                 auth.RegisterRequest(
-                    email="valid@example.com", password="1234567"
+                    email="valid@example.com", password="123456789"
                 )
             )
         assert exc_info.value.status_code == 400
         assert (
-            "8" in exc_info.value.detail
+            "10" in exc_info.value.detail
         )  # error message includes the length
 
-        # 8 chars should succeed
-        result = await auth.register(
+        # 10 chars should succeed
+        result = await a.register(
             auth.RegisterRequest(
-                email="valid@example.com", password="12345678"
+                email="valid2@example.com", password="1234567890"
             )
         )
         assert result.user_id
@@ -222,7 +216,7 @@ class TestRegister:
 
 class TestLogin:
     async def test_login_success(self, user):
-        result = await auth.login(
+        result = await _auth().login(
             auth.LoginRequest(
                 email="testuser@example.com", password="testpass"
             )
@@ -232,7 +226,7 @@ class TestLogin:
 
     async def test_login_wrong_password(self, user):
         with pytest.raises(HTTPException) as exc_info:
-            await auth.login(
+            await _auth().login(
                 auth.LoginRequest(
                     email="testuser@example.com", password="wrong"
                 )
@@ -246,7 +240,7 @@ class TestLogin:
             "oidc@example.com", None, verified=True, provider="oidc"
         )
         with pytest.raises(HTTPException) as exc_info:
-            await auth.login(
+            await _auth().login(
                 auth.LoginRequest(
                     email="oidc@example.com", password="anything"
                 )
@@ -262,7 +256,7 @@ class TestLogin:
             "unverified@example.com", password_hash, verified=False
         )
         with pytest.raises(HTTPException) as exc_info:
-            await auth.login(
+            await _auth().login(
                 auth.LoginRequest(
                     email="unverified@example.com", password="testpass"
                 )
@@ -272,7 +266,7 @@ class TestLogin:
 
     async def test_login_nonexistent_user(self, db):
         with pytest.raises(HTTPException) as exc_info:
-            await auth.login(
+            await _auth().login(
                 auth.LoginRequest(email="noone@example.com", password="pass")
             )
         assert exc_info.value.status_code == 401
@@ -310,32 +304,32 @@ class TestLoginRateLimit:
 
     async def test_login_wrong_password_records_attempt(self, user):
         """Wrong password increments attempt count."""
-        for i in range(auth.LOGIN_LOCKOUT_FAILURES - 1):
+        for i in range(_auth().login_lockout_failures - 1):
             with pytest.raises(HTTPException) as exc_info:
-                await auth.login(
+                await _auth().login(
                     auth.LoginRequest(
                         email="testuser@example.com", password="wrong"
                     )
                 )
             assert exc_info.value.status_code == 401
         info = await model.get_login_attempt_info("testuser@example.com")
-        assert info["attempt_count"] == auth.LOGIN_LOCKOUT_FAILURES - 1
+        assert info["attempt_count"] == _auth().login_lockout_failures - 1
 
     async def test_login_lockout_after_max_attempts(self, user):
         """Locked out after LOGIN_LOCKOUT_FAILURES failed attempts."""
-        for i in range(auth.LOGIN_LOCKOUT_FAILURES):
+        for i in range(_auth().login_lockout_failures):
             with pytest.raises(HTTPException) as exc_info:
-                await auth.login(
+                await _auth().login(
                     auth.LoginRequest(
                         email="testuser@example.com", password="wrong"
                     )
                 )
-            if i < auth.LOGIN_LOCKOUT_FAILURES - 1:
+            if i < _auth().login_lockout_failures - 1:
                 assert exc_info.value.status_code == 401
             else:
                 assert exc_info.value.status_code == 429
         with pytest.raises(HTTPException) as exc_info:
-            await auth.login(
+            await _auth().login(
                 auth.LoginRequest(
                     email="testuser@example.com", password="wrong"
                 )
@@ -357,13 +351,13 @@ class TestLoginRateLimit:
                 " VALUES (?, ?, ?)",
                 (
                     "testuser@example.com",
-                    auth.LOGIN_LOCKOUT_FAILURES - 1,
+                    _auth().login_lockout_failures - 1,
                     old,
                 ),
             )
         # A wrong password now: window elapsed -> reset, not lock.
         with pytest.raises(HTTPException) as exc_info:
-            await auth.login(
+            await _auth().login(
                 auth.LoginRequest(
                     email="testuser@example.com", password="wrong"
                 )
@@ -374,17 +368,19 @@ class TestLoginRateLimit:
 
     def test_window_elapsed_policy(self):
         """window_elapsed decides whether the sliding window has passed."""
-        assert auth.window_elapsed(None) is False
-        assert auth.window_elapsed({"first_attempt_at": None}) is False
+        assert _auth().window_elapsed(None) is False
+        assert _auth().window_elapsed({"first_attempt_at": None}) is False
         # Unparseable timestamp is treated as not-elapsed (safe default).
-        assert auth.window_elapsed({"first_attempt_at": "not-a-date"}) is False
+        assert (
+            _auth().window_elapsed({"first_attempt_at": "not-a-date"}) is False
+        )
         old = (
             datetime.now(timezone.utc)
-            - timedelta(seconds=auth.LOGIN_LOCKOUT_WINDOW + 1)
+            - timedelta(seconds=_auth().login_lockout_window + 1)
         ).isoformat()
-        assert auth.window_elapsed({"first_attempt_at": old}) is True
+        assert _auth().window_elapsed({"first_attempt_at": old}) is True
         recent = datetime.now(timezone.utc).isoformat()
-        assert auth.window_elapsed({"first_attempt_at": recent}) is False
+        assert _auth().window_elapsed({"first_attempt_at": recent}) is False
 
     async def test_login_lockout_message_shows_remaining_time(self, user):
         """Lockout message includes remaining minutes."""
@@ -394,7 +390,7 @@ class TestLoginRateLimit:
             "testuser@example.com", locked_until.isoformat()
         )
         with pytest.raises(HTTPException) as exc_info:
-            await auth.login(
+            await _auth().login(
                 auth.LoginRequest(
                     email="testuser@example.com", password="wrong"
                 )
@@ -409,7 +405,7 @@ class TestLoginRateLimit:
         await model.set_login_lockout(
             "testuser@example.com", expired_until.isoformat()
         )
-        result = await auth.login(
+        result = await _auth().login(
             auth.LoginRequest(
                 email="testuser@example.com", password="testpass"
             )
@@ -424,7 +420,7 @@ class TestLoginRateLimit:
             "testuser@example.com", locked_until.isoformat()
         )
         with pytest.raises(HTTPException) as exc_info:
-            await auth.login(
+            await _auth().login(
                 auth.LoginRequest(
                     email="testuser@example.com", password="testpass"
                 )
@@ -433,14 +429,14 @@ class TestLoginRateLimit:
 
     async def test_should_lockout_helper(self, db):
         """should_lockout returns True at threshold, False below/above."""
-        assert auth.should_lockout({"attempt_count": 4}) is False
-        assert auth.should_lockout({"attempt_count": 5}) is True
-        assert auth.should_lockout(None) is False
+        assert _auth().should_lockout({"attempt_count": 4}) is False
+        assert _auth().should_lockout({"attempt_count": 5}) is True
+        assert _auth().should_lockout(None) is False
 
     async def test_should_lockout_respects_configured_threshold(self, db):
         """should_lockout uses LOGIN_LOCKOUT_FAILURES as the threshold."""
-        assert auth.should_lockout({"attempt_count": 5}) is True
-        assert auth.should_lockout({"attempt_count": 4}) is False
+        assert _auth().should_lockout({"attempt_count": 5}) is True
+        assert _auth().should_lockout({"attempt_count": 4}) is False
 
     async def test_is_locked_out_helper(self, db):
         """is_locked_out returns True/msg when locked_until is in the future."""
@@ -458,12 +454,12 @@ class TestLoginRateLimit:
         assert auth.is_locked_out(no_lock) == (False, None)
         assert auth.is_locked_out(None) == (False, None)
 
-    async def test_login_lockout_disabled_when_zero(self, db, monkeypatch):
-        """With LOGIN_LOCKOUT_FAILURES=0, no rate limiting occurs."""
-        monkeypatch.setattr(auth, "LOGIN_LOCKOUT_FAILURES", 0)
+    async def test_login_lockout_disabled_when_zero(self, db):
+        """With login_lockout_failures=0, no rate limiting occurs."""
+        a = _auth({"KLANGK_LOGIN_LOCKOUT_FAILURES": "0"})
         for _ in range(20):
             with pytest.raises(HTTPException) as exc_info:
-                await auth.login(
+                await a.login(
                     auth.LoginRequest(
                         email="testuser@example.com", password="wrong"
                     )
@@ -472,14 +468,14 @@ class TestLoginRateLimit:
 
     async def test_login_nonexistent_user_also_rate_limited(self, db):
         """Nonexistent users are also rate-limited to prevent enumeration."""
-        for i in range(auth.LOGIN_LOCKOUT_FAILURES):
+        for i in range(_auth().login_lockout_failures):
             with pytest.raises(HTTPException) as exc_info:
-                await auth.login(
+                await _auth().login(
                     auth.LoginRequest(
                         email="nobody@example.com", password="wrong"
                     )
                 )
-            if i < auth.LOGIN_LOCKOUT_FAILURES - 1:
+            if i < _auth().login_lockout_failures - 1:
                 assert exc_info.value.status_code == 401
             else:
                 assert exc_info.value.status_code == 429
@@ -488,7 +484,7 @@ class TestLoginRateLimit:
         """Successful login clears failed attempt counts."""
         await model.record_failed_login("testuser@example.com")
         await model.record_failed_login("testuser@example.com")
-        result = await auth.login(
+        result = await _auth().login(
             auth.LoginRequest(
                 email="testuser@example.com", password="testpass"
             )
@@ -500,17 +496,17 @@ class TestLoginRateLimit:
 
 class TestVerification:
     def test_create_and_decode_verification_token(self):
-        token = auth.create_verification_token("user-123")
-        user_id = auth.decode_verification_token(token)
+        token = _auth().create_verification_token("user-123")
+        user_id = _auth().decode_verification_token(token)
         assert user_id == "user-123"
 
     def test_decode_invalid_token(self):
-        assert auth.decode_verification_token("garbage") is None
+        assert _auth().decode_verification_token("garbage") is None
 
     def test_decode_wrong_purpose(self):
         # A regular auth token should not pass as a verification token
-        token = auth.create_token("user-123", "test")
-        assert auth.decode_verification_token(token) is None
+        token = _auth().create_token("user-123", "test")
+        assert _auth().decode_verification_token(token) is None
 
     async def test_verify_user(self, db):
         import bcrypt
@@ -532,97 +528,97 @@ class TestVerification:
 
 class TestPasswordReset:
     def test_create_and_decode_reset_token(self):
-        token = auth.create_password_reset_token("user-456")
-        assert auth.decode_password_reset_token(token) == "user-456"
+        token = _auth().create_password_reset_token("user-456")
+        assert _auth().decode_password_reset_token(token) == "user-456"
 
     def test_decode_invalid_token(self):
-        assert auth.decode_password_reset_token("garbage") is None
+        assert _auth().decode_password_reset_token("garbage") is None
 
     def test_reset_and_verify_tokens_not_interchangeable(self):
-        reset = auth.create_password_reset_token("user-456")
-        verify = auth.create_verification_token("user-456")
-        assert auth.decode_verification_token(reset) is None
-        assert auth.decode_password_reset_token(verify) is None
+        reset = _auth().create_password_reset_token("user-456")
+        verify = _auth().create_verification_token("user-456")
+        assert _auth().decode_verification_token(reset) is None
+        assert _auth().decode_password_reset_token(verify) is None
 
 
 class TestWorkspaceToken:
     def test_create_and_decode_workspace_token(self):
-        token = auth.create_workspace_token("ws-123")
-        assert auth.decode_workspace_token(token) == "ws-123"
+        token = _auth().create_workspace_token("ws-123")
+        assert _auth().decode_workspace_token(token) == "ws-123"
 
     def test_decode_invalid_token(self):
-        assert auth.decode_workspace_token("garbage") is None
+        assert _auth().decode_workspace_token("garbage") is None
 
     def test_user_token_rejected(self):
-        user_token = auth.create_token("user-1", "u@test.com")
-        assert auth.decode_workspace_token(user_token) is None
+        user_token = _auth().create_token("user-1", "u@test.com")
+        assert _auth().decode_workspace_token(user_token) is None
 
     def test_verify_token_rejected(self):
-        verify_token = auth.create_verification_token("user-1")
-        assert auth.decode_workspace_token(verify_token) is None
+        verify_token = _auth().create_verification_token("user-1")
+        assert _auth().decode_workspace_token(verify_token) is None
 
     def test_workspace_token_rejected_by_other_decoders(self):
-        ws_token = auth.create_workspace_token("ws-123")
-        assert auth.decode_verification_token(ws_token) is None
-        assert auth.decode_password_reset_token(ws_token) is None
+        ws_token = _auth().create_workspace_token("ws-123")
+        assert _auth().decode_verification_token(ws_token) is None
+        assert _auth().decode_password_reset_token(ws_token) is None
 
 
 class TestTokenValidation:
     async def test_get_user_from_valid_token(self, user):
-        token = auth.create_token(user["id"], user["email"])
-        result = await auth.get_user_from_token(token)
+        token = _auth().create_token(user["id"], user["email"])
+        result = await _auth().get_user_from_token(token)
         assert result is not None
         assert result["id"] == user["id"]
 
     async def test_get_user_from_invalid_token(self, db):
-        result = await auth.get_user_from_token("invalid.token.here")
+        result = await _auth().get_user_from_token("invalid.token.here")
         assert result is None
 
     async def test_blocklisted_token_rejected(self, user):
-        token = auth.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         # Token should work before blocklisting
-        assert await auth.get_user_from_token(token) is not None
+        assert await _auth().get_user_from_token(token) is not None
         # Blocklist it
-        await auth.logout(token)
+        await _auth().logout(token)
         # Now it should fail
-        assert await auth.get_user_from_token(token) is None
+        assert await _auth().get_user_from_token(token) is None
 
     async def test_get_user_from_token_missing_sub(self, db):
         """Token with no 'sub' claim returns None."""
         token = jwt.encode(
             {"email": "x", "jti": "j1", "exp": 9999999999},
-            auth.SECRET_KEY,
-            algorithm=auth.ALGORITHM,
+            _auth().secret,
+            algorithm=_auth().algorithm,
         )
-        assert await auth.get_user_from_token(token) is None
+        assert await _auth().get_user_from_token(token) is None
 
     async def test_get_user_from_token_missing_jti(self, db):
         """Token with no 'jti' claim returns None."""
         token = jwt.encode(
             {"sub": "uid", "email": "x", "exp": 9999999999},
-            auth.SECRET_KEY,
-            algorithm=auth.ALGORITHM,
+            _auth().secret,
+            algorithm=_auth().algorithm,
         )
-        assert await auth.get_user_from_token(token) is None
+        assert await _auth().get_user_from_token(token) is None
 
     async def test_get_user_from_token_deleted_user(self, user):
         """Token for a user that no longer exists returns None."""
-        token = auth.create_token("nonexistent-id", "ghost@example.com")
-        assert await auth.get_user_from_token(token) is None
+        token = _auth().create_token("nonexistent-id", "ghost@example.com")
+        assert await _auth().get_user_from_token(token) is None
 
 
 class TestGetCurrentUser:
     async def test_valid_credentials(self, user):
-        token = auth.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         creds = HTTPAuthorizationCredentials(
             scheme="Bearer", credentials=token
         )
-        result = await auth.get_current_user(creds)
+        result = await auth.get_current_user(_req(), creds)
         assert result["id"] == user["id"]
 
     async def test_no_credentials(self, db):
         with pytest.raises(HTTPException) as exc_info:
-            await auth.get_current_user(None)
+            await auth.get_current_user(_req(), None)
         assert exc_info.value.status_code == 401
 
     async def test_invalid_token(self, db):
@@ -630,106 +626,106 @@ class TestGetCurrentUser:
             scheme="Bearer", credentials="bad.token.here"
         )
         with pytest.raises(HTTPException) as exc_info:
-            await auth.get_current_user(creds)
+            await auth.get_current_user(_req(), creds)
         assert exc_info.value.status_code == 401
 
     async def test_missing_sub_in_token(self, db):
         token = jwt.encode(
             {"email": "x", "jti": "j1", "exp": 9999999999},
-            auth.SECRET_KEY,
-            algorithm=auth.ALGORITHM,
+            _auth().secret,
+            algorithm=_auth().algorithm,
         )
         creds = HTTPAuthorizationCredentials(
             scheme="Bearer", credentials=token
         )
         with pytest.raises(HTTPException) as exc_info:
-            await auth.get_current_user(creds)
+            await auth.get_current_user(_req(), creds)
         assert exc_info.value.status_code == 401
 
     async def test_blocklisted_token(self, user):
-        token = auth.create_token(user["id"], user["email"])
-        await auth.logout(token)
+        token = _auth().create_token(user["id"], user["email"])
+        await _auth().logout(token)
         creds = HTTPAuthorizationCredentials(
             scheme="Bearer", credentials=token
         )
         with pytest.raises(HTTPException) as exc_info:
-            await auth.get_current_user(creds)
+            await auth.get_current_user(_req(), creds)
         assert exc_info.value.status_code == 401
 
     async def test_deleted_user(self, user):
-        token = auth.create_token("nonexistent-id", "ghost@example.com")
+        token = _auth().create_token("nonexistent-id", "ghost@example.com")
         creds = HTTPAuthorizationCredentials(
             scheme="Bearer", credentials=token
         )
         with pytest.raises(HTTPException) as exc_info:
-            await auth.get_current_user(creds)
+            await auth.get_current_user(_req(), creds)
         assert exc_info.value.status_code == 401
 
 
 class TestGetCurrentUserOptional:
     async def test_valid_credentials(self, user):
-        token = auth.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         creds = HTTPAuthorizationCredentials(
             scheme="Bearer", credentials=token
         )
-        result = await auth.get_current_user_optional(creds)
+        result = await auth.get_current_user_optional(_req(), creds)
         assert result is not None
         assert result["id"] == user["id"]
 
     async def test_no_credentials(self, db):
-        result = await auth.get_current_user_optional(None)
+        result = await auth.get_current_user_optional(_req(), None)
         assert result is None
 
     async def test_invalid_token(self, db):
         creds = HTTPAuthorizationCredentials(
             scheme="Bearer", credentials="bad.token"
         )
-        result = await auth.get_current_user_optional(creds)
+        result = await auth.get_current_user_optional(_req(), creds)
         assert result is None
 
     async def test_missing_sub(self, db):
         token = jwt.encode(
             {"email": "x", "jti": "j1", "exp": 9999999999},
-            auth.SECRET_KEY,
-            algorithm=auth.ALGORITHM,
+            _auth().secret,
+            algorithm=_auth().algorithm,
         )
         creds = HTTPAuthorizationCredentials(
             scheme="Bearer", credentials=token
         )
-        result = await auth.get_current_user_optional(creds)
+        result = await auth.get_current_user_optional(_req(), creds)
         assert result is None
 
     async def test_blocklisted_token(self, user):
-        token = auth.create_token(user["id"], user["email"])
-        await auth.logout(token)
+        token = _auth().create_token(user["id"], user["email"])
+        await _auth().logout(token)
         creds = HTTPAuthorizationCredentials(
             scheme="Bearer", credentials=token
         )
-        result = await auth.get_current_user_optional(creds)
+        result = await auth.get_current_user_optional(_req(), creds)
         assert result is None
 
     async def test_deleted_user(self, user):
-        token = auth.create_token("nonexistent-id", "ghost@example.com")
+        token = _auth().create_token("nonexistent-id", "ghost@example.com")
         creds = HTTPAuthorizationCredentials(
             scheme="Bearer", credentials=token
         )
-        result = await auth.get_current_user_optional(creds)
+        result = await auth.get_current_user_optional(_req(), creds)
         assert result is None
 
 
 class TestLogout:
     async def test_logout_invalid_token(self, db):
         """Logout with garbage token should not raise."""
-        await auth.logout("not.a.valid.token")
+        await _auth().logout("not.a.valid.token")
 
     async def test_logout_token_without_jti(self, db):
         """Logout with token missing jti should not raise."""
         token = jwt.encode(
             {"sub": "uid", "exp": 9999999999},
-            auth.SECRET_KEY,
-            algorithm=auth.ALGORITHM,
+            _auth().secret,
+            algorithm=_auth().algorithm,
         )
-        await auth.logout(token)
+        await _auth().logout(token)
 
 
 class TestRefreshToken:
@@ -739,11 +735,11 @@ class TestRefreshToken:
             "a@b.com", auth.hash_password("pw"), verified=True
         )
         user = await model.get_user_by_email("a@b.com")
-        token = auth.create_token(user["id"], user["email"])
-        result = await auth.refresh_token(token)
+        token = _auth().create_token(user["id"], user["email"])
+        result = await _auth().refresh_token(token)
         assert result.access_token != token
         # Old JTI should be blocklisted
-        old_payload = auth.decode_token(token, allow_expired=True)
+        old_payload = _auth().decode_token(token, allow_expired=True)
         assert await model.is_token_blocklisted(old_payload["jti"])
 
     async def test_refresh_idempotent(self, db):
@@ -752,9 +748,9 @@ class TestRefreshToken:
             "a@b.com", auth.hash_password("pw"), verified=True
         )
         user = await model.get_user_by_email("a@b.com")
-        token = auth.create_token(user["id"], user["email"])
-        result1 = await auth.refresh_token(token)
-        result2 = await auth.refresh_token(token)
+        token = _auth().create_token(user["id"], user["email"])
+        result1 = await _auth().refresh_token(token)
+        result2 = await _auth().refresh_token(token)
         assert result1.access_token == result2.access_token
 
     async def test_refresh_expired_token_returns_401(self, db):
@@ -770,11 +766,11 @@ class TestRefreshToken:
                 "jti": "expired-jti",
                 "exp": datetime.now(timezone.utc) - timedelta(hours=1),
             },
-            auth.SECRET_KEY,
-            algorithm=auth.ALGORITHM,
+            _auth().secret,
+            algorithm=_auth().algorithm,
         )
         with pytest.raises(HTTPException) as exc_info:
-            await auth.refresh_token(expired)
+            await _auth().refresh_token(expired)
         assert exc_info.value.status_code == 401
 
     async def test_refresh_expired_token_with_prior_refresh(self, db):
@@ -797,10 +793,10 @@ class TestRefreshToken:
                 "jti": "old-jti",
                 "exp": datetime.now(timezone.utc) - timedelta(seconds=1),
             },
-            auth.SECRET_KEY,
-            algorithm=auth.ALGORITHM,
+            _auth().secret,
+            algorithm=_auth().algorithm,
         )
-        result = await auth.refresh_token(expired)
+        result = await _auth().refresh_token(expired)
         assert result.access_token == "cached-new-token"
 
     async def test_refresh_expired_returns_cached_regardless_of_blocklist_expiry(
@@ -826,17 +822,17 @@ class TestRefreshToken:
                 "jti": "old-jti",
                 "exp": datetime.now(timezone.utc) - timedelta(hours=2),
             },
-            auth.SECRET_KEY,
-            algorithm=auth.ALGORITHM,
+            _auth().secret,
+            algorithm=_auth().algorithm,
         )
-        result = await auth.refresh_token(expired)
+        result = await _auth().refresh_token(expired)
         assert result.access_token == "cached-replacement"
 
     async def test_refresh_deleted_user_returns_401(self, db):
         """Refreshing a token for a deleted user returns 401."""
-        token = auth.create_token("nonexistent-user", "gone@example.com")
+        token = _auth().create_token("nonexistent-user", "gone@example.com")
         with pytest.raises(HTTPException) as exc_info:
-            await auth.refresh_token(token)
+            await _auth().refresh_token(token)
         assert exc_info.value.status_code == 401
 
     async def test_refresh_revoked_token_returns_401(self, db):
@@ -845,83 +841,88 @@ class TestRefreshToken:
             "a@b.com", auth.hash_password("pw"), verified=True
         )
         user = await model.get_user_by_email("a@b.com")
-        token = auth.create_token(user["id"], user["email"])
-        await auth.logout(token)
+        token = _auth().create_token(user["id"], user["email"])
+        await _auth().logout(token)
         with pytest.raises(HTTPException) as exc_info:
-            await auth.refresh_token(token)
+            await _auth().refresh_token(token)
         assert exc_info.value.status_code == 401
 
-    def test_configurable_token_expire_hours(self, monkeypatch):
-        """TOKEN_EXPIRE_HOURS reads from KLANGK_ACCESS_TOKEN_HOURS."""
-        monkeypatch.setenv("KLANGK_ACCESS_TOKEN_HOURS", "48")
-        # Re-evaluate the module-level constant
-        result = int(auth.resolve_env_value("KLANGK_ACCESS_TOKEN_HOURS", "24"))
-        assert result == 48
+    def test_configurable_token_expire_hours(self):
+        """token_expire_hours reads from settings at construction."""
+        a = _auth({"KLANGK_ACCESS_TOKEN_HOURS": "48"})
+        assert a.token_expire_hours == 48.0
 
 
 class TestInvitationTokens:
     def test_roundtrip(self):
-        token = auth.create_invitation_token("inv-123", "user@example.com")
-        result = auth.decode_invitation_token(token)
+        token = _auth().create_invitation_token("inv-123", "user@example.com")
+        result = _auth().decode_invitation_token(token)
         assert result == ("inv-123", "user@example.com")
 
     def test_wrong_purpose_rejected(self):
-        token = auth.create_verification_token("uid")
-        assert auth.decode_invitation_token(token) is None
+        token = _auth().create_verification_token("uid")
+        assert _auth().decode_invitation_token(token) is None
 
     def test_invalid_token_returns_none(self):
-        assert auth.decode_invitation_token("garbage") is None
+        assert _auth().decode_invitation_token("garbage") is None
 
     def test_missing_email_returns_none(self):
         token = jwt.encode(
             {"sub": "inv-1", "purpose": "invite", "exp": 9999999999},
-            auth.SECRET_KEY,
-            algorithm=auth.ALGORITHM,
+            _auth().secret,
+            algorithm=_auth().algorithm,
         )
-        assert auth.decode_invitation_token(token) is None
+        assert _auth().decode_invitation_token(token) is None
 
     def test_missing_sub_returns_none(self):
         token = jwt.encode(
             {"email": "x@y.com", "purpose": "invite", "exp": 9999999999},
-            auth.SECRET_KEY,
-            algorithm=auth.ALGORITHM,
+            _auth().secret,
+            algorithm=_auth().algorithm,
         )
-        assert auth.decode_invitation_token(token) is None
+        assert _auth().decode_invitation_token(token) is None
 
 
 class TestInvitationsEnabled:
     def test_enabled_by_default(self):
-        assert auth.invitations_enabled() is True
+        assert _auth().invitations_enabled() is True
 
-    def test_disabled(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_DISABLE_INVITES", "true")
-        assert auth.invitations_enabled() is False
+    def test_disabled(self):
+        a = _auth({"KLANGK_DISABLE_INVITES": "true"})
+        assert a.invitations_enabled() is False
 
 
 class TestRequireSecureJwtSecret:
-    def test_secure_secret_passes(self, monkeypatch):
-        monkeypatch.setattr(auth, "SECRET_KEY", "a-real-strong-secret")
-        assert auth.jwt_secret_is_secure() is True
-        auth.require_secure_jwt_secret()  # no raise
+    def test_secure_secret_passes(self):
+        a = _auth({"KLANGK_JWT_SECRET": "a-real-strong-secret"})
+        assert a.jwt_secret_is_secure() is True
+        a.require_secure_jwt_secret()  # no raise
 
-    def test_default_secret_is_insecure(self, monkeypatch):
-        monkeypatch.setattr(auth, "SECRET_KEY", auth._INSECURE_DEFAULT_SECRET)
-        assert auth.jwt_secret_is_secure() is False
+    def test_default_secret_is_insecure(self):
+        a = _auth()  # unset -> INSECURE_DEFAULT_SECRET
+        assert a.jwt_secret_is_secure() is False
 
-    def test_default_secret_warns(self, monkeypatch):
-        monkeypatch.setattr(auth, "SECRET_KEY", auth._INSECURE_DEFAULT_SECRET)
-        monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
-        auth.require_secure_jwt_secret()  # warns but does not raise
+    def test_default_secret_warns(self, caplog):
+        a = _auth()
+        import logging
 
-    def test_default_secret_blocks_with_prevent(self, monkeypatch):
-        monkeypatch.setattr(auth, "SECRET_KEY", auth._INSECURE_DEFAULT_SECRET)
-        monkeypatch.setenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", "1")
+        with caplog.at_level(logging.WARNING, logger="klangk_backend.auth"):
+            a.require_secure_jwt_secret()  # warns but does not raise
+
+    def test_default_secret_blocks_with_prevent(self):
+        a = _auth({"KLANGK_PREVENT_INSECURE_JWT_SECRET": "1"})
         with pytest.raises(ConfigurationError, match="KLANGK_JWT_SECRET"):
-            auth.require_secure_jwt_secret()
+            a.require_secure_jwt_secret()
 
-    def test_empty_secret_blocks_with_prevent(self, monkeypatch):
-        monkeypatch.setattr(auth, "SECRET_KEY", "")
-        monkeypatch.setenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", "1")
-        assert auth.jwt_secret_is_secure() is False
+    def test_empty_secret_blocks_with_prevent(self):
+        # jwt_secret unset falls back to the insecure default; an explicit
+        # empty string is also insecure and blocked when prevent is set.
+        a = _auth(
+            {
+                "KLANGK_JWT_SECRET": "",
+                "KLANGK_PREVENT_INSECURE_JWT_SECRET": "1",
+            }
+        )
+        assert a.jwt_secret_is_secure() is False
         with pytest.raises(ConfigurationError):
-            auth.require_secure_jwt_secret()
+            a.require_secure_jwt_secret()

@@ -13,8 +13,11 @@ from klangk_backend.exceptions import SendmailError
 
 def _email_service(env: dict) -> EmailService:
     """Build an EmailService from explicit env (never touches the process env)."""
+    from klangk_backend.auth import Auth
+
     settings = make_settings(env)
     app_state = types.SimpleNamespace(settings=settings)
+    app_state.auth = Auth(app_state)
     return EmailService(app_state)
 
 

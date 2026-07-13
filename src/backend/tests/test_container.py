@@ -10,7 +10,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from klangk_backend import bringup, container, model, podman, util as util_mod
+from klangk_backend import (
+    auth as auth_mod,
+    bringup,
+    container,
+    model,
+    podman,
+    util as util_mod,
+)
 from _helpers import make_settings
 
 
@@ -49,6 +56,8 @@ def _make_app_state(registry=None, sockets=None):
     app_state.workspaces = Workspaces(app_state)
     # #1503: container.py reaches derive_hosting_info via app_state.util.
     app_state.util = util_mod.Util(app_state)
+
+    app_state.auth = auth_mod.Auth(app_state)
     return app_state
 
 
@@ -727,8 +736,6 @@ class TestStartContainer:
 
     async def test_workspace_token_written_to_container(self, workspace):
         """Workspace token is written to the container via set_workspace_token."""
-        from klangk_backend import auth
-
         with (
             patch_podman(self.registry),
             patch.object(
@@ -744,7 +751,7 @@ class TestStartContainer:
         cid, token = mock_set.call_args.args
         assert cid == "new-cid"
         assert cid == "new-cid"
-        decoded_ws = auth.decode_workspace_token(token)
+        decoded_ws = self.registry.app_state.auth.decode_workspace_token(token)
         assert decoded_ws == workspace["id"]
 
     async def test_pull_policy_default_never(self, workspace):
