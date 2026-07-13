@@ -377,7 +377,7 @@ class TestLifespan:
         app.state.container_registry = app_state.container_registry
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
-        app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
+        app.state.nginx_watchdog = main.NginxWatchdog(app.state)
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
         app.state.workspaces = workspaces.Workspaces(app.state)
@@ -424,7 +424,7 @@ class TestLifespan:
         app.state.container_registry = app_state.container_registry
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
-        app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
+        app.state.nginx_watchdog = main.NginxWatchdog(app.state)
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
         app.state.workspaces = workspaces.Workspaces(app.state)
@@ -554,7 +554,7 @@ class TestStartupShutdownRestart:
     async def test_restart_runtime_runs_shutdown_then_startup(self):
         main._restart_lock = None  # force fresh lock creation
         app_state = _make_app_state()
-        wd = main.NginxWatchdog(KlangkSettings(env={}))
+        wd = main.NginxWatchdog(app_state)
         with (
             patch(
                 "klangk_backend.main.runtime_shutdown", new_callable=AsyncMock
@@ -577,7 +577,7 @@ class TestStartupShutdownRestart:
         main._restart_lock = asyncio.Lock()
         existing = main._restart_lock
         app_state = _make_app_state()
-        wd = main.NginxWatchdog(KlangkSettings(env={}))
+        wd = main.NginxWatchdog(app_state)
         with (
             patch(
                 "klangk_backend.main.runtime_shutdown", new_callable=AsyncMock
@@ -602,7 +602,7 @@ class TestStartupShutdownRestart:
             order.append("up")
 
         app_state = _make_app_state()
-        wd = main.NginxWatchdog(KlangkSettings(env={}))
+        wd = main.NginxWatchdog(app_state)
         with (
             patch(
                 "klangk_backend.main.runtime_shutdown",
@@ -627,7 +627,7 @@ class TestStartupShutdownRestart:
     async def test_on_sighup_schedules_restart(self):
         """on_sighup creates a task that runs restart_runtime."""
         app_state = _make_app_state()
-        wd = main.NginxWatchdog(KlangkSettings(env={}))
+        wd = main.NginxWatchdog(app_state)
         with patch(
             "klangk_backend.main.restart_runtime", new_callable=AsyncMock
         ) as mock_restart:
@@ -648,7 +648,7 @@ class TestStartupShutdownRestart:
         app.state.container_registry = app_state.container_registry
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
-        app.state.nginx_watchdog = main.NginxWatchdog(KlangkSettings(env={}))
+        app.state.nginx_watchdog = main.NginxWatchdog(app.state)
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
         app.state.workspaces = workspaces.Workspaces(app.state)
