@@ -33,12 +33,14 @@ operators or integrators to act when upgrading.
   a `ValidationError`, not silently at use time. Callers read
   `settings.field` directly — no per-call `resolve_indirection` wrap
   (#1461).
-- **`state_dir` / `data_dir` now required:** `KLANGK_STATE_DIR` and
-  `KLANGK_DATA_DIR` have no defaults — a missing value fails at
-  construction with a `ValidationError`. `klangkd` no longer mutates
-  `os.environ` to inject a `state_dir` default; the field enforces its own
-  requirement (#1459). `KLANGK_PLUGINS_DIR` defaults to
-  `<KLANGK_STATE_DIR>/plugins` when unset (#1461).
+- **`state_dir` required; `data_dir` / `customize_dir` / `plugins_dir` derive from it:**
+  `KLANGK_STATE_DIR` has no default — a missing value fails at construction
+  with a `ValidationError` (#1459, #1461). `KLANGK_DATA_DIR` defaults to
+  `<KLANGK_STATE_DIR>/data`, `KLANGK_CUSTOMIZE_DIR` to
+  `<KLANGK_STATE_DIR>/custom`, and `KLANGK_PLUGINS_DIR` to
+  `<KLANGK_STATE_DIR>/plugins` when unset; an explicit value always wins
+  (#1461, #1506). `klangkd` no longer mutates `os.environ` to inject a
+  `state_dir` default; the field enforces its own requirement (#1459).
 - **CLI transport resolver:** `klangkc --server` now accepts a Unix socket
   path (e.g. `/tmp/klangk.sock`) in addition to `http(s)://` URLs. All HTTP
   and WebSocket connections route through a single transport resolver that
@@ -54,6 +56,10 @@ operators or integrators to act when upgrading.
 - **Direct UDS login:** `client_is_loopback` treats direct UDS connections
   (no nginx proxy) as loopback, so `klangkc login /path/to/sock` works in
   no-auth mode (#1399).
+- **Per-test timeout for the Python test suites** — both backend and CLI
+  suites now run with `pytest-timeout` (`--timeout=60`). A hanging test
+  fails after 60s instead of burning the whole job budget. New
+  `pytest-timeout` dev dependency (#1513).
 
 ### Changed
 
@@ -65,6 +71,14 @@ operators or integrators to act when upgrading.
 - **Public `resolve_indirection` removed** — the logic is now private
   (`_resolve_indirection`), called only by the model validator and the
   non-`KLANGK_` path of `resolve_env_value` (#1461).
+- **Proxy-trust / hosting helpers are instance methods on `Util(app_state)`:**
+  `util.py` no longer reads config at import time. `reject_proxy_headers`,
+  `trusted_proxy_cidrs`, `peer_trusted`, `connection_peer_is_trusted`,
+  `client_is_loopback`, `derive_hosting_info`, `customize_dir`, `cors_origins`,
+  and `set_uds_mode` are now methods on `Util`, reading `self.settings` at
+  call time. The module globals `_REJECT_PROXY`, `_TRUSTED_PROXY_CIDRS`, and
+  `_UDS_MODE` are gone. `klangkd` arms UDS trust via
+  `app.state.util.set_uds_mode(True)` after `build_app` (#1503, #1426).
 
 ### Removed
 

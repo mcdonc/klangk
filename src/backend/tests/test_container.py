@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from klangk_backend import bringup, container, model, podman
+from klangk_backend import bringup, container, model, podman, util as util_mod
 from _helpers import make_settings
 
 
@@ -47,6 +47,8 @@ def _make_app_state(registry=None, sockets=None):
     from klangk_backend.workspaces import Workspaces
 
     app_state.workspaces = Workspaces(app_state)
+    # #1503: container.py reaches derive_hosting_info via app_state.util.
+    app_state.util = util_mod.Util(app_state)
     return app_state
 
 

@@ -81,9 +81,7 @@ def ssl_cert_dir() -> str | None:
     settings = get_settings()
     raw = settings.ssl_cert_dir
     if not raw:
-        customize = settings.customize_dir or os.path.join(
-            settings.state_dir, "custom"
-        )
+        customize = settings.customize_dir
         candidate = os.path.join(customize, "certs")
         if os.path.isdir(candidate):
             raw = candidate

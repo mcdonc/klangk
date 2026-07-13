@@ -499,9 +499,9 @@ class TestWatchdogGate:
             assert spawned["bin"] == "/fake/nginx"
             assert spawned["conf"] == str(tmp_path / "nginx.conf")
         finally:
-            import klangk_backend.util as util
-
-            util.set_uds_mode(False)
+            # UDS mode is now per-Util-instance (_wd builds a fresh one each
+            # call), so there's no module global to reset (#1503).
+            pass
 
 
 class TestPrepareNginx:

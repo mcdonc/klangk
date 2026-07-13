@@ -796,7 +796,7 @@ class TestSetupStaticFiles:
         monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", str(custom))
 
         test_app = FastAPI()
-        _settings = make_settings({})
+        _settings = make_settings({"KLANGK_CUSTOMIZE_DIR": str(custom)})
         test_app.state.settings = _settings
         test_app.state.util = util_mod.Util(test_app.state)
         main.setup_static_files(test_app, tmp_path)
