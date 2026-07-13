@@ -63,6 +63,22 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **E2E test envs are now hermetic (#1526):** all E2E suites (backend,
+  CLI, frontend) build subprocess envs via a shared `clean_env()` helper
+  (`_e2e_env.py` / `e2e-env.ts`) that strips every `KLANGK*` /
+  `_KLANGK*` / `KLANGKC*` / `LOGFIRE*` var from the ambient env before
+  applying the test's explicit overrides. No more `{**os.environ, ...}` /
+  `{...process.env, ...}` spreads — a stray config var in the CI runner's
+  env (or leaked by a prior test) can no longer silently change results.
+  The baseline defaults (`KLANGK_AUTH_MODES=password`, `_KLANGK_DISABLE_NGINX=1`)
+  moved from session-scoped `os.environ` mutations in `conftest.py` into
+  `clean_env()`, eliminating the in-process mutation too. Each server launch
+  now sets `KLANGK_STATE_DIR` to a fresh temp dir explicitly (the required
+  validator no longer relies on devenv seeding it), and `clean_env()`
+  forwards the three build-infra vars (`KLANGK_PLUGINS_DIR`,
+  `KLANGK_IMAGE_NAME`, `KLANGK_VERSION_FILE`) that locate the artifacts
+  devenv's `klangk:build-workspace-image` task produces.
+
 - **The `main:app` ASGI shim is gone (#1454).** `main.py` no longer exposes
   an `app` attribute or a lazy `__getattr__` — the composition root is sealed.
   `klangkd` is the only production entry point (constructs the app explicitly

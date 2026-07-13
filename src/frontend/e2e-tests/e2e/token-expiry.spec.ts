@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import { tmpdir } from "os";
 import { join } from "path";
 import { API_BASE, registerUser } from "./helpers";
+import { cleanEnv } from "../e2e-env";
 
 const JWT_SECRET = "e2e-test-secret";
 
@@ -88,7 +89,7 @@ test.describe("Token expiry", () => {
     // Run klangkc shell — it should fail with a clear error
     try {
       execSync(`klangkc shell "${workspace.name}"`, {
-        env: { ...process.env, HOME: tmpHome },
+        env: cleanEnv({ HOME: tmpHome }),
         encoding: "utf-8",
         timeout: 15_000,
       });

@@ -26,6 +26,15 @@ import pytest
 import websockets
 
 from klangk_backend.model import free_port
+import sys
+
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(__file__), "..", "..", "backend", "e2e-tests"
+    ),
+)
+from _e2e_env import clean_env
 
 logger = logging.getLogger(__name__)
 
@@ -45,19 +54,20 @@ def _run(args, timeout=120, input=None, **kwargs):
 
 
 def _start_server(data_dir):
-    env = {
-        **os.environ,
-        "KLANGK_PORT": PORT,
-        "KLANGK_DATA_DIR": data_dir,
-        "KLANGK_JWT_SECRET": "tw-e2e-secret",
-        "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
-        "KLANGK_DEFAULT_USER": "test@example.com",
-        "KLANGK_DEFAULT_PASSWORD": "testpass",
-        "KLANGK_TEST_MODE": "1",
-        "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-        "KLANGK_PORT_RANGE_START": str(free_port()),
-        "LOGFIRE_TOKEN": "",
-    }
+    state_dir = tempfile.mkdtemp(prefix="klangk-tw-e2e-state-")
+    env = clean_env(
+        KLANGK_PORT=PORT,
+        KLANGK_DATA_DIR=data_dir,
+        KLANGK_STATE_DIR=state_dir,
+        KLANGK_JWT_SECRET="tw-e2e-secret",
+        KLANGK_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGK_DEFAULT_USER="test@example.com",
+        KLANGK_DEFAULT_PASSWORD="testpass",
+        KLANGK_TEST_MODE="1",
+        KLANGK_IDLE_TIMEOUT_SECONDS="300",
+        KLANGK_PORT_RANGE_START=str(free_port()),
+        LOGFIRE_TOKEN="",
+    )
     log_path = os.path.join(data_dir, "server.log")
     log_file = open(log_path, "w")  # noqa: SIM115
     proc = subprocess.Popen(
@@ -121,7 +131,7 @@ def _stop_server(proc, data_dir):
         ["klangk-instance-id"],
         capture_output=True,
         text=True,
-        env={**os.environ, "KLANGK_DATA_DIR": data_dir},
+        env=clean_env(KLANGK_DATA_DIR=data_dir),
     ).stdout.strip()
     if instance_id:
         result = subprocess.run(
@@ -386,7 +396,7 @@ class TestTerminalWindows:
         data_dir = tempfile.mkdtemp(prefix="klangk-tw-e2e-")
         proc, base_url, server_env = _start_server(data_dir)
         config_dir = tmp_path_factory.mktemp("klangk-tw-config")
-        env = {**os.environ, "HOME": str(config_dir)}
+        env = clean_env(HOME=str(config_dir))
         (config_dir / ".config" / "klangk").mkdir(parents=True)
         _login(base_url, env)
         token = _get_token(base_url)

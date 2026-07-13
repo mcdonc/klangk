@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { cleanEnv } from "../e2e-env";
 import {
   API_BASE,
   TEST_PASSWORD,
@@ -576,6 +577,8 @@ test.describe("Klangk E2E", () => {
         const projectRoot = join(__dirname, "..", "..", "..", "..");
         const backendPort = process.env.KLANGK_E2E_PORT || "18997";
         const dataDir = process.env.KLANGK_E2E_DATA_DIR || "/tmp/klangk-e2e";
+        const stateDir =
+          process.env.KLANGK_E2E_STATE_DIR || "/tmp/klangk-e2e-state";
         const backendProcess = spawnProc(
           "python3",
           [
@@ -589,10 +592,10 @@ test.describe("Klangk E2E", () => {
             cwd: join(projectRoot, "src", "backend"),
             detached: true,
             stdio: ["ignore", "pipe", "pipe"],
-            env: {
-              ...process.env,
+            env: cleanEnv({
               KLANGK_PORT: backendPort,
               KLANGK_DATA_DIR: dataDir,
+              KLANGK_STATE_DIR: stateDir,
               KLANGK_JWT_SECRET: "e2e-test-secret",
               KLANGK_DEFAULT_USER: "admin@example.com",
               KLANGK_DEFAULT_PASSWORD: "admin",
@@ -606,7 +609,7 @@ test.describe("Klangk E2E", () => {
               KLANGK_OIDC_LOGIN_HOOK: "",
               KLANGK_DISABLE_REGISTRATION: "",
               KLANGK_DISABLE_INVITES: "",
-            },
+            }),
           },
         );
         restartedPid = backendProcess.pid ?? null;

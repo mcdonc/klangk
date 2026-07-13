@@ -16,6 +16,7 @@ import httpx
 import pytest
 
 from klangk_backend.model import free_port
+from _e2e_env import clean_env
 
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
 
@@ -54,23 +55,22 @@ def _start_klangkd():
 
     sock_path = os.path.join(data_dir, "klangk.sock")
 
-    env = {
-        **os.environ,
-        "KLANGK_LISTEN": sock_path,
-        "KLANGK_NGINX_PORT": nginx_port,
-        "KLANGK_STATE_DIR": data_dir,
-        "KLANGK_DATA_DIR": data_dir,
-        "KLANGK_JWT_SECRET": "nginx-lifecycle-test",
-        "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
-        "KLANGK_DEFAULT_USER": "test@example.com",
-        "KLANGK_DEFAULT_PASSWORD": "testpass",
-        "KLANGK_AUTH_MODES": "none",
-        "KLANGK_TEST_MODE": "1",
-        "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-        "KLANGK_PORT_RANGE_START": str(free_port()),
-        "_KLANGK_DISABLE_NGINX": "",
-        "LOGFIRE_TOKEN": "",
-    }
+    env = clean_env(
+        KLANGK_LISTEN=sock_path,
+        KLANGK_NGINX_PORT=nginx_port,
+        KLANGK_STATE_DIR=data_dir,
+        KLANGK_DATA_DIR=data_dir,
+        KLANGK_JWT_SECRET="nginx-lifecycle-test",
+        KLANGK_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGK_DEFAULT_USER="test@example.com",
+        KLANGK_DEFAULT_PASSWORD="testpass",
+        KLANGK_AUTH_MODES="none",
+        KLANGK_TEST_MODE="1",
+        KLANGK_IDLE_TIMEOUT_SECONDS="300",
+        KLANGK_PORT_RANGE_START=str(free_port()),
+        _KLANGK_DISABLE_NGINX="",
+        LOGFIRE_TOKEN="",
+    )
 
     proc = subprocess.Popen(
         ["python3", "-m", "klangk_backend.klangkd", "--config=none"],
