@@ -57,8 +57,8 @@ async def require_workspace_token(request: Request) -> str:
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing workspace token")
     token = authorization[7:]
-    result = auth.decode_workspace_token(token)
-    if result is auth.WORKSPACE_TOKEN_EXPIRED:
+    result = request.app.state.auth.decode_workspace_token(token)
+    if result is auth.Auth.WORKSPACE_TOKEN_EXPIRED:
         raise HTTPException(status_code=401, detail="Workspace token expired")
     if result is None:
         raise HTTPException(status_code=401, detail="Invalid workspace token")

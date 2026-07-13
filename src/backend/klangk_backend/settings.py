@@ -163,8 +163,11 @@ def _resolve_indirection(value: str | None, key: str = "") -> str | None:
 # KlangkSettings model
 # ---------------------------------------------------------------------------
 
-# The insecure default JWT secret — matches the constant in auth.py.
-_INSECURE_DEFAULT_SECRET = "change-this-to-a-random-secret"
+# The insecure default JWT secret. Single source of truth — auth.py's
+# Auth.jwt_secret_is_secure() compares against this (#1501).
+INSECURE_DEFAULT_SECRET = "change-this-to-a-random-secret"
+# Back-compat alias (was the private name).
+_INSECURE_DEFAULT_SECRET = INSECURE_DEFAULT_SECRET
 
 
 # --- Env-source override for injectable env dicts (#1426 Slice 1) ---

@@ -16,7 +16,6 @@ from jinja2 import (
     select_autoescape,
 )
 
-from . import auth
 from .exceptions import SendmailError
 
 logger = logging.getLogger(__name__)
@@ -269,7 +268,7 @@ class EmailService:
         rendered = self.render_email(
             "verify",
             link=verification_url,
-            expiry_hours=auth.VERIFY_TOKEN_EXPIRE_HOURS,
+            expiry_hours=self.app_state.auth.verify_token_expire_hours,
         )
         await self._send(self.build_multipart(to, rendered))
         logger.info("Verification email sent to %s", to)
@@ -279,7 +278,7 @@ class EmailService:
         rendered = self.render_email(
             "reset",
             link=reset_url,
-            expiry_hours=auth.RESET_TOKEN_EXPIRE_HOURS,
+            expiry_hours=self.app_state.auth.reset_token_expire_hours,
         )
         await self._send(self.build_multipart(to, rendered))
         logger.info("Password reset email sent to %s", to)
@@ -291,7 +290,7 @@ class EmailService:
         rendered = self.render_email(
             "invite",
             link=invite_url,
-            expiry_hours=auth.INVITE_TOKEN_EXPIRE_HOURS,
+            expiry_hours=self.app_state.auth.invite_token_expire_hours,
             invited_by=invited_by_email,
         )
         await self._send(self.build_multipart(to, rendered))

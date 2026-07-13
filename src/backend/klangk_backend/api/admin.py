@@ -49,7 +49,7 @@ async def send_invitation(
     app_state=Depends(get_app_state_dep),
 ):
     """Send an invitation email (admin only)."""
-    if not auth.invitations_enabled():
+    if not app_state.auth.invitations_enabled():
         raise HTTPException(status_code=403, detail="Invitations are disabled")
 
     auth.validate_email(req.email)
@@ -68,7 +68,7 @@ async def send_invitation(
         )
 
     invitation = await model.create_invitation(req.email, admin["id"])
-    token = auth.create_invitation_token(invitation["id"], req.email)
+    token = app_state.auth.create_invitation_token(invitation["id"], req.email)
 
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
@@ -143,7 +143,9 @@ async def resend_invitation(
             detail="Invitation not found or not pending",
         )
 
-    token = auth.create_invitation_token(invitation["id"], invitation["email"])
+    token = app_state.auth.create_invitation_token(
+        invitation["id"], invitation["email"]
+    )
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
     )
@@ -213,7 +215,7 @@ async def admin_create_user(
                 request.client.host if request.client else None,
             )
         )
-        verification_token = auth.create_verification_token(user_id)
+        verification_token = app_state.auth.create_verification_token(user_id)
         verification_url = (
             f"{proto}://{hostname}{base_path}"
             f"/#/verify?token={verification_token}"
@@ -242,7 +244,7 @@ async def admin_create_user(
             status_code=400,
             detail="Password is required when not sending verification email",
         )
-    auth.validate_password_length(req.password)
+    app_state.auth.validate_password_length(req.password)
     password_hash = auth.hash_password(req.password)
     user = await model.create_user(req.email, password_hash, verified=True)
     return {"id": user["id"], "email": user["email"], "status": "created"}
@@ -310,7 +312,7 @@ async def update_user(
     if req.email is not None:
         await model.update_email(user_id, req.email)
     if req.password is not None:
-        auth.validate_password_length(req.password)
+        app_state.auth.validate_password_length(req.password)
         password_hash = auth.hash_password(req.password)
         await model.update_password(user_id, password_hash)
     if req.handle is not None:

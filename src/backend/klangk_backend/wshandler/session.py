@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from .. import auth, model
+from .. import model
 from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
 from .constants import (
     agent_conversations,
@@ -178,7 +178,7 @@ class WorkspaceSession:
                 return  # pragma: no cover
 
             # Renew at 80% of the token lifetime.
-            lifetime = auth.WORKSPACE_TOKEN_EXPIRE_HOURS * 3600
+            lifetime = self.app_state.auth.workspace_token_expire_hours * 3600
             delay = lifetime * 0.8
             try:
                 await asyncio.sleep(delay)
@@ -190,13 +190,17 @@ class WorkspaceSession:
                 return  # pragma: no cover
 
             try:
-                new_token = auth.create_workspace_token(self.workspace_id)
+                new_token = self.app_state.auth.create_workspace_token(
+                    self.workspace_id
+                )
                 await self.app_state.terminal.set_workspace_token(
                     container_id, new_token
                 )
                 self.workspace_token_expiry = datetime.now(
                     timezone.utc
-                ) + timedelta(hours=auth.WORKSPACE_TOKEN_EXPIRE_HOURS)
+                ) + timedelta(
+                    hours=self.app_state.auth.workspace_token_expire_hours
+                )
                 logger.info(
                     "Renewed workspace token for %s",
                     self.workspace_id,

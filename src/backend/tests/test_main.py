@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from klangk_backend import (
     agent as agent_mod,
+    auth as auth_mod,
     emailsvc as emailsvc_mod,
     util as util_mod,
     main,
@@ -53,6 +54,8 @@ def _make_app_state(settings=None):
     app_state.agents = agent_mod.Agents(app_state)
     app_state.email = emailsvc_mod.EmailService(app_state)
     app_state.util = util_mod.Util(app_state)
+
+    app_state.auth = auth_mod.Auth(app_state)
     return app_state
 
 
@@ -386,6 +389,8 @@ class TestLifespan:
         app.state.agents = agent_mod.Agents(app.state)
         app.state.email = emailsvc_mod.EmailService(app.state)
         app.state.util = util_mod.Util(app.state)
+
+        app.state.auth = auth_mod.Auth(app.state)
         registry = app_state.container_registry
         with (
             patch.object(
@@ -434,6 +439,8 @@ class TestLifespan:
         app.state.agents = agent_mod.Agents(app.state)
         app.state.email = emailsvc_mod.EmailService(app.state)
         app.state.util = util_mod.Util(app.state)
+
+        app.state.auth = auth_mod.Auth(app.state)
         registry = app_state.container_registry
         with (
             patch.object(
@@ -659,6 +666,8 @@ class TestStartupShutdownRestart:
         app.state.agents = agent_mod.Agents(app.state)
         app.state.email = emailsvc_mod.EmailService(app.state)
         app.state.util = util_mod.Util(app.state)
+
+        app.state.auth = auth_mod.Auth(app.state)
         registry = app_state.container_registry
         loop = asyncio.get_running_loop()
         with (
@@ -699,6 +708,8 @@ class TestSetupStaticFiles:
         _settings = make_settings({})
         test_app.state.settings = _settings
         test_app.state.util = util_mod.Util(test_app.state)
+
+        test_app.state.auth = auth_mod.Auth(test_app.state)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -716,6 +727,8 @@ class TestSetupStaticFiles:
         _settings = make_settings({})
         test_app.state.settings = _settings
         test_app.state.util = util_mod.Util(test_app.state)
+
+        test_app.state.auth = auth_mod.Auth(test_app.state)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -737,6 +750,8 @@ class TestSetupStaticFiles:
         _settings = make_settings({})
         test_app.state.settings = _settings
         test_app.state.util = util_mod.Util(test_app.state)
+
+        test_app.state.auth = auth_mod.Auth(test_app.state)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -756,6 +771,8 @@ class TestSetupStaticFiles:
         _settings = make_settings({})
         test_app.state.settings = _settings
         test_app.state.util = util_mod.Util(test_app.state)
+
+        test_app.state.auth = auth_mod.Auth(test_app.state)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -776,6 +793,8 @@ class TestSetupStaticFiles:
         _settings = make_settings({})
         test_app.state.settings = _settings
         test_app.state.util = util_mod.Util(test_app.state)
+
+        test_app.state.auth = auth_mod.Auth(test_app.state)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -799,6 +818,8 @@ class TestSetupStaticFiles:
         _settings = make_settings({"KLANGK_CUSTOMIZE_DIR": str(custom)})
         test_app.state.settings = _settings
         test_app.state.util = util_mod.Util(test_app.state)
+
+        test_app.state.auth = auth_mod.Auth(test_app.state)
         main.setup_static_files(test_app, tmp_path)
 
         branding_route = [
@@ -816,6 +837,8 @@ class TestSetupStaticFiles:
         _settings = make_settings({})
         test_app.state.settings = _settings
         test_app.state.util = util_mod.Util(test_app.state)
+
+        test_app.state.auth = auth_mod.Auth(test_app.state)
         main.setup_static_files(test_app, tmp_path)
 
         branding_route = [
@@ -830,6 +853,8 @@ class TestSetupStaticFiles:
         _settings = make_settings({})
         test_app.state.settings = _settings
         test_app.state.util = util_mod.Util(test_app.state)
+
+        test_app.state.auth = auth_mod.Auth(test_app.state)
         main.setup_static_files(test_app, tmp_path)
         transport = ASGITransport(app=test_app)
         async with AsyncClient(
@@ -849,6 +874,8 @@ class TestSetupStaticFiles:
         _settings = make_settings({})
         test_app.state.settings = _settings
         test_app.state.util = util_mod.Util(test_app.state)
+
+        test_app.state.auth = auth_mod.Auth(test_app.state)
         main.setup_static_files(test_app, tmp_path)
         transport = ASGITransport(app=test_app)
         async with AsyncClient(

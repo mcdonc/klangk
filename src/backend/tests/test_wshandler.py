@@ -17,6 +17,7 @@ from fastapi import WebSocketDisconnect
 
 from klangk_backend import (
     agent as agent_mod,
+    auth as auth_mod,
     emailsvc as emailsvc_mod,
     util as util_mod,
     model,
@@ -100,7 +101,15 @@ def _make_app_state(registry=None, sockets=None):
     app_state.agents = agent_mod.Agents(app_state)
     app_state.email = emailsvc_mod.EmailService(app_state)
     app_state.util = util_mod.Util(app_state)
+
+    app_state.auth = auth_mod.Auth(app_state)
     return app_state
+
+
+def _auth():
+    """A standalone Auth for token forging (same default secret as the
+    app fixture, so tokens round-trip through app.state.auth.decode_*)."""
+    return auth_mod.Auth(types.SimpleNamespace(settings=make_settings({})))
 
 
 def _mock_sock(headers=None, query_params=None):
@@ -1919,11 +1928,10 @@ class TestHandleWebsocketDispatch:
     """Test all command dispatch branches through the main handler."""
 
     async def _run_commands(self, user, commands, app_state=None):
-        from klangk_backend import auth as auth_mod
 
         if app_state is None:
             app_state = _make_app_state()
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         msgs = [json.dumps(c) for c in commands] + [WebSocketDisconnect()]
         websocket.receive_text = AsyncMock(side_effect=msgs)
@@ -1998,9 +2006,8 @@ class TestHandleWebsocketDispatch:
         """Container should NOT be killed on disconnect — idle timeout handles it."""
         app_state = _make_app_state()
         registry = app_state.container_registry
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
 
         workspace = await app_state.workspaces.create_workspace(
@@ -2071,8 +2078,6 @@ class TestHandleWebsocket:
 
         from jose import jwt
 
-        from klangk_backend import auth as auth_mod
-
         expired = datetime.now(timezone.utc) - timedelta(hours=1)
         payload = {
             "sub": user["id"],
@@ -2081,7 +2086,7 @@ class TestHandleWebsocket:
             "exp": expired,
         }
         token = jwt.encode(
-            payload, auth_mod.SECRET_KEY, algorithm=auth_mod.ALGORITHM
+            payload, _auth().secret, algorithm=_auth().algorithm
         )
         websocket = _mock_raw_sock(query_params={"token": token})
         await handle_websocket(websocket, app_state)
@@ -2091,9 +2096,8 @@ class TestHandleWebsocket:
 
     async def test_valid_token_then_disconnect(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(side_effect=WebSocketDisconnect())
 
@@ -2103,9 +2107,8 @@ class TestHandleWebsocket:
 
     async def test_unexpected_exception_logged(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=ValueError("unexpected")
@@ -2117,9 +2120,8 @@ class TestHandleWebsocket:
 
     async def test_runtime_error_treated_as_disconnect(self, user, app_state):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=RuntimeError(
@@ -2133,9 +2135,8 @@ class TestHandleWebsocket:
 
     async def test_invalid_json(self, user, app_state):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=["not json", WebSocketDisconnect()]
@@ -2148,9 +2149,8 @@ class TestHandleWebsocket:
 
     async def test_unknown_command(self, user, app_state):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -2168,9 +2168,8 @@ class TestHandleWebsocket:
         app_state = _make_app_state()
         sockets = app_state.sockets
         registry = app_state.container_registry
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "ui-ready-ws"
@@ -2227,9 +2226,8 @@ class TestHandleWebsocket:
 
     async def test_ui_ready_no_pending(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -2253,9 +2251,8 @@ class TestHandleWebsocket:
     async def test_general_exception_logged(self, user):
         app_state = _make_app_state()
         sockets = app_state.sockets
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=RuntimeError("unexpected")
@@ -3441,9 +3438,8 @@ class TestSshAgentForwarder:
 class TestExecDispatch:
     async def test_dispatch_exec_start(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -3459,9 +3455,8 @@ class TestExecDispatch:
 
     async def test_dispatch_exec_input(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -3477,9 +3472,8 @@ class TestExecDispatch:
 
     async def test_dispatch_exec_stop(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -3495,9 +3489,8 @@ class TestExecDispatch:
 
     async def test_dispatch_exec_close_stdin(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -3513,9 +3506,8 @@ class TestExecDispatch:
 
     async def test_dispatch_heartbeat(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -3531,9 +3523,8 @@ class TestExecDispatch:
 
     async def test_dispatch_chat_send(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -3549,9 +3540,8 @@ class TestExecDispatch:
 
     async def test_dispatch_chat_delete(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -3569,9 +3559,8 @@ class TestExecDispatch:
 class TestChatLoadMoreDispatch:
     async def test_dispatch_chat_load_more(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -3613,9 +3602,8 @@ class TestBrowserBridge:
     async def test_dispatch_browser_response(self, user):
         app_state = _make_app_state()
         sockets = app_state.sockets
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -4634,10 +4622,9 @@ class TestCleanupSubscriberRace:
 class TestWsDebugLogging:
     async def test_recv_logged_when_debug(self, user, monkeypatch):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
         monkeypatch.setattr(wshandler, "WS_DEBUG", True)
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -5336,9 +5323,8 @@ class TestHandleShutdownContainer:
 
     async def test_shutdown_dispatch(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -8277,9 +8263,8 @@ class TestSendQueueBehavior:
     async def test_slow_client_closes_connection(self, user):
         """When the send queue is full, handle_websocket drops the client."""
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
 
         # Make the raw websocket.send_json block forever so the queue fills up
@@ -9664,9 +9649,8 @@ class TestDispatchBrowserRequestStreamTo:
     async def test_loop_dispatches_browser_chunk(self, user, app_state):
         app_state = _make_app_state()
         sockets = app_state.sockets
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -9760,9 +9744,7 @@ class TestTokenRenewal:
         try:
             with (
                 patch.object(
-                    wshandler.auth,
-                    "WORKSPACE_TOKEN_EXPIRE_HOURS",
-                    0.0001,
+                    app_state.auth, "workspace_token_expire_hours", 0.0001
                 ),
                 patch.object(
                     _mock_term,
@@ -9782,7 +9764,7 @@ class TestTokenRenewal:
             assert mock_set.call_count >= 1
             cid, token = mock_set.call_args.args
             assert cid == "test-cid"
-            decoded = wshandler.auth.decode_workspace_token(token)
+            decoded = _auth().decode_workspace_token(token)
             assert decoded == workspace["id"]
         finally:
             sockets.sessions.pop(workspace["id"], None)
@@ -9814,9 +9796,7 @@ class TestTokenRenewal:
 
             with (
                 patch.object(
-                    wshandler.auth,
-                    "WORKSPACE_TOKEN_EXPIRE_HOURS",
-                    0.0001,
+                    app_state.auth, "workspace_token_expire_hours", 0.0001
                 ),
                 patch.object(
                     _mock_term,
@@ -9857,9 +9837,7 @@ class TestTokenRenewal:
         try:
             with (
                 patch.object(
-                    wshandler.auth,
-                    "WORKSPACE_TOKEN_EXPIRE_HOURS",
-                    0.0001,
+                    app_state.auth, "workspace_token_expire_hours", 0.0001
                 ),
                 patch.object(
                     _mock_term,
@@ -9929,9 +9907,8 @@ class TestTokenRenewal:
 class TestSSHAgentDispatch:
     async def test_dispatch_ssh_agent_start(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -9947,9 +9924,8 @@ class TestSSHAgentDispatch:
 
     async def test_dispatch_ssh_agent_data(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -9965,9 +9941,8 @@ class TestSSHAgentDispatch:
 
     async def test_dispatch_ssh_agent_stop(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -9983,9 +9958,8 @@ class TestSSHAgentDispatch:
 
     async def test_dispatch_share_window(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -10001,9 +9975,8 @@ class TestSSHAgentDispatch:
 
     async def test_dispatch_unshare_window(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -10019,9 +9992,8 @@ class TestSSHAgentDispatch:
 
     async def test_dispatch_create_shared_terminal(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -10037,9 +10009,8 @@ class TestSSHAgentDispatch:
 
     async def test_dispatch_join_shared_terminal(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -10061,9 +10032,8 @@ class TestSSHAgentDispatch:
 
     async def test_dispatch_delete_shared_terminal(self, user):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -10081,9 +10051,8 @@ class TestSSHAgentDispatch:
 
     async def test_dispatch_list_shared_terminals(self, user, app_state):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -10101,9 +10070,8 @@ class TestSSHAgentDispatch:
 
     async def test_dispatch_chat_agent_abort(self, user, app_state):
         app_state = _make_app_state()
-        from klangk_backend import auth as auth_mod
 
-        token = auth_mod.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
             side_effect=[
@@ -10446,7 +10414,7 @@ class TestTokenRenewalFailureLogged:
         ) + timedelta(seconds=0.05)
         with (
             patch.object(
-                wshandler.auth, "WORKSPACE_TOKEN_EXPIRE_HOURS", 0.0001
+                app_state.auth, "workspace_token_expire_hours", 0.0001
             ),
             patch.object(
                 _mock_term,

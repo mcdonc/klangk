@@ -18,7 +18,7 @@ from httpx import ASGITransport, AsyncClient
 
 from klangk_backend import (
     api,
-    auth,
+    auth as auth_mod,
     emailsvc as emailsvc_mod,
     util as util_mod,
     main,
@@ -29,6 +29,13 @@ from klangk_backend import (
 from _helpers import make_settings
 from klangk_backend.main import register_exception_handlers
 from klangk_backend.util import API_PREFIX
+import types
+
+
+def _auth():
+    """Standalone Auth for token forging (default secret matches the app)."""
+    return auth_mod.Auth(types.SimpleNamespace(settings=make_settings({})))
+
 
 DEFAULT_EMAIL = "admin@example.com"
 SEEDED_PASSWORD = "seeded-pw"
@@ -62,6 +69,8 @@ async def mode_server(db, monkeypatch):
     app.state.plugins = plugins_mod.Plugins(app.state)
     app.state.email = emailsvc_mod.EmailService(app.state)
     app.state.util = util_mod.Util(app.state)
+
+    app.state.auth = auth_mod.Auth(app.state)
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)
     register_exception_handlers(app)
@@ -348,7 +357,7 @@ class TestChangePasswordReality:
             "oidc-only@example.com", None, verified=True
         )
         # Mint a token for that user so the request authenticates.
-        oidc_token = auth.create_token(oidc_user["id"], oidc_user["email"])
+        oidc_token = _auth().create_token(oidc_user["id"], oidc_user["email"])
 
         resp = await client.post(
             "/api/v1/auth/change-password",

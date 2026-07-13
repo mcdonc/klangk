@@ -21,7 +21,6 @@ from .. import (
     wshandler,
 )
 from ._common import get_app_state_dep
-from ..util import resolve_env_value
 from ._common import (
     send_email,
 )
@@ -43,8 +42,8 @@ async def verify_workspace_token(request: Request):
             headers={"X-Token-Error": "missing"},
         )
     token = authorization[7:]
-    result = auth.decode_workspace_token(token)
-    if result is auth.WORKSPACE_TOKEN_EXPIRED:
+    result = request.app.state.auth.decode_workspace_token(token)
+    if result is auth.Auth.WORKSPACE_TOKEN_EXPIRED:
         return JSONResponse(
             status_code=401,
             content={"detail": "Workspace token expired"},
@@ -70,9 +69,9 @@ async def register(
             status_code=403,
             detail="Password registration is disabled",
         )
-    if resolve_env_value("KLANGK_TEST_MODE"):
+    if request.app.state.settings.test_mode:
         # Test mode: auto-verify so E2E tests get immediate access
-        result = await auth.register(req, verified=True)
+        result = await request.app.state.auth.register(req, verified=True)
         return result
 
     logger.info("Registering user: %s", req.email)
@@ -80,7 +79,7 @@ async def register(
     existing = await model.get_user_by_email(req.email)
     if existing is not None:
         raise HTTPException(status_code=400, detail="Registration failed")
-    auth.validate_password_length(req.password)
+    request.app.state.auth.validate_password_length(req.password)
 
     password_hash = auth.hash_password(req.password)
     user_id = str(uuid.uuid4())
@@ -94,7 +93,9 @@ async def register(
         proto,
         base_path,
     )
-    verification_token = auth.create_verification_token(user_id)
+    verification_token = request.app.state.auth.create_verification_token(
+        user_id
+    )
     verification_url = (
         f"{proto}://{hostname}{base_path}/#/verify?token={verification_token}"
     )
@@ -125,9 +126,9 @@ async def register(
 
 
 @router.get("/auth/verify")
-async def verify_email(token: str):
+async def verify_email(token: str, request: Request):
     """Verify a user's email via the token from the verification link."""
-    user_id = auth.decode_verification_token(token)
+    user_id = request.app.state.auth.decode_verification_token(token)
     if user_id is None:
         raise HTTPException(
             status_code=400, detail="Invalid or expired verification token"
@@ -136,7 +137,7 @@ async def verify_email(token: str):
     if not updated:
         raise HTTPException(status_code=404, detail="User not found")
     user = await model.get_user_by_id(user_id)
-    access_token = auth.create_token(user_id, user["email"])
+    access_token = request.app.state.auth.create_token(user_id, user["email"])
     return {"status": "verified", "access_token": access_token}
 
 
@@ -194,7 +195,9 @@ async def resend_verification(
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
     )
-    verification_token = auth.create_verification_token(user["id"])
+    verification_token = request.app.state.auth.create_verification_token(
+        user["id"]
+    )
     verification_url = (
         f"{proto}://{hostname}{base_path}/#/verify?token={verification_token}"
     )
@@ -206,7 +209,7 @@ async def resend_verification(
     return {"status": "sent"}
 
 
-class ForgotPasswordRequest(auth.BaseModel):
+class ForgotPasswordRequest(BaseModel):
     email: str
 
 
@@ -240,7 +243,9 @@ async def forgot_password(
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
     )
-    reset_token = auth.create_password_reset_token(user["id"])
+    reset_token = request.app.state.auth.create_password_reset_token(
+        user["id"]
+    )
     reset_url = (
         f"{proto}://{hostname}{base_path}/#/reset-password?token={reset_token}"
     )
@@ -252,20 +257,20 @@ async def forgot_password(
     return {"status": "sent"}
 
 
-class ResetPasswordRequest(auth.BaseModel):
+class ResetPasswordRequest(BaseModel):
     token: str
     password: str
 
 
 @router.post("/auth/reset-password")
-async def reset_password(req: ResetPasswordRequest):
+async def reset_password(req: ResetPasswordRequest, request: Request):
     """Reset password using a token from the reset email."""
-    user_id = auth.decode_password_reset_token(req.token)
+    user_id = request.app.state.auth.decode_password_reset_token(req.token)
     if user_id is None:
         raise HTTPException(
             status_code=400, detail="Invalid or expired reset token"
         )
-    auth.validate_password_length(req.password)
+    request.app.state.auth.validate_password_length(req.password)
     if user_id == model.AGENT_USER_ID:
         raise HTTPException(
             status_code=400,
@@ -277,7 +282,7 @@ async def reset_password(req: ResetPasswordRequest):
     user = await model.get_user_by_id(user_id)
     if user is None:  # pragma: no cover
         raise HTTPException(status_code=404, detail="User not found")
-    token = auth.create_token(user_id, user["email"])
+    token = request.app.state.auth.create_token(user_id, user["email"])
     return {"status": "reset", "access_token": token}
 
 
@@ -290,10 +295,10 @@ async def login(
         raise HTTPException(
             status_code=403, detail="Password login is disabled"
         )
-    return await auth.login(req)
+    return await request.app.state.auth.login(req)
 
 
-class LocalLoginResponse(auth.BaseModel):
+class LocalLoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     email: str
@@ -330,7 +335,7 @@ async def local_login(request: Request):
             status_code=403,
             detail="Local login requires a loopback client",
         )
-    email = resolve_env_value("KLANGK_DEFAULT_USER", "admin@example.com")
+    email = request.app.state.settings.default_user
     user = await model.get_user_by_email(email)
     if user is None:
         # seed_default_user() runs in the lifespan before the app serves
@@ -339,7 +344,7 @@ async def local_login(request: Request):
             status_code=500,
             detail="Default user is not seeded",
         )
-    token = auth.create_token(user["id"], user["email"])
+    token = request.app.state.auth.create_token(user["id"], user["email"])
     return LocalLoginResponse(access_token=token, email=user["email"])
 
 
@@ -350,10 +355,10 @@ async def refresh_token(request: Request):
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
     token = authorization[7:]
-    return await auth.refresh_token(token)
+    return await request.app.state.auth.refresh_token(token)
 
 
-class ChangePasswordRequest(auth.BaseModel):
+class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
 
@@ -361,6 +366,7 @@ class ChangePasswordRequest(auth.BaseModel):
 @router.post("/auth/change-password")
 async def change_password(
     req: ChangePasswordRequest,
+    request: Request,
     user: dict = Depends(auth.get_current_user),
 ):
     """Change password. Requires current password."""
@@ -378,13 +384,13 @@ async def change_password(
         raise HTTPException(
             status_code=401, detail="Current password is incorrect"
         )
-    auth.validate_password_length(req.new_password)
+    request.app.state.auth.validate_password_length(req.new_password)
     password_hash = auth.hash_password(req.new_password)
     await model.update_password(user["id"], password_hash)
     return {"status": "updated"}
 
 
-class ChangeEmailRequest(auth.BaseModel):
+class ChangeEmailRequest(BaseModel):
     email: str
     password: str
 
@@ -424,7 +430,7 @@ async def change_email(
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
     )
-    token = auth.create_verification_token(user["id"])
+    token = request.app.state.auth.create_verification_token(user["id"])
     url = f"{proto}://{hostname}{base_path}/#/verify?token={token}"
     await send_email(
         app_state.email.send_verification_email(req.email, url),
@@ -434,7 +440,7 @@ async def change_email(
     return {"status": "updated", "needs_verification": True}
 
 
-class ChangeHandleRequest(auth.BaseModel):
+class ChangeHandleRequest(BaseModel):
     handle: str
     password: str
 
@@ -491,7 +497,7 @@ async def logout(
     # Blocklist the token so it can't be reused after logout
     authorization = request.headers.get("authorization", "")
     if authorization.startswith("Bearer "):
-        await auth.logout(authorization[7:])
+        await request.app.state.auth.logout(authorization[7:])
 
     # If the user logged in via OIDC and the provider has logout_redirect
     # enabled, return the IdP logout URL so the frontend can redirect.
@@ -524,9 +530,9 @@ class AcceptInviteRequest(BaseModel):
 
 
 @router.post("/auth/accept-invite")
-async def accept_invite(req: AcceptInviteRequest):
+async def accept_invite(req: AcceptInviteRequest, request: Request):
     """Accept an invitation and create a verified account."""
-    result = auth.decode_invitation_token(req.token)
+    result = request.app.state.auth.decode_invitation_token(req.token)
     if result is None:
         raise HTTPException(
             status_code=400, detail="Invalid or expired invitation token"
@@ -539,7 +545,7 @@ async def accept_invite(req: AcceptInviteRequest):
             status_code=400, detail="Invitation is no longer valid"
         )
 
-    auth.validate_password_length(req.password)
+    request.app.state.auth.validate_password_length(req.password)
 
     existing = await model.get_user_by_email(email)
     if existing is not None:
@@ -551,5 +557,7 @@ async def accept_invite(req: AcceptInviteRequest):
     user = await model.create_user(email, password_hash, verified=True)
     await model.mark_invitation_accepted(invitation_id)
 
-    access_token = auth.create_token(user["id"], user["email"])
+    access_token = request.app.state.auth.create_token(
+        user["id"], user["email"]
+    )
     return {"status": "accepted", "access_token": access_token}

@@ -15,7 +15,7 @@ from httpx import AsyncClient, ASGITransport
 from klangk_backend import (
     agent,
     api,
-    auth,
+    auth as auth_mod,
     model,
     podman,
     workspaces as ws_mod,
@@ -27,6 +27,18 @@ from klangk_backend import oidc as oidc_mod
 from klangk_backend import plugins as plugins_mod
 from _helpers import make_settings
 from klangk_backend.wshandler.session import WebSocketState
+import types
+
+
+def _auth():
+    """A standalone Auth for token forging (same default secret as the
+    app fixture, so tokens round-trip through app.state.auth.decode_*)."""
+    return auth_mod.Auth(types.SimpleNamespace(settings=make_settings({})))
+
+
+# Aliases for the raw-JWT test that builds a token by hand.
+_SECRET = make_settings({}).jwt_secret
+_ALGORITHM = "HS256"
 
 # Mock Podman instance wired onto app.state.podman by the app fixture;
 # files/volume-API tests patch its methods via patch.object (#1468).
@@ -64,6 +76,8 @@ async def app(db, temp_data_dir):
     app.state.agents.get_workspace_session = sockets.get_session
     app.state.email = emailsvc_mod.EmailService(app.state)
     app.state.util = util_mod.Util(app.state)
+
+    app.state.auth = auth_mod.Auth(app.state)
 
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)
@@ -107,7 +121,7 @@ async def _oidc_user_headers(email="oidc@example.com"):
     authenticated endpoints that must not 500 on a NULL hash (#890).
     """
     user = await model.create_user(email, None, verified=True, provider="oidc")
-    token = auth.create_token(user["id"], user["email"])
+    token = _auth().create_token(user["id"], user["email"])
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -130,7 +144,7 @@ class TestEmpty:
 
 class TestVerifyWorkspaceToken:
     async def test_valid_workspace_token(self, client):
-        token = auth.create_workspace_token("ws-123")
+        token = _auth().create_workspace_token("ws-123")
         resp = await client.get(
             "/api/v1/auth/verify-workspace-token",
             headers={"Authorization": f"Bearer {token}"},
@@ -150,7 +164,7 @@ class TestVerifyWorkspaceToken:
         assert resp.status_code == 401
 
     async def test_user_jwt_rejected(self, client):
-        user_token = auth.create_token("user-1", "u@test.com")
+        user_token = _auth().create_token("user-1", "u@test.com")
         resp = await client.get(
             "/api/v1/auth/verify-workspace-token",
             headers={"Authorization": f"Bearer {user_token}"},
@@ -164,7 +178,7 @@ class TestVerifyWorkspaceToken:
 
         expired = datetime.now(timezone.utc) - timedelta(hours=1)
         payload = {"sub": "ws-123", "purpose": "workspace", "exp": expired}
-        token = jwt.encode(payload, auth.SECRET_KEY, algorithm=auth.ALGORITHM)
+        token = jwt.encode(payload, _SECRET, algorithm=_ALGORITHM)
         resp = await client.get(
             "/api/v1/auth/verify-workspace-token",
             headers={"Authorization": f"Bearer {token}"},
@@ -184,7 +198,7 @@ class TestVerifyWorkspaceToken:
 class TestWorkspaceChat:
     async def test_post_agent_message(self, client, user):
         workspace = await model.create_workspace(user["id"], "chat-ws")
-        token = auth.create_workspace_token(workspace["id"])
+        token = _auth().create_workspace_token(workspace["id"])
         resp = await client.post(
             "/api/v1/workspaces/post-chat-message",
             headers={"Authorization": f"Bearer {token}"},
@@ -198,7 +212,7 @@ class TestWorkspaceChat:
 
     async def test_broadcasts_to_websocket(self, client, user, sockets):
         workspace = await model.create_workspace(user["id"], "bcast-ws")
-        token = auth.create_workspace_token(workspace["id"])
+        token = _auth().create_workspace_token(workspace["id"])
         session = sockets.get_or_create_session(workspace["id"])
         mock_sock = MagicMock()
         session.subscribers.add(mock_sock)
@@ -231,7 +245,7 @@ class TestWorkspaceChat:
         assert resp.status_code == 401
 
     async def test_workspace_not_found(self, client):
-        token = auth.create_workspace_token("nonexistent-ws")
+        token = _auth().create_workspace_token("nonexistent-ws")
         resp = await client.post(
             "/api/v1/workspaces/post-chat-message",
             headers={"Authorization": f"Bearer {token}"},
@@ -241,7 +255,7 @@ class TestWorkspaceChat:
 
     async def test_empty_message_rejected(self, client, user):
         workspace = await model.create_workspace(user["id"], "empty-ws")
-        token = auth.create_workspace_token(workspace["id"])
+        token = _auth().create_workspace_token(workspace["id"])
         resp = await client.post(
             "/api/v1/workspaces/post-chat-message",
             headers={"Authorization": f"Bearer {token}"},
@@ -391,7 +405,7 @@ class TestConfig:
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["min_password_length"] == auth.MIN_PASSWORD_LENGTH
+        assert data["min_password_length"] == _auth().min_password_length
 
     async def test_get_config_logo_url_defaults_empty(
         self, client, app, monkeypatch
@@ -402,8 +416,12 @@ class TestConfig:
         assert resp.status_code == 200
         assert resp.json()["logo_url"] == ""
 
-    async def test_get_config_logo_url_reflects_env(self, client, monkeypatch):
-        monkeypatch.setenv("KLANGK_LOGO_URL", "https://example.com/l.png")
+    async def test_get_config_logo_url_reflects_env(
+        self, client, app, monkeypatch
+    ):
+        monkeypatch.setattr(
+            app.state.settings, "logo_url", "https://example.com/l.png"
+        )
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         assert resp.json()["logo_url"] == "https://example.com/l.png"
@@ -460,10 +478,13 @@ class TestConfig:
     async def test_get_config_logo_url_resolves_file_secret(
         self, client, app, tmp_path, monkeypatch
     ):
-        # file:/cmd: resolution works like other secrets (#1152).
-        secret = tmp_path / "logo_url"
-        secret.write_text("https://from.secret/l.png")
-        monkeypatch.setenv("KLANGK_LOGO_URL", f"file:{secret}")
+        # file:/cmd: resolution happens at settings construction (#1461);
+        # the field holds the resolved value, which /config surfaces as-is.
+        monkeypatch.setattr(
+            app.state.settings,
+            "logo_url",
+            "https://from.secret/l.png",
+        )
         resp = await client.get("/api/v1/config")
         assert resp.json()["logo_url"] == "https://from.secret/l.png"
 
@@ -532,9 +553,9 @@ class TestAuthRoutes:
         assert user is not None
         assert user["handle"] == "handleme"  # derived, not NULL
 
-    async def test_register_test_mode(self, client, db, monkeypatch):
+    async def test_register_test_mode(self, client, app, db, monkeypatch):
         """In test mode, unauthenticated registration is allowed and auto-verified."""
-        monkeypatch.setenv("KLANGK_TEST_MODE", "1")
+        monkeypatch.setattr(app.state.settings, "test_mode", "1")
         resp = await client.post(
             "/api/v1/auth/register",
             json={"email": "new@example.com", "password": "newpass1"},
@@ -603,15 +624,13 @@ class TestAuthRoutes:
 
     async def test_verify_email(self, client, db):
         """Verify endpoint marks user as verified."""
-        from klangk_backend import auth as auth_mod
-
         import bcrypt
 
         password_hash = bcrypt.hashpw(b"pass", bcrypt.gensalt()).decode()
         user = await model.create_user(
             "unverified@example.com", password_hash, verified=False
         )
-        token = auth_mod.create_verification_token(user["id"])
+        token = _auth().create_verification_token(user["id"])
         resp = await client.get(f"/api/v1/auth/verify?token={token}")
         assert resp.status_code == 200
         assert resp.json()["status"] == "verified"
@@ -627,9 +646,7 @@ class TestAuthRoutes:
         assert resp.status_code == 400
 
     async def test_verify_nonexistent_user(self, client, db):
-        from klangk_backend import auth as auth_mod
-
-        token = auth_mod.create_verification_token("nonexistent-id")
+        token = _auth().create_verification_token("nonexistent-id")
         resp = await client.get(f"/api/v1/auth/verify?token={token}")
         assert resp.status_code == 404
 
@@ -691,10 +708,12 @@ class TestLocalLogin:
         self, client, app, db, monkeypatch
     ):
         monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")
-        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        monkeypatch.setattr(
+            app.state.settings, "default_user", "local@example.com"
+        )
         await model.create_user(
             "local@example.com",
-            auth.hash_password("unused"),
+            auth_mod.hash_password("unused"),
             verified=True,
         )
         resp = await client.post("/api/v1/auth/local")
@@ -704,17 +723,19 @@ class TestLocalLogin:
         assert data["token_type"] == "bearer"
         token = data["access_token"]
         # The token flows through the normal JWT gate unchanged.
-        claims = auth.decode_token(token)
+        claims = _auth().decode_token(token)
         assert claims["email"] == "local@example.com"
 
     async def test_token_authorizes_requests(
         self, client, app, db, monkeypatch
     ):
         monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")
-        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        monkeypatch.setattr(
+            app.state.settings, "default_user", "local@example.com"
+        )
         await model.create_user(
             "local@example.com",
-            auth.hash_password("unused"),
+            auth_mod.hash_password("unused"),
             verified=True,
         )
         token = (await client.post("/api/v1/auth/local")).json()[
@@ -748,16 +769,20 @@ class TestLocalLogin:
         # app skips — so if it were somehow bypassed at runtime the endpoint
         # surfaces a 500 rather than minting a token for a ghost user.
         monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")
-        monkeypatch.setenv("KLANGK_DEFAULT_USER", "ghost@example.com")
+        monkeypatch.setattr(
+            app.state.settings, "default_user", "ghost@example.com"
+        )
         resp = await client.post("/api/v1/auth/local")
         assert resp.status_code == 500
 
     async def test_no_body_required(self, client, app, db, monkeypatch):
         monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")
-        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        monkeypatch.setattr(
+            app.state.settings, "default_user", "local@example.com"
+        )
         await model.create_user(
             "local@example.com",
-            auth.hash_password("unused"),
+            auth_mod.hash_password("unused"),
             verified=True,
         )
         # Simple POST (no JSON body, no custom header) — the loopback bind +
@@ -778,10 +803,12 @@ class TestLocalLogin:
         """Front-proxy bypass: peer is loopback (nginx) but X-Real-IP is the
         real client (a workspace container) -> backend refuses independently."""
         monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")
-        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        monkeypatch.setattr(
+            app.state.settings, "default_user", "local@example.com"
+        )
         await model.create_user(
             "local@example.com",
-            auth.hash_password("unused"),
+            auth_mod.hash_password("unused"),
             verified=True,
         )
         resp = await client.post(
@@ -798,10 +825,12 @@ class TestLocalLogin:
         operator's browser) -> admit. (ASGI test client peer is itself
         loopback, satisfying the trust gate that honors X-Real-IP.)"""
         monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")
-        monkeypatch.setenv("KLANGK_DEFAULT_USER", "local@example.com")
+        monkeypatch.setattr(
+            app.state.settings, "default_user", "local@example.com"
+        )
         await model.create_user(
             "local@example.com",
-            auth.hash_password("unused"),
+            auth_mod.hash_password("unused"),
             verified=True,
         )
         resp = await client.post(
@@ -813,7 +842,7 @@ class TestLocalLogin:
 
 class TestResendVerification:
     async def _create_unverified_user(self):
-        password_hash = auth.hash_password("testpass")
+        password_hash = auth_mod.hash_password("testpass")
         await model.create_user(
             "unverified@example.com", password_hash, verified=False
         )
@@ -976,7 +1005,7 @@ class TestResendVerification:
 
 class TestForgotPassword:
     async def _create_user(self):
-        password_hash = auth.hash_password("oldpass")
+        password_hash = auth_mod.hash_password("oldpass")
         return await model.create_user(
             "forgot@example.com", password_hash, verified=True
         )
@@ -1056,14 +1085,14 @@ class TestForgotPassword:
 
 class TestResetPassword:
     async def _create_user(self):
-        password_hash = auth.hash_password("oldpass")
+        password_hash = auth_mod.hash_password("oldpass")
         return await model.create_user(
             "reset@example.com", password_hash, verified=True
         )
 
     async def test_reset_success(self, client, db):
         user = await self._create_user()
-        token = auth.create_password_reset_token(user["id"])
+        token = _auth().create_password_reset_token(user["id"])
         resp = await client.post(
             "/api/v1/auth/reset-password",
             json={"token": token, "password": "newpass1"},
@@ -1091,7 +1120,7 @@ class TestResetPassword:
 
     async def test_reset_short_password(self, client, db):
         user = await self._create_user()
-        token = auth.create_password_reset_token(user["id"])
+        token = _auth().create_password_reset_token(user["id"])
         resp = await client.post(
             "/api/v1/auth/reset-password",
             json={"token": token, "password": "ab"},
@@ -1100,7 +1129,7 @@ class TestResetPassword:
         assert "8 characters" in resp.json()["detail"]
 
     async def test_reset_agent_user_rejected(self, client, db):
-        token = auth.create_password_reset_token(model.AGENT_USER_ID)
+        token = _auth().create_password_reset_token(model.AGENT_USER_ID)
         resp = await client.post(
             "/api/v1/auth/reset-password",
             json={"token": token, "password": "newpass1"},
@@ -1224,7 +1253,7 @@ class TestChangeEmail:
 
     async def test_change_email_already_taken(self, client, user, db):
         # Create another user
-        password_hash = auth.hash_password("other")
+        password_hash = auth_mod.hash_password("other")
         await model.create_user(
             "other@example.com", password_hash, verified=True
         )
@@ -2172,7 +2201,7 @@ class TestWorkspaceRoutes:
 
 class TestWorkspaceSharingRoutes:
     async def _create_other_user(self):
-        password_hash = auth.hash_password("otherpass")
+        password_hash = auth_mod.hash_password("otherpass")
         return await model.create_user(
             "other@example.com", password_hash, verified=True
         )
@@ -3159,7 +3188,7 @@ class TestTransferOwnership:
         ws_id = resp.json()["id"]
 
         other = await model.create_user("xfer-other@test.com", "pass")
-        other_token = auth.create_token(other["id"], other["email"])
+        other_token = _auth().create_token(other["id"], other["email"])
         other_headers = {"Authorization": f"Bearer {other_token}"}
 
         await model.create_user("xfer-target2@test.com", "pass")
@@ -3216,7 +3245,7 @@ class TestTransferOwnership:
         assert resp.status_code == 200
 
         # New owner should be in the owners role group
-        target_token = auth.create_token(target["id"], target["email"])
+        target_token = _auth().create_token(target["id"], target["email"])
         target_headers = {"Authorization": f"Bearer {target_token}"}
         resp = await client.get(
             f"/api/v1/workspaces/{ws_id}/roles",
@@ -3640,7 +3669,7 @@ class TestUserSearch:
 
 class TestBrowserBridge:
     def _ws_token_headers(self, workspace_id="ws-test"):
-        token = auth.create_workspace_token(workspace_id)
+        token = _auth().create_workspace_token(workspace_id)
         return {"Authorization": f"Bearer {token}"}
 
     async def test_missing_token_returns_401(self, client, user):
@@ -3659,11 +3688,11 @@ class TestBrowserBridge:
         assert resp.status_code == 403
         assert "Unknown browser ID" in resp.json()["detail"]
 
-    async def test_expired_token_returns_401(self, client, user):
+    async def test_expired_token_returns_401(self, client, app, user):
         with patch.object(
-            auth,
+            app.state.auth,
             "decode_workspace_token",
-            return_value=auth.WORKSPACE_TOKEN_EXPIRED,
+            return_value=auth_mod.Auth.WORKSPACE_TOKEN_EXPIRED,
         ):
             resp = await client.post(
                 "/api/v1/browser-delegate",
@@ -4730,8 +4759,8 @@ class TestGroups:
 
     async def test_jwt_has_no_roles(self, user):
         """JWT tokens no longer include roles."""
-        token = auth.create_token(user["id"], "testuser@example.com")
-        payload = auth.decode_token(token)
+        token = _auth().create_token(user["id"], "testuser@example.com")
+        payload = _auth().decode_token(token)
         assert "roles" not in payload
 
     async def test_login_jwt_has_no_roles(self, client, user):
@@ -4741,7 +4770,7 @@ class TestGroups:
         )
         assert resp.status_code == 200
         token = resp.json()["access_token"]
-        payload = auth.decode_token(token)
+        payload = _auth().decode_token(token)
         assert "roles" not in payload
 
 
@@ -7206,7 +7235,9 @@ class TestInvitations:
         self, client, app, admin_user, monkeypatch
     ):
         headers = await self._admin_headers(client)
-        monkeypatch.setattr(auth, "invitations_enabled", lambda: False)
+        monkeypatch.setattr(
+            app.state.auth, "invitations_enabled", lambda: False
+        )
         resp = await client.post(
             "/api/v1/admin/invitations",
             headers=headers,
@@ -7589,7 +7620,7 @@ class TestInvitations:
                 json={"email": "accept@example.com"},
             )
         inv_id = create_resp.json()["id"]
-        token = auth.create_invitation_token(inv_id, "accept@example.com")
+        token = _auth().create_invitation_token(inv_id, "accept@example.com")
 
         resp = await client.post(
             "/api/v1/auth/accept-invite",
@@ -7628,7 +7659,7 @@ class TestInvitations:
                 json={"email": "double@example.com"},
             )
         inv_id = create_resp.json()["id"]
-        token = auth.create_invitation_token(inv_id, "double@example.com")
+        token = _auth().create_invitation_token(inv_id, "double@example.com")
 
         # Accept once
         await client.post(
@@ -7656,7 +7687,7 @@ class TestInvitations:
                 json={"email": "short@example.com"},
             )
         inv_id = create_resp.json()["id"]
-        token = auth.create_invitation_token(inv_id, "short@example.com")
+        token = _auth().create_invitation_token(inv_id, "short@example.com")
 
         resp = await client.post(
             "/api/v1/auth/accept-invite",
@@ -7680,10 +7711,12 @@ class TestInvitations:
                 json={"email": "noreg@example.com"},
             )
         inv_id = create_resp.json()["id"]
-        token = auth.create_invitation_token(inv_id, "noreg@example.com")
+        token = _auth().create_invitation_token(inv_id, "noreg@example.com")
 
         # Disable registration
-        monkeypatch.setattr(auth, "registration_enabled", lambda: False)
+        monkeypatch.setattr(
+            app.state.auth, "registration_enabled", lambda: False
+        )
 
         # Accept-invite should still work
         resp = await client.post(
@@ -7708,11 +7741,11 @@ class TestInvitations:
                 json={"email": "race@example.com"},
             )
         inv_id = create_resp.json()["id"]
-        token = auth.create_invitation_token(inv_id, "race@example.com")
+        token = _auth().create_invitation_token(inv_id, "race@example.com")
 
         # Simulate race: create user with that email before accepting
         await model.create_user(
-            "race@example.com", auth.hash_password("pass"), verified=True
+            "race@example.com", auth_mod.hash_password("pass"), verified=True
         )
 
         resp = await client.post(
@@ -7724,7 +7757,7 @@ class TestInvitations:
 
     async def test_accept_invite_wrong_purpose_token(self, client, db):
         # Use a verification token (wrong purpose)
-        token = auth.create_verification_token("fake-user-id")
+        token = _auth().create_verification_token("fake-user-id")
         resp = await client.post(
             "/api/v1/auth/accept-invite",
             json={"token": token, "password": "newpassword"},
@@ -7740,13 +7773,13 @@ class TestInvitations:
         self, client, app, monkeypatch
     ):
         # Default: flag unset -> not allowed, so the UI hides its checkbox.
-        monkeypatch.delenv("KLANGK_ALLOW_AUTOSTART", raising=False)
+        monkeypatch.setattr(app.state.settings, "allow_autostart", None)
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         assert resp.json()["allow_autostart"] is False
 
         # Flag set -> advertised as true so the UI may show the checkbox.
-        monkeypatch.setenv("KLANGK_ALLOW_AUTOSTART", "1")
+        monkeypatch.setattr(app.state.settings, "allow_autostart", "1")
         resp = await client.get("/api/v1/config")
         assert resp.json()["allow_autostart"] is True
 
@@ -8579,7 +8612,7 @@ class TestOIDCLogout:
             provider="test",
             external_id="logout-sub",
         )
-        token = auth.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         headers = {"Authorization": f"Bearer {token}"}
 
         provider = api.oidc.OIDCProvider(
@@ -8629,7 +8662,7 @@ class TestOIDCLogout:
             provider="test",
             external_id="nologout-sub",
         )
-        token = auth.create_token(user["id"], user["email"])
+        token = _auth().create_token(user["id"], user["email"])
         headers = {"Authorization": f"Bearer {token}"}
 
         provider = api.oidc.OIDCProvider(

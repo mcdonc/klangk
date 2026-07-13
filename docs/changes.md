@@ -79,6 +79,18 @@ operators or integrators to act when upgrading.
   call time. The module globals `_REJECT_PROXY`, `_TRUSTED_PROXY_CIDRS`, and
   `_UDS_MODE` are gone. `klangkd` arms UDS trust via
   `app.state.util.set_uds_mode(True)` after `build_app` (#1503, #1426).
+- **Auth config is instance-owned on `Auth(app_state)`:** `auth.py` no longer
+  reads config at import time. The module globals (`SECRET_KEY`,
+  `ALGORITHM`, `TOKEN_EXPIRE_HOURS`, `MIN_PASSWORD_LENGTH`, `LOGIN_LOCKOUT_*`,
+  `INVITE_TOKEN_EXPIRE_HOURS`, `WORKSPACE_TOKEN_EXPIRE_HOURS`) and the
+  call-time `resolve_env_value` reads are gone; each is an instance attr or
+  method reading `self.settings`. Token create/decode, register/login/
+  refresh/logout, `registration_enabled`/`invitations_enabled`, and
+  `require_secure_jwt_secret` are methods on `Auth`, reached via
+  `app.state.auth.*`. Pure helpers (password hashing, email validation, the
+  lockout predicate) and the FastAPI dependency callables stay module-level.
+  `_INSECURE_DEFAULT_SECRET` consolidated into `settings.INSECURE_DEFAULT_SECRET`
+  (#1501, #1426).
 
 ### Removed
 

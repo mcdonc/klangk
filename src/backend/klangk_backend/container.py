@@ -5,7 +5,7 @@ import logging
 import os
 import time
 
-from . import auth, bringup, model, podman
+from . import bringup, model, podman
 from .podman import PodmanError
 
 logger = logging.getLogger(__name__)
@@ -1308,7 +1308,9 @@ class ContainerRegistry:
 
         # Write the workspace token so container processes can
         # authenticate without an env-var restart.
-        workspace_token = auth.create_workspace_token(workspace_id)
+        workspace_token = self.app_state.auth.create_workspace_token(
+            workspace_id
+        )
         await self.app_state.terminal.set_workspace_token(cid, workspace_token)
 
         # Block until the entrypoint's one-time setup is done. ``podman

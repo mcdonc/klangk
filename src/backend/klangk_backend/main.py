@@ -574,7 +574,7 @@ async def lifespan(app: FastAPI):
     # and therefore before trust is applied.
     setup_logfire(app)
 
-    auth.require_secure_jwt_secret()
+    app.state.auth.require_secure_jwt_secret()
     app.state.plugins.load()
     app.state.oidc.init_providers()
     enforce_no_auth_bind_safety(app.state)
@@ -718,6 +718,11 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     """
     app = FastAPI(title="Klangk", lifespan=lifespan)
     app.state.settings = settings
+    # #1501: Auth(app_state) owns every auth config value and JWT
+    # operation (previously module-level globals + import-time
+    # resolve_env_value reads in auth.py). Reads self.settings at
+    # construction/call time.
+    app.state.auth = auth.Auth(app.state)
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
     app.state.container_registry = container.ContainerRegistry(app.state)

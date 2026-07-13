@@ -54,7 +54,7 @@ from ._common import get_app_state_dep
 # name to the logic module after the submodule imports (see below) so the
 # instance endpoints reference klangk_backend.auth, not the route module.
 from .. import auth as _auth_logic
-from ..util import resolve_env_bool, resolve_env_value
+from ..util import resolve_env_value
 
 # Route submodules, aliased because their names collide with the logic
 # modules imported above (api/auth.py vs klangk_backend.auth, etc.) and we
@@ -158,9 +158,12 @@ if resolve_env_value("KLANGK_TEST_MODE"):  # pragma: no cover
         return {"idle_timeout_seconds": seconds}
 
     @router.get("/test/workspace-token/{workspace_id}")
-    async def get_workspace_token(workspace_id: str):
+    async def get_workspace_token(
+        workspace_id: str,
+        app_state=Depends(get_app_state_dep),
+    ):
         """Return a workspace JWT for testing (test only)."""
-        return {"token": auth.create_workspace_token(workspace_id)}
+        return {"token": app_state.auth.create_workspace_token(workspace_id)}
 
     @router.get("/test/browsers/{workspace_id}")
     async def get_browsers(
@@ -204,8 +207,8 @@ SUPPORT_EMAIL = resolve_env_value("KLANGK_SUPPORT_EMAIL") or ""
 @router.get("/config")
 async def get_config(app_state=Depends(get_app_state_dep)):
     config = {
-        "registration_enabled": auth.registration_enabled(),
-        "invitations_enabled": auth.invitations_enabled(),
+        "registration_enabled": app_state.auth.registration_enabled(),
+        "invitations_enabled": app_state.auth.invitations_enabled(),
         # White-label product name (KLANGK_PRODUCT_NAME). Surfaced so the
         # frontend can rename the product (tab title, app-bar logo) without
         # a rebuild; defaults to "Klangk" for back-compat (#1149).
@@ -218,14 +221,17 @@ async def get_config(app_state=Depends(get_app_state_dep)):
         # Whether per-workspace auto-start (start the container on server
         # boot) is permitted. The web UI gates its "Auto start" checkbox on
         # this so users can't toggle a setting the server will reject (#1115).
-        "allow_autostart": resolve_env_bool("KLANGK_ALLOW_AUTOSTART"),
+        "allow_autostart": (app_state.settings.allow_autostart or "")
+        .strip()
+        .lower()
+        in ("1", "true", "yes"),
         # Surfaced so the UI can validate password length inline (matches
         # the rule enforced server-side by auth.validate_password_length).
-        "min_password_length": auth.MIN_PASSWORD_LENGTH,
+        "min_password_length": app_state.auth.min_password_length,
         # Deployer logo override (KLANGK_LOGO_URL). Empty when unset, in
         # which case the frontend renders the default KlangkLogo widget.
         # Supports file:/cmd: resolution like other secrets. See #1152.
-        "logo_url": resolve_env_value("KLANGK_LOGO_URL") or "",
+        "logo_url": app_state.settings.logo_url or "",
         # Configurable legal & support links (#1177). Plain env values (no
         # file:/cmd: resolution -- they are public, shown pre-auth). Empty
         # string when unset; the frontend hides whatever isn't configured.
