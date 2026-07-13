@@ -18,10 +18,12 @@ def make_settings(
 ) -> KlangkSettings:
     """Build ``KlangkSettings`` for a test, injecting required dirs if absent.
 
-    ``state_dir`` and ``data_dir`` are required (no defaults, #1461). Tests
-    that pass an explicit env dict (bypassing ``os.environ``) must include
-    both, or they get temp defaults so the validator passes. Pass an explicit
-    value in ``env`` to override.
+    ``state_dir`` is required (no default, #1461). ``data_dir`` defaults to
+    ``<state_dir>/data`` and ``plugins_dir`` to ``<state_dir>/plugins``
+    (#1506), but tests pass an explicit ``data_dir`` temp dir so they don't
+    write a real DB into the derived location. Tests that pass an explicit
+    env dict (bypassing ``os.environ``) get temp defaults for both so the
+    validator passes; pass an explicit value in ``env`` to override.
     """
     env = dict(env or {})
     env.setdefault(

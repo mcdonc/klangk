@@ -36,7 +36,7 @@ $KLANGK_DATA_DIR/workspaces/<user-id>/home/<workspace-id>/
 
 ## Data
 
-- All data stored in `$KLANGK_DATA_DIR` (defaults to `$DEVENV_STATE/klangk/data`)
+- All data stored in `$KLANGK_DATA_DIR` (defaults to `<KLANGK_STATE_DIR>/data`, which under devenv is `$DEVENV_STATE/klangk/data`)
 - SQLite database: `klangk.db` (users, workspaces, groups, ACL entries, port allocations, chat messages, chat mentions, token blocklist, login attempts, invitations)
 - Workspace files: `workspaces/<user-id>/home/<workspace-id>/work/` (inside the `/home/klangk` bind mount)
 - Persistent home: `workspaces/<user-id>/home/<workspace-id>/` (mounted as `/home/klangk` — dotfiles, bash history, Pi sessions)

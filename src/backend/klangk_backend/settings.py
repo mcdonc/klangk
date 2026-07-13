@@ -358,8 +358,11 @@ class KlangkSettings(BaseSettings):
     idle_timeout_seconds: str | None = None
 
     # --- Container / workspace ---
-    # data_dir: persistent storage (SQLite DB, workspace volumes). **Required**
-    # — no default; a missing value fails at construction (#1461).
+    # data_dir: persistent storage (SQLite DB, workspace volumes). Defaults
+    # to ``<state_dir>/data`` when unset (derived in the ``_require_dirs``
+    # validator after state_dir is resolved), so an operator who sets only
+    # ``state_dir`` gets a sensible data location. An explicit
+    # ``KLANGK_DATA_DIR`` / config-file value wins (#1506).
     data_dir: str | None = None
     customize_dir: str | None = None
     # plugins_dir: plugin packages. Defaults to ``<state_dir>/plugins`` when
@@ -469,16 +472,16 @@ class KlangkSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_dirs(self) -> "KlangkSettings":
-        """Require ``state_dir`` and ``data_dir``; derive ``plugins_dir``.
+        """Require ``state_dir``; derive ``data_dir`` and ``plugins_dir``.
 
-        Neither has a default — an operator must set them (env or config
-        file). A missing value fails fast at construction (boot), not at
-        the first use that dereferences a ``None`` path (#1461).
+        ``state_dir`` has no default — an operator must set it (env or config
+        file); a missing value fails fast at construction (boot), not at the
+        first use that dereferences a ``None`` path (#1461).
 
-        ``plugins_dir`` defaults to ``<state_dir>/plugins`` when unset, so an
-        operator who sets ``state_dir`` gets a sensible plugins location
-        without a second var. An explicit ``KLANGK_PLUGINS_DIR`` / config-file
-        value wins.
+        ``data_dir`` and ``plugins_dir`` both derive from ``state_dir`` when
+        unset (#1506), so an operator who sets only ``state_dir`` gets sensible
+        data and plugins locations without extra vars. Explicit
+        ``KLANGK_DATA_DIR`` / ``KLANGK_PLUGINS_DIR`` / config-file values win.
         """
         if not self.state_dir:
             raise ValueError(
@@ -487,11 +490,7 @@ class KlangkSettings(BaseSettings):
                 "nginx.conf, pid file)."
             )
         if not self.data_dir:
-            raise ValueError(
-                "KLANGK_DATA_DIR is required (env var or config file). "
-                "Set it to the persistent data directory (SQLite DB, "
-                "workspace volumes)."
-            )
+            self.data_dir = os.path.join(self.state_dir, "data")
         if not self.plugins_dir:
             self.plugins_dir = os.path.join(self.state_dir, "plugins")
         return self
