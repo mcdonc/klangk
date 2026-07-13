@@ -63,8 +63,15 @@ def _start_server(data_dir, port, extra_env=None):
     log_file = open(log_path, "w")  # noqa: SIM115
     proc = subprocess.Popen(
         [
-            "uvicorn",
-            "klangk_backend.main:app",
+            "python3",
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "..",
+                "backend",
+                "e2e-tests",
+                "runtestserver.py",
+            ),
             "--host",
             "0.0.0.0",
             "--port",

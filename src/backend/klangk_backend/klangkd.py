@@ -104,10 +104,10 @@ def main(  # pragma: no cover
     except FileNotFoundError:
         pass
     Path(uds_path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    # Construct the app explicitly and pass the object to uvicorn (not the
-    # "klangk_backend.main:app" string import). This avoids the module-level
+    # Construct the app explicitly and pass the object to uvicorn (not a
+    # ``module:app`` string import). This avoids the module-level
     # ``app = build_app()`` global — there's one ``build_app(settings)`` call,
-    # one registry, wired correctly (#1464).
+    # one registry, wired correctly (#1464, #1454).
     from klangk_backend.main import build_app  # noqa: allow-deferred-import
 
     asgi_app = build_app(settings)

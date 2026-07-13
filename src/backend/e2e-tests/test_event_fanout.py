@@ -57,8 +57,8 @@ def server():
     }
     proc = subprocess.Popen(
         [
-            "uvicorn",
-            "klangk_backend.main:app",
+            "python3",
+            os.path.join(os.path.dirname(__file__), "runtestserver.py"),
             "--host",
             "0.0.0.0",
             "--port",

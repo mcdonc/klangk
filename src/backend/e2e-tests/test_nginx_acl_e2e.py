@@ -27,14 +27,14 @@ def _render_conf(env_overrides, tmpdir=None):
     """Render nginx.conf via the Python renderer (#1396) with controlled env.
 
     Replaces the old ``_run_nginx_sh`` (which ran ``scripts/nginx.sh`` and
-    killed it after config generation). Sets KLANGK_* env vars, invalidates
-    the live env (read by render_config via get_settings), renders via :func:`klangk_backend.nginx.render_config`,
-    then restores the env. Returns the conf text.
+    killed it after config generation). Renders via :func:`klangk_backend.nginx.render_config`
+    from an explicit settings dict built from ``env_overrides`` — no
+    ``os.environ`` mutation. Returns the conf text.
 
     Keys the renderer consults but that aren't in ``env_overrides`` are
-    explicitly *cleared* (not left at whatever a prior test set) so each test
-    starts from a known-clean state — without this, ``test_no_llm_block_*``
-    would see a ``KLANGK_LLM_BASE_URL`` leaked from ``test_llm_block_*``.
+    absent from the dict (unset) so each test starts from a known-clean
+    state — without this, ``test_no_llm_block_*`` would see a
+    ``KLANGK_LLM_BASE_URL`` leaked from ``test_llm_block_*``.
     """
     env = {
         "KLANGK_NGINX_PORT": "19999",
@@ -42,44 +42,13 @@ def _render_conf(env_overrides, tmpdir=None):
         "KLANGK_STATE_DIR": str(tmpdir or "/tmp/klangk-e2e-state"),
         **env_overrides,
     }
-    # Every renderer-relevant key: absent in env_overrides => cleared for this
-    # render (restored to its prior value afterwards).
-    renderer_keys = {
-        "KLANGK_NGINX_PORT",
-        "KLANGK_DATA_DIR",
-        "KLANGK_STATE_DIR",
-        "KLANGK_CONTAINER_SUBNETS",
-        "KLANGK_LLM_BASE_URL",
-        "KLANGK_LLM_API_KEY",
-        "KLANGK_HOSTED_PORTS_PER_WORKSPACE",
-        "KLANGK_TRUST_OUTER_PROXY",
-        "KLANGK_FILE_UPLOAD_SIZE_MAX",
-        "KLANGK_DNS_SERVERS",
-        "KLANGK_NGINX_BIN",
-    }
-    old_env = {}
-    for k in renderer_keys:
-        old_env[k] = os.environ.get(k)
-        if k in env and env[k] is not None:
-            os.environ[k] = env[k]
-        else:
-            # Explicitly clear so an absent key means "not set" for this
-            # render, regardless of what a prior test left behind.
-            os.environ.pop(k, None)
-    try:
-        from klangk_backend.nginx import NginxRenderer, tcp_upstream
-        from klangk_backend.settings import KlangkSettings
-        import types
+    from klangk_backend.nginx import NginxRenderer, tcp_upstream
+    from klangk_backend.settings import KlangkSettings
+    import types
 
-        return NginxRenderer(
-            types.SimpleNamespace(settings=KlangkSettings(os.environ))
-        ).render_config(tcp_upstream("127.0.0.1", "19998"))
-    finally:
-        for k, old in old_env.items():
-            if old is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = old
+    return NginxRenderer(
+        types.SimpleNamespace(settings=KlangkSettings(env))
+    ).render_config(tcp_upstream("127.0.0.1", "19998"))
 
 
 def _write_and_launch_nginx(conf_text, nginx_port, tmpdir):
@@ -423,8 +392,8 @@ class TestNginxAclEnforcement:
         }
         backend_proc = subprocess.Popen(
             [
-                "uvicorn",
-                "klangk_backend.main:app",
+                "python3",
+                os.path.join(os.path.dirname(__file__), "runtestserver.py"),
                 "--host",
                 "0.0.0.0",
                 "--port",
@@ -455,25 +424,24 @@ class TestNginxAclEnforcement:
             raise RuntimeError("Backend did not start")
 
         # Start nginx via the Python renderer (#1396): render the conf
-        # from these env vars, then launch nginx directly with -c.
+        # from an explicit settings dict, then launch nginx directly with -c.
         from klangk_backend.nginx import NginxRenderer, tcp_upstream
         from klangk_backend.settings import KlangkSettings
         import types
 
-        for k, v in {
+        nginx_env = {
             "KLANGK_NGINX_PORT": nginx_port,
             "KLANGK_CONTAINER_SUBNETS": "192.0.2.0/24",
             "KLANGK_LLM_BASE_URL": f"http://127.0.0.1:{backend_port}",
             "KLANGK_LLM_API_KEY": "fake-key",
             "KLANGK_DATA_DIR": data_dir,
             "KLANGK_STATE_DIR": state_dir,
-        }.items():
-            os.environ[k] = v
+        }
         nginx_state = os.path.join(tmpdir, "nginx")
         os.makedirs(nginx_state, exist_ok=True)
         conf_path = os.path.join(nginx_state, "nginx.conf")
         NginxRenderer(
-            types.SimpleNamespace(settings=KlangkSettings(os.environ))
+            types.SimpleNamespace(settings=KlangkSettings(nginx_env))
         ).write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
         nginx_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],
@@ -601,8 +569,8 @@ class TestNginxDenyByDefault:
         }
         backend_proc = subprocess.Popen(
             [
-                "uvicorn",
-                "klangk_backend.main:app",
+                "python3",
+                os.path.join(os.path.dirname(__file__), "runtestserver.py"),
                 "--host",
                 "127.0.0.1",
                 "--port",
@@ -639,18 +607,17 @@ class TestNginxDenyByDefault:
         from klangk_backend.settings import KlangkSettings
         import types
 
-        for k, v in {
+        nginx_env = {
             "KLANGK_NGINX_PORT": nginx_port,
             "KLANGK_CONTAINER_SUBNETS": host_ip,
             "KLANGK_DATA_DIR": data_dir,
             "KLANGK_STATE_DIR": state_dir,
-        }.items():
-            os.environ[k] = v
+        }
         nginx_state = os.path.join(tmpdir, "nginx")
         os.makedirs(nginx_state, exist_ok=True)
         conf_path = os.path.join(nginx_state, "nginx.conf")
         NginxRenderer(
-            types.SimpleNamespace(settings=KlangkSettings(os.environ))
+            types.SimpleNamespace(settings=KlangkSettings(nginx_env))
         ).write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
         nginx_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],
@@ -772,8 +739,8 @@ class TestNginxAuthLocalAcl:
         }
         backend_proc = subprocess.Popen(
             [
-                "uvicorn",
-                "klangk_backend.main:app",
+                "python3",
+                os.path.join(os.path.dirname(__file__), "runtestserver.py"),
                 "--host",
                 "127.0.0.1",
                 "--port",
@@ -809,14 +776,16 @@ class TestNginxAuthLocalAcl:
         from klangk_backend.settings import KlangkSettings
         import types
 
-        os.environ["KLANGK_NGINX_PORT"] = nginx_port
-        os.environ["KLANGK_DATA_DIR"] = data_dir
-        os.environ["KLANGK_STATE_DIR"] = state_dir
+        nginx_env = {
+            "KLANGK_NGINX_PORT": nginx_port,
+            "KLANGK_DATA_DIR": data_dir,
+            "KLANGK_STATE_DIR": state_dir,
+        }
         nginx_state = os.path.join(tmpdir, "nginx")
         os.makedirs(nginx_state, exist_ok=True)
         conf_path = os.path.join(nginx_state, "nginx.conf")
         NginxRenderer(
-            types.SimpleNamespace(settings=KlangkSettings(os.environ))
+            types.SimpleNamespace(settings=KlangkSettings(nginx_env))
         ).write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
         nginx_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],
