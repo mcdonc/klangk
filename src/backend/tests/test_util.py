@@ -1,11 +1,10 @@
 """Tests for util: file- and command-backed secret resolution."""
 
+from klangk_backend.settings import resolve_dynamic_config
 from klangk_backend.util import (
     Util,
     read_file_value,
     run_cmd_value,
-    resolve_env_bool,
-    resolve_env_value,
     resolve_file_value,
     sanitize_disposition_name,
 )
@@ -20,7 +19,7 @@ def _util(env=None):
 
 
 class TestReadFileValue:
-    """read_file_value is the shared helper behind resolve_env_value
+    """read_file_value is the shared helper behind resolve_dynamic_config
     and resolve_file_value."""
 
     def test_reads_and_strips_contents(self, tmp_path):
@@ -84,69 +83,47 @@ class TestRunCmdValue:
         assert err == "no shell"
 
 
-class TestResolveEnvValue:
+class TestResolveDynamicConfig:
+    """resolve_dynamic_config resolves plugin-declared dynamic keys (outside
+    the KLANGK_ settings model) with file:/cmd: deref."""
+
     def test_plain_value(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "plain-value")
-        assert resolve_env_value("TEST_SECRET") == "plain-value"
+        assert resolve_dynamic_config("TEST_SECRET") == "plain-value"
 
     def test_file_prefix_reads_file(self, monkeypatch, tmp_path):
         secret_file = tmp_path / "secret.txt"
         secret_file.write_text("from-file\n")
         monkeypatch.setenv("TEST_SECRET", f"file:{secret_file}")
-        assert resolve_env_value("TEST_SECRET") == "from-file"
+        assert resolve_dynamic_config("TEST_SECRET") == "from-file"
 
     def test_file_missing_returns_none(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "file:/no/such/file")
-        assert resolve_env_value("TEST_SECRET") is None
+        assert resolve_dynamic_config("TEST_SECRET") is None
 
     def test_unset_returns_none(self, monkeypatch):
         monkeypatch.delenv("TEST_SECRET", raising=False)
-        assert resolve_env_value("TEST_SECRET") is None
+        assert resolve_dynamic_config("TEST_SECRET") is None
 
     def test_unset_returns_default(self, monkeypatch):
         monkeypatch.delenv("TEST_SECRET", raising=False)
-        assert resolve_env_value("TEST_SECRET", "fallback") == "fallback"
+        assert resolve_dynamic_config("TEST_SECRET", "fallback") == "fallback"
 
     def test_empty_string_returned_as_is(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "")
-        assert resolve_env_value("TEST_SECRET") == ""
+        assert resolve_dynamic_config("TEST_SECRET") == ""
 
     def test_cmd_prefix_runs_command(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "cmd:printf 'from-cmd'")
-        assert resolve_env_value("TEST_SECRET") == "from-cmd"
+        assert resolve_dynamic_config("TEST_SECRET") == "from-cmd"
 
     def test_cmd_prefix_with_pipe(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "cmd:echo hi | tr a-z A-Z")
-        assert resolve_env_value("TEST_SECRET") == "HI"
+        assert resolve_dynamic_config("TEST_SECRET") == "HI"
 
     def test_cmd_failure_returns_none(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "cmd:false")
-        assert resolve_env_value("TEST_SECRET") is None
-
-
-class TestResolveEnvBool:
-    def test_unset_default_false(self, monkeypatch):
-        monkeypatch.delenv("TEST_BOOL", raising=False)
-        assert resolve_env_bool("TEST_BOOL") is False
-
-    def test_unset_default_true(self, monkeypatch):
-        monkeypatch.delenv("TEST_BOOL", raising=False)
-        assert resolve_env_bool("TEST_BOOL", default=True) is True
-
-    def test_truthy_values(self, monkeypatch):
-        for val in ("1", "true", "True", "YES", "yes"):
-            monkeypatch.setenv("TEST_BOOL", val)
-            assert resolve_env_bool("TEST_BOOL") is True
-
-    def test_falsy_values(self, monkeypatch):
-        for val in ("0", "false", "False", "NO", "no", "maybe", ""):
-            monkeypatch.setenv("TEST_BOOL", val)
-            assert resolve_env_bool("TEST_BOOL") is False
-            assert resolve_env_bool("TEST_BOOL", default=True) is False
-
-    def test_whitespace_stripped(self, monkeypatch):
-        monkeypatch.setenv("TEST_BOOL", " true ")
-        assert resolve_env_bool("TEST_BOOL") is True
+        assert resolve_dynamic_config("TEST_SECRET") is None
 
 
 class TestResolveFileValue:

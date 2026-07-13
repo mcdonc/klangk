@@ -23,28 +23,22 @@ from _helpers import make_settings
 
 def _make_app_state(registry=None, sockets=None):
     """Build a minimal app_state for tests."""
+    from klangk_backend.podman import Podman
     from klangk_backend.wshandler.session import WebSocketState
 
     settings = make_settings({})
+    podman_inst = Podman(settings)
+    # Two-phase: build the namespace shell first so the owned instances
+    # (sockets, registry, terminal, plugins) can take app_state at
+    # construction and reach collaborators via self.app_state (#1426).
+    app_state = types.SimpleNamespace(settings=settings)
+    app_state.podman = podman_inst
     if sockets is None:
-        sockets = WebSocketState()
-
-    app_state = types.SimpleNamespace(
-        sockets=sockets,
-        settings=settings,
-    )
+        sockets = WebSocketState(app_state)
+    app_state.sockets = sockets
     if registry is None:
         registry = container.ContainerRegistry(app_state)
     app_state.container_registry = registry
-    registry.sockets = sockets
-    registry.app_state = app_state
-    sockets.app_state = app_state
-    # #1468: container.py reaches the CLI wrappers via self.podman.
-    if registry.podman is None:
-        from klangk_backend.podman import Podman
-
-        registry.podman = Podman(settings)
-        app_state.podman = registry.podman
     # #1480: container.py reaches set_workspace_token via app_state.terminal.
     from klangk_backend.terminal import Terminal
     from klangk_backend import plugins as plugins_mod
@@ -111,35 +105,34 @@ class TestParseIdleTimeout:
 class TestSslCertDir:
     """Runtime SSL/CA certificate injection (#1181): ssl_cert_dir() resolver."""
 
-    def test_unset_returns_none(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_SSL_CERT_DIR", raising=False)
-        assert container.ssl_cert_dir() is None
+    def test_unset_returns_none(self):
+        assert container.ssl_cert_dir(make_settings({})) is None
 
-    def test_missing_dir_returns_none(self, monkeypatch, tmp_path):
+    def test_missing_dir_returns_none(self, tmp_path):
         gone = tmp_path / "does-not-exist"
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(gone))
-        assert container.ssl_cert_dir() is None
+        s = make_settings({"KLANGK_SSL_CERT_DIR": str(gone)})
+        assert container.ssl_cert_dir(s) is None
 
-    def test_empty_dir_returns_none(self, monkeypatch, tmp_path):
+    def test_empty_dir_returns_none(self, tmp_path):
         # Dir exists but contains no .pem/.crt.
         (tmp_path / "readme.txt").write_text("no certs here")
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(tmp_path))
-        assert container.ssl_cert_dir() is None
+        s = make_settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
+        assert container.ssl_cert_dir(s) is None
 
-    def test_dir_with_pem_returns_path(self, monkeypatch, tmp_path):
+    def test_dir_with_pem_returns_path(self, tmp_path):
         (tmp_path / "ca.pem").write_text("-----BEGIN CERTIFICATE-----")
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(tmp_path))
-        assert container.ssl_cert_dir() == str(tmp_path.resolve())
+        s = make_settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
+        assert container.ssl_cert_dir(s) == str(tmp_path.resolve())
 
-    def test_dir_with_crt_returns_path(self, monkeypatch, tmp_path):
+    def test_dir_with_crt_returns_path(self, tmp_path):
         (tmp_path / "my-ca.crt").write_text("-----BEGIN CERTIFICATE-----")
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(tmp_path))
-        assert container.ssl_cert_dir() == str(tmp_path.resolve())
+        s = make_settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
+        assert container.ssl_cert_dir(s) == str(tmp_path.resolve())
 
-    def test_extension_case_insensitive(self, monkeypatch, tmp_path):
+    def test_extension_case_insensitive(self, tmp_path):
         (tmp_path / "CA.PEM").write_text("-----BEGIN CERTIFICATE-----")
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(tmp_path))
-        assert container.ssl_cert_dir() == str(tmp_path.resolve())
+        s = make_settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
+        assert container.ssl_cert_dir(s) == str(tmp_path.resolve())
 
     def test_ssl_env_vars_empty_without_dir(self):
         assert container.ssl_env_vars(None) == []
@@ -469,7 +462,7 @@ class TestPortsPerWorkspaceCap:
 def patch_podman(registry=None, **overrides):
     """Patch the podman.* calls container.py makes.
 
-    container.py reaches the CLI wrappers via ``self.registry.podman.X``
+    container.py reaches the CLI wrappers via ``self.registry.app_state.podman.X``
     (#1468); this patches the methods on that instance. Yields a namespace
     of the AsyncMocks so tests can assert on them. Override any default by
     passing ``name=AsyncMock(...)``.
@@ -488,7 +481,7 @@ def patch_podman(registry=None, **overrides):
         ),
     }
     mocks = {**defaults, **overrides}
-    target = registry.podman if registry is not None else podman
+    target = registry.app_state.podman if registry is not None else podman
     with ExitStack() as stack:
         for name, mock in mocks.items():
             stack.enter_context(patch.object(target, name, mock))
@@ -878,7 +871,9 @@ class TestStartContainer:
         ssl_dir = tmp_path / "ssl"
         ssl_dir.mkdir()
         (ssl_dir / "corp-ca.pem").write_text("-----BEGIN CERTIFICATE-----")
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(ssl_dir))
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "ssl_cert_dir", str(ssl_dir)
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
@@ -2487,7 +2482,7 @@ def _health_registry(ws_state=None):
 
     Constructs a fresh registry via ``_make_app_state`` and wires its
     ``sockets`` to the given WebSocketState (or a fresh one by default).
-    HealthMonitor reaches sockets via ``self.registry.sockets``.
+    HealthMonitor reaches sockets via ``self.registry.app_state.sockets``.
     """
     app_state = _make_app_state(sockets=ws_state)
     return app_state.container_registry
@@ -2533,7 +2528,9 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         exec_mock = AsyncMock(return_value=(0, "", ""))
         with (
-            patch.object(monitor.registry.podman, "exec_container", exec_mock),
+            patch.object(
+                monitor.registry.app_state.podman, "exec_container", exec_mock
+            ),
             patch.object(
                 model, "get_user_handle", AsyncMock(return_value="owner")
             ),
@@ -2573,7 +2570,7 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.registry.podman,
+                monitor.registry.app_state.podman,
                 "exec_container",
                 AsyncMock(return_value=(1, "", "curl: connection refused")),
             ),
@@ -2603,7 +2600,7 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.registry.podman,
+                monitor.registry.app_state.podman,
                 "exec_container",
                 AsyncMock(return_value=(2, "all good on stdout", "")),
             ),
@@ -2633,7 +2630,7 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.registry.podman,
+                monitor.registry.app_state.podman,
                 "exec_container",
                 AsyncMock(return_value=(127, "", "")),
             ),
@@ -2673,7 +2670,7 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.registry.podman,
+                monitor.registry.app_state.podman,
                 "exec_container",
                 AsyncMock(side_effect=podman.PodmanError(500, "boom")),
             ),
@@ -2701,7 +2698,7 @@ class TestHealthMonitorRunOne:
         monitor = _health_registry().health
         st = _health_state(owner_id=None)
         with patch.object(
-            monitor.registry.podman, "exec_container"
+            monitor.registry.app_state.podman, "exec_container"
         ) as exec_mock:
             status, message = await monitor._run_one(st)
         assert status == "unhealthy"
@@ -2717,7 +2714,7 @@ class TestHealthMonitorRunOne:
                 model, "get_user_handle", AsyncMock(return_value=None)
             ),
             patch.object(
-                monitor.registry.podman, "exec_container"
+                monitor.registry.app_state.podman, "exec_container"
             ) as exec_mock,
         ):
             status, message = await monitor._run_one(st)
@@ -2930,14 +2927,14 @@ class TestHealthMonitorStartupGrace:
         sock = _mock_sock_for_health()
         st = _health_state(health_status="unhealthy")
         try:
-            reg.sockets.connections[sock] = SimpleNamespace(
+            reg.app_state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             # No WorkspaceSession registered for this workspace — yet
             # the event must still reach the connection.
             monitor._broadcast(st, "unhealthy", "connection refused")
         finally:
-            reg.sockets.connections.pop(sock, None)
+            reg.app_state.sockets.connections.pop(sock, None)
         sock.send_json.assert_called_once_with(
             {
                 "type": "service_health",
@@ -3039,13 +3036,13 @@ class TestHealthMonitorBroadcastSeq:
         st = _health_state(health_status="unhealthy")
         st.health_checked_at = 1_700_000_000.0
         try:
-            reg.sockets.connections[sock] = SimpleNamespace(
+            reg.app_state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             monitor._broadcast(st, "unhealthy", "connection refused")
             monitor._broadcast(st, "unhealthy", "connection refused")
         finally:
-            reg.sockets.connections.pop(sock, None)
+            reg.app_state.sockets.connections.pop(sock, None)
         frames = [c[0][0] for c in sock.send_json.call_args_list]
         assert len(frames) == 2
         # Monotonic seq across emits; live frames are running=True.
@@ -3075,12 +3072,12 @@ class TestHealthMonitorDeath:
         st.health_checked_at = 1_700_000_000.0
         st.health_seq = 4
         try:
-            reg.sockets.connections[sock] = SimpleNamespace(
+            reg.app_state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             monitor.broadcast_death(st)
         finally:
-            reg.sockets.connections.pop(sock, None)
+            reg.app_state.sockets.connections.pop(sock, None)
         frame = sock.send_json.call_args[0][0]
         assert frame["type"] == "service_health"
         assert frame["healthy"] is False
@@ -3107,13 +3104,13 @@ class TestHealthMonitorDeath:
             seen_state_present.append(wid in reg.states)
 
         try:
-            reg.sockets.connections[sock] = SimpleNamespace(
+            reg.app_state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             reg.set_on_workspace_killed(on_killed)
             await reg.notify_workspace_killed(st.workspace_id)
         finally:
-            reg.sockets.connections.pop(sock, None)
+            reg.app_state.sockets.connections.pop(sock, None)
             reg.states.pop(st.workspace_id, None)
             reg.set_on_workspace_killed(None)
         frame = sock.send_json.call_args[0][0]
@@ -3128,12 +3125,12 @@ class TestHealthMonitorDeath:
         st = _health_state(health_check=None)
         self.registry.states[st.workspace_id] = st
         try:
-            self.registry.sockets.connections[sock] = SimpleNamespace(
-                user={"id": "u1", "email": "a@x"}
+            self.registry.app_state.sockets.connections[sock] = (
+                SimpleNamespace(user={"id": "u1", "email": "a@x"})
             )
             await self.registry.notify_workspace_killed(st.workspace_id)
         finally:
-            self.registry.sockets.connections.pop(sock, None)
+            self.registry.app_state.sockets.connections.pop(sock, None)
             self.registry.states.pop(st.workspace_id, None)
         sock.send_json.assert_not_called()
 
@@ -3141,12 +3138,12 @@ class TestHealthMonitorDeath:
         # If the state is already gone (double-kill), nothing to emit.
         sock = _mock_sock_for_health()
         try:
-            self.registry.sockets.connections[sock] = SimpleNamespace(
-                user={"id": "u1", "email": "a@x"}
+            self.registry.app_state.sockets.connections[sock] = (
+                SimpleNamespace(user={"id": "u1", "email": "a@x"})
             )
             await self.registry.notify_workspace_killed("no-such-ws")
         finally:
-            self.registry.sockets.connections.pop(sock, None)
+            self.registry.app_state.sockets.connections.pop(sock, None)
         sock.send_json.assert_not_called()
 
     async def test_idle_cleanup_emits_death_frame(self):
@@ -3171,7 +3168,7 @@ class TestHealthMonitorDeath:
         )
 
         try:
-            reg.sockets.connections[sock] = SimpleNamespace(
+            reg.app_state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             with patch_podman(self.registry):
@@ -3185,7 +3182,7 @@ class TestHealthMonitorDeath:
                 except asyncio.CancelledError:
                     pass
         finally:
-            reg.sockets.connections.pop(sock, None)
+            reg.app_state.sockets.connections.pop(sock, None)
             reg.states.pop(st.workspace_id, None)
             reg._cid_to_wsid.pop(st.container_id, None)
 
@@ -3212,7 +3209,7 @@ class TestHealthLoopHeartbeat:
         monitor = reg.health
         sock = _mock_sock_for_health()
         try:
-            reg.sockets.connections[sock] = SimpleNamespace(
+            reg.app_state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"},
                 wants_health_heartbeat=True,
             )
@@ -3228,7 +3225,7 @@ class TestHealthLoopHeartbeat:
                 except asyncio.CancelledError:
                     pass
         finally:
-            reg.sockets.connections.pop(sock, None)
+            reg.app_state.sockets.connections.pop(sock, None)
         frames = [c[0][0] for c in sock.send_json.call_args_list]
         assert frames  # at least one heartbeat over ~5 ticks
         assert all(f["type"] == "service_health_heartbeat" for f in frames)
@@ -3320,7 +3317,7 @@ class TestRegistryConnections:
     """HealthMonitor reaches WebSocketState via the registry, not a module global (#1464)."""
 
     def test_connections_property_reads_from_registry(self):
-        """The connections property returns self.registry.sockets."""
+        """The connections property returns self.registry.app_state.sockets."""
         from klangk_backend.wshandler.session import WebSocketState
 
         ws_state = WebSocketState()

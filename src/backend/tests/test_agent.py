@@ -6,6 +6,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
+from _helpers import make_settings
 from klangk_backend.agent import (
     AgentError,
     AgentProcessDied,
@@ -59,9 +60,12 @@ def _make_app_state(cid="cid"):
     mock_registry.get_state.return_value = _FakeContainerState(cid)
     mock_pod = MagicMock()
     app_state = types.SimpleNamespace(
-        container_registry=mock_registry, podman=mock_pod
+        settings=make_settings({}),
+        container_registry=mock_registry,
+        podman=mock_pod,
     )
     app_state.workspaces = MagicMock()
+    app_state.sockets = MagicMock()
     return app_state
 
 
@@ -116,41 +120,40 @@ _ACK = {"type": "response", "command": "prompt", "success": True}
 class TestAgentDisabled:
     """The agent can be turned off entirely by an admin (#1138)."""
 
-    async def test_is_disabled_defaults_false(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_AGENT_DISABLED", raising=False)
+    async def test_is_disabled_defaults_false(self):
         agents = _make_agents()
         assert agents.is_disabled() is False
 
-    async def test_is_disabled_true_when_set(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_AGENT_DISABLED", "1")
+    async def test_is_disabled_true_when_set(self):
         agents = _make_agents()
+        agents.settings.agent_disabled = "1"
         assert agents.is_disabled() is True
 
-    async def test_is_disabled_truthy_variants(self, monkeypatch):
+    async def test_is_disabled_truthy_variants(self):
         agents = _make_agents()
         for val in ("1", "true", "YES", "True"):
-            monkeypatch.setenv("KLANGK_AGENT_DISABLED", val)
+            agents.settings.agent_disabled = val
             assert agents.is_disabled() is True, val
 
-    async def test_is_disabled_falsy_variants(self, monkeypatch):
+    async def test_is_disabled_falsy_variants(self):
         agents = _make_agents()
         for val in ("0", "false", "no", ""):
-            monkeypatch.setenv("KLANGK_AGENT_DISABLED", val)
+            agents.settings.agent_disabled = val
             assert agents.is_disabled() is False, val
 
-    async def test_ensure_started_refuses_when_disabled(self, monkeypatch):
+    async def test_ensure_started_refuses_when_disabled(self):
         """The subprocess is never spawned when disabled."""
-        monkeypatch.setenv("KLANGK_AGENT_DISABLED", "1")
         session = _make_session("ws-disabled")
+        session.agents.settings.agent_disabled = "1"
         with patch("asyncio.create_subprocess_exec") as mock_spawn:
             with pytest.raises(AgentError, match="disabled"):
                 await session.ensure_started()
             mock_spawn.assert_not_called()
 
-    async def test_send_prompt_raises_when_disabled(self, monkeypatch):
+    async def test_send_prompt_raises_when_disabled(self):
         """send_prompt surfaces the disabled state, never spawns."""
-        monkeypatch.setenv("KLANGK_AGENT_DISABLED", "1")
         session = _make_session("ws-disabled")
+        session.agents.settings.agent_disabled = "1"
         with patch("asyncio.create_subprocess_exec") as mock_spawn:
             with pytest.raises(AgentError, match="disabled"):
                 await session.send_prompt("hello")
@@ -638,7 +641,9 @@ class TestAgentSession:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
-        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+        agents.app_state.sockets.get_session = MagicMock(
+            return_value=MagicMock()
+        )
 
         with (
             patch.object(
@@ -1168,7 +1173,9 @@ class TestMonitorProcess:
 
         agents = _make_agents()
         mock_session = MagicMock()
-        agents.get_workspace_session = MagicMock(return_value=mock_session)
+        agents.app_state.sockets.get_session = MagicMock(
+            return_value=mock_session
+        )
 
         with (
             patch.object(
@@ -1237,7 +1244,9 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
-        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+        agents.app_state.sockets.get_session = MagicMock(
+            return_value=MagicMock()
+        )
 
         with (
             patch.object(
@@ -1277,7 +1286,9 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
-        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+        agents.app_state.sockets.get_session = MagicMock(
+            return_value=MagicMock()
+        )
 
         with (
             patch.object(
@@ -1337,7 +1348,9 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
-        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+        agents.app_state.sockets.get_session = MagicMock(
+            return_value=MagicMock()
+        )
 
         with (
             patch.object(
@@ -1372,7 +1385,9 @@ class TestMonitorProcess:
         mock_proc.stderr.read = AsyncMock(side_effect=OSError("broken pipe"))
         session._proc = mock_proc
 
-        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+        agents.app_state.sockets.get_session = MagicMock(
+            return_value=MagicMock()
+        )
 
         with (
             patch.object(
@@ -1401,7 +1416,9 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
-        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+        agents.app_state.sockets.get_session = MagicMock(
+            return_value=MagicMock()
+        )
 
         with (
             patch.object(
@@ -1428,7 +1445,9 @@ class TestMonitorProcess:
 
         agents = _make_agents()
         mock_session = MagicMock()
-        agents.get_workspace_session = MagicMock(return_value=mock_session)
+        agents.app_state.sockets.get_session = MagicMock(
+            return_value=mock_session
+        )
 
         with (
             patch.object(
@@ -1480,7 +1499,9 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
-        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+        agents.app_state.sockets.get_session = MagicMock(
+            return_value=MagicMock()
+        )
 
         with (
             patch.object(
@@ -1529,7 +1550,9 @@ class TestMonitorProcess:
             # Simulate something else restarting the proc during sleep
             session._proc = AsyncMock()
 
-        agents.get_workspace_session = MagicMock(return_value=MagicMock())
+        agents.app_state.sockets.get_session = MagicMock(
+            return_value=MagicMock()
+        )
 
         with (
             patch.object(

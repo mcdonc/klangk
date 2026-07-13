@@ -12,6 +12,8 @@ mode switch is therefore simulated by rebuilding the OIDC instance (a
 "restart") after changing ``KLANGK_AUTH_MODES``.
 """
 
+import os
+
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -59,7 +61,7 @@ async def mode_server(db, monkeypatch):
     monkeypatch.setenv("KLANGK_DEFAULT_USER", DEFAULT_EMAIL)
     monkeypatch.setenv("KLANGK_DEFAULT_PASSWORD", SEEDED_PASSWORD)
     # Seed exactly as the lifespan does at startup.
-    await main.seed_default_user()
+    await main.seed_default_user(make_settings(os.environ))
     default_user = await model.get_user_by_email(DEFAULT_EMAIL)
     assert default_user is not None, "seed_default_user must create the user"
 
@@ -383,10 +385,14 @@ class TestRestartIdempotency:
         must not duplicate the user or drop its admin membership."""
         client, user = mode_server
         _none(monkeypatch)
-        await main.seed_default_user()  # simulate restart in none mode
+        await main.seed_default_user(
+            make_settings(os.environ)
+        )  # simulate restart in none mode
 
         _password(monkeypatch)
-        await main.seed_default_user()  # simulate restart in password mode
+        await main.seed_default_user(
+            make_settings(os.environ)
+        )  # simulate restart in password mode
 
         again = await model.get_user_by_email(DEFAULT_EMAIL)
         assert again["id"] == user["id"]

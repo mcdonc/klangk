@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import os
 import time
 from typing import TYPE_CHECKING
 
@@ -12,7 +13,6 @@ from fastapi import WebSocketDisconnect
 
 from .. import model
 from ..exceptions import TerminalError
-from ..util import resolve_env_value
 from ..podman import ExecSession
 from ..terminal import (
     TerminalSession,
@@ -50,7 +50,7 @@ class SshAgentForwarder:
 
     async def start(self) -> None:
         """Start SSH agent forwarding via socat inside the container."""
-        _debug_agent = resolve_env_value("KLANGKC_DEBUG_SSH_AGENT", "")
+        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
         container_id = self._conn.container_id
         if not container_id:
             send_error(
@@ -117,7 +117,7 @@ class SshAgentForwarder:
 
     async def forward_output(self) -> None:
         """Read from socat stdout and send to the CLI as ssh_agent_response."""
-        _debug_agent = resolve_env_value("KLANGKC_DEBUG_SSH_AGENT", "")
+        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
         proc = self.proc
         if proc is None or proc.stdout is None:
             return
@@ -145,7 +145,7 @@ class SshAgentForwarder:
 
     async def data(self, msg: dict) -> None:
         """Write data from the CLI's local agent into socat stdin."""
-        _debug_agent = resolve_env_value("KLANGKC_DEBUG_SSH_AGENT", "")
+        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
         proc = self.proc
         if proc is None or proc.stdin is None:
             if _debug_agent:

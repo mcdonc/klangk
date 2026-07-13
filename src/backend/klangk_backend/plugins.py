@@ -9,7 +9,7 @@ import json
 import logging
 import os
 
-from .settings import resolve_env_value
+from .settings import resolve_dynamic_config
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class Plugins:
 
     Plugin-declared config keys (discovered at ``load()`` time from
     ``package.json``) are dynamic — they're not settings fields — so
-    their values are still resolved via :func:`resolve_env_value` at
+    their values are still resolved via :func:`resolve_dynamic_config` at
     load time (honoring ``file:``/``cmd:`` prefixes for plugin secrets).
     """
 
@@ -78,12 +78,12 @@ class Plugins:
 
         for key, spec in self.declarations.items():
             default = spec.get("default", "")
-            # resolve_env_value (not raw os.environ) so plugin-declared keys
+            # resolve_dynamic_config (not raw os.environ) so plugin-declared keys
             # also honor the file:/cmd: prefixes — plugin config may itself be
             # a secret (e.g. an API token declared by a plugin). These keys
             # are dynamic (discovered from package.json), not settings fields,
             # so they can't be migrated to typed settings.
-            self.values[key] = resolve_env_value(key, default) or ""
+            self.values[key] = resolve_dynamic_config(key, default) or ""
 
         if self.declarations:
             logger.info(

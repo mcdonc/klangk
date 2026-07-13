@@ -85,21 +85,16 @@ def _make_app_state(registry=None, sockets=None):
     from klangk_backend.container import ContainerRegistry
 
     settings = make_settings({})
+    # Two-phase: shell first so owned instances (sockets, registry, etc.)
+    # can take app_state at construction (#1426).
+    app_state = types.SimpleNamespace(settings=settings)
     if sockets is None:
-        sockets = WebSocketState()
-
-    app_state = types.SimpleNamespace(
-        sockets=sockets,
-        settings=settings,
-    )
+        sockets = WebSocketState(app_state)
+    app_state.sockets = sockets
     if registry is None:
         registry = ContainerRegistry(app_state)
     app_state.container_registry = registry
-    registry.sockets = sockets
-    registry.app_state = app_state
-    sockets.app_state = app_state
     app_state.podman = _mock_pod
-    registry.podman = _mock_pod
     # #1480: shared mock Terminal wired onto app_state. Tests patch
     # its methods via patch.object(_mock_term, ...).
     app_state.terminal = _mock_term

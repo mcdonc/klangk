@@ -100,8 +100,8 @@ async function globalSetup() {
     };
     execSync(
       `python -c "from klangk_backend.nginx import NginxRenderer, tcp_upstream; ` +
-        `from klangk_backend.settings import get_settings; import types; ` +
-        `NginxRenderer(types.SimpleNamespace(settings=get_settings()))` +
+        `from klangk_backend.settings import KlangkSettings; import types, os; ` +
+        `NginxRenderer(types.SimpleNamespace(settings=KlangkSettings(os.environ)))` +
         `.write_config(tcp_upstream('127.0.0.1', '${backendPort}'), '${confPath}')"`,
       {
         cwd: join(projectRoot, "src", "backend"),

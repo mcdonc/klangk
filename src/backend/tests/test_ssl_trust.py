@@ -15,6 +15,12 @@ from pathlib import Path
 import pytest
 
 from klangk_backend import ssl_trust
+from _helpers import make_settings
+
+
+def _settings(env: dict):
+    """Build settings carrying the test's env overrides."""
+    return make_settings(env)
 
 
 @pytest.fixture(autouse=True)
@@ -35,46 +41,41 @@ def _restore_trust_env(monkeypatch):
 
 
 class TestSslCertDir:
-    def test_unset_returns_none(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_SSL_CERT_DIR", raising=False)
-        assert ssl_trust.ssl_cert_dir() is None
+    def test_unset_returns_none(self):
+        assert ssl_trust.ssl_cert_dir(_settings({})) is None
 
-    def test_missing_dir_returns_none(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(tmp_path / "nope"))
-        assert ssl_trust.ssl_cert_dir() is None
+    def test_missing_dir_returns_none(self, tmp_path):
+        s = _settings({"KLANGK_SSL_CERT_DIR": str(tmp_path / "nope")})
+        assert ssl_trust.ssl_cert_dir(s) is None
 
-    def test_empty_dir_returns_none(self, monkeypatch, tmp_path):
+    def test_empty_dir_returns_none(self, tmp_path):
         (tmp_path / "readme.txt").write_text("no certs")
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(tmp_path))
-        assert ssl_trust.ssl_cert_dir() is None
+        s = _settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
+        assert ssl_trust.ssl_cert_dir(s) is None
 
-    def test_pem_and_crt_detected(self, monkeypatch, tmp_path):
+    def test_pem_and_crt_detected(self, tmp_path):
         (tmp_path / "a.pem").write_text("CERTA")
         (tmp_path / "b.CRT").write_text("CERTB")
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(tmp_path))
-        assert ssl_trust.ssl_cert_dir() == str(tmp_path.resolve())
+        s = _settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
+        assert ssl_trust.ssl_cert_dir(s) == str(tmp_path.resolve())
 
-    def test_falls_back_to_customize_dir_certs(self, monkeypatch, tmp_path):
+    def test_falls_back_to_customize_dir_certs(self, tmp_path):
         # When KLANGK_SSL_CERT_DIR is unset but <customize_dir>/certs
         # exists with cert files, it is used.  See #1360.
-        monkeypatch.delenv("KLANGK_SSL_CERT_DIR", raising=False)
         custom = tmp_path / "cust"
         certs = custom / "certs"
         certs.mkdir(parents=True)
         (certs / "ca.pem").write_text("CERT")
-        monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", str(custom))
-        assert ssl_trust.ssl_cert_dir() == str(certs.resolve())
+        s = _settings({"KLANGK_CUSTOMIZE_DIR": str(custom)})
+        assert ssl_trust.ssl_cert_dir(s) == str(certs.resolve())
 
-    def test_customize_dir_certs_ignored_when_empty(
-        self, monkeypatch, tmp_path
-    ):
+    def test_customize_dir_certs_ignored_when_empty(self, tmp_path):
         # An empty certs/ subdir is treated the same as missing.
-        monkeypatch.delenv("KLANGK_SSL_CERT_DIR", raising=False)
         custom = tmp_path / "cust"
         certs = custom / "certs"
         certs.mkdir(parents=True)
-        monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", str(custom))
-        assert ssl_trust.ssl_cert_dir() is None
+        s = _settings({"KLANGK_CUSTOMIZE_DIR": str(custom)})
+        assert ssl_trust.ssl_cert_dir(s) is None
 
 
 class TestSslEnvVars:
@@ -92,15 +93,14 @@ class TestSslEnvVars:
 
 
 class TestApplyBackendSslTrust:
-    def test_noop_when_unset(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_SSL_CERT_DIR", raising=False)
-        assert ssl_trust.apply_backend_ssl_trust() is None
+    def test_noop_when_unset(self):
+        assert ssl_trust.apply_backend_ssl_trust(_settings({})) is None
         for k in ssl_trust.SSL_TRUST_VARS:
             assert k not in os.environ
 
-    def test_noop_when_dir_has_no_certs(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(tmp_path))
-        assert ssl_trust.apply_backend_ssl_trust() is None
+    def test_noop_when_dir_has_no_certs(self, tmp_path):
+        s = _settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
+        assert ssl_trust.apply_backend_ssl_trust(s) is None
         for k in ssl_trust.SSL_TRUST_VARS:
             assert k not in os.environ
 
@@ -116,9 +116,14 @@ class TestApplyBackendSslTrust:
         )
         (tmp_path / "sys.pem").write_text("FAKE-SYSTEM-CA\n")
         data_dir = tmp_path / "data"
-        monkeypatch.setenv("KLANGK_DATA_DIR", str(data_dir))
+        s = _settings(
+            {
+                "KLANGK_SSL_CERT_DIR": str(cert_dir),
+                "KLANGK_DATA_DIR": str(data_dir),
+            }
+        )
 
-        bundle = ssl_trust.apply_backend_ssl_trust()
+        bundle = ssl_trust.apply_backend_ssl_trust(s)
 
         assert bundle is not None
         assert os.path.isfile(bundle)
@@ -142,9 +147,14 @@ class TestApplyBackendSslTrust:
             lambda self_bundle=None: str(tmp_path / "sys.pem"),
         )
         (tmp_path / "sys.pem").write_text("SYSTEM-MARKER\n")
-        monkeypatch.setenv("KLANGK_DATA_DIR", str(tmp_path / "data"))
+        s = _settings(
+            {
+                "KLANGK_SSL_CERT_DIR": str(cert_dir),
+                "KLANGK_DATA_DIR": str(tmp_path / "data"),
+            }
+        )
 
-        ssl_trust.apply_backend_ssl_trust()
+        ssl_trust.apply_backend_ssl_trust(s)
 
         bundle = os.environ["SSL_CERT_FILE"]
         contents = Path(bundle).read_text()
@@ -168,14 +178,19 @@ class TestApplyBackendSslTrust:
             lambda self_bundle=None: str(tmp_path / "sys.pem"),
         )
         (tmp_path / "sys.pem").write_text("SYSTEM\n")
-        monkeypatch.setenv("KLANGK_DATA_DIR", str(tmp_path / "data"))
+        s = _settings(
+            {
+                "KLANGK_SSL_CERT_DIR": str(cert_dir),
+                "KLANGK_DATA_DIR": str(tmp_path / "data"),
+            }
+        )
 
-        ssl_trust.apply_backend_ssl_trust()
+        ssl_trust.apply_backend_ssl_trust(s)
         first = os.environ["SSL_CERT_FILE"]
         size_after_first = os.path.getsize(first)
         contents_after_first = Path(first).read_text()
 
-        ssl_trust.apply_backend_ssl_trust()
+        ssl_trust.apply_backend_ssl_trust(s)
         second = os.environ["SSL_CERT_FILE"]
         assert second == first
         assert os.path.getsize(second) == size_after_first
@@ -192,10 +207,15 @@ class TestApplyBackendSslTrust:
         (cert_dir / "corp-ca.pem").write_text("CORP\n")
         monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(cert_dir))
         monkeypatch.setattr(ssl_trust, "system_ca_bundle", lambda **kw: None)
-        monkeypatch.setenv("KLANGK_DATA_DIR", str(tmp_path / "data"))
+        s = _settings(
+            {
+                "KLANGK_SSL_CERT_DIR": str(cert_dir),
+                "KLANGK_DATA_DIR": str(tmp_path / "data"),
+            }
+        )
 
         with caplog.at_level(logging.WARNING):
-            ssl_trust.apply_backend_ssl_trust()
+            ssl_trust.apply_backend_ssl_trust(s)
         # Still applied (custom certs present), but warned about system loss.
         assert os.environ["SSL_CERT_FILE"]
         assert any("system bundle" in r.message for r in caplog.records)
@@ -319,7 +339,17 @@ class TestInternalsAndErrorBranches:
             "makedirs",
             lambda *a, **k: (_ for _ in ()).throw(OSError("nope")),
         )
-        assert ssl_trust.apply_backend_ssl_trust() is None
+        assert (
+            ssl_trust.apply_backend_ssl_trust(
+                _settings(
+                    {
+                        "KLANGK_SSL_CERT_DIR": str(cert_dir),
+                        "KLANGK_DATA_DIR": str(tmp_path / "data"),
+                    }
+                )
+            )
+            is None
+        )
 
     def test_apply_warns_on_empty_bundle(self, monkeypatch, tmp_path, caplog):
         cert_dir = tmp_path / "ssl"
@@ -333,5 +363,15 @@ class TestInternalsAndErrorBranches:
             ssl_trust, "iter_cert_files", lambda d: ["/nope/cert.pem"]
         )
         with caplog.at_level(logging.WARNING):
-            assert ssl_trust.apply_backend_ssl_trust() is None
+            assert (
+                ssl_trust.apply_backend_ssl_trust(
+                    _settings(
+                        {
+                            "KLANGK_SSL_CERT_DIR": str(cert_dir),
+                            "KLANGK_DATA_DIR": str(tmp_path / "data"),
+                        }
+                    )
+                )
+                is None
+            )
         assert any("empty" in r.message for r in caplog.records)

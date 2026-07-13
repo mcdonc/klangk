@@ -109,7 +109,7 @@ docker run -d \
 Place your `.pem`/`.crt` CA certificate files in `<KLANGK_CUSTOMIZE_DIR>/certs/` and **restart** workspaces (or the backend). Klangk makes those CAs trusted at startup without rebuilding any image:
 
 - **Workspace containers** — the directory is bind-mounted read-only into each container, and the entrypoint builds a merged CA bundle (system CAs plus your custom certs) on the writable `/tmp` tmpfs. The toolchain trust env vars (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`) are set to point at it, so OpenSSL, Python, `curl`, and Node all honor your CAs. The bundle is merged with system CAs so public-internet TLS keeps working.
-- **Backend process** — at startup the backend concatenates your certs with its own system bundle and sets the same trust env vars, so outbound TLS (OIDC discovery, SMTP relay, LLM proxy) trusts your private CAs too.
+- **Backend process** — at startup the backend concatenates your certs with its own system bundle into `<KLANGK_STATE_DIR>/ssl/ca-bundle.crt` and sets the same trust env vars, so outbound TLS (OIDC discovery, SMTP relay, LLM proxy) trusts your private CAs too.
 
 ```bash
 # Using KLANGK_CUSTOMIZE_DIR (recommended):

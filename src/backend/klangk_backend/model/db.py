@@ -16,6 +16,7 @@ this slice (see #1452 scope fence).
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -23,7 +24,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from ..settings import KlangkSettings, get_settings
+from ..settings import KlangkSettings
 
 logger = logging.getLogger(__name__)
 
@@ -226,13 +227,13 @@ def set_db(db: DB) -> None:
 def get_default_db() -> DB:
     """Return the module-level DB, constructing one lazily if needed.
 
-    Lazily constructs from :func:`get_settings` so the import-and-query /
+    Lazily constructs from the live environment so the import-and-query /
     ops REPL path works without an explicit ``set_db`` call — matching the
     pre-refactor behavior where ``ensure_engine`` read the global env.
     """
     global _db
     if _db is None:
-        _db = DB(get_settings())
+        _db = DB(KlangkSettings(os.environ))
     return _db
 
 

@@ -63,6 +63,40 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **`resolve_env_value` / `resolve_env_bool` / `get_settings` retired
+  (#1518):** the transitional config-reading shims are deleted. Every
+  call-time caller now reads `app_state.settings.<field>` directly: `main.py`
+  (`seed_default_user`, `seed_agent_user`, `enforce_no_auth_bind_safety`,
+  `setup_logfire`), `ssl_trust.py` (`ssl_cert_dir`,
+  `apply_backend_ssl_trust` — both now take `settings`; the merged CA bundle
+  moved from `<data_dir>/ssl/ca-bundle.crt` to
+  `<state_dir>/ssl/ca-bundle.crt`), `agent.py`
+  (`is_disabled`), `model/db.py` (`get_default_db` constructs
+  `KlangkSettings(os.environ)`). `KLANGKC_DEBUG_SSH_AGENT` and the LOGFIRE\_\*
+  vars are plain `os.environ.get`. The only surviving resolver is
+  `resolve_dynamic_config` (plugins' dynamic keys — real `file:`/`cmd:`
+  deref on keys outside the settings model). `listen_is_socket` now takes
+  a required `value` arg (no settings singleton fallback).
+
+- **`NginxWatchdog` moved from `main.py` to `nginx.py`** — it owns the nginx
+  child process + renders config via `NginxRenderer`, so it belongs with the
+  renderer (#1518).
+
+- **Construction wiring simplified (#1518):** `build_app` no longer
+  post-constructs `app.state.container_registry.{podman,sockets,app_state}`
+  or `app.state.agents.get_workspace_session` or `sockets.app_state` — every
+  owned instance is constructed with `app_state` and reaches collaborators
+  via `self.app_state.<name>`. `WebSocketState(app_state)` takes app_state
+  at construction; `Agents` reads `self.app_state.sockets.get_session`
+  directly; `ContainerRegistry` reads `self.app_state.podman` /
+  `self.app_state.sockets`.
+
+- **`KLANGK_FRONTEND_DIR` setting (#1456):** the built Flutter Web UI is
+  served from `settings.frontend_dir` (defaults to the repo-relative
+  `src/frontend/build/web` computed in `KlangkSettings`; `klangkd`
+  deployments override it). Previously the path was hardcoded in `build_app`,
+  so installed-package deployments silently skipped mounting the UI.
+
 - **Settings field defaults lifted into `KlangkSettings` (#1514):** the
   `str | None = None` fields whose consumers applied a fixed `or "default"`
   fallback at read time are now non-optional `str` with the default baked in:

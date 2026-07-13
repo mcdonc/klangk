@@ -17,7 +17,7 @@ import logging
 import re
 import time
 
-from . import model, util
+from . import model
 from .podman import subprocess_env
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
@@ -92,19 +92,22 @@ class Agents:
 
     def __init__(self, app_state) -> None:
         self.app_state = app_state
+        self.settings = app_state.settings
         self._agents: dict[str, "AgentSession"] = {}
         self._agents_lock = asyncio.Lock()
-        self.get_workspace_session = None
 
     def is_disabled(self) -> bool:
         """True if the chat agent has been disabled by an admin.
 
         When disabled, the ``pi --mode rpc`` subprocess is never spawned —
         see ``AgentSession.ensure_started``, which consults this before
-        creating the process.  Resolved at call time so tests can toggle
-        it via ``monkeypatch.setenv``.
+        creating the process.
         """
-        return util.resolve_env_bool("KLANGK_AGENT_DISABLED")
+        return self.settings.agent_disabled.strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
 
     async def ensure_agent_home(
         self, workspace_id: str, container_id: str
@@ -253,11 +256,7 @@ class Agents:
             agent_handle,
             f"{agent_handle} has disconnected",
         )
-        session = (
-            self.get_workspace_session(workspace_id)
-            if self.get_workspace_session
-            else None
-        )
+        session = self.app_state.sockets.get_session(workspace_id)
         if session:
             session.broadcast({"type": "agent_thinking", "thinking": False})
             session.broadcast({"type": "chat_message", **sys_msg})
@@ -287,11 +286,7 @@ class Agents:
             agent_handle,
             f"{agent_handle} has reconnected",
         )
-        session = (
-            self.get_workspace_session(workspace_id)
-            if self.get_workspace_session
-            else None
-        )
+        session = self.app_state.sockets.get_session(workspace_id)
         if session:
             session.broadcast({"type": "chat_message", **sys_msg})
             session.broadcast(
