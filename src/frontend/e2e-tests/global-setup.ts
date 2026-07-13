@@ -3,6 +3,8 @@ import { createWriteStream, mkdirSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
+import { cleanEnv } from "./e2e-env";
+
 async function globalSetup() {
   // When KLANGK_TEST_URL is set, skip server startup — tests run against
   // an already-running instance (e.g. the host container).
@@ -27,6 +29,8 @@ async function globalSetup() {
 
   const dataDir = mkdtempSync(join(tmpdir(), "klangk-e2e-"));
   process.env.KLANGK_E2E_DATA_DIR = dataDir;
+  const stateDir = mkdtempSync(join(tmpdir(), "klangk-e2e-state-"));
+  process.env.KLANGK_E2E_STATE_DIR = stateDir;
 
   // Create a branding dir so setup_static_files mounts /branding.
   const customizeDir = join(dataDir, "customize");
@@ -93,11 +97,10 @@ async function globalSetup() {
     mkdirSync(nginxState, { recursive: true });
     const confPath = join(nginxState, "nginx.conf");
 
-    const renderEnv = {
-      ...process.env,
+    const renderEnv = cleanEnv({
       KLANGK_NGINX_PORT: nginxPort,
       KLANGK_PORT: backendPort,
-    };
+    });
     execSync(
       `python -c "from klangk_backend.nginx import NginxRenderer, tcp_upstream; ` +
         `from klangk_backend.settings import KlangkSettings; import types, os; ` +
@@ -139,14 +142,12 @@ async function globalSetup() {
       cwd: join(projectRoot, "src", "backend"),
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        // Bare uvicorn on TCP; the lifespan's nginx expects a UDS, so
-        // suppress it and let global-setup manage nginx separately (#1427).
+      env: cleanEnv({
         _KLANGK_DISABLE_NGINX: "1",
         KLANGK_PORT: backendPort,
         KLANGK_NGINX_PORT: nginxPort,
         KLANGK_DATA_DIR: dataDir,
+        KLANGK_STATE_DIR: stateDir,
         KLANGK_CUSTOMIZE_DIR: join(dataDir, "customize"),
         KLANGK_LOGIN_LOCKOUT_FAILURES: "5",
         KLANGK_JWT_SECRET: "e2e-test-secret",
@@ -165,7 +166,7 @@ async function globalSetup() {
         KLANGK_OIDC_LOGIN_HOOK: "", // No OIDC login hook in E2E tests
         KLANGK_DISABLE_REGISTRATION: "", // Allow registration in E2E tests
         KLANGK_DISABLE_INVITES: "", // Allow invitations in E2E tests
-      },
+      }),
     },
   );
 

@@ -36,30 +36,32 @@ import pytest
 import websockets
 
 from klangk_backend.model import free_port
+from _e2e_env import clean_env
 
 
 @pytest.fixture(scope="module")
 def server():
     """Start a real Klangk server for the test module."""
     data_dir = tempfile.mkdtemp(prefix="klangk-dcmd-shared-e2e-")
+    state_dir = tempfile.mkdtemp(prefix="klangk-dcmd-shared-e2e-state-")
     port = str(free_port())
 
-    env = {
-        **os.environ,
-        "KLANGK_PORT": port,
-        "KLANGK_DATA_DIR": data_dir,
-        "KLANGK_JWT_SECRET": "dcmd-shared-e2e-secret",
-        "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
-        "KLANGK_DEFAULT_USER": "test@example.com",
-        "KLANGK_DEFAULT_PASSWORD": "testpass",
-        "KLANGK_TEST_MODE": "1",
-        "KLANGK_IDLE_TIMEOUT_SECONDS": "0",
-        "KLANGK_PORT_RANGE_START": str(free_port()),
-        "LOGFIRE_TOKEN": "",
-        "KLANGK_LLM_BASE_URL": "",
-        "KLANGK_LLM_API_KEY": "",
-        "KLANGK_LLM_MODEL": "",
-    }
+    env = clean_env(
+        KLANGK_PORT=port,
+        KLANGK_DATA_DIR=data_dir,
+        KLANGK_STATE_DIR=state_dir,
+        KLANGK_JWT_SECRET="dcmd-shared-e2e-secret",
+        KLANGK_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGK_DEFAULT_USER="test@example.com",
+        KLANGK_DEFAULT_PASSWORD="testpass",
+        KLANGK_TEST_MODE="1",
+        KLANGK_IDLE_TIMEOUT_SECONDS="0",
+        KLANGK_PORT_RANGE_START=str(free_port()),
+        LOGFIRE_TOKEN="",
+        KLANGK_LLM_BASE_URL="",
+        KLANGK_LLM_API_KEY="",
+        KLANGK_LLM_MODEL="",
+    )
     proc = subprocess.Popen(
         [
             "python3",

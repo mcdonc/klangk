@@ -19,6 +19,15 @@ from pathlib import Path
 import pytest
 
 from klangk_backend.model import free_port
+import sys
+
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(__file__), "..", "..", "backend", "e2e-tests"
+    ),
+)
+from _e2e_env import clean_env
 
 logger = logging.getLogger(__name__)
 
@@ -42,20 +51,21 @@ def _start_server(data_dir, port, extra_env=None):
     """
     import httpx
 
-    env = {
-        **os.environ,
-        "KLANGK_PORT": port,
-        "KLANGK_DATA_DIR": data_dir,
-        "KLANGK_JWT_SECRET": "cli-e2e-test-secret",
-        "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
-        "KLANGK_DEFAULT_USER": "test@example.com",
-        "KLANGK_DEFAULT_PASSWORD": "testpass",
-        "KLANGK_TEST_MODE": "1",
-        "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-        "KLANGK_PORT_RANGE_START": str(free_port()),
-        "LOGFIRE_TOKEN": "",
+    state_dir = tempfile.mkdtemp(prefix="klangk-cli-e2e-state-")
+    env = clean_env(
+        KLANGK_PORT=port,
+        KLANGK_DATA_DIR=data_dir,
+        KLANGK_STATE_DIR=state_dir,
+        KLANGK_JWT_SECRET="cli-e2e-test-secret",
+        KLANGK_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGK_DEFAULT_USER="test@example.com",
+        KLANGK_DEFAULT_PASSWORD="testpass",
+        KLANGK_TEST_MODE="1",
+        KLANGK_IDLE_TIMEOUT_SECONDS="300",
+        KLANGK_PORT_RANGE_START=str(free_port()),
+        LOGFIRE_TOKEN="",
         **(extra_env or {}),
-    }
+    )
     # Write server output to a temp file instead of PIPE.  With PIPE,
     # the OS buffer (64 KB) fills up when the server emits enough log
     # lines, deadlocking the event loop — the root cause of #364.
@@ -123,7 +133,7 @@ def _stop_server(proc, data_dir):
         ["klangk-instance-id"],
         capture_output=True,
         text=True,
-        env={**os.environ, "KLANGK_DATA_DIR": data_dir},
+        env=clean_env(KLANGK_DATA_DIR=data_dir),
     ).stdout.strip()
     if instance_id:
         result = subprocess.run(
@@ -165,7 +175,7 @@ def server():
 def cli_config(server, tmp_path_factory):
     """Create a CLI config pointing at the test server."""
     config_dir = tmp_path_factory.mktemp("klangk-cli-config")
-    env = {**os.environ, "HOME": str(config_dir)}
+    env = clean_env(HOME=str(config_dir))
     # The CLI reads from ~/.config/klangk/cli.yaml
     klangk_config_dir = config_dir / ".config" / "klangk"
     klangk_config_dir.mkdir(parents=True)
@@ -719,7 +729,7 @@ class TestAutoStart:
             extra_env={"KLANGK_ALLOW_AUTOSTART": "1"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-autostart-config")
-        env = {**os.environ, "HOME": str(config_dir)}
+        env = clean_env(HOME=str(config_dir))
         klangk_config_dir = config_dir / ".config" / "klangk"
         klangk_config_dir.mkdir(parents=True)
         _run(
@@ -837,7 +847,7 @@ class TestSandboxAutoStartServiceCommand:
             extra_env={"KLANGK_ALLOW_AUTOSTART": "1"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-sandbox-defcmd-config")
-        env = {**os.environ, "HOME": str(config_dir)}
+        env = clean_env(HOME=str(config_dir))
         klangk_config_dir = config_dir / ".config" / "klangk"
         klangk_config_dir.mkdir(parents=True)
         _run(
@@ -1153,7 +1163,7 @@ class TestAuthError:
         config_dir.mkdir()
         klangk_config = config_dir / ".config" / "klangk"
         klangk_config.mkdir(parents=True)
-        env = {**os.environ, "HOME": str(config_dir)}
+        env = clean_env(HOME=str(config_dir))
         result = _run(
             ["klangkc", "ls"],
             env=env,
@@ -1507,7 +1517,7 @@ class TestAllowedMountRoots:
             extra_env={"KLANGK_ALLOWED_MOUNT_ROOTS": "/tmp,/home"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-mount-roots-config")
-        env = {**os.environ, "HOME": str(config_dir)}
+        env = clean_env(HOME=str(config_dir))
         klangk_config_dir = config_dir / ".config" / "klangk"
         klangk_config_dir.mkdir(parents=True)
         _run(
@@ -1590,7 +1600,7 @@ class TestVolumeUserIsolation:
             ("_env_b", "user2@example.com", "testpass2"),
         ]:
             config_dir = tmp_path_factory.mktemp(f"klangk-vol-iso-{attr}")
-            env = {**os.environ, "HOME": str(config_dir)}
+            env = clean_env(HOME=str(config_dir))
             (config_dir / ".config" / "klangk").mkdir(parents=True)
             _run(
                 [
@@ -1726,7 +1736,7 @@ class TestTerminalSharing:
         data_dir = tempfile.mkdtemp(prefix="klangk-terminal-sharing-")
         proc, base_url = _start_server(data_dir, str(free_port()))
         config_dir = tmp_path_factory.mktemp("klangk-terminal-sharing-config")
-        env = {**os.environ, "HOME": str(config_dir)}
+        env = clean_env(HOME=str(config_dir))
         (config_dir / ".config" / "klangk").mkdir(parents=True)
         _run(
             [
@@ -1886,7 +1896,7 @@ class TestWorkspaceSharing:
         )
 
         config_dir = tmp_path_factory.mktemp("klangk-ws-share")
-        env = {**os.environ, "HOME": str(config_dir)}
+        env = clean_env(HOME=str(config_dir))
         (config_dir / ".config" / "klangk").mkdir(parents=True)
         _run(
             [
@@ -2026,7 +2036,7 @@ def short_token_server():
 def short_token_cli_config(short_token_server, tmp_path_factory):
     """Create a CLI config pointing at the short-token server."""
     config_dir = tmp_path_factory.mktemp("klangk-refresh-config")
-    env = {**os.environ, "HOME": str(config_dir)}
+    env = clean_env(HOME=str(config_dir))
     klangk_config_dir = config_dir / ".config" / "klangk"
     klangk_config_dir.mkdir(parents=True)
     return {

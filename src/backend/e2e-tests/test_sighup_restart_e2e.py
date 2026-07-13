@@ -33,35 +33,33 @@ import pytest
 import websockets
 
 from klangk_backend.model import free_port
+from _e2e_env import clean_env
 
 
 @pytest.fixture(scope="module")
 def server():
     """Start a real Klangk server with short idle + health intervals."""
     data_dir = tempfile.mkdtemp(prefix="klangk-sighup-e2e-")
+    state_dir = tempfile.mkdtemp(prefix="klangk-sighup-e2e-state-")
     port = str(free_port())
 
-    env = {
-        **os.environ,
-        "KLANGK_PORT": port,
-        "KLANGK_DATA_DIR": data_dir,
-        "KLANGK_JWT_SECRET": "sighup-e2e-secret",
-        "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
-        "KLANGK_DEFAULT_USER": "test@example.com",
-        "KLANGK_DEFAULT_PASSWORD": "testpass",
-        "KLANGK_TEST_MODE": "1",
-        # Short idle timeout so a workspace with no subscribers stops
-        # quickly; we mainly care that SIGHUP stops *all* of them.
-        "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-        "KLANGK_PORT_RANGE_START": str(free_port()),
-        # Allow auto-start so the post-SIGHUP restart brings workspaces
-        # back (acceptance criterion #4).
-        "KLANGK_ALLOW_AUTOSTART": "1",
-        "LOGFIRE_TOKEN": "",
-        "KLANGK_LLM_BASE_URL": "",
-        "KLANGK_LLM_API_KEY": "",
-        "KLANGK_LLM_MODEL": "",
-    }
+    env = clean_env(
+        KLANGK_PORT=port,
+        KLANGK_DATA_DIR=data_dir,
+        KLANGK_STATE_DIR=state_dir,
+        KLANGK_JWT_SECRET="sighup-e2e-secret",
+        KLANGK_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGK_DEFAULT_USER="test@example.com",
+        KLANGK_DEFAULT_PASSWORD="testpass",
+        KLANGK_TEST_MODE="1",
+        KLANGK_IDLE_TIMEOUT_SECONDS="300",
+        KLANGK_PORT_RANGE_START=str(free_port()),
+        KLANGK_ALLOW_AUTOSTART="1",
+        LOGFIRE_TOKEN="",
+        KLANGK_LLM_BASE_URL="",
+        KLANGK_LLM_API_KEY="",
+        KLANGK_LLM_MODEL="",
+    )
     proc = subprocess.Popen(
         [
             "python3",

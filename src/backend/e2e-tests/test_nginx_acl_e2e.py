@@ -19,6 +19,7 @@ import httpx
 import pytest
 
 from klangk_backend.model import free_port
+from _e2e_env import clean_env
 
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
 
@@ -376,20 +377,19 @@ class TestNginxAclEnforcement:
         nginx_port = _find_free_port()
 
         # Start uvicorn.
-        backend_env = {
-            **os.environ,
-            "KLANGK_PORT": backend_port,
-            "KLANGK_DATA_DIR": data_dir,
-            "KLANGK_STATE_DIR": state_dir,
-            "KLANGK_JWT_SECRET": "nginx-acl-test-secret",
-            "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
-            "KLANGK_DEFAULT_USER": "test@example.com",
-            "KLANGK_DEFAULT_PASSWORD": "testpass",
-            "KLANGK_TEST_MODE": "1",
-            "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-            "KLANGK_PORT_RANGE_START": str(free_port()),
-            "LOGFIRE_TOKEN": "",
-        }
+        backend_env = clean_env(
+            KLANGK_PORT=backend_port,
+            KLANGK_DATA_DIR=data_dir,
+            KLANGK_STATE_DIR=state_dir,
+            KLANGK_JWT_SECRET="nginx-acl-test-secret",
+            KLANGK_PREVENT_INSECURE_JWT_SECRET="",
+            KLANGK_DEFAULT_USER="test@example.com",
+            KLANGK_DEFAULT_PASSWORD="testpass",
+            KLANGK_TEST_MODE="1",
+            KLANGK_IDLE_TIMEOUT_SECONDS="300",
+            KLANGK_PORT_RANGE_START=str(free_port()),
+            LOGFIRE_TOKEN="",
+        )
         backend_proc = subprocess.Popen(
             [
                 "python3",
@@ -553,20 +553,19 @@ class TestNginxDenyByDefault:
         nginx_port = _find_free_port()
 
         # Start uvicorn (loopback only; nginx reaches it via 127.0.0.1).
-        backend_env = {
-            **os.environ,
-            "KLANGK_PORT": backend_port,
-            "KLANGK_DATA_DIR": data_dir,
-            "KLANGK_STATE_DIR": state_dir,
-            "KLANGK_JWT_SECRET": "nginx-deny-test-secret",
-            "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
-            "KLANGK_DEFAULT_USER": "test@example.com",
-            "KLANGK_DEFAULT_PASSWORD": "testpass",
-            "KLANGK_TEST_MODE": "1",
-            "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-            "KLANGK_PORT_RANGE_START": str(free_port()),
-            "LOGFIRE_TOKEN": "",
-        }
+        backend_env = clean_env(
+            KLANGK_PORT=backend_port,
+            KLANGK_DATA_DIR=data_dir,
+            KLANGK_STATE_DIR=state_dir,
+            KLANGK_JWT_SECRET="nginx-deny-test-secret",
+            KLANGK_PREVENT_INSECURE_JWT_SECRET="",
+            KLANGK_DEFAULT_USER="test@example.com",
+            KLANGK_DEFAULT_PASSWORD="testpass",
+            KLANGK_TEST_MODE="1",
+            KLANGK_IDLE_TIMEOUT_SECONDS="300",
+            KLANGK_PORT_RANGE_START=str(free_port()),
+            LOGFIRE_TOKEN="",
+        )
         backend_proc = subprocess.Popen(
             [
                 "python3",
@@ -722,21 +721,20 @@ class TestNginxAuthLocalAcl:
 
         # Start uvicorn (loopback; nginx reaches it via 127.0.0.1).
         # KLANGK_AUTH_MODES=none so /auth/local actually mints a token.
-        backend_env = {
-            **os.environ,
-            "KLANGK_PORT": backend_port,
-            "KLANGK_DATA_DIR": data_dir,
-            "KLANGK_STATE_DIR": state_dir,
-            "KLANGK_JWT_SECRET": "nginx-auth-local-test-secret",
-            "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
-            "KLANGK_DEFAULT_USER": "test@example.com",
-            "KLANGK_DEFAULT_PASSWORD": "testpass",
-            "KLANGK_AUTH_MODES": "none",
-            "KLANGK_TEST_MODE": "1",
-            "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-            "KLANGK_PORT_RANGE_START": str(free_port()),
-            "LOGFIRE_TOKEN": "",
-        }
+        backend_env = clean_env(
+            KLANGK_PORT=backend_port,
+            KLANGK_DATA_DIR=data_dir,
+            KLANGK_STATE_DIR=state_dir,
+            KLANGK_JWT_SECRET="nginx-auth-local-test-secret",
+            KLANGK_PREVENT_INSECURE_JWT_SECRET="",
+            KLANGK_DEFAULT_USER="test@example.com",
+            KLANGK_DEFAULT_PASSWORD="testpass",
+            KLANGK_AUTH_MODES="none",
+            KLANGK_TEST_MODE="1",
+            KLANGK_IDLE_TIMEOUT_SECONDS="300",
+            KLANGK_PORT_RANGE_START=str(free_port()),
+            LOGFIRE_TOKEN="",
+        )
         backend_proc = subprocess.Popen(
             [
                 "python3",

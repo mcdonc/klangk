@@ -17,53 +17,24 @@ import httpx
 import pytest
 
 from klangk_backend.model import free_port
-
-# Env vars from .env that could change test behavior.
-_SANITIZED_VARS = [
-    "KLANGK_AUTH_MODES",
-    "KLANGK_OIDC_CONFIG",
-    "KLANGK_DISABLE_REGISTRATION",
-    "KLANGK_DISABLE_INVITES",
-    "KLANGK_LOGIN_LOCKOUT_FAILURES",
-    "KLANGK_MIN_PASSWORD_LENGTH",
-    "KLANGK_PREVENT_INSECURE_JWT_SECRET",
-]
-
-
-def _clean_env():
-    """Return os.environ with test-affecting vars removed, pinned to a known
-    baseline.
-
-    ``KLANGK_AUTH_MODES`` is stripped from the ambient env (above) and then
-    set explicitly to ``password`` here: the production default changed to
-    ``none`` (#1374), but these tests exercise the password auth flow
-    (login, register, lockout, ACL via ``admin_headers``). Stripping alone
-    used to yield ``password`` via the old unset default; that's no longer
-    true, so pin it explicitly. Tests that need a different mode set it in
-    their own env dict, which overrides this baseline (the spread order in
-    ``_start_server`` puts explicit keys after ``_clean_env()``).
-    """
-    env = dict(os.environ)
-    for var in _SANITIZED_VARS:
-        env.pop(var, None)
-    env["KLANGK_AUTH_MODES"] = "password"
-    return env
+from _e2e_env import clean_env
 
 
 def _start_server(data_dir, port):
     """Start a Klangk server and wait for it to be ready."""
-    env = {
-        **_clean_env(),
-        "KLANGK_PORT": port,
-        "KLANGK_DATA_DIR": data_dir,
-        "KLANGK_JWT_SECRET": "acl-e2e-test-secret",
-        "KLANGK_DEFAULT_USER": "admin@example.com",
-        "KLANGK_DEFAULT_PASSWORD": "adminpass",
-        "KLANGK_TEST_MODE": "1",
-        "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-        "KLANGK_PORT_RANGE_START": str(free_port()),
-        "LOGFIRE_TOKEN": "",
-    }
+    state_dir = tempfile.mkdtemp(prefix="klangk-acl-e2e-state-")
+    env = clean_env(
+        KLANGK_PORT=port,
+        KLANGK_DATA_DIR=data_dir,
+        KLANGK_STATE_DIR=state_dir,
+        KLANGK_JWT_SECRET="acl-e2e-test-secret",
+        KLANGK_DEFAULT_USER="admin@example.com",
+        KLANGK_DEFAULT_PASSWORD="adminpass",
+        KLANGK_TEST_MODE="1",
+        KLANGK_IDLE_TIMEOUT_SECONDS="300",
+        KLANGK_PORT_RANGE_START=str(free_port()),
+        LOGFIRE_TOKEN="",
+    )
     proc = subprocess.Popen(
         [
             "python3",
@@ -106,7 +77,7 @@ def _stop_server(proc, data_dir):
         ["klangk-instance-id"],
         capture_output=True,
         text=True,
-        env={**os.environ, "KLANGK_DATA_DIR": data_dir},
+        env=clean_env(KLANGK_DATA_DIR=data_dir, KLANGK_STATE_DIR=data_dir),
     ).stdout.strip()
     result = subprocess.run(
         [
@@ -1049,20 +1020,21 @@ class TestAutoStartWithServiceCommand:
     @staticmethod
     def autostart_server(request):
         data_dir = tempfile.mkdtemp(prefix="klangk-autostart-e2e-")
+        state_dir = tempfile.mkdtemp(prefix="klangk-autostart-e2e-state-")
         port = str(free_port())
-        env = {
-            **_clean_env(),
-            "KLANGK_PORT": port,
-            "KLANGK_DATA_DIR": data_dir,
-            "KLANGK_JWT_SECRET": "autostart-e2e-secret",
-            "KLANGK_DEFAULT_USER": "admin@example.com",
-            "KLANGK_DEFAULT_PASSWORD": "adminpass",
-            "KLANGK_TEST_MODE": "1",
-            "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
-            "KLANGK_PORT_RANGE_START": str(free_port()),
-            "KLANGK_ALLOW_AUTOSTART": "1",
-            "LOGFIRE_TOKEN": "",
-        }
+        env = clean_env(
+            KLANGK_PORT=port,
+            KLANGK_DATA_DIR=data_dir,
+            KLANGK_STATE_DIR=state_dir,
+            KLANGK_JWT_SECRET="autostart-e2e-secret",
+            KLANGK_DEFAULT_USER="admin@example.com",
+            KLANGK_DEFAULT_PASSWORD="adminpass",
+            KLANGK_TEST_MODE="1",
+            KLANGK_IDLE_TIMEOUT_SECONDS="300",
+            KLANGK_PORT_RANGE_START=str(free_port()),
+            KLANGK_ALLOW_AUTOSTART="1",
+            LOGFIRE_TOKEN="",
+        )
         proc = subprocess.Popen(
             [
                 "python3",
