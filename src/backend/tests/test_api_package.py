@@ -267,18 +267,28 @@ class TestSubmoduleStructure:
         from klangk_backend.api import _common
 
         for name in (
-            "FILE_UPLOAD_SIZE_MAX",
             "send_email",
             "workspace_resource",
             "admin_resource",
             "require_workspace_token",
             "WorkspaceAclEntry",
+            "autostart_allowed",
         ):
             assert hasattr(_common, name), f"_common missing {name}"
 
-    def test_file_upload_size_max_is_shared_object(self):
-        """workspaces and files must see the same upload-size cap."""
-        from klangk_backend.api import _common, files, workspaces
+    def test_no_duplicate_module_globals(self):
+        """No module-level config reads survive in the api package (#1516)."""
+        from klangk_backend.api import _common, __init__ as api_init
 
-        assert workspaces.FILE_UPLOAD_SIZE_MAX is _common.FILE_UPLOAD_SIZE_MAX
-        assert files.FILE_UPLOAD_SIZE_MAX is _common.FILE_UPLOAD_SIZE_MAX
+        assert not hasattr(_common, "FILE_UPLOAD_SIZE_MAX")
+        for name in (
+            "LOGIN_BANNER_TITLE",
+            "LOGIN_BANNER",
+            "PRODUCT_NAME",
+            "TERMS_URL",
+            "PRIVACY_URL",
+            "AUP_URL",
+            "SUPPORT_URL",
+            "SUPPORT_EMAIL",
+        ):
+            assert not hasattr(api_init, name), f"api still defines {name}"

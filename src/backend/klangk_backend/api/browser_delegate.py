@@ -12,9 +12,6 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel
 
-from .. import (
-    wshandler,
-)
 from ._common import get_app_state_dep
 from ._common import (
     require_workspace_token,
@@ -109,7 +106,7 @@ async def browser_delegate_stream(
     )
     return StreamingResponse(
         session.dispatch_browser_request_stream_to(
-            target_sock, payload, wshandler.bridge_idle_timeout()
+            target_sock, payload, app_state.util.bridge_idle_timeout()
         ),
         media_type="application/x-ndjson",
     )

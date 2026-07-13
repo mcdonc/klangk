@@ -265,14 +265,16 @@ class TestWorkspaceChat:
 
 
 class TestVersion:
-    async def test_version_from_file(self, client, tmp_path, monkeypatch):
+    async def test_version_from_file(self, client, app, tmp_path, monkeypatch):
         version_file = tmp_path / "version.json"
         version_file.write_text(
             '{"version": "2026.01.01+abc1234",'
             ' "commit": "abc1234",'
             ' "built_at": "2026-01-01T00:00:00Z"}'
         )
-        monkeypatch.setenv("KLANGK_VERSION_FILE", str(version_file))
+        monkeypatch.setattr(
+            app.state.settings, "version_file", str(version_file)
+        )
         resp = await client.get("/api/v1/version")
         assert resp.status_code == 200
         data = resp.json()
@@ -281,8 +283,8 @@ class TestVersion:
         assert data["built_at"] == "2026-01-01T00:00:00Z"
         assert "plugins" in data
 
-    async def test_version_no_file(self, client, monkeypatch):
-        monkeypatch.delenv("KLANGK_VERSION_FILE", raising=False)
+    async def test_version_no_file(self, client, app, monkeypatch):
+        monkeypatch.setattr(app.state.settings, "version_file", None)
         resp = await client.get("/api/v1/version")
         assert resp.status_code == 200
         data = resp.json()
@@ -294,7 +296,7 @@ class TestVersion:
     async def test_version_includes_plugins(
         self, client, app, tmp_path, monkeypatch
     ):
-        monkeypatch.delenv("KLANGK_VERSION_FILE", raising=False)
+        monkeypatch.setattr(app.state.settings, "version_file", None)
         plugin_dir = tmp_path / "plugins" / "myplugin"
         plugin_dir.mkdir(parents=True)
         (plugin_dir / "package.json").write_text(
@@ -332,7 +334,9 @@ class TestVersion:
             ' "commit": "abc1234",'
             ' "built_at": "2026-01-01T00:00:00Z"}'
         )
-        monkeypatch.setenv("KLANGK_VERSION_FILE", str(version_file))
+        monkeypatch.setattr(
+            app.state.settings, "version_file", str(version_file)
+        )
         resp = await client.get("/api/v1/version")
         assert resp.status_code == 200
         data = resp.json()
@@ -350,7 +354,9 @@ class TestVersion:
             ' "commit": "abc1234",'
             ' "built_at": "2026-01-01T00:00:00Z"}'
         )
-        monkeypatch.setenv("KLANGK_VERSION_FILE", str(version_file))
+        monkeypatch.setattr(
+            app.state.settings, "version_file", str(version_file)
+        )
         resp = await client.get("/api/v1/version")
         assert resp.status_code == 200
         data = resp.json()
@@ -390,9 +396,11 @@ class TestConfig:
         data = resp.json()
         assert data["my_plugin_var"] == "test-value"
 
-    async def test_get_config_banner_fields(self, client, monkeypatch):
-        monkeypatch.setattr(api, "LOGIN_BANNER_TITLE", "Notice")
-        monkeypatch.setattr(api, "LOGIN_BANNER", "You must accept terms.")
+    async def test_get_config_banner_fields(self, client, app, monkeypatch):
+        monkeypatch.setattr(app.state.settings, "login_banner_title", "Notice")
+        monkeypatch.setattr(
+            app.state.settings, "login_banner", "You must accept terms."
+        )
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
@@ -444,15 +452,25 @@ class TestConfig:
     async def test_get_config_legal_links_reflect_env(
         self, client, app, monkeypatch
     ):
-        # Each link is surfaced verbatim from its module constant (resolved
-        # from env at import time, like PRODUCT_NAME / LOGIN_BANNER).
-        monkeypatch.setattr(api, "TERMS_URL", "https://corp.example.com/terms")
+        # Each link is surfaced verbatim from its settings field (frozen at
+        # construction, like product_name / login_banner).
         monkeypatch.setattr(
-            api, "PRIVACY_URL", "https://corp.example.com/privacy"
+            app.state.settings, "terms_url", "https://corp.example.com/terms"
         )
-        monkeypatch.setattr(api, "AUP_URL", "https://corp.example.com/aup")
-        monkeypatch.setattr(api, "SUPPORT_URL", "https://help.example.com")
-        monkeypatch.setattr(api, "SUPPORT_EMAIL", "help@example.com")
+        monkeypatch.setattr(
+            app.state.settings,
+            "privacy_url",
+            "https://corp.example.com/privacy",
+        )
+        monkeypatch.setattr(
+            app.state.settings, "aup_url", "https://corp.example.com/aup"
+        )
+        monkeypatch.setattr(
+            app.state.settings, "support_url", "https://help.example.com"
+        )
+        monkeypatch.setattr(
+            app.state.settings, "support_email", "help@example.com"
+        )
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
@@ -468,9 +486,10 @@ class TestConfig:
         # Legal/support links are PUBLIC URLs shown to unauthenticated
         # users, so they must NOT get file:/cmd: secret resolution -- a
         # deployer pointing them at a file: path would be exposing secret
-        # resolution to the world. The raw value is surfaced verbatim
-        # (were it resolved, file:///etc/shadow would yield empty/None).
-        monkeypatch.setattr(api, "TERMS_URL", "file:///etc/shadow")
+        # resolution to the world. The settings field is surfaced verbatim.
+        monkeypatch.setattr(
+            app.state.settings, "terms_url", "file:///etc/shadow"
+        )
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         assert resp.json()["terms_url"] == "file:///etc/shadow"
@@ -496,8 +515,10 @@ class TestConfig:
         data = resp.json()
         assert data["product_name"] == "Klangk"
 
-    async def test_get_config_reflects_product_name(self, client, monkeypatch):
-        monkeypatch.setattr(api, "PRODUCT_NAME", "Acme Labs")
+    async def test_get_config_reflects_product_name(
+        self, client, app, monkeypatch
+    ):
+        monkeypatch.setattr(app.state.settings, "product_name", "Acme Labs")
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
@@ -1552,7 +1573,7 @@ class TestWorkspaceRoutes:
     async def test_create_auto_start_allowed_with_env(self, client, app, user):
         headers = await _auth_headers(client)
         with (
-            patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}),
+            patch.object(app.state.settings, "allow_autostart", "1"),
             patch.object(
                 app.state.workspaces,
                 "start_workspace",
@@ -1573,7 +1594,7 @@ class TestWorkspaceRoutes:
     ):
         headers = await _auth_headers(client)
         with (
-            patch.dict(os.environ, {"KLANGK_ALLOW_AUTOSTART": "1"}),
+            patch.object(app.state.settings, "allow_autostart", "1"),
             patch.object(
                 app.state.workspaces,
                 "start_workspace",
@@ -4167,16 +4188,20 @@ class TestFileRoutes:
         finally:
             self._cleanup(ws_id)
 
-    async def test_upload_exceeds_size_limit(self, client, user):
+    async def test_upload_exceeds_size_limit(
+        self, client, user, app, monkeypatch
+    ):
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
-            with patch.object(api.files, "FILE_UPLOAD_SIZE_MAX", 10):
-                resp = await client.post(
-                    f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/work/big.txt",
-                    headers=headers,
-                    files={"file": ("big.txt", b"x" * 100, "text/plain")},
-                )
+            monkeypatch.setattr(
+                app.state.settings, "file_upload_size_max", "10"
+            )
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/work/big.txt",
+                headers=headers,
+                files={"file": ("big.txt", b"x" * 100, "text/plain")},
+            )
             assert resp.status_code == 413
             assert "limit" in resp.json()["detail"].lower()
         finally:
@@ -6957,11 +6982,9 @@ class TestWorkspaceExportImport:
             assert link_path.is_symlink(), f"Not a symlink: {link_path}"
             assert os.readlink(str(link_path)) == "file0.txt"
 
-    async def test_import_size_limit(self, client, user, monkeypatch):
+    async def test_import_size_limit(self, client, user, app, monkeypatch):
         """Upload exceeding size limit is rejected."""
-        import klangk_backend.api.workspaces as api_mod
-
-        monkeypatch.setattr(api_mod, "FILE_UPLOAD_SIZE_MAX", 100)
+        monkeypatch.setattr(app.state.settings, "file_upload_size_max", "100")
 
         headers = await self._user_headers(client)
         resp = await client.post(

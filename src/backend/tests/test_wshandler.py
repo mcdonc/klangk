@@ -52,6 +52,12 @@ from klangk_backend.wshandler import (
 )
 
 
+def _util(env=None):
+    """Build a Util instance from explicit env."""
+    settings = make_settings(env)
+    return util_mod.Util(types.SimpleNamespace(settings=settings))
+
+
 _mock_pod = MagicMock()
 _mock_pod.exec_container = AsyncMock(return_value=(0, "", ""))
 
@@ -9475,17 +9481,24 @@ class TestChatDelete:
 
 
 class TestBridgeIdleTimeout:
-    def test_default(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_BRIDGE_TIMEOUT_SECONDS", raising=False)
-        assert wshandler.bridge_idle_timeout() == 30.0
+    def test_default(self):
+        assert _util().bridge_idle_timeout() == 30.0
 
-    def test_env_override(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_BRIDGE_TIMEOUT_SECONDS", "45")
-        assert wshandler.bridge_idle_timeout() == 45.0
+    def test_env_override(self):
+        assert (
+            _util(
+                {"KLANGK_BRIDGE_TIMEOUT_SECONDS": "45"}
+            ).bridge_idle_timeout()
+            == 45.0
+        )
 
-    def test_invalid_env_falls_back(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_BRIDGE_TIMEOUT_SECONDS", "nope")
-        assert wshandler.bridge_idle_timeout() == 30.0
+    def test_invalid_env_falls_back(self):
+        assert (
+            _util(
+                {"KLANGK_BRIDGE_TIMEOUT_SECONDS": "nope"}
+            ).bridge_idle_timeout()
+            == 30.0
+        )
 
 
 class TestHandleBrowserChunk:

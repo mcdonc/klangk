@@ -24,7 +24,6 @@ from ..util import (
     sanitize_disposition_name,
 )
 from ._common import (
-    FILE_UPLOAD_SIZE_MAX,
     workspace_resource,
 )
 
@@ -170,7 +169,7 @@ async def upload_file(
     if not filename:  # pragma: no cover
         raise HTTPException(status_code=400, detail="No filename provided")
 
-    max_upload = FILE_UPLOAD_SIZE_MAX
+    max_upload = int(app_state.settings.file_upload_size_max)
     buf = io.BytesIO()
     total = 0
     while chunk := await file.read(1024 * 1024):

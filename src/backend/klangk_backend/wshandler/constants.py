@@ -9,12 +9,13 @@ dependencies between sibling modules are placed here.
 import asyncio
 import json
 import logging
-
-from ..util import resolve_env_value
+import os
 
 logger = logging.getLogger(__name__)
 
-WS_DEBUG = bool(resolve_env_value("KLANGKWS_DEBUG"))
+# Plain debug flag (not a KlangkSettings field): read straight from the
+# environment, no file:/cmd: resolution (#1516).
+WS_DEBUG = bool(os.environ.get("KLANGKWS_DEBUG"))
 
 # Max size for terminal/exec input data (base64-decoded bytes).
 # Matches uvicorn's --ws-max-size (16 MB) so the app-level cap isn't
@@ -23,20 +24,6 @@ MAX_INPUT_SIZE = 16777216
 
 # Max outbound messages before we declare the client too slow and close.
 SEND_QUEUE_SIZE = 256
-
-
-def bridge_idle_timeout() -> float:
-    """Max seconds between streamed browser chunks before giving up.
-
-    Bounds the gap between chunks (not the total query duration), so a
-    long-but-progressing stream never times out.  Override with
-    KLANGK_BRIDGE_TIMEOUT_SECONDS.
-    """
-    raw = resolve_env_value("KLANGK_BRIDGE_TIMEOUT_SECONDS")
-    try:
-        return float(raw) if raw else 30.0
-    except ValueError:
-        return 30.0
 
 
 # ---------------------------------------------------------------------------

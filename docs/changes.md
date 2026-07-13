@@ -63,6 +63,19 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **Last import-time config reads removed from the API and wshandler
+  packages (#1516):** `api/__init__.py`, `api/_common.py`, and
+  `wshandler/constants.py` no longer read config at module import time.
+  The `/config` endpoint (`product_name`, `login_banner`, legal/support
+  URLs, `logo_url`, `allow_autostart`) and `/version` read the frozen
+  `app_state.settings` directly. The `FILE_UPLOAD_SIZE_MAX` module constant
+  is gone — `files.py`/`workspaces.py` read
+  `app_state.settings.file_upload_size_max`. `KLANGKWS_DEBUG` and
+  `KLANGK_TEST_MODE` (plain flags, not secrets) read `os.environ` directly
+  with no `file:`/`cmd:` resolution. The test collection-time
+  `KLANGK_STATE_DIR`/`KLANGK_DATA_DIR` env workaround in `conftest.py` is
+  removed — test collection no longer needs env pre-set.
+
 - **`resolve_env_value` (KLANGK path) no longer re-resolves `file:`/`cmd:`**
   — the field is already resolved at construction. The function survives for
   plugins' dynamic keys (non-`KLANGK_`, discovered from `package.json`) and

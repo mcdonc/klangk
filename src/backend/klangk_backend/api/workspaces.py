@@ -39,13 +39,12 @@ from ..model import (
 )
 from ..model.instance import get_instance_id
 from ..util import (
-    resolve_env_bool,
     sanitize_disposition_name,
 )
 from ._common import (
-    FILE_UPLOAD_SIZE_MAX,
     WorkspaceAclEntry,
     admin_resource,
+    autostart_allowed,
     workspace_resource,
 )
 
@@ -173,7 +172,7 @@ async def create_workspace(
     user: dict = Depends(auth.get_current_user),
     app_state=Depends(get_app_state_dep),
 ):
-    if body.auto_start and not resolve_env_bool("KLANGK_ALLOW_AUTOSTART"):
+    if body.auto_start and not autostart_allowed(app_state):
         raise HTTPException(
             status_code=400,
             detail="Auto-start is not enabled on this server"
@@ -250,9 +249,7 @@ async def update_workspace(
     app_state=Depends(get_app_state_dep),
 ):
     fields = body.model_dump(exclude_unset=True)
-    if fields.get("auto_start") and not resolve_env_bool(
-        "KLANGK_ALLOW_AUTOSTART"
-    ):
+    if fields.get("auto_start") and not autostart_allowed(app_state):
         raise HTTPException(
             status_code=400,
             detail="Auto-start is not enabled on this server"
@@ -564,13 +561,12 @@ async def export_workspace(
     )
 
 
-async def _stream_upload_to_tempfile(file: UploadFile) -> str:
+async def _stream_upload_to_tempfile(file: UploadFile, max_upload: int) -> str:
     """Stream *file* to a temp file, enforcing the upload size limit.
 
     Returns the path to the temp file.  Caller is responsible for
     deleting it.
     """
-    max_upload = FILE_UPLOAD_SIZE_MAX
     tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
     total = 0
     try:
@@ -713,7 +709,9 @@ async def import_workspace(
     Creates a new workspace with metadata from workspace.json and
     extracts the home directory from the archive.
     """
-    archive_path = await _stream_upload_to_tempfile(file)
+    archive_path = await _stream_upload_to_tempfile(
+        file, int(app_state.settings.file_upload_size_max)
+    )
     ws = None
     try:
         meta = await _extract_archive_metadata(archive_path, name, app_state)
