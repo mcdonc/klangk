@@ -214,18 +214,19 @@ listen: 127.0.0.1
 
 ### Server / network
 
-| Key                      | Default          | Env var                         |
-| ------------------------ | ---------------- | ------------------------------- |
-| `listen`                 | `127.0.0.1`      | `KLANGK_LISTEN`                 |
-| `nginx_port`             | `8995`           | `KLANGK_NGINX_PORT`             |
-| `port_range_start`       | `9000`           | `KLANGK_PORT_RANGE_START`       |
-| `cors_origins`           |                  | `KLANGK_CORS_ORIGINS`           |
-| `dns_servers`            |                  | `KLANGK_DNS_SERVERS`            |
-| `hosting_hostname`       | _(auto-derived)_ | `KLANGK_HOSTING_HOSTNAME`       |
-| `hosting_proto`          | _(auto-derived)_ | `KLANGK_HOSTING_PROTO`          |
-| `hosting_base_path`      | _(auto-derived)_ | `KLANGK_HOSTING_BASE_PATH`      |
-| `bridge_timeout_seconds` |                  | `KLANGK_BRIDGE_TIMEOUT_SECONDS` |
-| `idle_timeout_seconds`   | `1800`           | `KLANGK_IDLE_TIMEOUT_SECONDS`   |
+| Key                      | Default           | Env var                         |
+| ------------------------ | ----------------- | ------------------------------- |
+| `listen`                 | `127.0.0.1`       | `KLANGK_LISTEN`                 |
+| `nginx_port`             | `8995`            | `KLANGK_NGINX_PORT`             |
+| `port_range_start`       | `9000`            | `KLANGK_PORT_RANGE_START`       |
+| `cors_origins`           |                   | `KLANGK_CORS_ORIGINS`           |
+| `frontend_dir`           | _(repo-relative)_ | `KLANGK_FRONTEND_DIR`           |
+| `dns_servers`            |                   | `KLANGK_DNS_SERVERS`            |
+| `hosting_hostname`       | _(auto-derived)_  | `KLANGK_HOSTING_HOSTNAME`       |
+| `hosting_proto`          | _(auto-derived)_  | `KLANGK_HOSTING_PROTO`          |
+| `hosting_base_path`      | _(auto-derived)_  | `KLANGK_HOSTING_BASE_PATH`      |
+| `bridge_timeout_seconds` |                   | `KLANGK_BRIDGE_TIMEOUT_SECONDS` |
+| `idle_timeout_seconds`   | `1800`            | `KLANGK_IDLE_TIMEOUT_SECONDS`   |
 
 ### Container / workspace
 

@@ -32,10 +32,7 @@ from . import (
     workspaces,
     wshandler,
 )
-from .settings import (
-    KlangkSettings,
-    get_settings,
-)
+from .settings import KlangkSettings
 from .api import root_router, router
 from .util import API_PREFIX
 from .model import (
@@ -47,10 +44,6 @@ from .model import (
     SYSTEM_EVERYONE,
 )
 from .model import AGENT_USER_ID
-from .util import (
-    resolve_env_bool,
-    resolve_env_value,
-)
 from .wshandler import handle_websocket
 
 _LIGHT_BLUE = "\033[94m"
@@ -174,10 +167,14 @@ def enforce_no_auth_bind_safety(app_state) -> None:
     """
     if app_state.oidc.auth_modes() != "none":
         return
-    host = resolve_env_value("KLANGK_LISTEN", "127.0.0.1") or "127.0.0.1"
+    host = app_state.settings.listen or "127.0.0.1"
     if _is_loopback_bind(host):
         return
-    if resolve_env_bool("KLANGK_ALLOW_INSECURE_NO_AUTH"):
+    if app_state.settings.allow_insecure_no_auth.strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
         logger.warning(
             "KLANGK_AUTH_MODES=none with non-loopback bind %r — allowed "
             "because KLANGK_ALLOW_INSECURE_NO_AUTH=1. Anyone who can reach "
@@ -194,7 +191,7 @@ def enforce_no_auth_bind_safety(app_state) -> None:
     )
 
 
-async def seed_default_user() -> None:
+async def seed_default_user(settings) -> None:
     """Create default user if it doesn't exist.
 
     If KLANGK_DEFAULT_PASSWORD is set, use it. Otherwise generate a random
@@ -203,8 +200,8 @@ async def seed_default_user() -> None:
     admin_group_id = await ensure_admin_group()
     await seed_default_acls(admin_group_id)
 
-    email = resolve_env_value("KLANGK_DEFAULT_USER", "admin@example.com")
-    password = resolve_env_value("KLANGK_DEFAULT_PASSWORD")
+    email = settings.default_user
+    password = settings.default_password
     existing = await model.get_user_by_email(email)
     if existing is None:
         generated = password is None
@@ -234,7 +231,7 @@ async def seed_default_user() -> None:
         await model.add_user_to_group(existing["id"], admin_group_id)
 
 
-async def seed_agent_user() -> None:
+async def seed_agent_user(settings) -> None:
     """Ensure the chat agent user exists in the DB.
 
     Reads email/handle from env vars (with defaults) and upserts the
@@ -248,8 +245,8 @@ async def seed_agent_user() -> None:
     actionable message instead of letting a bare ``IntegrityError`` abort
     startup mid-sequence.  See #1137.
     """
-    email = resolve_env_value("KLANGK_AGENT_EMAIL", "clanker@example.com")
-    handle = resolve_env_value("KLANGK_AGENT_HANDLE", "clanker")
+    email = settings.agent_email
+    handle = settings.agent_handle
     async with model.transaction() as db:
         # Pre-check: refuse a handle already claimed by a non-agent user.
         # Runs in the same transaction as the upsert so there is no
@@ -399,115 +396,6 @@ async def process_shutdown() -> None:
 # supervisor library — bespoke, matching uvicorn's own precedent. devenv /
 # supervisord remain only the outer restart layer for uvicorn (klangkd).
 
-
-class NginxWatchdog:
-    """Owns the nginx child process and its supervision task (#1463).
-
-    Constructed with ``app_state`` (``self._settings = app_state.settings``)
-    and owns a :class:`~klangk_backend.nginx.NginxRenderer` instance for
-    config rendering (#1469). Stored on ``app.state.nginx_watchdog``; the
-    lifespan calls ``.start()`` / ``.stop()``.
-    """
-
-    def __init__(self, app_state) -> None:
-        self._app_state = app_state
-        self._settings: KlangkSettings = app_state.settings
-        self._renderer = nginx_mod.NginxRenderer(app_state)
-        self._proc: asyncio.subprocess.Process | None = None
-        self._task: asyncio.Task | None = None
-        self._stopping = False
-
-    async def _watch(
-        self, bin_path: str, conf_path: str
-    ) -> None:  # pragma: no cover
-        """Spawn nginx and respawn it on unexpected exit (with backoff).
-
-        Exits cleanly when ``_stopping`` is set (a cooperative shutdown).
-        nginx runs in klangkd's process group (no ``start_new_session``) so
-        it is killed automatically when klangkd is terminated (#1439).
-        """
-        backoff = 1.0
-        while not self._stopping:
-            self._proc = await asyncio.create_subprocess_exec(
-                bin_path,
-                "-e",
-                "stderr",
-                "-c",
-                conf_path,
-                stdout=None,
-                stderr=None,
-            )
-            logger.info(
-                "nginx started (pid %d) with %s", self._proc.pid, conf_path
-            )
-            rc = await self._proc.wait()
-            self._proc = None
-            if self._stopping:
-                return
-            logger.warning(
-                "nginx exited (rc=%d); restarting in %.1fs", rc, backoff
-            )
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 30.0)
-
-    def _prepare(self) -> tuple[str, str]:
-        """Render nginx.conf and return ``(bin_path, conf_path)``.
-
-        uvicorn always binds a UDS (``<state_dir>/klangk.sock``); nginx proxies
-        to that socket regardless of whether ``KLANGK_LISTEN`` is a socket path
-        or a TCP address. ``KLANGK_LISTEN`` only controls the *nginx template*
-        (minimal/headless vs full/browser) and the nginx listen directive, not
-        the upstream.
-        """
-        state_dir = self._settings.state_dir
-        uds_path = os.path.join(state_dir, "klangk.sock")
-        conf_path = os.path.join(state_dir, "nginx.conf")
-        bin_path = self._renderer.find_nginx_bin()
-        self._renderer.write_config(
-            nginx_mod.uds_upstream(uds_path), conf_path
-        )
-        return bin_path, conf_path
-
-    async def start(self) -> None:
-        """Render nginx.conf and start the nginx watchdog.
-
-        Gated only by ``_KLANGK_DISABLE_NGINX`` — an **internal,
-        non-user-facing** env var the test suite sets to suppress nginx spawn
-        (tests boot the app via the lifespan and don't want a real nginx
-        process). Not a documented config knob; no operator-facing name.
-        """
-        if os.environ.get("_KLANGK_DISABLE_NGINX"):
-            return
-        bin_path, conf_path = self._prepare()
-        self._stopping = False
-        # The real watchdog (nginx spawn + respawn loop) is covered by the
-        # e2e ACL suite; here create_task just schedules the coroutine.
-        self._task = asyncio.create_task(self._watch(bin_path, conf_path))
-
-    async def stop(self) -> None:
-        """Stop nginx and cancel the watchdog (cooperative: waits for exit)."""
-        self._stopping = True
-        proc = self._proc
-        # The proc-kill branch is only reached when nginx was spawned (UDS
-        # mode); covered via TestStopWatchdog + the e2e ACL teardown.
-        if proc is not None and proc.returncode is None:
-            proc.terminate()
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                proc.kill()
-        self._proc = None
-        task = self._task
-        # Same: only when a watchdog task was created (UDS mode).
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-        self._task = None
-
-
 # Serializes concurrent SIGHUP-triggered restarts so a second signal
 # arriving mid-restart queues behind the first instead of racing.
 _restart_lock: asyncio.Lock | None = None
@@ -564,7 +452,7 @@ async def lifespan(app: FastAPI):
     # Make the backend process itself trust deployer-supplied CAs (#1181)
     # before any outbound TLS happens (OIDC discovery, SMTP relay, LLM-proxy
     # upstream). No-op when KLANGK_SSL_CERT_DIR is unset or empty of certs.
-    ssl_trust.apply_backend_ssl_trust()
+    ssl_trust.apply_backend_ssl_trust(app.state.settings)
 
     # Configure Logfire *after* SSL trust is applied. logfire.configure()
     # probes the Logfire API at configuration time, so it must run once the
@@ -579,8 +467,8 @@ async def lifespan(app: FastAPI):
     app.state.oidc.init_providers()
     enforce_no_auth_bind_safety(app.state)
     app.state.oidc.load_login_hook()
-    await seed_default_user()
-    await seed_agent_user()
+    await seed_default_user(app.state.settings)
+    await seed_agent_user(app.state.settings)
     registry = app.state.container_registry
 
     async def _on_workspace_killed(ws_id):
@@ -619,12 +507,12 @@ async def lifespan(app: FastAPI):
 
 def setup_logfire(app: FastAPI) -> bool:
     """Enable Logfire instrumentation if LOGFIRE_TOKEN is set."""
-    if not resolve_env_value("LOGFIRE_TOKEN"):
+    if not os.environ.get("LOGFIRE_TOKEN"):
         return False
     import logfire  # noqa: allow-deferred-import
 
-    base_url = resolve_env_value("LOGFIRE_BASE_URL")
-    environment = resolve_env_value("LOGFIRE_ENVIRONMENT")
+    base_url = os.environ.get("LOGFIRE_BASE_URL")
+    environment = os.environ.get("LOGFIRE_ENVIRONMENT")
     kwargs: dict = {}
     if environment:
         kwargs["environment"] = environment
@@ -723,25 +611,20 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # resolve_env_value reads in auth.py). Reads self.settings at
     # construction/call time.
     app.state.auth = auth.Auth(app.state)
+    # #1468: Podman(settings) owns the resolved binary path + the ~20 CLI
+    # wrappers. Constructed before the registry/terminal so they reach it
+    # via self.app_state.podman (#1426).
+    app.state.podman = podman.Podman(settings)
+    # Slice 2c (#1475): the WebSocketState is an owned instance wired onto
+    # app.state.sockets. Constructed before the registry so it reaches it
+    # via self.app_state.sockets — no module-level singleton.
+    app.state.sockets = wshandler.WebSocketState(app.state)
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
     app.state.container_registry = container.ContainerRegistry(app.state)
     # Slice 2b (#1463): nginx watchdog is an owned instance with start/stop
     # lifecycle methods called by the lifespan.
-    app.state.nginx_watchdog = NginxWatchdog(app.state)
-    # Slice 2c (#1475): the WebSocketState is an owned instance wired onto
-    # app.state.sockets. The registry and agent module reach it through
-    # explicit references — no module-level singleton.
-    sockets = wshandler.WebSocketState()
-    app.state.sockets = sockets
-    app.state.container_registry.sockets = sockets
-    # #1468: Podman(settings) owns the resolved binary path + the ~20 CLI
-    # wrappers. The registry reaches it via self.podman; terminal/files/etc.
-    # thread app.state.podman explicitly.
-    podman_inst = podman.Podman(settings)
-    app.state.podman = podman_inst
-    app.state.container_registry.podman = podman_inst
-    app.state.container_registry.app_state = app.state
+    app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
     # #1480: Terminal(app_state) groups the ~25 tmux-session
     # management functions that share a Podman dependency. Reaches podman,
     # the registry, and settings through the single app_state reference.
@@ -763,15 +646,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # the model/ free functions (transaction/fetchone/get_db) reach it.
     app.state.db = model.db.DB(settings)
     model.db.set_db(app.state.db)
-    # WebSocketState reaches the registry through its own app_state
-    # back-reference (send_service_health_snapshot / reset_workspace).
-    # The unit-test fixtures set this explicitly; build_app must too, or
-    # every WS connect crashes on the health snapshot (#1475).
-    sockets.app_state = app.state
-    # #1486: Agents(app_state) owns the per-workspace Pi RPC sessions
-    # (previously module globals _agents/_agents_lock/get_workspace_session).
     app.state.agents = agent.Agents(app.state)
-    app.state.agents.get_workspace_session = sockets.get_session
     # #1483: EmailService(app_state) owns SMTP/sendmail transport + the
     # Jinja template env (previously module-level functions reading
     # resolve_env_value at call time).
@@ -798,9 +673,9 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     async def websocket_endpoint(ws: WebSocket):  # pragma: no cover
         await handle_websocket(ws, app.state)
 
-    frontend_dir = (
-        Path(__file__).parent.parent.parent / "frontend" / "build" / "web"
-    )
+    # Frontend UI dir, resolved from settings (#1456). Mounted only when it
+    # exists (absent in installed-package deployments -> UI not served).
+    frontend_dir = Path(settings.frontend_dir)
     if frontend_dir.exists():  # pragma: no cover
         setup_static_files(app, frontend_dir)
 
@@ -824,5 +699,5 @@ from .api._common import get_app_state_dep  # noqa: F401, E402
 
 def __getattr__(name):
     if name == "app":
-        return build_app(get_settings())
+        return build_app(KlangkSettings(os.environ))
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

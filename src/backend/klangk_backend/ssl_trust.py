@@ -29,8 +29,6 @@ import ssl
 
 import certifi
 
-from . import util
-from .settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +66,7 @@ def iter_cert_files(ssl_dir: str):
             yield os.path.join(ssl_dir, name)
 
 
-def ssl_cert_dir() -> str | None:
+def ssl_cert_dir(settings) -> str | None:
     """Return the deployer SSL cert dir if it should be trusted, else ``None``.
 
     Resolves ``KLANGK_SSL_CERT_DIR`` first (deprecated, backwards-compat);
@@ -78,7 +76,6 @@ def ssl_cert_dir() -> str | None:
     of certs).  Never raises — a misconfigured path simply disables
     runtime trust.
     """
-    settings = get_settings()
     raw = settings.ssl_cert_dir
     if not raw:
         customize = settings.customize_dir
@@ -163,7 +160,7 @@ def write_merged_bundle(bundle_path: str, ssl_dir: str) -> bool:
     return written > 0 and os.path.getsize(bundle_path) > 0
 
 
-def apply_backend_ssl_trust() -> str | None:
+def apply_backend_ssl_trust(settings) -> str | None:
     """Make the backend process trust the deployer's custom CAs.
 
     Builds a merged bundle (system + custom) under ``<data_dir>/ssl`` and sets
@@ -175,14 +172,11 @@ def apply_backend_ssl_trust() -> str | None:
 
     Returns the bundle path, or ``None`` if trust was not applied.
     """
-    ssl_dir = ssl_cert_dir()
+    ssl_dir = ssl_cert_dir(settings)
     if not ssl_dir:
         return None
-    default_data = os.path.expanduser("~/.klangk/data")
-    data_dir = (
-        util.resolve_env_value("KLANGK_DATA_DIR", default_data) or default_data
-    )
-    bundle_dir = os.path.join(data_dir, "ssl")
+    state_dir = settings.state_dir
+    bundle_dir = os.path.join(state_dir, "ssl")
     try:
         os.makedirs(bundle_dir, exist_ok=True)
     except OSError as exc:

@@ -17,6 +17,7 @@ from klangk_backend import (
     agent as agent_mod,
     auth as auth_mod,
     emailsvc as emailsvc_mod,
+    nginx as nginx_mod,
     util as util_mod,
     main,
     model,
@@ -33,21 +34,17 @@ def _make_app_state(settings=None):
     """Build a minimal app_state for tests."""
     if settings is None:
         settings = make_settings({})
-    sockets = WebSocketState()
-    app_state = types.SimpleNamespace(
-        sockets=sockets,
-        settings=settings,
-    )
+    # Two-phase: shell first so owned instances can take app_state at
+    # construction (#1426).
+    app_state = types.SimpleNamespace(settings=settings)
+    sockets = WebSocketState(app_state)
+    app_state.sockets = sockets
     registry = ContainerRegistry(app_state)
     app_state.container_registry = registry
-    registry.sockets = sockets
-    registry.app_state = app_state
-    sockets.app_state = app_state
     # #1468: container.py / agent.py reach the CLI wrappers via self.podman.
     from klangk_backend.podman import Podman
 
-    registry.podman = Podman(settings)
-    app_state.podman = registry.podman
+    app_state.podman = Podman(settings)
     app_state.oidc = oidc.OIDC(app_state)
     app_state.plugins = plugins.Plugins(app_state)
     app_state.workspaces = workspaces.Workspaces(app_state)
@@ -66,23 +63,23 @@ class TestSeedDefaultUser:
     async def test_creates_user_when_missing(self, db, monkeypatch):
         monkeypatch.setenv("KLANGK_DEFAULT_USER", "seed-test")
         monkeypatch.setenv("KLANGK_DEFAULT_PASSWORD", "seed-pass")
-        await main.seed_default_user()
+        await main.seed_default_user(make_settings(os.environ))
         user = await model.get_user_by_email("seed-test")
         assert user is not None
 
     async def test_skips_existing_user(self, db, monkeypatch):
         monkeypatch.setenv("KLANGK_DEFAULT_USER", "seed-test")
         monkeypatch.setenv("KLANGK_DEFAULT_PASSWORD", "seed-pass")
-        await main.seed_default_user()
+        await main.seed_default_user(make_settings(os.environ))
         # Call again — should not raise
-        await main.seed_default_user()
+        await main.seed_default_user(make_settings(os.environ))
         user = await model.get_user_by_email("seed-test")
         assert user is not None
 
     async def test_generates_password_when_not_set(self, db, monkeypatch):
         monkeypatch.setenv("KLANGK_DEFAULT_USER", "gen-test")
         monkeypatch.delenv("KLANGK_DEFAULT_PASSWORD", raising=False)
-        await main.seed_default_user()
+        await main.seed_default_user(make_settings(os.environ))
         user = await model.get_user_by_email("gen-test")
         assert user is not None
         # User exists and is in the admin group
@@ -99,7 +96,7 @@ class TestSeedDefaultUser:
         import logging
 
         with caplog.at_level(logging.INFO):
-            await main.seed_default_user()
+            await main.seed_default_user(make_settings(os.environ))
         # Password must NOT appear in log output (security)
         assert "password printed to stderr" in caplog.text
         assert "log-test" in caplog.text
@@ -111,14 +108,19 @@ class TestSeedDefaultUser:
 # --- no-auth bind safety gate (#1374) ---
 
 
-def _bind_safety_app_state(auth_mode=None):
+def _bind_safety_app_state(auth_mode=None, listen=None, allow_insecure=None):
     """Build a minimal app_state whose oidc reads the given auth mode (#1450).
 
-    Pass the mode explicitly — the bind-safety tests exercise different
-    modes (password / none), and OIDC now reads ``settings.auth_modes`` at
-    construction instead of re-reading the env per call.
+    Pass the mode/listen/allow-insecure explicitly — the bind-safety tests
+    exercise different combinations, and these are now read from
+    ``settings`` frozen at construction (#1518) instead of re-reading the
+    env per call.
     """
     env = {"KLANGK_AUTH_MODES": auth_mode} if auth_mode else {}
+    if listen is not None:
+        env["KLANGK_LISTEN"] = listen
+    if allow_insecure is not None:
+        env["KLANGK_ALLOW_INSECURE_NO_AUTH"] = allow_insecure
     settings = make_settings(env)
     app_state = types.SimpleNamespace(settings=settings)
     app_state.oidc = oidc.OIDC(app_state)
@@ -131,50 +133,45 @@ class TestNoAuthBindSafety:
     """enforce_no_auth_bind_safety() — refuse none mode on a non-loopback
     bind unless explicitly overridden."""
 
-    def test_noop_when_not_none_mode(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_LISTEN", "0.0.0.0")
+    def test_noop_when_not_none_mode(self):
         # Returns None, raises nothing.
         assert (
             main.enforce_no_auth_bind_safety(
-                _bind_safety_app_state(auth_mode="password")
+                _bind_safety_app_state(auth_mode="password", listen="0.0.0.0")
             )
             is None
         )
 
-    def test_allows_loopback_ipv4(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
+    def test_allows_loopback_ipv4(self):
         assert (
             main.enforce_no_auth_bind_safety(
-                _bind_safety_app_state(auth_mode="none")
+                _bind_safety_app_state(auth_mode="none", listen="127.0.0.1")
             )
             is None
         )
 
-    def test_allows_loopback_ipv6_and_localhost(self, monkeypatch):
+    def test_allows_loopback_ipv6_and_localhost(self):
         for host in ("::1", "localhost"):
-            monkeypatch.setenv("KLANGK_LISTEN", host)
             assert (
                 main.enforce_no_auth_bind_safety(
-                    _bind_safety_app_state(auth_mode="none")
+                    _bind_safety_app_state(auth_mode="none", listen=host)
                 )
                 is None
             )
 
-    def test_allows_full_loopback_range(self, monkeypatch):
+    def test_allows_full_loopback_range(self):
         """The whole 127.0.0.0/8 range is loopback (RFC 990), not just
         127.0.0.1 — ``127.0.0.2`` is a valid loopback bind and must be
         admitted (the original exact-match allowlist wrongly refused it)."""
         for host in ("127.0.0.2", "127.255.255.254"):
-            monkeypatch.setenv("KLANGK_LISTEN", host)
             assert (
                 main.enforce_no_auth_bind_safety(
-                    _bind_safety_app_state(auth_mode="none")
+                    _bind_safety_app_state(auth_mode="none", listen=host)
                 )
                 is None
             )
 
-    def test_allows_loopback_default_when_listen_unset(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_LISTEN", raising=False)
+    def test_allows_loopback_default_when_listen_unset(self):
         # KLANGK_LISTEN defaults to 127.0.0.1 (#1375).
         assert (
             main.enforce_no_auth_bind_safety(
@@ -183,30 +180,27 @@ class TestNoAuthBindSafety:
             is None
         )
 
-    def test_refuses_ipv6_wildcard(self, monkeypatch):
+    def test_refuses_ipv6_wildcard(self):
         """``::`` binds every interface (incl. IPv6) and is NOT loopback —
         must be refused even though it isn't ``0.0.0.0``."""
-        monkeypatch.setenv("KLANGK_LISTEN", "::")
         with pytest.raises(SystemExit) as exc_info:
             main.enforce_no_auth_bind_safety(
-                _bind_safety_app_state(auth_mode="none")
+                _bind_safety_app_state(auth_mode="none", listen="::")
             )
         assert "::" in str(exc_info.value)
 
-    def test_refuses_non_loopback_hostname(self, monkeypatch):
+    def test_refuses_non_loopback_hostname(self):
         """A bare hostname (other than ``localhost``) is not an IP literal and
         not a recognized loopback name — fail-closed (refuse)."""
-        monkeypatch.setenv("KLANGK_LISTEN", "myhost")
         with pytest.raises(SystemExit):
             main.enforce_no_auth_bind_safety(
-                _bind_safety_app_state(auth_mode="none")
+                _bind_safety_app_state(auth_mode="none", listen="myhost")
             )
 
-    def test_refuses_non_loopback_bind(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_LISTEN", "0.0.0.0")
+    def test_refuses_non_loopback_bind(self):
         with pytest.raises(SystemExit) as exc_info:
             main.enforce_no_auth_bind_safety(
-                _bind_safety_app_state(auth_mode="none")
+                _bind_safety_app_state(auth_mode="none", listen="0.0.0.0")
             )
         msg = str(exc_info.value)
         assert "KLANGK_AUTH_MODES=none" in msg
@@ -214,25 +208,28 @@ class TestNoAuthBindSafety:
         assert "KLANGK_ALLOW_INSECURE_NO_AUTH=1" in msg
         assert "0.0.0.0" in msg
 
-    def test_allows_socket_path(self, monkeypatch):
+    def test_allows_socket_path(self):
         """A UDS path is safe — same-uid trust boundary (#1399)."""
-        monkeypatch.setenv("KLANGK_LISTEN", "/tmp/klangk.sock")
         assert (
             main.enforce_no_auth_bind_safety(
-                _bind_safety_app_state(auth_mode="none")
+                _bind_safety_app_state(
+                    auth_mode="none", listen="/tmp/klangk.sock"
+                )
             )
             is None
         )
 
-    def test_override_flag_allows_non_loopback(self, monkeypatch, caplog):
-        monkeypatch.setenv("KLANGK_LISTEN", "0.0.0.0")
-        monkeypatch.setenv("KLANGK_ALLOW_INSECURE_NO_AUTH", "1")
+    def test_override_flag_allows_non_loopback(self, caplog):
         import logging
 
         with caplog.at_level(logging.WARNING):
             assert (
                 main.enforce_no_auth_bind_safety(
-                    _bind_safety_app_state(auth_mode="none")
+                    _bind_safety_app_state(
+                        auth_mode="none",
+                        listen="0.0.0.0",
+                        allow_insecure="1",
+                    )
                 )
                 is None
             )
@@ -244,7 +241,7 @@ class TestNoAuthBindSafety:
 
 class TestSeedAgentUser:
     async def test_creates_agent_user(self, db):
-        await main.seed_agent_user()
+        await main.seed_agent_user(make_settings(os.environ))
         user = await model.get_user_by_id(model.AGENT_USER_ID)
         assert user is not None
         assert user["email"] == "clanker@example.com"
@@ -253,17 +250,17 @@ class TestSeedAgentUser:
     async def test_custom_env_vars(self, db, monkeypatch):
         monkeypatch.setenv("KLANGK_AGENT_EMAIL", "bot@test.com")
         monkeypatch.setenv("KLANGK_AGENT_HANDLE", "TestBot")
-        await main.seed_agent_user()
+        await main.seed_agent_user(make_settings(os.environ))
         user = await model.get_user_by_id(model.AGENT_USER_ID)
         assert user is not None
         assert user["email"] == "bot@test.com"
         assert user["handle"] == "TestBot"
 
     async def test_upserts_existing(self, db, monkeypatch):
-        await main.seed_agent_user()
+        await main.seed_agent_user(make_settings(os.environ))
         monkeypatch.setenv("KLANGK_AGENT_EMAIL", "new@test.com")
         monkeypatch.setenv("KLANGK_AGENT_HANDLE", "NewBot")
-        await main.seed_agent_user()
+        await main.seed_agent_user(make_settings(os.environ))
         user = await model.get_user_by_id(model.AGENT_USER_ID)
         assert user["email"] == "new@test.com"
         assert user["handle"] == "NewBot"
@@ -271,7 +268,7 @@ class TestSeedAgentUser:
     async def test_clears_cache(self, db):
         # Prime cache with fallback
         await model.get_agent_user()
-        await main.seed_agent_user()
+        await main.seed_agent_user(make_settings(os.environ))
         # Cache should now reflect DB values
         agent = await model.get_agent_user()
         assert agent["email"] == "clanker@example.com"
@@ -310,7 +307,7 @@ class TestSeedAgentUser:
         assert human["handle"] == "alice"
         monkeypatch.setenv("KLANGK_AGENT_HANDLE", "alice")
         with pytest.raises(RuntimeError, match="alice"):
-            await main.seed_agent_user()
+            await main.seed_agent_user(make_settings(os.environ))
         # Human user is untouched.
         refreshed = await model.get_user_by_id(human["id"])
         assert refreshed["handle"] == "alice"
@@ -319,13 +316,15 @@ class TestSeedAgentUser:
 
     async def test_seed_rename_to_human_handle_refuses(self, db, monkeypatch):
         """Re-seeding the agent onto a human's handle fails, leaves agent as-is."""
-        await main.seed_agent_user()  # agent handle = clanker
+        await main.seed_agent_user(
+            make_settings(os.environ)
+        )  # agent handle = clanker
         human = await model.create_user(
             "alice@example.com", "hash", verified=True
         )
         monkeypatch.setenv("KLANGK_AGENT_HANDLE", "alice")
         with pytest.raises(RuntimeError, match="already used by another user"):
-            await main.seed_agent_user()
+            await main.seed_agent_user(make_settings(os.environ))
         # Agent keeps its original handle; human untouched.
         agent = await model.get_user_by_id(model.AGENT_USER_ID)
         assert agent["handle"] == "clanker"
@@ -356,7 +355,7 @@ class TestSeedAgentUser:
 
         monkeypatch.setenv("KLANGK_AGENT_HANDLE", "alice")
         with pytest.raises(RuntimeError):
-            await main.seed_agent_user()
+            await main.seed_agent_user(make_settings(os.environ))
 
         # Human's files are exactly where they were — nothing migrated.
         assert (human_dir / "secret.txt").read_text() == "alice's secrets"
@@ -382,7 +381,7 @@ class TestLifespan:
         app.state.container_registry = app_state.container_registry
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
-        app.state.nginx_watchdog = main.NginxWatchdog(app.state)
+        app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
         app.state.workspaces = workspaces.Workspaces(app.state)
@@ -432,7 +431,7 @@ class TestLifespan:
         app.state.container_registry = app_state.container_registry
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
-        app.state.nginx_watchdog = main.NginxWatchdog(app.state)
+        app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
         app.state.workspaces = workspaces.Workspaces(app.state)
@@ -565,7 +564,7 @@ class TestStartupShutdownRestart:
     async def test_restart_runtime_runs_shutdown_then_startup(self):
         main._restart_lock = None  # force fresh lock creation
         app_state = _make_app_state()
-        wd = main.NginxWatchdog(app_state)
+        wd = nginx_mod.NginxWatchdog(app_state)
         with (
             patch(
                 "klangk_backend.main.runtime_shutdown", new_callable=AsyncMock
@@ -588,7 +587,7 @@ class TestStartupShutdownRestart:
         main._restart_lock = asyncio.Lock()
         existing = main._restart_lock
         app_state = _make_app_state()
-        wd = main.NginxWatchdog(app_state)
+        wd = nginx_mod.NginxWatchdog(app_state)
         with (
             patch(
                 "klangk_backend.main.runtime_shutdown", new_callable=AsyncMock
@@ -613,7 +612,7 @@ class TestStartupShutdownRestart:
             order.append("up")
 
         app_state = _make_app_state()
-        wd = main.NginxWatchdog(app_state)
+        wd = nginx_mod.NginxWatchdog(app_state)
         with (
             patch(
                 "klangk_backend.main.runtime_shutdown",
@@ -638,7 +637,7 @@ class TestStartupShutdownRestart:
     async def test_on_sighup_schedules_restart(self):
         """on_sighup creates a task that runs restart_runtime."""
         app_state = _make_app_state()
-        wd = main.NginxWatchdog(app_state)
+        wd = nginx_mod.NginxWatchdog(app_state)
         with patch(
             "klangk_backend.main.restart_runtime", new_callable=AsyncMock
         ) as mock_restart:
@@ -659,7 +658,7 @@ class TestStartupShutdownRestart:
         app.state.container_registry = app_state.container_registry
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
-        app.state.nginx_watchdog = main.NginxWatchdog(app.state)
+        app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
         app.state.workspaces = workspaces.Workspaces(app.state)

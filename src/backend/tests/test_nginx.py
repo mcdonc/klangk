@@ -28,7 +28,7 @@ def _renderer(settings):
 
 def _wd(settings):
     """Build a NginxWatchdog from settings (wrapped in a minimal app_state)."""
-    from klangk_backend.main import NginxWatchdog
+    from klangk_backend.nginx import NginxWatchdog
 
     return NginxWatchdog(types.SimpleNamespace(settings=settings))
 
@@ -466,7 +466,7 @@ class TestWatchdogGate:
         watchdog. The real nginx spawn is e2e-covered; here _watch is stubbed
         so the orchestration (prepare, set _stopping=False, create_task) is
         unit-tested."""
-        from klangk_backend.main import NginxWatchdog
+        from klangk_backend.nginx import NginxWatchdog
 
         sock = str(tmp_path / "klangk.sock")
         s = make_settings(

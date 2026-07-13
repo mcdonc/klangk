@@ -24,6 +24,7 @@ settings.
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import os
@@ -573,3 +574,109 @@ http {{
         if found:
             return found
         return "/usr/sbin/nginx"
+
+
+class NginxWatchdog:
+    """Owns the nginx child process and its supervision task (#1463).
+
+    Constructed with ``app_state`` (``self._settings = app_state.settings``)
+    and owns a :class:`NginxRenderer` instance for config rendering (#1469).
+    Stored on ``app.state.nginx_watchdog``; the lifespan calls
+    ``.start()`` / ``.stop()``.
+    """
+
+    def __init__(self, app_state) -> None:
+        self._app_state = app_state
+        self._settings: KlangkSettings = app_state.settings
+        self._renderer = NginxRenderer(app_state)
+        self._proc: asyncio.subprocess.Process | None = None
+        self._task: asyncio.Task | None = None
+        self._stopping = False
+
+    async def _watch(
+        self, bin_path: str, conf_path: str
+    ) -> None:  # pragma: no cover
+        """Spawn nginx and respawn it on unexpected exit (with backoff).
+
+        Exits cleanly when ``_stopping`` is set (a cooperative shutdown).
+        nginx runs in klangkd's process group (no ``start_new_session``) so
+        it is killed automatically when klangkd is terminated (#1439).
+        """
+        backoff = 1.0
+        while not self._stopping:
+            self._proc = await asyncio.create_subprocess_exec(
+                bin_path,
+                "-e",
+                "stderr",
+                "-c",
+                conf_path,
+                stdout=None,
+                stderr=None,
+            )
+            logger.info(
+                "nginx started (pid %d) with %s", self._proc.pid, conf_path
+            )
+            rc = await self._proc.wait()
+            self._proc = None
+            if self._stopping:
+                return
+            logger.warning(
+                "nginx exited (rc=%d); restarting in %.1fs", rc, backoff
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30.0)
+
+    def _prepare(self) -> tuple[str, str]:
+        """Render nginx.conf and return ``(bin_path, conf_path)``.
+
+        uvicorn always binds a UDS (``<state_dir>/klangk.sock``); nginx proxies
+        to that socket regardless of whether ``KLANGK_LISTEN`` is a socket path
+        or a TCP address. ``KLANGK_LISTEN`` only controls the *nginx template*
+        (minimal/headless vs full/browser) and the nginx listen directive, not
+        the upstream.
+        """
+        state_dir = self._settings.state_dir
+        uds_path = os.path.join(state_dir, "klangk.sock")
+        conf_path = os.path.join(state_dir, "nginx.conf")
+        bin_path = self._renderer.find_nginx_bin()
+        self._renderer.write_config(uds_upstream(uds_path), conf_path)
+        return bin_path, conf_path
+
+    async def start(self) -> None:
+        """Render nginx.conf and start the nginx watchdog.
+
+        Gated only by ``_KLANGK_DISABLE_NGINX`` — an **internal,
+        non-user-facing** env var the test suite sets to suppress nginx spawn
+        (tests boot the app via the lifespan and don't want a real nginx
+        process). Not a documented config knob; no operator-facing name.
+        """
+        if os.environ.get("_KLANGK_DISABLE_NGINX"):
+            return
+        bin_path, conf_path = self._prepare()
+        self._stopping = False
+        # The real watchdog (nginx spawn + respawn loop) is covered by the
+        # e2e ACL suite; here create_task just schedules the coroutine.
+        self._task = asyncio.create_task(self._watch(bin_path, conf_path))
+
+    async def stop(self) -> None:
+        """Stop nginx and cancel the watchdog (cooperative: waits for exit)."""
+        self._stopping = True
+        proc = self._proc
+        # The proc-kill branch is only reached when nginx was spawned (UDS
+        # mode); covered via TestStopWatchdog + the e2e ACL teardown.
+        if proc is not None and proc.returncode is None:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                proc.kill()
+        self._proc = None
+        task = self._task
+        # Same: only when a watchdog task was created (UDS mode).
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._task = None

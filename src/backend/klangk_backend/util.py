@@ -13,12 +13,6 @@ import logging
 import subprocess
 from typing import TypeVar
 
-# resolve_env_value / resolve_env_bool / get_settings now live in the settings
-# module (#1394). Re-exported here for backward compat — the ~85 call sites
-# that do ``from .util import resolve_env_value`` keep working. They retire as
-# each consuming module is promoted to read ``app_state.settings`` directly.
-from .settings import resolve_env_value, resolve_env_bool, get_settings  # noqa: F401
-
 T = TypeVar("T")
 
 # Versioned API prefix — used by api.py (router mount) and acl.py

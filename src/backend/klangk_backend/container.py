@@ -328,11 +328,10 @@ class HealthMonitor:
     def connections(self):
         """The WebSocketState instance the monitor broadcasts through (#1464).
 
-        Reached via the registry's ``sockets`` attribute, set by
-        ``build_app()`` in production. No lazy import — the registry owns
-        the reference.
+        Reached via ``app_state.sockets`` (owned instance, #1426) — no
+        post-construction wiring needed.
         """
-        return self.registry.sockets
+        return self.registry.app_state.sockets
 
     def _setup_complete(self, state: ContainerState) -> bool:
         """True if health checks may run for this workspace.
@@ -415,7 +414,7 @@ class HealthMonitor:
             state.health_check,
         )
         try:
-            rc, out, err = await self.registry.podman.exec_container(
+            rc, out, err = await self.registry.app_state.podman.exec_container(
                 state.container_id,
                 # bash -c (NON-login): sources nothing, so the probe is
                 # deterministic and insulated from the user's interactive
@@ -626,12 +625,8 @@ class ContainerRegistry:
         self.idle = IdleMonitor(self)
         self.health = HealthMonitor(self)
 
-        # The WebSocketState instance (set by build_app after construction,
-        # #1464). The HealthMonitor reaches it via self.registry.sockets.
-        self.sockets = None
-        # The Podman instance (set by build_app after construction, #1468).
-        # Internal callers reach the CLI wrappers via self.podman.X.
-        self.podman = None
+        # The Podman instance is reached via self.app_state.podman (owned
+        # instance, #1426) — no post-construction wiring needed.
 
     # --- settings-derived methods (were module functions, #1487) ---
 
@@ -1034,7 +1029,9 @@ class ContainerRegistry:
         still running, or ``None`` if it was removed (or not found)
         and a new one should be created.
         """
-        info = await self.podman.inspect_container(existing_container_id)
+        info = await self.app_state.podman.inspect_container(
+            existing_container_id
+        )
         t_inspect = time.monotonic()
         logger.info(
             "workspace-open: check if old container still exists "
@@ -1061,7 +1058,7 @@ class ContainerRegistry:
                 time.monotonic() - t_start,
             )
             return existing_container_id, "connected"
-        await self.podman.remove_container(existing_container_id)
+        await self.app_state.podman.remove_container(existing_container_id)
         logger.info(
             "workspace-open: delete old stopped container (podman rm): %.3fs",
             time.monotonic() - t_inspect,
@@ -1263,7 +1260,7 @@ class ContainerRegistry:
         that hold conflicting ports.
         """
         t_create = time.monotonic()
-        cid = await self.podman.create_container(
+        cid = await self.app_state.podman.create_container(
             container_name, resolved_image, **create_kwargs
         )
         logger.info(
@@ -1280,14 +1277,14 @@ class ContainerRegistry:
         )
         t_podman_start = time.monotonic()
         try:
-            await self.podman.start_container(cid)
+            await self.app_state.podman.start_container(cid)
         except podman.PodmanError as exc:
             if "port is already allocated" not in exc.message:
                 raise
             await self._resolve_port_conflict(
-                cid, container_name, publish, self.podman
+                cid, container_name, publish, self.app_state.podman
             )
-            await self.podman.start_container(cid)
+            await self.app_state.podman.start_container(cid)
         logger.info(
             "workspace-open: boot container (podman start): %.3fs",
             time.monotonic() - t_podman_start,
@@ -1298,7 +1295,7 @@ class ContainerRegistry:
             sudoers_rule = "klangk ALL=(ALL) NOPASSWD:ALL"
         else:
             sudoers_rule = "klangk ALL=(ALL) !ALL"
-        await self.podman.exec_container(
+        await self.app_state.podman.exec_container(
             cid,
             ["klangk-configure-sudo", sudoers_rule],
             user="root",
@@ -1318,7 +1315,7 @@ class ContainerRegistry:
         # terminals, exec, agent, health check — gets a genuine readiness
         # guarantee regardless of shell, closing the race that previously
         # only the in-bashrc gate covered (and only for bash).
-        await self.podman.wait_for_container_ready(cid)
+        await self.app_state.podman.wait_for_container_ready(cid)
 
         return cid
 
@@ -1422,7 +1419,7 @@ class ContainerRegistry:
         # Resolve the agent home at this async seam (``_build_env`` is
         # sync) so every exec process inherits KLANGK_AGENT_HOME (#1157).
         agent_home = f"/home/{await model.agent_handle()}"
-        ssl_dir = ssl_cert_dir()
+        ssl_dir = ssl_cert_dir(self.settings)
         if ssl_dir:
             logger.info(
                 "Runtime SSL trust enabled: mounting %s at %s",
@@ -1439,7 +1436,9 @@ class ContainerRegistry:
             extra_env,
             ssl_dir,
         )
-        await self._ensure_volumes(extra_mounts, user_id, self.podman)
+        await self._ensure_volumes(
+            extra_mounts, user_id, self.app_state.podman
+        )
         binds = self._build_mounts(
             home_path, config_path, extra_mounts, ssl_dir
         )
@@ -1529,7 +1528,7 @@ class ContainerRegistry:
     async def stop_and_remove_container(self, container_id: str) -> None:
         """Stop and remove a container.
 
-        The slow ``self.podman.remove_container`` call runs *outside* the
+        The slow ``self.app_state.podman.remove_container`` call runs *outside* the
         workspace lock; only the registry-state teardown is serialized --
         under the same per-workspace lock :meth:`start_container` uses -- so
         a concurrent start for the same workspace cannot observe a
@@ -1548,7 +1547,7 @@ class ContainerRegistry:
         ever seen and is cleared on process restart.
         """
         try:
-            await self.podman.remove_container(container_id)
+            await self.app_state.podman.remove_container(container_id)
             logger.info("Stopped container %s", container_id)
         except podman.PodmanError as e:
             logger.warning(
@@ -1618,13 +1617,13 @@ class ContainerRegistry:
         """
         t0 = time.monotonic()
         try:
-            cid = await self.podman.create_container(
+            cid = await self.app_state.podman.create_container(
                 "klangk-prewarm",
                 self.image_name,
                 pull="never",
                 userns=self.settings.userns,
             )
-            await self.podman.remove_container(cid)
+            await self.app_state.podman.remove_container(cid)
             logger.info("Podman pre-warmed in %.3fs", time.monotonic() - t0)
         except podman.PodmanError as e:
             logger.warning(
@@ -1635,7 +1634,7 @@ class ContainerRegistry:
 
     async def adopt_orphaned_containers(self) -> None:
         try:
-            containers = await self.podman.list_containers(
+            containers = await self.app_state.podman.list_containers(
                 f"klangk.instance={model.get_instance_id()}"
             )
             for c in containers:
@@ -1646,7 +1645,7 @@ class ContainerRegistry:
                         cid[:12],
                     )
                     try:
-                        await self.podman.remove_container(cid)
+                        await self.app_state.podman.remove_container(cid)
                     except podman.PodmanError as e:
                         logger.warning(
                             "Failed to remove orphaned container %s: %s",
@@ -1686,7 +1685,7 @@ class ContainerRegistry:
         tracked_ids = set(self._cid_to_wsid.keys())
         tasks = [self.stop_and_remove_container(cid) for cid in tracked_ids]
         try:
-            containers = await self.podman.list_containers(
+            containers = await self.app_state.podman.list_containers(
                 f"klangk.instance={model.get_instance_id()}"
             )
             for c in containers:

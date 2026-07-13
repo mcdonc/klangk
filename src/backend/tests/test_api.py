@@ -60,20 +60,15 @@ async def app(db, temp_data_dir):
         }
     )
     app.state.settings = settings
-    registry = ContainerRegistry(app.state)
-    sockets = WebSocketState()
-    app.state.container_registry = registry
-    app.state.sockets = sockets
-    registry.sockets = sockets
-    registry.app_state = app.state
-    sockets.app_state = app.state
     app.state.podman = _mock_pod
-    registry.podman = _mock_pod
+    sockets = WebSocketState(app.state)
+    app.state.sockets = sockets
+    registry = ContainerRegistry(app.state)
+    app.state.container_registry = registry
     app.state.oidc = oidc_mod.OIDC(app.state)
     app.state.plugins = plugins_mod.Plugins(app.state)
     app.state.workspaces = ws_mod.Workspaces(app.state)
     app.state.agents = agent.Agents(app.state)
-    app.state.agents.get_workspace_session = sockets.get_session
     app.state.email = emailsvc_mod.EmailService(app.state)
     app.state.util = util_mod.Util(app.state)
 
@@ -2510,7 +2505,7 @@ class TestWorkspaceSharingRoutes:
         # guard (which only fires on a grant) must let it through.
         from klangk_backend.main import seed_agent_user
 
-        await seed_agent_user()
+        await seed_agent_user(make_settings(os.environ))
         agent = await model.get_user_by_id(model.AGENT_USER_ID)
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -2562,7 +2557,7 @@ class TestWorkspaceSharingRoutes:
         # points themselves are unit-tested in test_model.py.
         from klangk_backend.main import seed_agent_user
 
-        await seed_agent_user()
+        await seed_agent_user(make_settings(os.environ))
         agent = await model.get_user_by_id(model.AGENT_USER_ID)
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -3223,7 +3218,7 @@ class TestTransferOwnership:
     async def test_transfer_to_agent_rejected(self, client, user):
         from klangk_backend.main import seed_agent_user
 
-        await seed_agent_user()
+        await seed_agent_user(make_settings(os.environ))
         agent = await model.get_user_by_id(model.AGENT_USER_ID)
 
         headers = await _auth_headers(client)
@@ -5075,7 +5070,7 @@ class TestAdminEndpoints:
     async def test_delete_agent_user_rejected(self, client, admin_user, db):
         from klangk_backend.main import seed_agent_user
 
-        await seed_agent_user()
+        await seed_agent_user(make_settings(os.environ))
         headers = await self._admin_headers(client)
         resp = await client.delete(
             f"/api/v1/admin/users/{model.AGENT_USER_ID}", headers=headers
@@ -5197,7 +5192,7 @@ class TestAdminEndpoints:
         # Seed the agent user so it exists in the DB
         from klangk_backend.main import seed_agent_user
 
-        await seed_agent_user()
+        await seed_agent_user(make_settings(os.environ))
         headers = await self._admin_headers(client)
         resp = await client.patch(
             f"/api/v1/admin/users/{model.AGENT_USER_ID}",

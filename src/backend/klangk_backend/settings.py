@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+from pathlib import Path
 from typing import ClassVar, Mapping
 
 from pydantic_settings import (
@@ -61,9 +62,7 @@ _VALID_AUTH_MODES = frozenset({"password", "oidc", "both", "none"})
 # ``resolve_env_value`` (plugin-declared dynamic keys).
 __all__ = [
     "KlangkSettings",
-    "get_settings",
-    "resolve_env_value",
-    "resolve_env_bool",
+    "resolve_dynamic_config",
 ]
 
 # ---------------------------------------------------------------------------
@@ -71,6 +70,17 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 _CMD_TIMEOUT_SECONDS = 10
+
+# Default frontend dir: repo-relative build output (dev/devenv). Computed
+# from this module's location so it resolves identically whether running
+# from a checkout (exists -> UI mounted) or an installed package (absent ->
+# build_app's exists()-skip handles it). KLANGK_FRONTEND_DIR overrides (#1456).
+_DEFAULT_FRONTEND_DIR = str(
+    Path(__file__).resolve().parent.parent.parent
+    / "frontend"
+    / "build"
+    / "web"
+)
 
 
 def _read_file(value: str) -> tuple[str | None, OSError | None]:
@@ -305,7 +315,7 @@ class KlangkSettings(BaseSettings):
     auth_modes: str | None = None
     jwt_secret: str | None = _INSECURE_DEFAULT_SECRET
     prevent_insecure_jwt_secret: str = ""
-    default_user: str | None = "admin@example.com"
+    default_user: str = "admin@example.com"
     default_password: str | None = None
     access_token_hours: str | None = "24"
     workspace_token_hours: str | None = "24"
@@ -316,7 +326,7 @@ class KlangkSettings(BaseSettings):
     disable_registration: str = ""
     disable_invites: str = ""
     invite_expire_hours: str | None = "72"
-    allow_insecure_no_auth: str | None = None
+    allow_insecure_no_auth: str = ""
     reject_proxy_headers: str | None = None
     trusted_proxy_cidrs: str | None = "127.0.0.1,::1"
 
@@ -348,6 +358,11 @@ class KlangkSettings(BaseSettings):
     # X-Forwarded-* in nginx's catch-all (see #1396 renderer). Mirrors the
     # KLANGK_TRUST_OUTER_PROXY env var the old nginx.sh read.
     trust_outer_proxy: str = ""
+    # frontend_dir: directory the built Flutter Web UI is served from
+    # (#1456). Defaults to the repo-relative build path (src/frontend/build/web,
+    # computed above as _DEFAULT_FRONTEND_DIR) so dev/devenv keeps working
+    # unchanged; klangkd deployments override with the installed path.
+    frontend_dir: str = _DEFAULT_FRONTEND_DIR
     # ws_msg_size_max: max WebSocket message size (bytes), passed to uvicorn.
     # Default 16 MiB; klangkd reads it through the typed config (config file +
     # file:/cmd: resolution), not raw env.
@@ -431,9 +446,9 @@ class KlangkSettings(BaseSettings):
     terminal_banner: str = ""
 
     # --- Agent ---
-    agent_email: str | None = "clanker@example.com"
-    agent_handle: str | None = "clanker"
-    agent_disabled: str | None = None
+    agent_email: str = "clanker@example.com"
+    agent_handle: str = "clanker"
+    agent_disabled: str = ""
 
     # --- SSL / certs ---
     ssl_cert_dir: str | None = None
@@ -534,24 +549,6 @@ class KlangkSettings(BaseSettings):
 # ---------------------------------------------------------------------------
 
 
-def get_settings() -> KlangkSettings:
-    """Return a fresh ``KlangkSettings`` from the live environment.
-
-    Cache-free: constructs on every call.  Tests that change the environment
-    via ``monkeypatch.setenv`` / ``delenv`` are automatically correct — the
-    next call reads the updated env.  Production constructs exactly one
-    instance in ``build_app(settings)`` (stored on ``app.state.settings``);
-    this function is the transitional shim for callers not yet migrated to
-    explicit settings threading (#1426).
-    """
-    return KlangkSettings(os.environ)
-
-
-# ---------------------------------------------------------------------------
-# Bind-spec classification (polymorphic KLANGK_LISTEN, #1422)
-# ---------------------------------------------------------------------------
-
-
 def classify_listen(value: str | None) -> str:
     """Classify a ``KLANGK_LISTEN`` value as ``"socket"`` or ``"tcp"``.
 
@@ -578,7 +575,7 @@ def classify_listen(value: str | None) -> str:
     return "tcp"  # bare hostname/IP — TCP
 
 
-def listen_is_socket(value: str | None = None) -> bool:
+def listen_is_socket(value: str) -> bool:
     """True iff the resolved ``KLANGK_LISTEN`` is a socket path.
 
     Convenience wrapper around :func:`classify_listen` that reads the merged
@@ -589,67 +586,27 @@ def listen_is_socket(value: str | None = None) -> bool:
     ``KlangkSettings`` already resolves ``file:``/``cmd:`` at construction
     (#1461), so ``settings.listen`` is the resolved value — no wrap needed.
     """
-    v = value if value is not None else get_settings().listen
+    v = value
     return classify_listen(v) == "socket"
 
 
 # ---------------------------------------------------------------------------
-# Legacy read functions (delegate to settings, apply file:/cmd: resolution)
+# Plugin dynamic-key resolver (the only remaining file:/cmd: deref path)
 # ---------------------------------------------------------------------------
 
 
-def _key_to_field(key: str) -> str:
-    """Map an env-var name (``KLANGK_JWT_SECRET``) to a field name (``jwt_secret``)."""
-    if key.startswith("KLANGK_"):
-        return key[len("KLANGK_") :].lower()
-    return key.lower()
+def resolve_dynamic_config(key: str, default: str | None = None) -> str | None:
+    """Resolve a plugin-declared dynamic config key.
 
-
-def resolve_env_value(key: str, default: str | None = None) -> str | None:
-    """Read a config value, dereferencing ``file:`` / ``cmd:`` prefixes.
-
-    **Transitional shim** (#1461): core modules should read
-    ``app_state.settings.field`` directly — ``KlangkSettings`` resolves
-    ``file:``/``cmd:`` at construction, so the field is already the resolved
-    value. This function survives for callers that still reach for env by
-    key name (plugins' dynamic keys discovered from ``package.json``, and
-    not-yet-migrated modules — see #1426's remaining slices).
-
-    For ``KLANGK_`` keys: reads the already-resolved field off the settings
-    singleton — no ``file:``/``cmd:`` wrap here (the model validator did it
-    at construction). If unset (``None``), returns *default*.
-
-    For non-``KLANGK_`` keys (``LOGFIRE_TOKEN``, ``KLANGKC_DEBUG_SSH_AGENT``,
-    plugin-declared keys): reads ``os.environ`` directly and applies
-    :func:`_resolve_indirection` — these are outside the settings model's
-    ``env_prefix`` and (for plugins) not known at construction, so they still
-    need per-call resolution.
+    Plugin config keys (discovered from each plugin's ``package.json``) are
+    outside the ``KLANGK_`` settings model — they are not known at settings
+    construction, so they can't be resolved by the model validator. This
+    reads ``os.environ`` directly and applies :func:`_resolve_indirection`
+    so plugin config honors ``file:``/``cmd:`` prefixes (a plugin-declared
+    key may itself be a secret, e.g. an API token).
     """
-    if key.startswith("KLANGK_"):
-        field = _key_to_field(key)
-        settings = get_settings()
-        raw = getattr(settings, field, None)
-        # Field already resolved at construction (#1461); raw is the final
-        # value (None when unset).
-        return raw if raw is not None else default
-    # Non-KLANGK_ env vars (LOGFIRE_*, KLANGKC_*, plugin-declared keys) are
-    # outside the settings model's env_prefix. Read directly from os.environ
-    # and resolve file:/cmd: per-call — these keys are dynamic (not known at
-    # construction) so they can't be resolved inside the model validator.
     raw = os.environ.get(key)
     if raw is None:
         return default
     resolved = _resolve_indirection(raw, key)
     return resolved if resolved is not None else default
-
-
-def resolve_env_bool(key: str, default: bool = False) -> bool:
-    """Read a config value as a boolean.
-
-    Truthy values: ``"1"``, ``"true"``, ``"yes"`` (case-insensitive).
-    Everything else is falsy.  Unset returns *default*.
-    """
-    val = resolve_env_value(key)
-    if val is None:
-        return default
-    return val.strip().lower() in ("1", "true", "yes")
