@@ -48,6 +48,11 @@ def _make_app_state(settings=None):
     app_state.oidc = oidc.OIDC(app_state)
     app_state.plugins = plugins.Plugins(app_state)
     app_state.workspaces = workspaces.Workspaces(app_state)
+    # #1520: the lifespan binds app.state.db as the active DB for its context;
+    # mirror build_app so lifespan-driven tests have it.
+    from klangk_backend.model import db as db_mod
+
+    app_state.db = db_mod.DB(settings)
     app_state.agents = agent_mod.Agents(app_state)
     app_state.email = emailsvc_mod.EmailService(app_state)
     app_state.util = util_mod.Util(app_state)
@@ -381,6 +386,7 @@ class TestLifespan:
         app.state.container_registry = app_state.container_registry
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
+        app.state.db = app_state.db
         app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
@@ -431,6 +437,7 @@ class TestLifespan:
         app.state.container_registry = app_state.container_registry
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
+        app.state.db = app_state.db
         app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
@@ -469,7 +476,12 @@ class TestLifespan:
         monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
         monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
         monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
+        from klangk_backend.model import db as db_mod
+
         app = FastAPI()
+        # The lifespan binds app.state.db into the ContextVar before the
+        # pid-file refuse check (#1520); point it at the conftest-bound DB.
+        app.state.db = db_mod.get_current_db()
         with (
             patch("klangk_backend.main.check_pid_file", return_value=12345),
             pytest.raises(SystemExit),
@@ -550,16 +562,14 @@ class TestStartupShutdownRestart:
         mock_shutdown.assert_awaited_once()
 
     async def test_process_shutdown_disposes(self):
+        app_state = _make_app_state()
+        app_state.db = AsyncMock()
         with (
             patch("klangk_backend.main.remove_pid_file") as mock_remove,
-            patch(
-                "klangk_backend.main.model.dispose_engine",
-                new_callable=AsyncMock,
-            ) as mock_dispose,
         ):
-            await main.process_shutdown()
+            await main.process_shutdown(app_state)
         mock_remove.assert_called_once()
-        mock_dispose.assert_awaited_once()
+        app_state.db.dispose_engine.assert_awaited_once()
 
     async def test_restart_runtime_runs_shutdown_then_startup(self):
         main._restart_lock = None  # force fresh lock creation
@@ -658,6 +668,7 @@ class TestStartupShutdownRestart:
         app.state.container_registry = app_state.container_registry
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
+        app.state.db = app_state.db
         app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)

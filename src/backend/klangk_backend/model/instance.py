@@ -16,7 +16,7 @@ exposes this to non-Python callers (shell scripts, TypeScript tests).
 import sqlite3
 import uuid
 
-from .db import get_default_db, get_db
+from .db import get_current_db, get_db
 
 _cache: str | None = None
 
@@ -75,7 +75,7 @@ def resolve_instance_id_sync() -> str:
     """
     global _cache
 
-    db_path = get_default_db().db_path
+    db_path = get_current_db().db_path
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     try:

@@ -14,7 +14,7 @@ class TestMigration:
     async def test_migrate_old_schema(self, temp_data_dir):
         """Migrates a pre-OIDC database: password_hash NOT NULL, no
         provider/external_id columns."""
-        db_path = model.db.get_default_db().db_path
+        db_path = model.db.get_current_db().db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db = await aiosqlite.connect(str(db_path))
         try:
@@ -56,7 +56,7 @@ class TestMigration:
 
     async def test_migrate_workspaces_adds_auto_start(self, temp_data_dir):
         """Migrates a workspaces table missing the auto_start column."""
-        db_path = model.db.get_default_db().db_path
+        db_path = model.db.get_current_db().db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db = await aiosqlite.connect(str(db_path))
         try:
@@ -119,7 +119,7 @@ class TestMigration:
     ):
         """init_db renames the legacy default_command column to service_command
         (#1203), preserving existing data."""
-        db_path = model.db.get_default_db().db_path
+        db_path = model.db.get_current_db().db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db = await aiosqlite.connect(str(db_path))
         try:
@@ -188,7 +188,7 @@ class TestMigration:
         so a DB created before they shipped lacked them. init_db must add
         them on upgrade (NULL by default) without touching existing rows.
         """
-        db_path = model.db.get_default_db().db_path
+        db_path = model.db.get_current_db().db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db = await aiosqlite.connect(str(db_path))
         try:
@@ -322,39 +322,36 @@ class TestHandles:
     async def test_set_user_handle_rejects_agent_handle(self, db):
         # A human must not be able to take the live agent's handle (#1160)
         # — independent of DB seeding, not just DB-uniqueness coincidence.
-        import klangk_backend.model as us
 
-        us.clear_agent_cache()
-        user = await us.create_user("someone@example.com", "hash")
+        model.clear_agent_cache()
+        user = await model.create_user("someone@example.com", "hash")
         with pytest.raises(
             ValueError, match="reserved for the workspace agent"
         ):
-            await us.set_user_handle(user["id"], await us.agent_handle())
+            await model.set_user_handle(user["id"], await model.agent_handle())
         # The rejection is the agent handle specifically (clanker), not a
         # generic conflict — a different handle still works.
-        await us.set_user_handle(user["id"], "someone-else")
+        await model.set_user_handle(user["id"], "someone-else")
 
     async def test_set_user_handle_rejects_agent_handle_unseeded(self, db):
         # The fallback agent handle (clanker) is rejected even when the
         # agent row has NOT been seeded — the gap DB-uniqueness leaves.
-        import klangk_backend.model as us
 
-        us.clear_agent_cache()
-        user = await us.create_user("someone@example.com", "hash")
+        model.clear_agent_cache()
+        user = await model.create_user("someone@example.com", "hash")
         with pytest.raises(
             ValueError, match="reserved for the workspace agent"
         ):
-            await us.set_user_handle(user["id"], "clanker")
+            await model.set_user_handle(user["id"], "clanker")
 
     async def test_create_user_agent_email_gets_suffixed(self, db):
         # A derived handle colliding with the agent handle is suffixed,
         # not refused (registration derives, doesn't choose) — but the
         # user must never end up WITH the agent handle (#1160).
-        import klangk_backend.model as us
 
-        us.clear_agent_cache()
-        user = await us.create_user("clanker@example.com", "hash")
-        assert user["handle"] != await us.agent_handle()
+        model.clear_agent_cache()
+        user = await model.create_user("clanker@example.com", "hash")
+        assert user["handle"] != await model.agent_handle()
         assert user["handle"] == "clanker-2"
 
     async def test_set_user_handle_invalid(self, user):
@@ -1866,30 +1863,31 @@ class TestDB:
         assert str(db.db_path).endswith("klangk.db")
         assert db.engine is None
 
-    def test_get_default_db_lazy_constructs(self, temp_data_dir):
-        """get_default_db lazily constructs a DB from settings when _db is None."""
+    def test_get_current_db_lazy_constructs(self, temp_data_dir):
+        """get_current_db lazily constructs a DB from settings when nothing is bound."""
+        from contextvars import Context
+
         from klangk_backend.model import db as db_mod
 
-        saved = db_mod._db
-        try:
-            db_mod._db = None
-            result = db_mod.get_default_db()
-            assert result is not None
-            assert result.db_path.name == "klangk.db"
-        finally:
-            db_mod._db = saved
+        # A fresh Context has no vars set, so get_current_db's LookupError
+        # path fires and lazily builds a DB from the (monkeypatched) env.
+        ctx = Context()
+        result = ctx.run(db_mod.get_current_db)
+        assert result is not None
+        assert result.db_path.name == "klangk.db"
+        # The lazily-built instance is now bound for that context.
+        assert ctx.run(db_mod.get_current_db) is result
 
-    def test_set_db_replaces_instance(self, temp_data_dir):
-        """set_db replaces the module-level DB instance."""
+    def test_set_current_db_replaces_instance(self, temp_data_dir):
+        """set_current_db binds a DB for the current context; reset restores it."""
         from klangk_backend.model import db as db_mod
         from klangk_backend.model.db import DB
         from klangk_backend.settings import KlangkSettings
         import os
 
-        saved = db_mod._db
-        try:
-            new_db = DB(KlangkSettings(os.environ))
-            db_mod.set_db(new_db)
-            assert db_mod.get_default_db() is new_db
-        finally:
-            db_mod.set_db(saved)
+        original = db_mod.get_current_db()
+        new_db = DB(KlangkSettings(os.environ))
+        token = db_mod.set_current_db(new_db)
+        assert db_mod.get_current_db() is new_db
+        db_mod.reset_current_db(token)
+        assert db_mod.get_current_db() is original

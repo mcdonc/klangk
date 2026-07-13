@@ -8375,19 +8375,18 @@ class TestMentionsAgent:
         permanently and ignored handle changes, so @mentions kept using
         the old handle forever.
         """
-        import klangk_backend.model as us
         from klangk_backend.wshandler import mentions_agent
 
         # Sanity: original handle is detected before the rename.
         assert await mentions_agent("@clanker hello")
 
         # Rename the agent handle in the DB and drop the cached user.
-        async with us.transaction() as db:
+        async with model.transaction() as db:
             await db.execute(
                 "UPDATE users SET handle = ? WHERE id = ?",
-                ("RenamedBot", us.AGENT_USER_ID),
+                ("RenamedBot", model.AGENT_USER_ID),
             )
-        us.clear_agent_cache()
+        model.clear_agent_cache()
 
         # New handle is now detected ...
         assert await mentions_agent("@RenamedBot hello")
