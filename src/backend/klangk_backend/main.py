@@ -404,14 +404,16 @@ async def process_shutdown() -> None:
 class NginxWatchdog:
     """Owns the nginx child process and its supervision task (#1463).
 
-    Constructed with ``settings`` (needed to render nginx.conf via the
-    renderer, which takes settings as of Slice 2a). Stored on
-    ``app.state.nginx_watchdog``; the lifespan calls ``.start()`` /
-    ``.stop()``.
+    Constructed with ``app_state`` (``self._settings = app_state.settings``)
+    and owns a :class:`~klangk_backend.nginx.NginxRenderer` instance for
+    config rendering (#1469). Stored on ``app.state.nginx_watchdog``; the
+    lifespan calls ``.start()`` / ``.stop()``.
     """
 
-    def __init__(self, settings: KlangkSettings) -> None:
-        self._settings = settings
+    def __init__(self, app_state) -> None:
+        self._app_state = app_state
+        self._settings: KlangkSettings = app_state.settings
+        self._renderer = nginx_mod.NginxRenderer(app_state)
         self._proc: asyncio.subprocess.Process | None = None
         self._task: asyncio.Task | None = None
         self._stopping = False
@@ -464,9 +466,9 @@ class NginxWatchdog:
         )
         uds_path = os.path.join(state_dir, "klangk.sock")
         conf_path = os.path.join(state_dir, "nginx.conf")
-        bin_path = nginx_mod.find_nginx_bin(self._settings)
-        nginx_mod.write_config(
-            nginx_mod.uds_upstream(uds_path), conf_path, self._settings
+        bin_path = self._renderer.find_nginx_bin()
+        self._renderer.write_config(
+            nginx_mod.uds_upstream(uds_path), conf_path
         )
         return bin_path, conf_path
 
@@ -744,7 +746,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     app.state.container_registry = container.ContainerRegistry(app.state)
     # Slice 2b (#1463): nginx watchdog is an owned instance with start/stop
     # lifecycle methods called by the lifespan.
-    app.state.nginx_watchdog = NginxWatchdog(settings)
+    app.state.nginx_watchdog = NginxWatchdog(app.state)
     # Slice 2c (#1475): the WebSocketState is an owned instance wired onto
     # app.state.sockets. The registry and agent module reach it through
     # explicit references — no module-level singleton.

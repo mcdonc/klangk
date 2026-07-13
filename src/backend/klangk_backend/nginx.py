@@ -13,6 +13,13 @@ parameter so it serves both the production UDS bind
 (:func:`tcp_upstream`) — only the ``proxy_pass`` base differs.
 
 See #1392 (design record) and #1396 (this chunk).
+
+The settings-driven rendering logic lives on :class:`NginxRenderer`, an
+owned instance constructed with ``app_state`` (``self._settings =
+app_state.settings``) per the composition-root refactor (#1426, #1469).
+Pure helpers (upstream constructors, host-IP auto-detection, the minimal-
+template auth-location formatter) stay module-level — they don't read
+settings.
 """
 
 from __future__ import annotations
@@ -51,7 +58,7 @@ def _is_loopback(addr: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Upstream constructors
+# Upstream constructors (pure — no settings)
 # ---------------------------------------------------------------------------
 
 
@@ -101,44 +108,6 @@ def detect_host_ipv4s() -> list[str]:
     return addrs
 
 
-def detect_dns_resolvers(settings: KlangkSettings) -> str:
-    """Space-separated nameservers for nginx's ``resolver`` directive.
-
-    From ``KLANGK_DNS_SERVERS`` (comma→space) if set, else parsed from
-    ``/etc/resolv.conf`` (IPv6 bracketed for nginx), else ``8.8.8.8``.
-    """
-    raw = resolve_indirection(settings.dns_servers)
-    if raw:
-        servers = []
-        for token in str(raw).split(","):
-            token = token.strip()
-            if not token:
-                continue
-            if ":" in token and not token.startswith("["):
-                servers.append(f"[{token}]")
-            else:
-                servers.append(token)
-        return " ".join(servers) or "8.8.8.8"
-    # Parse /etc/resolv.conf.
-    servers: list[str] = []
-    try:
-        for line in Path("/etc/resolv.conf").read_text().splitlines():
-            parts = line.split()
-            if len(parts) >= 2 and parts[0] == "nameserver":
-                addr = parts[1]
-                if ":" in addr:
-                    servers.append(f"[{addr}]")
-                else:
-                    servers.append(addr)
-    except OSError:
-        pass
-    return " ".join(servers) or "8.8.8.8"
-
-
-# ---------------------------------------------------------------------------
-# Container ACL / DENY computation
-# ---------------------------------------------------------------------------
-
 # Fallback subnets when auto-detection yields nothing (mirrors nginx.sh):
 # 172.16/12 + 10/8 (common container ranges), explicitly NOT 192.168/16
 # (most common LAN range — allowing it would expose the LLM proxy to peers).
@@ -146,187 +115,9 @@ _FALLBACK_ACL_SUBNETS = ["172.16.0.0/12", "10.0.0.0/8", "127.0.0.1"]
 _FALLBACK_DENY_SUBNETS = ["172.16.0.0/12", "10.0.0.0/8"]
 
 
-def compute_container_acls(settings: KlangkSettings) -> tuple[str, str]:
-    """Build the CONTAINER_ACL (allowlist) and CONTAINER_DENY (blocklist) text.
-
-    Returns ``(acl_block, deny_block)`` where each is the indented
-    ``allow``/``deny`` directives (no leading/trailing newline). Two
-    complementary ACLs from one source set (#1376):
-
-    - CONTAINER_ACL: allowlist on the three container endpoints
-      (llm-proxy, browser-delegate, post-chat-message). Allows the container
-      source IPs, denies everyone else.
-    - CONTAINER_DENY: blocklist on the catch-all ``location /``. Denies the
-      container source IPs so a container reaches ONLY those three endpoints,
-      not the whole /api/v1/* tree. Loopback is ALWAYS excluded (local
-      browsers need the full UI/API).
-
-    With an explicit ``KLANGK_CONTAINER_SUBNETS`` override, 127.0.0.1 is NOT
-    implicitly added to CONTAINER_ACL (the operator's list is used verbatim).
-    """
-    explicit = resolve_indirection(settings.container_subnets)
-    if explicit:
-        subnets = [s.strip() for s in str(explicit).split(",") if s.strip()]
-        acl_lines = [f"      allow {s};" for s in subnets]
-        deny_lines = [
-            f"      deny {s};" for s in subnets if not _is_loopback(s)
-        ]
-        if not deny_lines:
-            logger.warning(
-                "container source set has no non-loopback entries — "
-                "catch-all location / denies nothing (deny-by-default inactive)"
-            )
-    else:
-        addrs = detect_host_ipv4s()
-        if addrs:
-            acl_lines = [f"      allow {a};" for a in addrs]
-            deny_lines = [
-                f"      deny {a};" for a in addrs if not _is_loopback(a)
-            ]
-        else:
-            logger.warning(
-                "container subnet detection failed, using fallback RFC1918 ranges"
-            )
-            acl_lines = [f"      allow {s};" for s in _FALLBACK_ACL_SUBNETS]
-            deny_lines = [f"      deny {s};" for s in _FALLBACK_DENY_SUBNETS]
-    acl = "\n".join(acl_lines) + "\n      deny all;"
-    deny = "\n".join(deny_lines) + "\n      allow all;"
-    return acl, deny
-
-
 # ---------------------------------------------------------------------------
-# client_max_body_size
+# Minimal-template auth-location formatter (pure — no settings)
 # ---------------------------------------------------------------------------
-
-
-def compute_client_max_body_size(settings: KlangkSettings) -> str:
-    """Derive nginx ``client_max_body_size`` from ``KLANGK_FILE_UPLOAD_SIZE_MAX``.
-
-    The setting is in bytes (default 500 MB); nginx wants ``Nm``. Minimum 1m.
-    """
-    raw = resolve_indirection(settings.file_upload_size_max) or "524288000"
-    try:
-        bytes_ = int(str(raw))
-    except (TypeError, ValueError):
-        bytes_ = 524288000
-    mb = max(1, bytes_ // 1048576)
-    return f"{mb}m"
-
-
-# ---------------------------------------------------------------------------
-# Section builders
-# ---------------------------------------------------------------------------
-
-
-def _build_hosted_block(settings: KlangkSettings) -> str:
-    """The /hosted/ proxy locations (or a 404 block when disabled).
-
-    Disabled entirely when ``KLANGK_HOSTED_PORTS_PER_WORKSPACE`` is exactly 0
-    — mirrors the backend's ``ports_per_workspace_cap()`` (#1237).
-    """
-    raw = resolve_indirection(settings.hosted_ports_per_workspace) or "5"
-    if str(raw).strip() == "0":
-        return (
-            "    # Hosted-app serving is disabled "
-            "(KLANGK_HOSTED_PORTS_PER_WORKSPACE=0).\n"
-            "    location ^~ /hosted/ {\n"
-            "      return 404;\n"
-            "    }\n"
-        )
-    return (
-        "    # A hosted URL without a trailing slash (e.g. .../9001) can't match the\n"
-        "    # proxy location below. Redirect to the canonical trailing-slash form so\n"
-        "    # relative asset paths resolve.\n"
-        "    location ~ ^/hosted/[^/]+/(?<hosted_port>\\d+)$ {\n"
-        "      if ($hosted_is_ws = 0) {\n"
-        "        return 308 $uri/$is_args$args;\n"
-        "      }\n"
-        "      # WebSocket clients cannot follow a 308; proxy instead.\n"
-        "      proxy_pass http://127.0.0.1:$hosted_port/$is_args$args;\n"
-        "      proxy_set_header Host $http_host;\n"
-        "      proxy_set_header X-Real-IP $remote_addr;\n"
-        "      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
-        "      proxy_set_header X-Forwarded-Proto $scheme;\n"
-        "      proxy_http_version 1.1;\n"
-        "      proxy_set_header Upgrade $http_upgrade;\n"
-        "      proxy_set_header Connection $connection_upgrade;\n"
-        "    }\n"
-        "\n"
-        "    # Hosted app proxy: extract port from URL and proxy to container.\n"
-        "    location ~ ^/hosted/[^/]+/(\\d+)/(.*)$ {\n"
-        "      proxy_pass http://127.0.0.1:$1/$2$is_args$args;\n"
-        "      proxy_set_header Host $http_host;\n"
-        "      proxy_set_header X-Real-IP $remote_addr;\n"
-        "      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
-        "      proxy_set_header X-Forwarded-Proto $scheme;\n"
-        "      proxy_http_version 1.1;\n"
-        "      proxy_set_header Upgrade $http_upgrade;\n"
-        "      proxy_set_header Connection $connection_upgrade;\n"
-        "    }\n"
-    )
-
-
-def _build_llm_block(
-    acl: str, resolvers: str, settings: KlangkSettings
-) -> str:
-    """The /llm-proxy/ location, only when ``KLANGK_LLM_BASE_URL`` is set.
-
-    Containers hit this instead of the real endpoint, so they never see the
-    API key. Uses an nginx variable so the upstream resolves at request time
-    (avoids crash on unresolvable hosts). ``file:``/``cmd:`` prefixes on the
-    URL and key are resolved here (Python's resolver, not the retired
-    ``klangk-resolve-value`` console script).
-    """
-    base_url = resolve_indirection(settings.llm_base_url)
-    if not base_url:
-        return ""
-    api_key = resolve_indirection(settings.llm_api_key) or ""
-    return (
-        f"    location ~ ^/llm-proxy/(.*)$ {{\n"
-        f"{acl}\n"
-        "      auth_request /api/v1/auth/verify-workspace-token;\n"
-        "      auth_request_set $auth_token_error $upstream_http_x_token_error;\n"
-        "      error_page 401 = @token_auth_failed;\n"
-        f"      resolver {resolvers} valid=30s;\n"
-        f"      set $llm_backend {base_url}/$1;\n"
-        "      proxy_pass $llm_backend;\n"
-        f'      proxy_set_header Authorization "Bearer {api_key}";\n'
-        "      proxy_set_header Host $proxy_host;\n"
-        "      proxy_ssl_server_name on;\n"
-        "      proxy_http_version 1.1;\n"
-        '      proxy_set_header Connection "";\n'
-        "      proxy_buffering off;\n"
-        "      proxy_cache off;\n"
-        "      chunked_transfer_encoding on;\n"
-        "    }\n"
-    )
-
-
-def _trust_outer_proxy(settings: KlangkSettings) -> bool:
-    raw = resolve_indirection(settings.trust_outer_proxy) or ""
-    return str(raw).strip().lower() in ("1", "true", "yes")
-
-
-# ---------------------------------------------------------------------------
-# Main renderer
-# ---------------------------------------------------------------------------
-
-
-def render_config(upstream: str, settings: KlangkSettings) -> str:
-    """Render ``nginx.conf`` as a string.
-
-    Template selection keys off ``KLANGK_LISTEN``'s shape only (#1398): a
-    socket path ⇒ the minimal (headless) template; TCP ⇒ the full (browser)
-    template. The AUTH value does not participate in template selection —
-    only the bind does. ``upstream`` is the ``proxy_pass`` base
-    (:func:`uds_upstream` for the production socket bind, :func:`tcp_upstream`
-    for tests). All other values come from the merged settings
-    (env > config file > defaults) plus the host-IP / DNS auto-detection
-    probes.
-    """
-    if listen_is_socket(resolve_indirection(settings.listen)):
-        return _render_minimal_config(upstream, settings)
-    return _render_full_config(upstream, settings)
 
 
 def _minimal_auth_locations(upstream: str) -> str:
@@ -358,31 +149,261 @@ def _minimal_auth_locations(upstream: str) -> str:
     )
 
 
-def _render_minimal_config(upstream: str, settings: KlangkSettings) -> str:
-    """Render the minimal (headless) ``nginx.conf`` — socket bind only (#1398).
+# ---------------------------------------------------------------------------
+# Renderer (settings-driven — owned instance, #1469)
+# ---------------------------------------------------------------------------
 
-    Emitted when ``KLANGK_LISTEN`` is a socket path: a browser can't reach a
-    UDS and uvicorn exposes no browser-facing TCP, so no browser UI is
-    serviceable. The only served surface is the container-egress
-    ``/llm-proxy`` location (with its workspace-token ``auth_request`` gate +
-    CONTAINER_ACL) on the single container-egress listener. No ``location /``,
-    no ``/api/v1/*``, no static UI, no ``/auth/local`` — the attack surface is
-    two channels (operator→UDS, container→llm-proxy) and nothing else.
 
-    The ``auth_request`` subrequest target + JSON 401 page are emitted only
-    when an ``/llm-proxy`` location exists to gate on them (i.e. when
-    ``KLANGK_LLM_BASE_URL`` is set); with no LLM configured the server block
-    serves nothing.
+class NginxRenderer:
+    """Settings-driven ``nginx.conf`` renderer (#1396, #1469).
+
+    Constructed with ``app_state`` (``self._settings = app_state.settings``)
+    per the composition-root pattern. The renderer is a pure function of the
+    merged config (settings + env probes); it does not touch podman.
+    ``NginxWatchdog`` owns an instance and calls :meth:`render_config` /
+    :meth:`find_nginx_bin` / :meth:`write_config` from its ``_prepare`` step.
     """
-    nginx_port = resolve_indirection(settings.nginx_port) or "8995"
-    client_max_body_size = compute_client_max_body_size(settings)
-    resolvers = detect_dns_resolvers(settings)
-    acl, _deny = compute_container_acls(settings)
-    llm_block = _build_llm_block(acl, resolvers, settings)
-    # The auth_request infrastructure is only reachable via the /llm-proxy
-    # location's auth_request; omit it entirely when there's no LLM proxy.
-    auth_locations = _minimal_auth_locations(upstream) if llm_block else ""
-    return f"""daemon off;
+
+    def __init__(self, app_state) -> None:
+        self._app_state = app_state
+        self._settings: KlangkSettings = app_state.settings
+
+    # -- DNS / ACL / size computation --------------------------------------
+
+    def detect_dns_resolvers(self) -> str:
+        """Space-separated nameservers for nginx's ``resolver`` directive.
+
+        From ``KLANGK_DNS_SERVERS`` (comma→space) if set, else parsed from
+        ``/etc/resolv.conf`` (IPv6 bracketed for nginx), else ``8.8.8.8``.
+        """
+        raw = resolve_indirection(self._settings.dns_servers)
+        if raw:
+            servers = []
+            for token in str(raw).split(","):
+                token = token.strip()
+                if not token:
+                    continue
+                if ":" in token and not token.startswith("["):
+                    servers.append(f"[{token}]")
+                else:
+                    servers.append(token)
+            return " ".join(servers) or "8.8.8.8"
+        # Parse /etc/resolv.conf.
+        servers: list[str] = []
+        try:
+            for line in Path("/etc/resolv.conf").read_text().splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and parts[0] == "nameserver":
+                    addr = parts[1]
+                    if ":" in addr:
+                        servers.append(f"[{addr}]")
+                    else:
+                        servers.append(addr)
+        except OSError:
+            pass
+        return " ".join(servers) or "8.8.8.8"
+
+    def compute_container_acls(self) -> tuple[str, str]:
+        """Build the CONTAINER_ACL (allowlist) and CONTAINER_DENY (blocklist) text.
+
+        Returns ``(acl_block, deny_block)`` where each is the indented
+        ``allow``/``deny`` directives (no leading/trailing newline). Two
+        complementary ACLs from one source set (#1376):
+
+        - CONTAINER_ACL: allowlist on the three container endpoints
+          (llm-proxy, browser-delegate, post-chat-message). Allows the container
+          source IPs, denies everyone else.
+        - CONTAINER_DENY: blocklist on the catch-all ``location /``. Denies the
+          container source IPs so a container reaches ONLY those three endpoints,
+          not the whole /api/v1/* tree. Loopback is ALWAYS excluded (local
+          browsers need the full UI/API).
+
+        With an explicit ``KLANGK_CONTAINER_SUBNETS`` override, 127.0.0.1 is NOT
+        implicitly added to CONTAINER_ACL (the operator's list is used verbatim).
+        """
+        explicit = resolve_indirection(self._settings.container_subnets)
+        if explicit:
+            subnets = [
+                s.strip() for s in str(explicit).split(",") if s.strip()
+            ]
+            acl_lines = [f"      allow {s};" for s in subnets]
+            deny_lines = [
+                f"      deny {s};" for s in subnets if not _is_loopback(s)
+            ]
+            if not deny_lines:
+                logger.warning(
+                    "container source set has no non-loopback entries — "
+                    "catch-all location / denies nothing (deny-by-default inactive)"
+                )
+        else:
+            addrs = detect_host_ipv4s()
+            if addrs:
+                acl_lines = [f"      allow {a};" for a in addrs]
+                deny_lines = [
+                    f"      deny {a};" for a in addrs if not _is_loopback(a)
+                ]
+            else:
+                logger.warning(
+                    "container subnet detection failed, using fallback RFC1918 ranges"
+                )
+                acl_lines = [
+                    f"      allow {s};" for s in _FALLBACK_ACL_SUBNETS
+                ]
+                deny_lines = [
+                    f"      deny {s};" for s in _FALLBACK_DENY_SUBNETS
+                ]
+        acl = "\n".join(acl_lines) + "\n      deny all;"
+        deny = "\n".join(deny_lines) + "\n      allow all;"
+        return acl, deny
+
+    def compute_client_max_body_size(self) -> str:
+        """Derive nginx ``client_max_body_size`` from ``KLANGK_FILE_UPLOAD_SIZE_MAX``.
+
+        The setting is in bytes (default 500 MB); nginx wants ``Nm``. Minimum 1m.
+        """
+        raw = (
+            resolve_indirection(self._settings.file_upload_size_max)
+            or "524288000"
+        )
+        try:
+            bytes_ = int(str(raw))
+        except (TypeError, ValueError):
+            bytes_ = 524288000
+        mb = max(1, bytes_ // 1048576)
+        return f"{mb}m"
+
+    # -- Section builders --------------------------------------------------
+
+    def _build_hosted_block(self) -> str:
+        """The /hosted/ proxy locations (or a 404 block when disabled).
+
+        Disabled entirely when ``KLANGK_HOSTED_PORTS_PER_WORKSPACE`` is exactly 0
+        — mirrors the backend's ``ports_per_workspace_cap()`` (#1237).
+        """
+        raw = (
+            resolve_indirection(self._settings.hosted_ports_per_workspace)
+            or "5"
+        )
+        if str(raw).strip() == "0":
+            return (
+                "    # Hosted-app serving is disabled "
+                "(KLANGK_HOSTED_PORTS_PER_WORKSPACE=0).\n"
+                "    location ^~ /hosted/ {\n"
+                "      return 404;\n"
+                "    }\n"
+            )
+        return (
+            "    # A hosted URL without a trailing slash (e.g. .../9001) can't match the\n"
+            "    # proxy location below. Redirect to the canonical trailing-slash form so\n"
+            "    # relative asset paths resolve.\n"
+            "    location ~ ^/hosted/[^/]+/(?<hosted_port>\\d+)$ {\n"
+            "      if ($hosted_is_ws = 0) {\n"
+            "        return 308 $uri/$is_args$args;\n"
+            "      }\n"
+            "      # WebSocket clients cannot follow a 308; proxy instead.\n"
+            "      proxy_pass http://127.0.0.1:$hosted_port/$is_args$args;\n"
+            "      proxy_set_header Host $http_host;\n"
+            "      proxy_set_header X-Real-IP $remote_addr;\n"
+            "      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            "      proxy_set_header X-Forwarded-Proto $scheme;\n"
+            "      proxy_http_version 1.1;\n"
+            "      proxy_set_header Upgrade $http_upgrade;\n"
+            "      proxy_set_header Connection $connection_upgrade;\n"
+            "    }\n"
+            "\n"
+            "    # Hosted app proxy: extract port from URL and proxy to container.\n"
+            "    location ~ ^/hosted/[^/]+/(\\d+)/(.*)$ {\n"
+            "      proxy_pass http://127.0.0.1:$1/$2$is_args$args;\n"
+            "      proxy_set_header Host $http_host;\n"
+            "      proxy_set_header X-Real-IP $remote_addr;\n"
+            "      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            "      proxy_set_header X-Forwarded-Proto $scheme;\n"
+            "      proxy_http_version 1.1;\n"
+            "      proxy_set_header Upgrade $http_upgrade;\n"
+            "      proxy_set_header Connection $connection_upgrade;\n"
+            "    }\n"
+        )
+
+    def _build_llm_block(self, acl: str, resolvers: str) -> str:
+        """The /llm-proxy/ location, only when ``KLANGK_LLM_BASE_URL`` is set.
+
+        Containers hit this instead of the real endpoint, so they never see the
+        API key. Uses an nginx variable so the upstream resolves at request time
+        (avoids crash on unresolvable hosts). ``file:``/``cmd:`` prefixes on the
+        URL and key are resolved here (Python's resolver, not the retired
+        ``klangk-resolve-value`` console script).
+        """
+        base_url = resolve_indirection(self._settings.llm_base_url)
+        if not base_url:
+            return ""
+        api_key = resolve_indirection(self._settings.llm_api_key) or ""
+        return (
+            f"    location ~ ^/llm-proxy/(.*)$ {{\n"
+            f"{acl}\n"
+            "      auth_request /api/v1/auth/verify-workspace-token;\n"
+            "      auth_request_set $auth_token_error $upstream_http_x_token_error;\n"
+            "      error_page 401 = @token_auth_failed;\n"
+            f"      resolver {resolvers} valid=30s;\n"
+            f"      set $llm_backend {base_url}/$1;\n"
+            "      proxy_pass $llm_backend;\n"
+            f'      proxy_set_header Authorization "Bearer {api_key}";\n'
+            "      proxy_set_header Host $proxy_host;\n"
+            "      proxy_ssl_server_name on;\n"
+            "      proxy_http_version 1.1;\n"
+            '      proxy_set_header Connection "";\n'
+            "      proxy_buffering off;\n"
+            "      proxy_cache off;\n"
+            "      chunked_transfer_encoding on;\n"
+            "    }\n"
+        )
+
+    def _trust_outer_proxy(self) -> bool:
+        raw = resolve_indirection(self._settings.trust_outer_proxy) or ""
+        return str(raw).strip().lower() in ("1", "true", "yes")
+
+    # -- Main renderer -----------------------------------------------------
+
+    def render_config(self, upstream: str) -> str:
+        """Render ``nginx.conf`` as a string.
+
+        Template selection keys off ``KLANGK_LISTEN``'s shape only (#1398): a
+        socket path ⇒ the minimal (headless) template; TCP ⇒ the full (browser)
+        template. The AUTH value does not participate in template selection —
+        only the bind does. ``upstream`` is the ``proxy_pass`` base
+        (:func:`uds_upstream` for the production socket bind, :func:`tcp_upstream`
+        for tests). All other values come from the merged settings
+        (env > config file > defaults) plus the host-IP / DNS auto-detection
+        probes.
+        """
+        if listen_is_socket(resolve_indirection(self._settings.listen)):
+            return self._render_minimal_config(upstream)
+        return self._render_full_config(upstream)
+
+    def _render_minimal_config(self, upstream: str) -> str:
+        """Render the minimal (headless) ``nginx.conf`` — socket bind only (#1398).
+
+        Emitted when ``KLANGK_LISTEN`` is a socket path: a browser can't reach a
+        UDS and uvicorn exposes no browser-facing TCP, so no browser UI is
+        serviceable. The only served surface is the container-egress
+        ``/llm-proxy`` location (with its workspace-token ``auth_request`` gate +
+        CONTAINER_ACL) on the single container-egress listener. No ``location /``,
+        no ``/api/v1/*``, no static UI, no ``/auth/local`` — the attack surface is
+        two channels (operator→UDS, container→llm-proxy) and nothing else.
+
+        The ``auth_request`` subrequest target + JSON 401 page are emitted only
+        when an ``/llm-proxy`` location exists to gate on them (i.e. when
+        ``KLANGK_LLM_BASE_URL`` is set); with no LLM configured the server block
+        serves nothing.
+        """
+        nginx_port = resolve_indirection(self._settings.nginx_port) or "8995"
+        client_max_body_size = self.compute_client_max_body_size()
+        resolvers = self.detect_dns_resolvers()
+        acl, _deny = self.compute_container_acls()
+        llm_block = self._build_llm_block(acl, resolvers)
+        # The auth_request infrastructure is only reachable via the /llm-proxy
+        # location's auth_request; omit it entirely when there's no LLM proxy.
+        auth_locations = _minimal_auth_locations(upstream) if llm_block else ""
+        return f"""daemon off;
 pid /tmp/nginx.pid;
 error_log stderr;
 events {{ worker_connections 1024; }}
@@ -402,44 +423,43 @@ http {{
 }}
 """
 
+    def _render_full_config(self, upstream: str) -> str:
+        """Render the full (browser) ``nginx.conf`` — TCP bind (#1396, #1398).
 
-def _render_full_config(upstream: str, settings: KlangkSettings) -> str:
-    """Render the full (browser) ``nginx.conf`` — TCP bind (#1396, #1398).
+        Emitted when ``KLANGK_LISTEN`` is TCP: the browser UI + every API path +
+        static files + the no-auth ``/auth/local`` handout are all serviceable.
+        This is the template the renderer shipped before #1398's socket/minimal
+        branch; it is kept verbatim so the TCP path is a strict regression guard.
+        """
+        nginx_port = resolve_indirection(self._settings.nginx_port) or "8995"
+        client_max_body_size = self.compute_client_max_body_size()
+        resolvers = self.detect_dns_resolvers()
+        acl, deny = self.compute_container_acls()
 
-    Emitted when ``KLANGK_LISTEN`` is TCP: the browser UI + every API path +
-    static files + the no-auth ``/auth/local`` handout are all serviceable.
-    This is the template the renderer shipped before #1398's socket/minimal
-    branch; it is kept verbatim so the TCP path is a strict regression guard.
-    """
-    nginx_port = resolve_indirection(settings.nginx_port) or "8995"
-    client_max_body_size = compute_client_max_body_size(settings)
-    resolvers = detect_dns_resolvers(settings)
-    acl, deny = compute_container_acls(settings)
+        hosted_block = self._build_hosted_block()
+        llm_block = self._build_llm_block(acl, resolvers)
+        trust = self._trust_outer_proxy()
+        if trust:
+            forwarded_headers = (
+                "      proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n"
+                "      proxy_set_header X-Forwarded-Host $http_x_forwarded_host;\n"
+                "      proxy_set_header X-Forwarded-Prefix $http_x_forwarded_prefix;\n"
+            )
+        else:
+            forwarded_headers = (
+                "      proxy_set_header X-Forwarded-Proto $scheme;\n"
+                "      proxy_set_header X-Forwarded-Host $http_host;\n"
+            )
 
-    hosted_block = _build_hosted_block(settings)
-    llm_block = _build_llm_block(acl, resolvers, settings)
-    trust = _trust_outer_proxy(settings)
-    if trust:
-        forwarded_headers = (
-            "      proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n"
-            "      proxy_set_header X-Forwarded-Host $http_x_forwarded_host;\n"
-            "      proxy_set_header X-Forwarded-Prefix $http_x_forwarded_prefix;\n"
+        # The three proxy-header lines every proxied location shares.
+        common_headers = (
+            "      proxy_set_header Host $http_host;\n"
+            "      proxy_set_header X-Real-IP $remote_addr;\n"
+            "      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            "      proxy_http_version 1.1;\n"
         )
-    else:
-        forwarded_headers = (
-            "      proxy_set_header X-Forwarded-Proto $scheme;\n"
-            "      proxy_set_header X-Forwarded-Host $http_host;\n"
-        )
 
-    # The three proxy-header lines every proxied location shares.
-    common_headers = (
-        "      proxy_set_header Host $http_host;\n"
-        "      proxy_set_header X-Real-IP $remote_addr;\n"
-        "      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
-        "      proxy_http_version 1.1;\n"
-    )
-
-    conf = f"""daemon off;
+        conf = f"""daemon off;
 pid /tmp/nginx.pid;
 error_log stderr;
 events {{ worker_connections 1024; }}
@@ -525,40 +545,38 @@ http {{
   }}
 }}
 """
-    return conf
+        return conf
 
+    # -- I/O + binary location --------------------------------------------
 
-def write_config(
-    upstream: str, conf_path: str | Path, settings: KlangkSettings
-) -> str:
-    """Render the config and write it to ``conf_path`` (returns the text).
+    def write_config(self, upstream: str, conf_path: str | Path) -> str:
+        """Render the config and write it to ``conf_path`` (returns the text).
 
-    Written mode ``0600`` because the rendered config may embed secrets
-    (notably the LLM API key, which nginx needs in the ``/llm-proxy/`` block
-    to set the ``Authorization`` header — there is no way to proxy that
-    header without nginx knowing it). The file lives under the same
-    same-uid-only ``state_dir`` as the UDS, so the restrictive mode matches
-    the existing trust boundary.
-    """
-    text = render_config(upstream, settings)
-    path = Path(conf_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # The LLM API key is necessarily in this config (nginx adds the
-    # Authorization header on the proxied upstream); 0600 keeps it private
-    # to the klangk user. lgtm[py/clear-text-storage-of-sensitive-data]
-    # — the storage is intentional and unavoidable for nginx-based proxying.
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(text)
-    return text
+        Written mode ``0600`` because the rendered config may embed secrets
+        (notably the LLM API key, which nginx needs in the ``/llm-proxy/`` block
+        to set the ``Authorization`` header — there is no way to proxy that
+        header without nginx knowing it). The file lives under the same
+        same-uid-only ``state_dir`` as the UDS, so the restrictive mode matches
+        the existing trust boundary.
+        """
+        text = self.render_config(upstream)
+        path = Path(conf_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # The LLM API key is necessarily in this config (nginx adds the
+        # Authorization header on the proxied upstream); 0600 keeps it private
+        # to the klangk user. lgtm[py/clear-text-storage-of-sensitive-data]
+        # — the storage is intentional and unavoidable for nginx-based proxying.
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        return text
 
-
-def find_nginx_bin(settings: KlangkSettings) -> str:
-    """Locate the nginx binary: KLANGK_NGINX_BIN > PATH > /usr/sbin/nginx."""
-    configured = resolve_indirection(settings.nginx_bin)
-    if configured:
-        return str(configured)
-    found = shutil.which("nginx")
-    if found:
-        return found
-    return "/usr/sbin/nginx"
+    def find_nginx_bin(self) -> str:
+        """Locate the nginx binary: KLANGK_NGINX_BIN > PATH > /usr/sbin/nginx."""
+        configured = resolve_indirection(self._settings.nginx_bin)
+        if configured:
+            return str(configured)
+        found = shutil.which("nginx")
+        if found:
+            return found
+        return "/usr/sbin/nginx"

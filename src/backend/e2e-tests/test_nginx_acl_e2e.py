@@ -63,12 +63,13 @@ def _render_conf(env_overrides, tmpdir=None):
             # render, regardless of what a prior test left behind.
             os.environ.pop(k, None)
     try:
-        from klangk_backend.nginx import render_config, tcp_upstream
+        from klangk_backend.nginx import NginxRenderer, tcp_upstream
         from klangk_backend.settings import get_settings
+        import types
 
-        return render_config(
-            tcp_upstream("127.0.0.1", "19998"), get_settings()
-        )
+        return NginxRenderer(
+            types.SimpleNamespace(settings=get_settings())
+        ).render_config(tcp_upstream("127.0.0.1", "19998"))
     finally:
         for k, old in old_env.items():
             if old is None:
@@ -448,8 +449,9 @@ class TestNginxAclEnforcement:
 
         # Start nginx via the Python renderer (#1396): render the conf
         # from these env vars, then launch nginx directly with -c.
-        from klangk_backend.nginx import write_config, tcp_upstream
+        from klangk_backend.nginx import NginxRenderer, tcp_upstream
         from klangk_backend.settings import get_settings
+        import types
 
         for k, v in {
             "KLANGK_NGINX_PORT": nginx_port,
@@ -461,9 +463,9 @@ class TestNginxAclEnforcement:
         nginx_state = os.path.join(tmpdir, "nginx")
         os.makedirs(nginx_state, exist_ok=True)
         conf_path = os.path.join(nginx_state, "nginx.conf")
-        write_config(
-            tcp_upstream("127.0.0.1", backend_port), conf_path, get_settings()
-        )
+        NginxRenderer(
+            types.SimpleNamespace(settings=get_settings())
+        ).write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
         nginx_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],
             stdout=subprocess.PIPE,
@@ -621,8 +623,9 @@ class TestNginxDenyByDefault:
         # Start nginx via the Python renderer (#1396) with the host IP as
         # the (sole) container source IP. CONTAINER_DENY on the catch-all
         # then denies exactly that IP.
-        from klangk_backend.nginx import write_config, tcp_upstream
+        from klangk_backend.nginx import NginxRenderer, tcp_upstream
         from klangk_backend.settings import get_settings
+        import types
 
         for k, v in {
             "KLANGK_NGINX_PORT": nginx_port,
@@ -632,9 +635,9 @@ class TestNginxDenyByDefault:
         nginx_state = os.path.join(tmpdir, "nginx")
         os.makedirs(nginx_state, exist_ok=True)
         conf_path = os.path.join(nginx_state, "nginx.conf")
-        write_config(
-            tcp_upstream("127.0.0.1", backend_port), conf_path, get_settings()
-        )
+        NginxRenderer(
+            types.SimpleNamespace(settings=get_settings())
+        ).write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
         nginx_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],
             stdout=subprocess.PIPE,
@@ -785,16 +788,17 @@ class TestNginxAuthLocalAcl:
         # nginx via the Python renderer (#1396) with no container subnets —
         # the /auth/local block is always generated with its fixed loopback
         # allowlist.
-        from klangk_backend.nginx import write_config, tcp_upstream
+        from klangk_backend.nginx import NginxRenderer, tcp_upstream
         from klangk_backend.settings import get_settings
+        import types
 
         os.environ["KLANGK_NGINX_PORT"] = nginx_port
         nginx_state = os.path.join(tmpdir, "nginx")
         os.makedirs(nginx_state, exist_ok=True)
         conf_path = os.path.join(nginx_state, "nginx.conf")
-        write_config(
-            tcp_upstream("127.0.0.1", backend_port), conf_path, get_settings()
-        )
+        NginxRenderer(
+            types.SimpleNamespace(settings=get_settings())
+        ).write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
         nginx_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],
             stdout=subprocess.PIPE,
