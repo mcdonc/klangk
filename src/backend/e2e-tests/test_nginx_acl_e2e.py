@@ -38,12 +38,16 @@ def _render_conf(env_overrides, tmpdir=None):
     """
     env = {
         "KLANGK_NGINX_PORT": "19999",
+        "KLANGK_DATA_DIR": str(tmpdir or "/tmp/klangk-e2e-data"),
+        "KLANGK_STATE_DIR": str(tmpdir or "/tmp/klangk-e2e-state"),
         **env_overrides,
     }
     # Every renderer-relevant key: absent in env_overrides => cleared for this
     # render (restored to its prior value afterwards).
     renderer_keys = {
         "KLANGK_NGINX_PORT",
+        "KLANGK_DATA_DIR",
+        "KLANGK_STATE_DIR",
         "KLANGK_CONTAINER_SUBNETS",
         "KLANGK_LLM_BASE_URL",
         "KLANGK_LLM_API_KEY",
@@ -395,7 +399,9 @@ class TestNginxAclEnforcement:
         """
         tmpdir = str(tmp_path_factory.mktemp("nginx-acl"))
         data_dir = os.path.join(tmpdir, "data")
+        state_dir = os.path.join(tmpdir, "state")
         os.makedirs(data_dir)
+        os.makedirs(state_dir)
 
         backend_port = _find_free_port()
         nginx_port = _find_free_port()
@@ -405,6 +411,7 @@ class TestNginxAclEnforcement:
             **os.environ,
             "KLANGK_PORT": backend_port,
             "KLANGK_DATA_DIR": data_dir,
+            "KLANGK_STATE_DIR": state_dir,
             "KLANGK_JWT_SECRET": "nginx-acl-test-secret",
             "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
             "KLANGK_DEFAULT_USER": "test@example.com",
@@ -458,6 +465,8 @@ class TestNginxAclEnforcement:
             "KLANGK_CONTAINER_SUBNETS": "192.0.2.0/24",
             "KLANGK_LLM_BASE_URL": f"http://127.0.0.1:{backend_port}",
             "KLANGK_LLM_API_KEY": "fake-key",
+            "KLANGK_DATA_DIR": data_dir,
+            "KLANGK_STATE_DIR": state_dir,
         }.items():
             os.environ[k] = v
         nginx_state = os.path.join(tmpdir, "nginx")
@@ -569,7 +578,9 @@ class TestNginxDenyByDefault:
 
         tmpdir = str(tmp_path_factory.mktemp("nginx-deny-default"))
         data_dir = os.path.join(tmpdir, "data")
+        state_dir = os.path.join(tmpdir, "state")
         os.makedirs(data_dir)
+        os.makedirs(state_dir)
         backend_port = _find_free_port()
         nginx_port = _find_free_port()
 
@@ -578,6 +589,7 @@ class TestNginxDenyByDefault:
             **os.environ,
             "KLANGK_PORT": backend_port,
             "KLANGK_DATA_DIR": data_dir,
+            "KLANGK_STATE_DIR": state_dir,
             "KLANGK_JWT_SECRET": "nginx-deny-test-secret",
             "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
             "KLANGK_DEFAULT_USER": "test@example.com",
@@ -630,6 +642,8 @@ class TestNginxDenyByDefault:
         for k, v in {
             "KLANGK_NGINX_PORT": nginx_port,
             "KLANGK_CONTAINER_SUBNETS": host_ip,
+            "KLANGK_DATA_DIR": data_dir,
+            "KLANGK_STATE_DIR": state_dir,
         }.items():
             os.environ[k] = v
         nginx_state = os.path.join(tmpdir, "nginx")
@@ -733,7 +747,9 @@ class TestNginxAuthLocalAcl:
 
         tmpdir = str(tmp_path_factory.mktemp("nginx-auth-local"))
         data_dir = os.path.join(tmpdir, "data")
+        state_dir = os.path.join(tmpdir, "state")
         os.makedirs(data_dir)
+        os.makedirs(state_dir)
         backend_port = _find_free_port()
         nginx_port = _find_free_port()
 
@@ -743,6 +759,7 @@ class TestNginxAuthLocalAcl:
             **os.environ,
             "KLANGK_PORT": backend_port,
             "KLANGK_DATA_DIR": data_dir,
+            "KLANGK_STATE_DIR": state_dir,
             "KLANGK_JWT_SECRET": "nginx-auth-local-test-secret",
             "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
             "KLANGK_DEFAULT_USER": "test@example.com",
@@ -793,6 +810,8 @@ class TestNginxAuthLocalAcl:
         import types
 
         os.environ["KLANGK_NGINX_PORT"] = nginx_port
+        os.environ["KLANGK_DATA_DIR"] = data_dir
+        os.environ["KLANGK_STATE_DIR"] = state_dir
         nginx_state = os.path.join(tmpdir, "nginx")
         os.makedirs(nginx_state, exist_ok=True)
         conf_path = os.path.join(nginx_state, "nginx.conf")

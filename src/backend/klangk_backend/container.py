@@ -642,7 +642,7 @@ class ContainerRegistry:
 
     def image_pull_policy(self) -> str:
         """Resolve the workspace-image pull policy from settings."""
-        policy = self.settings.image_pull_policy or "never"
+        policy = self.settings.image_pull_policy
         if policy not in _VALID_PULL_POLICIES:
             logger.warning(
                 "Invalid KLANGK_IMAGE_PULL_POLICY=%r (valid: %s); using 'never'.",
@@ -655,9 +655,7 @@ class ContainerRegistry:
     def _is_protected(self, source: str) -> bool:
         """True if source is a protected host path that must never be mounted."""
         resolved = os.path.realpath(source)
-        data_dir = os.path.realpath(
-            self.settings.data_dir or os.path.expanduser("~/.klangk/data")
-        )
+        data_dir = os.path.realpath(self.settings.data_dir)
         for blocked in [*_PROTECTED_PATHS, data_dir]:
             blocked = os.path.realpath(blocked)
             if resolved == blocked or resolved.startswith(blocked + "/"):
@@ -1142,7 +1140,7 @@ class ContainerRegistry:
             if hosting_base_path is None:
                 hosting_base_path = b
         env_vars: list[str] = []
-        nginx_port = self.settings.nginx_port or "8995"
+        nginx_port = self.settings.nginx_port
         proxy_url = f"http://host.containers.internal:{nginx_port}/llm-proxy"
         llm_model = self.settings.llm_model or ""
         env_vars.append(f"KLANGK_LLM_PROXY_URL={proxy_url}")

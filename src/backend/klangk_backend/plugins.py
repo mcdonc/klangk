@@ -34,9 +34,7 @@ class Plugins:
     def __init__(self, app_state):
         self.app_state = app_state
         self.settings = app_state.settings
-        self.plugins_dir = self.settings.plugins_dir or os.path.join(
-            os.path.expanduser("~"), ".klangk", "plugins"
-        )
+        self.plugins_dir = self.settings.plugins_dir
         # Loaded at startup: {env_key: {plugin, description, default, scope}}
         self.declarations: dict[str, dict] = {}
         # Resolved values: {env_key: str}

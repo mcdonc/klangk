@@ -25,7 +25,7 @@ from klangk_backend import (
     oidc as oidc_mod,
     plugins as plugins_mod,
 )
-from klangk_backend.settings import KlangkSettings
+from _helpers import make_settings
 from klangk_backend.main import register_exception_handlers
 from klangk_backend.util import API_PREFIX
 
@@ -56,7 +56,7 @@ async def mode_server(db, monkeypatch):
     assert default_user is not None, "seed_default_user must create the user"
 
     app = FastAPI()
-    app.state.settings = KlangkSettings(env={"KLANGK_AUTH_MODES": "none"})
+    app.state.settings = make_settings({"KLANGK_AUTH_MODES": "none"})
     app.state.oidc = oidc_mod.OIDC(app.state)
     app.state.plugins = plugins_mod.Plugins(app.state)
     app.state.email = emailsvc_mod.EmailService(app.state)
@@ -81,7 +81,7 @@ def _set_mode(mode: str):
     (same as a real server restart).
     """
     app = _current_app
-    app.state.settings = KlangkSettings(env={"KLANGK_AUTH_MODES": mode})
+    app.state.settings = make_settings({"KLANGK_AUTH_MODES": mode})
     app.state.oidc = oidc_mod.OIDC(app.state)
 
 

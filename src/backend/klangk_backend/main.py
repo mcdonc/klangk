@@ -34,7 +34,6 @@ from . import (
 from .settings import (
     KlangkSettings,
     get_settings,
-    resolve_indirection,
 )
 from .api import root_router, router
 from .util import API_PREFIX, derive_hosting_info
@@ -460,10 +459,7 @@ class NginxWatchdog:
         (minimal/headless vs full/browser) and the nginx listen directive, not
         the upstream.
         """
-        state_dir = (
-            resolve_indirection(self._settings.state_dir)
-            or "/tmp/klangk-state"
-        )
+        state_dir = self._settings.state_dir
         uds_path = os.path.join(state_dir, "klangk.sock")
         conf_path = os.path.join(state_dir, "nginx.conf")
         bin_path = self._renderer.find_nginx_bin()
@@ -704,7 +700,7 @@ def setup_static_files(app: FastAPI, frontend_dir: Path) -> None:
     if candidate.is_dir():
         branding_dir = candidate
     else:
-        fallback = Path(get_settings().data_dir or "") / "branding"
+        fallback = Path(get_settings().data_dir) / "branding"
         branding_dir = fallback if fallback.is_dir() else None
     if branding_dir is not None:
         logger.info("Branding served from %s", branding_dir)

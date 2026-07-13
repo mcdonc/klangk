@@ -19,7 +19,6 @@ from jinja2 import (
 
 from . import auth
 from .exceptions import SendmailError
-from .settings import resolve_indirection
 
 logger = logging.getLogger(__name__)
 
@@ -58,29 +57,25 @@ class EmailService:
     def resolve_password(self) -> str | None:
         """Resolve KLANGK_SMTP_PASSWORD.
 
-        ``file:``/``cmd:`` prefixes are dereferenced here at call time.
-        Remove this indirection (read ``self.settings.smtp_password``
-        directly) once #1461 moves resolution into KlangkSettings at
-        construction.
+        ``file:``/``cmd:`` prefixes are dereferenced at construction by
+        ``KlangkSettings`` (#1461), so ``self.settings.smtp_password`` is
+        already the resolved value (or ``None`` when unset).
         """
-        return resolve_indirection(
-            self.settings.smtp_password, "KLANGK_SMTP_PASSWORD"
-        )
+        return self.settings.smtp_password
 
     def product_name(self) -> str:
         """Configured product name (KLANGK_PRODUCT_NAME), default 'Klangk'."""
-        return self.settings.product_name or "Klangk"
+        return self.settings.product_name
 
     def smtp_config(self) -> dict:
         """Read SMTP configuration from settings at call time."""
         return {
             "host": self.settings.smtp_host,
-            "port": int(self.settings.smtp_port or "587"),
+            "port": int(self.settings.smtp_port),
             "user": self.settings.smtp_user,
             "password": self.resolve_password(),
             "from_addr": self.settings.smtp_from,
-            "use_tls": (self.settings.smtp_use_tls or "true").lower()
-            in ("true", "1"),
+            "use_tls": self.settings.smtp_use_tls.lower() in ("true", "1"),
         }
 
     def use_smtp(self) -> bool:
@@ -126,7 +121,7 @@ class EmailService:
         logger.info("Email sent via SMTP to %s", msg["To"])
 
     async def send_via_sendmail(self, msg: EmailMessage) -> None:
-        sendmail = self.settings.sendmail_path or "sendmail"
+        sendmail = self.settings.sendmail_path
         logger.info("Using sendmail at: %s", sendmail)
         resolved = shutil.which(sendmail)
         logger.info("Resolved sendmail path: %s", resolved)

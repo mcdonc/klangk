@@ -29,10 +29,7 @@ from pathlib import Path
 import typer
 import uvicorn
 
-from klangk_backend.settings import (
-    KlangkSettings,
-    resolve_indirection,
-)
+from klangk_backend.settings import KlangkSettings
 from klangk_backend.util import set_uds_mode
 
 # The default config-file location — a deployed klangkd finds its config here
@@ -64,20 +61,6 @@ def _resolve_config_path(config: str) -> str:
     return str(path)
 
 
-def _default_state_dir() -> str:
-    """The built-in state-dir default (env-only fallback, before config load).
-
-    Only used to seed the default in the settings model; once config is loaded,
-    ``get_settings().state_dir`` is the source of truth (config file > env >
-    this default, with ``file:``/``cmd:`` resolution).
-    """
-    return (
-        os.environ.get("KLANGK_STATE_DIR")
-        or os.environ.get("DEVENV_STATE")
-        or "/tmp/klangk-state"
-    )
-
-
 @app.command()
 def main(  # pragma: no cover
     config: str = typer.Option(
@@ -93,11 +76,6 @@ def main(  # pragma: no cover
     """Start the klangk server (uvicorn + nginx child)."""
     resolved = _resolve_config_path(config)
 
-    # Seed the state_dir default into the env so the settings model can pick
-    # it up as the lowest-priority default (config file > env > this). Done
-    # before constructing settings so the YAML source sees a consistent env.
-    os.environ.setdefault("KLANGK_STATE_DIR", _default_state_dir())
-
     # Everything below reads through the typed config (config file > env >
     # defaults, with file:/cmd: resolution), NOT raw os.environ — so a YAML
     # value or a ``file:``/``cmd:`` prefix takes effect the same as an env
@@ -110,15 +88,12 @@ def main(  # pragma: no cover
     # renders the minimal (headless) template; a TCP address → nginx renders
     # the full (browser) template and listens on that address. uvicorn never
     # listens on TCP directly.
-    state_dir = resolve_indirection(settings.state_dir) or _default_state_dir()
+    state_dir = settings.state_dir
     os.environ["KLANGK_STATE_DIR"] = state_dir
     uds_path = os.path.join(state_dir, "klangk.sock")
 
-    # Read ws_max_size through the typed config (config file > env > default,
-    # with file:/cmd:), not raw os.environ (#1394/#1395).
-    ws_max_size = int(
-        resolve_indirection(settings.ws_msg_size_max) or "16777216"
-    )
+    # Read ws_max_size through the typed config (default 16 MiB, #1394/#1395).
+    ws_max_size = int(settings.ws_msg_size_max)
 
     # Bind the UDS. A stale socket from a kill -9'd process makes the
     # bind fail with EADDRINUSE — unlink first (the pidfile guard in the

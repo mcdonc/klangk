@@ -24,7 +24,7 @@ from klangk_backend.container import ContainerRegistry
 from klangk_backend import emailsvc as emailsvc_mod
 from klangk_backend import oidc as oidc_mod
 from klangk_backend import plugins as plugins_mod
-from klangk_backend.settings import KlangkSettings
+from _helpers import make_settings
 from klangk_backend.wshandler.session import WebSocketState
 
 # Mock Podman instance wired onto app.state.podman by the app fixture;
@@ -39,7 +39,7 @@ async def app(db, temp_data_dir):
     from klangk_backend.util import API_PREFIX
     from klangk_backend.main import register_exception_handlers
 
-    settings = KlangkSettings(
+    settings = make_settings(
         env={
             "KLANGK_AUTH_MODES": "password",
             "KLANGK_DATA_DIR": str(temp_data_dir),
@@ -286,12 +286,11 @@ class TestVersion:
             ' "description": "A test plugin"}'
         )
         # Rebuild the Plugins instance pointing at the tmp plugin dir
-        from klangk_backend.settings import KlangkSettings
         import types as types_mod
 
         app.state.plugins = app.state.plugins.__class__(
             types_mod.SimpleNamespace(
-                settings=KlangkSettings(
+                settings=make_settings(
                     env={"KLANGK_PLUGINS_DIR": str(tmp_path / "plugins")}
                 )
             )
@@ -5899,11 +5898,10 @@ class TestBuildWorkspaceArchive:
 class TestWorkspaceMetadata:
     def _ws(self):
         """Build a Workspaces instance for testing (#1484)."""
-        from klangk_backend.settings import KlangkSettings
         import types as types_mod
 
         return ws_mod.Workspaces(
-            types_mod.SimpleNamespace(settings=KlangkSettings(env={}))
+            types_mod.SimpleNamespace(settings=make_settings({}))
         )
 
     def test_extracts_metadata(self):

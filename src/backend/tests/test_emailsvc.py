@@ -6,14 +6,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from _helpers import make_settings
 from klangk_backend.emailsvc import EmailService
 from klangk_backend.exceptions import SendmailError
-from klangk_backend.settings import KlangkSettings
 
 
 def _email_service(env: dict) -> EmailService:
     """Build an EmailService from explicit env (never touches the process env)."""
-    settings = KlangkSettings(env=env)
+    settings = make_settings(env)
     app_state = types.SimpleNamespace(settings=settings)
     return EmailService(app_state)
 
@@ -40,11 +40,13 @@ class TestResolvePassword:
         svc = _email_service({"KLANGK_SMTP_PASSWORD": f"file:{pw_file}"})
         assert svc.resolve_password() == "file-secret"
 
-    def test_file_missing_returns_none(self):
-        svc = _email_service(
-            {"KLANGK_SMTP_PASSWORD": "file:/nonexistent/file"}
-        )
-        assert svc.resolve_password() is None
+    def test_file_missing_fails_at_construction(self):
+        # #1461: a dangling file: reference fails fast at construction
+        # (boot), not silently as None at use time.
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            _email_service({"KLANGK_SMTP_PASSWORD": "file:/nonexistent/file"})
 
     def test_no_password(self):
         svc = _email_service({})

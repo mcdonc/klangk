@@ -36,14 +36,14 @@ Config-file keys map directly to `KLANGK_*` environment variable names with the 
 
 ## `file:` and `cmd:` resolution
 
-Any value — whether from the config file or an env var — can use `file:` or `cmd:` prefixes to resolve secrets at runtime:
+Any value — whether from the config file or an env var — can use `file:` or `cmd:` prefixes to resolve secrets at **construction time** (not per-call at use time):
 
 ```yaml
 jwt_secret: "file:/run/secrets/jwt"
 smtp_password: "cmd:aws secretsmanager get-secret-value --secret-id klangk/smtp | jq -r .SecretString"
 ```
 
-The resolver is source-agnostic: it sees only the value, not where it came from.
+The resolver is source-agnostic: it sees only the value, not where it came from. `KlangkSettings` runs every string field through the resolver once, in a `model_validator(mode="after")`, before the object leaves `__init__` ([#1461](https://github.com/mcdonc/klangk/issues/1461)). A bad reference (`file:/nonexistent`, `cmd:false`) fails fast at boot with a `ValidationError` — not silently at use time. Thereafter every `settings.field` read returns the already-resolved value; no caller wraps in a resolver call.
 
 ## Inline OIDC providers
 
@@ -94,6 +94,10 @@ nginx_port: "8995"
 hosting_hostname: klangk.example.com
 hosting_proto: https
 trusted_proxy_cidrs: "127.0.0.1,::1,10.0.0.0/8"
+
+# --- Storage (required, no defaults) ---
+state_dir: /var/lib/klangk/state
+data_dir: /var/lib/klangk/data
 
 # --- Container / workspace ---
 image_name: klangk-workspace
@@ -225,34 +229,36 @@ listen: 127.0.0.1
 
 ### Container / workspace
 
-| Key                          | Default            | Env var                             |
-| ---------------------------- | ------------------ | ----------------------------------- |
-| `data_dir`                   |                    | `KLANGK_DATA_DIR`                   |
-| `customize_dir`              |                    | `KLANGK_CUSTOMIZE_DIR`              |
-| `plugins_dir`                |                    | `KLANGK_PLUGINS_DIR`                |
-| `image_name`                 | `klangk-workspace` | `KLANGK_IMAGE_NAME`                 |
-| `image_pull_policy`          | `never`            | `KLANGK_IMAGE_PULL_POLICY`          |
-| `allowed_images`             |                    | `KLANGK_ALLOWED_IMAGES`             |
-| `allowed_mount_roots`        |                    | `KLANGK_ALLOWED_MOUNT_ROOTS`        |
-| `allow_autostart`            |                    | `KLANGK_ALLOW_AUTOSTART`            |
-| `allow_sudo`                 |                    | `KLANGK_ALLOW_SUDO`                 |
-| `container_subnets`          | _(auto-derived)_   | `KLANGK_CONTAINER_SUBNETS`          |
-| `userns`                     |                    | `KLANGK_USERNS`                     |
-| `podman_bin`                 | `podman`           | `KLANGK_PODMAN_BIN`                 |
-| `disable_tmux`               |                    | `KLANGK_DISABLE_TMUX`               |
-| `health_check_interval`      |                    | `KLANGK_HEALTH_CHECK_INTERVAL`      |
-| `health_check_startup_grace` |                    | `KLANGK_HEALTH_CHECK_STARTUP_GRACE` |
-| `health_check_timeout`       |                    | `KLANGK_HEALTH_CHECK_TIMEOUT`       |
-| `hosted_ports_per_workspace` | `5`                | `KLANGK_HOSTED_PORTS_PER_WORKSPACE` |
-| `test_mode`                  |                    | `KLANGK_TEST_MODE`                  |
-| `version_file`               |                    | `KLANGK_VERSION_FILE`               |
+| Key                          | Default               | Env var                             |
+| ---------------------------- | --------------------- | ----------------------------------- |
+| `data_dir`                   | **required**          | `KLANGK_DATA_DIR`                   |
+| `state_dir`                  | **required**          | `KLANGK_STATE_DIR`                  |
+| `customize_dir`              |                       | `KLANGK_CUSTOMIZE_DIR`              |
+| `plugins_dir`                | `<state_dir>/plugins` | `KLANGK_PLUGINS_DIR`                |
+| `image_name`                 | `klangk-workspace`    | `KLANGK_IMAGE_NAME`                 |
+| `image_pull_policy`          | `never`               | `KLANGK_IMAGE_PULL_POLICY`          |
+| `allowed_images`             |                       | `KLANGK_ALLOWED_IMAGES`             |
+| `allowed_mount_roots`        |                       | `KLANGK_ALLOWED_MOUNT_ROOTS`        |
+| `allow_autostart`            |                       | `KLANGK_ALLOW_AUTOSTART`            |
+| `allow_sudo`                 |                       | `KLANGK_ALLOW_SUDO`                 |
+| `container_subnets`          | _(auto-derived)_      | `KLANGK_CONTAINER_SUBNETS`          |
+| `userns`                     |                       | `KLANGK_USERNS`                     |
+| `podman_bin`                 | `podman`              | `KLANGK_PODMAN_BIN`                 |
+| `disable_tmux`               |                       | `KLANGK_DISABLE_TMUX`               |
+| `health_check_interval`      |                       | `KLANGK_HEALTH_CHECK_INTERVAL`      |
+| `health_check_startup_grace` |                       | `KLANGK_HEALTH_CHECK_STARTUP_GRACE` |
+| `health_check_timeout`       |                       | `KLANGK_HEALTH_CHECK_TIMEOUT`       |
+| `hosted_ports_per_workspace` | `5`                   | `KLANGK_HOSTED_PORTS_PER_WORKSPACE` |
+| `test_mode`                  |                       | `KLANGK_TEST_MODE`                  |
+| `version_file`               |                       | `KLANGK_VERSION_FILE`               |
 
 ### LLM
 
-| Key           | Default | Env var              |
-| ------------- | ------- | -------------------- |
-| `llm_api_key` |         | `KLANGK_LLM_API_KEY` |
-| `llm_model`   |         | `KLANGK_LLM_MODEL`   |
+| Key            | Default | Env var               |
+| -------------- | ------- | --------------------- |
+| `llm_base_url` |         | `KLANGK_LLM_BASE_URL` |
+| `llm_api_key`  |         | `KLANGK_LLM_API_KEY`  |
+| `llm_model`    |         | `KLANGK_LLM_MODEL`    |
 
 ### OIDC
 
@@ -313,6 +319,6 @@ listen: 127.0.0.1
 
 ### File upload
 
-| Key                    | Default | Env var                       |
-| ---------------------- | ------- | ----------------------------- |
-| `file_upload_size_max` |         | `KLANGK_FILE_UPLOAD_SIZE_MAX` |
+| Key                    | Default     | Env var                       |
+| ---------------------- | ----------- | ----------------------------- |
+| `file_upload_size_max` | `524288000` | `KLANGK_FILE_UPLOAD_SIZE_MAX` |

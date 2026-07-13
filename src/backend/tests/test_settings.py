@@ -2,23 +2,26 @@
 
 Covers:
 - file: / cmd: indirection resolution (success + error paths)
-- KlangkSettings(env=...) constructor + config_file= param
+- make_settings(...) constructor + config_file= param
 - resolve_env_value (KLANGK_ and non-KLANGK_ keys)
 - resolve_env_bool
 - _key_to_field mapping
 """
 
+import os
+
 import pytest
 
+from _helpers import make_settings
 from klangk_backend.settings import (
     KlangkSettings,
     _key_to_field,
+    _resolve_indirection,
     get_settings,
     resolve_env_bool,
     resolve_env_value,
     classify_listen,
     listen_is_socket,
-    resolve_indirection,
 )
 
 
@@ -36,41 +39,46 @@ class TestKeyToField:
 
 
 class TestResolveIndirection:
+    """The private ``_resolve_indirection`` is the core ``file:``/``cmd:``
+    resolver — shared by the ``_resolve_indirections`` model validator on
+    ``KlangkSettings`` (construction-time, #1461) and the non-``KLANGK_``
+    path of ``resolve_env_value`` (plugin-declared dynamic keys)."""
+
     def test_none_returns_none(self):
-        assert resolve_indirection(None) is None
+        assert _resolve_indirection(None) is None
 
     def test_plain_value(self):
-        assert resolve_indirection("hello") == "hello"
+        assert _resolve_indirection("hello") == "hello"
 
     def test_file_prefix(self, tmp_path):
         secret = tmp_path / "secret.txt"
         secret.write_text("the-secret\n")
-        assert resolve_indirection(f"file:{secret}") == "the-secret"
+        assert _resolve_indirection(f"file:{secret}") == "the-secret"
 
     def test_file_failure_returns_none(self):
-        result = resolve_indirection("file:/nonexistent/path/to/secret")
+        result = _resolve_indirection("file:/nonexistent/path/to/secret")
         assert result is None
 
     def test_cmd_prefix(self):
-        result = resolve_indirection("cmd:echo hello")
+        result = _resolve_indirection("cmd:echo hello")
         assert result == "hello"
 
     def test_cmd_failure_returns_none(self):
-        result = resolve_indirection("cmd:false")
+        result = _resolve_indirection("cmd:false")
         assert result is None
 
     def test_cmd_nonzero_exit_returns_none(self):
-        result = resolve_indirection("cmd:exit 1")
+        result = _resolve_indirection("cmd:exit 1")
         assert result is None
 
     def test_cmd_oserror(self):
         # A command that can't be spawned (no such binary)
-        result = resolve_indirection("cmd:/nonexistent/binary/path")
+        result = _resolve_indirection("cmd:/nonexistent/binary/path")
         assert result is None
 
     def test_cmd_timeout(self):
         # A command that sleeps longer than the timeout
-        result = resolve_indirection("cmd:sleep 100")
+        result = _resolve_indirection("cmd:sleep 100")
         assert result is None
 
 
@@ -190,14 +198,14 @@ class TestConfigFile:
         """A YAML config file provides values that env doesn't override."""
         cfg = tmp_path / "config.yaml"
         cfg.write_text('logo_url: "https://example.com/logo.png"\n')
-        s = KlangkSettings(env={}, config_file=str(cfg))
+        s = make_settings({}, config_file=str(cfg))
         assert s.logo_url == "https://example.com/logo.png"
 
     def test_env_overrides_yaml(self, tmp_path):
         """Env vars override YAML file values (precedence)."""
         cfg = tmp_path / "config.yaml"
         cfg.write_text('brand_color: "#FF0000"\n')
-        s = KlangkSettings(
+        s = make_settings(
             env={"KLANGK_BRAND_COLOR": "#00FF00"}, config_file=str(cfg)
         )
         assert s.brand_color == "#00FF00"
@@ -206,24 +214,24 @@ class TestConfigFile:
         """A key set in both env and YAML: env wins."""
         cfg = tmp_path / "config.yaml"
         cfg.write_text('product_name: "From YAML"\n')
-        s = KlangkSettings(
+        s = make_settings(
             env={"KLANGK_PRODUCT_NAME": "From Env"}, config_file=str(cfg)
         )
         assert s.product_name == "From Env"
 
     def test_config_none_opt_out(self):
         """config_file='none': no file, env+defaults only."""
-        s = KlangkSettings(env={}, config_file="none")
+        s = make_settings({}, config_file="none")
         assert s.nginx_port == "8995"  # built-in default
 
     def test_file_cmd_resolution_from_yaml(self, tmp_path):
-        """file:/cmd: values in YAML resolve correctly."""
+        """file:/cmd: values in YAML resolve at construction (#1461)."""
         secret = tmp_path / "jwt.txt"
         secret.write_text("yaml-secret\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(f'jwt_secret: "file:{secret}"\n')
-        s = KlangkSettings(env={}, config_file=str(cfg))
-        assert resolve_indirection(s.jwt_secret) == "yaml-secret"
+        s = make_settings({}, config_file=str(cfg))
+        assert s.jwt_secret == "yaml-secret"
 
 
 # ---------------------------------------------------------------------------
@@ -312,21 +320,21 @@ class TestKlangkdLauncher:
 
 
 class TestEnvConstructor:
-    """Tests for the KlangkSettings(env=...) constructor (#1426 Slice 1)."""
+    """Tests for the make_settings(...) constructor (#1426 Slice 1)."""
 
     def test_reads_from_env_dict(self):
         # Explicit env dict is the only source — os.environ is ignored.
-        s = KlangkSettings(env={"KLANGK_NGINX_PORT": "4321"})
+        s = make_settings({"KLANGK_NGINX_PORT": "4321"})
         assert s.nginx_port == "4321"
 
     def test_env_dict_ignores_os_environ(self, monkeypatch):
         monkeypatch.setenv("KLANGK_NGINX_PORT", "9999")
-        s = KlangkSettings(env={"KLANGK_NGINX_PORT": "1111"})
+        s = make_settings({"KLANGK_NGINX_PORT": "1111"})
         assert s.nginx_port == "1111"
         assert s.nginx_port != "9999"
 
     def test_empty_env_dict_uses_defaults(self):
-        s = KlangkSettings(env={})
+        s = make_settings({})
         assert s.auth_modes is None
         assert s.default_user == "admin@example.com"
         assert s.min_password_length == "8"
@@ -334,11 +342,11 @@ class TestEnvConstructor:
     def test_env_for_sources_reset_after_construction(self):
         # The class-var bridge is cleaned up after construction so it doesn't
         # leak between instances.
-        KlangkSettings(env={"KLANGK_NGINX_PORT": "1234"})
+        make_settings({"KLANGK_NGINX_PORT": "1234"})
         assert KlangkSettings._env_for_sources is None
 
     def test_env_dict_multiple_fields(self):
-        s = KlangkSettings(
+        s = make_settings(
             env={
                 "KLANGK_AUTH_MODES": "password",
                 "KLANGK_JWT_SECRET": "secret123",
@@ -353,14 +361,14 @@ class TestEnvConstructor:
         # The config_file= constructor param wires a YAML source in.
         cfg = tmp_path / "config.yaml"
         cfg.write_text("product_name: FromConfigFile\n")
-        s = KlangkSettings(env={}, config_file=str(cfg))
+        s = make_settings({}, config_file=str(cfg))
         assert s.product_name == "FromConfigFile"
 
     def test_env_overrides_config_file(self, tmp_path):
         # Precedence: env dict > config file.
         cfg = tmp_path / "config.yaml"
         cfg.write_text("product_name: FromConfigFile\n")
-        s = KlangkSettings(
+        s = make_settings(
             env={"KLANGK_PRODUCT_NAME": "FromEnv"}, config_file=str(cfg)
         )
         assert s.product_name == "FromEnv"
@@ -373,12 +381,12 @@ class TestAuthModesValidator:
 
     @pytest.mark.parametrize("mode", ["password", "oidc", "both", "none"])
     def test_valid_modes_accepted(self, mode):
-        s = KlangkSettings(env={"KLANGK_AUTH_MODES": mode})
+        s = make_settings({"KLANGK_AUTH_MODES": mode})
         assert s.auth_modes == mode
 
     def test_unset_allowed_means_none(self):
         # None = unset = "default to none at read time" (legitimate).
-        s = KlangkSettings(env={})
+        s = make_settings({})
         assert s.auth_modes is None
 
     @pytest.mark.parametrize(
@@ -390,21 +398,125 @@ class TestAuthModesValidator:
         from pydantic import ValidationError
 
         with _pytest.raises(ValidationError):
-            KlangkSettings(env={"KLANGK_AUTH_MODES": bad})
+            make_settings({"KLANGK_AUTH_MODES": bad})
 
     def test_empty_string_treated_as_unset(self):
         # KLANGK_AUTH_MODES="" (set but blank) is treated as unset → None →
         # "none" at read time, preserving the pre-validator behavior.
         # (Not a security risk: blank is a config mistake, not a typo'd
         # secure-mode name silently degrading.)
-        s = KlangkSettings(env={"KLANGK_AUTH_MODES": ""})
+        s = make_settings({"KLANGK_AUTH_MODES": ""})
         assert s.auth_modes is None
 
     def test_typo_error_message_lists_valid_modes(self):
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError) as exc_info:
-            KlangkSettings(env={"KLANGK_AUTH_MODES": "passdword"})
+            make_settings({"KLANGK_AUTH_MODES": "passdword"})
         msg = str(exc_info.value)
         assert "passdword" in msg
         assert "password" in msg  # valid modes listed in the message
+
+
+class TestResolveIndirectionsValidator:
+    """The ``_resolve_indirections`` model validator runs once at construction
+    (#1461): every string field with a ``file:``/``cmd:`` prefix is resolved
+    before the object leaves ``__init__``. Thereafter ``settings.field`` is
+    the resolved value — no caller wraps in ``resolve_indirection``. A bad
+    reference fails fast at construction (boot), not silently at use time."""
+
+    def test_file_resolved_at_construction(self, tmp_path):
+        secret = tmp_path / "jwt.txt"
+        secret.write_text("the-real-secret\n")
+        s = make_settings({"KLANGK_JWT_SECRET": f"file:{secret}"})
+        assert s.jwt_secret == "the-real-secret"
+
+    def test_cmd_resolved_at_construction(self):
+        s = make_settings(
+            env={"KLANGK_JWT_SECRET": "cmd:printf %s cmd-secret"}
+        )
+        assert s.jwt_secret == "cmd-secret"
+
+    def test_plain_value_passes_through(self):
+        s = make_settings({"KLANGK_JWT_SECRET": "plain-secret"})
+        assert s.jwt_secret == "plain-secret"
+
+    def test_none_field_left_alone(self):
+        # Unset fields stay None (not passed through the resolver — the
+        # isinstance(val, str) guard skips them).
+        s = make_settings({})
+        assert s.smtp_password is None
+
+    def test_file_missing_fails_at_construction(self):
+        # fail-fast: a dangling file: reference aborts boot, not silent None.
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            make_settings({"KLANGK_JWT_SECRET": "file:/nonexistent/path"})
+        msg = str(exc_info.value)
+        assert "JWT_SECRET" in msg
+
+    def test_cmd_failure_fails_at_construction(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            make_settings({"KLANGK_JWT_SECRET": "cmd:false"})
+
+    def test_idempotent_re_resolution(self):
+        # A plain (already-resolved) value survives a second pass unchanged —
+        # the legacy resolve_env_value path reads the resolved field and its
+        # redundant _resolve_indirection call is a no-op.
+        s = make_settings({"KLANGK_NGINX_PORT": "8995"})
+        assert _resolve_indirection(s.nginx_port) == "8995"
+
+    def test_non_string_field_skipped(self):
+        # oidc_providers is list[dict] | None — not a str, skipped by the
+        # validator (would crash if isinstance check were missing).
+        s = make_settings({"KLANGK_OIDC_PROVIDERS": '[{"name": "x"}]'})
+        assert s.oidc_providers == [{"name": "x"}]
+
+
+class TestRequireDirsValidator:
+    """`state_dir` and `data_dir` are required — no defaults (#1461). A
+    missing value fails at construction, not at the first use that
+    dereferences a ``None`` path. `plugins_dir` defaults to
+    `<state_dir>/plugins` when unset."""
+
+    def test_missing_state_dir_fails(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(env={"KLANGK_DATA_DIR": "/tmp/data"})
+        assert "KLANGK_STATE_DIR" in str(exc_info.value)
+
+    def test_missing_data_dir_fails(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        assert "KLANGK_DATA_DIR" in str(exc_info.value)
+
+    def test_both_missing_fails(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            KlangkSettings(env={})
+
+    def test_plugins_dir_defaults_to_state_dir_plugins(self):
+        s = make_settings(
+            env={
+                "KLANGK_STATE_DIR": "/tmp/state",
+                "KLANGK_DATA_DIR": "/tmp/data",
+            }
+        )
+        assert s.plugins_dir == os.path.join("/tmp/state", "plugins")
+
+    def test_explicit_plugins_dir_wins(self):
+        s = make_settings(
+            env={
+                "KLANGK_STATE_DIR": "/tmp/state",
+                "KLANGK_DATA_DIR": "/tmp/data",
+                "KLANGK_PLUGINS_DIR": "/explicit/plugins",
+            }
+        )
+        assert s.plugins_dir == "/explicit/plugins"

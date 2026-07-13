@@ -207,6 +207,13 @@ class TestMainCLI:
         # State with active server but no token
         state = CLIState(active_server="http://localhost:8995")
         state.save()
+        # Patch the live server probe so the test is deterministic
+        # regardless of whether a real klangkd is running on localhost:8995
+        # in none mode (which would auto-login and skip the Exit).
+        monkeypatch.setattr(
+            "klangkc.main.fetch_config",
+            lambda url: {"auth_modes": "password"},
+        )
 
         with pytest.raises(typer.Exit):
             main.require_auth()

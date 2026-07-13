@@ -11,14 +11,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from klangk_backend import bringup, container, model, podman
+from _helpers import make_settings
 
 
 def _make_app_state(registry=None, sockets=None):
     """Build a minimal app_state for tests."""
-    from klangk_backend.settings import KlangkSettings
     from klangk_backend.wshandler.session import WebSocketState
 
-    settings = KlangkSettings(env={})
+    settings = make_settings({})
     if sockets is None:
         sockets = WebSocketState()
 
@@ -67,9 +67,8 @@ def _stub_bringup(monkeypatch):
 class TestParseIdleTimeout:
     def _registry(self, env):
         import types as types_mod
-        from klangk_backend.settings import KlangkSettings
 
-        settings = KlangkSettings(env=env)
+        settings = make_settings(env)
         app_state = types_mod.SimpleNamespace(settings=settings)
         return container.ContainerRegistry(app_state)
 
@@ -155,20 +154,16 @@ class TestImagePullPolicy:
     def test_valid_override(self):
         # Rebuild registry with env override
         import types as types_mod
-        from klangk_backend.settings import KlangkSettings
 
-        settings = KlangkSettings(env={"KLANGK_IMAGE_PULL_POLICY": "missing"})
+        settings = make_settings({"KLANGK_IMAGE_PULL_POLICY": "missing"})
         app_state = types_mod.SimpleNamespace(settings=settings)
         reg = container.ContainerRegistry(app_state)
         assert reg.image_pull_policy() == "missing"
 
     def test_invalid_falls_back_to_never(self, caplog):
         import types as types_mod
-        from klangk_backend.settings import KlangkSettings
 
-        settings = KlangkSettings(
-            env={"KLANGK_IMAGE_PULL_POLICY": "sometimes"}
-        )
+        settings = make_settings({"KLANGK_IMAGE_PULL_POLICY": "sometimes"})
         app_state = types_mod.SimpleNamespace(settings=settings)
         reg = container.ContainerRegistry(app_state)
         with caplog.at_level("WARNING"):
@@ -369,9 +364,8 @@ class TestPortAllocation:
 class TestDnsConfig:
     def _registry(self, env):
         import types as types_mod
-        from klangk_backend.settings import KlangkSettings
 
-        settings = KlangkSettings(env=env)
+        settings = make_settings(env)
         app_state = types_mod.SimpleNamespace(settings=settings)
         return container.ContainerRegistry(app_state)
 
@@ -420,9 +414,8 @@ class TestPortsPerWorkspaceCap:
 
     def _registry(self, env):
         import types as types_mod
-        from klangk_backend.settings import KlangkSettings
 
-        settings = KlangkSettings(env=env)
+        settings = make_settings(env)
         app_state = types_mod.SimpleNamespace(settings=settings)
         return container.ContainerRegistry(app_state)
 
@@ -3301,10 +3294,9 @@ class TestRegistryServiceSessionLocks:
 
     def test_registry_takes_settings(self):
         """ContainerRegistry.__init__ accepts app_state (#1426, #1487)."""
-        from klangk_backend.settings import KlangkSettings
         import types as types_mod
 
-        settings = KlangkSettings(env={})
+        settings = make_settings({})
         app_state = types_mod.SimpleNamespace(settings=settings)
         reg = container.ContainerRegistry(app_state)
         assert reg.settings is not None
@@ -3333,9 +3325,8 @@ class TestRegistrySettingsDerived:
 
     def _registry(self, env):
         import types as types_mod
-        from klangk_backend.settings import KlangkSettings
 
-        settings = KlangkSettings(env=env)
+        settings = make_settings(env)
         app_state = types_mod.SimpleNamespace(settings=settings)
         return container.ContainerRegistry(app_state)
 
