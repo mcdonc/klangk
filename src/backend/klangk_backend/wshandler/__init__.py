@@ -33,7 +33,6 @@ from .constants import (
     cancel_agent_task as cancel_agent_task,
     drop_agent_task_if_current as drop_agent_task_if_current,
     log_ws_msg as log_ws_msg,
-    bridge_idle_timeout as bridge_idle_timeout,
     clear_agent_mention_state as clear_agent_mention_state,
 )
 from .safe_websocket import (

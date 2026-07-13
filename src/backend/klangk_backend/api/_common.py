@@ -13,15 +13,8 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
 from .. import auth
-from ..util import resolve_env_value
 
 logger = logging.getLogger(__name__)
-
-# Maximum upload size for file uploads and workspace imports (bytes).
-# Default 500 MB; override via KLANGK_FILE_UPLOAD_SIZE_MAX (in bytes).
-FILE_UPLOAD_SIZE_MAX = int(
-    resolve_env_value("KLANGK_FILE_UPLOAD_SIZE_MAX", str(500 * 1024 * 1024))
-)
 
 
 async def send_email(coro, recipient: str, kind: str = "email") -> None:
@@ -73,6 +66,19 @@ def get_app_state_dep(request: Request):
     reaching for module-level globals (#1426, #1475).
     """
     return request.app.state
+
+
+def autostart_allowed(app_state) -> bool:
+    """Whether per-workspace auto-start is permitted (KLANGK_ALLOW_AUTOSTART).
+
+    Read off the frozen ``app_state.settings`` rather than re-resolving the
+    env at call time (#1516).
+    """
+    return (app_state.settings.allow_autostart or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 class WorkspaceAclEntry(BaseModel):

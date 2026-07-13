@@ -45,7 +45,7 @@ from .. import (
     oidc,
     wshandler,
 )
-from ._common import get_app_state_dep
+from ._common import autostart_allowed, get_app_state_dep
 
 # Imported under an alias: the ``from . import auth as _auth_routes`` line
 # below pulls in the api/auth.py *submodule*, and the import machinery writes
@@ -54,7 +54,6 @@ from ._common import get_app_state_dep
 # name to the logic module after the submodule imports (see below) so the
 # instance endpoints reference klangk_backend.auth, not the route module.
 from .. import auth as _auth_logic
-from ..util import resolve_env_value
 
 # Route submodules, aliased because their names collide with the logic
 # modules imported above (api/auth.py vs klangk_backend.auth, etc.) and we
@@ -103,7 +102,7 @@ async def empty():
 @router.get("/version")
 async def version(app_state=Depends(get_app_state_dep)):
     """Return build version info, plus loaded plugin metadata."""
-    if version_file := resolve_env_value("KLANGK_VERSION_FILE", ""):
+    if version_file := app_state.settings.version_file:
         if os.path.isfile(version_file):
             with open(version_file) as f:
                 info = json.load(f)
@@ -119,7 +118,7 @@ async def version(app_state=Depends(get_app_state_dep)):
 
 # --- Test/debug endpoints (only when KLANGK_TEST_MODE is set) ---
 
-if resolve_env_value("KLANGK_TEST_MODE"):  # pragma: no cover
+if os.environ.get("KLANGK_TEST_MODE"):  # pragma: no cover
 
     @router.get("/test/idle-timeout")
     async def get_idle_timeout(
@@ -186,60 +185,40 @@ if resolve_env_value("KLANGK_TEST_MODE"):  # pragma: no cover
         return browsers
 
 
-LOGIN_BANNER_TITLE = resolve_env_value("KLANGK_LOGIN_BANNER_TITLE", "")
-LOGIN_BANNER = resolve_env_value("KLANGK_LOGIN_BANNER", "")
-PRODUCT_NAME = resolve_env_value("KLANGK_PRODUCT_NAME", "Klangk") or "Klangk"
-
-# Configurable legal & support links (#1177). These are PUBLIC URLs shown
-# to unauthenticated users on the login/registration screens, in the app
-# chrome, and in email footers -- so they deliberately use plain env values
-# and do NOT go through resolve_env_value() (no file:/cmd: secret
-# resolution). A deployer pointing these at sensitive internal resources
-# would be exposing them to the world. Empty string when unset, matching the
-# logo_url convention the frontend already falls back from.
-TERMS_URL = resolve_env_value("KLANGK_TERMS_URL") or ""
-PRIVACY_URL = resolve_env_value("KLANGK_PRIVACY_URL") or ""
-AUP_URL = resolve_env_value("KLANGK_AUP_URL") or ""
-SUPPORT_URL = resolve_env_value("KLANGK_SUPPORT_URL") or ""
-SUPPORT_EMAIL = resolve_env_value("KLANGK_SUPPORT_EMAIL") or ""
-
-
 @router.get("/config")
 async def get_config(app_state=Depends(get_app_state_dep)):
+    s = app_state.settings
     config = {
         "registration_enabled": app_state.auth.registration_enabled(),
         "invitations_enabled": app_state.auth.invitations_enabled(),
         # White-label product name (KLANGK_PRODUCT_NAME). Surfaced so the
         # frontend can rename the product (tab title, app-bar logo) without
         # a rebuild; defaults to "Klangk" for back-compat (#1149).
-        "product_name": PRODUCT_NAME,
-        "login_banner_title": LOGIN_BANNER_TITLE,
-        "login_banner": LOGIN_BANNER,
+        "product_name": s.product_name,
+        "login_banner_title": s.login_banner_title,
+        "login_banner": s.login_banner,
         "oidc_providers": app_state.oidc.list_providers(),
         "auth_modes": app_state.oidc.auth_modes(),
         "instance_id": model.get_instance_id(),
         # Whether per-workspace auto-start (start the container on server
         # boot) is permitted. The web UI gates its "Auto start" checkbox on
         # this so users can't toggle a setting the server will reject (#1115).
-        "allow_autostart": (app_state.settings.allow_autostart or "")
-        .strip()
-        .lower()
-        in ("1", "true", "yes"),
+        "allow_autostart": autostart_allowed(app_state),
         # Surfaced so the UI can validate password length inline (matches
         # the rule enforced server-side by auth.validate_password_length).
         "min_password_length": app_state.auth.min_password_length,
         # Deployer logo override (KLANGK_LOGO_URL). Empty when unset, in
         # which case the frontend renders the default KlangkLogo widget.
         # Supports file:/cmd: resolution like other secrets. See #1152.
-        "logo_url": app_state.settings.logo_url or "",
+        "logo_url": s.logo_url,
         # Configurable legal & support links (#1177). Plain env values (no
         # file:/cmd: resolution -- they are public, shown pre-auth). Empty
         # string when unset; the frontend hides whatever isn't configured.
-        "terms_url": TERMS_URL,
-        "privacy_url": PRIVACY_URL,
-        "aup_url": AUP_URL,
-        "support_url": SUPPORT_URL,
-        "support_email": SUPPORT_EMAIL,
+        "terms_url": s.terms_url,
+        "privacy_url": s.privacy_url,
+        "aup_url": s.aup_url,
+        "support_url": s.support_url,
+        "support_email": s.support_email,
     }
     config.update(app_state.plugins.frontend_config())
     return config

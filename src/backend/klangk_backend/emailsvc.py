@@ -155,17 +155,17 @@ class EmailService:
         s = self.settings
         return {
             "product_name": self.product_name(),
-            "logo_url": s.logo_url or "",
-            "brand_color": s.brand_color or "#E65100",
+            "logo_url": s.logo_url,
+            "brand_color": s.brand_color,
             # Configurable legal & support links (#1177). Plain env values,
             # shown in the email footer to all recipients. Mirrors what
             # /config exposes to the frontend; the base template renders
             # whatever is set.
-            "terms_url": s.terms_url or "",
-            "privacy_url": s.privacy_url or "",
-            "aup_url": s.aup_url or "",
-            "support_url": s.support_url or "",
-            "support_email": s.support_email or "",
+            "terms_url": s.terms_url,
+            "privacy_url": s.privacy_url,
+            "aup_url": s.aup_url,
+            "support_url": s.support_url,
+            "support_email": s.support_email,
         }
 
     def _customize_dir(self) -> str:

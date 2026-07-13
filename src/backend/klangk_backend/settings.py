@@ -416,19 +416,19 @@ class KlangkSettings(BaseSettings):
     email_templates_dir: str | None = None
 
     # --- Legal / support links ---
-    terms_url: str | None = None
-    privacy_url: str | None = None
-    aup_url: str | None = None
-    support_url: str | None = None
-    support_email: str | None = None
+    terms_url: str = ""
+    privacy_url: str = ""
+    aup_url: str = ""
+    support_url: str = ""
+    support_email: str = ""
 
     # --- Branding / UI ---
-    product_name: str | None = "Klangk"
-    logo_url: str | None = None
-    brand_color: str | None = "#E65100"
-    login_banner: str | None = None
-    login_banner_title: str | None = None
-    terminal_banner: str | None = None
+    product_name: str = "Klangk"
+    logo_url: str = ""
+    brand_color: str = "#E65100"
+    login_banner: str = ""
+    login_banner_title: str = ""
+    terminal_banner: str = ""
 
     # --- Agent ---
     agent_email: str | None = "clanker@example.com"

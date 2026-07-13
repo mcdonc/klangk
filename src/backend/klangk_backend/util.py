@@ -353,6 +353,19 @@ class Util:
         hostname, proto, _ = self.derive_hosting_info(None, None)
         return [f"{proto}://{hostname}"]
 
+    def bridge_idle_timeout(self) -> float:
+        """Max seconds between streamed browser chunks before giving up.
+
+        Bounds the gap between chunks (not the total query duration), so a
+        long-but-progressing stream never times out. Override with
+        KLANGK_BRIDGE_TIMEOUT_SECONDS (the settings field is parsed here).
+        """
+        raw = self.settings.bridge_timeout_seconds
+        try:
+            return float(raw) if raw else 30.0
+        except (TypeError, ValueError):
+            return 30.0
+
 
 class BoundedOutputQueue(asyncio.Queue[T | None]):
     """Bounded asyncio.Queue with non-blocking sentinel support.

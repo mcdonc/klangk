@@ -1,31 +1,10 @@
 """Shared fixtures for backend unit tests."""
 
 import os
-import tempfile
 
 # Must be set before coverage.py initialises in each xdist worker so that
 # code executed inside SQLAlchemy's greenlet context is tracked.
 os.environ.setdefault("COVERAGE_CORE", "sysmon")
-
-# state_dir / data_dir are required (no defaults, #1461). auth.py still reads
-# config at import time (#1501 — Auth promotion not yet done); set temp dirs
-# in the env before any such import runs during collection. The autouse
-# `temp_data_dir` fixture overrides these with per-test tmp dirs once tests
-# start. util.py no longer triggers this (#1503), but auth.py does.
-# state_dir / data_dir are required (no defaults, #1461). Several modules
-# still read config at import time via resolve_env_value (-> get_settings()):
-# api/__init__.py (LOGIN_BANNER, PRODUCT_NAME, legal/support URLs),
-# api/_common.py (FILE_UPLOAD_SIZE_MAX), wshandler/constants.py (WS_DEBUG).
-# Set temp dirs in the env before any such import runs during collection.
-# The autouse `temp_data_dir` fixture overrides these with per-test tmp
-# dirs once tests start. auth.py no longer triggers this (#1501); util.py
-# no longer triggers this (#1503).
-os.environ.setdefault(
-    "KLANGK_STATE_DIR", tempfile.mkdtemp(prefix="klangk-collect-state-")
-)
-os.environ.setdefault(
-    "KLANGK_DATA_DIR", tempfile.mkdtemp(prefix="klangk-collect-data-")
-)
 
 import bcrypt
 
