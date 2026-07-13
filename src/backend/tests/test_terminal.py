@@ -43,7 +43,7 @@ _mock_registry.mark_service_started = MagicMock()
 # in per-class setup_method / patch.object auto-restore); only the
 # settings-bearing wrapper + Terminal are recreated.
 _mock_settings = MagicMock()
-_mock_settings.disable_tmux = None
+_mock_settings.disable_tmux = ""
 _app_state = types.SimpleNamespace(
     podman=_mock_pod,
     container_registry=_mock_registry,
@@ -63,7 +63,7 @@ def _fresh_terminal():
     """
     global _mock_settings, _app_state, _terminal
     _mock_settings = MagicMock()
-    _mock_settings.disable_tmux = None
+    _mock_settings.disable_tmux = ""
     _app_state = types.SimpleNamespace(
         podman=_mock_pod,
         container_registry=_mock_registry,
@@ -995,7 +995,7 @@ class TestBuildShellCommandJoinSession:
 
 class TestTerminalTmuxEnabled:
     def test_default_enabled(self):
-        _mock_settings.disable_tmux = None
+        _mock_settings.disable_tmux = ""
         assert _terminal.tmux_enabled() is True
 
     @pytest.mark.parametrize("val", ["1", "true", "TRUE", "yes", "Yes"])

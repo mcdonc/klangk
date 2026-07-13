@@ -183,7 +183,7 @@ class EmailService:
         """
         if self._env is None:
             loaders = []
-            user_dir = self.settings.email_templates_dir or ""
+            user_dir = self.settings.email_templates_dir
             if not user_dir:
                 candidate = Path(self._customize_dir()) / "email-templates"
                 if candidate.is_dir():

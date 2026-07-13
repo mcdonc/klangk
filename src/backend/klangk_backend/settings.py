@@ -304,7 +304,7 @@ class KlangkSettings(BaseSettings):
     # --- Auth / identity ---
     auth_modes: str | None = None
     jwt_secret: str | None = _INSECURE_DEFAULT_SECRET
-    prevent_insecure_jwt_secret: str | None = None
+    prevent_insecure_jwt_secret: str = ""
     default_user: str | None = "admin@example.com"
     default_password: str | None = None
     access_token_hours: str | None = "24"
@@ -313,8 +313,8 @@ class KlangkSettings(BaseSettings):
     login_lockout_failures: str | None = "5"
     login_lockout_duration: str | None = "900"
     login_lockout_window: str | None = "300"
-    disable_registration: str | None = None
-    disable_invites: str | None = None
+    disable_registration: str = ""
+    disable_invites: str = ""
     invite_expire_hours: str | None = "72"
     allow_insecure_no_auth: str | None = None
     reject_proxy_headers: str | None = None
@@ -347,13 +347,13 @@ class KlangkSettings(BaseSettings):
     # trust_outer_proxy: opt-in to surviving an outer trusted proxy's
     # X-Forwarded-* in nginx's catch-all (see #1396 renderer). Mirrors the
     # KLANGK_TRUST_OUTER_PROXY env var the old nginx.sh read.
-    trust_outer_proxy: str | None = None
+    trust_outer_proxy: str = ""
     # ws_msg_size_max: max WebSocket message size (bytes), passed to uvicorn.
     # Default 16 MiB; klangkd reads it through the typed config (config file +
     # file:/cmd: resolution), not raw env.
     ws_msg_size_max: str | None = "16777216"
     cors_origins: str | None = None
-    dns_servers: str | None = None
+    dns_servers: str = ""
     hosting_hostname: str | None = None
     hosting_proto: str | None = None
     hosting_base_path: str | None = None
@@ -377,16 +377,16 @@ class KlangkSettings(BaseSettings):
     image_pull_policy: str | None = "never"
     allowed_images: str | None = None
     allowed_mount_roots: str | None = None
-    allow_autostart: str | None = None
-    allow_sudo: str | None = None
+    allow_autostart: str = ""
+    allow_sudo: str = ""
     container_subnets: str | None = None
-    userns: str | None = None
+    userns: str = "keep-id:uid=1000,gid=1000"
     podman_bin: str | None = "podman"
-    disable_tmux: str | None = None
+    disable_tmux: str = ""
     health_check_interval: str | None = None
     health_check_startup_grace: str | None = None
     health_check_timeout: str | None = None
-    hosted_ports_per_workspace: str | None = "5"
+    hosted_ports_per_workspace: str = "5"
     test_mode: str | None = None
     version_file: str | None = None
 
@@ -396,8 +396,8 @@ class KlangkSettings(BaseSettings):
     # not read by the backend itself. Kept here so the renderer reads it
     # through the same typed config path as everything else (#1396).
     llm_base_url: str | None = None
-    llm_api_key: str | None = None
-    llm_model: str | None = None
+    llm_api_key: str = ""
+    llm_model: str = ""
 
     # --- OIDC ---
     oidc_config: str | None = None
@@ -410,10 +410,10 @@ class KlangkSettings(BaseSettings):
     smtp_user: str | None = None
     smtp_password: str | None = None
     smtp_from: str | None = None
-    smtp_reply_to: str | None = None
+    smtp_reply_to: str = ""
     smtp_use_tls: str | None = "true"
     sendmail_path: str | None = "sendmail"
-    email_templates_dir: str | None = None
+    email_templates_dir: str = ""
 
     # --- Legal / support links ---
     terms_url: str = ""

@@ -329,7 +329,7 @@ class NginxRenderer:
         base_url = self._settings.llm_base_url
         if not base_url:
             return ""
-        api_key = self._settings.llm_api_key or ""
+        api_key = self._settings.llm_api_key
         return (
             f"    location ~ ^/llm-proxy/(.*)$ {{\n"
             f"{acl}\n"
@@ -351,7 +351,7 @@ class NginxRenderer:
         )
 
     def _trust_outer_proxy(self) -> bool:
-        raw = self._settings.trust_outer_proxy or ""
+        raw = self._settings.trust_outer_proxy
         return str(raw).strip().lower() in ("1", "true", "yes")
 
     # -- Main renderer -----------------------------------------------------

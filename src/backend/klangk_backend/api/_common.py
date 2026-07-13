@@ -74,7 +74,7 @@ def autostart_allowed(app_state) -> bool:
     Read off the frozen ``app_state.settings`` rather than re-resolving the
     env at call time (#1516).
     """
-    return (app_state.settings.allow_autostart or "").strip().lower() in (
+    return app_state.settings.allow_autostart.strip().lower() in (
         "1",
         "true",
         "yes",
