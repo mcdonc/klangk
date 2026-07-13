@@ -63,6 +63,19 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **Settings field defaults lifted into `KlangkSettings` (#1514):** the
+  `str | None = None` fields whose consumers applied a fixed `or "default"`
+  fallback at read time are now non-optional `str` with the default baked in:
+  `dns_servers`, `llm_model`, `llm_api_key`, `userns`
+  (`keep-id:uid=1000,gid=1000`), `disable_registration`, `disable_invites`,
+  `prevent_insecure_jwt_secret`, `trust_outer_proxy`, `disable_tmux`,
+  `allow_sudo`, `allow_autostart`, `hosted_ports_per_workspace`,
+  `email_templates_dir`, `smtp_reply_to`. The scattered `or ""` /
+  `or "keep-id:..."` fallbacks in `auth.py`, `container.py`, `nginx.py`,
+  `terminal.py`, `emailsvc.py`, and `api/_common.py` are gone; consumers
+  read `self.settings.<field>` directly. (The product-name / legal-link /
+  branding fields were already lifted in #1516/#1517.)
+
 - **Last import-time config reads removed from the API and wshandler
   packages (#1516):** `api/__init__.py`, `api/_common.py`, and
   `wshandler/constants.py` no longer read config at module import time.

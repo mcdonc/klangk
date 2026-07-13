@@ -637,7 +637,7 @@ class ContainerRegistry:
 
     def container_dns_config(self) -> list[str]:
         """Return DNS server list from settings.dns_servers."""
-        raw = self.settings.dns_servers or ""
+        raw = self.settings.dns_servers
         return [d.strip() for d in raw.split(",") if d.strip()]
 
     def image_pull_policy(self) -> str:
@@ -724,9 +724,7 @@ class ContainerRegistry:
 
     def ports_per_workspace_cap(self) -> int:
         """Server-wide ceiling on hosted-app ports per workspace."""
-        raw = self.settings.hosted_ports_per_workspace or str(
-            DEFAULT_PORTS_PER_WORKSPACE
-        )
+        raw = self.settings.hosted_ports_per_workspace
         try:
             return max(0, int(raw))
         except ValueError:
@@ -1142,7 +1140,7 @@ class ContainerRegistry:
         env_vars: list[str] = []
         nginx_port = self.settings.nginx_port
         proxy_url = f"http://host.containers.internal:{nginx_port}/llm-proxy"
-        llm_model = self.settings.llm_model or ""
+        llm_model = self.settings.llm_model
         env_vars.append(f"KLANGK_LLM_PROXY_URL={proxy_url}")
         if llm_model:
             env_vars.append(f"KLANGK_LLM_MODEL={llm_model}")
@@ -1452,7 +1450,7 @@ class ContainerRegistry:
         ]
         iid = model.get_instance_id()
         container_name = f"klangk-{iid}-{workspace_id[:12]}"
-        allow_sudo = (self.settings.allow_sudo or "").strip().lower() in (
+        allow_sudo = self.settings.allow_sudo.strip().lower() in (
             "1",
             "true",
             "yes",
@@ -1476,7 +1474,7 @@ class ContainerRegistry:
             env=env_vars,
             init=True,
             interactive=True,
-            userns=self.settings.userns or "keep-id:uid=1000,gid=1000",
+            userns=self.settings.userns,
             pull=self.image_pull_policy(),
         )
 
@@ -1624,7 +1622,7 @@ class ContainerRegistry:
                 "klangk-prewarm",
                 self.image_name,
                 pull="never",
-                userns=self.settings.userns or "keep-id:uid=1000,gid=1000",
+                userns=self.settings.userns,
             )
             await self.podman.remove_container(cid)
             logger.info("Podman pre-warmed in %.3fs", time.monotonic() - t0)

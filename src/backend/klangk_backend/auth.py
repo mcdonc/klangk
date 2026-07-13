@@ -165,7 +165,7 @@ class Auth:
         """
         if self.jwt_secret_is_secure():
             return
-        prevent = (self.settings.prevent_insecure_jwt_secret or "").lower()
+        prevent = self.settings.prevent_insecure_jwt_secret.lower()
         if prevent in ("1", "true", "yes"):
             raise ConfigurationError(
                 "KLANGK_JWT_SECRET is unset or the insecure default. Set a "
@@ -180,12 +180,12 @@ class Auth:
 
     def registration_enabled(self) -> bool:
         """Check if public registration is enabled."""
-        val = self.settings.disable_registration or ""
+        val = self.settings.disable_registration
         return val.lower() not in ("1", "true", "yes")
 
     def invitations_enabled(self) -> bool:
         """Check if admin invitations are enabled."""
-        val = self.settings.disable_invites or ""
+        val = self.settings.disable_invites
         return val.lower() not in ("1", "true", "yes")
 
     def validate_password_length(self, password: str) -> None:

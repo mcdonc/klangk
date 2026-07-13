@@ -243,7 +243,7 @@ class Terminal:
         affects the default per-user terminal; shared/joined terminals are
         built on tmux session groups and always use tmux regardless.
         """
-        val = (self._app_state.settings.disable_tmux or "").lower()
+        val = self._app_state.settings.disable_tmux.lower()
         return val not in ("1", "true", "yes")
 
     # --- tmux session / window queries ---

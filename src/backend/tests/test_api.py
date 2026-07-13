@@ -7796,7 +7796,7 @@ class TestInvitations:
         self, client, app, monkeypatch
     ):
         # Default: flag unset -> not allowed, so the UI hides its checkbox.
-        monkeypatch.setattr(app.state.settings, "allow_autostart", None)
+        monkeypatch.setattr(app.state.settings, "allow_autostart", "")
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         assert resp.json()["allow_autostart"] is False
