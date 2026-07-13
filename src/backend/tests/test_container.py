@@ -528,8 +528,7 @@ class TestStartContainer:
         p.start_container.assert_awaited_once_with("new-cid")
         assert workspace["id"] in self.registry.states
 
-    async def test_sudo_disabled_by_default(self, workspace, monkeypatch):
-        monkeypatch.delenv("KLANGK_ALLOW_SUDO", raising=False)
+    async def test_sudo_disabled_by_default(self, workspace):
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -813,9 +812,7 @@ class TestStartContainer:
         assert "KLANGK_HOSTING_PROTO=https" in env
         assert "KLANGK_HOSTING_BASE_PATH=/klangk" in env
 
-    async def test_hosting_env_vars_default_is_bare_localhost(
-        self, workspace, monkeypatch
-    ):
+    async def test_hosting_env_vars_default_is_bare_localhost(self, workspace):
         """Omitted hosting_* resolves to bare localhost (#1240).
 
         This is the path ``eager_start_workspace`` takes (autostart /
@@ -826,10 +823,6 @@ class TestStartContainer:
         Now the choke point resolves it, and no port is synthesized from
         ``KLANGK_NGINX_PORT`` (the port must live in HOSTING_HOSTNAME).
         """
-        monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
-        monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
-        monkeypatch.delenv("KLANGK_HOSTING_BASE_PATH", raising=False)
-        monkeypatch.setenv("KLANGK_NGINX_PORT", "8996")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
@@ -888,11 +881,8 @@ class TestStartContainer:
         assert "CURL_CA_BUNDLE=/tmp/klangk/ca-bundle.crt" in env
         assert "NODE_EXTRA_CA_CERTS=/tmp/klangk/ca-bundle.crt" in env
 
-    async def test_no_ssl_trust_when_cert_dir_unset(
-        self, workspace, monkeypatch
-    ):
+    async def test_no_ssl_trust_when_cert_dir_unset(self, workspace):
         """Without KLANGK_SSL_CERT_DIR there is no mount and no trust env."""
-        monkeypatch.delenv("KLANGK_SSL_CERT_DIR", raising=False)
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
@@ -905,13 +895,19 @@ class TestStartContainer:
         assert not any(e.startswith("SSL_CERT_FILE=") for e in env)
 
     async def test_no_ssl_trust_when_dir_has_no_certs(
-        self, workspace, monkeypatch, tmp_path
+        self, workspace, tmp_path
     ):
         """A cert dir with no .pem/.crt is not mounted (#1181)."""
         ssl_dir = tmp_path / "ssl"
         ssl_dir.mkdir()
         (ssl_dir / "notes.txt").write_text("not a cert")
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(ssl_dir))
+        # Point the registry's settings at the empty cert dir so ssl_cert_dir()
+        # actually evaluates it (previously this was an inert setenv against
+        # os.environ that the registry — built from make_settings({}) — never
+        # saw; the test passed for the wrong reason).
+        self.registry.settings = make_settings(
+            {"KLANGK_SSL_CERT_DIR": str(ssl_dir)}
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
@@ -1020,11 +1016,8 @@ class TestStartContainer:
         await self.registry.allocate_ports(workspace["id"], 5)
         assert await self.registry.get_workspace_ports(workspace["id"]) == []
 
-    async def test_hosting_env_present_when_enabled(
-        self, workspace, monkeypatch
-    ):
+    async def test_hosting_env_present_when_enabled(self, workspace):
         """Sanity: with the default cap, hosting env is injected as before."""
-        monkeypatch.delenv("KLANGK_HOSTED_PORTS_PER_WORKSPACE", raising=False)
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],

@@ -12,8 +12,6 @@ mode switch is therefore simulated by rebuilding the OIDC instance (a
 "restart") after changing ``KLANGK_AUTH_MODES``.
 """
 
-import os
-
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -58,10 +56,15 @@ async def mode_server(db, monkeypatch):
     for the seeded default user (so tests know its ``id`` / ``email``).
     """
     global _current_app
-    monkeypatch.setenv("KLANGK_DEFAULT_USER", DEFAULT_EMAIL)
-    monkeypatch.setenv("KLANGK_DEFAULT_PASSWORD", SEEDED_PASSWORD)
     # Seed exactly as the lifespan does at startup.
-    await main.seed_default_user(make_settings(os.environ))
+    await main.seed_default_user(
+        make_settings(
+            {
+                "KLANGK_DEFAULT_USER": DEFAULT_EMAIL,
+                "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
+            }
+        )
+    )
     default_user = await model.get_user_by_email(DEFAULT_EMAIL)
     assert default_user is not None, "seed_default_user must create the user"
 
@@ -98,11 +101,11 @@ def _set_mode(mode: str):
     app.state.oidc = oidc_mod.OIDC(app.state)
 
 
-def _none(monkeypatch):
+def _none():
     _set_mode("none")
 
 
-def _password(monkeypatch):
+def _password():
     _set_mode("password")
 
 
@@ -121,7 +124,7 @@ class TestNoneToPasswordUpgrade:
         with a new password — succeeds because the seeded default user is an
         admin."""
         client, user = mode_server
-        _none(monkeypatch)
+        _none()
 
         token = (await client.post("/api/v1/auth/local")).json()[
             "access_token"
@@ -148,7 +151,7 @@ class TestNoneToPasswordUpgrade:
         """Step 3-4: flip to password mode, then login with the password the
         admin just set works — the documented end state."""
         client, user = mode_server
-        _none(monkeypatch)
+        _none()
         token = (await client.post("/api/v1/auth/local")).json()[
             "access_token"
         ]
@@ -158,7 +161,7 @@ class TestNoneToPasswordUpgrade:
             json={"password": NEW_PASSWORD},
         )
 
-        _password(monkeypatch)
+        _password()
         resp = await client.post(
             "/api/v1/auth/login",
             json={"email": DEFAULT_EMAIL, "password": NEW_PASSWORD},
@@ -172,7 +175,7 @@ class TestNoneToPasswordUpgrade:
         """``admin users set-password`` replaces the hash, so whatever password
         the default user had before (the seeded one) no longer works."""
         client, user = mode_server
-        _none(monkeypatch)
+        _none()
         token = (await client.post("/api/v1/auth/local")).json()[
             "access_token"
         ]
@@ -181,7 +184,7 @@ class TestNoneToPasswordUpgrade:
             headers={"Authorization": f"Bearer {token}"},
             json={"password": NEW_PASSWORD},
         )
-        _password(monkeypatch)
+        _password()
 
         resp = await client.post(
             "/api/v1/auth/login",
@@ -194,7 +197,7 @@ class TestNoneToPasswordUpgrade:
     ):
         """Once real login is on, the free-token endpoint is gone (403)."""
         client, _ = mode_server
-        _password(monkeypatch)
+        _password()
         resp = await client.post("/api/v1/auth/local")
         assert resp.status_code == 403
 
@@ -205,7 +208,7 @@ class TestNoneToPasswordUpgrade:
         mode switch is not a global logout (docs: 'tokens in flight keep
         working until they expire')."""
         client, _ = mode_server
-        _none(monkeypatch)
+        _none()
         token = (await client.post("/api/v1/auth/local")).json()[
             "access_token"
         ]
@@ -214,7 +217,7 @@ class TestNoneToPasswordUpgrade:
             await client.get("/api/v1/auth/me", headers=h)
         ).status_code == 200
 
-        _password(monkeypatch)
+        _password()
         # Same token, new mode — still valid.
         resp = await client.get("/api/v1/auth/me", headers=h)
         assert resp.status_code == 200
@@ -231,10 +234,10 @@ class TestPasswordToNone:
     ):
         """Reversing the switch re-enables the no-auth endpoint."""
         client, _ = mode_server
-        _password(monkeypatch)
+        _password()
         assert (await client.post("/api/v1/auth/local")).status_code == 403
 
-        _none(monkeypatch)
+        _none()
         resp = await client.post("/api/v1/auth/local")
         assert resp.status_code == 200
         assert resp.json()["email"] == DEFAULT_EMAIL
@@ -244,7 +247,7 @@ class TestPasswordToNone:
     ):
         """Token-in-flight claim, reverse direction."""
         client, _ = mode_server
-        _password(monkeypatch)
+        _password()
         resp = await client.post(
             "/api/v1/auth/login",
             json={"email": DEFAULT_EMAIL, "password": SEEDED_PASSWORD},
@@ -253,7 +256,7 @@ class TestPasswordToNone:
         token = resp.json()["access_token"]
         h = {"Authorization": f"Bearer {token}"}
 
-        _none(monkeypatch)
+        _none()
         assert (
             await client.get("/api/v1/auth/me", headers=h)
         ).status_code == 200
@@ -271,7 +274,7 @@ class TestDataCarriesOver:
         """The operator is the same DB user before and after the switch (same
         id, same email, still admin)."""
         client, user = mode_server
-        _none(monkeypatch)
+        _none()
         free = (await client.post("/api/v1/auth/local")).json()["access_token"]
         none_me = (
             await client.get(
@@ -279,7 +282,7 @@ class TestDataCarriesOver:
             )
         ).json()
 
-        _password(monkeypatch)
+        _password()
         login = await client.post(
             "/api/v1/auth/login",
             json={"email": DEFAULT_EMAIL, "password": SEEDED_PASSWORD},
@@ -303,10 +306,10 @@ class TestDataCarriesOver:
         """A workspace created in none mode is still owned by the default user
         after flipping to password mode — modes change auth, not data."""
         client, user = mode_server
-        _none(monkeypatch)
+        _none()
         ws = await model.create_workspace(user["id"], "persists-across-switch")
 
-        _password(monkeypatch)
+        _password()
         # Re-resolve the workspace straight from the DB the restart would see.
         rows = (await model.list_workspaces(user["id"]))["items"]
         names = [r["name"] for r in rows]
@@ -330,7 +333,7 @@ class TestChangePasswordReality:
         """Self-service ``/auth/change-password`` works on the seeded default
         user because it has a real password hash."""
         client, _ = mode_server
-        _none(monkeypatch)
+        _none()
         token = (await client.post("/api/v1/auth/local")).json()[
             "access_token"
         ]
@@ -352,7 +355,7 @@ class TestChangePasswordReality:
         self-service change-password — that 403 path exists, it just does not
         apply to the seeded default user."""
         client, _ = mode_server
-        _none(monkeypatch)
+        _none()
 
         # A user with no password hash (an OIDC-only style account).
         oidc_user = await model.create_user(
@@ -384,21 +387,33 @@ class TestRestartIdempotency:
         """Re-running the lifespan seed (a restart with a new mode, same DB)
         must not duplicate the user or drop its admin membership."""
         client, user = mode_server
-        _none(monkeypatch)
+        _none()
         await main.seed_default_user(
-            make_settings(os.environ)
+            make_settings(
+                {
+                    "KLANGK_AUTH_MODES": "none",
+                    "KLANGK_DEFAULT_USER": DEFAULT_EMAIL,
+                    "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
+                }
+            )
         )  # simulate restart in none mode
 
-        _password(monkeypatch)
+        _password()
         await main.seed_default_user(
-            make_settings(os.environ)
+            make_settings(
+                {
+                    "KLANGK_AUTH_MODES": "password",
+                    "KLANGK_DEFAULT_USER": DEFAULT_EMAIL,
+                    "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
+                }
+            )
         )  # simulate restart in password mode
 
         again = await model.get_user_by_email(DEFAULT_EMAIL)
         assert again["id"] == user["id"]
         # Still admin (membership re-asserted, not lost) — ask the canonical
         # /my-permissions source the CLI and frontend both use.
-        _none(monkeypatch)
+        _none()
         token = (await client.post("/api/v1/auth/local")).json()[
             "access_token"
         ]

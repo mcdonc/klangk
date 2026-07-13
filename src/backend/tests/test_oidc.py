@@ -1,6 +1,5 @@
 """Tests for OIDC client module."""
 
-import os
 import time
 import types
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,18 +14,16 @@ from _helpers import make_settings
 from klangk_backend.settings import KlangkSettings
 
 
-def _settings() -> KlangkSettings:
-    """Build settings from the live (monkeypatched) environment."""
-    return KlangkSettings(os.environ)
-
-
 def _oidc(settings: KlangkSettings | None = None) -> oidc.OIDC:
-    """Build a fresh OIDC instance from the live (monkeypatched) env.
+    """Build a fresh OIDC instance from explicit settings.
 
     Each call constructs a new instance so test state (providers, caches,
-    login-hook) never leaks between tests (#1450).
+    login-hook) never leaks between tests (#1450). Defaults to a plain
+    ``make_settings({})`` (auth_modes is the production default ``none``);
+    tests pass explicit settings to vary a field (#1457: construct
+    directly, never via os.environ).
     """
-    app_state = types.SimpleNamespace(settings=settings or _settings())
+    app_state = types.SimpleNamespace(settings=settings or make_settings({}))
     return oidc.OIDC(app_state)
 
 
@@ -50,16 +47,18 @@ class TestGet:
 
 
 class TestLoadConfig:
-    def test_no_config(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
+    def test_no_config(self):
         assert _oidc().load_config() == []
 
-    def test_missing_file(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(tmp_path / "nope.json"))
+    def test_missing_file(self, tmp_path):
         with pytest.raises(ConfigurationError, match="absolute path"):
-            _oidc().load_config()
+            _oidc(
+                make_settings(
+                    {"KLANGK_OIDC_CONFIG": str(tmp_path / "nope.json")}
+                )
+            ).load_config()
 
-    def test_valid_config(self, monkeypatch, tmp_path):
+    def test_valid_config(self, tmp_path):
         cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
             yaml.dump(
@@ -74,14 +73,15 @@ class TestLoadConfig:
                 ]
             )
         )
-        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
-        providers = _oidc().load_config()
+        providers = _oidc(
+            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+        ).load_config()
         assert len(providers) == 1
         assert providers[0].id == "test"
         assert providers[0].issuer == "https://idp.example.com"
         assert providers[0].client_secret == "s3cret"
 
-    def test_file_secret(self, monkeypatch, tmp_path):
+    def test_file_secret(self, tmp_path):
         secret_file = tmp_path / "secret"
         secret_file.write_text("file-secret\n")
         cfg = tmp_path / "oidc.yaml"
@@ -98,11 +98,12 @@ class TestLoadConfig:
                 ]
             )
         )
-        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
-        providers = _oidc().load_config()
+        providers = _oidc(
+            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+        ).load_config()
         assert providers[0].client_secret == "file-secret"
 
-    def test_ca_cert(self, monkeypatch, tmp_path):
+    def test_ca_cert(self, tmp_path):
         cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
             yaml.dump(
@@ -118,11 +119,12 @@ class TestLoadConfig:
                 ]
             )
         )
-        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
-        providers = _oidc().load_config()
+        providers = _oidc(
+            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+        ).load_config()
         assert providers[0].ca_cert == "/etc/pki/dod-ca.pem"
 
-    def test_token_validation_pem(self, monkeypatch, tmp_path):
+    def test_token_validation_pem(self, tmp_path):
         pem = "-----BEGIN PUBLIC KEY-----\nMIIBI...\n-----END PUBLIC KEY-----"
         cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
@@ -139,11 +141,12 @@ class TestLoadConfig:
                 ]
             )
         )
-        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
-        providers = _oidc().load_config()
+        providers = _oidc(
+            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+        ).load_config()
         assert providers[0].token_validation_pem == pem
 
-    def test_ca_cert_relative_resolved(self, monkeypatch, tmp_path):
+    def test_ca_cert_relative_resolved(self, tmp_path):
         cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
             yaml.dump(
@@ -159,12 +162,13 @@ class TestLoadConfig:
                 ]
             )
         )
-        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
-        providers = _oidc().load_config()
+        providers = _oidc(
+            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+        ).load_config()
         expected = str(tmp_path / "certs" / "ca.pem")
         assert providers[0].ca_cert == expected
 
-    def test_ca_cert_default_none(self, monkeypatch, tmp_path):
+    def test_ca_cert_default_none(self, tmp_path):
         cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
             yaml.dump(
@@ -179,11 +183,12 @@ class TestLoadConfig:
                 ]
             )
         )
-        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
-        providers = _oidc().load_config()
+        providers = _oidc(
+            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+        ).load_config()
         assert providers[0].ca_cert is None
 
-    def test_trust_email(self, monkeypatch, tmp_path):
+    def test_trust_email(self, tmp_path):
         cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
             yaml.dump(
@@ -199,11 +204,12 @@ class TestLoadConfig:
                 ]
             )
         )
-        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
-        providers = _oidc().load_config()
+        providers = _oidc(
+            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+        ).load_config()
         assert providers[0].trust_email is True
 
-    def test_trust_email_defaults_false(self, monkeypatch, tmp_path):
+    def test_trust_email_defaults_false(self, tmp_path):
         cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
             yaml.dump(
@@ -218,11 +224,12 @@ class TestLoadConfig:
                 ]
             )
         )
-        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
-        providers = _oidc().load_config()
+        providers = _oidc(
+            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+        ).load_config()
         assert providers[0].trust_email is False
 
-    def test_multiple_providers(self, monkeypatch, tmp_path):
+    def test_multiple_providers(self, tmp_path):
         cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
             yaml.dump(
@@ -244,13 +251,14 @@ class TestLoadConfig:
                 ]
             )
         )
-        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
-        providers = _oidc().load_config()
+        providers = _oidc(
+            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+        ).load_config()
         assert len(providers) == 2
         assert providers[0].id == "a"
         assert providers[1].id == "b"
 
-    def test_snake_case_fallback(self, monkeypatch, tmp_path):
+    def test_snake_case_fallback(self, tmp_path):
         """Legacy snake_case keys still work for backwards compat."""
         cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
@@ -269,8 +277,9 @@ class TestLoadConfig:
                 ]
             )
         )
-        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
-        providers = _oidc().load_config()
+        providers = _oidc(
+            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+        ).load_config()
         assert len(providers) == 1
         assert providers[0].display_name == "Legacy"
         assert providers[0].client_id == "klangk"
@@ -283,7 +292,7 @@ class TestLoadConfig:
 class TestInlineProviders:
     """OIDC providers specified inline in the klangkd config file (#1395)."""
 
-    def test_inline_providers_loaded(self, tmp_path, monkeypatch):
+    def test_inline_providers_loaded(self, tmp_path):
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             "oidc_providers:\n"
@@ -293,8 +302,7 @@ class TestInlineProviders:
             "    client-id: klangk\n"
             '    client-secret: "inline-secret"\n'
         )
-        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
-        settings = make_settings(os.environ, config_file=str(cfg))
+        settings = make_settings({}, config_file=str(cfg))
         providers = _oidc(settings).load_config()
         assert len(providers) == 1
         assert providers[0].id == "inline"
@@ -302,7 +310,7 @@ class TestInlineProviders:
         assert providers[0].client_secret == "inline-secret"
         assert providers[0].issuer == "https://idp.example.com"
 
-    def test_external_file_overrides_inline(self, monkeypatch, tmp_path):
+    def test_external_file_overrides_inline(self, tmp_path):
         """When both inline and external are configured, external wins
         (env var override, consistent with env > file precedence)."""
         ext = tmp_path / "oidc.yaml"
@@ -319,8 +327,6 @@ class TestInlineProviders:
                 ]
             )
         )
-        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(ext))
-
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             "oidc_providers:\n"
@@ -330,12 +336,14 @@ class TestInlineProviders:
             "    client-id: klangk\n"
             '    client-secret: "inline"\n'
         )
-        settings = make_settings(os.environ, config_file=str(cfg))
+        settings = make_settings(
+            {"KLANGK_OIDC_CONFIG": str(ext)}, config_file=str(cfg)
+        )
         providers = _oidc(settings).load_config()
         assert len(providers) == 1
         assert providers[0].id == "external"
 
-    def test_inline_file_secret_resolution(self, tmp_path, monkeypatch):
+    def test_inline_file_secret_resolution(self, tmp_path):
         """file: prefix in inline provider secrets resolves correctly."""
         secret = tmp_path / "secret.txt"
         secret.write_text("resolved-secret\n")
@@ -348,12 +356,11 @@ class TestInlineProviders:
             "    client-id: klangk\n"
             f'    client-secret: "file:{secret}"\n'
         )
-        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
-        settings = make_settings(os.environ, config_file=str(cfg))
+        settings = make_settings({}, config_file=str(cfg))
         providers = _oidc(settings).load_config()
         assert providers[0].client_secret == "resolved-secret"
 
-    def test_inline_multiple_providers(self, tmp_path, monkeypatch):
+    def test_inline_multiple_providers(self, tmp_path):
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             "oidc_providers:\n"
@@ -368,16 +375,13 @@ class TestInlineProviders:
             "    client-id: klangk\n"
             '    client-secret: "sb"\n'
         )
-        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
-        settings = make_settings(os.environ, config_file=str(cfg))
+        settings = make_settings({}, config_file=str(cfg))
         providers = _oidc(settings).load_config()
         assert len(providers) == 2
         assert providers[0].id == "a"
         assert providers[1].id == "b"
 
-    def test_falls_back_to_external_when_no_inline(
-        self, monkeypatch, tmp_path
-    ):
+    def test_falls_back_to_external_when_no_inline(self, tmp_path):
         """With no inline providers, external file is used."""
         ext = tmp_path / "oidc.yaml"
         ext.write_text(
@@ -393,14 +397,15 @@ class TestInlineProviders:
                 ]
             )
         )
-        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(ext))
-        providers = _oidc().load_config()
+        providers = _oidc(
+            make_settings({"KLANGK_OIDC_CONFIG": str(ext)})
+        ).load_config()
         assert len(providers) == 1
         assert providers[0].id == "external"
 
 
 class TestProviderRegistry:
-    def test_init_and_lookup(self, monkeypatch, tmp_path):
+    def test_init_and_lookup(self, tmp_path):
         cfg = tmp_path / "oidc.yaml"
         cfg.write_text(
             yaml.dump(
@@ -415,8 +420,7 @@ class TestProviderRegistry:
                 ]
             )
         )
-        monkeypatch.setenv("KLANGK_OIDC_CONFIG", str(cfg))
-        o = _oidc()
+        o = _oidc(make_settings({"KLANGK_OIDC_CONFIG": str(cfg)}))
         o.init_providers()
         assert o.is_enabled()
         assert o.get_provider("test") is not None
@@ -429,40 +433,32 @@ class TestProviderRegistry:
         assert not o.is_enabled()
         assert o.list_providers() == []
 
-    def test_init_raises_when_oidc_required_but_no_providers(
-        self, monkeypatch
-    ):
-        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "oidc")
+    def test_init_raises_when_oidc_required_but_no_providers(self):
         with pytest.raises(ConfigurationError, match="no OIDC providers"):
-            _oidc().init_providers()
+            _oidc(
+                make_settings({"KLANGK_AUTH_MODES": "oidc"})
+            ).init_providers()
 
-    def test_init_raises_when_both_required_but_no_providers(
-        self, monkeypatch
-    ):
-        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "both")
+    def test_init_raises_when_both_required_but_no_providers(self):
         with pytest.raises(ConfigurationError, match="no OIDC providers"):
-            _oidc().init_providers()
+            _oidc(
+                make_settings({"KLANGK_AUTH_MODES": "both"})
+            ).init_providers()
 
-    def test_init_ok_when_password_only(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
-        o = _oidc()
+    def test_init_ok_when_password_only(self):
+        o = _oidc(make_settings({"KLANGK_AUTH_MODES": "password"}))
         o.init_providers()
         assert not o.is_enabled()
 
 
 class TestAuthModes:
-    def test_default_none_when_no_oidc(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+    def test_default_none_when_no_oidc(self):
         o = _oidc()
         assert o.auth_modes() == "none"
         assert not o.password_login_allowed()
         assert o.local_login_allowed()
 
-    def test_default_none_when_oidc_enabled(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+    def test_default_none_when_oidc_enabled(self):
         o = _oidc()
         o.providers.append(_provider())
         assert o.auth_modes() == "none"
@@ -470,57 +466,47 @@ class TestAuthModes:
         assert not o.password_login_allowed()
         assert not o.oidc_login_allowed()
 
-    def test_oidc_only(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "oidc")
-        o = _oidc()
+    def test_oidc_only(self):
+        o = _oidc(make_settings({"KLANGK_AUTH_MODES": "oidc"}))
         o.providers.append(_provider())
         assert o.auth_modes() == "oidc"
         assert not o.password_login_allowed()
         assert o.oidc_login_allowed()
 
-    def test_password_only(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
-        o = _oidc()
+    def test_password_only(self):
+        o = _oidc(make_settings({"KLANGK_AUTH_MODES": "password"}))
         o.providers.append(_provider())
         assert o.auth_modes() == "password"
         assert o.password_login_allowed()
         assert not o.oidc_login_allowed()
 
-    def test_none_mode(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
-        o = _oidc()
+    def test_none_mode(self):
+        o = _oidc(make_settings({"KLANGK_AUTH_MODES": "none"}))
         assert o.auth_modes() == "none"
         assert not o.password_login_allowed()
         assert not o.oidc_login_allowed()
         assert o.local_login_allowed()
 
-    def test_none_mode_ignores_oidc_config(self, monkeypatch):
-        o = _oidc()
-        o.providers.append(_provider())
-        monkeypatch.setenv("KLANGK_AUTH_MODES", "none")
-        # Rebuild so settings reflects the mode change
-        o = _oidc()
+    def test_none_mode_ignores_oidc_config(self):
+        o = _oidc(make_settings({"KLANGK_AUTH_MODES": "none"}))
         o.providers.append(_provider())
         assert o.auth_modes() == "none"
         assert o.local_login_allowed()
 
-    def test_local_login_false_in_other_modes(self, monkeypatch):
+    def test_local_login_false_in_other_modes(self):
         for mode in ("password", "oidc", "both"):
-            monkeypatch.setenv("KLANGK_AUTH_MODES", mode)
-            o = _oidc()
+            o = _oidc(make_settings({"KLANGK_AUTH_MODES": mode}))
             assert not o.local_login_allowed()
 
     # --- AUTH_MODES unset defaults to ``none`` (no amalgamated setting) ---
 
-    def test_unset_defaults_to_none(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+    def test_unset_defaults_to_none(self):
         o = _oidc()
         assert o.auth_modes() == "none"
         assert o.local_login_allowed()
         assert not o.password_login_allowed()
 
-    def test_unset_stays_none_with_oidc_configured(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
+    def test_unset_stays_none_with_oidc_configured(self):
         o = _oidc()
         assert o.auth_modes() == "none"
         o.providers.append(_provider())
@@ -812,69 +798,74 @@ class TestParseHookValue:
 
 
 class TestLoadLoginHook:
-    def test_no_hook_when_not_set(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_OIDC_LOGIN_HOOK", raising=False)
+    def test_no_hook_when_not_set(self):
         o = _oidc()
         o.load_login_hook()
         assert o.login_hook is None
 
-    def test_hook_loaded_from_file(self, monkeypatch, tmp_path):
+    def test_hook_loaded_from_file(self, tmp_path):
         hook_file = tmp_path / "myhook.py"
         hook_file.write_text(
             "def on_login(provider, claims, email, tokens):\n"
             "    return {'testers'}\n"
         )
-        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", str(hook_file))
-        o = _oidc()
+        o = _oidc(make_settings({"KLANGK_OIDC_LOGIN_HOOK": str(hook_file)}))
         o.load_login_hook()
         assert o.login_hook is not None
         assert o.login_hook(None, {}, "", {}) == {"testers"}
 
-    def test_hook_loaded_with_custom_func_name(self, monkeypatch, tmp_path):
+    def test_hook_loaded_with_custom_func_name(self, tmp_path):
         hook_file = tmp_path / "myhook.py"
         hook_file.write_text(
             "def check(provider, claims, email, tokens):\n"
             "    return {'admins'}\n"
         )
-        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", f"{hook_file}:check")
-        o = _oidc()
+        o = _oidc(
+            make_settings({"KLANGK_OIDC_LOGIN_HOOK": f"{hook_file}:check"})
+        )
         o.load_login_hook()
         assert o.login_hook is not None
         assert o.login_hook(None, {}, "", {}) == {"admins"}
 
-    def test_async_hook_detected(self, monkeypatch, tmp_path):
+    def test_async_hook_detected(self, tmp_path):
         hook_file = tmp_path / "myhook.py"
         hook_file.write_text(
             "async def on_login(provider, claims, email, tokens):\n"
             "    return None\n"
         )
-        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", str(hook_file))
-        o = _oidc()
+        o = _oidc(make_settings({"KLANGK_OIDC_LOGIN_HOOK": str(hook_file)}))
         o.load_login_hook()
         assert o.login_hook_is_async is True
 
-    def test_file_not_found(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", "/nonexistent/hook.py")
+    def test_file_not_found(self):
         with pytest.raises(ConfigurationError, match="file not found"):
-            _oidc().load_login_hook()
+            _oidc(
+                make_settings(
+                    {"KLANGK_OIDC_LOGIN_HOOK": "/nonexistent/hook.py"}
+                )
+            ).load_login_hook()
 
-    def test_func_not_found(self, monkeypatch, tmp_path):
+    def test_func_not_found(self, tmp_path):
         hook_file = tmp_path / "myhook.py"
         hook_file.write_text("x = 1\n")
-        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", f"{hook_file}:missing")
         with pytest.raises(
             ConfigurationError, match="not found or not callable"
         ):
-            _oidc().load_login_hook()
+            _oidc(
+                make_settings(
+                    {"KLANGK_OIDC_LOGIN_HOOK": f"{hook_file}:missing"}
+                )
+            ).load_login_hook()
 
-    def test_not_callable(self, monkeypatch, tmp_path):
+    def test_not_callable(self, tmp_path):
         hook_file = tmp_path / "myhook.py"
         hook_file.write_text("on_login = 42\n")
-        monkeypatch.setenv("KLANGK_OIDC_LOGIN_HOOK", str(hook_file))
         with pytest.raises(
             ConfigurationError, match="not found or not callable"
         ):
-            _oidc().load_login_hook()
+            _oidc(
+                make_settings({"KLANGK_OIDC_LOGIN_HOOK": str(hook_file)})
+            ).load_login_hook()
 
 
 class TestCallLoginHook:
