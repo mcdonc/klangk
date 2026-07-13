@@ -28,7 +28,13 @@
 # KLANGK_ALLOW_AUTOSTART=1 + KLANGK_HEALTH_CHECK_INTERVAL=10 live in .env.
 set -uo pipefail
 
-WT=/home/chrism/projects/klangk/.worktrees/demo-video-scripts
+# Resolve the worktree root from this script's location (it lives at
+# <worktree>/src/frontend/e2e-tests/demo/), so the launcher works from any
+# worktree — not a hardcoded path that drifts when the worktree is renamed.
+WT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)" || {
+  echo "FATAL: not inside a git worktree" >&2
+  exit 1
+}
 cd "$WT" || exit 1
 DEMO_DIR="src/frontend/e2e-tests/demo"
 RECORDINGS_DIR="$DEMO_DIR/recordings"

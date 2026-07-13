@@ -1,0 +1,21 @@
+# Fake OIDC provider for the demo backend.
+#
+# The demo pins KLANGK_AUTH_MODES=both so the login screen shows the "Log in
+# with <provider>" button above the password fields — the login-card click
+# coordinates in demo-helpers.ts were measured for that layout (the button
+# shifts the fields down ~0.07). `both` requires at least one OIDC provider
+# to be configured or klangkd refuses to boot.
+#
+# The demo NEVER actually authenticates via OIDC — every scene logs in with a
+# password — so the issuer URL / client-secret here are fake and never called.
+# They just need to parse so the provider renders a button. run-demo-backend.sh
+# points KLANGK_OIDC_CONFIG at this file.
+#
+# Format: a bare YAML list of providers (NOT wrapped in an `oidc_providers:`
+# key — that's the inline klangkd.yaml format; the external file is the list
+# itself). Matches customize/custom/oidc/oidc.yaml.
+- id: demo-sso
+  display-name: Demo SSO
+  issuer: https://sso.demo.example.com
+  client-id: klangk-demo
+  client-secret: demo-secret-not-used

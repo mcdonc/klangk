@@ -54,7 +54,9 @@ would otherwise skip them). Run them via the `playwright` command defined in
 ## Prerequisites
 
 1. **Demo server running.** Start your real klangk normally (the one with your
-   real LLM key). It should answer on `http://localhost:8995`.
+   real LLM key). It should answer on `http://localhost:8996`.
+   (`run-demo-backend.sh` starts an isolated demo backend on :8996 with
+   `KLANGK_AUTH_MODES=both`, `KLANGK_LISTEN=127.0.0.1`.)
 
 2. **Auto-start enabled** (for scene 4, later): `.env` has
    `KLANGK_ALLOW_AUTOSTART=1` — confirmed.
@@ -108,7 +110,7 @@ Knobs (env vars):
 
 | Var                          | Default                 | Effect                                                           |
 | ---------------------------- | ----------------------- | ---------------------------------------------------------------- |
-| `KLANGK_TEST_URL`            | `http://localhost:8995` | the demo server to point at                                      |
+| `KLANGK_TEST_URL`            | `http://localhost:8996` | the demo server to point at                                      |
 | `KLANGK_DEMO_HEADLESS`       | unset                   | set `=1` for a quick headless dry check                          |
 | `KLANGK_DEMO_SLOWMO`         | `50`                    | ms slowMo between actions (bump for slower, readable clicks)     |
 | `KLANGK_DEMO_AGENT_WAIT`     | `60000`                 | how long to hold for clanker's live reply before the scene ends  |
@@ -230,7 +232,7 @@ From the worktree root:
 devenv shell -- src/frontend/e2e-tests/demo/record-terminal.sh \
     python3 src/frontend/e2e-tests/demo/cli_demo.py --scene demo
 
-# A real CLI scene against a live server (start klangk on :8995 first):
+# A real CLI scene against a live server (start klangk on :8996 first):
 devenv shell -- src/frontend/e2e-tests/demo/record-terminal.sh \
     python3 src/frontend/e2e-tests/demo/cli_demo.py --scene scene_2
 ```

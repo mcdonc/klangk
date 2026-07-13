@@ -10,9 +10,15 @@
 # So this script runs the demo backend ISOLATED on a dedicated port pair +
 # instance (set in .env, the only thing that wins over devenv.nix's env):
 #
-#   backend (uvicorn):     :$KLANGK_PORT        (.env -> 8998)
-#   nginx (klangkc target)::$KLANGK_NGINX_PORT  (.env -> 8996)
+#   backend (uvicorn):     127.0.0.1:$KLANGK_PORT  (.env -> 8998; TCP because
+#                                                  KLANGK_LISTEN=127.0.0.1)
+#   nginx (klangkc target)::$KLANGK_NGINX_PORT     (.env -> 8996)
 #   instance id:           "video"   (unique pid file + container labels)
+#
+# KLANGK_LISTEN=127.0.0.1 is load-bearing: post-#1400 the default listen is
+# None → klangkd binds a UDS and renders the headless (no-browser) template.
+# The demo needs the browser UI, so we force TCP loopback → nginx renders the
+# full browser template and the web-UI scenes can drive it.
 #
 # Teardown is bulletproof and does NOT rely on `devenv processes down`:
 #   1. kill -9 the native manager supervising the video instance (FIRST, so it
@@ -30,7 +36,13 @@
 # record-cli.sh + demo-seed.ts point at http://localhost:${KLANGK_NGINX_PORT}.
 set -uo pipefail
 
-WT=/home/chrism/projects/klangk/.worktrees/demo-video-scripts
+# Resolve the worktree root from this script's location (it lives at
+# <worktree>/src/frontend/e2e-tests/demo/), so the launcher works from any
+# worktree — not a hardcoded path that drifts when the worktree is renamed.
+WT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)" || {
+  echo "FATAL: not inside a git worktree" >&2
+  exit 1
+}
 cd "$WT" || exit 1
 
 # These come from .env (devenv loads it; .env's mkDefault beats devenv.nix's
@@ -38,9 +50,39 @@ cd "$WT" || exit 1
 # can report/target the right ports.
 DEMO_PORT="${KLANGK_PORT:-8998}"
 DEMO_NGINX_PORT="${KLANGK_NGINX_PORT:-8996}"
+DEMO_LISTEN="${KLANGK_LISTEN:-127.0.0.1}"
+# `both` = password + OIDC. The login screen shows the OIDC button above the
+# password fields, which the demo's login-card click coordinates assume (see
+# demo-helpers.ts demoLogin). Override with KLANGK_AUTH_MODES if you want a
+# different mode for a one-off run.
+DEMO_AUTH_MODES="${KLANGK_AUTH_MODES:-both}"
+# Short, stable state dir under /tmp. The worktree-relative default that
+# devenv.nix exports (KLANGK_STATE_DIR=.devenv/state/klangk) is too long for
+# a UDS path — klangkd binds <state_dir>/klangk.sock, and AF_UNIX caps
+# sun_path at 108 bytes (#1531). A long worktree path (e.g.
+# .worktrees/issue-1505-update-intro-video-demo-to-work-against-latest-main
+# /klangk.sock) overflows it and the backend crashes on boot. /tmp is short
+# and survives across runs (so the demo container images + DB persist).
+#
+# NOTE: do NOT read KLANGK_STATE_DIR here — devenv.nix exports it as the
+# long worktree path, which is exactly the value we're trying to avoid.
+# Use KLANGK_DEMO_STATE_DIR to override. This value is exported in the
+# `start` command's env (it can't go in .env — .env doesn't override
+# devenv.nix's env.KLANGK_STATE_DIR).
+DEMO_STATE_DIR="${KLANGK_DEMO_STATE_DIR:-/tmp/klangk-demo}"
 DEMO_INSTANCE=video
+# Fake OIDC provider config. `both` mode requires at least one provider or
+# klangkd refuses to boot; the demo never actually authenticates via OIDC
+# (every scene uses password login), so the values are fake — they just need
+# to parse so the "Log in with <provider>" button renders.
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEMO_OIDC_CONFIG="$_SCRIPT_DIR/demo-oidc.yaml"
+# Bootstrap admin = the server's KLANGK_DEFAULT_USER. demo-seed.ts logs in as
+# this account to manage users + run the destructive reset. Must match the
+# seed's BOOTSTRAP_EMAIL / BOOTSTRAP_PASSWORD defaults (see demo-seed.ts).
+DEMO_BOOTSTRAP_EMAIL="${KLANGK_DEFAULT_USER:-admin@plope.com}"
+DEMO_BOOTSTRAP_PASSWORD="${KLANGK_DEFAULT_PASSWORD:-admin}"
 URL="http://localhost:${DEMO_NGINX_PORT}"
-RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
 # ---------------------------------------------------------------------------
 # .env bootstrap
@@ -57,11 +99,19 @@ _ensure_env() {
   if grep -qF "KLANGK_INSTANCE_ID=$DEMO_INSTANCE" .env 2>/dev/null &&
     grep -qF "KLANGK_PORT=$DEMO_PORT" .env 2>/dev/null &&
     grep -qF "KLANGK_NGINX_PORT=$DEMO_NGINX_PORT" .env 2>/dev/null &&
+    grep -qF "KLANGK_LISTEN=$DEMO_LISTEN" .env 2>/dev/null &&
+    grep -qF "KLANGK_STATE_DIR=$DEMO_STATE_DIR" .env 2>/dev/null &&
+    grep -qF "KLANGK_OIDC_CONFIG=$DEMO_OIDC_CONFIG" .env 2>/dev/null &&
+    grep -qF "KLANGK_DEFAULT_USER=$DEMO_BOOTSTRAP_EMAIL" .env 2>/dev/null &&
     grep -qF "KLANGK_HOSTING_HOSTNAME=localhost:$DEMO_NGINX_PORT" .env 2>/dev/null &&
-    grep -qF "KLANGK_AUTH_MODES=password" .env 2>/dev/null; then
+    grep -qF "KLANGK_AUTH_MODES=$DEMO_AUTH_MODES" .env 2>/dev/null; then
     return 0
   fi
   echo "  configuring demo ports in .env (instance=$DEMO_INSTANCE, backend=$DEMO_PORT, nginx=$DEMO_NGINX_PORT)"
+  # Create the short state dir so klangkd can place its UDS + rendered
+  # nginx.conf there. /tmp/klangk-demo survives across runs for warm reuse;
+  # demo-seed.ts --reset wipes the DB + users, not the dir.
+  mkdir -p "$DEMO_STATE_DIR"
   # Drop any prior managed block, then append a fresh one.
   if [ -f .env ]; then
     sed -i "/${_ENV_BLOCK_BEGIN}/,/${_ENV_BLOCK_END}/d" .env
@@ -69,17 +119,40 @@ _ensure_env() {
   {
     echo ""
     echo "$_ENV_BLOCK_BEGIN"
-    echo "# Dedicated demo backend port pair + instance. .env (mkDefault 1000)"
-    echo "# overrides devenv.nix's mkOverride 1500; a parent export does NOT, so"
-    echo "# these MUST live in .env. Managed by run-demo-backend.sh — re-runnable."
+    echo "# Demo backend config. devenv.nix does NOT enable dotenv, so .env is"
+    echo "# not auto-loaded — the 'start' command sources it inside the devenv"
+    echo "# shell so these values win over devenv.nix's env. block. Managed by"
+    echo "# run-demo-backend.sh — re-runnable."
     echo "KLANGK_INSTANCE_ID=$DEMO_INSTANCE"
     echo "KLANGK_PORT=$DEMO_PORT"
     echo "KLANGK_NGINX_PORT=$DEMO_NGINX_PORT"
-    # The demo exercises the password auth flow (login, register, lockout),
-    # but the production default for KLANGK_AUTH_MODES (unset, no OIDC) is
-    # `none` (#1374), which disables password login/registration. Pin the
-    # demo backend to `password` so the default change doesn't break it.
-    echo "KLANGK_AUTH_MODES=password"
+    # Bootstrap admin (the server's KLANGK_DEFAULT_USER). demo-seed.ts logs in
+    # as this account to create the hero + cast users. klangkd creates it at
+    # startup with KLANGK_DEFAULT_PASSWORD. Must match the seed's
+    # BOOTSTRAP_EMAIL/BOOTSTRAP_PASSWORD defaults.
+    echo "KLANGK_DEFAULT_USER=$DEMO_BOOTSTRAP_EMAIL"
+    echo "KLANGK_DEFAULT_PASSWORD=$DEMO_BOOTSTRAP_PASSWORD"
+    # Force a TCP loopback bind so nginx renders the full (browser) template.
+    # The post-#1400 default is a UDS → headless (no browser); the demo needs
+    # the browser UI, so this override is load-bearing.
+    echo "KLANGK_LISTEN=$DEMO_LISTEN"
+    # Short state dir under /tmp: klangkd binds <state_dir>/klangk.sock and
+    # AF_UNIX caps sun_path at 108 bytes (#1531). The worktree-relative path
+    # that devenv.nix sets is too long for a deep worktree. .env is sourced
+    # inside the devenv shell (see the `start` command) so this value wins
+    # over devenv.nix's env.KLANGK_STATE_DIR. /tmp survives across runs.
+    echo "KLANGK_STATE_DIR=$DEMO_STATE_DIR"
+    # The demo exercises both the password auth flow (login, register,
+    # lockout) AND the OIDC button on the login screen (the "Log in with
+    # <provider>" surface the web-UI scenes show). Pin to `both` so the
+    # password fields AND the OIDC button are present — the production
+    # default of `none` (#1374) disables both. Also: the login-card click
+    # coordinates in demo-helpers.ts were measured for `both` mode (the
+    # OIDC button shifts the fields down), so they need `both` to land.
+    echo "KLANGK_AUTH_MODES=$DEMO_AUTH_MODES"
+    # Point at the fake OIDC provider config (see demo-oidc.yaml) so `both`
+    # mode boots and the login button renders. The issuer is never contacted.
+    echo "KLANGK_OIDC_CONFIG=$DEMO_OIDC_CONFIG"
     # Post-#1241: derive_hosting_info treats the env var as the
     # authoritative override, so the eager-start path (no live request)
     # builds hosted URLs that resolve through nginx on the public port.
@@ -103,24 +176,23 @@ _cmdline_has_wt() {
   tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -qF "$WT"
 }
 
-# Echo the live native-managers supervising devenv processes in this session.
-_live_managers() {
-  local pf m
-  for pf in "$RUNTIME"/devenv-*/processes/native-manager.pid; do
-    [ -f "$pf" ] || continue
-    m=$(cat "$pf" 2>/dev/null || true)
-    [ -n "$m" ] && kill -0 "$m" 2>/dev/null && echo "$m"
-  done
+# All PIDs belonging to the demo backend/nginx. klangkd runs from this
+# worktree's venv (so the worktree path is in its cmdline); nginx's master
+# is started with `-c <state_dir>/nginx.conf` (so the state_dir is in its
+# cmdline). nginx WORKERS show only "nginx: worker process" (no path, no
+# env) so they are pulled in as the children of any demo nginx master
+# BEFORE the master is killed. (We can't use KLANGK_INSTANCE_ID: nginx
+# wipes its env on startup.)
+_cmdline_has_state_dir() {
+  local p="$1"
+  [ -r "/proc/$p/cmdline" ] || return 1
+  tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -qF "$DEMO_STATE_DIR"
 }
 
-# All PIDs belonging to the demo backend/nginx. The backend + nginx MASTER are
-# matched by the worktree path in cmdline; nginx WORKERS show only
-# "nginx: worker process" (no path, no env) so they are pulled in as the
-# children of any demo nginx master BEFORE the master is killed.
 _demo_procs() {
   local p kids
-  for p in $(pgrep -f "klangk_backend.main|nginx" 2>/dev/null || true); do
-    if _cmdline_has_wt "$p"; then
+  for p in $(pgrep -f "klangk_backend.klangkd|klangk_backend.main|nginx" 2>/dev/null || true); do
+    if _cmdline_has_wt "$p" || _cmdline_has_state_dir "$p"; then
       echo "$p"
       kids=$(pgrep -P "$p" 2>/dev/null || true)
       [ -n "$kids" ] && echo "$kids"
@@ -128,45 +200,19 @@ _demo_procs() {
   done
 }
 
-# Echo the pid of the live native manager supervising the demo backend, or "".
-# Walk UP the parent chain from each demo proc until we reach a PID that is a
-# live native-manager (or PID 1). Reliable even when the backend is orphaned to
-# systemd (the walk finds no manager -> no respawn risk).
-_find_video_manager() {
-  local mgrs m vp p pp
-  mgrs=$(_live_managers)
-  [ -z "$mgrs" ] && return
-  for vp in $(_demo_procs); do
-    p=$vp
-    while [ -n "$p" ] && [ "$p" != 1 ]; do
-      pp=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
-      [ -z "$pp" ] && break
-      for m in $mgrs; do [ "$pp" = "$m" ] && echo "$m" && return; done
-      p=$pp
-    done
-  done
-}
-
 # ---------------------------------------------------------------------------
-# teardown: manager first (stop respawns), then video-instance procs, then
-# whatever still holds our ports.
+# teardown: kill the demo procs, then whatever still holds our ports.
+# (No devenv process manager to fight — klangkd is launched directly.)
 # ---------------------------------------------------------------------------
 stop_all() {
-  local m p port holders
-  # 1. native manager for the demo instance (kill BEFORE its children, or it
-  #    will just respawn them).
-  m=$(_find_video_manager)
-  if [ -n "$m" ]; then
-    kill -9 "$m" 2>/dev/null || true
-    rm -f "$RUNTIME"/devenv-*/processes/native-manager.pid 2>/dev/null || true
-  fi
-  # 2. every demo proc (backend, nginx master, AND nginx workers — collected
+  local p port holders
+  # 1. every demo proc (klangkd, nginx master, AND nginx workers — collected
   #    here while still parented, before any kill in this step).
   for p in $(_demo_procs | sort -u); do
     kill -9 "$p" 2>/dev/null || true
   done
-  # 3. final safety net: whatever still holds our dedicated ports (catches any
-  #    orphaned nginx worker that slipped step 2).
+  # 2. final safety net: whatever still holds our dedicated ports (catches any
+  #    orphaned nginx worker that slipped step 1).
   sleep 0.3
   for port in "$DEMO_PORT" "$DEMO_NGINX_PORT"; do
     holders=$(ss -tlnpH "sport = :$port" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
@@ -174,7 +220,7 @@ stop_all() {
   done
 }
 
-is_up() { ss -tln 2>/dev/null | grep -q ":${DEMO_PORT} "; }
+is_up() { ss -tln 2>/dev/null | grep -q ":${DEMO_NGINX_PORT} "; }
 
 # ---------------------------------------------------------------------------
 # commands
@@ -206,14 +252,30 @@ start)
   stop_all
 
   echo "starting demo backend (video) on $URL ..."
-  # `devenv processes up` runs the full task chain (build-workspace-image,
-  # flutter-build, etc.) then backend + nginx, all supervised by its native
-  # manager. --detach daemonizes; we tear down via stop_all (above), NOT via
-  # the unreliable `devenv processes down`.
-  nohup devenv processes up --detach \
-    >/tmp/klangk-video-processes.log 2>&1 &
+  # Launch klangkd DIRECTLY (not via `devenv processes up`). The process
+  # manager spawns its children in a freshly nix-evaluated environment that
+  # ignores the current shell's exports, so sourcing .env around it has no
+  # effect — klangkd would still see devenv.nix's KLANGK_STATE_DIR (the long
+  # worktree path, which overflows AF_UNIX's 108-byte sun_path, #1531) and
+  # the default ports (racing the main repo's backend on :8997/:8995).
+  #
+  # Source .env INSIDE the devenv shell (after devenv's env setup) so .env's
+  # values win, then exec klangkd with --config=none (all config from env).
+  # `set -a` makes every assignment in .env an export. nohup + & detaches so
+  # the script can return after the port comes up; teardown is stop_all.
+  #
+  # The task chain (build-workspace-image, flutter-build) is NOT needed here
+  # — the workspace image is already built (the main repo's devenv builds it
+  # into the shared podman store) and the demo doesn't serve the Flutter UI
+  # from this worktree's build (nginx points elsewhere). klangkd + the image
+  # is all the demo needs.
+  nohup devenv --quiet shell -- bash -c '
+    set -a; . ./.env; set +a
+    exec python3 -m klangk_backend.klangkd --config=none
+  ' >/tmp/klangk-video-processes.log 2>&1 &
 
-  # Wait for the backend port to bind (nginx 502s until then).
+  # Wait for nginx to bind (uvicorn binds a UDS, not TCP, so :$DEMO_PORT is
+  # never listened on; nginx on :$DEMO_NGINX_PORT is the readiness signal).
   for _ in $(seq 1 120); do
     if is_up; then
       echo "$URL"

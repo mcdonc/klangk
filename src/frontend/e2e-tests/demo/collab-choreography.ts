@@ -117,6 +117,7 @@ export type CollabCtx = {
   tab: {
     scratch: TabTarget;
     bash: TabTarget;
+    terminal2: TabTarget;
     shared: TabTarget; // where a joined shared terminal tab sits for the teammate
   };
   chatBox: { x: number; y: number };
@@ -486,7 +487,7 @@ async function waitForClanker(ctx: CollabCtx, beat: Beat): Promise<void> {
     await ctx.ws.designer.recvUntil(
       (m) =>
         m.type === "chat_message" &&
-        (m as { user_email?: string }).user_email?.includes("clanker"),
+        Boolean((m as { user_email?: string }).user_email?.includes("clanker")),
       Math.max(2_000, deadline - Date.now()),
     );
     console.log(`[beat] PASS ${beat.id} (clanker replied)`);
