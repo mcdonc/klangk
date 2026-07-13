@@ -133,8 +133,8 @@ async function globalSetup() {
 
   // Start uvicorn directly with E2E overrides as env vars.
   const backendProcess = spawn(
-    "uvicorn",
-    ["klangk_backend.main:app", "--host", "0.0.0.0", "--port", backendPort],
+    "python3",
+    ["e2e-tests/runtestserver.py", "--host", "0.0.0.0", "--port", backendPort],
     {
       cwd: join(projectRoot, "src", "backend"),
       detached: true,

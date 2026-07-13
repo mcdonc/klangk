@@ -1087,9 +1087,30 @@ class TestBuildApp:
         app = main.build_app(make_settings({}))
         assert model.AgentPrincipalError in app.exception_handlers
 
-    def test_module_app_is_built(self):
-        """The module-level ``app`` shim is a real FastAPI app."""
-        assert isinstance(main.app, FastAPI)
+    def test_no_module_level_app_attribute(self):
+        """main.py no longer exposes an ``app`` attribute (#1454).
+
+        The composition root is sealed: ``klangkd`` builds the app explicitly.
+        E2E suites launch ``e2e-tests/runtestserver.py`` (which builds the
+        app and passes the object to uvicorn) instead of a string import.
+        """
+        assert not hasattr(main, "app")
+
+    def test_runtestserver_builds_app(self):
+        """The E2E launcher script builds a real FastAPI app."""
+        import runpy
+        from pathlib import Path
+
+        script = (
+            Path(__file__).resolve().parent.parent
+            / "e2e-tests"
+            / "runtestserver.py"
+        )
+        # Don't execute __main__ (that would call uvicorn.run); just verify
+        # the module imports and exposes build_app correctly.
+        ns = runpy.run_path(str(script), run_name="not_main")
+        app = ns["build_app"](ns["KlangkSettings"](os.environ))
+        assert isinstance(app, FastAPI)
 
 
 class TestGetAppStateDep:

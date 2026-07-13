@@ -63,6 +63,14 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **The `main:app` ASGI shim is gone (#1454).** `main.py` no longer exposes
+  an `app` attribute or a lazy `__getattr__` — the composition root is sealed.
+  `klangkd` is the only production entry point (constructs the app explicitly
+  via `build_app(settings)` and passes the object to uvicorn). The E2E suites
+  launch `e2e-tests/runtestserver.py` (a test-only launcher that builds the
+  app and passes the object to uvicorn) instead of the `klangk_backend.main:app`
+  string import — no `module:app` string import anywhere.
+
 - **`resolve_env_value` / `resolve_env_bool` / `get_settings` retired
   (#1518):** the transitional config-reading shims are deleted. Every
   call-time caller now reads `app_state.settings.<field>` directly: `main.py`

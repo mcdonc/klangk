@@ -689,15 +689,8 @@ from .api._common import get_app_state_dep  # noqa: F401, E402
 
 
 # --- ASGI app ---
-# No module-level ``app = build_app(...)``: that eagerly constructed a
-# ``ContainerRegistry`` at import time, separate from the one klangkd / the
-# lifespan use — two registries, and the health loop ran on the wrong one
-# (#1464). Instead, klangkd constructs the app explicitly (build_app(settings))
-# and passes the object to uvicorn. The lazy ``__getattr__`` below covers the
-# ``uvicorn klangk_backend.main:app`` string-import path used by E2E tests.
-
-
-def __getattr__(name):
-    if name == "app":
-        return build_app(KlangkSettings(os.environ))
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# No module-level ``app = build_app(...)`` and no ``__getattr__`` shim: the
+# composition root is sealed (#1454). ``klangkd`` constructs the app
+# explicitly (``build_app(settings)``) and passes the object to uvicorn. The
+# E2E suites launch ``e2e-tests/runtestserver.py``, which builds the app and
+# passes the object to uvicorn — no ``module:app`` string import anywhere.

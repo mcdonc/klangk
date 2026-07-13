@@ -66,8 +66,8 @@ def _start_server(data_dir, port):
     }
     proc = subprocess.Popen(
         [
-            "uvicorn",
-            "klangk_backend.main:app",
+            "python3",
+            os.path.join(os.path.dirname(__file__), "runtestserver.py"),
             "--host",
             "0.0.0.0",
             "--port",
@@ -1065,8 +1065,8 @@ class TestAutoStartWithServiceCommand:
         }
         proc = subprocess.Popen(
             [
-                "uvicorn",
-                "klangk_backend.main:app",
+                "python3",
+                os.path.join(os.path.dirname(__file__), "runtestserver.py"),
                 "--host",
                 "0.0.0.0",
                 "--port",

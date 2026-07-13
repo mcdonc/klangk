@@ -577,9 +577,9 @@ test.describe("Klangk E2E", () => {
         const backendPort = process.env.KLANGK_E2E_PORT || "18997";
         const dataDir = process.env.KLANGK_E2E_DATA_DIR || "/tmp/klangk-e2e";
         const backendProcess = spawnProc(
-          "uvicorn",
+          "python3",
           [
-            "klangk_backend.main:app",
+            "e2e-tests/runtestserver.py",
             "--host",
             "0.0.0.0",
             "--port",
