@@ -27,6 +27,18 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Construction-time `file:`/`cmd:` resolution:** `KlangkSettings` now
+  resolves all `file:`/`cmd:`-prefixed field values once, at construction.
+  A dangling reference (e.g. `file:/nonexistent`) fails fast at boot with
+  a `ValidationError`, not silently at use time. Callers read
+  `settings.field` directly — no per-call `resolve_indirection` wrap
+  (#1461).
+- **`state_dir` / `data_dir` now required:** `KLANGK_STATE_DIR` and
+  `KLANGK_DATA_DIR` have no defaults — a missing value fails at
+  construction with a `ValidationError`. `klangkd` no longer mutates
+  `os.environ` to inject a `state_dir` default; the field enforces its own
+  requirement (#1459). `KLANGK_PLUGINS_DIR` defaults to
+  `<KLANGK_STATE_DIR>/plugins` when unset (#1461).
 - **CLI transport resolver:** `klangkc --server` now accepts a Unix socket
   path (e.g. `/tmp/klangk.sock`) in addition to `http(s)://` URLs. All HTTP
   and WebSocket connections route through a single transport resolver that
@@ -42,6 +54,17 @@ operators or integrators to act when upgrading.
 - **Direct UDS login:** `client_is_loopback` treats direct UDS connections
   (no nginx proxy) as loopback, so `klangkc login /path/to/sock` works in
   no-auth mode (#1399).
+
+### Changed
+
+- **`resolve_env_value` (KLANGK path) no longer re-resolves `file:`/`cmd:`**
+  — the field is already resolved at construction. The function survives for
+  plugins' dynamic keys (non-`KLANGK_`, discovered from `package.json`) and
+  not-yet-migrated modules; core code should read `app_state.settings.field`
+  directly (#1461).
+- **Public `resolve_indirection` removed** — the logic is now private
+  (`_resolve_indirection`), called only by the model validator and the
+  non-`KLANGK_` path of `resolve_env_value` (#1461).
 
 ### Removed
 

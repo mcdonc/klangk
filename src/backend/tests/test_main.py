@@ -23,14 +23,14 @@ from klangk_backend import (
     workspaces,
 )
 from klangk_backend.container import ContainerRegistry
-from klangk_backend.settings import KlangkSettings
+from _helpers import make_settings
 from klangk_backend.wshandler.session import WebSocketState
 
 
 def _make_app_state(settings=None):
     """Build a minimal app_state for tests."""
     if settings is None:
-        settings = KlangkSettings(env={})
+        settings = make_settings({})
     sockets = WebSocketState()
     app_state = types.SimpleNamespace(
         sockets=sockets,
@@ -114,7 +114,7 @@ def _bind_safety_app_state(auth_mode=None):
     construction instead of re-reading the env per call.
     """
     env = {"KLANGK_AUTH_MODES": auth_mode} if auth_mode else {}
-    settings = KlangkSettings(env=env)
+    settings = make_settings(env)
     app_state = types.SimpleNamespace(settings=settings)
     app_state.oidc = oidc.OIDC(app_state)
     app_state.plugins = plugins.Plugins(app_state)
@@ -1058,22 +1058,22 @@ class TestBuildApp:
     """Tests for build_app() composition root (#1426)."""
 
     def test_build_app_returns_fastapi(self):
-        settings = KlangkSettings(env={})
+        settings = make_settings({})
         app = main.build_app(settings)
         assert isinstance(app, FastAPI)
 
     def test_build_app_sets_state_settings(self):
-        settings = KlangkSettings(env={})
+        settings = make_settings({})
         app = main.build_app(settings)
         assert app.state.settings is settings
 
     def test_build_app_includes_routers(self):
-        app = main.build_app(KlangkSettings(env={}))
+        app = main.build_app(make_settings({}))
         paths = set(app.openapi()["paths"].keys())
         assert "/api/v1/config" in paths  # api router with prefix
 
     def test_build_app_has_ws_endpoint(self):
-        app = main.build_app(KlangkSettings(env={}))
+        app = main.build_app(make_settings({}))
         ws_paths = {
             r.path
             for r in app.routes
@@ -1082,7 +1082,7 @@ class TestBuildApp:
         assert "/ws" in ws_paths
 
     def test_build_app_registers_exception_handlers(self):
-        app = main.build_app(KlangkSettings(env={}))
+        app = main.build_app(make_settings({}))
         assert model.AgentPrincipalError in app.exception_handlers
 
     def test_module_app_is_built(self):
@@ -1094,7 +1094,7 @@ class TestGetAppStateDep:
     """Tests for get_app_state_dep per-request bridge (#1426)."""
 
     def test_returns_app_state(self):
-        settings = KlangkSettings(env={})
+        settings = make_settings({})
         app = main.build_app(settings)
         request = MagicMock()
         request.app = app

@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from klangk_backend import podman
-from klangk_backend.settings import KlangkSettings
+from _helpers import make_settings
 
 # Instance whose methods the tests exercise (#1468: the ~20 free
 # functions became Podman methods; classify/PodmanError stay module-level).
-_p = podman.Podman(KlangkSettings(env={}))
+_p = podman.Podman(make_settings({}))
 
 EXEC = "klangk_backend.podman.asyncio.create_subprocess_exec"
 

@@ -7,9 +7,9 @@ import pytest
 
 
 from klangk_backend.podman import ExecSession, Podman
-from klangk_backend.settings import KlangkSettings
+from _helpers import make_settings
 
-_podman = Podman(KlangkSettings(env={}))
+_podman = Podman(make_settings({}))
 
 
 def _mock_proc(stdout_data=b"", returncode=None):

@@ -17,6 +17,7 @@ from klangk_backend.nginx import (
     tcp_upstream,
     uds_upstream,
 )
+from _helpers import make_settings
 from klangk_backend.settings import KlangkSettings
 
 
@@ -42,25 +43,25 @@ class TestUpstreams:
 
 class TestClientMaxBodySize:
     def test_default_500mb(self):
-        s = KlangkSettings(env={})
+        s = make_settings({})
         assert _renderer(s).compute_client_max_body_size() == "500m"
 
     def test_custom(self):
-        s = KlangkSettings(env={"KLANGK_FILE_UPLOAD_SIZE_MAX": "10485760"})
+        s = make_settings({"KLANGK_FILE_UPLOAD_SIZE_MAX": "10485760"})
         assert _renderer(s).compute_client_max_body_size() == "10m"
 
     def test_minimum_1m(self):
-        s = KlangkSettings(env={"KLANGK_FILE_UPLOAD_SIZE_MAX": "100"})
+        s = make_settings({"KLANGK_FILE_UPLOAD_SIZE_MAX": "100"})
         assert _renderer(s).compute_client_max_body_size() == "1m"
 
     def test_garbage_falls_back(self):
-        s = KlangkSettings(env={"KLANGK_FILE_UPLOAD_SIZE_MAX": "not-a-number"})
+        s = make_settings({"KLANGK_FILE_UPLOAD_SIZE_MAX": "not-a-number"})
         assert _renderer(s).compute_client_max_body_size() == "500m"
 
 
 class TestContainerAcls:
     def test_explicit_subnets(self):
-        s = KlangkSettings(
+        s = make_settings(
             env={"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16"}
         )
         acl, deny = _renderer(s).compute_container_acls()
@@ -74,7 +75,7 @@ class TestContainerAcls:
         assert "allow all;" in deny
 
     def test_loopback_excluded_from_deny(self):
-        s = KlangkSettings(
+        s = make_settings(
             env={"KLANGK_CONTAINER_SUBNETS": "127.0.0.1,10.89.0.0/24"}
         )
         _, deny = _renderer(s).compute_container_acls()
@@ -83,14 +84,14 @@ class TestContainerAcls:
         assert "allow all;" in deny
 
     def test_all_loopback_warns(self, caplog):
-        s = KlangkSettings(env={"KLANGK_CONTAINER_SUBNETS": "127.0.0.1"})
+        s = make_settings({"KLANGK_CONTAINER_SUBNETS": "127.0.0.1"})
         _, deny = _renderer(s).compute_container_acls()
         assert "allow all;" in deny
         assert "no non-loopback" in caplog.text
 
     def test_auto_detect_or_fallback(self):
         """Without explicit subnets: either host IPs or fallback RFC1918."""
-        s = KlangkSettings(env={})
+        s = make_settings({})
         acl, deny = _renderer(s).compute_container_acls()
         # Must produce *something* (host IPs or fallback).
         assert "deny all;" in acl
@@ -99,31 +100,31 @@ class TestContainerAcls:
 
 class TestDnsResolvers:
     def test_explicit_servers(self):
-        s = KlangkSettings(env={"KLANGK_DNS_SERVERS": "1.2.3.4,5.6.7.8"})
+        s = make_settings({"KLANGK_DNS_SERVERS": "1.2.3.4,5.6.7.8"})
         result = _renderer(s).detect_dns_resolvers()
         assert "1.2.3.4" in result
         assert "5.6.7.8" in result
 
     def test_ipv6_bracketed(self):
-        s = KlangkSettings(env={"KLANGK_DNS_SERVERS": "::1"})
+        s = make_settings({"KLANGK_DNS_SERVERS": "::1"})
         assert "[::1]" in _renderer(s).detect_dns_resolvers()
 
     def test_empty_tokens_skipped(self):
         """Trailing commas / empty entries in KLANGK_DNS_SERVERS are skipped."""
-        s = KlangkSettings(env={"KLANGK_DNS_SERVERS": "1.2.3.4,,5.6.7.8,"})
+        s = make_settings({"KLANGK_DNS_SERVERS": "1.2.3.4,,5.6.7.8,"})
         result = _renderer(s).detect_dns_resolvers()
         assert "1.2.3.4" in result
         assert "5.6.7.8" in result
 
     def test_fallback(self):
-        s = KlangkSettings(env={})
+        s = make_settings({})
         result = _renderer(s).detect_dns_resolvers()
         assert len(result) > 0  # from resolv.conf or 8.8.8.8
 
 
 class TestRenderConfig:
     def test_basic_structure(self):
-        s = KlangkSettings(env={"KLANGK_NGINX_PORT": "8995"})
+        s = make_settings({"KLANGK_NGINX_PORT": "8995"})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         assert "daemon off;" in conf
         assert "listen 8995;" in conf
@@ -134,24 +135,24 @@ class TestRenderConfig:
         assert "location /" in conf
 
     def test_uds_upstream_in_conf(self):
-        s = KlangkSettings(env={"KLANGK_NGINX_PORT": "8995"})
+        s = make_settings({"KLANGK_NGINX_PORT": "8995"})
         conf = _renderer(s).render_config(uds_upstream("/tmp/klangk.sock"))
         assert "proxy_pass http://unix:/tmp/klangk.sock:" in conf
 
     def test_no_llm_block_without_url(self):
-        s = KlangkSettings(env={})
+        s = make_settings({})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         assert "llm-proxy" not in conf
 
     def test_llm_block_with_url(self):
-        s = KlangkSettings(
+        s = make_settings(
             env={"KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434"}
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         assert "llm-proxy" in conf
 
     def test_llm_api_key_resolved(self):
-        s = KlangkSettings(
+        s = make_settings(
             env={
                 "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
                 "KLANGK_LLM_API_KEY": "cmd:printf %s resolved-key",
@@ -162,7 +163,7 @@ class TestRenderConfig:
         assert "cmd:" not in conf
 
     def test_auth_local_loopback_acl(self):
-        s = KlangkSettings(env={})
+        s = make_settings({})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         # Find the auth/local block.
         import re
@@ -177,25 +178,25 @@ class TestRenderConfig:
         assert "deny all;" in block
 
     def test_hosted_disabled(self):
-        s = KlangkSettings(env={"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "0"})
+        s = make_settings({"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "0"})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         assert "location ^~ /hosted/ {" in conf
         assert "return 404;" in conf
 
     def test_hosted_enabled_default(self):
-        s = KlangkSettings(env={})
+        s = make_settings({})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         assert "location ~ ^/hosted/[^/]+/(?<hosted_port>" in conf
 
     def test_trust_outer_proxy(self):
-        s = KlangkSettings(env={"KLANGK_TRUST_OUTER_PROXY": "1"})
+        s = make_settings({"KLANGK_TRUST_OUTER_PROXY": "1"})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         # When trusting outer proxy, X-Forwarded-* come from client headers.
         assert "http_x_forwarded_proto" in conf
         assert "http_x_forwarded_host" in conf
 
     def test_no_trust_outer_proxy(self):
-        s = KlangkSettings(env={})
+        s = make_settings({})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         # Default: X-Forwarded-* derived from trusted values.
         assert "proxy_set_header X-Forwarded-Proto $scheme;" in conf
@@ -205,7 +206,7 @@ class TestRenderConfig:
         """file:/cmd: values resolve in the renderer."""
         secret = tmp_path / "llm.key"
         secret.write_text("file-based-key\n")
-        s = KlangkSettings(
+        s = make_settings(
             env={
                 "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
                 "KLANGK_LLM_API_KEY": f"file:{secret}",
@@ -226,7 +227,7 @@ class TestMinimalTemplate:
 
     def test_socket_emits_minimal_with_llm(self):
         """Socket + LLM ⇒ only /llm-proxy, no browser surface (#1398)."""
-        s = KlangkSettings(
+        s = make_settings(
             env={
                 "KLANGK_LISTEN": "/tmp/klangk.sock",
                 "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
@@ -251,7 +252,7 @@ class TestMinimalTemplate:
 
     def test_socket_no_llm_emits_listener_only(self):
         """Socket + no LLM ⇒ no /llm-proxy, no auth locations; just listener."""
-        s = KlangkSettings(
+        s = make_settings(
             env={
                 "KLANGK_LISTEN": "/tmp/klangk.sock",
                 "KLANGK_NGINX_PORT": "8995",
@@ -268,7 +269,7 @@ class TestMinimalTemplate:
     def test_socket_single_container_egress_listener(self):
         """No client-facing TCP: exactly one listen (container-egress), no
         browser catch-all location (#1398 criterion 3)."""
-        s = KlangkSettings(
+        s = make_settings(
             env={
                 "KLANGK_LISTEN": "/tmp/klangk.sock",
                 "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
@@ -284,7 +285,7 @@ class TestMinimalTemplate:
 
     def test_tcp_emits_full_template(self):
         """Regression guard: TCP LISTEN ⇒ full browser template (#1398 #2)."""
-        s = KlangkSettings(
+        s = make_settings(
             env={"KLANGK_LISTEN": "127.0.0.1", "KLANGK_NGINX_PORT": "8995"}
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
@@ -297,7 +298,7 @@ class TestMinimalTemplate:
         """AUTH value does not change which template is rendered (#1398 #4):
         socket ⇒ minimal and TCP ⇒ full across auth values."""
         for auth in ("none", "password", "both"):
-            s_sock = KlangkSettings(
+            s_sock = make_settings(
                 env={
                     "KLANGK_LISTEN": "/tmp/klangk.sock",
                     "KLANGK_AUTH_MODES": auth,
@@ -311,7 +312,7 @@ class TestMinimalTemplate:
             assert "location / {" not in minimal
             assert "location ~ ^/llm-proxy/" in minimal
 
-            s_tcp = KlangkSettings(
+            s_tcp = make_settings(
                 env={
                     "KLANGK_LISTEN": "127.0.0.1",
                     "KLANGK_AUTH_MODES": auth,
@@ -326,11 +327,11 @@ class TestMinimalTemplate:
 
 class TestFindNginxBin:
     def test_configured(self):
-        s = KlangkSettings(env={"KLANGK_NGINX_BIN": "/custom/nginx"})
+        s = make_settings({"KLANGK_NGINX_BIN": "/custom/nginx"})
         assert _renderer(s).find_nginx_bin() == "/custom/nginx"
 
     def test_fallback_to_which(self):
-        s = KlangkSettings(env={})
+        s = make_settings({})
         result = _renderer(s).find_nginx_bin()
         # Either found on PATH or falls back to /usr/sbin/nginx.
         assert len(result) > 0
@@ -339,7 +340,7 @@ class TestFindNginxBin:
         """When shutil.which returns None, fall back to /usr/sbin/nginx."""
         import klangk_backend.nginx as nginx_mod
 
-        s = KlangkSettings(env={})
+        s = make_settings({})
         monkeypatch.setattr(nginx_mod.shutil, "which", lambda _: None)
         assert _renderer(s).find_nginx_bin() == "/usr/sbin/nginx"
 
@@ -361,7 +362,7 @@ class TestDnsResolversFromResolvConf:
         """When KLANGK_DNS_SERVERS is unset, nameservers come from resolv.conf."""
         import klangk_backend.nginx as nginx_mod
 
-        s = KlangkSettings(env={})
+        s = make_settings({})
         content = "nameserver 1.1.1.1\nnameserver ::1\n"
         monkeypatch.setattr(
             nginx_mod.Path,
@@ -376,7 +377,7 @@ class TestDnsResolversFromResolvConf:
         """OSError reading resolv.conf -> fall back to 8.8.8.8."""
         import klangk_backend.nginx as nginx_mod
 
-        s = KlangkSettings(env={})
+        s = make_settings({})
 
         def _raise(self):
             raise OSError("no resolv.conf")
@@ -390,7 +391,7 @@ class TestContainerAclFallback:
         """When auto-detect yields nothing, fallback RFC1918 ranges are used."""
         import klangk_backend.nginx as nginx_mod
 
-        s = KlangkSettings(env={})
+        s = make_settings({})
         monkeypatch.setattr(nginx_mod, "detect_host_ipv4s", lambda: [])
         acl, deny = _renderer(s).compute_container_acls()
         assert "allow 172.16.0.0/12;" in acl
@@ -401,7 +402,7 @@ class TestContainerAclFallback:
 
 class TestWriteConfig:
     def test_writes_file(self, tmp_path):
-        s = KlangkSettings(env={"KLANGK_NGINX_PORT": "8995"})
+        s = make_settings({"KLANGK_NGINX_PORT": "8995"})
         r = _renderer(s)
         conf_path = tmp_path / "nginx.conf"
         text = r.render_config(tcp_upstream("127.0.0.1", "8997"))
@@ -416,25 +417,28 @@ class TestWriteConfig:
 
 
 class TestKlangkdHelpers:
-    def test_default_state_dir_env(self, monkeypatch):
-        from klangk_backend.klangkd import _default_state_dir
+    def test_state_dir_required_when_unset(self):
+        # #1459/#1461: state_dir has no default — missing fails at construction.
+        from pydantic import ValidationError
 
-        monkeypatch.setenv("KLANGK_STATE_DIR", "/custom/state")
-        assert _default_state_dir() == "/custom/state"
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(env={"KLANGK_DATA_DIR": "/tmp/data"})
+        assert "KLANGK_STATE_DIR" in str(exc_info.value)
 
-    def test_default_state_dir_devenv(self, monkeypatch):
-        from klangk_backend.klangkd import _default_state_dir
+    def test_state_dir_env_sets_value(self):
+        s = make_settings({"KLANGK_STATE_DIR": "/custom/state"})
+        assert s.state_dir == "/custom/state"
 
-        monkeypatch.delenv("KLANGK_STATE_DIR", raising=False)
-        monkeypatch.setenv("DEVENV_STATE", "/devenv/state")
-        assert _default_state_dir() == "/devenv/state"
-
-    def test_default_state_dir_fallback(self, monkeypatch):
-        from klangk_backend.klangkd import _default_state_dir
-
-        monkeypatch.delenv("KLANGK_STATE_DIR", raising=False)
-        monkeypatch.delenv("DEVENV_STATE", raising=False)
-        assert _default_state_dir() == "/tmp/klangk-state"
+    def test_state_dir_config_file_sets_value(self, tmp_path):
+        # Config file provides state_dir; not shadowed by a seeded env value
+        # (klangkd no longer mutates os.environ, #1459).
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text('state_dir: "/from/config"\n')
+        s = KlangkSettings(
+            env={"KLANGK_DATA_DIR": str(tmp_path)},
+            config_file=str(cfg),
+        )
+        assert s.state_dir == "/from/config"
 
 
 # The watchdog is gated only by the internal _KLANGK_DISABLE_NGINX kill
@@ -450,7 +454,7 @@ class TestWatchdogGate:
         """No-op when the test-only _KLANGK_DISABLE_NGINX is set."""
 
         monkeypatch.setenv("_KLANGK_DISABLE_NGINX", "1")
-        wd = _wd(KlangkSettings(env={}))
+        wd = _wd(make_settings({}))
         await wd.start()
         assert wd._task is None
 
@@ -465,7 +469,7 @@ class TestWatchdogGate:
         from klangk_backend.main import NginxWatchdog
 
         sock = str(tmp_path / "klangk.sock")
-        s = KlangkSettings(
+        s = make_settings(
             env={
                 "KLANGK_STATE_DIR": str(tmp_path),
                 "KLANGK_LISTEN": sock,
@@ -505,7 +509,7 @@ class TestPrepareNginx:
 
     def test_renders_config_and_returns_paths(self, monkeypatch, tmp_path):
 
-        s = KlangkSettings(
+        s = make_settings(
             env={
                 "KLANGK_STATE_DIR": str(tmp_path),
                 "KLANGK_NGINX_PORT": "19999",
@@ -533,7 +537,7 @@ class TestStopWatchdog:
     async def test_stops_no_proc_no_task(self):
         """Nothing spawned: just clears state (the no-op path)."""
 
-        wd = _wd(KlangkSettings(env={}))
+        wd = _wd(make_settings({}))
         await wd.stop()
         assert wd._proc is None
         assert wd._task is None
@@ -557,7 +561,7 @@ class TestStopWatchdog:
             async def wait(self):
                 return 0
 
-        wd = _wd(KlangkSettings(env={}))
+        wd = _wd(make_settings({}))
         wd._proc = FakeProc()
         await wd.stop()
         assert terminated == [True]
@@ -573,7 +577,7 @@ class TestStopWatchdog:
             except asyncio.CancelledError:
                 raise
 
-        wd = _wd(KlangkSettings(env={}))
+        wd = _wd(make_settings({}))
         wd._task = asyncio.create_task(_long_running())
         await wd.stop()
         assert wd._task is None
@@ -603,7 +607,7 @@ class TestStopWatchdog:
             raise asyncio.TimeoutError()
 
         monkeypatch.setattr(main.asyncio, "wait_for", _fake_wait_for)
-        wd = _wd(KlangkSettings(env={}))
+        wd = _wd(make_settings({}))
         wd._proc = HungProc()
         await wd.stop()
         assert actions == ["terminate", "kill"]

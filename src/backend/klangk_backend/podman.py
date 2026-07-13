@@ -24,7 +24,7 @@ import tempfile
 import time
 from collections.abc import AsyncGenerator
 
-from .settings import KlangkSettings, resolve_indirection
+from .settings import KlangkSettings
 from .util import BoundedOutputQueue
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ class Podman:
 
     def __init__(self, settings: KlangkSettings):
         self._settings = settings
-        self._bin = resolve_indirection(settings.podman_bin) or "podman"
+        self._bin = settings.podman_bin
 
     @property
     def bin(self) -> str:

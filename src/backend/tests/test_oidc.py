@@ -11,6 +11,7 @@ import pytest
 
 from klangk_backend import oidc
 from klangk_backend.exceptions import ConfigurationError
+from _helpers import make_settings
 from klangk_backend.settings import KlangkSettings
 
 
@@ -293,7 +294,7 @@ class TestInlineProviders:
             '    client-secret: "inline-secret"\n'
         )
         monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
-        settings = KlangkSettings(env=os.environ, config_file=str(cfg))
+        settings = make_settings(os.environ, config_file=str(cfg))
         providers = _oidc(settings).load_config()
         assert len(providers) == 1
         assert providers[0].id == "inline"
@@ -329,7 +330,7 @@ class TestInlineProviders:
             "    client-id: klangk\n"
             '    client-secret: "inline"\n'
         )
-        settings = KlangkSettings(env=os.environ, config_file=str(cfg))
+        settings = make_settings(os.environ, config_file=str(cfg))
         providers = _oidc(settings).load_config()
         assert len(providers) == 1
         assert providers[0].id == "external"
@@ -348,7 +349,7 @@ class TestInlineProviders:
             f'    client-secret: "file:{secret}"\n'
         )
         monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
-        settings = KlangkSettings(env=os.environ, config_file=str(cfg))
+        settings = make_settings(os.environ, config_file=str(cfg))
         providers = _oidc(settings).load_config()
         assert providers[0].client_secret == "resolved-secret"
 
@@ -368,7 +369,7 @@ class TestInlineProviders:
             '    client-secret: "sb"\n'
         )
         monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
-        settings = KlangkSettings(env=os.environ, config_file=str(cfg))
+        settings = make_settings(os.environ, config_file=str(cfg))
         providers = _oidc(settings).load_config()
         assert len(providers) == 2
         assert providers[0].id == "a"

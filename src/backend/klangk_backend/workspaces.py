@@ -135,7 +135,7 @@ class Workspaces:
     def __init__(self, app_state):
         self.app_state = app_state
         self.settings = app_state.settings
-        raw = self.settings.data_dir or str(Path.home() / ".klangk" / "data")
+        raw = self.settings.data_dir
         self.data_dir = Path(raw)
         self.root = self.data_dir / "workspaces"
 

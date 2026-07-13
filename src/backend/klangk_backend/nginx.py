@@ -34,7 +34,6 @@ from pathlib import Path
 from .settings import (
     KlangkSettings,
     listen_is_socket,
-    resolve_indirection,
 )
 
 logger = logging.getLogger(__name__)
@@ -176,7 +175,7 @@ class NginxRenderer:
         From ``KLANGK_DNS_SERVERS`` (comma→space) if set, else parsed from
         ``/etc/resolv.conf`` (IPv6 bracketed for nginx), else ``8.8.8.8``.
         """
-        raw = resolve_indirection(self._settings.dns_servers)
+        raw = self._settings.dns_servers
         if raw:
             servers = []
             for token in str(raw).split(","):
@@ -221,7 +220,7 @@ class NginxRenderer:
         With an explicit ``KLANGK_CONTAINER_SUBNETS`` override, 127.0.0.1 is NOT
         implicitly added to CONTAINER_ACL (the operator's list is used verbatim).
         """
-        explicit = resolve_indirection(self._settings.container_subnets)
+        explicit = self._settings.container_subnets
         if explicit:
             subnets = [
                 s.strip() for s in str(explicit).split(",") if s.strip()
@@ -261,10 +260,7 @@ class NginxRenderer:
 
         The setting is in bytes (default 500 MB); nginx wants ``Nm``. Minimum 1m.
         """
-        raw = (
-            resolve_indirection(self._settings.file_upload_size_max)
-            or "524288000"
-        )
+        raw = self._settings.file_upload_size_max
         try:
             bytes_ = int(str(raw))
         except (TypeError, ValueError):
@@ -280,10 +276,7 @@ class NginxRenderer:
         Disabled entirely when ``KLANGK_HOSTED_PORTS_PER_WORKSPACE`` is exactly 0
         — mirrors the backend's ``ports_per_workspace_cap()`` (#1237).
         """
-        raw = (
-            resolve_indirection(self._settings.hosted_ports_per_workspace)
-            or "5"
-        )
+        raw = self._settings.hosted_ports_per_workspace
         if str(raw).strip() == "0":
             return (
                 "    # Hosted-app serving is disabled "
@@ -333,10 +326,10 @@ class NginxRenderer:
         URL and key are resolved here (Python's resolver, not the retired
         ``klangk-resolve-value`` console script).
         """
-        base_url = resolve_indirection(self._settings.llm_base_url)
+        base_url = self._settings.llm_base_url
         if not base_url:
             return ""
-        api_key = resolve_indirection(self._settings.llm_api_key) or ""
+        api_key = self._settings.llm_api_key or ""
         return (
             f"    location ~ ^/llm-proxy/(.*)$ {{\n"
             f"{acl}\n"
@@ -358,7 +351,7 @@ class NginxRenderer:
         )
 
     def _trust_outer_proxy(self) -> bool:
-        raw = resolve_indirection(self._settings.trust_outer_proxy) or ""
+        raw = self._settings.trust_outer_proxy or ""
         return str(raw).strip().lower() in ("1", "true", "yes")
 
     # -- Main renderer -----------------------------------------------------
@@ -375,7 +368,7 @@ class NginxRenderer:
         (env > config file > defaults) plus the host-IP / DNS auto-detection
         probes.
         """
-        if listen_is_socket(resolve_indirection(self._settings.listen)):
+        if listen_is_socket(self._settings.listen):
             return self._render_minimal_config(upstream)
         return self._render_full_config(upstream)
 
@@ -395,7 +388,7 @@ class NginxRenderer:
         ``KLANGK_LLM_BASE_URL`` is set); with no LLM configured the server block
         serves nothing.
         """
-        nginx_port = resolve_indirection(self._settings.nginx_port) or "8995"
+        nginx_port = self._settings.nginx_port
         client_max_body_size = self.compute_client_max_body_size()
         resolvers = self.detect_dns_resolvers()
         acl, _deny = self.compute_container_acls()
@@ -431,7 +424,7 @@ http {{
         This is the template the renderer shipped before #1398's socket/minimal
         branch; it is kept verbatim so the TCP path is a strict regression guard.
         """
-        nginx_port = resolve_indirection(self._settings.nginx_port) or "8995"
+        nginx_port = self._settings.nginx_port
         client_max_body_size = self.compute_client_max_body_size()
         resolvers = self.detect_dns_resolvers()
         acl, deny = self.compute_container_acls()
@@ -573,7 +566,7 @@ http {{
 
     def find_nginx_bin(self) -> str:
         """Locate the nginx binary: KLANGK_NGINX_BIN > PATH > /usr/sbin/nginx."""
-        configured = resolve_indirection(self._settings.nginx_bin)
+        configured = self._settings.nginx_bin
         if configured:
             return str(configured)
         found = shutil.which("nginx")

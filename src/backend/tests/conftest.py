@@ -1,14 +1,29 @@
 """Shared fixtures for backend unit tests."""
 
 import os
+import tempfile
 
 # Must be set before coverage.py initialises in each xdist worker so that
 # code executed inside SQLAlchemy's greenlet context is tracked.
 os.environ.setdefault("COVERAGE_CORE", "sysmon")
 
+# state_dir / data_dir are required (no defaults, #1461). Some modules read
+# config at import time (util.py's _REJECT_PROXY / _TRUSTED_PROXY_CIDRS — the
+# #1426 anti-pattern, not yet promoted). Set temp dirs in the env before any
+# such import runs during collection. The autouse `temp_data_dir` fixture
+# overrides these with per-test tmp dirs once tests start.
+os.environ.setdefault(
+    "KLANGK_STATE_DIR", tempfile.mkdtemp(prefix="klangk-collect-state-")
+)
+os.environ.setdefault(
+    "KLANGK_DATA_DIR", tempfile.mkdtemp(prefix="klangk-collect-data-")
+)
+
 import bcrypt
 
 import pytest
+
+from klangk_backend.settings import KlangkSettings
 
 # Use fast bcrypt rounds (4 instead of default 12) for all tests.
 _original_gensalt = bcrypt.gensalt
@@ -57,8 +72,9 @@ def _default_auth_mode(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def temp_data_dir(tmp_path, monkeypatch):
-    """Point KLANGK_DATA_DIR / KLANGK_CUSTOMIZE_DIR at temp dirs per test."""
+    """Point KLANGK_DATA_DIR / KLANGK_STATE_DIR / KLANGK_CUSTOMIZE_DIR at temp dirs per test."""
     monkeypatch.setenv("KLANGK_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("KLANGK_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", str(tmp_path / "customize"))
     monkeypatch.delenv("KLANGK_IMAGE_PULL_POLICY", raising=False)
     # Rebuild the DB instance from the new env so the engine cache and
@@ -66,7 +82,6 @@ def temp_data_dir(tmp_path, monkeypatch):
     # to rebind — construct a fresh DB from settings).
     import klangk_backend.model as us
     import klangk_backend.model.db as us_core
-    from klangk_backend.settings import KlangkSettings
 
     us_core.set_db(us_core.DB(KlangkSettings(os.environ)))
     # Clear agent caches so each test starts fresh.

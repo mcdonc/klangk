@@ -24,6 +24,7 @@ from klangk_backend import (
     workspaces as ws_mod,
 )
 from klangk_backend.exceptions import TerminalError
+from _helpers import make_settings
 from klangk_backend.util import (
     derive_hosting_info,
 )
@@ -86,10 +87,9 @@ _mock_term.service_cmd_window_exists = AsyncMock(return_value=False)
 
 def _make_app_state(registry=None, sockets=None):
     """Build a minimal app_state for tests."""
-    from klangk_backend.settings import KlangkSettings
     from klangk_backend.container import ContainerRegistry
 
-    settings = KlangkSettings(env={})
+    settings = make_settings({})
     if sockets is None:
         sockets = WebSocketState()
 

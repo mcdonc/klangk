@@ -4,7 +4,7 @@ import json
 import types
 
 from klangk_backend import plugins
-from klangk_backend.settings import KlangkSettings
+from _helpers import make_settings
 
 
 def _make_plugin(tmp_path, name, config):
@@ -19,7 +19,7 @@ def _make_plugin(tmp_path, name, config):
 def _plugins(plugins_dir):
     """Build a fresh Plugins instance pointing at *plugins_dir* (#1451)."""
     app_state = types.SimpleNamespace(
-        settings=KlangkSettings(env={"KLANGK_PLUGINS_DIR": str(plugins_dir)})
+        settings=make_settings({"KLANGK_PLUGINS_DIR": str(plugins_dir)})
     )
     return plugins.Plugins(app_state)
 

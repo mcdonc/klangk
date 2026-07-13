@@ -112,7 +112,7 @@ class DB:
 
     def __init__(self, settings: KlangkSettings):
         self.settings = settings
-        raw = settings.data_dir or str(Path.home() / ".klangk" / "data")
+        raw = settings.data_dir
         self.data_dir = Path(raw)
         self.db_path = self.data_dir / "klangk.db"
         self.engine = None

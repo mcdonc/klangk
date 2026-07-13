@@ -15,6 +15,7 @@ let
   pluginsDir = config.devenv.root + "/.devenv/state/klangk/plugins";
   dataDir = config.devenv.root + "/.devenv/state/klangk/data";
   versionFile = config.devenv.state + "/klangk/version.json";
+  stateDir = config.devenv.state + "/klangk";
   backendPort = "8997";
   nginxPort = "8995";
 in
@@ -209,6 +210,9 @@ in
       config.devenv.state + "/klangk/podman/policy.json"
   );
   env.KLANGK_VERSION_FILE = versionFile;
+  # state_dir: runtime state (UDS, rendered nginx.conf, pid). Devenv pins it
+  # to $DEVENV_STATE/klangk; the field default is /tmp/klangk-state (#1459).
+  env.KLANGK_STATE_DIR = stateDir;
   # Docker build platform for klangk images. On Linux, default to the host
   # architecture so arm64 machines build/run natively instead of under amd64
   # emulation. The published GHCR base (klangk-workspace-base:latest) is

@@ -11,11 +11,14 @@ Design (see #1392, #1394):
   preserve the exact string-returning behavior of the legacy
   ``resolve_env_value``; typed fields (``int`` / ``bool`` / ``list``) arrive
   incrementally as call sites migrate to direct ``settings.field`` access.
-- **``file:`` / ``cmd:`` resolution** is applied by :func:`resolve_indirection`,
-  shared between :func:`resolve_env_value` (legacy) and direct settings access.
-  Both paths produce identical results regardless of whether the value came
-  from an env var or (future) a config file — capability is a property of the
-  value, not the source.
+- **``file:`` / ``cmd:`` resolution** is applied once, at construction, by
+  the ``_resolve_indirections`` model validator on :class:`KlangkSettings`
+  (#1461). Every ``settings.field`` read thereafter returns the already-
+  resolved value — no caller wraps in ``resolve_indirection``. The private
+  ``_resolve_indirection`` survives for two callers: that validator, and the
+  non-``KLANGK_`` path of :func:`resolve_env_value` (plugin-declared dynamic
+  keys discovered from ``package.json``, which are not settings fields and so
+  cannot be resolved at construction).
 - **Env-change-detection cache** (:func:`get_settings`): cache-free —
   re-constructs on every call, so ``monkeypatch.setenv`` /
   ``monkeypatch.delenv`` in tests is picked up automatically.
@@ -38,7 +41,7 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings.sources.providers.env import parse_env_vars
 
 logger = logging.getLogger(__name__)
@@ -51,13 +54,16 @@ logger = logging.getLogger(__name__)
 _VALID_AUTH_MODES = frozenset({"password", "oidc", "both", "none"})
 
 # Re-exported for backward compat — callers that ``from ..util import ...``
-# still work because util.py re-exports these.
+# still work because util.py re-exports these.  ``resolve_indirection`` is
+# NOT exported: ``file:``/``cmd:`` resolution now happens once, inside
+# ``KlangkSettings`` at construction (#1461).  The private ``_resolve_indirection``
+# is shared by the model validator and the non-KLANGK path of
+# ``resolve_env_value`` (plugin-declared dynamic keys).
 __all__ = [
     "KlangkSettings",
     "get_settings",
     "resolve_env_value",
     "resolve_env_bool",
-    "resolve_indirection",
 ]
 
 # ---------------------------------------------------------------------------
@@ -101,7 +107,7 @@ def _run_cmd(value: str) -> tuple[str | None, str | None]:
     return proc.stdout.strip(), None
 
 
-def resolve_indirection(value: str | None, key: str = "") -> str | None:
+def _resolve_indirection(value: str | None, key: str = "") -> str | None:
     """Resolve ``file:`` / ``cmd:`` prefixes on a raw config value.
 
     If *value* starts with ``file:`` the remainder is a file path (contents
@@ -116,6 +122,13 @@ def resolve_indirection(value: str | None, key: str = "") -> str | None:
     name a secret — so CodeQL ``py/clear-text-logging-sensitive-data`` does
     not fire (this mirrors the legacy ``resolve_file_value``, which is
     un-flagged for the same reason).
+
+    Private: ``file:``/``cmd:`` resolution for ``KlangkSettings`` fields
+    happens once at construction via the ``_resolve_indirections`` model
+    validator (#1461).  This helper survives for two callers: that
+    validator, and the non-KLANGK path of ``resolve_env_value`` (plugin-
+    declared dynamic keys discovered from ``package.json``, which are not
+    settings fields and so cannot be resolved at construction).
     """
     if value is None:
         return None
@@ -320,9 +333,10 @@ class KlangkSettings(BaseSettings):
     nginx_port: str | None = "8995"
     port_range_start: str | None = "9000"
     # state_dir: runtime state (the UDS when listen is a socket path, rendered
-    # nginx.conf, pid). Defaults to a klangk subdir under the system temp;
-    # devenv pins it to DEVENV_STATE and the host container to
-    # /tmp/klangk-state.
+    # nginx.conf, pid). **Required** — no default; a missing value fails at
+    # construction (#1461). Devenv pins it to ``$DEVENV_STATE/klangk`` via
+    # ``env.KLANGK_STATE_DIR`` in devenv.nix; the host container sets it to
+    # ``/tmp/klangk-state``.
     state_dir: str | None = None
     # nginx_bin: the nginx executable the renderer spawns. Falls back to
     # shutil.which("nginx") then /usr/sbin/nginx at render time.
@@ -344,8 +358,14 @@ class KlangkSettings(BaseSettings):
     idle_timeout_seconds: str | None = None
 
     # --- Container / workspace ---
+    # data_dir: persistent storage (SQLite DB, workspace volumes). **Required**
+    # — no default; a missing value fails at construction (#1461).
     data_dir: str | None = None
     customize_dir: str | None = None
+    # plugins_dir: plugin packages. Defaults to ``<state_dir>/plugins`` when
+    # unset (derived in the ``_require_dirs`` validator after state_dir is
+    # resolved). Shell scripts and the host container set KLANGK_PLUGINS_DIR
+    # explicitly.
     plugins_dir: str | None = None
     image_name: str | None = "klangk-workspace"
     image_pull_policy: str | None = "never"
@@ -360,7 +380,7 @@ class KlangkSettings(BaseSettings):
     health_check_interval: str | None = None
     health_check_startup_grace: str | None = None
     health_check_timeout: str | None = None
-    hosted_ports_per_workspace: str | None = None
+    hosted_ports_per_workspace: str | None = "5"
     test_mode: str | None = None
     version_file: str | None = None
 
@@ -413,7 +433,68 @@ class KlangkSettings(BaseSettings):
     ssl_cert_dir: str | None = None
 
     # --- File upload ---
-    file_upload_size_max: str | None = None
+    file_upload_size_max: str | None = "524288000"
+
+    @model_validator(mode="after")
+    def _resolve_indirections(self) -> "KlangkSettings":
+        """Resolve ``file:``/``cmd:`` prefixes once, at construction (#1461).
+
+        Every string field is run through :func:`_resolve_indirection` before
+        the object is handed to anything. Thereafter ``settings.field`` returns
+        the already-resolved value — no caller wraps in ``resolve_indirection``.
+        A field set to ``file:/nonexistent`` or ``cmd:false`` fails *here*
+        (fail-fast at boot), not silently at use time.
+
+        Resolution is idempotent: a plain (non-``file:``/``cmd:``) value passes
+        through unchanged, so re-resolving an already-resolved value is a
+        no-op. This keeps the legacy ``resolve_env_value`` path (still used by
+        plugin-declared dynamic keys and not-yet-migrated modules) correct —
+        it reads the already-resolved field and the redundant
+        ``_resolve_indirection`` call it makes is a harmless no-op.
+
+        Only ``str`` fields are candidates: ``list[dict]`` (``oidc_providers``)
+        and any non-string field are skipped. ``None`` (unset) is left alone.
+        """
+        for name in type(self).model_fields:
+            val = getattr(self, name)
+            if isinstance(val, str):
+                resolved = _resolve_indirection(val, name)
+                if resolved is None:
+                    raise ValueError(
+                        f"KLANGK_{name.upper()} could not be resolved: the "
+                        f"file:/cmd: reference failed. See logs for detail."
+                    )
+                setattr(self, name, resolved)
+        return self
+
+    @model_validator(mode="after")
+    def _require_dirs(self) -> "KlangkSettings":
+        """Require ``state_dir`` and ``data_dir``; derive ``plugins_dir``.
+
+        Neither has a default — an operator must set them (env or config
+        file). A missing value fails fast at construction (boot), not at
+        the first use that dereferences a ``None`` path (#1461).
+
+        ``plugins_dir`` defaults to ``<state_dir>/plugins`` when unset, so an
+        operator who sets ``state_dir`` gets a sensible plugins location
+        without a second var. An explicit ``KLANGK_PLUGINS_DIR`` / config-file
+        value wins.
+        """
+        if not self.state_dir:
+            raise ValueError(
+                "KLANGK_STATE_DIR is required (env var or config file). "
+                "Set it to the runtime state directory (UDS socket, rendered "
+                "nginx.conf, pid file)."
+            )
+        if not self.data_dir:
+            raise ValueError(
+                "KLANGK_DATA_DIR is required (env var or config file). "
+                "Set it to the persistent data directory (SQLite DB, "
+                "workspace volumes)."
+            )
+        if not self.plugins_dir:
+            self.plugins_dir = os.path.join(self.state_dir, "plugins")
+        return self
 
     @field_validator("auth_modes")
     @classmethod
@@ -500,12 +581,11 @@ def listen_is_socket(value: str | None = None) -> bool:
     setting when *value* is omitted. This is what the nginx renderer and the
     lifespan watchdog key off to decide "headless/minimal template + UDS
     bind" vs "full template + TCP bind."
+
+    ``KlangkSettings`` already resolves ``file:``/``cmd:`` at construction
+    (#1461), so ``settings.listen`` is the resolved value — no wrap needed.
     """
-    v = (
-        value
-        if value is not None
-        else resolve_indirection(get_settings().listen)
-    )
+    v = value if value is not None else get_settings().listen
     return classify_listen(v) == "socket"
 
 
@@ -524,25 +604,38 @@ def _key_to_field(key: str) -> str:
 def resolve_env_value(key: str, default: str | None = None) -> str | None:
     """Read a config value, dereferencing ``file:`` / ``cmd:`` prefixes.
 
-    Delegates to the settings singleton (which reads ``os.environ`` via
-    pydantic-settings) and applies :func:`resolve_indirection` to the result.
-    If the value is unset (``None``), returns *default*.
+    **Transitional shim** (#1461): core modules should read
+    ``app_state.settings.field`` directly — ``KlangkSettings`` resolves
+    ``file:``/``cmd:`` at construction, so the field is already the resolved
+    value. This function survives for callers that still reach for env by
+    key name (plugins' dynamic keys discovered from ``package.json``, and
+    not-yet-migrated modules — see #1426's remaining slices).
 
-    Non-``KLANGK_`` keys (``LOGFIRE_TOKEN``, ``KLANGKC_DEBUG_SSH_AGENT``,
-    etc.) fall back to ``os.environ.get`` directly, since they're outside the
-    settings model's ``env_prefix``.
+    For ``KLANGK_`` keys: reads the already-resolved field off the settings
+    singleton — no ``file:``/``cmd:`` wrap here (the model validator did it
+    at construction). If unset (``None``), returns *default*.
+
+    For non-``KLANGK_`` keys (``LOGFIRE_TOKEN``, ``KLANGKC_DEBUG_SSH_AGENT``,
+    plugin-declared keys): reads ``os.environ`` directly and applies
+    :func:`_resolve_indirection` — these are outside the settings model's
+    ``env_prefix`` and (for plugins) not known at construction, so they still
+    need per-call resolution.
     """
     if key.startswith("KLANGK_"):
         field = _key_to_field(key)
         settings = get_settings()
         raw = getattr(settings, field, None)
-    else:
-        # Non-KLANGK_ env vars (LOGFIRE_*, KLANGKC_*, etc.) are outside the
-        # settings model's env_prefix. Read directly from os.environ.
-        raw = os.environ.get(key)
+        # Field already resolved at construction (#1461); raw is the final
+        # value (None when unset).
+        return raw if raw is not None else default
+    # Non-KLANGK_ env vars (LOGFIRE_*, KLANGKC_*, plugin-declared keys) are
+    # outside the settings model's env_prefix. Read directly from os.environ
+    # and resolve file:/cmd: per-call — these keys are dynamic (not known at
+    # construction) so they can't be resolved inside the model validator.
+    raw = os.environ.get(key)
     if raw is None:
         return default
-    resolved = resolve_indirection(raw, key)
+    resolved = _resolve_indirection(raw, key)
     return resolved if resolved is not None else default
 
 
