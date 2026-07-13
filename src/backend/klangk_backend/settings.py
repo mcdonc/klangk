@@ -472,16 +472,16 @@ class KlangkSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_dirs(self) -> "KlangkSettings":
-        """Require ``state_dir``; derive ``data_dir`` and ``plugins_dir``.
+        """Require ``state_dir``; derive ``data_dir``, ``customize_dir``, ``plugins_dir``.
 
         ``state_dir`` has no default — an operator must set it (env or config
         file); a missing value fails fast at construction (boot), not at the
         first use that dereferences a ``None`` path (#1461).
 
-        ``data_dir`` and ``plugins_dir`` both derive from ``state_dir`` when
-        unset (#1506), so an operator who sets only ``state_dir`` gets sensible
-        data and plugins locations without extra vars. Explicit
-        ``KLANGK_DATA_DIR`` / ``KLANGK_PLUGINS_DIR`` / config-file values win.
+        ``data_dir``, ``customize_dir``, and ``plugins_dir`` all derive from
+        ``state_dir`` when unset (#1506), so an operator who sets only
+        ``state_dir`` gets sensible locations without extra vars. Explicit
+        values win.
         """
         if not self.state_dir:
             raise ValueError(
@@ -493,6 +493,8 @@ class KlangkSettings(BaseSettings):
             self.data_dir = os.path.join(self.state_dir, "data")
         if not self.plugins_dir:
             self.plugins_dir = os.path.join(self.state_dir, "plugins")
+        if not self.customize_dir:
+            self.customize_dir = os.path.join(self.state_dir, "custom")
         return self
 
     @field_validator("auth_modes")

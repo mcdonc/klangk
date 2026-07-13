@@ -19,10 +19,7 @@ from .. import (
     model,
     oidc,
 )
-from ..util import (
-    API_PREFIX,
-    derive_hosting_info,
-)
+from ..util import API_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +67,7 @@ async def oidc_login(
     verifier, challenge = oidc.generate_pkce()
     state = secrets.token_urlsafe(32)
 
-    hostname, proto, base_path = derive_hosting_info(
+    hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
     )
     redirect_uri = f"{proto}://{hostname}{base_path}{API_PREFIX}/auth/oidc/{provider_id}/callback"
@@ -214,8 +211,11 @@ def _build_redirect_response(
     if _valid_cli_redirect(cli_redirect):
         redirect_url = f"{cli_redirect}?token={access_token}"
     else:
-        hostname, proto, base_path = derive_hosting_info(
-            request.headers, request.client.host if request.client else None
+        hostname, proto, base_path = (
+            request.app.state.util.derive_hosting_info(
+                request.headers,
+                request.client.host if request.client else None,
+            )
         )
         redirect_url = (
             f"{proto}://{hostname}{base_path}"

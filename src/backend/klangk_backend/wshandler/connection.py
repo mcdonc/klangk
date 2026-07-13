@@ -10,7 +10,6 @@ from .. import acl as _acl
 from .. import auth, container, model
 from ..terminal import TerminalSession
 from ..podman import ExecSession
-from ..util import derive_hosting_info
 from .constants import (
     agent_conversations,
     agent_tasks,
@@ -302,7 +301,7 @@ class Connection:
         )
 
         hosting_hostname, hosting_proto, hosting_base_path = (
-            derive_hosting_info(
+            self.app_state.util.derive_hosting_info(
                 self.sock.headers,
                 self.sock.client.host if self.sock.client else None,
             )

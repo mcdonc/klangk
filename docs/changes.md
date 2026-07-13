@@ -33,13 +33,12 @@ operators or integrators to act when upgrading.
   a `ValidationError`, not silently at use time. Callers read
   `settings.field` directly — no per-call `resolve_indirection` wrap
   (#1461).
-- **`state_dir` required; `data_dir` / `plugins_dir` derive from it:**
-  `KLANGK_STATE_DIR` has no default — a missing value fails at construction
-  with a `ValidationError` (#1459, #1461). `KLANGK_DATA_DIR` defaults to
-  `<KLANGK_STATE_DIR>/data` and `KLANGK_PLUGINS_DIR` to
-  `<KLANGK_STATE_DIR>/plugins` when unset; an explicit value always wins
-  (#1461, #1506). `klangkd` no longer mutates `os.environ` to inject a
-  `state_dir` default; the field enforces its own requirement (#1459).
+- **`state_dir` / `data_dir` now required:** `KLANGK_STATE_DIR` and
+  `KLANGK_DATA_DIR` have no defaults — a missing value fails at
+  construction with a `ValidationError`. `klangkd` no longer mutates
+  `os.environ` to inject a `state_dir` default; the field enforces its own
+  requirement (#1459). `KLANGK_PLUGINS_DIR` defaults to
+  `<KLANGK_STATE_DIR>/plugins` when unset (#1461).
 - **CLI transport resolver:** `klangkc --server` now accepts a Unix socket
   path (e.g. `/tmp/klangk.sock`) in addition to `http(s)://` URLs. All HTTP
   and WebSocket connections route through a single transport resolver that

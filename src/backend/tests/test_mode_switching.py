@@ -20,6 +20,7 @@ from klangk_backend import (
     api,
     auth,
     emailsvc as emailsvc_mod,
+    util as util_mod,
     main,
     model,
     oidc as oidc_mod,
@@ -60,6 +61,7 @@ async def mode_server(db, monkeypatch):
     app.state.oidc = oidc_mod.OIDC(app.state)
     app.state.plugins = plugins_mod.Plugins(app.state)
     app.state.email = emailsvc_mod.EmailService(app.state)
+    app.state.util = util_mod.Util(app.state)
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)
     register_exception_handlers(app)

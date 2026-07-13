@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 from klangk_backend import (
     agent as agent_mod,
     emailsvc as emailsvc_mod,
+    util as util_mod,
     main,
     model,
     oidc,
@@ -51,6 +52,7 @@ def _make_app_state(settings=None):
     app_state.workspaces = workspaces.Workspaces(app_state)
     app_state.agents = agent_mod.Agents(app_state)
     app_state.email = emailsvc_mod.EmailService(app_state)
+    app_state.util = util_mod.Util(app_state)
     return app_state
 
 
@@ -383,6 +385,7 @@ class TestLifespan:
         app.state.workspaces = workspaces.Workspaces(app.state)
         app.state.agents = agent_mod.Agents(app.state)
         app.state.email = emailsvc_mod.EmailService(app.state)
+        app.state.util = util_mod.Util(app.state)
         registry = app_state.container_registry
         with (
             patch.object(
@@ -430,6 +433,7 @@ class TestLifespan:
         app.state.workspaces = workspaces.Workspaces(app.state)
         app.state.agents = agent_mod.Agents(app.state)
         app.state.email = emailsvc_mod.EmailService(app.state)
+        app.state.util = util_mod.Util(app.state)
         registry = app_state.container_registry
         with (
             patch.object(
@@ -654,6 +658,7 @@ class TestStartupShutdownRestart:
         app.state.workspaces = workspaces.Workspaces(app.state)
         app.state.agents = agent_mod.Agents(app.state)
         app.state.email = emailsvc_mod.EmailService(app.state)
+        app.state.util = util_mod.Util(app.state)
         registry = app_state.container_registry
         loop = asyncio.get_running_loop()
         with (
@@ -691,6 +696,9 @@ class TestSetupStaticFiles:
         (tmp_path / "index.html").write_text("<html>hello</html>")
 
         test_app = FastAPI()
+        _settings = make_settings({})
+        test_app.state.settings = _settings
+        test_app.state.util = util_mod.Util(test_app.state)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -705,6 +713,9 @@ class TestSetupStaticFiles:
         (tmp_path / "index.html").write_text("<html>hi</html>")
 
         test_app = FastAPI()
+        _settings = make_settings({})
+        test_app.state.settings = _settings
+        test_app.state.util = util_mod.Util(test_app.state)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -723,6 +734,9 @@ class TestSetupStaticFiles:
         (tmp_path / "app.js").write_text("console.log('hi')")
 
         test_app = FastAPI()
+        _settings = make_settings({})
+        test_app.state.settings = _settings
+        test_app.state.util = util_mod.Util(test_app.state)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -739,6 +753,9 @@ class TestSetupStaticFiles:
         (tmp_path / "image.png").write_bytes(b"\x89PNG")
 
         test_app = FastAPI()
+        _settings = make_settings({})
+        test_app.state.settings = _settings
+        test_app.state.util = util_mod.Util(test_app.state)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -756,6 +773,9 @@ class TestSetupStaticFiles:
         branding.write_bytes(b"\x89PNG\r\n\x1a\n")
 
         test_app = FastAPI()
+        _settings = make_settings({})
+        test_app.state.settings = _settings
+        test_app.state.util = util_mod.Util(test_app.state)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -776,6 +796,9 @@ class TestSetupStaticFiles:
         monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", str(custom))
 
         test_app = FastAPI()
+        _settings = make_settings({})
+        test_app.state.settings = _settings
+        test_app.state.util = util_mod.Util(test_app.state)
         main.setup_static_files(test_app, tmp_path)
 
         branding_route = [
@@ -790,6 +813,9 @@ class TestSetupStaticFiles:
         (tmp_path / "index.html").write_text("<html></html>")
 
         test_app = FastAPI()
+        _settings = make_settings({})
+        test_app.state.settings = _settings
+        test_app.state.util = util_mod.Util(test_app.state)
         main.setup_static_files(test_app, tmp_path)
 
         branding_route = [
@@ -801,6 +827,9 @@ class TestSetupStaticFiles:
         (tmp_path / "index.html").write_text("<html></html>")
         (tmp_path / "branding").mkdir()
         test_app = FastAPI()
+        _settings = make_settings({})
+        test_app.state.settings = _settings
+        test_app.state.util = util_mod.Util(test_app.state)
         main.setup_static_files(test_app, tmp_path)
         transport = ASGITransport(app=test_app)
         async with AsyncClient(
@@ -817,6 +846,9 @@ class TestSetupStaticFiles:
         branding.parent.mkdir(parents=True, exist_ok=True)
         branding.write_bytes(b"\x89PNG")
         test_app = FastAPI()
+        _settings = make_settings({})
+        test_app.state.settings = _settings
+        test_app.state.util = util_mod.Util(test_app.state)
         main.setup_static_files(test_app, tmp_path)
         transport = ASGITransport(app=test_app)
         async with AsyncClient(
@@ -873,63 +905,7 @@ class TestSetupLogfire:
 
 
 class TestCorsOrigins:
-    def test_default_localhost(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
-        monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
-        monkeypatch.delenv("KLANGK_NGINX_PORT", raising=False)
-        # No override -> bare localhost; the port is NOT synthesized from
-        # KLANGK_NGINX_PORT (consistent with hosted-app URL construction).
-        assert main.cors_origins() == ["http://localhost"]
-
-    def test_nginx_port_not_synthesized(self, monkeypatch):
-        """KLANGK_NGINX_PORT does not leak into the CORS origin.
-
-        It is internal container wiring, not the browser origin; the port
-        must come from KLANGK_HOSTING_HOSTNAME. Setting the nginx port
-        therefore has no effect on the derived origin (#1240).
-        """
-        monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
-        monkeypatch.delenv("KLANGK_HOSTING_HOSTNAME", raising=False)
-        monkeypatch.setenv("KLANGK_NGINX_PORT", "9000")
-        assert main.cors_origins() == ["http://localhost"]
-
-    def test_hosting_hostname_carries_port(self, monkeypatch):
-        """The port lives in KLANGK_HOSTING_HOSTNAME, not a separate var."""
-        monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
-        monkeypatch.setenv("KLANGK_HOSTING_HOSTNAME", "localhost:8996")
-        monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
-        assert main.cors_origins() == ["http://localhost:8996"]
-
-    def test_hosting_hostname(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
-        monkeypatch.setenv("KLANGK_HOSTING_HOSTNAME", "klangk.example.com")
-        monkeypatch.setenv("KLANGK_HOSTING_PROTO", "https")
-        assert main.cors_origins() == ["https://klangk.example.com"]
-
-    def test_hosting_hostname_default_proto(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_CORS_ORIGINS", raising=False)
-        monkeypatch.setenv("KLANGK_HOSTING_HOSTNAME", "klangk.example.com")
-        monkeypatch.delenv("KLANGK_HOSTING_PROTO", raising=False)
-        assert main.cors_origins() == ["http://klangk.example.com"]
-
-    def test_explicit_origins(self, monkeypatch):
-        monkeypatch.setenv(
-            "KLANGK_CORS_ORIGINS",
-            "https://a.example.com, https://b.example.com",
-        )
-        assert main.cors_origins() == [
-            "https://a.example.com",
-            "https://b.example.com",
-        ]
-
-    def test_explicit_origins_strips_empties(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_CORS_ORIGINS", "https://a.com,,")
-        assert main.cors_origins() == ["https://a.com"]
-
-    def test_explicit_overrides_hosting(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_CORS_ORIGINS", "https://override.com")
-        monkeypatch.setenv("KLANGK_HOSTING_HOSTNAME", "ignored.com")
-        assert main.cors_origins() == ["https://override.com"]
+    """Moved to test_util.py (Util.cors_origins, #1503)."""
 
     def test_with_base_url_and_environment(self, monkeypatch):
         monkeypatch.setenv("LOGFIRE_TOKEN", "test-token")

@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 import shutil
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -171,13 +170,8 @@ class EmailService:
         }
 
     def _customize_dir(self) -> str:
-        """Return the root customization directory.
-
-        Resolves ``KLANGK_CUSTOMIZE_DIR`` (default ``~/.klangk/custom``).
-        """
-        return self.settings.customize_dir or str(
-            os.path.join(os.path.expanduser("~"), ".klangk", "custom")
-        )
+        """Root customization directory (defaults to ``<state_dir>/custom``)."""
+        return self.settings.customize_dir
 
     def _template_env(self) -> Environment:
         """Build (and cache) the Jinja environment.

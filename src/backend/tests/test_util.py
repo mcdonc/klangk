@@ -1,7 +1,7 @@
 """Tests for util: file- and command-backed secret resolution."""
 
 from klangk_backend.util import (
-    customize_dir,
+    Util,
     read_file_value,
     run_cmd_value,
     resolve_env_bool,
@@ -9,6 +9,14 @@ from klangk_backend.util import (
     resolve_file_value,
     sanitize_disposition_name,
 )
+from _helpers import make_settings
+import types
+
+
+def _util(env=None):
+    """Build a Util instance from explicit env."""
+    settings = make_settings(env)
+    return Util(types.SimpleNamespace(settings=settings))
 
 
 class TestReadFileValue:
@@ -161,16 +169,13 @@ class TestResolveFileValue:
 
 
 class TestCustomizeDir:
-    def test_returns_env_value(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", "/opt/custom")
-        assert customize_dir() == "/opt/custom"
+    def test_returns_env_value(self):
+        u = _util({"KLANGK_CUSTOMIZE_DIR": "/opt/custom"})
+        assert u.customize_dir() == "/opt/custom"
 
-    def test_default_under_home(self, monkeypatch):
-        monkeypatch.delenv("KLANGK_CUSTOMIZE_DIR", raising=False)
-        import os
-
-        expected = os.path.join(os.path.expanduser("~"), ".klangk", "custom")
-        assert customize_dir() == expected
+    def test_defaults_to_state_dir_custom(self):
+        u = _util({"KLANGK_STATE_DIR": "/tmp/state"})
+        assert u.customize_dir() == "/tmp/state/custom"
 
 
 class TestSanitizeDispositionName:
@@ -185,3 +190,57 @@ class TestSanitizeDispositionName:
 
     def test_combined(self):
         assert sanitize_disposition_name('my/"file".txt') == "my_file.txt"
+
+
+class TestCorsOrigins:
+    """Util.cors_origins (moved from main.py, #1503)."""
+
+    def test_default_localhost(self):
+        u = _util({})
+        assert u.cors_origins() == ["http://localhost"]
+
+    def test_nginx_port_not_synthesized(self):
+        """KLANGK_NGINX_PORT does not leak into the CORS origin."""
+        u = _util({"KLANGK_NGINX_PORT": "9000"})
+        assert u.cors_origins() == ["http://localhost"]
+
+    def test_hosting_hostname_carries_port(self):
+        u = _util({"KLANGK_HOSTING_HOSTNAME": "localhost:8996"})
+        assert u.cors_origins() == ["http://localhost:8996"]
+
+    def test_hosting_hostname(self):
+        u = _util(
+            {
+                "KLANGK_HOSTING_HOSTNAME": "klangk.example.com",
+                "KLANGK_HOSTING_PROTO": "https",
+            }
+        )
+        assert u.cors_origins() == ["https://klangk.example.com"]
+
+    def test_hosting_hostname_default_proto(self):
+        u = _util({"KLANGK_HOSTING_HOSTNAME": "klangk.example.com"})
+        assert u.cors_origins() == ["http://klangk.example.com"]
+
+    def test_explicit_origins(self):
+        u = _util(
+            {
+                "KLANGK_CORS_ORIGINS": "https://a.example.com, https://b.example.com"
+            }
+        )
+        assert u.cors_origins() == [
+            "https://a.example.com",
+            "https://b.example.com",
+        ]
+
+    def test_explicit_origins_strips_empties(self):
+        u = _util({"KLANGK_CORS_ORIGINS": "https://a.com,,"})
+        assert u.cors_origins() == ["https://a.com"]
+
+    def test_explicit_overrides_hosting(self):
+        u = _util(
+            {
+                "KLANGK_CORS_ORIGINS": "https://override.com",
+                "KLANGK_HOSTING_HOSTNAME": "ignored.com",
+            }
+        )
+        assert u.cors_origins() == ["https://override.com"]

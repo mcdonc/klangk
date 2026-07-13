@@ -21,11 +21,7 @@ from .. import (
     wshandler,
 )
 from ._common import get_app_state_dep
-from ..util import (
-    client_is_loopback,
-    derive_hosting_info,
-    resolve_env_value,
-)
+from ..util import resolve_env_value
 from ._common import (
     send_email,
 )
@@ -89,7 +85,7 @@ async def register(
     password_hash = auth.hash_password(req.password)
     user_id = str(uuid.uuid4())
 
-    hostname, proto, base_path = derive_hosting_info(
+    hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
     )
     logger.info(
@@ -195,7 +191,7 @@ async def resend_verification(
         )
     resend_timestamps[req.email] = now
 
-    hostname, proto, base_path = derive_hosting_info(
+    hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
     )
     verification_token = auth.create_verification_token(user["id"])
@@ -241,7 +237,7 @@ async def forgot_password(
         )
     reset_timestamps[req.email] = now
 
-    hostname, proto, base_path = derive_hosting_info(
+    hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
     )
     reset_token = auth.create_password_reset_token(user["id"])
@@ -327,7 +323,7 @@ async def local_login(request: Request):
     # Independent loopback check: trusts X-Real-IP/X-Forwarded-For only when
     # the immediate peer is itself a trusted (loopback) proxy, so it can't be
     # spoofed by a direct non-loopback caller. See util.client_is_loopback.
-    if not client_is_loopback(
+    if not request.app.state.util.client_is_loopback(
         request.headers, request.client.host if request.client else None
     ):
         raise HTTPException(
@@ -425,7 +421,7 @@ async def change_email(
             (user["id"],),
         )
 
-    hostname, proto, base_path = derive_hosting_info(
+    hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
     )
     token = auth.create_verification_token(user["id"])
@@ -504,9 +500,11 @@ async def logout(
     if db_user and db_user.get("provider", "local") != "local":
         provider = request.app.state.oidc.get_provider(db_user["provider"])
         if provider:
-            hostname, proto, base_path = derive_hosting_info(
-                request.headers,
-                request.client.host if request.client else None,
+            hostname, proto, base_path = (
+                request.app.state.util.derive_hosting_info(
+                    request.headers,
+                    request.client.host if request.client else None,
+                )
             )
             post_logout_uri = f"{proto}://{hostname}{base_path}/#/login"
             logout_url = await request.app.state.oidc.build_logout_url(

@@ -477,10 +477,10 @@ class TestResolveIndirectionsValidator:
 
 
 class TestRequireDirsValidator:
-    """`state_dir` is required -- no default (#1461); a missing value fails at
-    construction, not at the first use that dereferences a ``None`` path.
-    `data_dir` and `plugins_dir` both default to `<state_dir>/<name>` when
-    unset (#1506); explicit values win."""
+    """`state_dir` and `data_dir` are required — no defaults (#1461). A
+    missing value fails at construction, not at the first use that
+    dereferences a ``None`` path. `plugins_dir` defaults to
+    `<state_dir>/plugins` when unset."""
 
     def test_missing_state_dir_fails(self):
         from pydantic import ValidationError
@@ -489,39 +489,34 @@ class TestRequireDirsValidator:
             KlangkSettings(env={"KLANGK_DATA_DIR": "/tmp/data"})
         assert "KLANGK_STATE_DIR" in str(exc_info.value)
 
-    def test_missing_state_dir_alone_fails(self):
+    def test_missing_data_dir_fails(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        assert "KLANGK_DATA_DIR" in str(exc_info.value)
+
+    def test_both_missing_fails(self):
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
             KlangkSettings(env={})
 
-    def test_data_dir_defaults_to_state_dir_data(self):
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
-        assert s.data_dir == os.path.join("/tmp/state", "data")
-
-    def test_explicit_data_dir_wins(self):
-        s = KlangkSettings(
+    def test_plugins_dir_defaults_to_state_dir_plugins(self):
+        s = make_settings(
             env={
                 "KLANGK_STATE_DIR": "/tmp/state",
-                "KLANGK_DATA_DIR": "/explicit/data",
+                "KLANGK_DATA_DIR": "/tmp/data",
             }
         )
-        assert s.data_dir == "/explicit/data"
-
-    def test_plugins_dir_defaults_to_state_dir_plugins(self):
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
         assert s.plugins_dir == os.path.join("/tmp/state", "plugins")
 
     def test_explicit_plugins_dir_wins(self):
-        s = KlangkSettings(
+        s = make_settings(
             env={
                 "KLANGK_STATE_DIR": "/tmp/state",
+                "KLANGK_DATA_DIR": "/tmp/data",
                 "KLANGK_PLUGINS_DIR": "/explicit/plugins",
             }
         )
         assert s.plugins_dir == "/explicit/plugins"
-
-    def test_both_derived_dirs_default_together(self):
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
-        assert s.data_dir == os.path.join("/tmp/state", "data")
-        assert s.plugins_dir == os.path.join("/tmp/state", "plugins")

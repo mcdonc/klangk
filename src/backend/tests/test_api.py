@@ -22,6 +22,7 @@ from klangk_backend import (
 )
 from klangk_backend.container import ContainerRegistry
 from klangk_backend import emailsvc as emailsvc_mod
+from klangk_backend import util as util_mod
 from klangk_backend import oidc as oidc_mod
 from klangk_backend import plugins as plugins_mod
 from _helpers import make_settings
@@ -62,6 +63,7 @@ async def app(db, temp_data_dir):
     app.state.agents = agent.Agents(app.state)
     app.state.agents.get_workspace_session = sockets.get_session
     app.state.email = emailsvc_mod.EmailService(app.state)
+    app.state.util = util_mod.Util(app.state)
 
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)
