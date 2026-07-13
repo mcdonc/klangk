@@ -410,11 +410,8 @@ class TestConfig:
         data = resp.json()
         assert data["min_password_length"] == _auth().min_password_length
 
-    async def test_get_config_logo_url_defaults_empty(
-        self, client, app, monkeypatch
-    ):
+    async def test_get_config_logo_url_defaults_empty(self, client, app):
         # No KLANGK_LOGO_URL set -> empty string (UI renders default widget).
-        monkeypatch.delenv("KLANGK_LOGO_URL", raising=False)
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         assert resp.json()["logo_url"] == ""
@@ -2505,7 +2502,7 @@ class TestWorkspaceSharingRoutes:
         # guard (which only fires on a grant) must let it through.
         from klangk_backend.main import seed_agent_user
 
-        await seed_agent_user(make_settings(os.environ))
+        await seed_agent_user(make_settings({}))
         agent = await model.get_user_by_id(model.AGENT_USER_ID)
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -2557,7 +2554,7 @@ class TestWorkspaceSharingRoutes:
         # points themselves are unit-tested in test_model.py.
         from klangk_backend.main import seed_agent_user
 
-        await seed_agent_user(make_settings(os.environ))
+        await seed_agent_user(make_settings({}))
         agent = await model.get_user_by_id(model.AGENT_USER_ID)
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -3218,7 +3215,7 @@ class TestTransferOwnership:
     async def test_transfer_to_agent_rejected(self, client, user):
         from klangk_backend.main import seed_agent_user
 
-        await seed_agent_user(make_settings(os.environ))
+        await seed_agent_user(make_settings({}))
         agent = await model.get_user_by_id(model.AGENT_USER_ID)
 
         headers = await _auth_headers(client)
@@ -5070,7 +5067,7 @@ class TestAdminEndpoints:
     async def test_delete_agent_user_rejected(self, client, admin_user, db):
         from klangk_backend.main import seed_agent_user
 
-        await seed_agent_user(make_settings(os.environ))
+        await seed_agent_user(make_settings({}))
         headers = await self._admin_headers(client)
         resp = await client.delete(
             f"/api/v1/admin/users/{model.AGENT_USER_ID}", headers=headers
@@ -5192,7 +5189,7 @@ class TestAdminEndpoints:
         # Seed the agent user so it exists in the DB
         from klangk_backend.main import seed_agent_user
 
-        await seed_agent_user(make_settings(os.environ))
+        await seed_agent_user(make_settings({}))
         headers = await self._admin_headers(client)
         resp = await client.patch(
             f"/api/v1/admin/users/{model.AGENT_USER_ID}",

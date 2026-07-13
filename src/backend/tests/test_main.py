@@ -65,26 +65,35 @@ def _make_app_state(settings=None):
 
 
 class TestSeedDefaultUser:
-    async def test_creates_user_when_missing(self, db, monkeypatch):
-        monkeypatch.setenv("KLANGK_DEFAULT_USER", "seed-test")
-        monkeypatch.setenv("KLANGK_DEFAULT_PASSWORD", "seed-pass")
-        await main.seed_default_user(make_settings(os.environ))
+    async def test_creates_user_when_missing(self, db):
+        await main.seed_default_user(
+            make_settings(
+                {
+                    "KLANGK_DEFAULT_USER": "seed-test",
+                    "KLANGK_DEFAULT_PASSWORD": "seed-pass",
+                }
+            )
+        )
         user = await model.get_user_by_email("seed-test")
         assert user is not None
 
-    async def test_skips_existing_user(self, db, monkeypatch):
-        monkeypatch.setenv("KLANGK_DEFAULT_USER", "seed-test")
-        monkeypatch.setenv("KLANGK_DEFAULT_PASSWORD", "seed-pass")
-        await main.seed_default_user(make_settings(os.environ))
+    async def test_skips_existing_user(self, db):
+        s = make_settings(
+            {
+                "KLANGK_DEFAULT_USER": "seed-test",
+                "KLANGK_DEFAULT_PASSWORD": "seed-pass",
+            }
+        )
+        await main.seed_default_user(s)
         # Call again — should not raise
-        await main.seed_default_user(make_settings(os.environ))
+        await main.seed_default_user(s)
         user = await model.get_user_by_email("seed-test")
         assert user is not None
 
-    async def test_generates_password_when_not_set(self, db, monkeypatch):
-        monkeypatch.setenv("KLANGK_DEFAULT_USER", "gen-test")
-        monkeypatch.delenv("KLANGK_DEFAULT_PASSWORD", raising=False)
-        await main.seed_default_user(make_settings(os.environ))
+    async def test_generates_password_when_not_set(self, db):
+        await main.seed_default_user(
+            make_settings({"KLANGK_DEFAULT_USER": "gen-test"})
+        )
         user = await model.get_user_by_email("gen-test")
         assert user is not None
         # User exists and is in the admin group
@@ -94,14 +103,14 @@ class TestSeedDefaultUser:
         assert admin_group["id"] in group_ids
 
     async def test_generated_password_printed_to_stderr(
-        self, db, monkeypatch, caplog, capsys
+        self, db, caplog, capsys
     ):
-        monkeypatch.setenv("KLANGK_DEFAULT_USER", "log-test")
-        monkeypatch.delenv("KLANGK_DEFAULT_PASSWORD", raising=False)
         import logging
 
         with caplog.at_level(logging.INFO):
-            await main.seed_default_user(make_settings(os.environ))
+            await main.seed_default_user(
+                make_settings({"KLANGK_DEFAULT_USER": "log-test"})
+            )
         # Password must NOT appear in log output (security)
         assert "password printed to stderr" in caplog.text
         assert "log-test" in caplog.text
@@ -246,26 +255,36 @@ class TestNoAuthBindSafety:
 
 class TestSeedAgentUser:
     async def test_creates_agent_user(self, db):
-        await main.seed_agent_user(make_settings(os.environ))
+        await main.seed_agent_user(make_settings({}))
         user = await model.get_user_by_id(model.AGENT_USER_ID)
         assert user is not None
         assert user["email"] == "clanker@example.com"
         assert user["handle"] == "clanker"
 
-    async def test_custom_env_vars(self, db, monkeypatch):
-        monkeypatch.setenv("KLANGK_AGENT_EMAIL", "bot@test.com")
-        monkeypatch.setenv("KLANGK_AGENT_HANDLE", "TestBot")
-        await main.seed_agent_user(make_settings(os.environ))
+    async def test_custom_env_vars(self, db):
+        await main.seed_agent_user(
+            make_settings(
+                {
+                    "KLANGK_AGENT_EMAIL": "bot@test.com",
+                    "KLANGK_AGENT_HANDLE": "TestBot",
+                }
+            )
+        )
         user = await model.get_user_by_id(model.AGENT_USER_ID)
         assert user is not None
         assert user["email"] == "bot@test.com"
         assert user["handle"] == "TestBot"
 
-    async def test_upserts_existing(self, db, monkeypatch):
-        await main.seed_agent_user(make_settings(os.environ))
-        monkeypatch.setenv("KLANGK_AGENT_EMAIL", "new@test.com")
-        monkeypatch.setenv("KLANGK_AGENT_HANDLE", "NewBot")
-        await main.seed_agent_user(make_settings(os.environ))
+    async def test_upserts_existing(self, db):
+        await main.seed_agent_user(make_settings({}))
+        await main.seed_agent_user(
+            make_settings(
+                {
+                    "KLANGK_AGENT_EMAIL": "new@test.com",
+                    "KLANGK_AGENT_HANDLE": "NewBot",
+                }
+            )
+        )
         user = await model.get_user_by_id(model.AGENT_USER_ID)
         assert user["email"] == "new@test.com"
         assert user["handle"] == "NewBot"
@@ -273,7 +292,7 @@ class TestSeedAgentUser:
     async def test_clears_cache(self, db):
         # Prime cache with fallback
         await model.get_agent_user()
-        await main.seed_agent_user(make_settings(os.environ))
+        await main.seed_agent_user(make_settings({}))
         # Cache should now reflect DB values
         agent = await model.get_agent_user()
         assert agent["email"] == "clanker@example.com"
@@ -297,9 +316,7 @@ class TestSeedAgentUser:
         # The underlying driver-level cause is the sqlite UNIQUE violation.
         assert isinstance(exc_info.value.orig, sqlite3.IntegrityError)
 
-    async def test_seed_refuses_handle_collision_with_human(
-        self, db, monkeypatch
-    ):
+    async def test_seed_refuses_handle_collision_with_human(self, db):
         """Seeding the agent with a live user's handle fails cleanly.
 
         The destructive path is ensure_home_symlink migrating that user's
@@ -310,35 +327,33 @@ class TestSeedAgentUser:
             "alice@example.com", "hash", verified=True
         )
         assert human["handle"] == "alice"
-        monkeypatch.setenv("KLANGK_AGENT_HANDLE", "alice")
         with pytest.raises(RuntimeError, match="alice"):
-            await main.seed_agent_user(make_settings(os.environ))
+            await main.seed_agent_user(
+                make_settings({"KLANGK_AGENT_HANDLE": "alice"})
+            )
         # Human user is untouched.
         refreshed = await model.get_user_by_id(human["id"])
         assert refreshed["handle"] == "alice"
         # Agent was not created with the colliding handle.
         assert await model.get_user_by_id(model.AGENT_USER_ID) is None
 
-    async def test_seed_rename_to_human_handle_refuses(self, db, monkeypatch):
+    async def test_seed_rename_to_human_handle_refuses(self, db):
         """Re-seeding the agent onto a human's handle fails, leaves agent as-is."""
-        await main.seed_agent_user(
-            make_settings(os.environ)
-        )  # agent handle = clanker
+        await main.seed_agent_user(make_settings({}))  # agent handle = clanker
         human = await model.create_user(
             "alice@example.com", "hash", verified=True
         )
-        monkeypatch.setenv("KLANGK_AGENT_HANDLE", "alice")
         with pytest.raises(RuntimeError, match="already used by another user"):
-            await main.seed_agent_user(make_settings(os.environ))
+            await main.seed_agent_user(
+                make_settings({"KLANGK_AGENT_HANDLE": "alice"})
+            )
         # Agent keeps its original handle; human untouched.
         agent = await model.get_user_by_id(model.AGENT_USER_ID)
         assert agent["handle"] == "clanker"
         refreshed = await model.get_user_by_id(human["id"])
         assert refreshed["handle"] == "alice"
 
-    async def test_collision_leaves_human_files_untouched(
-        self, db, monkeypatch, tmp_path
-    ):
+    async def test_collision_leaves_human_files_untouched(self, db, tmp_path):
         """A handle collision never reaches ensure_home_symlink's adoption.
 
         Builds the on-disk layout that the destructive branch would migrate
@@ -358,9 +373,10 @@ class TestSeedAgentUser:
         (human_dir / "secret.txt").write_text("alice's secrets")
         (home / "alice").symlink_to(f".users/{human['id']}")
 
-        monkeypatch.setenv("KLANGK_AGENT_HANDLE", "alice")
         with pytest.raises(RuntimeError):
-            await main.seed_agent_user(make_settings(os.environ))
+            await main.seed_agent_user(
+                make_settings({"KLANGK_AGENT_HANDLE": "alice"})
+            )
 
         # Human's files are exactly where they were — nothing migrated.
         assert (human_dir / "secret.txt").read_text() == "alice's secrets"
@@ -373,14 +389,7 @@ class TestSeedAgentUser:
 
 
 class TestLifespan:
-    async def test_lifespan_starts_and_stops(self, db, monkeypatch):
-        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
-        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
-        # Default mode is now ``none``; pin the bind loopback so the
-        # no-auth safety gate admits startup deterministically (the real
-        # out-of-box boot path).
-        monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
-        monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
+    async def test_lifespan_starts_and_stops(self, db):
         app = FastAPI()
         app_state = _make_app_state()
         app.state.container_registry = app_state.container_registry
@@ -423,15 +432,9 @@ class TestLifespan:
             mock_shutdown.assert_awaited_once()
             mock_remove.assert_called_once()
 
-    async def test_lifespan_workspace_killed_resets_state(
-        self, db, monkeypatch
-    ):
+    async def test_lifespan_workspace_killed_resets_state(self, db):
         """The workspace-killed callback threads app.state into
         reset_workspace_state (sockets, workspace_id) — #1475."""
-        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
-        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
-        monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
-        monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
         app = FastAPI()
         app_state = _make_app_state()
         app.state.container_registry = app_state.container_registry
@@ -471,11 +474,7 @@ class TestLifespan:
                 await registry.on_workspace_killed("ws-killed")
         mock_reset.assert_awaited_once_with(app.state.sockets, "ws-killed")
 
-    async def test_lifespan_refuses_if_pid_alive(self, db, monkeypatch):
-        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
-        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
-        monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
-        monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
+    async def test_lifespan_refuses_if_pid_alive(self, db):
         from klangk_backend.model import db as db_mod
 
         app = FastAPI()
@@ -657,12 +656,8 @@ class TestStartupShutdownRestart:
             await asyncio.sleep(0)
         mock_restart.assert_awaited_once_with(app_state, wd)
 
-    async def test_lifespan_registers_sighup_handler(self, db, monkeypatch):
+    async def test_lifespan_registers_sighup_handler(self, db):
         """The lifespan installs (and removes) a SIGHUP handler."""
-        monkeypatch.delenv("KLANGK_OIDC_CONFIG", raising=False)
-        monkeypatch.delenv("KLANGK_AUTH_MODES", raising=False)
-        monkeypatch.setenv("KLANGK_LISTEN", "127.0.0.1")
-        monkeypatch.delenv("KLANGK_PREVENT_INSECURE_JWT_SECRET", raising=False)
         app = FastAPI()
         app_state = _make_app_state()
         app.state.container_registry = app_state.container_registry
@@ -822,7 +817,6 @@ class TestSetupStaticFiles:
         custom = tmp_path / "cust"
         branding = custom / "branding"
         branding.mkdir(parents=True)
-        monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", str(custom))
 
         test_app = FastAPI()
         _settings = make_settings({"KLANGK_CUSTOMIZE_DIR": str(custom)})

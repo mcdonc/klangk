@@ -12,6 +12,8 @@ import pytest
 
 from klangk_backend.settings import KlangkSettings
 
+from _helpers import make_settings
+
 # Use fast bcrypt rounds (4 instead of default 12) for all tests.
 _original_gensalt = bcrypt.gensalt
 
@@ -37,24 +39,6 @@ def _disable_nginx(monkeypatch):
     Sets the internal, non-user-facing ``_KLANGK_DISABLE_NGINX`` kill switch.
     """
     monkeypatch.setenv("_KLANGK_DISABLE_NGINX", "1")
-
-
-@pytest.fixture(autouse=True)
-def _default_auth_mode(monkeypatch):
-    """Pin the test suite to ``password`` mode.
-
-    The production default for ``KLANGK_AUTH_MODES`` (when unset and no OIDC
-    is configured) is ``none`` — see ``oidc.auth_modes``. Most backend tests
-    exercise the authenticated API via ``_auth_headers`` (HTTP login), which
-    the ``password`` gate admits; pinning the suite here keeps that working
-    regardless of how the production default evolves, so a default change
-    doesn't silently flip ~190 login-flow tests.
-
-    Tests that care about a *specific* mode set it themselves (their
-    ``setenv``/``delenv`` overrides this). ``delenv`` is the way to opt into
-    the real production default within a test.
-    """
-    monkeypatch.setenv("KLANGK_AUTH_MODES", "password")
 
 
 @pytest.fixture(autouse=True)
@@ -200,14 +184,20 @@ def app_state(temp_data_dir):
     """
     import types
 
-    from klangk_backend.settings import KlangkSettings
     from klangk_backend.auth import Auth
     from klangk_backend.container import ContainerRegistry
     from klangk_backend.emailsvc import EmailService
     from klangk_backend.util import Util
     from klangk_backend.workspaces import Workspaces
 
-    settings = KlangkSettings(os.environ)
+    settings = make_settings(
+        {
+            "KLANGK_AUTH_MODES": "password",
+            "KLANGK_DATA_DIR": str(temp_data_dir),
+            "KLANGK_STATE_DIR": str(temp_data_dir / "state"),
+            "KLANGK_CUSTOMIZE_DIR": str(temp_data_dir / "customize"),
+        }
+    )
     state = types.SimpleNamespace(settings=settings)
     state.auth = Auth(state)
     registry = ContainerRegistry(state)

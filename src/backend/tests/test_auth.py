@@ -1,6 +1,5 @@
 """Tests for auth module: password hashing, JWT tokens, login/register."""
 
-import os
 import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -275,32 +274,12 @@ class TestLogin:
 class TestLoginRateLimit:
     """Tests for login brute-force protection.
 
-    The default LOGIN_LOCKOUT_FAILURES is 5 (enabled); these tests pin
-    it explicitly to 5 and reload the auth module so they exercise the
-    lockout machinery deterministically regardless of the default.
+    The default LOGIN_LOCKOUT_FAILURES is 5 (enabled); ``_auth()`` builds
+    ``Auth(make_settings({}))`` which picks up that default, so these tests
+    exercise the lockout machinery deterministically (#1515: auth reads
+    from settings at construction, not module globals — the old reload
+    dance is obsolete).
     """
-
-    def setup_method(self):
-        self._prev = os.environ.get("KLANGK_LOGIN_LOCKOUT_FAILURES")
-        os.environ["KLANGK_LOGIN_LOCKOUT_FAILURES"] = "5"
-        import importlib
-        import klangk_backend.auth as a
-
-        importlib.reload(a)
-        globals()["auth"] = a
-        globals()["model"] = a.model
-
-    def teardown_method(self):
-        if self._prev is None:
-            os.environ.pop("KLANGK_LOGIN_LOCKOUT_FAILURES", None)
-        else:
-            os.environ["KLANGK_LOGIN_LOCKOUT_FAILURES"] = self._prev
-        import importlib
-        import klangk_backend.auth as a
-
-        importlib.reload(a)
-        globals()["auth"] = a
-        globals()["model"] = a.model
 
     async def test_login_wrong_password_records_attempt(self, user):
         """Wrong password increments attempt count."""

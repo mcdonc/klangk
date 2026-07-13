@@ -108,7 +108,6 @@ class TestApplyBackendSslTrust:
         cert_dir = tmp_path / "ssl"
         cert_dir.mkdir()
         (cert_dir / "corp-ca.pem").write_text("FAKE-CORP-CA\n")
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(cert_dir))
         monkeypatch.setattr(
             ssl_trust,
             "system_ca_bundle",
@@ -140,7 +139,6 @@ class TestApplyBackendSslTrust:
         cert_dir = tmp_path / "ssl"
         cert_dir.mkdir()
         (cert_dir / "corp-ca.crt").write_text("CORP\n")
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(cert_dir))
         monkeypatch.setattr(
             ssl_trust,
             "system_ca_bundle",
@@ -171,7 +169,6 @@ class TestApplyBackendSslTrust:
         cert_dir = tmp_path / "ssl"
         cert_dir.mkdir()
         (cert_dir / "corp-ca.pem").write_text("CORP\n")
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(cert_dir))
         monkeypatch.setattr(
             ssl_trust,
             "system_ca_bundle",
@@ -205,7 +202,6 @@ class TestApplyBackendSslTrust:
         cert_dir = tmp_path / "ssl"
         cert_dir.mkdir()
         (cert_dir / "corp-ca.pem").write_text("CORP\n")
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(cert_dir))
         monkeypatch.setattr(ssl_trust, "system_ca_bundle", lambda **kw: None)
         s = _settings(
             {
@@ -332,8 +328,6 @@ class TestInternalsAndErrorBranches:
         cert_dir = tmp_path / "ssl"
         cert_dir.mkdir()
         (cert_dir / "c.pem").write_text("C")
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(cert_dir))
-        monkeypatch.setenv("KLANGK_DATA_DIR", str(tmp_path / "data"))
         monkeypatch.setattr(
             ssl_trust.os,
             "makedirs",
@@ -354,8 +348,6 @@ class TestInternalsAndErrorBranches:
     def test_apply_warns_on_empty_bundle(self, monkeypatch, tmp_path, caplog):
         cert_dir = tmp_path / "ssl"
         cert_dir.mkdir()
-        monkeypatch.setenv("KLANGK_SSL_CERT_DIR", str(cert_dir))
-        monkeypatch.setenv("KLANGK_DATA_DIR", str(tmp_path / "data"))
         monkeypatch.setattr(
             ssl_trust, "system_ca_bundle", lambda self_bundle=None: None
         )
