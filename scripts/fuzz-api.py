@@ -6,18 +6,22 @@ fuzzed values for a configurable duration.  Watches responses and server
 logs for anomalies (5xx errors, unhandled exceptions, crashes).
 
 Usage:
-    scripts/fuzz-api.py [--duration MINUTES] [--port PORT] [--seed SEED]
+    scripts/fuzz-api.py [--duration MINUTES] [--seed SEED]   # fuzz
+    scripts/fuzz-api.py --check                                # drift gate
 
 The script:
-  - Starts its own uvicorn server in a subprocess (using a temp data dir)
+  - Starts its own klangkd server in a subprocess (bound to a Unix socket
+    in a temp state dir; nginx suppressed) and talks to it over the UDS
   - Logs in as admin and uses the token for authenticated requests
   - Generates random payloads: valid-ish values, boundary values, type
     confusion, oversized strings, unicode, null bytes, nested objects
   - Fires requests at every known endpoint with fuzzed parameters
   - Collects all 5xx responses and stderr output from the server
   - Prints a summary report at the end
+  - ``--check`` diffs the declared ENDPOINTS against the live router's
+    OpenAPI schema (no server started) and exits 1 on drift
 
-Exit code 0 = no anomalies, 1 = anomalies found.
+Exit code 0 = no anomalies (or, with --check, no drift), 1 = anomalies / drift.
 """
 
 import argparse
@@ -254,6 +258,7 @@ P = "/api/v1"  # all routes except /health are under this prefix
 ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     # Public (root_router — no prefix)
     ("GET", "/health", None, None),
+    ("GET", "/empty", None, None),  # OAuth callback landing page
     # Public (router — /api/v1 prefix)
     ("GET", f"{P}/version", None, None),
     ("GET", f"{P}/config", None, None),
@@ -281,6 +286,7 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
         None,
     ),
     # Auth — with token
+    ("POST", f"{P}/auth/local", None, None),  # no-auth mode; 403 in password mode
     ("POST", f"{P}/auth/refresh", None, None),
     (
         "POST",
@@ -335,7 +341,14 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
         None,
     ),
     ("POST", f"{P}/workspaces/{{workspace_id}}/restart", None, None),
+    ("GET", f"{P}/workspaces/{{workspace_id}}/status", None, None),
     ("GET", f"{P}/workspaces/{{workspace_id}}/export", None, None),
+    (
+        "POST",
+        f"{P}/workspaces/{{workspace_id}}/transfer",
+        {"email": "email"},
+        None,
+    ),  # transfer ownership
     ("POST", f"{P}/workspaces/import", None, None),  # multipart upload
     # Workspace members
     ("GET", f"{P}/workspaces/{{workspace_id}}/members", None, None),
@@ -473,6 +486,13 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
         {"email": "email", "password": "password", "handle": "string"},
         None,
     ),
+    (
+        "GET",
+        f"{P}/admin/users/{{user_id}}/workspaces",
+        None,
+        {"limit": "int", "offset": "int"},
+    ),
+    ("POST", f"{P}/admin/users/{{user_id}}/unlockout", None, None),
     ("GET", f"{P}/admin/groups", None, None),
     (
         "POST",
@@ -566,66 +586,74 @@ class TeeReader:
         return "".join(self._buf)
 
 
-def start_server(port: int, data_dir: str) -> tuple[subprocess.Popen, TeeReader]:
-    """Start a uvicorn server as a subprocess.
+def start_server(data_dir: str) -> tuple[subprocess.Popen, TeeReader, str]:
+    """Start a klangkd server as a subprocess, bound to a Unix socket.
 
-    Returns (process, tee_reader) — the tee_reader streams server stderr
-    to the terminal in real time and captures it for the report.
+    ``klangkd`` is the real server launcher (``--config none`` = env-only);
+    it always binds a UDS at ``<state_dir>/klangk.sock`` and would normally
+    start an nginx child, so ``_KLANGK_DISABLE_NGINX`` suppresses nginx —
+    the fuzzer talks to the backend directly over the socket. ``KLANGK_TEST_MODE``
+    registers the ``/api/v1/test/*`` routes the fuzzer also exercises.
+
+    Returns (process, tee_reader, uds_path) — the tee_reader streams server
+    stderr to the terminal in real time and captures it for the report.
     """
+    uds_path = os.path.join(data_dir, "klangk.sock")
     env = {
         **os.environ,
-        "KLANGK_DATA_DIR": data_dir,
+        "KLANGK_STATE_DIR": data_dir,
         "KLANGK_DEFAULT_USER": "admin@example.com",
         "KLANGK_DEFAULT_PASSWORD": "admin",
         "KLANGK_JWT_SECRET": "fuzz-test-secret",
         "KLANGK_MIN_PASSWORD_LENGTH": "1",
+        "KLANGK_AUTH_MODES": "password",
+        "KLANGK_TEST_MODE": "1",
+        # Suppress nginx spawn (the fuzzer hits the backend UDS directly).
+        "_KLANGK_DISABLE_NGINX": "1",
         # Disable features that need external services
         "KLANGK_IMAGE_PULL_POLICY": "never",
     }
     proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "klangk_backend.main:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            "--no-access-log",
-        ],
-        cwd=os.path.join(os.path.dirname(__file__), "..", "src", "backend"),
+        ["klangkd", "--config", "none"],
         env=env,
         stderr=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
     )
     tee = TeeReader(proc.stderr)
-    return proc, tee
+    return proc, tee, uds_path
 
 
-def wait_for_server(base_url: str, timeout: float = 30) -> None:
-    """Poll /health until the server is up."""
+def wait_for_server(uds_path: str, timeout: float = 30) -> None:
+    """Poll /health until the server is up (over the UDS)."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            r = httpx.get(f"{base_url}/health", timeout=2)
-            if r.status_code == 200:
-                return
-        except httpx.ConnectError:
+            with httpx.Client(
+                transport=httpx.HTTPTransport(uds=uds_path),
+                base_url="http://klangkd",
+                timeout=2,
+            ) as c:
+                if c.get("/health").status_code == 200:
+                    return
+        except (httpx.ConnectError, httpx.HTTPError):
             pass
         time.sleep(0.3)
     raise TimeoutError("Server did not start in time")
 
 
-def login(base_url: str) -> str:
-    """Log in as admin and return the access token."""
-    r = httpx.post(
-        f"{base_url}/api/v1/auth/login",
-        json={"email": "admin@example.com", "password": "admin"},
+def login(uds_path: str) -> str:
+    """Log in as admin and return the access token (over the UDS)."""
+    with httpx.Client(
+        transport=httpx.HTTPTransport(uds=uds_path),
+        base_url="http://klangkd",
         timeout=10,
-    )
-    r.raise_for_status()
-    return r.json()["access_token"]
+    ) as c:
+        r = c.post(
+            "/api/v1/auth/login",
+            json={"email": "admin@example.com", "password": "admin"},
+        )
+        r.raise_for_status()
+        return r.json()["access_token"]
 
 
 # ---------------------------------------------------------------------------
@@ -760,7 +788,7 @@ class AnomalyTracker:
 
 
 async def run_fuzz(
-    base_url: str,
+    uds_path: str,
     token: str,
     duration_minutes: float,
     seed: int,
@@ -773,17 +801,23 @@ async def run_fuzz(
     headers = {"Authorization": f"Bearer {token}"}
     workspace_ids: list[str] = []
 
+    transport = httpx.AsyncHTTPTransport(uds=uds_path)
+
     # Pre-create a couple of workspaces
     for i in range(2):
         try:
-            r = httpx.post(
-                f"{base_url}/api/v1/workspaces",
-                json={"name": f"fuzz-ws-{i}"},
-                headers=headers,
+            with httpx.Client(
+                transport=httpx.HTTPTransport(uds=uds_path),
+                base_url="http://klangkd",
                 timeout=10,
-            )
-            if r.status_code == 200:
-                workspace_ids.append(r.json()["id"])
+            ) as c:
+                r = c.post(
+                    "/api/v1/workspaces",
+                    json={"name": f"fuzz-ws-{i}"},
+                    headers=headers,
+                )
+                if r.status_code == 200:
+                    workspace_ids.append(r.json()["id"])
         except Exception:
             pass
 
@@ -792,26 +826,39 @@ async def run_fuzz(
     group_ids: list[str] = []
     for i in range(3):
         try:
-            r = httpx.post(
-                f"{base_url}/api/v1/admin/users",
-                json={"email": f"fuzzuser{i}@example.com", "password": "fuzzpass"},
-                headers=headers,
+            with httpx.Client(
+                transport=httpx.HTTPTransport(uds=uds_path),
+                base_url="http://klangkd",
                 timeout=10,
-            )
-            if r.status_code == 200:
-                user_ids.append(r.json()["id"])
+            ) as c:
+                r = c.post(
+                    "/api/v1/admin/users",
+                    json={
+                        "email": f"fuzzuser{i}@example.com",
+                        "password": "fuzzpass",
+                    },
+                    headers=headers,
+                )
+                if r.status_code == 200:
+                    user_ids.append(r.json()["id"])
         except Exception:
             pass
     for i in range(2):
         try:
-            r = httpx.post(
-                f"{base_url}/api/v1/admin/groups",
-                json={"name": f"fuzz-group-{i}"},
-                headers=headers,
+            with httpx.Client(
+                transport=httpx.HTTPTransport(uds=uds_path),
+                base_url="http://klangkd",
                 timeout=10,
-            )
-            if r.status_code in (200, 201):
-                group_ids.append(r.json()["id"])
+            ) as c:
+                r = c.post(
+                    "/api/v1/admin/groups",
+                    json={"name": f"fuzz-group-{i}"},
+                    headers=headers,
+                )
+                if r.status_code in (200, 201):
+                    group_ids.append(r.json()["id"])
+        except Exception:
+            pass
         except Exception:
             pass
 
@@ -823,7 +870,9 @@ async def run_fuzz(
         len(group_ids),
     )
 
-    async with httpx.AsyncClient(base_url=base_url, timeout=10) as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://klangkd", timeout=10
+    ) as client:
         while time.monotonic() < deadline:
             # Pick a random endpoint
             method, path_template, body_schema, query_schema = rng.choice(ENDPOINTS)
@@ -923,10 +972,78 @@ async def run_fuzz(
             # Periodically re-login in case the token was invalidated
             if tracker.requests_sent % 200 == 0:
                 try:
-                    new_token = login(base_url)
+                    new_token = login(uds_path)
                     headers["Authorization"] = f"Bearer {new_token}"
                 except Exception:
                     pass  # will continue with old or no token
+
+
+# ---------------------------------------------------------------------------
+# Endpoint drift check (--check mode)
+# ---------------------------------------------------------------------------
+
+
+def _fuzzed_routes() -> set[tuple[str, str]]:
+    """The (method, path) set the fuzzer declares, excluding the
+    synthetic ``/{random_path}`` catch-all (not a real route)."""
+    out = set()
+    for method, path, _body, _query in ENDPOINTS:
+        if "{random_path}" in path:
+            continue
+        out.add((method.upper(), path))
+    return out
+
+
+def _backend_routes() -> set[tuple[str, str]]:
+    """The (method, path) set the live router declares, read from the
+    FastAPI OpenAPI schema (``build_app`` with ``KLANGK_TEST_MODE=1`` so
+    the ``/api/v1/test/*`` routes are included)."""
+    # The test-mode gate in api/__init__.py reads os.environ directly (not
+    # the KlangkSettings env dict), so set it on os.environ before build_app
+    # imports/registers the test routes.
+    os.environ["KLANGK_TEST_MODE"] = "1"
+    os.environ["_KLANGK_DISABLE_NGINX"] = "1"
+    env = {
+        **os.environ,
+        "KLANGK_STATE_DIR": tempfile.mkdtemp(prefix="klangk-check-"),
+        "KLANGK_JWT_SECRET": "check-secret",
+    }
+    from klangk_backend.main import build_app
+    from klangk_backend.settings import KlangkSettings
+
+    app = build_app(KlangkSettings(env))
+    routes: set[tuple[str, str]] = set()
+    for path, ops in app.openapi()["paths"].items():
+        for method in ops:
+            routes.add((method.upper(), path))
+    return routes
+
+
+def check_endpoints() -> int:
+    """Diff ENDPOINTS against the live router; fail on drift (#1536).
+
+    Prints the missing/extra sets and returns 0 if they match, 1 otherwise.
+    Run as ``scripts/fuzz-api.py --check`` — a cheap, server-less gate for
+    CI so the fuzzer's hand-curated route list can't silently fall behind
+    the backend again.
+    """
+    backend = _backend_routes()
+    fuzzed = _fuzzed_routes()
+    missing = sorted(backend - fuzzed, key=lambda x: x[1])
+    extra = sorted(fuzzed - backend, key=lambda x: x[1])
+    print(f"backend routes: {len(backend)}  fuzzer endpoints: {len(fuzzed)}")
+    if missing:
+        print("\nMISSING from fuzzer (real routes not fuzzed):")
+        for m, p in missing:
+            print(f"  {m:6} {p}")
+    if extra:
+        print("\nEXTRA in fuzzer (fuzzed, no matching route):")
+        for m, p in extra:
+            print(f"  {m:6} {p}")
+    if not missing and not extra:
+        print("No drift ✓")
+        return 0
+    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -937,16 +1054,18 @@ async def run_fuzz(
 def main():
     parser = argparse.ArgumentParser(description="API fuzz tester for klangk")
     parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Don't fuzz: diff ENDPOINTS against the live router's OpenAPI "
+            "schema and exit 1 on drift. Server-less; for CI."
+        ),
+    )
+    parser.add_argument(
         "--duration",
         type=float,
         default=30,
         help="Duration in minutes (default: 30)",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=18997,
-        help="Port for the test server (default: 18997)",
     )
     parser.add_argument(
         "--seed",
@@ -956,8 +1075,6 @@ def main():
     )
     args = parser.parse_args()
 
-    seed = args.seed if args.seed is not None else random.randint(0, 2**32)
-
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -966,19 +1083,22 @@ def main():
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-    base_url = f"http://127.0.0.1:{args.port}"
+    if args.check:
+        sys.exit(check_endpoints())
+
+    seed = args.seed if args.seed is not None else random.randint(0, 2**32)
 
     tracker = AnomalyTracker()
 
     with tempfile.TemporaryDirectory(prefix="klangk-fuzz-") as data_dir:
-        logger.info("Starting server on port %d (data_dir=%s)", args.port, data_dir)
-        proc, tee = start_server(args.port, data_dir)
+        logger.info("Starting klangkd (uds=%s/klangk.sock)", data_dir)
+        proc, tee, uds_path = start_server(data_dir)
 
         try:
-            wait_for_server(base_url)
+            wait_for_server(uds_path)
             logger.info("Server is up")
 
-            token = login(base_url)
+            token = login(uds_path)
             logger.info("Logged in as admin")
 
             logger.info(
@@ -986,7 +1106,7 @@ def main():
                 args.duration,
                 seed,
             )
-            asyncio.run(run_fuzz(base_url, token, args.duration, seed, tracker))
+            asyncio.run(run_fuzz(uds_path, token, args.duration, seed, tracker))
         except KeyboardInterrupt:
             logger.info("Interrupted by user")
         except Exception:

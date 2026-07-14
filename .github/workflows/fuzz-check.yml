@@ -1,0 +1,39 @@
+name: "Fuzz API: endpoint drift check"
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [release/**]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            relevant:
+              - 'scripts/fuzz-api.py'
+              - 'src/backend/klangk_backend/api/**'
+              - 'src/backend/klangk_backend/main.py'
+              - '.github/workflows/fuzz-check.yml'
+
+      - uses: ./.github/actions/devenv-setup
+        if: steps.filter.outputs.relevant == 'true'
+
+      - name: Check fuzzer ENDPOINTS against the live router
+        if: steps.filter.outputs.relevant == 'true'
+        run: devenv shell -- python scripts/fuzz-api.py --check
+
+      - name: Skip notice
+        if: steps.filter.outputs.relevant != 'true'
+        run: echo "No fuzzer/API changes — skipping fuzz drift check"
