@@ -111,6 +111,17 @@ at boot — the literal token is never stored in `.env`. Values are
 single-quoted because `.env` is `source`d by bash: unquoted
 `VAR=cmd:cat /path` parses as `VAR=cmd:cat` + execute `/path`.
 
+### 10. KLANGK_ALLOW_AUTOSTART=1 in .env (run-demo-backend.sh)
+
+Scene 3 (`klangkc sandbox`) creates a workspace with `auto_start: true` from the
+sandbox config. The server rejects this with 400 unless `KLANGK_ALLOW_AUTOSTART=1`
+is set. Added to the managed `.env` block and the idempotency guard.
+
+### 11. Scene 3 Setup complete timeout (cli_demo.py)
+
+The openclaw `setup.sh` can take longer than the original 180s timeout on first
+run. Bumped to 360s.
+
 ## Verification
 
 - `tsc --noEmit -p tsconfig.json` passes clean (exit 0) for the whole demo
