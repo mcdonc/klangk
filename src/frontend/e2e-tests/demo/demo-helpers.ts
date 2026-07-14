@@ -702,7 +702,8 @@ export async function seedDemoFile(
  *  tabCenterX(1)=0.195, etc.; these match the live UI exactly. */
 const TAB_MARGIN_PX = 4;
 const TAB_W_PX = 122; // 120 (SizedBox) + 2 (1px padding each side)
-const PLUS_HALF_PX = 13; // half the ~26px "New terminal" icon button
+// Empirically calibrated offset so the click lands on the "+" icon center.
+const PLUS_HALF_PX = -25;
 const LAYOUT_W = 960;
 
 /** Horizontal center (px) of the terminal tab at 0-based `tabIndex`. */

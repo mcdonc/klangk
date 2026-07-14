@@ -8,11 +8,11 @@
 # backend isn't an option either.
 #
 # So this script runs the demo backend ISOLATED on a dedicated port pair +
-# instance (set in .env, the only thing that wins over devenv.nix's env):
+# instance (set in .demo-env, the only thing that wins over devenv.nix's env):
 #
-#   backend (uvicorn):     127.0.0.1:$KLANGK_PORT  (.env -> 8998; TCP because
+#   backend (uvicorn):     127.0.0.1:$KLANGK_PORT  (.demo-env -> 8998; TCP because
 #                                                  KLANGK_LISTEN=127.0.0.1)
-#   nginx (klangkc target)::$KLANGK_NGINX_PORT     (.env -> 8996)
+#   nginx (klangkc target)::$KLANGK_NGINX_PORT     (.demo-env -> 8996)
 #   instance id:           "video"   (unique pid file + container labels)
 #
 # KLANGK_LISTEN=127.0.0.1 is load-bearing: post-#1400 the default listen is
@@ -45,9 +45,9 @@ WT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)" || {
 }
 cd "$WT" || exit 1
 
-# These come from .env (devenv loads it; .env's mkDefault beats devenv.nix's
-# mkOverride 1500, which a plain export does NOT). Read them back so the script
-# can report/target the right ports.
+# These come from .demo-env (sourced at launch; .demo-env's values beat
+# devenv.nix's env. block). Read them back so the script can report/target the
+# right ports.
 DEMO_PORT="${KLANGK_PORT:-8998}"
 DEMO_NGINX_PORT="${KLANGK_NGINX_PORT:-8996}"
 DEMO_LISTEN="${KLANGK_LISTEN:-127.0.0.1}"
@@ -67,8 +67,8 @@ DEMO_AUTH_MODES="${KLANGK_AUTH_MODES:-both}"
 # NOTE: do NOT read KLANGK_STATE_DIR here — devenv.nix exports it as the
 # long worktree path, which is exactly the value we're trying to avoid.
 # Use KLANGK_DEMO_STATE_DIR to override. This value is exported in the
-# `start` command's env (it can't go in .env — .env doesn't override
-# devenv.nix's env.KLANGK_STATE_DIR).
+# `start` command's env (it can't go in .demo-env — .demo-env doesn't
+# override devenv.nix's env.KLANGK_STATE_DIR).
 DEMO_STATE_DIR="${KLANGK_DEMO_STATE_DIR:-/tmp/klangk-demo}"
 DEMO_INSTANCE=video
 # Fake OIDC provider config. `both` mode requires at least one provider or
@@ -85,52 +85,53 @@ DEMO_BOOTSTRAP_PASSWORD="${KLANGK_DEFAULT_PASSWORD:-admin}"
 # LLM provider the live-agent scenes (pi -p in scene 2, clanker in 6/8) call
 # via the /llm-proxy. Override with KLANGK_DEMO_LLM_* if you want a different
 # provider for the demo. Defaults to z.ai (glm-5.2); the API key uses the
-# cmd: indirection so the secret is read at boot, not stored in .env.
+# cmd: indirection so the secret is read at boot, not stored in .demo-env.
 DEMO_LLM_BASE_URL="${KLANGK_DEMO_LLM_BASE_URL:-https://api.z.ai/api/coding/paas/v4}"
 DEMO_LLM_API_KEY="${KLANGK_DEMO_LLM_API_KEY:-cmd:cat /run/agenix/zai-authtoken-chrism2}"
 DEMO_LLM_MODEL="${KLANGK_DEMO_LLM_MODEL:-glm-5.2}"
 URL="http://localhost:${DEMO_NGINX_PORT}"
 
 # ---------------------------------------------------------------------------
-# .env bootstrap
+# .demo-env bootstrap
 # ---------------------------------------------------------------------------
-# .env is gitignored (it holds secrets), so a fresh clone won't have the demo
-# backend's dedicated port pair + instance, and `devenv processes up` would
-# come up on the DEFAULT ports (:8997/:8995), racing the main repo's backend.
-# We maintain a clearly-marked managed block at the END of .env (never touch
-# existing lines/secrets). Idempotent: re-running replaces only our block.
+# .demo-env is gitignored (it holds secrets), so a fresh clone won't have the
+# demo backend's dedicated port pair + instance, and `devenv processes up`
+# would come up on the DEFAULT ports (:8997/:8995), racing the main repo's
+# backend. We maintain a clearly-marked managed block at the END of .demo-env
+# (never touch existing lines/secrets). Idempotent: re-running replaces only
+# our block.
 _ENV_BLOCK_BEGIN="# --- run-demo-backend.sh managed block (do not edit by hand) ---"
 _ENV_BLOCK_END="# --- end run-demo-backend.sh managed block ---"
 _ensure_env() {
   # Already configured (and nothing changed)? Skip the rewrite.
-  if grep -qF "KLANGK_INSTANCE_ID=$DEMO_INSTANCE" .env 2>/dev/null &&
-    grep -qF "KLANGK_PORT=$DEMO_PORT" .env 2>/dev/null &&
-    grep -qF "KLANGK_NGINX_PORT=$DEMO_NGINX_PORT" .env 2>/dev/null &&
-    grep -qF "KLANGK_LISTEN=$DEMO_LISTEN" .env 2>/dev/null &&
-    grep -qF "KLANGK_STATE_DIR=$DEMO_STATE_DIR" .env 2>/dev/null &&
-    grep -qF "KLANGK_OIDC_CONFIG=$DEMO_OIDC_CONFIG" .env 2>/dev/null &&
-    grep -qF "KLANGK_DEFAULT_USER=$DEMO_BOOTSTRAP_EMAIL" .env 2>/dev/null &&
-    grep -qF "KLANGK_LLM_BASE_URL='$DEMO_LLM_BASE_URL'" .env 2>/dev/null &&
-    grep -qF "KLANGK_LLM_MODEL='$DEMO_LLM_MODEL'" .env 2>/dev/null &&
-    grep -qF "KLANGK_HOSTING_HOSTNAME=localhost:$DEMO_NGINX_PORT" .env 2>/dev/null &&
-    grep -qF "KLANGK_AUTH_MODES=$DEMO_AUTH_MODES" .env 2>/dev/null &&
-    grep -qF "KLANGK_ALLOW_AUTOSTART=1" .env 2>/dev/null; then
+  if grep -qF "KLANGK_INSTANCE_ID=$DEMO_INSTANCE" .demo-env 2>/dev/null &&
+    grep -qF "KLANGK_PORT=$DEMO_PORT" .demo-env 2>/dev/null &&
+    grep -qF "KLANGK_NGINX_PORT=$DEMO_NGINX_PORT" .demo-env 2>/dev/null &&
+    grep -qF "KLANGK_LISTEN=$DEMO_LISTEN" .demo-env 2>/dev/null &&
+    grep -qF "KLANGK_STATE_DIR=$DEMO_STATE_DIR" .demo-env 2>/dev/null &&
+    grep -qF "KLANGK_OIDC_CONFIG=$DEMO_OIDC_CONFIG" .demo-env 2>/dev/null &&
+    grep -qF "KLANGK_DEFAULT_USER=$DEMO_BOOTSTRAP_EMAIL" .demo-env 2>/dev/null &&
+    grep -qF "KLANGK_LLM_BASE_URL='$DEMO_LLM_BASE_URL'" .demo-env 2>/dev/null &&
+    grep -qF "KLANGK_LLM_MODEL='$DEMO_LLM_MODEL'" .demo-env 2>/dev/null &&
+    grep -qF "KLANGK_HOSTING_HOSTNAME=localhost:$DEMO_NGINX_PORT" .demo-env 2>/dev/null &&
+    grep -qF "KLANGK_AUTH_MODES=$DEMO_AUTH_MODES" .demo-env 2>/dev/null &&
+    grep -qF "KLANGK_ALLOW_AUTOSTART=1" .demo-env 2>/dev/null; then
     return 0
   fi
-  echo "  configuring demo ports in .env (instance=$DEMO_INSTANCE, backend=$DEMO_PORT, nginx=$DEMO_NGINX_PORT)"
+  echo "  configuring demo ports in .demo-env (instance=$DEMO_INSTANCE, backend=$DEMO_PORT, nginx=$DEMO_NGINX_PORT)"
   # Create the short state dir so klangkd can place its UDS + rendered
   # nginx.conf there. /tmp/klangk-demo survives across runs for warm reuse;
   # demo-seed.ts --reset wipes the DB + users, not the dir.
   mkdir -p "$DEMO_STATE_DIR"
   # Drop any prior managed block, then append a fresh one.
-  if [ -f .env ]; then
-    sed -i "/${_ENV_BLOCK_BEGIN}/,/${_ENV_BLOCK_END}/d" .env
+  if [ -f .demo-env ]; then
+    sed -i "/${_ENV_BLOCK_BEGIN}/,/${_ENV_BLOCK_END}/d" .demo-env
   fi
   {
     echo ""
     echo "$_ENV_BLOCK_BEGIN"
-    echo "# Demo backend config. devenv.nix does NOT enable dotenv, so .env is"
-    echo "# not auto-loaded — the 'start' command sources it inside the devenv"
+    echo "# Demo backend config. devenv.nix does NOT enable dotenv, so .demo-env"
+    echo "# is not auto-loaded — the 'start' command sources it inside the devenv"
     echo "# shell so these values win over devenv.nix's env. block. Managed by"
     echo "# run-demo-backend.sh — re-runnable."
     echo "KLANGK_INSTANCE_ID=$DEMO_INSTANCE"
@@ -144,8 +145,8 @@ _ensure_env() {
     echo "KLANGK_DEFAULT_PASSWORD=$DEMO_BOOTSTRAP_PASSWORD"
     # LLM provider for the live-agent scenes (pi -p, clanker). The API key
     # uses cmd: indirection so klangkd resolves the secret at boot — it's
-    # not stored literally in .env. Override via KLANGK_DEMO_LLM_* if needed.
-    # Values are single-quoted: .env is `source`d by bash, and unquoted
+    # not stored literally in .demo-env. Override via KLANGK_DEMO_LLM_* if needed.
+    # Values are single-quoted: .demo-env is `source`d by bash, and unquoted
     # `cmd:cat /path` would be parsed as `VAR=cmd:cat` + run `/path` (the
     # shell's per-command env-assignment syntax), leaving the var unset.
     echo "KLANGK_LLM_BASE_URL='$DEMO_LLM_BASE_URL'"
@@ -157,7 +158,7 @@ _ensure_env() {
     echo "KLANGK_LISTEN=$DEMO_LISTEN"
     # Short state dir under /tmp: klangkd binds <state_dir>/klangk.sock and
     # AF_UNIX caps sun_path at 108 bytes (#1531). The worktree-relative path
-    # that devenv.nix sets is too long for a deep worktree. .env is sourced
+    # that devenv.nix sets is too long for a deep worktree. .demo-env is sourced
     # inside the devenv shell (see the `start` command) so this value wins
     # over devenv.nix's env.KLANGK_STATE_DIR. /tmp survives across runs.
     echo "KLANGK_STATE_DIR=$DEMO_STATE_DIR"
@@ -181,7 +182,7 @@ _ensure_env() {
     # automatically when the sandbox config requests it.
     echo "KLANGK_ALLOW_AUTOSTART=1"
     echo "$_ENV_BLOCK_END"
-  } >>.env
+  } >>.demo-env
 }
 
 # ---------------------------------------------------------------------------
@@ -268,7 +269,7 @@ start)
     echo "$URL (already up)"
     exit 0
   fi
-  # Ensure .env has our dedicated ports (self-bootstrap; idempotent).
+  # Ensure .demo-env has our dedicated ports (self-bootstrap; idempotent).
   _ensure_env
   # Clear any stale instance on our ports before launching.
   stop_all
@@ -276,14 +277,14 @@ start)
   echo "starting demo backend (video) on $URL ..."
   # Launch klangkd DIRECTLY (not via `devenv processes up`). The process
   # manager spawns its children in a freshly nix-evaluated environment that
-  # ignores the current shell's exports, so sourcing .env around it has no
+  # ignores the current shell's exports, so sourcing .demo-env around it has no
   # effect — klangkd would still see devenv.nix's KLANGK_STATE_DIR (the long
   # worktree path, which overflows AF_UNIX's 108-byte sun_path, #1531) and
   # the default ports (racing the main repo's backend on :8997/:8995).
   #
-  # Source .env INSIDE the devenv shell (after devenv's env setup) so .env's
-  # values win, then exec klangkd with --config=none (all config from env).
-  # `set -a` makes every assignment in .env an export. nohup + & detaches so
+  # Source .demo-env INSIDE the devenv shell (after devenv's env setup) so
+  # .demo-env's values win, then exec klangkd with --config=none (all config
+  # from env). `set -a` makes every assignment in .demo-env an export. nohup + & detaches so
   # the script can return after the port comes up; teardown is stop_all.
   #
   # The task chain (build-workspace-image, flutter-build) is NOT needed here
@@ -292,7 +293,7 @@ start)
   # from this worktree's build (nginx points elsewhere). klangkd + the image
   # is all the demo needs.
   nohup devenv --quiet shell -- bash -c '
-    set -a; . ./.env; set +a
+    set -a; . ./.demo-env; set +a
     exec python3 -m klangk_backend.klangkd --config=none
   ' >/tmp/klangk-video-processes.log 2>&1 &
 

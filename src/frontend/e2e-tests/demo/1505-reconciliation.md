@@ -3,13 +3,13 @@
 Plain-language log of what changed and why. Only lists things that actually
 needed changing.
 
-## Backend config the demo pins (run-demo-backend.sh → .env)
+## Backend config the demo pins (run-demo-backend.sh → .demo-env)
 
 The demo backend is isolated from the main repo's backend on a dedicated port
 pair + instance + short state dir. `run-demo-backend.sh` writes these into a
-managed block at the end of `.env`, then sources `.env` inside the devenv
-shell at launch (devenv.nix does not enable dotenv, so `.env` is not
-auto-loaded). The values:
+managed block at the end of `.demo-env`, then sources `.demo-env` inside the
+devenv shell at launch (devenv.nix does not enable dotenv, so `.demo-env` is
+not auto-loaded). The values:
 
 - `KLANGK_INSTANCE_ID=video` — own pid file + container labels, no port clash.
 - `KLANGK_PORT=8998` — uvicorn's TCP port (only referenced for teardown; the
@@ -49,12 +49,12 @@ process manager. Two problems on current main:
 - The process manager spawns its children in a freshly nix-evaluated
   environment that ignores the current shell's exports, so the demo's config
   never reaches klangkd.
-- devenv.nix does not enable dotenv, so `.env` is not auto-loaded either.
+- devenv.nix does not enable dotenv, so `.demo-env` is not auto-loaded either.
 
 Switched to launching `klangkd` directly: `nohup devenv shell -- bash -c 'set
--a; . ./.env; set +a; exec python3 -m klangk_backend.klangkd --config=none'`.
-Sourcing `.env` _inside_ the devenv shell (after devenv's env setup) makes
-`.env`'s values win over devenv.nix's `env.` block. Teardown was simplified
+-a; . ./.demo-env; set +a; exec python3 -m klangk_backend.klangkd --config=none'`.
+Sourcing `.demo-env` _inside_ the devenv shell (after devenv's env setup) makes
+`.demo-env`'s values win over devenv.nix's `env.` block. Teardown was simplified
 (removed the devenv-manager-discovery logic — there's no manager to fight
 anymore; just kill the klangkd + nginx procs and whatever holds the ports).
 
@@ -102,20 +102,20 @@ nginx on TCP :8996), so CLI and browser scenes share one backend with no
 config change between them. `record-cli.sh` exports `KLANGK_DEMO_SERVER` so
 `cli_demo.py` uses the same transport as the prep helpers.
 
-### 9. LLM creds in .env (run-demo-backend.sh)
+### 9. LLM creds in .demo-env (run-demo-backend.sh)
 
 Added `KLANGK_LLM_BASE_URL`, `KLANGK_LLM_API_KEY`, and `KLANGK_LLM_MODEL` to
-the managed `.env` block. The API key uses `cmd:` indirection
+the managed `.demo-env` block. The API key uses `cmd:` indirection
 (`cmd:cat /run/agenix/zai-authtoken-chrism2`) so klangkd resolves the secret
-at boot — the literal token is never stored in `.env`. Values are
-single-quoted because `.env` is `source`d by bash: unquoted
+at boot — the literal token is never stored in `.demo-env`. Values are
+single-quoted because `.demo-env` is `source`d by bash: unquoted
 `VAR=cmd:cat /path` parses as `VAR=cmd:cat` + execute `/path`.
 
-### 10. KLANGK_ALLOW_AUTOSTART=1 in .env (run-demo-backend.sh)
+### 10. KLANGK_ALLOW_AUTOSTART=1 in .demo-env (run-demo-backend.sh)
 
 Scene 3 (`klangkc sandbox`) creates a workspace with `auto_start: true` from the
 sandbox config. The server rejects this with 400 unless `KLANGK_ALLOW_AUTOSTART=1`
-is set. Added to the managed `.env` block and the idempotency guard.
+is set. Added to the managed `.demo-env` block and the idempotency guard.
 
 ### 11. Scene 3 Setup complete timeout (cli_demo.py)
 
