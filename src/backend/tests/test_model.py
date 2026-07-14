@@ -7,7 +7,7 @@ import aiosqlite
 import pytest
 import sqlalchemy.exc
 
-from klangk_backend import model
+from klangk_backend import model, util
 
 
 class TestMigration:
@@ -759,28 +759,6 @@ class TestPortAllocations:
         ports = await model.get_workspace_ports(workspace["id"])
         assert ports == [9000, 9001, 9002]
 
-    def test_free_port_returns_bindable_ephemeral_port(self):
-        """free_port hands back a port nothing else holds (#1393)."""
-        p = model.free_port()
-        assert isinstance(p, int)
-        assert 0 < p <= model.MAX_PORT
-        # The port must actually be bindable right now (the E2E harnesses
-        # rely on this to seed KLANGK_PORT / KLANGK_PORT_RANGE_START).
-        assert model.port_in_use(p) is False
-
-    def test_free_port_is_distinct_across_calls(self):
-        """Two calls don't hand back the same port while held (#1393)."""
-        import socket
-
-        a = model.free_port()
-        held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        held.bind(("127.0.0.1", a))
-        try:
-            b = model.free_port()
-            assert b != a, "free_port reused a port that is currently bound"
-        finally:
-            held.close()
-
     async def test_get_all_allocated_ports(self, workspace):
         await model.add_port_allocations(workspace["id"], [9000, 9001])
         all_ports = await model.get_all_allocated_ports()
@@ -815,7 +793,7 @@ class TestPortAllocations:
         assert all_ports == set()
 
     async def test_find_and_allocate_ports(self, workspace, monkeypatch):
-        monkeypatch.setattr(model.ports, "port_in_use", lambda p: False)
+        monkeypatch.setattr(util, "port_in_use", lambda p: False)
         ports = await model.find_and_allocate_ports(workspace["id"], 3, 9000)
         assert ports == [9000, 9001, 9002]
         stored = await model.get_workspace_ports(workspace["id"])
@@ -824,7 +802,7 @@ class TestPortAllocations:
     async def test_find_and_allocate_skips_used(
         self, workspace, user, monkeypatch
     ):
-        monkeypatch.setattr(model.ports, "port_in_use", lambda p: False)
+        monkeypatch.setattr(util, "port_in_use", lambda p: False)
         await model.add_port_allocations(workspace["id"], [9000, 9002])
         ws2 = await model.create_workspace(user["id"], "ws2")
         ports = await model.find_and_allocate_ports(ws2["id"], 3, 9000)
@@ -833,9 +811,7 @@ class TestPortAllocations:
     async def test_find_and_allocate_skips_os_bound_ports(
         self, workspace, monkeypatch
     ):
-        monkeypatch.setattr(
-            model.ports, "port_in_use", lambda p: p in {9001, 9003}
-        )
+        monkeypatch.setattr(util, "port_in_use", lambda p: p in {9001, 9003})
         ports = await model.find_and_allocate_ports(workspace["id"], 3, 9000)
         assert ports == [9000, 9002, 9004]
 
@@ -845,7 +821,7 @@ class TestPortAllocations:
         """Exhausting the port range fails fast instead of looping forever."""
         # Every port at/after start is treated as in-use; asking for any
         # ports from a start of MAX_PORT guarantees immediate exhaustion.
-        monkeypatch.setattr(model.ports, "port_in_use", lambda p: True)
+        monkeypatch.setattr(util, "port_in_use", lambda p: True)
         with pytest.raises(ValueError):
             await model.find_and_allocate_ports(
                 workspace["id"], 1, model.MAX_PORT
@@ -857,9 +833,7 @@ class TestPortAllocations:
         """The scan never exceeds MAX_PORT and raises if it can't fulfil."""
         # Only the last two ports are free; requesting two succeeds, three raises.
         free = {model.MAX_PORT - 1, model.MAX_PORT}
-        monkeypatch.setattr(
-            model.ports, "port_in_use", lambda p: p not in free
-        )
+        monkeypatch.setattr(util, "port_in_use", lambda p: p not in free)
         ports = await model.find_and_allocate_ports(
             workspace["id"], 2, model.MAX_PORT - 1
         )
@@ -869,18 +843,6 @@ class TestPortAllocations:
             await model.find_and_allocate_ports(
                 ws2["id"], 3, model.MAX_PORT - 1
             )
-
-
-class TestPortInUse:
-    def test_free_port(self):
-        assert model.port_in_use(59123) is False
-
-    def test_bound_port(self):
-        import socket
-
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("0.0.0.0", 59124))
-            assert model.port_in_use(59124) is True
 
 
 class TestServiceCommand:
