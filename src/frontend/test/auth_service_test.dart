@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -168,7 +167,7 @@ void main() {
     test('product_name is applied to Branding from /api/config', () async {
       testAuthHttpClientOverride = _bannerClient(productName: 'Acme Labs');
 
-      final service = AuthService();
+      AuthService();
       await Future.delayed(Duration.zero);
 
       expect(Branding.name, 'Acme Labs');
@@ -179,7 +178,7 @@ void main() {
       Branding.name = 'Stale';
       testAuthHttpClientOverride = _bannerClient();
 
-      final service = AuthService();
+      AuthService();
       await Future.delayed(Duration.zero);
 
       expect(Branding.name, 'Klangk');

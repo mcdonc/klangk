@@ -312,9 +312,7 @@ void main() {
         (tester) async {
       tester.view.physicalSize = const Size(1200, 2400);
       addTearDown(() => tester.view.resetPhysicalSize());
-      int callCount = 0;
       testAuthHttpClientOverride = MockClient((request) async {
-        callCount++;
         if (request.url.path.contains('login')) {
           return http.Response(
             jsonEncode({'detail': 'Account not verified'}),

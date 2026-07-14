@@ -19,7 +19,7 @@ import httpx
 import pytest
 
 from klangk_backend.model import free_port
-from _e2e_env import clean_env
+from _e2e_env import clean_env, close_popen_pipes
 
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
 
@@ -475,6 +475,8 @@ class TestNginxAclEnforcement:
         nginx_proc.wait(timeout=5)
         backend_proc.kill()
         backend_proc.wait(timeout=5)
+        close_popen_pipes(nginx_proc)
+        close_popen_pipes(backend_proc)
 
     def test_regular_endpoint_allowed(self, nginx_stack):
         """Regular endpoints (/) are not ACL-gated and should work."""
@@ -647,6 +649,8 @@ class TestNginxDenyByDefault:
         nginx_proc.wait(timeout=5)
         backend_proc.kill()
         backend_proc.wait(timeout=5)
+        close_popen_pipes(nginx_proc)
+        close_popen_pipes(backend_proc)
 
     def test_api_denied_from_container_ip(self, stack):
         """From the container source IP, a non-container /api/v1 path is

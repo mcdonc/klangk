@@ -3156,15 +3156,17 @@ class TestHealthMonitorDeath:
         )
         reg.states[st.workspace_id] = st
         reg._cid_to_wsid[st.container_id] = st.workspace_id
-        st.last_activity = (
-            time.time() - self.registry.idle_timeout_seconds - 100
-        )
+        st.last_activity = time.time() - reg.idle_timeout_seconds - 100
 
         try:
             reg.app_state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
-            with patch_podman(self.registry):
+            # Patch the registry that actually runs the cleanup loop
+            # (``reg``), not ``self.registry`` -- otherwise the real
+            # ``podman remove_container`` fires on a fake container id
+            # and its subprocess transport leaks (#1493).
+            with patch_podman(reg):
                 task = asyncio.create_task(reg.cleanup_idle_containers())
                 await asyncio.sleep(0.05)
                 reg.get_cleanup_wake().set()

@@ -19,7 +19,7 @@ import httpx
 import pytest
 
 from klangk_backend.model import free_port
-from _e2e_env import clean_env
+from _e2e_env import clean_env, close_popen_pipes
 
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
 
@@ -124,6 +124,7 @@ def _signal_test(sig):
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+        close_popen_pipes(proc)
 
 
 class TestNginxDiesWithKlangkd:

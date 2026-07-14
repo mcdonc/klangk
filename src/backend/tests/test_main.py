@@ -33,7 +33,9 @@ from klangk_backend.wshandler.session import WebSocketState
 def _make_app_state(settings=None):
     """Build a minimal app_state for tests."""
     if settings is None:
-        settings = make_settings({})
+        # Pin a default password so the lifespan's seed_default_user does
+        # not generate (and print) one to stderr on every boot (#1493).
+        settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
     # Two-phase: shell first so owned instances can take app_state at
     # construction (#1426).
     app_state = types.SimpleNamespace(settings=settings)
@@ -90,10 +92,13 @@ class TestSeedDefaultUser:
         user = await model.get_user_by_email("seed-test")
         assert user is not None
 
-    async def test_generates_password_when_not_set(self, db):
+    async def test_generates_password_when_not_set(self, db, capsys):
         await main.seed_default_user(
             make_settings({"KLANGK_DEFAULT_USER": "gen-test"})
         )
+        # Swallow the incidental generated-password print to stderr
+        # (asserted explicitly by test_generated_password_printed_to_stderr).
+        capsys.readouterr()
         user = await model.get_user_by_email("gen-test")
         assert user is not None
         # User exists and is in the admin group

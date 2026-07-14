@@ -166,7 +166,7 @@ def _mock_terminal(alive=True):
     return t
 
 
-def _empty_async_generator():
+async def _empty_async_generator():
     """An async generator that yields nothing — the safe default for
     ``session.output`` on a bare ``AsyncMock()`` session (see
     ``_mock_terminal`` for why)."""
@@ -5864,7 +5864,7 @@ class TestTerminalController:
         app_state = _make_app_state()
         registry = app_state.container_registry
         ctrl, _, _ = self._controller(app_state=app_state)
-        session = AsyncMock()
+        session = _mock_terminal()
         ctrl.session = session
         with patch.object(registry, "record_activity") as rec:
             result = await ctrl.activate_session(session, 80, 24)

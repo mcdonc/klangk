@@ -22,7 +22,7 @@ import pytest
 import websockets
 
 from klangk_backend.model import free_port
-from _e2e_env import clean_env
+from _e2e_env import clean_env, close_popen_pipes
 
 
 @pytest.fixture(scope="module")
@@ -94,6 +94,7 @@ def server():
             sys.stderr.write(
                 f"\n=== Home E2E server log ===\n{server_log}\n===\n"
             )
+    close_popen_pipes(proc)
     result = subprocess.run(
         [
             "podman",
