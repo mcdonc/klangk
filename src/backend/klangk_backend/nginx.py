@@ -25,11 +25,15 @@ settings.
 from __future__ import annotations
 
 import asyncio
+import ctypes
+import ctypes.util
 import ipaddress
 import logging
 import os
+import signal
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from .settings import (
@@ -576,6 +580,31 @@ http {{
         return "/usr/sbin/nginx"
 
 
+_PR_SET_PDEATHSIG = 1
+_HAS_PDEATHSIG = sys.platform == "linux"
+if _HAS_PDEATHSIG:
+    _libc = ctypes.CDLL(
+        ctypes.util.find_library("c") or "libc.so.6", use_errno=True
+    )
+
+
+def _nginx_preexec() -> None:  # pragma: no cover  – runs in forked child
+    """New session (for killpg) + auto-SIGTERM when parent dies (#1533).
+
+    ``os.setsid()`` puts nginx in its own process group so ``stop()`` can
+    ``os.killpg`` the entire tree on clean shutdown.
+
+    On Linux, ``prctl(PR_SET_PDEATHSIG, SIGTERM)`` asks the kernel to send
+    SIGTERM to the nginx master if klangkd dies without calling ``stop()``
+    (e.g. SIGKILL).  nginx handles SIGTERM by forwarding SIGQUIT to its
+    workers, so the whole tree exits.  macOS has no equivalent; on unclean
+    shutdown, orphaned nginx processes must be cleaned up externally.
+    """
+    os.setsid()
+    if _HAS_PDEATHSIG:
+        _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM)
+
+
 class NginxWatchdog:
     """Owns the nginx child process and its supervision task (#1463).
 
@@ -599,8 +628,9 @@ class NginxWatchdog:
         """Spawn nginx and respawn it on unexpected exit (with backoff).
 
         Exits cleanly when ``_stopping`` is set (a cooperative shutdown).
-        nginx runs in klangkd's process group (no ``start_new_session``) so
-        it is killed automatically when klangkd is terminated (#1439).
+        ``_nginx_preexec`` puts nginx in its own session (for ``os.killpg``
+        on clean shutdown) and sets ``PR_SET_PDEATHSIG(SIGTERM)`` so the
+        kernel auto-signals nginx if klangkd dies uncleanly (#1533).
         """
         backoff = 1.0
         while not self._stopping:
@@ -612,6 +642,7 @@ class NginxWatchdog:
                 conf_path,
                 stdout=None,
                 stderr=None,
+                preexec_fn=_nginx_preexec,
             )
             logger.info(
                 "nginx started (pid %d) with %s", self._proc.pid, conf_path
@@ -659,17 +690,27 @@ class NginxWatchdog:
         self._task = asyncio.create_task(self._watch(bin_path, conf_path))
 
     async def stop(self) -> None:
-        """Stop nginx and cancel the watchdog (cooperative: waits for exit)."""
+        """Stop nginx and cancel the watchdog (cooperative: waits for exit).
+
+        Kills the entire process group (master + workers) so no orphaned
+        workers linger after shutdown (#1533).
+        """
         self._stopping = True
         proc = self._proc
         # The proc-kill branch is only reached when nginx was spawned (UDS
         # mode); covered via TestStopWatchdog + the e2e ACL teardown.
         if proc is not None and proc.returncode is None:
-            proc.terminate()
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                proc.terminate()
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except asyncio.TimeoutError:
-                proc.kill()
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    proc.kill()
         self._proc = None
         task = self._task
         # Same: only when a watchdog task was created (UDS mode).

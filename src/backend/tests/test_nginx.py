@@ -6,6 +6,7 @@ real nginx — the runtime ACL enforcement is covered by the e2e suite
 """
 
 import asyncio
+from unittest.mock import Mock
 
 import pytest
 
@@ -544,12 +545,43 @@ class TestStopWatchdog:
         assert wd._stopping is True
 
     @pytest.mark.asyncio
-    async def test_stops_terminates_running_proc(self):
-        """A still-running nginx proc is terminated, then awaited."""
+    async def test_stops_terminates_running_proc(self, monkeypatch):
+        """A still-running nginx proc is killed via os.killpg (SIGTERM)."""
+        import signal
 
-        terminated = []
+        killpg_calls = []
+        monkeypatch.setattr(
+            "os.killpg", lambda pgid, sig: killpg_calls.append((pgid, sig))
+        )
 
         class FakeProc:
+            pid = 12345
+            returncode = None
+
+            def terminate(self):
+                pass  # pragma: no cover
+
+            def kill(self):
+                pass  # pragma: no cover
+
+            async def wait(self):
+                return 0
+
+        wd = _wd(make_settings({}))
+        wd._proc = FakeProc()
+        await wd.stop()
+        assert killpg_calls == [(12345, signal.SIGTERM)]
+        assert wd._proc is None
+
+    @pytest.mark.asyncio
+    async def test_stops_falls_back_to_terminate(self, monkeypatch):
+        """Falls back to proc.terminate() when killpg raises."""
+
+        terminated = []
+        monkeypatch.setattr("os.killpg", Mock(side_effect=ProcessLookupError))
+
+        class FakeProc:
+            pid = 12345
             returncode = None
 
             def terminate(self):
@@ -584,16 +616,71 @@ class TestStopWatchdog:
 
     @pytest.mark.asyncio
     async def test_stops_kills_on_timeout(self, monkeypatch):
-        """If the proc doesn't exit within the timeout, kill() follows."""
-        import klangk_backend.main as main
+        """If the proc doesn't exit within the timeout, SIGKILL via killpg."""
+        import signal
+
+        import klangk_backend.nginx as nginx_mod
 
         actions = []
 
+        def fake_killpg(pgid, sig):
+            actions.append(("killpg", sig))
+
+        monkeypatch.setattr("os.killpg", fake_killpg)
+
         class HungProc:
+            pid = 99999
             returncode = None
 
             def terminate(self):
-                actions.append("terminate")
+                actions.append("terminate")  # pragma: no cover
+
+            def kill(self):
+                actions.append("kill")  # pragma: no cover
+
+            async def wait(self):
+                await asyncio.sleep(100)
+                return 0
+
+        async def _fake_wait_for(coro, timeout):
+            coro.close()
+            raise asyncio.TimeoutError()
+
+        monkeypatch.setattr(nginx_mod.asyncio, "wait_for", _fake_wait_for)
+        wd = _wd(make_settings({}))
+        wd._proc = HungProc()
+        await wd.stop()
+        assert actions == [
+            ("killpg", signal.SIGTERM),
+            ("killpg", signal.SIGKILL),
+        ]
+        assert wd._proc is None
+
+    @pytest.mark.asyncio
+    async def test_stops_kills_fallback_on_timeout(self, monkeypatch):
+        """Falls back to proc.kill() when killpg SIGKILL raises."""
+        import signal
+
+        import klangk_backend.nginx as nginx_mod
+
+        actions = []
+        call_count = [0]
+
+        def fake_killpg(pgid, sig):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                actions.append(("killpg", sig))
+            else:
+                raise ProcessLookupError
+
+        monkeypatch.setattr("os.killpg", fake_killpg)
+
+        class HungProc:
+            pid = 99999
+            returncode = None
+
+            def terminate(self):
+                actions.append("terminate")  # pragma: no cover
 
             def kill(self):
                 actions.append("kill")
@@ -606,9 +693,9 @@ class TestStopWatchdog:
             coro.close()
             raise asyncio.TimeoutError()
 
-        monkeypatch.setattr(main.asyncio, "wait_for", _fake_wait_for)
+        monkeypatch.setattr(nginx_mod.asyncio, "wait_for", _fake_wait_for)
         wd = _wd(make_settings({}))
         wd._proc = HungProc()
         await wd.stop()
-        assert actions == ["terminate", "kill"]
+        assert actions == [("killpg", signal.SIGTERM), "kill"]
         assert wd._proc is None
