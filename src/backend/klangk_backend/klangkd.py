@@ -82,14 +82,14 @@ def main(  # pragma: no cover
     # bogus config) before uvicorn starts.
     settings = KlangkSettings(os.environ, config_file=resolved)
 
-    # uvicorn always binds a UDS (#1400). ``KLANGK_LISTEN`` is polymorphic
-    # (#1422) but only controls what *nginx* does: a socket path → nginx
-    # renders the minimal (headless) template; a TCP address → nginx renders
-    # the full (browser) template and listens on that address. uvicorn never
-    # listens on TCP directly.
+    # uvicorn always binds the UDS at ``settings.socket`` (default
+    # ``<state_dir>/klangk.sock``, overridable via ``KLANGK_SOCKET`` — #1542).
+    # ``KLANGK_PORT`` (unset ⇒ headless, set ⇒ full/browser) drives nginx's
+    # rendered template + listen directives; uvicorn never listens on TCP
+    # directly.
     state_dir = settings.state_dir
     os.environ["KLANGK_STATE_DIR"] = state_dir
-    uds_path = os.path.join(state_dir, "klangk.sock")
+    uds_path = settings.socket
 
     # Read ws_max_size through the typed config (default 16 MiB, #1394/#1395).
     ws_max_size = int(settings.ws_msg_size_max)

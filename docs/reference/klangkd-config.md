@@ -28,15 +28,15 @@ There is no silent fallback. The only way to run without a config file is `--con
 
 Config-file keys map directly to `KLANGK_*` environment variable names with the prefix stripped and lowercased. For example:
 
-| Env var             | Config-file key |
-| ------------------- | --------------- |
-| `KLANGK_JWT_SECRET` | `jwt_secret`    |
-| `KLANGK_NGINX_PORT` | `nginx_port`    |
-| `KLANGK_AUTH_MODES` | `auth_modes`    |
+| Env var              | Config-file key |
+| -------------------- | --------------- |
+| `KLANGK_JWT_SECRET`  | `jwt_secret`    |
+| `KLANGK_EGRESS_PORT` | `egress_port`   |
+| `KLANGK_AUTH_MODES`  | `auth_modes`    |
 
 ### `snake_case` or `kebab-case`
 
-Every config-file key accepts **either** `snake_case` or `kebab-case` — `jwt_secret` and `jwt-secret` resolve to the same setting, as do `nginx_port` / `nginx-port`, `auth_modes` / `auth-modes`, and so on ([#1538](https://github.com/mcdonc/klangk/issues/1538)). This matches the dual-form lookup the OIDC provider dicts already had and is forgiving of either style, but **`snake_case` is the preferred/documented form** — all examples in this chapter (and the field names they map to) use `snake_case`.
+Every config-file key accepts **either** `snake_case` or `kebab-case` — `jwt_secret` and `jwt-secret` resolve to the same setting, as do `egress_port` / `egress-port`, `auth_modes` / `auth-modes`, and so on ([#1538](https://github.com/mcdonc/klangk/issues/1538)). This matches the dual-form lookup the OIDC provider dicts already had and is forgiving of either style, but **`snake_case` is the preferred/documented form** — all examples in this chapter (and the field names they map to) use `snake_case`.
 
 ## `file:` and `cmd:` resolution
 
@@ -94,7 +94,8 @@ min_password_length: "12"
 
 # --- Server / network ---
 listen: "127.0.0.1"
-nginx_port: "8995"
+port: "8997"
+egress_port: "8995"
 hosting_hostname: klangk.example.com
 hosting_proto: https
 trusted_proxy_cidrs: "127.0.0.1,::1,10.0.0.0/8"
@@ -137,15 +138,18 @@ logo_url: https://example.com/logo.png
 
 Every key below corresponds to a `KLANGK_*` environment variable (uppercased, with `KLANGK_` prefix). See [Environment Variables](environment.md) for detailed descriptions of each.
 
-### Deployment shape (derived from `KLANGK_LISTEN` + `KLANGK_AUTH_MODE`)
+### Deployment shape (derived from `KLANGK_PORT` + `KLANGK_AUTH_MODE`)
 
-The deployment shape is **derived** from two knobs: the bind address (`KLANGK_LISTEN`) and the auth gate (`KLANGK_AUTH_MODE`). klangk picks the nginx template and enforces its one safety rule from their combination — there is no separate "mode" to set.
+The deployment shape is **derived** from two knobs: the browser port
+(`KLANGK_PORT`) and the auth gate (`KLANGK_AUTH_MODE`). klangk picks the
+nginx template and enforces its one safety rule from their combination —
+there is no separate "mode" to set.
 
-**`KLANGK_LISTEN`** is **polymorphic**: either a UNIX socket path (e.g.
-`/tmp/klangk.sock`) or a TCP host (e.g. `127.0.0.1`, `0.0.0.0`). The port is
-NOT part of listen — it comes from `KLANGK_PORT` when listen is TCP.
-Classification: an absolute path with no `://` scheme ⇒ socket; otherwise TCP.
-`KLANGK_PORT` applies only when LISTEN is TCP.
+**`KLANGK_PORT`** is the browser/nginx port. **Unset ⇒ headless** (no browser
+listener is rendered; nginx serves only the container-egress listener on
+`KLANGK_EGRESS_PORT`). **Set ⇒ full/browser mode** — nginx serves the browser
+UI, API, WebSocket, and hosted apps on `listen {KLANGK_LISTEN}:{KLANGK_PORT};`
+plus a separate container-egress listener on `KLANGK_EGRESS_PORT`.
 
 **`KLANGK_AUTH_MODE`** is the sole authority on the auth gate (`none` /
 `password` / `oidc` / `both`). When unset it defaults to `none`; OIDC settings
@@ -154,31 +158,29 @@ never promote it.
 For each combination, klangk renders the **maximum-feature nginx template
 the combination can service**:
 
-| `KLANGK_LISTEN`  | `KLANGK_AUTH_MODE`     | nginx template | browser?    | status                                               |
+| `KLANGK_PORT`    | `KLANGK_AUTH_MODE`     | nginx template | browser?    | status                                               |
 | ---------------- | ---------------------- | -------------- | ----------- | ---------------------------------------------------- |
-| socket (UDS)     | none                   | minimal        | no          | ✅ **default** (most-secure-convenient)              |
-| socket (UDS)     | password / oidc / both | minimal        | no          | ✅ (most secure, less convenient)                    |
+| unset (headless) | none                   | headless       | no          | ✅ (most secure)                                     |
+| unset (headless) | password / oidc / both | headless       | no          | ✅ (most secure, less convenient)                    |
 | loopback TCP     | none                   | full           | yes (local) | ✅ (local-dev "just works")                          |
 | loopback TCP     | password / oidc / both | full           | yes (local) | ✅                                                   |
 | non-loopback TCP | none                   | —              | —           | ⚠️ rejected unless `KLANGK_ALLOW_INSECURE_NO_AUTH=1` |
 | non-loopback TCP | password / oidc / both | full           | yes (net)   | ✅ (least secure; operator opted in)                 |
 
-- **Template selection keys off LISTEN's shape only**: socket ⇒ minimal
-  (container-egress `/llm-proxy` only — no browser UI, since a browser can't
-  reach a UDS); TCP ⇒ full. `KLANGK_AUTH_MODE` does **not** change which
-  template renders.
-- **The one gate** (`none` on non-loopback TCP) is enforced by
+- **Template selection keys off `KLANGK_PORT` only**: unset ⇒ headless
+  (container-egress only — no browser UI); set ⇒ full (browser UI + API +
+  hosted apps). `KLANGK_AUTH_MODE` does **not** change which template renders.
+- **The one gate** (`none` on non-loopback `KLANGK_LISTEN`) is enforced by
   `enforce_no_auth_bind_safety()` at boot — refused unless
   `KLANGK_ALLOW_INSECURE_NO_AUTH=1` is set (e.g. a throwaway VM on an
   isolated network). No-auth mode freely issues an admin token, so exposing
   it off-loopback is opt-in, not silent.
 
-**Security ordering** (most → least secure): UDS+password > UDS+none
-(default) > loopback TCP (local) > non-loopback TCP+gate. The default
-(UDS+none) is the most-secure-_convenient_ posture: same-uid-only socket
-access, no password to manage, and — via the minimal template — no
-browser/TCP surface. A future release will flip `KLANGK_LISTEN`'s default
-to a socket path so bare `klangkd` boots this posture.
+**Security ordering** (most → least secure): headless+password > headless+none
+
+> loopback TCP (local) > non-loopback TCP+gate. Headless is the most-secure
+> posture: the backend binds only a UDS (same-uid socket access), and nginx
+> serves only the container-egress listener — no browser/TCP surface at all.
 
 | Key      | Default     | Env var         |
 | -------- | ----------- | --------------- |
@@ -186,10 +188,11 @@ to a socket path so bare `klangkd` boots this posture.
 
 ```yaml
 # --- Deployment shape ---
-# listen is polymorphic: a socket path (UDS, minimal/headless template) or
-# a TCP host (full/browser template). Today the default is 127.0.0.1
-# (TCP); a future release will default it to a socket path (headless).
-listen: 127.0.0.1
+# port is the browser/nginx port. Unset ⇒ headless (no browser listener).
+# Set ⇒ full/browser mode (UI + API + hosted apps).
+port: "8997"
+# listen is the browser interface address (rendered only when port is set).
+# listen: "127.0.0.1"  # browser interface address (default loopback; set 0.0.0.0 for all interfaces)
 # auth_modes is the sole auth authority; unset defaults to none.
 # auth_modes: password  # or oidc / both / none
 ```
@@ -218,19 +221,22 @@ listen: 127.0.0.1
 
 ### Server / network
 
-| Key                      | Default           | Env var                         |
-| ------------------------ | ----------------- | ------------------------------- |
-| `listen`                 | `127.0.0.1`       | `KLANGK_LISTEN`                 |
-| `nginx_port`             | `8995`            | `KLANGK_NGINX_PORT`             |
-| `port_range_start`       | `9000`            | `KLANGK_PORT_RANGE_START`       |
-| `cors_origins`           |                   | `KLANGK_CORS_ORIGINS`           |
-| `frontend_dir`           | _(repo-relative)_ | `KLANGK_FRONTEND_DIR`           |
-| `dns_servers`            |                   | `KLANGK_DNS_SERVERS`            |
-| `hosting_hostname`       | _(auto-derived)_  | `KLANGK_HOSTING_HOSTNAME`       |
-| `hosting_proto`          | _(auto-derived)_  | `KLANGK_HOSTING_PROTO`          |
-| `hosting_base_path`      | _(auto-derived)_  | `KLANGK_HOSTING_BASE_PATH`      |
-| `bridge_timeout_seconds` |                   | `KLANGK_BRIDGE_TIMEOUT_SECONDS` |
-| `idle_timeout_seconds`   | `1800`            | `KLANGK_IDLE_TIMEOUT_SECONDS`   |
+| Key                      | Default                   | Env var                         |
+| ------------------------ | ------------------------- | ------------------------------- |
+| `listen`                 | `127.0.0.1`               | `KLANGK_LISTEN`                 |
+| `port`                   | _(unset)_                 | `KLANGK_PORT`                   |
+| `egress_port`            | `8995`                    | `KLANGK_EGRESS_PORT`            |
+| `nginx_port`             | _(deprecated)_            | `KLANGK_NGINX_PORT`             |
+| `socket`                 | `<state_dir>/klangk.sock` | `KLANGK_SOCKET`                 |
+| `port_range_start`       | `9000`                    | `KLANGK_PORT_RANGE_START`       |
+| `cors_origins`           |                           | `KLANGK_CORS_ORIGINS`           |
+| `frontend_dir`           | _(repo-relative)_         | `KLANGK_FRONTEND_DIR`           |
+| `dns_servers`            |                           | `KLANGK_DNS_SERVERS`            |
+| `hosting_hostname`       | _(auto-derived)_          | `KLANGK_HOSTING_HOSTNAME`       |
+| `hosting_proto`          | _(auto-derived)_          | `KLANGK_HOSTING_PROTO`          |
+| `hosting_base_path`      | _(auto-derived)_          | `KLANGK_HOSTING_BASE_PATH`      |
+| `bridge_timeout_seconds` |                           | `KLANGK_BRIDGE_TIMEOUT_SECONDS` |
+| `idle_timeout_seconds`   | `1800`                    | `KLANGK_IDLE_TIMEOUT_SECONDS`   |
 
 ### Container / workspace
 

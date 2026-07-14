@@ -7,11 +7,11 @@ Browser (Flutter Web + Terminal + Files + Chat)
     ├── WebSocket (authenticated): terminal I/O, exec, browser bridge, chat, presence, lifecycle events
     ├── Browser delegate: handles bridge requests from Pi extensions (fetch, plugin actions)
     ├── Auto-reconnect with exponential backoff on disconnect
-nginx reverse proxy (port 8995, serves UI + API + hosted app proxy + LLM proxy)
+nginx reverse proxy (browser port 8997 = UI + API + hosted app proxy; egress port 8995 = container→host endpoints)
     ↕ LLM proxy: container → host.containers.internal:8995/llm-proxy/ → ${KLANGK_LLM_BASE_URL}
     ↕ auth_request: validates per-workspace JWT on container→host endpoints
     ↕
-Python/FastAPI backend (port 8997, serves API + frontend static files)
+Python/FastAPI backend (UDS, serves API + frontend static files)
     ├── Auth (JWT sessions, SQLite user store)
     ├── Workspace registry (user → [workspace] → container)
     ├── Browser bridge (/api/v1/browser-delegate → WebSocket → Flutter)

@@ -73,9 +73,11 @@ RUN mkdir -p /var/log/nginx /var/lib/nginx && \
 ENV HOME=/home/klangk
 ENV PYTHONPATH=/home/klangk/src/backend:/home/klangk/venv/lib/python3.13/site-packages
 ENV PATH=/home/klangk/bin:/home/klangk/venv/bin:$PATH
-# klangkd binds a UDS (not TCP), so KLANGK_PORT/KLANGK_LISTEN are no longer
-# uvicorn's bind (#1396). nginx fronts the published port below.
-ENV KLANGK_NGINX_PORT=8995
+# klangkd binds a UDS (not TCP). KLANGK_PORT (browser) + KLANGK_EGRESS_PORT
+# (container egress) drive nginx's listeners. KLANGK_LISTEN is the browser
+# interface address (#1542).
+ENV KLANGK_PORT=8997
+ENV KLANGK_EGRESS_PORT=8995
 ENV KLANGK_DATA_DIR=/home/klangk/data
 ENV KLANGK_PLUGINS_DIR=/home/klangk/plugins
 ENV KLANGK_CUSTOMIZE_DIR=/home/klangk/custom
@@ -87,7 +89,8 @@ ENV KLANGK_STATE_DIR=/tmp/klangk-state
 USER klangk
 WORKDIR /home/klangk
 
-# Only nginx's port is published (uvicorn is UDS-only).
+# Browser port (8997) and egress port (8995) are published; uvicorn is UDS-only.
+EXPOSE 8997
 EXPOSE 8995
 
 ENTRYPOINT ["/home/klangk/bin/entrypoint"]

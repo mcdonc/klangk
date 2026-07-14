@@ -17,6 +17,7 @@ services:
   klangk:
     image: ghcr.io/mcdonc/klangk/klangk-host-custom:latest
     ports:
+      - "8997:8997"
       - "8995:8995"
     devices:
       - /dev/net/tun
@@ -30,8 +31,8 @@ services:
       - SYS_ADMIN
     environment:
       # --- Core ---
-      KLANGK_NGINX_PORT: "8995"
       KLANGK_PORT: "8997"
+      KLANGK_EGRESS_PORT: "8995"
       KLANGK_DEFAULT_USER: "admin@example.com"
       KLANGK_DEFAULT_PASSWORD: "admin"
       KLANGK_JWT_SECRET: "${KLANGK_JWT_SECRET}"

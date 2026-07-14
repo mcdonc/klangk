@@ -140,8 +140,6 @@ async def ensure_admin_group() -> str:
 def _is_loopback_bind(host: str) -> bool:
     if host == "localhost":
         return True
-    if host.startswith("/"):
-        return True  # UDS — same-uid trust boundary
     try:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
@@ -149,25 +147,27 @@ def _is_loopback_bind(host: str) -> bool:
 
 
 def enforce_no_auth_bind_safety(app_state) -> None:
-    """Refuse to start in ``none`` auth mode unless the bind is loopback.
+    """Refuse to start in ``none`` auth mode unless the browser bind is loopback.
 
     ``KLANGK_AUTH_MODES=none`` freely issues a token for the seeded default
     user (``POST /api/v1/auth/local``); anyone who can reach that endpoint is
-    effectively logged in as admin. The loopback bind (``KLANGK_LISTEN``, the
-    uvicorn ``--host``) is the identity boundary in this mode — it keeps the
-    endpoint reachable from the operator's own browser but not from the
-    network or from workspace containers. Override the gate explicitly with
-    ``KLANGK_ALLOW_INSECURE_NO_AUTH=1`` when you knowingly expose a no-auth
-    server (e.g. a throwaway VM on an isolated network). #1374.
+    effectively logged in as admin. In full/browser mode (`KLANGK_PORT` set),
+    the loopback browser bind (`KLANGK_LISTEN`) is the identity boundary — it
+    keeps the endpoint reachable from the operator's own browser but not from
+    the network or from workspace containers. Override the gate explicitly
+    with ``KLANGK_ALLOW_INSECURE_NO_AUTH=1`` when you knowingly expose a
+    no-auth server (e.g. a throwaway VM on an isolated network). #1374.
 
-    Reads auth mode from ``app_state.oidc.auth_modes()`` (#1450) so the
-    setting (supports ``@file:`` indirection resolved at startup) is read
-    once at construction — something a bash gate in the old nginx.sh
-    couldn't replicate.
+    In headless mode (`KLANGK_PORT` unset) there is no browser listener at
+    all — the backend serves only the UDS (same-uid trust boundary), and
+    ``/auth/local`` is never exposed over TCP — so the gate is a no-op (#1542).
     """
     if app_state.oidc.auth_modes() != "none":
         return
-    host = app_state.settings.listen or "127.0.0.1"
+    # Headless: no browser listener rendered → /auth/local not exposed on TCP.
+    if app_state.settings.port is None:
+        return
+    host = app_state.settings.listen
     if _is_loopback_bind(host):
         return
     if app_state.settings.allow_insecure_no_auth.strip().lower() in (

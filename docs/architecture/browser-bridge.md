@@ -4,7 +4,7 @@ Pi extensions and tools inside the container can delegate actions to the browser
 
 ## How It Works
 
-Extensions POST to `http://host.containers.internal:<nginx_port>/api/v1/browser-delegate` with a browser ID. Each browser tab generates a UUID stored in `sessionStorage` (survives refresh, unique per tab). When a terminal starts, the frontend sends this ID with the `terminal_start` WebSocket message. The backend maps the ID to the tab's WebSocket. The container reads the current browser ID dynamically via `klangk-browser-id` (which reads from tmux's global environment, updated on every attach/reattach).
+Extensions POST to `http://host.containers.internal:<egress_port>/api/v1/browser-delegate` with a browser ID. Each browser tab generates a UUID stored in `sessionStorage` (survives refresh, unique per tab). When a terminal starts, the frontend sends this ID with the `terminal_start` WebSocket message. The backend maps the ID to the tab's WebSocket. The container reads the current browser ID dynamically via `klangk-browser-id` (which reads from tmux's global environment, updated on every attach/reattach).
 
 ## Flow
 

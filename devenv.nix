@@ -16,8 +16,10 @@ let
   dataDir = config.devenv.root + "/.devenv/state/klangk/data";
   versionFile = config.devenv.state + "/klangk/version.json";
   stateDir = config.devenv.state + "/klangk";
-  backendPort = "8997";
-  nginxPort = "8995";
+  # Browser (ingress) and container-egress ports — nginx listens on both
+  # (#1542). kill-port-holders frees both before startup.
+  browserPort = "8997";
+  egressPort = "8995";
 in
 {
   languages.javascript = {
@@ -141,7 +143,7 @@ in
     "klangk:kill-port-holders" = {
       exec = ''
         if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
-          for port in ${backendPort} ${nginxPort}; do
+          for port in ${browserPort} ${egressPort}; do
             fuser -k "$port/tcp" 2>/dev/null || true
           done
         fi

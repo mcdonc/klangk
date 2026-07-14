@@ -7,8 +7,10 @@
 # devenv's backend process does this automatically.
 
 # --- Deployment shape ---
-# 127.0.0.1 → TCP, browser UI at http://localhost:$nginx_port.
-# Change to a socket path (e.g. /tmp/klangk.sock) for headless/UDS.
+# port: the browser/nginx port. Set it for full/browser mode (UI at http://localhost:8997).
+# Leave unset for headless mode (no browser listener; container-egress only).
+port: "8997"
+# listen: the browser interface address (rendered only when port is set).
 listen: "127.0.0.1"
 auth_modes: password
 
@@ -18,7 +20,7 @@ default_user: admin@example.com
 default_password: admin
 
 # --- Server / network ---
-nginx_port: "8995"
+egress_port: "8995"
 idle_timeout_seconds: "300"
 
 # --- Storage ---

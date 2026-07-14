@@ -38,7 +38,6 @@ from pathlib import Path
 
 from .settings import (
     KlangkSettings,
-    listen_is_socket,
 )
 
 logger = logging.getLogger(__name__)
@@ -124,13 +123,14 @@ _FALLBACK_DENY_SUBNETS = ["172.16.0.0/12", "10.0.0.0/8"]
 # ---------------------------------------------------------------------------
 
 
-def _minimal_auth_locations(upstream: str) -> str:
+def _egress_auth_locations(upstream: str) -> str:
     """The workspace-token ``auth_request`` subrequest target + JSON 401 page.
 
-    Minimal-template counterpart of the inline blocks in the full template.
-    Extracted because the minimal server block emits them adjacent to the
-    ``/llm-proxy`` location that gates on them; the full template interleaves
-    them with the browser/auth-local locations, so it keeps them inline.
+    Shared by the egress server block in both headless and full modes: the
+    container-egress locations (``/llm-proxy``, ``/api/v1/browser-delegate``,
+    ``/api/v1/workspaces/post-chat-message``) all gate on an ``auth_request``
+    subrequest, whose target (``verify-workspace-token``) and failure page
+    (``@token_auth_failed``) must live in the same server block.
     """
     return (
         "    # Workspace token verification subrequest"
@@ -364,43 +364,82 @@ class NginxRenderer:
     def render_config(self, upstream: str) -> str:
         """Render ``nginx.conf`` as a string.
 
-        Template selection keys off ``KLANGK_LISTEN``'s shape only (#1398): a
-        socket path ⇒ the minimal (headless) template; TCP ⇒ the full (browser)
-        template. The AUTH value does not participate in template selection —
-        only the bind does. ``upstream`` is the ``proxy_pass`` base
-        (:func:`uds_upstream` for the production socket bind, :func:`tcp_upstream`
-        for tests). All other values come from the merged settings
-        (env > config file > defaults) plus the host-IP / DNS auto-detection
-        probes.
+        Template selection keys off ``KLANGK_PORT`` (#1542): **unset** ⇒
+        headless (a single container-egress listener on ``KLANGK_EGRESS_PORT``);
+        **set** ⇒ full (a browser listener on ``{listen}:{port}`` plus a
+        separate container-egress listener). ``upstream`` is the ``proxy_pass``
+        base (:func:`uds_upstream` for the production socket bind,
+        :func:`tcp_upstream` for tests). All other values come from the merged
+        settings (env > config file > defaults) plus the host-IP / DNS
+        auto-detection probes.
         """
-        if listen_is_socket(self._settings.listen):
-            return self._render_minimal_config(upstream)
+        if self._settings.port is None:
+            return self._render_headless_config(upstream)
         return self._render_full_config(upstream)
 
-    def _render_minimal_config(self, upstream: str) -> str:
-        """Render the minimal (headless) ``nginx.conf`` — socket bind only (#1398).
+    def _egress_locations(
+        self, upstream: str, acl: str, resolvers: str
+    ) -> str:
+        """The container-egress locations, shared by headless and full modes.
 
-        Emitted when ``KLANGK_LISTEN`` is a socket path: a browser can't reach a
-        UDS and uvicorn exposes no browser-facing TCP, so no browser UI is
-        serviceable. The only served surface is the container-egress
-        ``/llm-proxy`` location (with its workspace-token ``auth_request`` gate +
-        CONTAINER_ACL) on the single container-egress listener. No ``location /``,
-        no ``/api/v1/*``, no static UI, no ``/auth/local`` — the attack surface is
-        two channels (operator→UDS, container→llm-proxy) and nothing else.
-
-        The ``auth_request`` subrequest target + JSON 401 page are emitted only
-        when an ``/llm-proxy`` location exists to gate on them (i.e. when
-        ``KLANGK_LLM_BASE_URL`` is set); with no LLM configured the server block
-        serves nothing.
+        Served on the ``KLANGK_EGRESS_PORT`` listener (container → backend via
+        ``host.containers.internal``): the LLM proxy (when configured), the
+        browser-delegate bridge, container-posted chat messages, and the
+        workspace-token ``auth_request`` subrequest + JSON 401 page that gate
+        them. All carry CONTAINER_ACL (allow container source IPs, deny all).
+        ``upstream`` is the UDS ``proxy_pass`` base.
         """
-        nginx_port = self._settings.nginx_port
+        llm_block = self._build_llm_block(acl, resolvers)
+        common_headers = (
+            "      proxy_set_header Host $http_host;\n"
+            "      proxy_set_header X-Real-IP $remote_addr;\n"
+            "      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            "      proxy_http_version 1.1;\n"
+        )
+        delegate = (
+            "    # Browser-delegate bridge: Pi extensions delegate long-running\n"
+            "    # actions through here. Read timeout accommodates streaming + git-credential.\n"
+            "    location /api/v1/browser-delegate {\n"
+            f"{acl}\n"
+            "      auth_request /api/v1/auth/verify-workspace-token;\n"
+            "      auth_request_set $auth_token_error $upstream_http_x_token_error;\n"
+            "      error_page 401 = @token_auth_failed;\n"
+            f"      proxy_pass {upstream};\n"
+            f"{common_headers}"
+            "      proxy_read_timeout 920s;\n"
+            "      proxy_send_timeout 920s;\n"
+            "      proxy_buffering off;\n"
+            "    }\n"
+        )
+        post_chat = (
+            "    # Container-to-chat API: containers post chat messages via workspace JWT.\n"
+            "    location = /api/v1/workspaces/post-chat-message {\n"
+            f"{acl}\n"
+            "      auth_request /api/v1/auth/verify-workspace-token;\n"
+            "      auth_request_set $auth_token_error $upstream_http_x_token_error;\n"
+            "      error_page 401 = @token_auth_failed;\n"
+            f"      proxy_pass {upstream}/api/v1/workspaces/post-chat-message;\n"
+            f"{common_headers}"
+            "    }\n"
+        )
+        return f"{llm_block}{delegate}{post_chat}{_egress_auth_locations(upstream)}"
+
+    def _render_headless_config(self, upstream: str) -> str:
+        """Render the headless ``nginx.conf`` — egress listener only (#1542).
+
+        ``KLANGK_PORT`` is unset ⇒ headless: no browser listener is rendered.
+        nginx listens on ``KLANGK_EGRESS_PORT`` for container → backend egress
+        (``/llm-proxy``, ``/api/v1/browser-delegate``,
+        ``/api/v1/workspaces/post-chat-message``). The browser UI, ``/hosted/``,
+        ``/auth/local``, and the catch-all ``location /`` are all absent — the
+        only served surface is container egress (plus same-uid UDS access to
+        the backend, which bypasses nginx entirely).
+        """
+        egress_port = self._settings.egress_port
         client_max_body_size = self.compute_client_max_body_size()
         resolvers = self.detect_dns_resolvers()
         acl, _deny = self.compute_container_acls()
-        llm_block = self._build_llm_block(acl, resolvers)
-        # The auth_request infrastructure is only reachable via the /llm-proxy
-        # location's auth_request; omit it entirely when there's no LLM proxy.
-        auth_locations = _minimal_auth_locations(upstream) if llm_block else ""
+        egress_locations = self._egress_locations(upstream, acl, resolvers)
         return f"""daemon off;
 pid /tmp/nginx.pid;
 error_log stderr;
@@ -416,26 +455,35 @@ http {{
   client_max_body_size {client_max_body_size};
 
   server {{
-    listen {nginx_port};
-{llm_block}{auth_locations}  }}
+    listen {egress_port};
+{egress_locations}  }}
 }}
 """
 
     def _render_full_config(self, upstream: str) -> str:
-        """Render the full (browser) ``nginx.conf`` — TCP bind (#1396, #1398).
+        """Render the full (browser) ``nginx.conf`` — two listeners (#1542).
 
-        Emitted when ``KLANGK_LISTEN`` is TCP: the browser UI + every API path +
-        static files + the no-auth ``/auth/local`` handout are all serviceable.
-        This is the template the renderer shipped before #1398's socket/minimal
-        branch; it is kept verbatim so the TCP path is a strict regression guard.
+        ``KLANGK_PORT`` is set ⇒ full/browser mode. Two server blocks:
+
+        - **Egress listener** (``listen {egress_port};``): container → backend
+          egress (shared with headless via :meth:`_egress_locations`).
+        - **Browser listener** (``listen {listen}:{port};``): the browser UI,
+          ``/hosted/``, ``/auth/local``, and the catch-all ``location /``.
+
+        Splitting browser ingress from container egress onto separate ports
+        lets operators firewall them independently. The browser block carries
+        no ``auth_request`` infra (it has no token-gated locations); all of
+        that lives in the egress block.
         """
-        nginx_port = self._settings.nginx_port
+        listen_addr = self._settings.listen
+        port = self._settings.port
+        egress_port = self._settings.egress_port
         client_max_body_size = self.compute_client_max_body_size()
         resolvers = self.detect_dns_resolvers()
         acl, deny = self.compute_container_acls()
 
         hosted_block = self._build_hosted_block()
-        llm_block = self._build_llm_block(acl, resolvers)
+        egress_locations = self._egress_locations(upstream, acl, resolvers)
         trust = self._trust_outer_proxy()
         if trust:
             forwarded_headers = (
@@ -483,41 +531,16 @@ http {{
 
   client_max_body_size {client_max_body_size};
 
+  # --- Container-egress listener (container → backend via host.containers.internal) ---
   server {{
-    listen {nginx_port};
+    listen {egress_port};
+{egress_locations}  }}
 
-{hosted_block}{llm_block}    # Browser-delegate bridge: Pi extensions delegate long-running
-    # actions through here. Read timeout accommodates streaming + git-credential.
-    location /api/v1/browser-delegate {{
-{acl}
-      auth_request /api/v1/auth/verify-workspace-token;
-      auth_request_set $auth_token_error $upstream_http_x_token_error;
-      error_page 401 = @token_auth_failed;
-      proxy_pass {upstream};
-{common_headers}      proxy_read_timeout 920s;
-      proxy_send_timeout 920s;
-      proxy_buffering off;
-    }}
+  # --- Browser listener (browser UI + API + hosted apps) ---
+  server {{
+    listen {listen_addr}:{port};
 
-    # Container-to-chat API: containers post chat messages via workspace JWT.
-    location = /api/v1/workspaces/post-chat-message {{
-{acl}
-      auth_request /api/v1/auth/verify-workspace-token;
-      auth_request_set $auth_token_error $upstream_http_x_token_error;
-      error_page 401 = @token_auth_failed;
-      proxy_pass {upstream}/api/v1/workspaces/post-chat-message;
-{common_headers}    }}
-
-    # Workspace token verification subrequest (nginx auth_request target).
-    location = /api/v1/auth/verify-workspace-token {{
-      internal;
-      proxy_pass {upstream}/api/v1/auth/verify-workspace-token;
-      proxy_pass_request_body off;
-      proxy_set_header Content-Length "";
-      proxy_set_header Authorization $http_authorization;
-    }}
-
-    # No-auth single-user token handout (POST /api/v1/auth/local, #1374).
+{hosted_block}    # No-auth single-user token handout (POST /api/v1/auth/local, #1374).
     # In none mode this freely issues an admin token, so it must be reachable
     # from the operator's browser (loopback) but NOT from workspace containers.
     location = /api/v1/auth/local {{
@@ -526,13 +549,6 @@ http {{
       deny all;
       proxy_pass {upstream};
 {common_headers}    }}
-
-    # JSON 401 error page for auth_request failures.
-    location @token_auth_failed {{
-      internal;
-      default_type application/json;
-      return 401 '{{"error":"$auth_token_error","detail":"Workspace token $auth_token_error"}}';
-    }}
 
     location / {{
 {deny}
@@ -660,15 +676,14 @@ class NginxWatchdog:
     def _prepare(self) -> tuple[str, str]:
         """Render nginx.conf and return ``(bin_path, conf_path)``.
 
-        uvicorn always binds a UDS (``<state_dir>/klangk.sock``); nginx proxies
-        to that socket regardless of whether ``KLANGK_LISTEN`` is a socket path
-        or a TCP address. ``KLANGK_LISTEN`` only controls the *nginx template*
-        (minimal/headless vs full/browser) and the nginx listen directive, not
-        the upstream.
+        uvicorn always binds the UDS at ``settings.socket`` (default
+        ``<state_dir>/klangk.sock``, overridable via ``KLANGK_SOCKET``); nginx
+        proxies to that socket regardless of deployment shape. ``KLANGK_PORT``
+        selects headless (unset) vs full (set) templates and the nginx listen
+        directives; the upstream is always the UDS.
         """
-        state_dir = self._settings.state_dir
-        uds_path = os.path.join(state_dir, "klangk.sock")
-        conf_path = os.path.join(state_dir, "nginx.conf")
+        uds_path = self._settings.socket
+        conf_path = os.path.join(self._settings.state_dir, "nginx.conf")
         bin_path = self._renderer.find_nginx_bin()
         self._renderer.write_config(uds_upstream(uds_path), conf_path)
         return bin_path, conf_path

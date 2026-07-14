@@ -38,7 +38,7 @@ def _render_conf(env_overrides, tmpdir=None):
     ``KLANGK_LLM_BASE_URL`` leaked from ``test_llm_block_*``.
     """
     env = {
-        "KLANGK_NGINX_PORT": "19999",
+        "KLANGK_EGRESS_PORT": "19999",
         "KLANGK_DATA_DIR": str(tmpdir or "/tmp/klangk-e2e-data"),
         "KLANGK_STATE_DIR": str(tmpdir or "/tmp/klangk-e2e-state"),
         **env_overrides,
@@ -50,25 +50,6 @@ def _render_conf(env_overrides, tmpdir=None):
     return NginxRenderer(
         types.SimpleNamespace(settings=KlangkSettings(env))
     ).render_config(tcp_upstream("127.0.0.1", "19998"))
-
-
-def _write_and_launch_nginx(conf_text, nginx_port, tmpdir):
-    """Write rendered conf and launch nginx directly (no bash script).
-
-    Returns the nginx ``Popen`` process. The conf is written to
-    ``<tmpdir>/nginx/nginx.conf`` and nginx is launched with ``-c`` pointing
-    at it (#1396 — replaces ``scripts/nginx.sh``).
-    """
-    nginx_state = os.path.join(tmpdir, "nginx")
-    os.makedirs(nginx_state, exist_ok=True)
-    conf_path = os.path.join(nginx_state, "nginx.conf")
-    with open(conf_path, "w") as f:
-        f.write(conf_text)
-    return subprocess.Popen(
-        ["nginx", "-e", "stderr", "-c", conf_path],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
 
 
 def _find_free_port():
@@ -374,7 +355,8 @@ class TestNginxAclEnforcement:
         os.makedirs(state_dir)
 
         backend_port = _find_free_port()
-        nginx_port = _find_free_port()
+        browser_port = _find_free_port()
+        egress_port = _find_free_port()
 
         # Start uvicorn.
         backend_env = clean_env(
@@ -430,7 +412,9 @@ class TestNginxAclEnforcement:
         import types
 
         nginx_env = {
-            "KLANGK_NGINX_PORT": nginx_port,
+            "KLANGK_PORT": browser_port,
+            "KLANGK_LISTEN": "0.0.0.0",
+            "KLANGK_EGRESS_PORT": egress_port,
             "KLANGK_CONTAINER_SUBNETS": "192.0.2.0/24",
             "KLANGK_LLM_BASE_URL": f"http://127.0.0.1:{backend_port}",
             "KLANGK_LLM_API_KEY": "fake-key",
@@ -449,12 +433,12 @@ class TestNginxAclEnforcement:
             stderr=subprocess.STDOUT,
         )
 
-        # Wait for nginx.
+        # Wait for nginx (browser /health on the browser port).
         deadline = time.time() + 10
         while time.time() < deadline:
             try:
                 r = httpx.get(
-                    f"http://localhost:{nginx_port}/health", timeout=2
+                    f"http://localhost:{browser_port}/health", timeout=2
                 )
                 if r.status_code == 200:
                     break
@@ -467,7 +451,8 @@ class TestNginxAclEnforcement:
             raise RuntimeError("Nginx did not start")
 
         yield {
-            "nginx_port": nginx_port,
+            "browser_port": browser_port,
+            "egress_port": egress_port,
             "backend_port": backend_port,
         }
 
@@ -479,9 +464,9 @@ class TestNginxAclEnforcement:
         close_popen_pipes(backend_proc)
 
     def test_regular_endpoint_allowed(self, nginx_stack):
-        """Regular endpoints (/) are not ACL-gated and should work."""
+        """Regular browser endpoints (/health) are not ACL-gated and should work."""
         r = httpx.get(
-            f"http://127.0.0.1:{nginx_stack['nginx_port']}/health",
+            f"http://127.0.0.1:{nginx_stack['browser_port']}/health",
             timeout=5,
         )
         assert r.status_code == 200
@@ -489,7 +474,7 @@ class TestNginxAclEnforcement:
     def test_llm_proxy_denied(self, nginx_stack):
         """LLM proxy returns 403 when source IP is not in allowed subnet."""
         r = httpx.get(
-            f"http://127.0.0.1:{nginx_stack['nginx_port']}/llm-proxy/v1/models",
+            f"http://127.0.0.1:{nginx_stack['egress_port']}/llm-proxy/v1/models",
             timeout=5,
         )
         assert r.status_code == 403
@@ -497,7 +482,7 @@ class TestNginxAclEnforcement:
     def test_browser_delegate_denied(self, nginx_stack):
         """browser-delegate returns 403 from non-container IP."""
         r = httpx.post(
-            f"http://127.0.0.1:{nginx_stack['nginx_port']}/api/v1/browser-delegate",
+            f"http://127.0.0.1:{nginx_stack['egress_port']}/api/v1/browser-delegate",
             timeout=5,
         )
         assert r.status_code == 403
@@ -552,7 +537,8 @@ class TestNginxDenyByDefault:
         os.makedirs(data_dir)
         os.makedirs(state_dir)
         backend_port = _find_free_port()
-        nginx_port = _find_free_port()
+        browser_port = _find_free_port()
+        egress_port = _find_free_port()
 
         # Start uvicorn (loopback only; nginx reaches it via 127.0.0.1).
         backend_env = clean_env(
@@ -609,7 +595,9 @@ class TestNginxDenyByDefault:
         import types
 
         nginx_env = {
-            "KLANGK_NGINX_PORT": nginx_port,
+            "KLANGK_PORT": browser_port,
+            "KLANGK_LISTEN": "0.0.0.0",
+            "KLANGK_EGRESS_PORT": egress_port,
             "KLANGK_CONTAINER_SUBNETS": host_ip,
             "KLANGK_DATA_DIR": data_dir,
             "KLANGK_STATE_DIR": state_dir,
@@ -626,12 +614,12 @@ class TestNginxDenyByDefault:
             stderr=subprocess.STDOUT,
         )
 
-        # Wait for nginx (probe via loopback, which is always allowed).
+        # Wait for nginx (probe via loopback on the browser port, always allowed).
         deadline = time.time() + 10
         while time.time() < deadline:
             try:
                 r = httpx.get(
-                    f"http://127.0.0.1:{nginx_port}/health", timeout=2
+                    f"http://127.0.0.1:{browser_port}/health", timeout=2
                 )
                 if r.status_code == 200:
                     break
@@ -643,7 +631,11 @@ class TestNginxDenyByDefault:
             backend_proc.kill()
             raise RuntimeError("Nginx did not start")
 
-        yield {"nginx_port": nginx_port, "host_ip": host_ip}
+        yield {
+            "browser_port": browser_port,
+            "egress_port": egress_port,
+            "host_ip": host_ip,
+        }
 
         nginx_proc.kill()
         nginx_proc.wait(timeout=5)
@@ -656,7 +648,7 @@ class TestNginxDenyByDefault:
         """From the container source IP, a non-container /api/v1 path is
         refused at nginx (403) — deny-by-default caps the brute-force surface."""
         r = httpx.get(
-            f"http://{stack['host_ip']}:{stack['nginx_port']}/api/v1/users",
+            f"http://{stack['host_ip']}:{stack['browser_port']}/api/v1/users",
             timeout=5,
         )
         assert r.status_code == 403
@@ -665,7 +657,7 @@ class TestNginxDenyByDefault:
         """From loopback, the same /api/v1 path reaches the backend (not 403) —
         local browsers keep full access."""
         r = httpx.get(
-            f"http://127.0.0.1:{stack['nginx_port']}/api/v1/users",
+            f"http://127.0.0.1:{stack['browser_port']}/api/v1/users",
             timeout=5,
         )
         # Not nginx-denied (401 unauth or similar is fine) — proves loopback
@@ -675,7 +667,7 @@ class TestNginxDenyByDefault:
     def test_health_from_loopback(self, stack):
         """Loopback browser traffic still reaches the app."""
         r = httpx.get(
-            f"http://127.0.0.1:{stack['nginx_port']}/health", timeout=5
+            f"http://127.0.0.1:{stack['browser_port']}/health", timeout=5
         )
         assert r.status_code == 200
 
@@ -685,7 +677,7 @@ class TestNginxDenyByDefault:
         returns 401, NOT 403 — proving the container IP is not globally blocked,
         only the catch-all."""
         r = httpx.post(
-            f"http://{stack['host_ip']}:{stack['nginx_port']}/api/v1/browser-delegate",
+            f"http://{stack['host_ip']}:{stack['egress_port']}/api/v1/browser-delegate",
             timeout=5,
         )
         assert r.status_code == 401
@@ -721,7 +713,8 @@ class TestNginxAuthLocalAcl:
         os.makedirs(data_dir)
         os.makedirs(state_dir)
         backend_port = _find_free_port()
-        nginx_port = _find_free_port()
+        browser_port = _find_free_port()
+        egress_port = _find_free_port()
 
         # Start uvicorn (loopback; nginx reaches it via 127.0.0.1).
         # KLANGK_AUTH_MODES=none so /auth/local actually mints a token.
@@ -779,7 +772,9 @@ class TestNginxAuthLocalAcl:
         import types
 
         nginx_env = {
-            "KLANGK_NGINX_PORT": nginx_port,
+            "KLANGK_PORT": browser_port,
+            "KLANGK_LISTEN": "0.0.0.0",
+            "KLANGK_EGRESS_PORT": egress_port,
             "KLANGK_DATA_DIR": data_dir,
             "KLANGK_STATE_DIR": state_dir,
         }
@@ -799,7 +794,7 @@ class TestNginxAuthLocalAcl:
         while time.time() < deadline:
             try:
                 r = httpx.get(
-                    f"http://127.0.0.1:{nginx_port}/health", timeout=2
+                    f"http://127.0.0.1:{browser_port}/health", timeout=2
                 )
                 if r.status_code == 200:
                     break
@@ -811,7 +806,10 @@ class TestNginxAuthLocalAcl:
             backend_proc.kill()
             raise RuntimeError("Nginx did not start")
 
-        yield {"nginx_port": nginx_port, "host_ip": host_ip}
+        yield {
+            "browser_port": browser_port,
+            "host_ip": host_ip,
+        }
 
         nginx_proc.kill()
         nginx_proc.wait(timeout=5)
@@ -823,7 +821,7 @@ class TestNginxAuthLocalAcl:
         appears as), POST /auth/local is refused at nginx (403) — the
         free-token endpoint is unreachable to workspace containers."""
         r = httpx.post(
-            f"http://{stack['host_ip']}:{stack['nginx_port']}/api/v1/auth/local",
+            f"http://{stack['host_ip']}:{stack['browser_port']}/api/v1/auth/local",
             timeout=5,
         )
         assert r.status_code == 403
@@ -832,7 +830,7 @@ class TestNginxAuthLocalAcl:
         """From loopback (the operator's browser), POST /auth/local reaches
         the backend and mints a token (200) — the auto-login path works."""
         r = httpx.post(
-            f"http://127.0.0.1:{stack['nginx_port']}/api/v1/auth/local",
+            f"http://127.0.0.1:{stack['browser_port']}/api/v1/auth/local",
             timeout=5,
         )
         assert r.status_code == 200

@@ -698,7 +698,7 @@ class TestStartContainer:
     async def test_llm_proxy_env_vars(self, workspace, monkeypatch):
         """Container gets proxy URL, not real API keys."""
         monkeypatch.setattr(self.registry.settings, "llm_model", "gemma4:31b")
-        monkeypatch.setattr(self.registry.settings, "nginx_port", "8995")
+        monkeypatch.setattr(self.registry.settings, "egress_port", "8995")
 
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -821,7 +821,7 @@ class TestStartContainer:
         *bypassed* ``derive_hosting_info`` entirely — so a deployer who set
         ``KLANGK_HOSTING_HOSTNAME`` saw it ignored on every eager start.
         Now the choke point resolves it, and no port is synthesized from
-        ``KLANGK_NGINX_PORT`` (the port must live in HOSTING_HOSTNAME).
+        ``KLANGK_EGRESS_PORT`` (the port must live in HOSTING_HOSTNAME).
         """
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
