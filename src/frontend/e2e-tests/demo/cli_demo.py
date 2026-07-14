@@ -536,7 +536,7 @@ def scene_3(t: Term) -> None:
     # starts the container.
     t.type("klangkc sandbox openclaw sandboxes/openclaw", per_char=0.03)
     t.enter()
-    t.expect("Setup complete", timeout=180)
+    t.expect("Setup complete", timeout=360)
     t.pause(HOLD)
 
     # step 3 — connect, show the project mounted inside, then disconnect.

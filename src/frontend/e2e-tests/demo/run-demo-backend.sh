@@ -113,7 +113,8 @@ _ensure_env() {
     grep -qF "KLANGK_LLM_BASE_URL='$DEMO_LLM_BASE_URL'" .env 2>/dev/null &&
     grep -qF "KLANGK_LLM_MODEL='$DEMO_LLM_MODEL'" .env 2>/dev/null &&
     grep -qF "KLANGK_HOSTING_HOSTNAME=localhost:$DEMO_NGINX_PORT" .env 2>/dev/null &&
-    grep -qF "KLANGK_AUTH_MODES=$DEMO_AUTH_MODES" .env 2>/dev/null; then
+    grep -qF "KLANGK_AUTH_MODES=$DEMO_AUTH_MODES" .env 2>/dev/null &&
+    grep -qF "KLANGK_ALLOW_AUTOSTART=1" .env 2>/dev/null; then
     return 0
   fi
   echo "  configuring demo ports in .env (instance=$DEMO_INSTANCE, backend=$DEMO_PORT, nginx=$DEMO_NGINX_PORT)"
@@ -176,6 +177,9 @@ _ensure_env() {
     # builds hosted URLs that resolve through nginx on the public port.
     # Carries host[:port]; the demo's public origin is the nginx port.
     echo "KLANGK_HOSTING_HOSTNAME=localhost:$DEMO_NGINX_PORT"
+    # Scene 3 (sandbox) needs auto-start so the workspace container boots
+    # automatically when the sandbox config requests it.
+    echo "KLANGK_ALLOW_AUTOSTART=1"
     echo "$_ENV_BLOCK_END"
   } >>.env
 }
