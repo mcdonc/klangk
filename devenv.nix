@@ -195,14 +195,16 @@ in
   # stub_dart_plugins.sh) that read it from the environment. The Nix-level
   # references use the ``pluginsDir`` let binding instead.
   env.KLANGK_PLUGINS_DIR = pluginsDir;
-  # Rootless podman from nix (Linux) ships no default policy.json, so a build/pull
-  # fails with "no policy.json file found". enterShell generates a permissive one
-  # at this path, and the build/pull scripts consume this var and pass it to podman
-  # via `--signature-policy`. NOTE: podman's build/pull/push path does NOT read an
-  # env var for the policy (the --signature-policy flag, which sets
-  # SystemContext.SignaturePolicyPath, is the only way to point it at a non-default
-  # file). On macOS podman runs in *remote* mode against the VM, which has its own
-  # policy, so leave this empty there.
+
+  # Rootless podman from nix (Linux) ships no default policy.json, so a
+  # build/pull fails with "no policy.json file found". enterShell generates a
+  # permissive one at this path, and the build/pull scripts consume this var
+  # and pass it to podman via `--signature-policy`. NOTE: podman's
+  # build/pull/push path does NOT read an env var for the policy (the
+  # --signature-policy flag, which sets SystemContext.SignaturePolicyPath, is
+  # the only way to point it at a non-default file). On macOS podman runs in
+  # *remote* mode against the VM, which has its own policy, so leave this empty
+  # there.
   env.CONTAINERS_SIGNATURE_POLICY = lib.mkOverride 1500 (
     if pkgs.stdenv.hostPlatform.isDarwin then
       ""
