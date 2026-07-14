@@ -771,8 +771,13 @@ export function klangkcExec(
   cmd: string,
   extraEnv: Record<string, string> = {},
 ): string {
+  // klangkcExec uses the UDS (same login token as the CLI scenes) rather than
+  // the TCP URL, so browser-scene prep doesn't need a separate TCP login.
+  const stateDir = process.env.KLANGK_DEMO_STATE_DIR || "/tmp/klangk-demo";
   const server =
-    extraEnv.KLANGK_DEMO_SERVER || process.env.KLANGK_DEMO_SERVER || DEMO_URL;
+    extraEnv.KLANGK_DEMO_SERVER ||
+    process.env.KLANGK_DEMO_SERVER ||
+    `${stateDir}/klangk.sock`;
   return execFileSync(
     "klangkc",
     ["--server", server, "exec", workspace, "bash", "-lc", cmd],
