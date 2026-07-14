@@ -455,7 +455,7 @@ http {{
   client_max_body_size {client_max_body_size};
 
   server {{
-    listen {egress_port};
+    listen 127.0.0.1:{egress_port};
 {egress_locations}  }}
 }}
 """
@@ -465,7 +465,7 @@ http {{
 
         ``KLANGK_PORT`` is set ⇒ full/browser mode. Two server blocks:
 
-        - **Egress listener** (``listen {egress_port};``): container → backend
+        - **Egress listener** (``listen 127.0.0.1:{egress_port};``): container → backend
           egress (shared with headless via :meth:`_egress_locations`).
         - **Browser listener** (``listen {listen}:{port};``): the browser UI,
           ``/hosted/``, ``/auth/local``, and the catch-all ``location /``.
@@ -533,7 +533,7 @@ http {{
 
   # --- Container-egress listener (container → backend via host.containers.internal) ---
   server {{
-    listen {egress_port};
+    listen 127.0.0.1:{egress_port};
 {egress_locations}  }}
 
   # --- Browser listener (browser UI + API + hosted apps) ---

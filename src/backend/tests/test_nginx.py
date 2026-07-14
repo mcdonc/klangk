@@ -131,9 +131,9 @@ class TestRenderConfig:
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         assert "daemon off;" in conf
-        # Browser listener (listen {listen}:{port}) + egress listener.
+        # Browser listener (listen {listen}:{port}) + egress listener (loopback-only).
         assert "listen 127.0.0.1:8997;" in conf
-        assert "listen 8995;" in conf
+        assert "listen 127.0.0.1:8995;" in conf
         assert "proxy_pass http://127.0.0.1:8997" in conf
         # Core locations present (split across the two server blocks).
         assert "location /api/v1/browser-delegate" in conf
@@ -284,8 +284,8 @@ class TestHeadlessTemplate:
         assert "post-chat-message" in conf
         assert "verify-workspace-token" in conf
         assert "@token_auth_failed" in conf
-        # Still a valid server block with the container-egress listener.
-        assert "listen 8995;" in conf
+        # Still a valid server block with the loopback container-egress listener.
+        assert "listen 127.0.0.1:8995;" in conf
         assert "daemon off;" in conf
 
     def test_headless_single_container_egress_listener(self):
@@ -300,9 +300,12 @@ class TestHeadlessTemplate:
         conf = _renderer(s).render_config(uds_upstream("/tmp/klangk.sock"))
         # Exactly one listen directive — the container-egress port.
         assert conf.count("\n    listen ") == 1
-        assert "listen 8995;" in conf
+        assert "listen 127.0.0.1:8995;" in conf
         # No browser catch-all is served off it.
         assert "location / {" not in conf
+        # Egress is always loopback-bound, never 0.0.0.0.
+        assert "listen 0.0.0.0" not in conf
+        assert "listen 8995;" not in conf  # bare port would be all-interfaces
 
     def test_port_set_emits_full_template(self):
         """Regression guard: KLANGK_PORT set ⇒ full browser template."""
@@ -316,9 +319,12 @@ class TestHeadlessTemplate:
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         assert "location / {" in conf
         assert "/api/v1/auth/local" in conf
-        # Two listeners: browser (listen {listen}:{port}) + egress.
+        # Two listeners: browser (listen {listen}:{port}) + egress (loopback-only).
         assert "listen 127.0.0.1:8997;" in conf
-        assert "listen 8995;" in conf
+        assert "listen 127.0.0.1:8995;" in conf
+        # Egress is always loopback-bound, never 0.0.0.0.
+        assert "listen 0.0.0.0" not in conf
+        assert "listen 8995;" not in conf  # bare port would be all-interfaces
 
     def test_template_keys_off_port_not_auth(self):
         """AUTH value does not change which template is rendered: unset PORT
