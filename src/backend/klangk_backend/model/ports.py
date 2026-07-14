@@ -1,9 +1,36 @@
-"""TCP port allocation tracking and free-port discovery."""
+"""TCP port allocation tracking.
+
+OS-level socket probes (``port_in_use``, ``free_port``, ``scan_free_ports``)
+live in :mod:`klangk_backend.util` now (#1547); they are re-imported below so
+the historical ``model.ports.*`` / ``model.*`` import paths keep working.
+"""
 
 import asyncio
-import socket
 
+from ..util import (  # moved to util (#1547); re-exported via __all__
+    MAX_PORT,
+    free_port,
+    port_in_use,
+    scan_free_ports,
+)
 from .db import transaction
+
+
+__all__ = [
+    # OS-level socket probes — moved to klangk_backend.util (#1547);
+    # re-exported here so the historical model.ports.* / model.* import
+    # paths keep working.
+    "MAX_PORT",
+    "port_in_use",
+    "free_port",
+    "scan_free_ports",
+    # DB-backed allocation tracking (this module's primary purpose).
+    "add_port_allocations",
+    "find_and_allocate_ports",
+    "remove_port_allocations",
+    "get_workspace_ports",
+    "get_all_allocated_ports",
+]
 
 
 async def add_port_allocations(workspace_id: str, ports: list[int]) -> None:
@@ -14,69 +41,6 @@ async def add_port_allocations(workspace_id: str, ports: list[int]) -> None:
                 "INSERT INTO port_allocations (port, workspace_id) VALUES (?, ?)",
                 (port, workspace_id),
             )
-
-
-# Highest valid TCP port.  find_and_allocate_ports will not scan past
-# this, so an exhausted range fails fast instead of looping forever.
-MAX_PORT = 65535
-
-
-def port_in_use(port: int) -> bool:
-    """Check if a port is bound at the OS level."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
-            s.bind(("0.0.0.0", port))
-            return False
-        except OSError:
-            return True
-
-
-def free_port() -> int:
-    """Return a free TCP port on loopback for ephemeral use.
-
-    Binds ``127.0.0.1:0`` so the OS assigns an ephemeral port, then
-    releases it and returns the number. Used by the E2E harnesses to
-    pick the server port (and to seed ``KLANGK_PORT_RANGE_START``)
-    instead of a hardcoded value, so concurrent runs — xdist workers,
-    or several suites on one machine — don't collide (#1393). This
-    generalizes the ``_find_free_port`` helper first introduced in
-    ``test_nginx_acl_e2e.py``.
-
-    The port is released before this returns, so there is an inherent
-    TOCTOU window before the caller rebinds it (e.g. uvicorn at server
-    startup, or a workspace container binding a hosted-app port). For
-    the workspace-port range the allocator's own :func:`port_in_use`
-    check (run inside :func:`scan_free_ports`) is the backstop: it skips
-    any port a concurrent run grabbed in the meantime.
-    """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        # Loopback (not INADDR_ANY "") for ephemeral pickup — same
-        # free-port behavior, matches the test_nginx_acl_e2e pattern.
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def scan_free_ports(start: int, count: int, used: set[int]) -> list[int]:
-    """Find ``count`` free ports at or after ``start``.
-
-    Skips ports already in ``used`` (DB-allocated) and ports reported as
-    bound by the OS.  This is synchronous because it performs blocking
-    ``socket.bind()`` checks; ``find_and_allocate_ports`` runs it in an
-    executor so the event loop is not stalled.  Raises ``ValueError`` if
-    fewer than ``count`` free ports are available before ``MAX_PORT``.
-    """
-    ports: list[int] = []
-    port = start
-    while len(ports) < count:
-        if port > MAX_PORT:
-            raise ValueError(
-                f"Could not allocate {count} free ports starting at "
-                f"{start}: exhausted at {MAX_PORT}"
-            )
-        if port not in used and not port_in_use(port):
-            ports.append(port)
-        port += 1
-    return ports
 
 
 async def find_and_allocate_ports(

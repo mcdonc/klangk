@@ -2,7 +2,10 @@
 
 from klangk_backend.settings import resolve_dynamic_config
 from klangk_backend.util import (
+    MAX_PORT,
     Util,
+    free_port,
+    port_in_use,
     read_file_value,
     run_cmd_value,
     resolve_file_value,
@@ -588,3 +591,42 @@ class TestClientIsLoopback:
         assert u.connection_peer_is_trusted(None) is False
         u.set_uds_mode(True)
         assert u.connection_peer_is_trusted(None) is True
+
+
+# --- OS-level port discovery (moved from test_model.py, #1547) ---
+# port_in_use / free_port are pure socket probes that live in util now;
+# they have no DB dependency, so their direct tests belong here.
+
+
+class TestPortDiscovery:
+    def test_port_in_use_false_for_free_port(self):
+        assert port_in_use(59123) is False
+
+    def test_port_in_use_true_for_bound_port(self):
+        import socket
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("0.0.0.0", 59124))
+            assert port_in_use(59124) is True
+
+    def test_free_port_returns_bindable_ephemeral_port(self):
+        """free_port hands back a port nothing else holds (#1393)."""
+        p = free_port()
+        assert isinstance(p, int)
+        assert 0 < p <= MAX_PORT
+        # The port must actually be bindable right now (the E2E harnesses
+        # rely on this to seed KLANGK_PORT / KLANGK_PORT_RANGE_START).
+        assert port_in_use(p) is False
+
+    def test_free_port_is_distinct_across_calls(self):
+        """Two calls don't hand back the same port while held (#1393)."""
+        import socket
+
+        a = free_port()
+        held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        held.bind(("127.0.0.1", a))
+        try:
+            b = free_port()
+            assert b != a, "free_port reused a port that is currently bound"
+        finally:
+            held.close()
