@@ -82,6 +82,13 @@ DEMO_OIDC_CONFIG="$_SCRIPT_DIR/demo-oidc.yaml"
 # seed's BOOTSTRAP_EMAIL / BOOTSTRAP_PASSWORD defaults (see demo-seed.ts).
 DEMO_BOOTSTRAP_EMAIL="${KLANGK_DEFAULT_USER:-admin@plope.com}"
 DEMO_BOOTSTRAP_PASSWORD="${KLANGK_DEFAULT_PASSWORD:-admin}"
+# LLM provider the live-agent scenes (pi -p in scene 2, clanker in 6/8) call
+# via the /llm-proxy. Override with KLANGK_DEMO_LLM_* if you want a different
+# provider for the demo. Defaults to z.ai (glm-5.2); the API key uses the
+# cmd: indirection so the secret is read at boot, not stored in .env.
+DEMO_LLM_BASE_URL="${KLANGK_DEMO_LLM_BASE_URL:-https://api.z.ai/api/coding/paas/v4}"
+DEMO_LLM_API_KEY="${KLANGK_DEMO_LLM_API_KEY:-cmd:cat /run/agenix/zai-authtoken-chrism2}"
+DEMO_LLM_MODEL="${KLANGK_DEMO_LLM_MODEL:-glm-5.2}"
 URL="http://localhost:${DEMO_NGINX_PORT}"
 
 # ---------------------------------------------------------------------------
@@ -103,6 +110,8 @@ _ensure_env() {
     grep -qF "KLANGK_STATE_DIR=$DEMO_STATE_DIR" .env 2>/dev/null &&
     grep -qF "KLANGK_OIDC_CONFIG=$DEMO_OIDC_CONFIG" .env 2>/dev/null &&
     grep -qF "KLANGK_DEFAULT_USER=$DEMO_BOOTSTRAP_EMAIL" .env 2>/dev/null &&
+    grep -qF "KLANGK_LLM_BASE_URL='$DEMO_LLM_BASE_URL'" .env 2>/dev/null &&
+    grep -qF "KLANGK_LLM_MODEL='$DEMO_LLM_MODEL'" .env 2>/dev/null &&
     grep -qF "KLANGK_HOSTING_HOSTNAME=localhost:$DEMO_NGINX_PORT" .env 2>/dev/null &&
     grep -qF "KLANGK_AUTH_MODES=$DEMO_AUTH_MODES" .env 2>/dev/null; then
     return 0
@@ -132,6 +141,15 @@ _ensure_env() {
     # BOOTSTRAP_EMAIL/BOOTSTRAP_PASSWORD defaults.
     echo "KLANGK_DEFAULT_USER=$DEMO_BOOTSTRAP_EMAIL"
     echo "KLANGK_DEFAULT_PASSWORD=$DEMO_BOOTSTRAP_PASSWORD"
+    # LLM provider for the live-agent scenes (pi -p, clanker). The API key
+    # uses cmd: indirection so klangkd resolves the secret at boot — it's
+    # not stored literally in .env. Override via KLANGK_DEMO_LLM_* if needed.
+    # Values are single-quoted: .env is `source`d by bash, and unquoted
+    # `cmd:cat /path` would be parsed as `VAR=cmd:cat` + run `/path` (the
+    # shell's per-command env-assignment syntax), leaving the var unset.
+    echo "KLANGK_LLM_BASE_URL='$DEMO_LLM_BASE_URL'"
+    echo "KLANGK_LLM_API_KEY='$DEMO_LLM_API_KEY'"
+    echo "KLANGK_LLM_MODEL='$DEMO_LLM_MODEL'"
     # Force a TCP loopback bind so nginx renders the full (browser) template.
     # The post-#1400 default is a UDS → headless (no browser); the demo needs
     # the browser UI, so this override is load-bearing.

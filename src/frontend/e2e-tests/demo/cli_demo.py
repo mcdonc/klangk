@@ -353,7 +353,16 @@ def scene_2(t: Term) -> None:
     the browser scenes later operate on the same workspace. Requires a live
     klangk server reachable by ``klangkc`` (see README).
     """
-    server = os.environ.get("KLANGK_DEMO_SERVER", "http://localhost:8996")
+    # The CLI transport is the UDS (uvicorn's socket, direct). record-cli.sh
+    # sets KLANGK_DEMO_SERVER to the socket path; this default matches for
+    # standalone runs. See record-cli.sh for why CLI uses UDS, browser TCP.
+    server = os.environ.get(
+        "KLANGK_DEMO_SERVER",
+        os.path.join(
+            os.environ.get("KLANGK_DEMO_STATE_DIR", "/tmp/klangk-demo"),
+            "klangk.sock",
+        ),
+    )
     admin = os.environ.get("KLANGK_DEMO_ADMIN_EMAIL", "admin@example.com")
     password = os.environ.get("KLANGK_DEMO_ADMIN_PASSWORD", "adminpass")
     # Hold between commands so the voiceover has room to breathe.

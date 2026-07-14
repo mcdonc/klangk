@@ -39,8 +39,14 @@ cd "$WT" || exit 1
 DEMO_DIR="src/frontend/e2e-tests/demo"
 RECORDINGS_DIR="$DEMO_DIR/recordings"
 mkdir -p "$RECORDINGS_DIR"
-# Demo backend's nginx port (run-demo-backend.sh / .env: KLANGK_NGINX_PORT=8996).
-SERVER="${KLANGK_DEMO_SERVER:-http://localhost:8996}"
+# Demo backend's CLI transport = the UDS (uvicorn's socket, direct — bypasses
+# nginx). The browser scenes use TCP-to-nginx (KLANGK_TEST_URL), but the CLI
+# scenes go over the socket: both listeners are up simultaneously on the one
+# backend (listen=127.0.0.1 → nginx on TCP, uvicorn always on the UDS), so no
+# config change is needed between CLI and browser recording. The socket path
+# is <KLANGK_STATE_DIR>/klangk.sock; default matches run-demo-backend.sh.
+DEMO_SOCKET="${KLANGK_DEMO_SOCKET:-${KLANGK_DEMO_STATE_DIR:-/tmp/klangk-demo}/klangk.sock}"
+SERVER="${KLANGK_DEMO_SERVER:-$DEMO_SOCKET}"
 HERO=admin@example.com
 PASS=adminpass
 SCENE="${1:-}"
@@ -131,6 +137,9 @@ record() {
   echo
   echo "================ RECORD $scene → $out ================"
   clean_display
+  # Export the server spec (UDS path) so cli_demo.py uses the same transport
+  # the prep helpers above do (both read KLANGK_DEMO_SERVER).
+  export KLANGK_DEMO_SERVER="$SERVER"
   KLANGK_DEMO_FONT_SIZE=28 KLANGK_DEMO_OUTPUT="$out" \
     devenv shell -- src/frontend/e2e-tests/demo/record-terminal.sh \
     python3 src/frontend/e2e-tests/demo/cli_demo.py --scene "$scene"
