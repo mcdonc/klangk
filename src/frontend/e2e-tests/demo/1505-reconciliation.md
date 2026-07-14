@@ -94,6 +94,23 @@ of providers (the external-file format `KLANGK_OIDC_CONFIG` expects), not the
 The demo backend's public port is `8996` (nginx), not `8995` (the main
 repo's default). Updated the README's references.
 
+### 8. CLI scenes use UDS transport (record-cli.sh, cli_demo.py)
+
+CLI scenes now connect over the UDS (`/tmp/klangk-demo/klangk.sock`) instead
+of the TCP URL. Both listeners are up simultaneously (uvicorn on the UDS,
+nginx on TCP :8996), so CLI and browser scenes share one backend with no
+config change between them. `record-cli.sh` exports `KLANGK_DEMO_SERVER` so
+`cli_demo.py` uses the same transport as the prep helpers.
+
+### 9. LLM creds in .env (run-demo-backend.sh)
+
+Added `KLANGK_LLM_BASE_URL`, `KLANGK_LLM_API_KEY`, and `KLANGK_LLM_MODEL` to
+the managed `.env` block. The API key uses `cmd:` indirection
+(`cmd:cat /run/agenix/zai-authtoken-chrism2`) so klangkd resolves the secret
+at boot — the literal token is never stored in `.env`. Values are
+single-quoted because `.env` is `source`d by bash: unquoted
+`VAR=cmd:cat /path` parses as `VAR=cmd:cat` + execute `/path`.
+
 ## Verification
 
 - `tsc --noEmit -p tsconfig.json` passes clean (exit 0) for the whole demo
