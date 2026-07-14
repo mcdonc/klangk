@@ -17,7 +17,7 @@ import httpx
 import pytest
 
 from klangk_backend.model import free_port
-from _e2e_env import clean_env
+from _e2e_env import clean_env, close_popen_pipes
 
 
 def _start_server(data_dir, port):
@@ -73,6 +73,7 @@ def _stop_server(proc, data_dir):
         proc.wait(timeout=5)
     except (ProcessLookupError, subprocess.TimeoutExpired):
         pass
+    close_popen_pipes(proc)
     instance_id = subprocess.run(
         ["klangk-instance-id"],
         capture_output=True,

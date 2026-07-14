@@ -16,6 +16,27 @@ actually run.
 from __future__ import annotations
 
 import os
+from subprocess import Popen
+
+
+def close_popen_pipes(proc: Popen) -> None:
+    """Close a Popen's captured stdout/stderr pipes.
+
+    E2E server fixtures capture the child's combined output on a
+    ``stdout=PIPE`` pipe to surface its log on failure. The
+    ``_io.BufferedReader`` that backs ``proc.stdout`` is *not* closed by
+    ``proc.kill()/wait()``; leaving it open leaks an fd until GC, which
+    surfaces as ``ResourceWarning: unclosed file`` in the suite's
+    warnings summary (#1493). Call this at the end of every fixture's
+    teardown after the log has been drained.
+    """
+    for stream in (proc.stdout, proc.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
 
 # Prefixes whose vars are stripped: any env var starting with one of these
 # (case-insensitive) is config or debug state that must not leak from the

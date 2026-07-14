@@ -33,7 +33,7 @@ import pytest
 import websockets
 
 from klangk_backend.model import free_port
-from _e2e_env import clean_env
+from _e2e_env import clean_env, close_popen_pipes
 
 
 @pytest.fixture(scope="module")
@@ -106,6 +106,7 @@ def server():
             sys.stderr.write(
                 f"\n=== SIGHUP e2e server log ===\n{server_log}\n===\n"
             )
+    close_popen_pipes(proc)
     result = subprocess.run(
         [
             "podman",
@@ -208,12 +209,15 @@ async def test_websocket_closed_with_1012_and_reconnects(server, auth):
 
         # The server closes every client with code 1012 ("service
         # restarted").  websockets raises ConnectionClosed on a
-        # server-initiated close; the code is on the exception.
+        # server-initiated close; the code is on the received close
+        # frame.  ``ConnectionClosed.code`` is deprecated in websockets
+        # >=13.1 (``rcvd`` is the received Close frame; None only if the
+        # peer hung up without a close frame, which can't carry 1012).
         closed = None
         try:
             await asyncio.wait_for(ws.recv(), timeout=60)
         except websockets.ConnectionClosed as exc:
-            closed = exc.code
+            closed = exc.rcvd.code if exc.rcvd is not None else None
         assert closed == 1012, f"expected close 1012, got {closed}"
     finally:
         await ws.close()

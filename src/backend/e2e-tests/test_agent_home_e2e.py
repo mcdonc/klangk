@@ -40,7 +40,7 @@ import pytest
 import websockets
 
 from klangk_backend.model import free_port
-from _e2e_env import clean_env
+from _e2e_env import clean_env, close_popen_pipes
 
 # Default agent handle (see model/users.py: _DEFAULT_AGENT_HANDLE).  Not
 # imported from the backend to keep the e2e test decoupled from the
@@ -133,6 +133,7 @@ def server():
             sys.stderr.write(
                 f"\n=== agent-home-e2e server log ===\n{server_log}\n===\n"
             )
+    close_popen_pipes(proc)
     _rm_containers(instance_id)
     shutil.rmtree(data_dir, ignore_errors=True)
 
