@@ -27,6 +27,13 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Config-file keys accept `snake_case` _and_ `kebab-case`:** every
+  `klangkd` config-file key may now be written in either form (`jwt_secret`
+  or `jwt-secret`, `nginx_port` or `nginx-port`, etc.) and resolves to the
+  same setting. Generalizes the dual-form lookup the OIDC provider dicts
+  already had to the whole config file; `snake_case` remains the
+  preferred/documented form (#1538).
+
 - **Construction-time `file:`/`cmd:` resolution:** `KlangkSettings` now
   resolves all `file:`/`cmd:`-prefixed field values once, at construction.
   A dangling reference (e.g. `file:/nonexistent`) fails fast at boot with

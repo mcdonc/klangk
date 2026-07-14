@@ -160,6 +160,89 @@ class TestConfigFile:
 
 
 # ---------------------------------------------------------------------------
+# Dual-form keys: kebab-case *and* snake_case (config-file style, #1538)
+# ---------------------------------------------------------------------------
+
+
+class TestDualFormKeys:
+    """Every config-file key may be written in either snake_case or
+    kebab-case and resolve to the same field (#1538). snake_case remains the
+    documented/preferred form; kebab-case is accepted for backwards compat
+    and consistency with the wider config-file style (e.g. cli.yaml, OIDC
+    provider dicts). Top-level keys are normalized by
+    ``_KebabYamlConfigSettingsSource``; nested OIDC provider dicts are
+    handled separately by :func:`klangk_backend.oidc.get`."""
+
+    def test_kebab_case_key_loads(self, tmp_path):
+        """A hyphenated top-level key maps to its snake_case field."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text('nginx-port: "9999"\n')
+        s = make_settings({}, config_file=str(cfg))
+        assert s.nginx_port == "9999"
+
+    def test_snake_case_key_loads(self, tmp_path):
+        """snake_case (the documented form) still loads unchanged."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text('nginx_port: "7777"\n')
+        s = make_settings({}, config_file=str(cfg))
+        assert s.nginx_port == "7777"
+
+    def test_kebab_and_snake_resolve_same_field(self, tmp_path):
+        """Both forms populate the same field (not two different ones)."""
+        cfg_kebab = tmp_path / "kebab.yaml"
+        cfg_kebab.write_text('brand-color: "#111111"\n')
+        cfg_snake = tmp_path / "snake.yaml"
+        cfg_snake.write_text('brand_color: "#222222"\n')
+        s_kebab = make_settings({}, config_file=str(cfg_kebab))
+        s_snake = make_settings({}, config_file=str(cfg_snake))
+        assert s_kebab.brand_color == "#111111"
+        assert s_snake.brand_color == "#222222"
+
+    def test_multi_word_kebab_keys(self, tmp_path):
+        """Several multi-word keys accept kebab-case in one file."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            'product-name: "Kebab"\n'
+            'trusted-proxy-cidrs: "10.0.0.0/8"\n'
+            'login-lockout-window: "600"\n'
+        )
+        s = make_settings({}, config_file=str(cfg))
+        assert s.product_name == "Kebab"
+        assert s.trusted_proxy_cidrs == "10.0.0.0/8"
+        assert s.login_lockout_window == "600"
+
+    def test_kebab_required_dir(self, tmp_path):
+        """state-dir (kebab) satisfies the required-dir validator."""
+        cfg = tmp_path / "config.yaml"
+        state = tmp_path / "state"
+        state.mkdir()
+        cfg.write_text(f'state-dir: "{state}"\n')
+        # Direct construction: env has no STATE_DIR, so the kebab key in the
+        # config file is the sole source (make_settings would inject one).
+        s = KlangkSettings(
+            env={"KLANGK_DATA_DIR": str(tmp_path / "data")},
+            config_file=str(cfg),
+        )
+        assert s.state_dir == str(state)
+
+    def test_nested_oidc_providers_not_normalized(self, tmp_path):
+        """Nested dicts (oidc_providers entries) are left verbatim — their
+        dual-form lookup is handled by oidc.get(), not the YAML source."""
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "oidc_providers:\n"
+            "  - id: cac\n"
+            "    client-id: klangk\n"
+            "    client-secret: sekret\n"
+        )
+        s = make_settings({}, config_file=str(cfg))
+        assert s.oidc_providers == [
+            {"id": "cac", "client-id": "klangk", "client-secret": "sekret"}
+        ]
+
+
+# ---------------------------------------------------------------------------
 # classify_listen / listen_is_socket (polymorphic KLANGK_LISTEN, #1422)
 # ---------------------------------------------------------------------------
 # KLANGK_LISTEN is polymorphic: a socket path or a TCP host (no port —

@@ -33,7 +33,7 @@ import logging
 import os
 import subprocess
 from pathlib import Path
-from typing import ClassVar, Mapping
+from typing import Any, ClassVar, Mapping
 
 from pydantic_settings import (
     BaseSettings,
@@ -212,6 +212,34 @@ class _EnvDictSource(EnvSettingsSource):
         )
 
 
+class _KebabYamlConfigSettingsSource(YamlConfigSettingsSource):
+    """YAML config source that accepts kebab-case *and* snake_case keys.
+
+    The config file is documented in snake_case (matching the field names),
+    but klangk's wider config-file style is kebab-case (e.g. the CLI's
+    ``cli.yaml`` and the OIDC provider dicts).  pydantic-settings matches
+    config keys against snake_case field names only, so a bare
+    ``YamlConfigSettingsSource`` silently ignores hyphenated keys.  This
+    subclass normalizes top-level hyphenated keys (``nginx-port`` →
+    ``nginx_port``) so an operator may write **either** form for any key
+    (#1538); snake_case keys pass through unchanged.
+
+    Only **top-level** keys are normalized.  Nested mappings (the dicts inside
+    ``oidc_providers``) are left as-is — their dual-form lookup is already
+    handled by :func:`klangk_backend.oidc.get`, which checks kebab then snake.
+    """
+
+    def _read_file(self, file_path: Path) -> dict[str, Any]:
+        data = super()._read_file(file_path)
+        # Normalize only top-level keys: ``-`` → ``_`` so either form maps to
+        # the same snake_case field.  Nested values (e.g. oidc_providers
+        # dicts) are preserved verbatim.
+        return {
+            (key.replace("-", "_") if isinstance(key, str) else key): value
+            for key, value in data.items()
+        }
+
+
 class KlangkSettings(BaseSettings):
     """Typed configuration for all ``KLANGK_*`` environment variables.
 
@@ -305,7 +333,7 @@ class KlangkSettings(BaseSettings):
         path = cls._config_file_for_sources
         if path is not None and path != "none":
             sources.append(
-                YamlConfigSettingsSource(settings_cls, yaml_file=path)
+                _KebabYamlConfigSettingsSource(settings_cls, yaml_file=path)
             )
         # init_settings (kwargs passed to the constructor) wins over everything.
         sources.append(init_settings)
