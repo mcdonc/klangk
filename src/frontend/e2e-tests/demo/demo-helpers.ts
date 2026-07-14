@@ -702,7 +702,8 @@ export async function seedDemoFile(
  *  tabCenterX(1)=0.195, etc.; these match the live UI exactly. */
 const TAB_MARGIN_PX = 4;
 const TAB_W_PX = 122; // 120 (SizedBox) + 2 (1px padding each side)
-const PLUS_HALF_PX = 13; // half the ~26px "New terminal" icon button
+// Empirically calibrated offset so the click lands on the "+" icon center.
+const PLUS_HALF_PX = -25;
 const LAYOUT_W = 960;
 
 /** Horizontal center (px) of the terminal tab at 0-based `tabIndex`. */
@@ -771,8 +772,13 @@ export function klangkcExec(
   cmd: string,
   extraEnv: Record<string, string> = {},
 ): string {
+  // klangkcExec uses the UDS (same login token as the CLI scenes) rather than
+  // the TCP URL, so browser-scene prep doesn't need a separate TCP login.
+  const stateDir = process.env.KLANGK_DEMO_STATE_DIR || "/tmp/klangk-demo";
   const server =
-    extraEnv.KLANGK_DEMO_SERVER || process.env.KLANGK_DEMO_SERVER || DEMO_URL;
+    extraEnv.KLANGK_DEMO_SERVER ||
+    process.env.KLANGK_DEMO_SERVER ||
+    `${stateDir}/klangk.sock`;
   return execFileSync(
     "klangkc",
     ["--server", server, "exec", workspace, "bash", "-lc", cmd],

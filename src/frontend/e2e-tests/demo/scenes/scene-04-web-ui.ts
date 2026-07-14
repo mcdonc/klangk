@@ -19,7 +19,7 @@
  *   6. Terminal continuity — just SHOW the existing CLI scrollback (the cloned
  *      repo + Pi session are already there). No new commands, no nav-tab tour:
  *      "files, chat, collaboration" is a hand-off to Sc 5/6/7, not a click-through.
- *   7. Add a second terminal tab via "+" → right-click → Rename → "scratch".
+ *   7. Add two terminal tabs via "+" → rename: "terminal2" then "scratch".
  *
  * Interaction rule (see videoscript "Interaction on camera"): every UI action
  * is a mouse click/movement; the keyboard types text only (commands, the name
@@ -32,9 +32,8 @@
  *   - demo workspace card (2nd in "Owned by Me"): fracX 0.50 / fracY 0.55
  *     (fracY 0.40 → openclaw, 0.55 → demo, 0.70 → Team Project).
  *   - Tab-strip positions are DERIVED, not calibrated: tabs are fixed 122px
- *     (see terminalTabCenterPx / addTerminalTab in demo-helpers). With the
- *     2 continuity tabs (bash + terminal2), "+" is at fracX ≈ 0.272 and the
- *     new 3rd tab it creates is at fracX ≈ 0.322.
+ *     (see terminalTabCenterPx in demo-helpers). With 1 existing tab (bash),
+ *     "+" is at ~140px; with 2 tabs "+" is at ~262px.
  *   - Rename field (triple-click select-all): fracX 0.50 / fracY 0.48.
  *   - OK button (rightmost in the dialog's bottom-right actions): fracX 0.60
  *     / fracY 0.62.
@@ -56,7 +55,6 @@ import {
   waitForFlutter,
   waitForTerminal,
   clickBackToWorkspaces,
-  addTerminalTab,
   terminalTabCenterPx,
   terminalType,
   mouseClick,
@@ -70,14 +68,10 @@ const TAB_STRIP_Y = 0.2;
 const SERVICE_TAB_X = 0.2;
 // bash sub-tab (leftmost): 4px margin + 61px (half the 122px tab).
 const BASH_TAB_X = 0.065;
-// CONTINUITY: scene 2's `klangkc shell demo terminal2` created a second
-// terminal window — and the scene-2 narration explicitly says "a named
-// window like this shows up as a tab in the web UI too." So on open the
-// `demo` strip already has TWO tabs: bash (index 0) + terminal2 (index 1).
-// The "+" therefore lands after 2 tabs (fracX ≈ 0.272), and the NEW tab it
-// creates is index 2 (the 3rd, fracX ≈ 0.322) — NOT index 1. (The earlier
-// take renamed terminal2 because these positions assumed a single tab.)
-const EXISTING_TABS = 2;
+// The demo workspace starts with only bash (index 0). This scene creates
+// BOTH terminal2 (index 1) and scratch (index 2) so later scenes (5b, 7)
+// have the expected three-tab layout: bash / terminal2 / scratch.
+const EXISTING_TABS = 1;
 // Rename dialog field + OK button (see header calibration).
 const FIELD_X = 0.5;
 const FIELD_Y = 0.48;
@@ -158,24 +152,37 @@ test("web ui tour", async ({ page, context, request }) => {
   //    commands or tour the nav tabs — the narration hands those off to Sc 5+.
   await pace(5000);
 
-  // 9. Add a NEW terminal tab via "+" (after the 2 continuity tabs), then
-  //    right-click THAT new tab → Rename → "scratch". All mouse except
-  //    typing the literal name.
-  await addTerminalTab(page, EXISTING_TABS);
+  // 9. Add TWO terminal tabs: "terminal2" (index 1) and "scratch" (index 2).
+  //    Later scenes (5b, 7) expect the three-tab layout: bash / terminal2 /
+  //    scratch. Each tab is created via "+" → rename.
+  const { width, height } = page.viewportSize()!;
+
+  // --- terminal2 (index 1) ---
+  // "+" sits after the 1 existing tab (bash). Empirically ~140px in 960-layout.
+  await mouseClick(page, 140 * (width / 960), TAB_STRIP_Y * height);
   await pace(2000);
+  // The new tab is index 1 — its center is at ~190px.
+  const t2X = 190 * (width / 960);
+  await mouseClickRight(page, t2X, TAB_STRIP_Y * height);
+  await pace(1500);
+  await mouseClick(page, t2X, (TAB_STRIP_Y + 0.04) * height);
+  await pace(1500);
+  await tripleClick(page, FIELD_X * 960, FIELD_Y * 540);
+  await page.keyboard.type("terminal2");
+  await pace(700);
+  await mouseClick(page, OK_X * 960, OK_Y * 540);
+  await pace(3000); // viewer sees the renamed "terminal2" tab settle
 
-  // The new tab is index EXISTING_TABS (the 3rd: bash, terminal2, <new>).
-  const newTabX = terminalTabCenterPx(EXISTING_TABS);
-
-  // Right-click the new tab → context menu → "Rename".
-  await mouseClickRight(page, newTabX, TAB_STRIP_Y * 540);
-  await pace(1500); // context menu appears
-  // "Rename" is the first menu item, just below the cursor.
-  await mouseClick(page, newTabX, (TAB_STRIP_Y + 0.04) * 540);
-  await pace(1500); // rename dialog appears
-
-  // Triple-click the field → select-all (replaces the default name, not
-  // appends), then type "scratch", then click OK to submit (no Ctrl+A / Enter).
+  // --- scratch (index 2) ---
+  // "+" now sits after 2 existing tabs. ~262px in 960-layout.
+  await mouseClick(page, 262 * (width / 960), TAB_STRIP_Y * height);
+  await pace(2000);
+  // The new tab is index 2 — center at terminalTabCenterPx(2) ≈ 309px.
+  const scratchX = terminalTabCenterPx(2);
+  await mouseClickRight(page, scratchX, TAB_STRIP_Y * height);
+  await pace(1500);
+  await mouseClick(page, scratchX, (TAB_STRIP_Y + 0.04) * height);
+  await pace(1500);
   await tripleClick(page, FIELD_X * 960, FIELD_Y * 540);
   await page.keyboard.type("scratch");
   await pace(700);

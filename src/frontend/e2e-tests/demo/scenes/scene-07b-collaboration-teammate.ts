@@ -1,7 +1,7 @@
 /**
  * Scene 7b — Collaboration: The Teammate's View (~1.5–2 min)
  *
- * The mirror of Scene 7 (scene-08-collaboration.ts). Records the TEAMMATE's
+ * The mirror of Scene 7 (scene-07-collaboration.ts). Records the TEAMMATE's
  * single browser window; the owner/designer/reviewer halves are driven by
  * WebSocket sidechannels. Same CONVERSATION (collab-choreography.ts) as Sc 7,
  * performed from the teammate's perspective. Intercut against Sc 7 in the edit.

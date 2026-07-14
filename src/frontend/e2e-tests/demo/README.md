@@ -30,11 +30,14 @@ run-demo.sh            # convenience runner
 demo-helpers.ts        # Flutter-coordinate primitives + pacing + auth + WS
 demo-seed.ts           # one-time: seed users + Potemkin workspaces
 scenes/
-  scene-05-web-ui.ts          # workspaces + terminal (continuation of the CLI)
-  scene-06-clanker-chat.ts    # live @clanker take (re-run until you like it)
-  scene-07-files.ts           # file browser + PDF inline render
-  scene-08-collaboration.ts   # 4 humans + clanker in one chat (2 recordings)
-  scene-10-admin.ts           # admin panel tour
+  scene-04-web-ui.ts                  # Sc 4: workspaces + terminal + hosted apps
+  scene-05-clanker.ts                 # Sc 5: live @clanker chat
+  scene-05b-pi-debug.ts               # Sc 5b: pi debug cycle
+  scene-06-files.ts                   # Sc 6: file browser + PDF inline render
+  scene-07-collaboration.ts           # Sc 7: collaboration (owner's view)
+  scene-07b-collaboration-teammate.ts # Sc 7b: collaboration (teammate's view)
+  scene-08-plugins.ts                 # Sc 8: plugins
+  scene-09-admin.ts                   # Sc 9: admin panel tour
 
 # CLI harness (tmux + ffmpeg)
 record-terminal.sh     # Xvfb + xterm + tmux + ffmpeg recorder harness
@@ -54,7 +57,9 @@ would otherwise skip them). Run them via the `playwright` command defined in
 ## Prerequisites
 
 1. **Demo server running.** Start your real klangk normally (the one with your
-   real LLM key). It should answer on `http://localhost:8995`.
+   real LLM key). It should answer on `http://localhost:8996`.
+   (`run-demo-backend.sh` starts an isolated demo backend on :8996 with
+   `KLANGK_AUTH_MODES=both`, `KLANGK_LISTEN=127.0.0.1`.)
 
 2. **Auto-start enabled** (for scene 4, later): `.env` has
    `KLANGK_ALLOW_AUTOSTART=1` — confirmed.
@@ -108,7 +113,7 @@ Knobs (env vars):
 
 | Var                          | Default                 | Effect                                                           |
 | ---------------------------- | ----------------------- | ---------------------------------------------------------------- |
-| `KLANGK_TEST_URL`            | `http://localhost:8995` | the demo server to point at                                      |
+| `KLANGK_TEST_URL`            | `http://localhost:8996` | the demo server to point at                                      |
 | `KLANGK_DEMO_HEADLESS`       | unset                   | set `=1` for a quick headless dry check                          |
 | `KLANGK_DEMO_SLOWMO`         | `50`                    | ms slowMo between actions (bump for slower, readable clicks)     |
 | `KLANGK_DEMO_AGENT_WAIT`     | `60000`                 | how long to hold for clanker's live reply before the scene ends  |
@@ -230,7 +235,7 @@ From the worktree root:
 devenv shell -- src/frontend/e2e-tests/demo/record-terminal.sh \
     python3 src/frontend/e2e-tests/demo/cli_demo.py --scene demo
 
-# A real CLI scene against a live server (start klangk on :8995 first):
+# A real CLI scene against a live server (start klangk on :8996 first):
 devenv shell -- src/frontend/e2e-tests/demo/record-terminal.sh \
     python3 src/frontend/e2e-tests/demo/cli_demo.py --scene scene_2
 ```
