@@ -70,14 +70,11 @@ const TAB_STRIP_Y = 0.2;
 const SERVICE_TAB_X = 0.2;
 // bash sub-tab (leftmost): 4px margin + 61px (half the 122px tab).
 const BASH_TAB_X = 0.065;
-// CONTINUITY: scene 2's `klangkc shell demo terminal2` created a second
-// terminal window — and the scene-2 narration explicitly says "a named
-// window like this shows up as a tab in the web UI too." So on open the
-// `demo` strip already has TWO tabs: bash (index 0) + terminal2 (index 1).
-// The "+" therefore lands after 2 tabs (fracX ≈ 0.272), and the NEW tab it
-// creates is index 2 (the 3rd, fracX ≈ 0.322) — NOT index 1. (The earlier
-// take renamed terminal2 because these positions assumed a single tab.)
-const EXISTING_TABS = 2;
+// The demo workspace may or may not still have scene 2's terminal2 window
+// (idle-stop + restart loses it). Assume only bash (index 0) to be safe.
+// The "+" lands after 1 tab (fracX ≈ 0.145), and the NEW tab it creates
+// is index 1 (fracX ≈ 0.195).
+const EXISTING_TABS = 1;
 // Rename dialog field + OK button (see header calibration).
 const FIELD_X = 0.5;
 const FIELD_Y = 0.48;
@@ -161,17 +158,22 @@ test("web ui tour", async ({ page, context, request }) => {
   // 9. Add a NEW terminal tab via "+" (after the 2 continuity tabs), then
   //    right-click THAT new tab → Rename → "scratch". All mouse except
   //    typing the literal name.
-  await addTerminalTab(page, EXISTING_TABS);
+  // Click the "+" button to add a new tab. The "+" sits just after the last
+  // tab; with 1 existing tab (bash, 122px wide + 4px margin) the icon center
+  // is at ~140px in 960-layout. Hardcoded rather than computed — the formula
+  // drifted with Flutter layout changes.
+  const { width, height } = page.viewportSize()!;
+  await mouseClick(page, 140 * (width / 960), TAB_STRIP_Y * height);
   await pace(2000);
 
-  // The new tab is index EXISTING_TABS (the 3rd: bash, terminal2, <new>).
-  const newTabX = terminalTabCenterPx(EXISTING_TABS);
+  // The new tab is index 1 (2nd tab: bash + <new>). Its center is at ~190px.
+  const newTabX = 190 * (width / 960);
 
   // Right-click the new tab → context menu → "Rename".
-  await mouseClickRight(page, newTabX, TAB_STRIP_Y * 540);
+  await mouseClickRight(page, newTabX, TAB_STRIP_Y * height);
   await pace(1500); // context menu appears
   // "Rename" is the first menu item, just below the cursor.
-  await mouseClick(page, newTabX, (TAB_STRIP_Y + 0.04) * 540);
+  await mouseClick(page, newTabX, (TAB_STRIP_Y + 0.04) * height);
   await pace(1500); // rename dialog appears
 
   // Triple-click the field → select-all (replaces the default name, not

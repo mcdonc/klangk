@@ -30,11 +30,14 @@ run-demo.sh            # convenience runner
 demo-helpers.ts        # Flutter-coordinate primitives + pacing + auth + WS
 demo-seed.ts           # one-time: seed users + Potemkin workspaces
 scenes/
-  scene-05-web-ui.ts          # workspaces + terminal (continuation of the CLI)
-  scene-06-clanker-chat.ts    # live @clanker take (re-run until you like it)
-  scene-07-files.ts           # file browser + PDF inline render
-  scene-08-collaboration.ts   # 4 humans + clanker in one chat (2 recordings)
-  scene-10-admin.ts           # admin panel tour
+  scene-04-web-ui.ts                  # Sc 4: workspaces + terminal + hosted apps
+  scene-05-clanker.ts                 # Sc 5: live @clanker chat
+  scene-05b-pi-debug.ts               # Sc 5b: pi debug cycle
+  scene-06-files.ts                   # Sc 6: file browser + PDF inline render
+  scene-07-collaboration.ts           # Sc 7: collaboration (owner's view)
+  scene-07b-collaboration-teammate.ts # Sc 7b: collaboration (teammate's view)
+  scene-08-plugins.ts                 # Sc 8: plugins
+  scene-09-admin.ts                   # Sc 9: admin panel tour
 
 # CLI harness (tmux + ffmpeg)
 record-terminal.sh     # Xvfb + xterm + tmux + ffmpeg recorder harness

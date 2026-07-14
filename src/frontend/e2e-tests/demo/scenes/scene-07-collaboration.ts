@@ -4,7 +4,7 @@
  * One of TWO mirrored recordings of the same conversation (see
  * collab-choreography.ts). This scene records the OWNER's single browser
  * window; the teammate/designer/reviewer halves are driven by WebSocket
- * sidechannels. The other half is Scene 7b (scene-08b-collaboration-teammate.ts,
+ * sidechannels. The other half is Scene 7b (scene-07b-collaboration-teammate.ts,
  * the teammate's window). The two clips intercut in the edit (DaVinci).
  *
  * The conversation itself — text, speakers, medium, cadence — lives ONCE in
