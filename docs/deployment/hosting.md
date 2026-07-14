@@ -29,8 +29,9 @@ outer nginx (443)
 
 ## Ports
 
-- `KLANGK_NGINX_PORT` (default `8995`): **Primary access point** — nginx serves UI, API, WebSocket, and proxies hosted app URLs directly to container ports
-- `KLANGK_PORT` (default `8997`): Backend (FastAPI/uvicorn)
+- `KLANGK_PORT` (default unset): **Browser access point** — nginx serves UI, API, WebSocket, and proxies hosted app URLs directly to container ports. Unset ⇒ headless mode (no browser listener). Suggested `8997` ([#1542](https://github.com/mcdonc/klangk/issues/1542)).
+- `KLANGK_EGRESS_PORT` (default `8995`): Container-egress port — the nginx listener for container→backend traffic (`/llm-proxy`, browser-delegate bridge, chat). Must differ from `KLANGK_PORT`.
+- `KLANGK_NGINX_PORT`: **Deprecated** alias for `KLANGK_EGRESS_PORT`; rename it.
 - `9000+`: User app ports (5 per workspace, mapped to container ports 8000-8004)
 
 ## Tailscale and LLM Proxy

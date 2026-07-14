@@ -14,8 +14,6 @@ from _helpers import make_settings
 from klangk_backend.settings import (
     KlangkSettings,
     _resolve_indirection,
-    classify_listen,
-    listen_is_socket,
     resolve_dynamic_config,
 )
 
@@ -105,6 +103,10 @@ class TestSettingsModel:
             "jwt_secret",
             "auth_modes",
             "data_dir",
+            "egress_port",
+            "egress_listen",
+            "port",
+            "socket",
             "nginx_port",
             "llm_api_key",
             "trusted_proxy_cidrs",
@@ -147,7 +149,7 @@ class TestConfigFile:
     def test_config_none_opt_out(self):
         """config_file='none': no file, env+defaults only."""
         s = make_settings({}, config_file="none")
-        assert s.nginx_port == "8995"  # built-in default
+        assert s.egress_port == "8995"  # built-in default
 
     def test_file_cmd_resolution_from_yaml(self, tmp_path):
         """file:/cmd: values in YAML resolve at construction (#1461)."""
@@ -176,16 +178,16 @@ class TestDualFormKeys:
     def test_kebab_case_key_loads(self, tmp_path):
         """A hyphenated top-level key maps to its snake_case field."""
         cfg = tmp_path / "config.yaml"
-        cfg.write_text('nginx-port: "9999"\n')
+        cfg.write_text('egress-port: "9999"\n')
         s = make_settings({}, config_file=str(cfg))
-        assert s.nginx_port == "9999"
+        assert s.egress_port == "9999"
 
     def test_snake_case_key_loads(self, tmp_path):
         """snake_case (the documented form) still loads unchanged."""
         cfg = tmp_path / "config.yaml"
-        cfg.write_text('nginx_port: "7777"\n')
+        cfg.write_text('egress_port: "7777"\n')
         s = make_settings({}, config_file=str(cfg))
-        assert s.nginx_port == "7777"
+        assert s.egress_port == "7777"
 
     def test_kebab_and_snake_resolve_same_field(self, tmp_path):
         """Both forms populate the same field (not two different ones)."""
@@ -243,61 +245,140 @@ class TestDualFormKeys:
 
 
 # ---------------------------------------------------------------------------
-# classify_listen / listen_is_socket (polymorphic KLANGK_LISTEN, #1422)
+# _resolve_socket_and_ports validator (listen-shape settings, #1542)
 # ---------------------------------------------------------------------------
-# KLANGK_LISTEN is polymorphic: a socket path or a TCP host (no port —
-# the port comes from KLANGK_PORT). The
-# deployment shape is *derived* from listen's shape + auth_modes (there is
-# no amalgamated UI-mode/preset setting — it never shipped). These pin the
-# classifier that the renderer, the klangkd bind, and the CLI (#1399) share.
+# KLANGK_PORT (unset ⇒ headless, set ⇒ browser), KLANGK_EGRESS_PORT (container
+# egress), KLANGK_SOCKET (backend UDS), and the deprecated KLANGK_NGINX_PORT
+# alias are resolved once at construction. Callers read ``egress_port`` /
+# ``socket`` only; ``nginx_port`` is a deprecated alias folded into
+# ``egress_port`` (egress-wins) and slated for removal.
 
 
-class TestClassifyListen:
-    def test_absolute_path_is_socket(self):
-        assert classify_listen("/tmp/klangk.sock") == "socket"
-        assert classify_listen("/run/user/1000/klangk.sock") == "socket"
+class TestResolveSocketAndPorts:
+    def test_socket_defaults_to_state_dir_klangk_sock(self):
+        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        assert s.socket == os.path.join("/tmp/state", "klangk.sock")
 
-    def test_tcp_host_is_tcp(self):
-        assert classify_listen("127.0.0.1") == "tcp"
-        assert classify_listen("0.0.0.0") == "tcp"
-        assert classify_listen("::1") == "tcp"
+    def test_explicit_socket_wins(self):
+        s = KlangkSettings(
+            env={
+                "KLANGK_STATE_DIR": "/tmp/state",
+                "KLANGK_SOCKET": "/short/klangk.sock",
+            }
+        )
+        assert s.socket == "/short/klangk.sock"
 
-    def test_value_with_port_is_tcp(self):
-        # LISTEN never carries a port (it comes from KLANGK_PORT), but if a
-        # port-bearing value did appear it must classify as TCP, not socket —
-        # the classifier never mis-classifies a non-socket.
-        assert classify_listen("127.0.0.1:8997") == "tcp"
-        assert classify_listen("0.0.0.0:8997") == "tcp"
-        assert classify_listen("[::1]:8997") == "tcp"
+    def test_egress_port_defaults_to_8995(self):
+        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        assert s.egress_port == "8995"
 
-    def test_http_scheme_is_tcp(self):
-        # CLI-style absolute URL — TCP (shared convention with #1399).
-        assert classify_listen("http://host:8995") == "tcp"
-        assert classify_listen("https://host") == "tcp"
+    def test_explicit_egress_port_wins(self):
+        s = KlangkSettings(
+            env={
+                "KLANGK_STATE_DIR": "/tmp/state",
+                "KLANGK_EGRESS_PORT": "7777",
+            }
+        )
+        assert s.egress_port == "7777"
 
-    def test_none_is_tcp(self):
-        # None ⇒ the TCP default (loopback until #1400 flips it to a socket).
-        assert classify_listen(None) == "tcp"
-        assert classify_listen("") == "tcp"
+    def test_port_defaults_to_none_headless(self):
+        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        assert s.port is None
 
-    def test_bare_relative_is_tcp(self):
-        # Ambiguous (no scheme, no leading slash) — classified as TCP, not a
-        # socket. Callers needing a socket must pass an absolute path; this
-        # keeps the classifier total (mirrors #1399's absolute-path rule).
-        assert classify_listen("klangk.sock") == "tcp"
-        assert classify_listen("localhost") == "tcp"
+    def test_listen_defaults_to_loopback(self):
+        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        assert s.listen == "127.0.0.1"
 
+    def test_egress_listen_defaults_to_all_interfaces(self):
+        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        assert s.egress_listen == "0.0.0.0"
 
-class TestListenIsSocket:
-    def test_true_when_listen_is_socket_path(self):
-        assert listen_is_socket("/tmp/klangk.sock") is True
+    def test_egress_listen_override(self):
+        s = KlangkSettings(
+            env={
+                "KLANGK_STATE_DIR": "/tmp/state",
+                "KLANGK_EGRESS_LISTEN": "192.168.1.5",
+            }
+        )
+        assert s.egress_listen == "192.168.1.5"
 
-    def test_false_when_listen_is_tcp(self):
-        assert listen_is_socket("127.0.0.1") is False
+    def test_nginx_port_folded_into_egress_with_warning(self, caplog):
+        """KLANGK_NGINX_PORT alone (no egress) is used as egress + a deprecation warning."""
+        import logging
 
-    def test_false_for_default(self):
-        # The default (127.0.0.1) is TCP; #1400 will flip this to a socket.
-        assert listen_is_socket("127.0.0.1") is False
+        with caplog.at_level(logging.WARNING):
+            s = KlangkSettings(
+                env={
+                    "KLANGK_STATE_DIR": "/tmp/state",
+                    "KLANGK_NGINX_PORT": "9999",
+                }
+            )
+        assert s.egress_port == "9999"
+        assert any(
+            "KLANGK_NGINX_PORT is deprecated" in r.message
+            for r in caplog.records
+        )
+
+    def test_egress_wins_over_nginx_port_with_warning(self, caplog):
+        """Both set: egress_port wins, nginx_port ignored + a warning."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            s = KlangkSettings(
+                env={
+                    "KLANGK_STATE_DIR": "/tmp/state",
+                    "KLANGK_EGRESS_PORT": "8995",
+                    "KLANGK_NGINX_PORT": "9999",
+                }
+            )
+        assert s.egress_port == "8995"
+        assert any(
+            "KLANGK_NGINX_PORT is ignored" in r.message for r in caplog.records
+        )
+
+    def test_egress_equals_port_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            KlangkSettings(
+                env={
+                    "KLANGK_STATE_DIR": "/tmp/state",
+                    "KLANGK_PORT": "8995",
+                    "KLANGK_EGRESS_PORT": "8995",
+                }
+            )
+
+    def test_socket_too_long_rejected(self):
+        from pydantic import ValidationError
+
+        # Build a path over 104 chars by setting a very long socket directly.
+        long_socket = "/" + "a" * 104 + ".sock"
+        assert len(long_socket) > 104
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGK_STATE_DIR": "/tmp/state",
+                    "KLANGK_SOCKET": long_socket,
+                }
+            )
+        msg = str(exc_info.value)
+        assert "KLANGK_SOCKET" in msg
+        assert "#1531" in msg
+
+    def test_socket_length_error_directs_to_state_dir_or_socket(self):
+        from pydantic import ValidationError
+
+        long_socket = "/" + "a" * 104 + ".sock"
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGK_STATE_DIR": "/tmp/state",
+                    "KLANGK_SOCKET": long_socket,
+                }
+            )
+        msg = str(exc_info.value)
+        assert "KLANGK_STATE_DIR" in msg
+        assert "KLANGK_SOCKET" in msg
 
 
 class TestKlangkdLauncher:
@@ -329,14 +410,14 @@ class TestEnvConstructor:
 
     def test_reads_from_env_dict(self):
         # Explicit env dict is the only source — os.environ is ignored.
-        s = make_settings({"KLANGK_NGINX_PORT": "4321"})
-        assert s.nginx_port == "4321"
+        s = make_settings({"KLANGK_EGRESS_PORT": "4321"})
+        assert s.egress_port == "4321"
 
     def test_env_dict_ignores_os_environ(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_NGINX_PORT", "9999")
-        s = make_settings({"KLANGK_NGINX_PORT": "1111"})
-        assert s.nginx_port == "1111"
-        assert s.nginx_port != "9999"
+        monkeypatch.setenv("KLANGK_EGRESS_PORT", "9999")
+        s = make_settings({"KLANGK_EGRESS_PORT": "1111"})
+        assert s.egress_port == "1111"
+        assert s.egress_port != "9999"
 
     def test_empty_env_dict_uses_defaults(self):
         s = make_settings({})
@@ -347,7 +428,7 @@ class TestEnvConstructor:
     def test_env_for_sources_reset_after_construction(self):
         # The class-var bridge is cleaned up after construction so it doesn't
         # leak between instances.
-        make_settings({"KLANGK_NGINX_PORT": "1234"})
+        make_settings({"KLANGK_EGRESS_PORT": "1234"})
         assert KlangkSettings._env_for_sources is None
 
     def test_env_dict_multiple_fields(self):
@@ -471,8 +552,8 @@ class TestResolveIndirectionsValidator:
         # A plain (already-resolved) value survives a second pass unchanged —
         # the legacy resolve_env_value path reads the resolved field and its
         # redundant _resolve_indirection call is a no-op.
-        s = make_settings({"KLANGK_NGINX_PORT": "8995"})
-        assert _resolve_indirection(s.nginx_port) == "8995"
+        s = make_settings({"KLANGK_EGRESS_PORT": "8995"})
+        assert _resolve_indirection(s.egress_port) == "8995"
 
     def test_non_string_field_skipped(self):
         # oidc_providers is list[dict] | None — not a str, skipped by the

@@ -318,7 +318,7 @@ docker run -d \
   --device /dev/net/tun \
   --security-opt seccomp=unconfined \
   --security-opt systempaths=unconfined \
-  -e KLANGK_NGINX_PORT=8995 \
+  -e KLANGK_EGRESS_PORT=8995 \
   -e KLANGK_PORT=8997 \
   -e KLANGK_DEFAULT_USER=admin@example.com \
   -e KLANGK_DEFAULT_PASSWORD=changeme \

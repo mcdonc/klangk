@@ -337,7 +337,7 @@ class Util:
 
         Consistent with hosted-app URL construction: the port comes from
         KLANGK_HOSTING_HOSTNAME (which carries host[:port]); it is never
-        synthesized from KLANGK_NGINX_PORT (that is internal container
+        synthesized from KLANGK_EGRESS_PORT (that is internal container
         wiring, not the browser origin). Origins carry no path, so
         KLANGK_HOSTING_BASE_PATH is ignored here.
         """

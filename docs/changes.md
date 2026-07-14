@@ -27,9 +27,30 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`KLANGK_EGRESS_LISTEN`** — the interface nginx binds for the container-
+  egress listener, rendered as `listen {egress_listen}:{egress_port};`.
+  Defaults to `0.0.0.0` (all interfaces), the only value portable across
+  podman network modes — `host.containers.internal` resolves to a netavark/
+  pasta virtual gateway that isn't bindable, and the real interface container
+  traffic lands on is environment-specific. The all-interfaces bind is gated
+  by `CONTAINER_ACL` (deny-all → 403 outside the container subnet) plus the
+  `auth_request` workspace-token gate (→ 401 without a valid JWT); pin to a
+  specific host IP to tighten further (#1542).
+
+- **`KLANGK_EGRESS_PORT`** — a dedicated container-egress port nginx listens
+  on for container→backend traffic (`/llm-proxy`, `/api/v1/browser-delegate`,
+  `/api/v1/workspaces/post-chat-message`). Default `8995`. Served in both
+  headless and full/browser modes (#1542).
+
+- **`KLANGK_SOCKET`** — the backend UDS path `klangkd` binds. Defaults to
+  `<state_dir>/klangk.sock`; override when the default overflows the
+  `AF_UNIX` `sun_path` limit. A resolved path exceeding 104 chars fails at
+  construction with a diagnostic directing the deployer to shorten
+  `KLANGK_SOCKET` or move `KLANGK_STATE_DIR` shallower (#1531, #1542).
+
 - **Config-file keys accept `snake_case` _and_ `kebab-case`:** every
   `klangkd` config-file key may now be written in either form (`jwt_secret`
-  or `jwt-secret`, `nginx_port` or `nginx-port`, etc.) and resolves to the
+  or `jwt-secret`, `egress_port` or `egress-port`, etc.) and resolves to the
   same setting. Generalizes the dual-form lookup the OIDC provider dicts
   already had to the whole config file; `snake_case` remains the
   preferred/documented form (#1538).
@@ -69,6 +90,28 @@ operators or integrators to act when upgrading.
   `pytest-timeout` dev dependency (#1513).
 
 ### Changed
+
+- **`KLANGK_PORT` is now the nginx browser port, not uvicorn's bind.** Under
+  `klangkd` uvicorn always binds the UDS (`KLANGK_SOCKET`); `KLANGK_PORT` is
+  the nginx listener for the browser UI + API + hosted apps. **Unset ⇒
+  headless mode** (no browser listener; only the container-egress listener on
+  `KLANGK_EGRESS_PORT` is served). Set ⇒ full/browser mode. Suggested value
+  `8997` (#1542).
+
+- **`KLANGK_LISTEN` is now a plain browser-interface address** (default
+  `127.0.0.1`), rendered as `listen {KLANGK_LISTEN}:{KLANGK_PORT};` only in
+  full/browser mode. The polymorphic socket-path meaning is retired (it never
+  shipped in a release); the UDS path is now `KLANGK_SOCKET` (#1542).
+
+- **nginx now listens on two separate ports in full/browser mode** — the
+  browser listener (`KLANGK_LISTEN`:`KLANGK_PORT`) and the container-egress
+  listener (`KLANGK_EGRESS_PORT`) — so ingress and egress traffic can be
+  firewalled independently. `KLANGK_EGRESS_PORT` must differ from
+  `KLANGK_PORT` (#1542).
+
+- **`classify_listen` / `listen_is_socket` removed** — `KLANGK_LISTEN` is no
+  longer polymorphic; template selection keys off `KLANGK_PORT` (unset ⇒
+  headless, set ⇒ full) instead (#1542).
 
 - **E2E test envs are now hermetic (#1526):** all E2E suites (backend,
   CLI, frontend) build subprocess envs via a shared `clean_env()` helper
@@ -183,6 +226,14 @@ operators or integrators to act when upgrading.
   `_INSECURE_DEFAULT_SECRET` consolidated into `settings.INSECURE_DEFAULT_SECRET`
   (#1501, #1426).
 
+### Deprecated
+
+- **`KLANGK_NGINX_PORT`** is deprecated; rename to `KLANGK_EGRESS_PORT`. If
+  `KLANGK_EGRESS_PORT` is unset, the `KLANGK_NGINX_PORT` value is used as the
+  egress port (with a deprecation warning); if both are set,
+  `KLANGK_EGRESS_PORT` wins and `KLANGK_NGINX_PORT` is ignored. A future
+  release will stop recognizing it (#1542).
+
 ### Removed
 
 - **`scripts/run-host-container.sh`:** retired; the `env | grep '^KLANGK_'`
@@ -240,6 +291,19 @@ set-password <email>` (set a known password for the default user — whose
   from `/my-permissions`).
 
 ### Breaking
+
+- **The listen/port settings model is restructured** (#1542):
+  - `KLANGK_NGINX_PORT` → rename to `KLANGK_EGRESS_PORT` (deprecated alias
+    accepted this release with a warning).
+  - `KLANGK_PORT` changes meaning from uvicorn's bind to the nginx browser
+    port. Operators who set `KLANGK_PORT` on the old assumption it was the
+    (dead) uvicorn bind should review: unset it for headless, or set it to
+    the desired browser port.
+  - `KLANGK_LISTEN`'s default is `127.0.0.1` (was polymorphic/unused). The
+    socket-path meaning never shipped in a release.
+  - The host container (`Dockerfile`) now sets `KLANGK_PORT=8997`,
+    `KLANGK_EGRESS_PORT=8995`, and publishes both ports (was
+    `KLANGK_NGINX_PORT` + one published port).
 
 - **Direct TCP to uvicorn is gone.** uvicorn now binds only a UNIX socket
   (`<state_dir>/klangk.sock`); nginx proxies to it. Point external proxies at

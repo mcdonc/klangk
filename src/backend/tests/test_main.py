@@ -127,15 +127,21 @@ class TestSeedDefaultUser:
 # --- no-auth bind safety gate (#1374) ---
 
 
-def _bind_safety_app_state(auth_mode=None, listen=None, allow_insecure=None):
+def _bind_safety_app_state(
+    auth_mode=None, listen=None, allow_insecure=None, port="8997"
+):
     """Build a minimal app_state whose oidc reads the given auth mode (#1450).
 
     Pass the mode/listen/allow-insecure explicitly — the bind-safety tests
     exercise different combinations, and these are now read from
     ``settings`` frozen at construction (#1518) instead of re-reading the
-    env per call.
+    env per call. ``port`` defaults to ``"8997"`` (full/browser mode) so the
+    browser-bind gate applies; pass ``port=None`` to exercise headless
+    (where the gate is a no-op — no browser listener, #1542).
     """
     env = {"KLANGK_AUTH_MODES": auth_mode} if auth_mode else {}
+    if port is not None:
+        env["KLANGK_PORT"] = port
     if listen is not None:
         env["KLANGK_LISTEN"] = listen
     if allow_insecure is not None:
@@ -227,12 +233,14 @@ class TestNoAuthBindSafety:
         assert "KLANGK_ALLOW_INSECURE_NO_AUTH=1" in msg
         assert "0.0.0.0" in msg
 
-    def test_allows_socket_path(self):
-        """A UDS path is safe — same-uid trust boundary (#1399)."""
+    def test_headless_exempt_from_bind_check(self):
+        """Headless (KLANGK_PORT unset) has no browser listener, so the bind
+        gate is a no-op — none mode is safe regardless of the listen address,
+        because /auth/local is never exposed over TCP (#1542)."""
         assert (
             main.enforce_no_auth_bind_safety(
                 _bind_safety_app_state(
-                    auth_mode="none", listen="/tmp/klangk.sock"
+                    auth_mode="none", listen="0.0.0.0", port=None
                 )
             )
             is None

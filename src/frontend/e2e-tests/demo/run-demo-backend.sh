@@ -12,7 +12,7 @@
 #
 #   backend (uvicorn):     127.0.0.1:$KLANGK_PORT  (.demo-env -> 8998; TCP because
 #                                                  KLANGK_LISTEN=127.0.0.1)
-#   nginx (klangkc target)::$KLANGK_NGINX_PORT     (.demo-env -> 8996)
+#   nginx (klangkc target)::$KLANGK_EGRESS_PORT     (.demo-env -> 8996)
 #   instance id:           "video"   (unique pid file + container labels)
 #
 # KLANGK_LISTEN=127.0.0.1 is load-bearing: post-#1400 the default listen is
@@ -33,7 +33,7 @@
 #   run-demo-backend.sh stop       tear down (idempotent)
 #   run-demo-backend.sh status     exit 0 if up, 1 if down
 #
-# record-cli.sh + demo-seed.ts point at http://localhost:${KLANGK_NGINX_PORT}.
+# record-cli.sh + demo-seed.ts point at http://localhost:${KLANGK_EGRESS_PORT}.
 set -uo pipefail
 
 # Resolve the worktree root from this script's location (it lives at
@@ -49,7 +49,7 @@ cd "$WT" || exit 1
 # devenv.nix's env. block). Read them back so the script can report/target the
 # right ports.
 DEMO_PORT="${KLANGK_PORT:-8998}"
-DEMO_NGINX_PORT="${KLANGK_NGINX_PORT:-8996}"
+DEMO_NGINX_PORT="${KLANGK_EGRESS_PORT:-8996}"
 DEMO_LISTEN="${KLANGK_LISTEN:-127.0.0.1}"
 # `both` = password + OIDC. The login screen shows the OIDC button above the
 # password fields, which the demo's login-card click coordinates assume (see
@@ -106,7 +106,7 @@ _ensure_env() {
   # Already configured (and nothing changed)? Skip the rewrite.
   if grep -qF "KLANGK_INSTANCE_ID=$DEMO_INSTANCE" .demo-env 2>/dev/null &&
     grep -qF "KLANGK_PORT=$DEMO_PORT" .demo-env 2>/dev/null &&
-    grep -qF "KLANGK_NGINX_PORT=$DEMO_NGINX_PORT" .demo-env 2>/dev/null &&
+    grep -qF "KLANGK_EGRESS_PORT=$DEMO_NGINX_PORT" .demo-env 2>/dev/null &&
     grep -qF "KLANGK_LISTEN=$DEMO_LISTEN" .demo-env 2>/dev/null &&
     grep -qF "KLANGK_STATE_DIR=$DEMO_STATE_DIR" .demo-env 2>/dev/null &&
     grep -qF "KLANGK_OIDC_CONFIG=$DEMO_OIDC_CONFIG" .demo-env 2>/dev/null &&
@@ -136,7 +136,7 @@ _ensure_env() {
     echo "# run-demo-backend.sh — re-runnable."
     echo "KLANGK_INSTANCE_ID=$DEMO_INSTANCE"
     echo "KLANGK_PORT=$DEMO_PORT"
-    echo "KLANGK_NGINX_PORT=$DEMO_NGINX_PORT"
+    echo "KLANGK_EGRESS_PORT=$DEMO_NGINX_PORT"
     # Bootstrap admin (the server's KLANGK_DEFAULT_USER). demo-seed.ts logs in
     # as this account to create the hero + cast users. klangkd creates it at
     # startup with KLANGK_DEFAULT_PASSWORD. Must match the seed's

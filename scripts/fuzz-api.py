@@ -590,15 +590,18 @@ def start_server(data_dir: str) -> tuple[subprocess.Popen, TeeReader, str]:
     """Start a klangkd server as a subprocess, bound to a Unix socket.
 
     ``klangkd`` is the real server launcher (``--config none`` = env-only);
-    it always binds a UDS at ``<state_dir>/klangk.sock`` and would normally
-    start an nginx child, so ``_KLANGK_DISABLE_NGINX`` suppresses nginx —
-    the fuzzer talks to the backend directly over the socket. ``KLANGK_TEST_MODE``
-    registers the ``/api/v1/test/*`` routes the fuzzer also exercises.
+    it always binds a UDS at ``settings.socket`` (default
+    ``<state_dir>/klangk.sock``, overridable via ``KLANGK_SOCKET`` — #1542)
+    and would normally start an nginx child, so ``_KLANGK_DISABLE_NGINX``
+    suppresses nginx — the fuzzer talks to the backend directly over the
+    socket. ``KLANGK_TEST_MODE`` registers the ``/api/v1/test/*`` routes the
+    fuzzer also exercises.
 
     Returns (process, tee_reader, uds_path) — the tee_reader streams server
     stderr to the terminal in real time and captures it for the report.
+    ``uds_path`` is the resolved socket path (read back from settings, not
+    recomputed, so a ``KLANGK_SOCKET`` override is honored).
     """
-    uds_path = os.path.join(data_dir, "klangk.sock")
     env = {
         **os.environ,
         "KLANGK_STATE_DIR": data_dir,
@@ -613,6 +616,16 @@ def start_server(data_dir: str) -> tuple[subprocess.Popen, TeeReader, str]:
         # Disable features that need external services
         "KLANGK_IMAGE_PULL_POLICY": "never",
     }
+    # Resolve the socket path from the same settings the server will use
+    # (honors KLANGK_SOCKET; defaults to <state_dir>/klangk.sock). Imported
+    # lazily so ``--check`` (which never starts a server) needs no backend.
+    from klangk_backend.settings import KlangkSettings
+
+    settings = KlangkSettings(
+        {k: v for k, v in env.items() if k.startswith("KLANGK_")},
+        config_file="none",
+    )
+    uds_path = settings.socket
     proc = subprocess.Popen(
         ["klangkd", "--config", "none"],
         env=env,
@@ -1091,7 +1104,7 @@ def main():
     tracker = AnomalyTracker()
 
     with tempfile.TemporaryDirectory(prefix="klangk-fuzz-") as data_dir:
-        logger.info("Starting klangkd (uds=%s/klangk.sock)", data_dir)
+        logger.info("Starting klangkd")
         proc, tee, uds_path = start_server(data_dir)
 
         try:

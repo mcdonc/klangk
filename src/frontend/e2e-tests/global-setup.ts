@@ -98,7 +98,7 @@ async function globalSetup() {
     const confPath = join(nginxState, "nginx.conf");
 
     const renderEnv = cleanEnv({
-      KLANGK_NGINX_PORT: nginxPort,
+      KLANGK_EGRESS_PORT: nginxPort,
       KLANGK_PORT: backendPort,
     });
     execSync(
@@ -145,7 +145,7 @@ async function globalSetup() {
       env: cleanEnv({
         _KLANGK_DISABLE_NGINX: "1",
         KLANGK_PORT: backendPort,
-        KLANGK_NGINX_PORT: nginxPort,
+        KLANGK_EGRESS_PORT: nginxPort,
         KLANGK_DATA_DIR: dataDir,
         KLANGK_STATE_DIR: stateDir,
         KLANGK_CUSTOMIZE_DIR: join(dataDir, "customize"),

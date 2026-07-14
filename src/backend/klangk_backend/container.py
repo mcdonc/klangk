@@ -1135,8 +1135,8 @@ class ContainerRegistry:
             if hosting_base_path is None:
                 hosting_base_path = b
         env_vars: list[str] = []
-        nginx_port = self.settings.nginx_port
-        proxy_url = f"http://host.containers.internal:{nginx_port}/llm-proxy"
+        egress_port = self.settings.egress_port
+        proxy_url = f"http://host.containers.internal:{egress_port}/llm-proxy"
         llm_model = self.settings.llm_model
         env_vars.append(f"KLANGK_LLM_PROXY_URL={proxy_url}")
         if llm_model:
@@ -1165,7 +1165,7 @@ class ContainerRegistry:
         env_vars.append(f"KLANGK_WORKSPACE_ID={workspace_id}")
         env_vars.append(f"KLANGK_AGENT_HOME={agent_home}")
         env_vars.append(
-            f"KLANGK_BRIDGE_URL=http://host.containers.internal:{nginx_port}"
+            f"KLANGK_BRIDGE_URL=http://host.containers.internal:{egress_port}"
         )
         if self.terminal_banner:
             env_vars.append(f"KLANGK_TERMINAL_BANNER={self.terminal_banner}")

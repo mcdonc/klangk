@@ -52,15 +52,12 @@ def _port_listening(port):
 
 
 def _start_klangkd():
-    """Start a klangkd process with nginx enabled, return (proc, nginx_port)."""
+    """Start a klangkd process with nginx enabled, return (proc, egress_port)."""
     data_dir = tempfile.mkdtemp(prefix="klangk-nginx-lifecycle-")
-    nginx_port = str(free_port())
-
-    sock_path = os.path.join(data_dir, "klangk.sock")
+    egress_port = str(free_port())
 
     env = clean_env(
-        KLANGK_LISTEN=sock_path,
-        KLANGK_NGINX_PORT=nginx_port,
+        KLANGK_EGRESS_PORT=egress_port,
         KLANGK_STATE_DIR=data_dir,
         KLANGK_DATA_DIR=data_dir,
         KLANGK_JWT_SECRET="nginx-lifecycle-test",
@@ -82,7 +79,7 @@ def _start_klangkd():
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-    return proc, nginx_port
+    return proc, egress_port
 
 
 def _wait_for_port_closed(port, timeout=10):
@@ -97,9 +94,9 @@ def _wait_for_port_closed(port, timeout=10):
 
 def _signal_test(sig):
     """Start klangkd + nginx, send *sig*, assert nginx port closes."""
-    proc, nginx_port = _start_klangkd()
+    proc, egress_port = _start_klangkd()
     try:
-        ok = _wait_for_nginx(nginx_port)
+        ok = _wait_for_nginx(egress_port)
         if not ok:
             proc.kill()
             out, _ = proc.communicate(timeout=5)
@@ -108,7 +105,7 @@ def _signal_test(sig):
                 f"{out.decode(errors='replace')[:2000]}"
             )
 
-        assert _port_listening(nginx_port), "nginx not serving"
+        assert _port_listening(egress_port), "nginx not serving"
 
         os.kill(proc.pid, sig)
         try:
@@ -117,7 +114,7 @@ def _signal_test(sig):
             proc.kill()
             proc.wait()
 
-        assert _wait_for_port_closed(nginx_port), (
+        assert _wait_for_port_closed(egress_port), (
             f"nginx port still listening after {signal.Signals(sig).name}"
         )
     finally:

@@ -176,9 +176,9 @@ class TestCorsOrigins:
         u = _util({})
         assert u.cors_origins() == ["http://localhost"]
 
-    def test_nginx_port_not_synthesized(self):
-        """KLANGK_NGINX_PORT does not leak into the CORS origin."""
-        u = _util({"KLANGK_NGINX_PORT": "9000"})
+    def test_egress_port_not_synthesized(self):
+        """KLANGK_EGRESS_PORT does not leak into the CORS origin."""
+        u = _util({"KLANGK_EGRESS_PORT": "9000"})
         assert u.cors_origins() == ["http://localhost"]
 
     def test_hosting_hostname_carries_port(self):
@@ -302,7 +302,7 @@ class TestDeriveHostingInfo:
 
     def test_forwarded_headers_trusted_from_loopback_peer(self):
         """Forwarded headers honored when the peer is a trusted proxy (loopback by default)."""
-        u = _util({"KLANGK_NGINX_PORT": "8995"})
+        u = _util({"KLANGK_EGRESS_PORT": "8995"})
         h, p, b = u.derive_hosting_info(
             {
                 "x-forwarded-host": "arctor.repoze.org",
@@ -321,7 +321,7 @@ class TestDeriveHostingInfo:
         An attacker reaching the backend directly (e.g. from a public IP)
         must not be able to poison X-Forwarded-Host to mint phishing links.
         """
-        u = _util({"KLANGK_NGINX_PORT": "8995"})
+        u = _util({"KLANGK_EGRESS_PORT": "8995"})
         h, p, b = u.derive_hosting_info(
             {
                 "host": "localhost:8997",
@@ -337,7 +337,7 @@ class TestDeriveHostingInfo:
 
     def test_forwarded_headers_rejected_when_no_peer(self):
         """Forwarded headers ignored when client_host is unavailable (fail-closed)."""
-        u = _util({"KLANGK_NGINX_PORT": "8995"})
+        u = _util({"KLANGK_EGRESS_PORT": "8995"})
         h, p, b = u.derive_hosting_info(
             {
                 "host": "localhost:8997",
@@ -354,7 +354,7 @@ class TestDeriveHostingInfo:
         """KLANGK_REJECT_PROXY_HEADERS=1 forces trust off even for loopback peers."""
         u = _util(
             {
-                "KLANGK_NGINX_PORT": "8995",
+                "KLANGK_EGRESS_PORT": "8995",
                 "KLANGK_REJECT_PROXY_HEADERS": "1",
             }
         )
@@ -375,7 +375,7 @@ class TestDeriveHostingInfo:
         """A non-loopback peer is trusted when its CIDR is configured."""
         u = _util(
             {
-                "KLANGK_NGINX_PORT": "8995",
+                "KLANGK_EGRESS_PORT": "8995",
                 "KLANGK_TRUSTED_PROXY_CIDRS": "10.0.0.0/8",
             }
         )
@@ -396,37 +396,37 @@ class TestDeriveHostingInfo:
 
         nginx forwards the client's Host as both Host and X-Forwarded-Host,
         so the port the browser hit rides along unmodified — no port is
-        synthesized from KLANGK_NGINX_PORT (that is internal wiring, not the
+        synthesized from KLANGK_EGRESS_PORT (that is internal wiring, not the
         public port; wrong behind a real proxy/ingress).
         """
-        u = _util({"KLANGK_NGINX_PORT": "8995"})
+        u = _util({"KLANGK_EGRESS_PORT": "8995"})
         h, p, b = u.derive_hosting_info({"host": "myhost:8997"}, "127.0.0.1")
         assert h == "myhost:8997"
         assert p == "http"
         assert b == ""
 
-    def test_host_header_no_nginx_port(self):
+    def test_host_header_no_egress_port(self):
         u = _util({})
         h, p, b = u.derive_hosting_info({"host": "myhost:8997"}, "127.0.0.1")
         assert h == "myhost:8997"
         assert p == "http"
         assert b == ""
 
-    def test_nginx_port_not_synthesized_into_host(self):
-        """KLANGK_NGINX_PORT is NOT used to compose the URL authority.
+    def test_egress_port_not_synthesized_into_host(self):
+        """KLANGK_EGRESS_PORT is NOT used to compose the URL authority.
 
         With no env override and an uninformative (empty) request, the floor
-        is bare localhost — even though KLANGK_NGINX_PORT is set. The port
+        is bare localhost — even though KLANGK_EGRESS_PORT is set. The port
         must come from KLANGK_HOSTING_HOSTNAME or the Host header, never
-        guessed from the internal nginx port (#1240).
+        guessed from the internal egress port (#1240).
         """
-        u = _util({"KLANGK_NGINX_PORT": "8995"})
+        u = _util({"KLANGK_EGRESS_PORT": "8995"})
         h, p, b = u.derive_hosting_info({}, "127.0.0.1")
         assert h == "localhost"
         assert p == "http"
         assert b == ""
 
-    def test_defaults_no_nginx_port(self):
+    def test_defaults_no_egress_port(self):
         u = _util({})
         h, p, b = u.derive_hosting_info({}, "127.0.0.1")
         assert h == "localhost"
@@ -446,7 +446,7 @@ class TestDeriveHostingInfo:
                 "KLANGK_HOSTING_HOSTNAME": "klangk.example.com",
                 "KLANGK_HOSTING_PROTO": "https",
                 "KLANGK_HOSTING_BASE_PATH": "/klangk",
-                "KLANGK_NGINX_PORT": "8995",
+                "KLANGK_EGRESS_PORT": "8995",
             }
         )
         h, p, b = u.derive_hosting_info(None, None)
@@ -456,13 +456,13 @@ class TestDeriveHostingInfo:
 
     def test_no_headers_falls_back_to_localhost(self):
         """No env, no request -> bare localhost (no port synthesized)."""
-        u = _util({"KLANGK_NGINX_PORT": "8995"})
+        u = _util({"KLANGK_EGRESS_PORT": "8995"})
         h, p, b = u.derive_hosting_info(None, None)
         assert h == "localhost"
         assert p == "http"
         assert b == ""
 
-    def test_no_headers_no_env_no_nginx_port(self):
+    def test_no_headers_no_env_no_egress_port(self):
         """Absolute floor: bare localhost when nothing is configured."""
         u = _util({})
         h, p, b = u.derive_hosting_info(None, None)

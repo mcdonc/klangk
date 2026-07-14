@@ -359,20 +359,55 @@ class KlangkSettings(BaseSettings):
     trusted_proxy_cidrs: str | None = "127.0.0.1,::1"
 
     # --- Server / network ---
-    # listen: the uvicorn bind spec — **polymorphic** (#1422). Either a TCP
-    # host (e.g. ``127.0.0.1``, ``0.0.0.0``) or a UNIX socket path
-    # (e.g. ``/tmp/klangk.sock``). Classification (see :func:`classify_listen`):
-    # an absolute path with no ``://`` scheme ⇒ socket; otherwise TCP. The
-    # deployment shape is *derived* from listen's shape + auth_modes — there
-    # is no amalgamated ``KLANGK_UI_MODE``/``KLANGK_PRESET`` setting (it never
-    # shipped). Socket ⇒ nginx renders the minimal (headless) template; TCP
-    # ⇒ full (browser) template. ``KLANGK_PORT`` applies only when listen is
-    # TCP. Default is None → klangkd derives a socket path from state_dir
-    # (#1400: headless UDS posture is the production default).
-    listen: str | None = None
-    port: str | None = "8997"
-    nginx_port: str | None = "8995"
+    # listen: the nginx **browser** interface/address (e.g. ``127.0.0.1``,
+    # ``0.0.0.0``). Rendered as ``listen {listen}:{port};`` only when
+    # ``KLANGK_PORT`` is set (full/browser mode). Default ``127.0.0.1``
+    # (loopback) keeps the browser listener reachable only from the operator's
+    # machine unless an operator deliberately widens it (#1542). The
+    # polymorphic socket-path meaning (#1422) never shipped in a release and
+    # is retired — the UDS path is now ``KLANGK_SOCKET``.
+    listen: str = "127.0.0.1"
+    # port: the nginx **browser** port (e.g. ``8997``). **No default** — unset
+    # ⇒ headless mode (no browser listener is rendered; only the container-
+    # egress listener on ``KLANGK_EGRESS_PORT`` is served). Set ⇒ full/browser
+    # mode (browser UI + API + hosted apps on ``listen {listen}:{port};``).
+    port: str | None = None
+    # egress_port: the container-egress port nginx listens on for
+    # container→backend traffic (``/llm-proxy``, ``/api/v1/browser-delegate``,
+    # ``/api/v1/workspaces/post-chat-message``). Serves both headless and full
+    # modes. Default ``8995``. Must differ from ``port`` so ingress vs egress
+    # can be firewalled separately (#1542). ``None`` here is a sentinel —
+    # ``_resolve_socket_and_ports`` resolves it to ``"8995"`` (or folds the
+    # deprecated ``KLANGK_NGINX_PORT`` into it).
+    egress_port: str | None = None
+    # egress_listen: the interface/address nginx binds for the container-
+    # egress listener, rendered as ``listen {egress_listen}:{egress_port};``.
+    # Default ``0.0.0.0`` (all interfaces) — the only value portable across
+    # podman network modes, because the host interface container traffic lands
+    # on is environment-specific (host LAN IP under pasta/netavark-NAT, bridge
+    # gateway under rootful bridge) and cannot be detected reliably at render
+    # time. The actual security boundary on the egress locations is the
+    # ``CONTAINER_ACL`` allowlist + ``auth_request`` workspace-token gate, not
+    # the bind address. An operator who knows their specific container-facing
+    # host IP may set this to that IP to drop every other interface from the
+    # egress surface (#1542).
+    egress_listen: str = "0.0.0.0"
+    # nginx_port: **deprecated** alias for ``egress_port`` (#1542). Folded into
+    # ``egress_port`` by ``_resolve_socket_and_ports``: if both are set,
+    # ``egress_port`` wins and ``nginx_port`` is ignored (with a warning); if
+    # only ``nginx_port`` is set it is used as the egress port (with a
+    # deprecation warning). To be removed in a future release. **Callers read
+    # ``settings.egress_port`` — nothing reads ``nginx_port`` except that one
+    # validator.**
+    nginx_port: str | None = None
     port_range_start: str | None = "9000"
+    # socket: the backend UDS path klangkd binds. Default
+    # ``<state_dir>/klangk.sock`` (derived in ``_resolve_socket_and_ports``
+    # after ``state_dir`` is resolved). A fail-fast validator rejects resolved
+    # paths exceeding the portable AF_UNIX ``sun_path`` bound (104 chars) with
+    # a diagnostic telling the deployer to shorten ``KLANGK_SOCKET`` or move
+    # ``KLANGK_STATE_DIR`` shallower (#1531, #1542).
+    socket: str | None = None
     # state_dir: runtime state (the UDS when listen is a socket path, rendered
     # nginx.conf, pid). **Required** — no default; a missing value fails at
     # construction (#1461). Devenv pins it to ``$DEVENV_STATE/klangk`` via
@@ -543,6 +578,77 @@ class KlangkSettings(BaseSettings):
             self.customize_dir = os.path.join(self.state_dir, "custom")
         return self
 
+    @model_validator(mode="after")
+    def _resolve_socket_and_ports(self) -> "KlangkSettings":
+        """Resolve the listen-shape settings: fold ``nginx_port`` into
+        ``egress_port``, default ``socket``, enforce egress≠browser and the
+        socket-length invariant.
+
+        Runs after ``_resolve_indirections`` (so ``nginx_port`` /
+        ``egress_port`` / ``socket`` string values are already
+        ``file:``/``cmd:``-resolved) and after ``_require_dirs`` (so
+        ``state_dir`` is non-None for the ``socket`` default). After this,
+        **every consumer reads ``self.egress_port`` and ``self.socket`` —
+        nothing reads ``nginx_port``.**
+
+        ``KLANGK_NGINX_PORT`` deprecation ladder (no hard error, #1542):
+
+        - ``egress_port`` set, ``nginx_port`` unset → use egress (clean).
+        - ``egress_port`` unset, ``nginx_port`` set → use ``nginx_port`` as
+          the egress port + a loud deprecation warning.
+        - both set → ``egress_port`` wins, ``nginx_port`` ignored + a warning.
+        """
+        # --- KLANGK_NGINX_PORT → egress_port fold ---
+        if self.nginx_port is not None:
+            if self.egress_port is not None:
+                logger.warning(
+                    "KLANGK_NGINX_PORT is ignored because KLANGK_EGRESS_PORT "
+                    "is also set; KLANGK_EGRESS_PORT takes precedence. "
+                    "KLANGK_NGINX_PORT is deprecated — remove it and use "
+                    "KLANGK_EGRESS_PORT."
+                )
+            else:
+                logger.warning(
+                    "KLANGK_NGINX_PORT is deprecated; rename it to "
+                    "KLANGK_EGRESS_PORT. Its value is used as the egress "
+                    "port for this run, but a future release will stop "
+                    "recognizing KLANGK_NGINX_PORT."
+                )
+                self.egress_port = self.nginx_port
+        if self.egress_port is None:
+            self.egress_port = "8995"
+
+        # --- egress ≠ browser port (ingress/egress firewall separation) ---
+        if self.port is not None and self.egress_port == self.port:
+            raise ValueError(
+                f"KLANGK_EGRESS_PORT ({self.egress_port!r}) must differ from "
+                f"KLANGK_PORT ({self.port!r}). The two nginx listeners carry "
+                "browser ingress vs container egress so operators can firewall "
+                "them separately; sharing a port defeats that and nginx cannot "
+                "bind two server blocks to the same port."
+            )
+
+        # --- socket default + length guard (#1531, #1542) ---
+        if self.socket is None:
+            self.socket = os.path.join(self.state_dir, "klangk.sock")
+        # Portable bound: macOS sun_path is 104 usable bytes; Linux is 107.
+        # Use the smaller so one check is correct on both platforms.
+        max_socket_len = 104
+        if len(self.socket) > max_socket_len:
+            raise ValueError(
+                f"KLANGK_SOCKET resolves to {self.socket!r} "
+                f"({len(self.socket)} chars), which exceeds the "
+                f"{max_socket_len}-character AF_UNIX sun_path limit. "
+                "Either set KLANGK_SOCKET to a shorter absolute path "
+                "(e.g. /tmp/klangk.sock) or move KLANGK_STATE_DIR shallower "
+                "in the filesystem. (The kernel caps UDS paths at "
+                "sockaddr_un.sun_path: 108 bytes incl. NUL on Linux → 107 "
+                "usable; 104 on macOS, so a deep state_dir overflows the "
+                "default <state_dir>/klangk.sock and the bind fails.) "
+                "See #1531."
+            )
+        return self
+
     @field_validator("auth_modes")
     @classmethod
     def _validate_auth_modes(cls, v: str | None) -> str | None:
@@ -575,47 +681,6 @@ class KlangkSettings(BaseSettings):
 # ---------------------------------------------------------------------------
 # Singleton with env-change-detection cache + config-file path
 # ---------------------------------------------------------------------------
-
-
-def classify_listen(value: str | None) -> str:
-    """Classify a ``KLANGK_LISTEN`` value as ``"socket"`` or ``"tcp"``.
-
-    ``KLANGK_LISTEN`` is polymorphic: a UNIX socket path (e.g.
-    ``/tmp/klangk.sock``) or a TCP host (e.g. ``127.0.0.1``). The port is NOT
-    part of listen — it comes from ``KLANGK_PORT`` when listen is TCP.
-    Classification rule (shared with the CLI ``--server`` resolver, #1399):
-
-    - an **absolute path** with no ``://`` scheme ⇒ ``"socket"``;
-    - otherwise ⇒ ``"tcp"`` (a bare hostname/IP, e.g. ``127.0.0.1``).
-
-    A bare/relative non-scheme value (e.g. ``klangk.sock``) is ambiguous and
-    is classified as ``"tcp"`` — callers that need a socket should pass an
-    absolute path. This mirrors #1399's "socket paths must be absolute" rule
-    and keeps the classifier total (no exceptions). ``None`` ⇒ ``"tcp"``
-    (the default bind is loopback TCP until #1400 flips it to a socket).
-    """
-    if not value:
-        return "tcp"
-    if "://" in value:
-        return "tcp"  # http(s)://... — TCP (CLI-style absolute URL)
-    if value.startswith("/"):
-        return "socket"  # absolute path, no scheme — UDS
-    return "tcp"  # bare hostname/IP — TCP
-
-
-def listen_is_socket(value: str) -> bool:
-    """True iff the resolved ``KLANGK_LISTEN`` is a socket path.
-
-    Convenience wrapper around :func:`classify_listen` that reads the merged
-    setting when *value* is omitted. This is what the nginx renderer and the
-    lifespan watchdog key off to decide "headless/minimal template + UDS
-    bind" vs "full template + TCP bind."
-
-    ``KlangkSettings`` already resolves ``file:``/``cmd:`` at construction
-    (#1461), so ``settings.listen`` is the resolved value — no wrap needed.
-    """
-    v = value
-    return classify_listen(v) == "socket"
 
 
 # ---------------------------------------------------------------------------

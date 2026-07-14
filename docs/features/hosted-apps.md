@@ -19,7 +19,7 @@ Hosted apps are accessible to anyone who can reach the Klangk server. Do not ser
 Start any HTTP server on a container port (8000-8004), then visit:
 
 ```text
-http://<hostname>:<nginx_port>/hosted/<workspace_id>/<host_port>/
+http://<hostname>:<KLANGK_PORT>/hosted/<workspace_id>/<host_port>/
 ```
 
 For example, if your workspace ID is `abc123` and you run a server on container port 8000 (mapped to host port 9000):
@@ -80,11 +80,11 @@ No manual configuration needed — the `KLANGK_HOSTING_*` environment variables 
 
 ## Configuration
 
-| Variable                            | Default | Description                                                                                                                |
-| ----------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `KLANGK_PORT_RANGE_START`           | `9000`  | First host port for workspace app allocations                                                                              |
-| `KLANGK_HOSTED_PORTS_PER_WORKSPACE` | `5`     | Ceiling on ports per workspace. `0` disables hosted-app serving entirely (no allocation, no hosting env, `/hosted/` 404s). |
-| `KLANGK_NGINX_PORT`                 | `8995`  | Nginx port (used in URL derivation)                                                                                        |
+| Variable                            | Default   | Description                                                                                                                |
+| ----------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `KLANGK_PORT_RANGE_START`           | `9000`    | First host port for workspace app allocations                                                                              |
+| `KLANGK_HOSTED_PORTS_PER_WORKSPACE` | `5`       | Ceiling on ports per workspace. `0` disables hosted-app serving entirely (no allocation, no hosting env, `/hosted/` 404s). |
+| `KLANGK_PORT`                       | _(unset)_ | Browser/nginx port (used in URL derivation). Must be set to serve hosted apps (hosted apps are browser-ingress).           |
 
 Ports are allocated atomically and cleaned up automatically when workspaces are deleted.
 
