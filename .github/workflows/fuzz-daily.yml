@@ -1,0 +1,42 @@
+name: "Fuzz API: daily run"
+
+# Runs the API fuzzer for 10 minutes against a real klangkd over its UDS.
+# Catches runtime anomalies (5xx, unhandled exceptions, crashes) that the
+# static --check drift gate (fuzz-check.yml) can't. The fuzzer exits 1 on
+# anomalies, so a green run means no 5xx / crashes across the whole API.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *" # daily, 06:00 UTC
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Use system podman on Ubuntu runners (nix podman lacks SUID newuidmap)
+      KLANGK_PODMAN_BIN: /usr/bin/podman
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/devenv-setup
+        with:
+          build-tasks: klangk:build-workspace-image
+
+      - name: Run fuzzer (10 min)
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- python scripts/fuzz-api.py --duration 10
+
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-server-log
+          path: fuzz-server.log
+          if-no-files-found: ignore
