@@ -1,13 +1,16 @@
-"""End-to-end test: nginx dies when klangkd dies (#1439).
+"""End-to-end test: nginx dies when klangkd dies (#1439, #1533).
 
-klangkd spawns nginx as a child. Before #1439, nginx ran in its own
-session (``start_new_session=True``), so a hard kill of klangkd orphaned
-it. After #1439, nginx runs in klangkd's process group and dies with it.
+klangkd spawns nginx in its own session (``setsid`` via ``preexec_fn``)
+with ``PR_SET_PDEATHSIG(SIGTERM)`` so the kernel auto-signals nginx when
+klangkd exits. ``stop()`` uses ``os.killpg`` for clean shutdown. The
+combination ensures nginx (master + workers) dies with klangkd under
+SIGTERM, SIGINT, and SIGKILL.
 
 Run with: devenv shell -- test-backend-e2e test_nginx_lifecycle_e2e.py
 """
 
 import os
+import signal
 import subprocess
 import tempfile
 import time
@@ -82,32 +85,58 @@ def _start_klangkd():
     return proc, nginx_port
 
 
+def _wait_for_port_closed(port, timeout=10):
+    """Wait until nothing is listening on localhost:port."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _port_listening(port):
+            return True
+        time.sleep(0.3)
+    return False
+
+
+def _signal_test(sig):
+    """Start klangkd + nginx, send *sig*, assert nginx port closes."""
+    proc, nginx_port = _start_klangkd()
+    try:
+        ok = _wait_for_nginx(nginx_port)
+        if not ok:
+            proc.kill()
+            out, _ = proc.communicate(timeout=5)
+            pytest.fail(
+                f"klangkd did not start:\n"
+                f"{out.decode(errors='replace')[:2000]}"
+            )
+
+        assert _port_listening(nginx_port), "nginx not serving"
+
+        os.kill(proc.pid, sig)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+        assert _wait_for_port_closed(nginx_port), (
+            f"nginx port still listening after {signal.Signals(sig).name}"
+        )
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
 class TestNginxDiesWithKlangkd:
-    """nginx must not outlive klangkd (#1439)."""
+    """nginx must not outlive klangkd (#1439, #1533)."""
 
     def test_nginx_stops_on_sigterm(self):
         """Graceful shutdown (SIGTERM) stops nginx."""
-        proc, nginx_port = _start_klangkd()
-        try:
-            ok = _wait_for_nginx(nginx_port)
-            if not ok:
-                proc.kill()
-                out, _ = proc.communicate(timeout=5)
-                pytest.fail(
-                    f"klangkd did not start:\n"
-                    f"{out.decode(errors='replace')[:2000]}"
-                )
+        _signal_test(signal.SIGTERM)
 
-            assert _port_listening(nginx_port), "nginx not serving"
+    def test_nginx_stops_on_sigint(self):
+        """Keyboard interrupt (SIGINT) stops nginx."""
+        _signal_test(signal.SIGINT)
 
-            proc.terminate()
-            proc.wait(timeout=10)
-            time.sleep(1)
-
-            assert not _port_listening(nginx_port), (
-                "nginx port still listening after SIGTERM"
-            )
-        finally:
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
+    def test_nginx_stops_on_sigkill(self):
+        """Hard kill (SIGKILL) — PR_SET_PDEATHSIG fires, nginx exits."""
+        _signal_test(signal.SIGKILL)
