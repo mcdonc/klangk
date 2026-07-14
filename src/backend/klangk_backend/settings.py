@@ -380,6 +380,18 @@ class KlangkSettings(BaseSettings):
     # ``_resolve_socket_and_ports`` resolves it to ``"8995"`` (or folds the
     # deprecated ``KLANGK_NGINX_PORT`` into it).
     egress_port: str | None = None
+    # egress_listen: the interface/address nginx binds for the container-
+    # egress listener, rendered as ``listen {egress_listen}:{egress_port};``.
+    # Default ``0.0.0.0`` (all interfaces) — the only value portable across
+    # podman network modes, because the host interface container traffic lands
+    # on is environment-specific (host LAN IP under pasta/netavark-NAT, bridge
+    # gateway under rootful bridge) and cannot be detected reliably at render
+    # time. The actual security boundary on the egress locations is the
+    # ``CONTAINER_ACL`` allowlist + ``auth_request`` workspace-token gate, not
+    # the bind address. An operator who knows their specific container-facing
+    # host IP may set this to that IP to drop every other interface from the
+    # egress surface (#1542).
+    egress_listen: str = "0.0.0.0"
     # nginx_port: **deprecated** alias for ``egress_port`` (#1542). Folded into
     # ``egress_port`` by ``_resolve_socket_and_ports``: if both are set,
     # ``egress_port`` wins and ``nginx_port`` is ignored (with a warning); if

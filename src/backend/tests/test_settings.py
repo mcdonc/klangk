@@ -104,6 +104,7 @@ class TestSettingsModel:
             "auth_modes",
             "data_dir",
             "egress_port",
+            "egress_listen",
             "port",
             "socket",
             "nginx_port",
@@ -287,6 +288,19 @@ class TestResolveSocketAndPorts:
     def test_listen_defaults_to_loopback(self):
         s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
         assert s.listen == "127.0.0.1"
+
+    def test_egress_listen_defaults_to_all_interfaces(self):
+        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        assert s.egress_listen == "0.0.0.0"
+
+    def test_egress_listen_override(self):
+        s = KlangkSettings(
+            env={
+                "KLANGK_STATE_DIR": "/tmp/state",
+                "KLANGK_EGRESS_LISTEN": "192.168.1.5",
+            }
+        )
+        assert s.egress_listen == "192.168.1.5"
 
     def test_nginx_port_folded_into_egress_with_warning(self, caplog):
         """KLANGK_NGINX_PORT alone (no egress) is used as egress + a deprecation warning."""

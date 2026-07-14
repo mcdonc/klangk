@@ -436,6 +436,7 @@ class NginxRenderer:
         the backend, which bypasses nginx entirely).
         """
         egress_port = self._settings.egress_port
+        egress_listen = self._settings.egress_listen
         client_max_body_size = self.compute_client_max_body_size()
         resolvers = self.detect_dns_resolvers()
         acl, _deny = self.compute_container_acls()
@@ -455,7 +456,7 @@ http {{
   client_max_body_size {client_max_body_size};
 
   server {{
-    listen 127.0.0.1:{egress_port};
+    listen {egress_listen}:{egress_port};
 {egress_locations}  }}
 }}
 """
@@ -465,7 +466,7 @@ http {{
 
         ``KLANGK_PORT`` is set ⇒ full/browser mode. Two server blocks:
 
-        - **Egress listener** (``listen 127.0.0.1:{egress_port};``): container → backend
+        - **Egress listener** (``listen {egress_listen}:{egress_port};``): container → backend
           egress (shared with headless via :meth:`_egress_locations`).
         - **Browser listener** (``listen {listen}:{port};``): the browser UI,
           ``/hosted/``, ``/auth/local``, and the catch-all ``location /``.
@@ -478,6 +479,7 @@ http {{
         listen_addr = self._settings.listen
         port = self._settings.port
         egress_port = self._settings.egress_port
+        egress_listen = self._settings.egress_listen
         client_max_body_size = self.compute_client_max_body_size()
         resolvers = self.detect_dns_resolvers()
         acl, deny = self.compute_container_acls()
@@ -533,7 +535,7 @@ http {{
 
   # --- Container-egress listener (container → backend via host.containers.internal) ---
   server {{
-    listen 127.0.0.1:{egress_port};
+    listen {egress_listen}:{egress_port};
 {egress_locations}  }}
 
   # --- Browser listener (browser UI + API + hosted apps) ---

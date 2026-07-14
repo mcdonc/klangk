@@ -89,9 +89,10 @@ ENV KLANGK_STATE_DIR=/tmp/klangk-state
 USER klangk
 WORKDIR /home/klangk
 
-# Browser port (8997) and egress port (8995) are published; uvicorn is UDS-only.
+# Only the browser port is published; the egress port is internal
+# (workspace containers reach it via host.containers.internal, not from
+# outside the host). uvicorn is UDS-only.
 EXPOSE 8997
-EXPOSE 8995
 
 ENTRYPOINT ["/home/klangk/bin/entrypoint"]
 CMD ["start"]

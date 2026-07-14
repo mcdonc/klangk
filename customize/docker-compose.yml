@@ -18,7 +18,6 @@ services:
     image: ghcr.io/mcdonc/klangk/klangk-host-custom:latest
     ports:
       - "8997:8997"
-      - "8995:8995"
     devices:
       - /dev/net/tun
       - /dev/fuse

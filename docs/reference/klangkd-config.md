@@ -193,6 +193,13 @@ the combination can service**:
 port: "8997"
 # listen is the browser interface address (rendered only when port is set).
 # listen: "127.0.0.1"  # browser interface address (default loopback; set 0.0.0.0 for all interfaces)
+# egress_listen is the egress interface address. Defaults to 0.0.0.0 (all
+# interfaces) — the only portable default across podman network modes. The
+# three served egress locations are double-gated (CONTAINER_ACL deny-all →
+# 403 outside the container subnet, plus auth_request workspace-token → 401
+# without a valid JWT), so the all-interfaces bind is not a security hole.
+# Pin to a specific host IP if your container-facing interface is stable.
+# egress_listen: "0.0.0.0"
 # auth_modes is the sole auth authority; unset defaults to none.
 # auth_modes: password  # or oidc / both / none
 ```
@@ -226,6 +233,7 @@ port: "8997"
 | `listen`                 | `127.0.0.1`               | `KLANGK_LISTEN`                 |
 | `port`                   | _(unset)_                 | `KLANGK_PORT`                   |
 | `egress_port`            | `8995`                    | `KLANGK_EGRESS_PORT`            |
+| `egress_listen`          | `0.0.0.0`                 | `KLANGK_EGRESS_LISTEN`          |
 | `nginx_port`             | _(deprecated)_            | `KLANGK_NGINX_PORT`             |
 | `socket`                 | `<state_dir>/klangk.sock` | `KLANGK_SOCKET`                 |
 | `port_range_start`       | `9000`                    | `KLANGK_PORT_RANGE_START`       |

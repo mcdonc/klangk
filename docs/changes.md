@@ -27,6 +27,16 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`KLANGK_EGRESS_LISTEN`** — the interface nginx binds for the container-
+  egress listener, rendered as `listen {egress_listen}:{egress_port};`.
+  Defaults to `0.0.0.0` (all interfaces), the only value portable across
+  podman network modes — `host.containers.internal` resolves to a netavark/
+  pasta virtual gateway that isn't bindable, and the real interface container
+  traffic lands on is environment-specific. The all-interfaces bind is gated
+  by `CONTAINER_ACL` (deny-all → 403 outside the container subnet) plus the
+  `auth_request` workspace-token gate (→ 401 without a valid JWT); pin to a
+  specific host IP to tighten further (#1542).
+
 - **`KLANGK_EGRESS_PORT`** — a dedicated container-egress port nginx listens
   on for container→backend traffic (`/llm-proxy`, `/api/v1/browser-delegate`,
   `/api/v1/workspaces/post-chat-message`). Default `8995`. Served in both
