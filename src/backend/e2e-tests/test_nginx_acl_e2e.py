@@ -38,6 +38,8 @@ def _render_conf(env_overrides, tmpdir=None):
     ``KLANGK_LLM_BASE_URL`` leaked from ``test_llm_block_*``.
     """
     env = {
+        "KLANGK_PORT": "19998",
+        "KLANGK_LISTEN": "127.0.0.1",
         "KLANGK_EGRESS_PORT": "19999",
         "KLANGK_DATA_DIR": str(tmpdir or "/tmp/klangk-e2e-data"),
         "KLANGK_STATE_DIR": str(tmpdir or "/tmp/klangk-e2e-state"),
