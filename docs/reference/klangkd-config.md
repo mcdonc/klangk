@@ -34,6 +34,10 @@ Config-file keys map directly to `KLANGK_*` environment variable names with the 
 | `KLANGK_NGINX_PORT` | `nginx_port`    |
 | `KLANGK_AUTH_MODES` | `auth_modes`    |
 
+### `snake_case` or `kebab-case`
+
+Every config-file key accepts **either** `snake_case` or `kebab-case` — `jwt_secret` and `jwt-secret` resolve to the same setting, as do `nginx_port` / `nginx-port`, `auth_modes` / `auth-modes`, and so on ([#1538](https://github.com/mcdonc/klangk/issues/1538)). This matches the dual-form lookup the OIDC provider dicts already had and is forgiving of either style, but **`snake_case` is the preferred/documented form** — all examples in this chapter (and the field names they map to) use `snake_case`.
+
 ## `file:` and `cmd:` resolution
 
 Any value — whether from the config file or an env var — can use `file:` or `cmd:` prefixes to resolve secrets at **construction time** (not per-call at use time):
