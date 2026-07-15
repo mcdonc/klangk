@@ -16,6 +16,7 @@ from klangk_backend import (
     agent,
     api,
     auth as auth_mod,
+    files as files_mod,
     model,
     podman,
     workspaces as ws_mod,
@@ -72,6 +73,7 @@ async def app(db, temp_data_dir):
     app.state.oidc = oidc_mod.OIDC(app.state)
     app.state.plugins = plugins_mod.Plugins(app.state)
     app.state.workspaces = ws_mod.Workspaces(app.state)
+    app.state.files = files_mod.Files(app.state)
     app.state.agents = agent.Agents(app.state)
     app.state.email = emailsvc_mod.EmailService(app.state)
     app.state.util = util_mod.Util(app.state)
@@ -4317,7 +4319,7 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
         try:
             with patch(
-                "klangk_backend.files.delete_path",
+                "klangk_backend.files.Files.delete_path",
                 new_callable=AsyncMock,
                 side_effect=OSError("Permission denied"),
             ):
@@ -4404,7 +4406,7 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
         try:
             with patch(
-                "klangk_backend.files.rename_path",
+                "klangk_backend.files.Files.rename_path",
                 new_callable=AsyncMock,
                 side_effect=OSError("Permission denied"),
             ):

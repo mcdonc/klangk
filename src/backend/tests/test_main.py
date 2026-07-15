@@ -17,6 +17,7 @@ from klangk_backend import (
     agent as agent_mod,
     auth as auth_mod,
     emailsvc as emailsvc_mod,
+    files as files_mod,
     nginx as nginx_mod,
     util as util_mod,
     main,
@@ -50,6 +51,7 @@ def _make_app_state(settings=None):
     app_state.oidc = oidc.OIDC(app_state)
     app_state.plugins = plugins.Plugins(app_state)
     app_state.workspaces = workspaces.Workspaces(app_state)
+    app_state.files = files_mod.Files(app_state)
     # #1520: the lifespan binds app.state.db as the active DB for its context;
     # mirror build_app so lifespan-driven tests have it.
     from klangk_backend.model import db as db_mod
