@@ -1641,17 +1641,12 @@ class ContainerRegistry:
         in-memory registry starts empty.  ``auto_start_workspaces`` then
         recreates the ones that should be running.
 
-        Skipped when klangkd itself runs inside a container (developing
-        klangk-in-klangk): killing the instance's containers would tear
-        down our own host.
+        Safe even when klangkd itself runs inside a container: the
+        ``klangk.instance`` label filter scopes removal to containers
+        *this instance* created, so an unrelated host container (or a
+        container created by an outer klangkd with a different instance
+        ID) is never touched (#1556).
         """
-        if os.path.exists("/.dockerenv") or os.path.exists(
-            "/run/.containerenv"
-        ):
-            logger.info(
-                "Running inside container, skipping startup container reap"
-            )
-            return
         try:
             containers = await self.app_state.podman.list_containers(
                 f"klangk.instance={model.get_instance_id()}"
@@ -1688,13 +1683,6 @@ class ContainerRegistry:
             except asyncio.CancelledError:
                 pass
             self.health.health_task = None
-        # Skip container cleanup when running inside a container
-        # (developing klangk in klangk -- don't kill our own container).
-        if os.path.exists("/.dockerenv") or os.path.exists(
-            "/run/.containerenv"
-        ):
-            logger.info("Running inside container, skipping container cleanup")
-            return
         tracked_ids = set(self._cid_to_wsid.keys())
         tasks = [self.stop_and_remove_container(cid) for cid in tracked_ids]
         try:

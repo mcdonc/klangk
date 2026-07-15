@@ -1962,14 +1962,6 @@ class TestShutdown:
         app_state = _make_app_state()
         self.registry = app_state.container_registry
 
-    async def test_shutdown_skips_in_container(self):
-        """When running inside a container, shutdown skips cleanup."""
-        self.registry.track_activity("cid", "ws")
-        with patch("os.path.exists", return_value=True):
-            await self.registry.shutdown()
-        # Container should still be tracked (not cleaned up)
-        assert "ws" in self.registry.states
-
     async def test_shutdown_stops_tracked(self):
         # list_containers returns the tracked cid; it should be skipped in
         # the orphan loop (already tracked) but still removed via tracking.
@@ -2374,20 +2366,6 @@ class TestReapInstanceContainers:
         mocks.remove_container.assert_awaited_once_with("orphan-bad")
         # Container was not adopted -- just skipped after failed removal.
         assert "ws-bad" not in self.registry.states
-
-    async def test_skipped_inside_container(self):
-        """The reap is a no-op when klangkd runs inside a container."""
-        with patch_podman(
-            self.registry,
-            list_containers=AsyncMock(),
-            remove_container=AsyncMock(),
-        ) as mocks:
-            with patch(
-                "os.path.exists", side_effect=lambda p: p == "/.dockerenv"
-            ):
-                await self.registry.reap_instance_containers()
-        mocks.list_containers.assert_not_awaited()
-        mocks.remove_container.assert_not_awaited()
 
     async def test_skips_empty_id(self):
         """A container dict with no Id/ID is skipped, not passed to remove."""
