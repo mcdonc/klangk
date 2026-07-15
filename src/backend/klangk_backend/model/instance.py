@@ -7,18 +7,40 @@ The instance ID serves two purposes:
 2. **Provenance stamping** — workspace exports embed this ID so imports
    can distinguish domestic archives from foreign ones (#1146).
 
-On first boot a UUID-4 is generated and persisted to the
-``instance_metadata`` table.  Subsequent boots read the stored value.
-The ``klangk-instance-id`` console script (see ``_instance_id.py``)
-exposes this to non-Python callers (shell scripts, TypeScript tests).
+The ID is a single line of text in ``<data_dir>/instance-id``. It lives in
+``data_dir`` (next to ``klangk.db``), **not** in a runtime/state dir, because
+it *identifies the data*: its lifetime is tied to the data, not to a process
+run. The ``runtime_dir()`` that holds the PID file (``XDG_RUNTIME_DIR`` /
+``/run/user/<uid>``) is wiped on reboot — the instance ID must survive that,
+so it follows the data (#1553).
+
+The file is the **single source of truth**. The instance ID is never stored
+in the DB; there is no DB read and no migration path. On first boot a UUID-4
+is generated and written atomically; subsequent boots read it back. The
+``klangk-instance-id`` console script (see ``_instance_id.py``) reads the
+same file, so external callers never open the SQLite DB.
 """
 
-import sqlite3
+import os
 import uuid
+from pathlib import Path
 
-from .db import get_current_db, get_db
+from .db import get_current_db
+
+#: Filename of the instance-ID file within ``data_dir``.
+INSTANCE_ID_FILENAME = "instance-id"
 
 _cache: str | None = None
+
+
+def instance_id_path() -> Path:
+    """Return ``<data_dir>/instance-id`` for the active DB's data dir.
+
+    Resolves ``data_dir`` from the current DB's settings (which, in an
+    external process, derives from ``KLANGK_DATA_DIR`` / ``KLANGK_STATE_DIR``
+    env vars). Does **not** open the SQLite DB — only the path is computed.
+    """
+    return get_current_db().data_dir / INSTANCE_ID_FILENAME
 
 
 def get_instance_id() -> str:
@@ -33,74 +55,30 @@ def get_instance_id() -> str:
     return _cache
 
 
-async def resolve_instance_id() -> str:
-    """Read or generate the instance ID, persist it, and cache it.
+def resolve_instance_id() -> str:
+    """Read the instance ID from ``<data_dir>/instance-id``, creating it if absent.
 
-    Used by the server at startup (inside the async event loop).
-    Reads from the ``instance_metadata`` table.  If no row exists,
-    generates a UUID-4 and inserts it.
+    Used by the server at startup (top of the lifespan, before seed/admin
+    setup). If the file exists its (stripped) contents are used; otherwise a
+    UUID-4 is generated and written atomically — ``instance-id.tmp`` then
+    ``os.replace`` — since the file is the only copy and a torn write would
+    otherwise be fatal. An empty/garbage file is regenerated the same way.
+
+    The resolved value is cached in-memory for the process lifetime.
     """
     global _cache
 
-    db = await get_db()
-    try:
-        cursor = await db.execute(
-            "SELECT value FROM instance_metadata WHERE key = 'instance_id'"
-        )
-        row = await cursor.fetchone()
+    path = instance_id_path()
+    resolved: str | None = None
+    if path.exists():
+        resolved = path.read_text().strip() or None
 
-        if row is not None:
-            resolved = row["value"]
-        else:
-            resolved = str(uuid.uuid4())
-            await db.execute(
-                "INSERT INTO instance_metadata (key, value)"
-                " VALUES ('instance_id', ?)",
-                (resolved,),
-            )
-            await db.commit()
+    if resolved is None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        resolved = str(uuid.uuid4())
+        tmp = path.parent / f"{path.name}.tmp"
+        tmp.write_text(resolved)
+        os.replace(tmp, path)
 
-        _cache = resolved
-        return resolved
-    finally:
-        await db.close()
-
-
-def resolve_instance_id_sync() -> str:
-    """Synchronous variant for use outside the async event loop.
-
-    Opens the SQLite database directly (no SQLAlchemy engine), reads or
-    creates the instance ID, and returns it.  Used by the
-    ``klangk-instance-id`` console script.
-    """
-    global _cache
-
-    db_path = get_current_db().db_path
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
-    try:
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS instance_metadata"
-            " (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
-        )
-        row = conn.execute(
-            "SELECT value FROM instance_metadata WHERE key = 'instance_id'"
-        ).fetchone()
-
-        if row is not None:
-            resolved = row[0]
-        else:
-            resolved = str(uuid.uuid4())
-            conn.execute(
-                "INSERT INTO instance_metadata (key, value)"
-                " VALUES ('instance_id', ?)",
-                (resolved,),
-            )
-            conn.commit()
-
-        _cache = resolved
-        return resolved
-    finally:
-        conn.close()
+    _cache = resolved
+    return resolved

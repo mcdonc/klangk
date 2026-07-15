@@ -245,6 +245,17 @@ operators or integrators to act when upgrading.
 
 ### Removed
 
+- **`instance_metadata` DB table / DB-stored instance ID:** the instance
+  ID is now a single line of text in `<data_dir>/instance-id`, not a row in
+  SQLite. The file lives in `data_dir` (next to `klangk.db`) because it
+  _identifies the data_ — its lifetime is tied to the data, not to a process
+  run, so it does not belong in the reboot-wiped `runtime_dir()` next to the
+  PID file. The `instance_metadata` table and the `resolve_instance_id_sync()`
+  DB-opening helper are gone; there is no migration path (no existing
+  installs). `klangk-instance-id` now reads the file and never opens the DB;
+  if the file is absent it errors (klangkd hasn't booted) rather than
+  generating an ID — only klangkd writes (#1553).
+
 - **In-container guards on container cleanup:** the
   `/.dockerenv` / `/run/.containerenv` early-return checks in
   `reap_instance_containers()` and `shutdown()` are gone. Both operations are

@@ -443,7 +443,7 @@ async def lifespan(app: FastAPI):
     # starts clean.
     _db_token = model.db.set_current_db(app.state.db)
     await model.init_db()
-    await model.resolve_instance_id()
+    model.resolve_instance_id()
 
     existing_pid = check_pid_file()
     if existing_pid is not None:

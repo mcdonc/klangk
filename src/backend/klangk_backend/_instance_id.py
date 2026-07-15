@@ -1,23 +1,29 @@
-"""CLI front-end for reading (or creating) the instance ID.
+"""CLI front-end for reading the instance ID.
 
 Registered as the ``klangk-instance-id`` console script in
 ``src/backend/pyproject.toml``.  Non-Python callers — devenv scripts,
-E2E test harnesses, build scripts — shell out to this instead of
-querying the database directly.
+E2E test harnesses, build scripts — read this instead of opening the
+database directly.
+
+It reads ``<data_dir>/instance-id`` — the file klangkd writes at startup
+(#1553). It does **not** open the SQLite DB and does **not** generate an
+ID when the file is absent: only klangkd writes the truth, so a missing
+file means klangkd has not booted yet (or this is a first boot before the
+server has run). The script resolves ``data_dir`` from the environment
+(``KLANGK_DATA_DIR`` / ``KLANGK_STATE_DIR``), so callers must run with
+the same environment klangkd was launched with.
 
 Usage::
 
     klangk-instance-id                # prints the instance UUID
-    KLANGK_DATA_DIR=/data klangk-instance-id  # uses a custom data dir
 
-The script opens the SQLite database directly (synchronous, no async
-engine) to read or create the ``instance_metadata`` row, then prints
-the value to stdout.
+Exit codes: 0 on success, 1 when the instance-ID file is absent, 2 on
+bad usage.
 """
 
 import sys
 
-from .model.instance import resolve_instance_id_sync
+from .model.instance import instance_id_path
 
 
 def main() -> None:
@@ -25,7 +31,16 @@ def main() -> None:
     if len(sys.argv) != 1:
         print("usage: klangk-instance-id", file=sys.stderr)
         raise SystemExit(2)
-    sys.stdout.write(resolve_instance_id_sync())
+
+    path = instance_id_path()
+    if not path.exists():
+        print(
+            f"klangk-instance-id: {path} does not exist "
+            "(klangkd has not written it yet)",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    sys.stdout.write(path.read_text().strip())
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -164,7 +164,6 @@ from .invitations import (
 from .instance import (
     get_instance_id,
     resolve_instance_id,
-    resolve_instance_id_sync,
 )
 
 __all__ = (
@@ -307,5 +306,4 @@ __all__ = (
     # instance
     "get_instance_id",
     "resolve_instance_id",
-    "resolve_instance_id_sync",
 )

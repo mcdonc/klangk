@@ -73,7 +73,7 @@ async def db(temp_data_dir):
     import klangk_backend.model as model
 
     await model.init_db()
-    await model.resolve_instance_id()
+    model.resolve_instance_id()
     return temp_data_dir
 
 
