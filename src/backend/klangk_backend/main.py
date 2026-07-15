@@ -348,8 +348,9 @@ def remove_pid_file() -> None:
 async def startup(app_state) -> None:
     """Container-side startup (self-healing on re-run).
 
-    Warms podman, adopts/reaps leftover containers, launches the idle
-    and health background loops, and auto-starts workspaces.  Every
+    Warms podman, reaps leftover containers from a previous run, launches
+    the idle and health background loops, and auto-starts workspaces.
+    Every
     step is idempotent -- ``init_db`` uses ``CREATE TABLE IF NOT
     EXISTS``, the loop starters are gated on ``task is None``, and
     ``auto_start`` re-creates stopped containers -- so re-running this
@@ -357,7 +358,7 @@ async def startup(app_state) -> None:
     """
     registry = app_state.container_registry
     await registry.prewarm_podman()
-    await registry.adopt_orphaned_containers()
+    await registry.reap_instance_containers()
     registry.start_cleanup_loop()
     registry.start_health_loop()
     n = await app_state.workspaces.auto_start_workspaces()

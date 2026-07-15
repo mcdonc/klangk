@@ -131,15 +131,6 @@ in
       after = [ "klangk:update-plugins" ];
       showOutput = true;
     };
-    "klangk:kill-containers" = {
-      exec = ''
-        if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
-          podman ps -a --filter "label=klangk.instance=$(klangk-instance-id)" -q \
-            | xargs -r podman rm -f
-        fi
-      '';
-      after = [ "klangk:uv-sync" ];
-    };
     "klangk:kill-port-holders" = {
       exec = ''
         if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
@@ -181,7 +172,6 @@ in
       after = [
         "klangk:flutter-build"
         "klangk:build-workspace-image"
-        "klangk:kill-containers"
         "klangk:kill-port-holders"
       ];
     };
@@ -243,12 +233,6 @@ in
         | python3 "$DEVENV_ROOT/scripts/trivy-report-nofix.py" -
     fi
     exec python3 "$DEVENV_ROOT/scripts/trivy-report-nofix.py" "$@"'';
-
-  scripts.kill-containers.exec = ''
-    podman ps -a \
-      --filter "label=klangk.instance=$(klangk-instance-id)" \
-      -q | xargs -r podman rm -f
-  '';
 
   scripts.update-plugins.exec = ''
     cd $DEVENV_ROOT

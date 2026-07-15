@@ -236,6 +236,19 @@ operators or integrators to act when upgrading.
 
 ### Removed
 
+- **devenv `klangk:kill-containers` task and `scripts.kill-containers`:**
+  klangkd now reaps its own instance's leftover containers at startup
+  (in `reap_instance_containers`, immediately after `prewarm_podman`),
+  removing the need for devenv to shell out to `klangk-instance-id` +
+  `podman rm -f` before the backend process starts. The kill now happens
+  in every deployment shape (systemd, host-container, bare `klangkd`),
+  not just under devenv (#1554).
+- **`adopt_orphaned_containers` → `reap_instance_containers`:** the old
+  method was effectively a startup reap already (the in-memory registry is
+  empty at startup, so every leftover was "untracked" and removed). Renamed
+  to reflect what it actually does and dropped the dead tracked-skip branch;
+  added the in-container guard (skip when klangkd itself runs in a
+  container) (#1554).
 - **`scripts/run-host-container.sh`:** retired; the `env | grep '^KLANGK_'`
   env-passthrough mechanism is replaced by mounting a config file (#1417).
 - **Headless single-user profile: nginx minimal template on a socket bind**

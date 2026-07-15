@@ -1630,33 +1630,46 @@ class ContainerRegistry:
                 "Podman pre-warm failed (%.3fs): %s", time.monotonic() - t0, e
             )
 
-    # --- Orphan adoption ---
+    # --- Startup reap ---
 
-    async def adopt_orphaned_containers(self) -> None:
+    async def reap_instance_containers(self) -> None:
+        """Remove every container labelled with this instance's ID.
+
+        Runs early in :func:`startup`, before any workspace is tracked, so
+        every leftover container from a crashed/killed previous run is
+        reaped unconditionally -- there is nothing to "adopt" because the
+        in-memory registry starts empty.  ``auto_start_workspaces`` then
+        recreates the ones that should be running.
+
+        Skipped when klangkd itself runs inside a container (developing
+        klangk-in-klangk): killing the instance's containers would tear
+        down our own host.
+        """
+        if os.path.exists("/.dockerenv") or os.path.exists(
+            "/run/.containerenv"
+        ):
+            logger.info(
+                "Running inside container, skipping startup container reap"
+            )
+            return
         try:
             containers = await self.app_state.podman.list_containers(
                 f"klangk.instance={model.get_instance_id()}"
             )
-            for c in containers:
-                cid = c.get("Id") or c.get("ID", "")
-                if cid not in self._cid_to_wsid:
-                    logger.info(
-                        "Removing orphaned container %s on startup",
-                        cid[:12],
-                    )
-                    try:
-                        await self.app_state.podman.remove_container(cid)
-                    except podman.PodmanError as e:
-                        logger.warning(
-                            "Failed to remove orphaned container %s: %s",
-                            cid[:12],
-                            e,
-                        )
-        except (
-            podman.PodmanError,
-            OSError,
-        ) as e:
-            logger.warning("Error scanning for orphaned containers: %s", e)
+        except (podman.PodmanError, OSError) as e:
+            logger.warning("Error scanning for leftover containers: %s", e)
+            return
+        for c in containers:
+            cid = c.get("Id") or c.get("ID", "")
+            if not cid:
+                continue
+            logger.info("Reaping leftover container %s on startup", cid[:12])
+            try:
+                await self.app_state.podman.remove_container(cid)
+            except podman.PodmanError as e:
+                logger.warning(
+                    "Failed to reap leftover container %s: %s", cid[:12], e
+                )
 
     # --- Shutdown ---
 
