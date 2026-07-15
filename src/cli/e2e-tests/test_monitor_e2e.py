@@ -46,6 +46,7 @@ sys.path.insert(
     ),
 )
 from _e2e_env import clean_env
+from pathlib import Path
 
 
 # --- server / auth / cli-config fixtures (self-contained, per repo convention) ---
@@ -136,13 +137,11 @@ def _stop_server(proc, data_dir):
     # Instance-scoped cleanup: only remove containers THIS test server
     # started (label=klangk.instance=<id>), never another suite's or xdist
     # worker's. The old ``label=klangk.managed=true`` filter was a cross-run
-    # hazard once suites could run concurrently (#1393).
-    instance_id = subprocess.run(
-        ["klangk-instance-id"],
-        capture_output=True,
-        text=True,
-        env=clean_env(KLANGK_DATA_DIR=data_dir),
-    ).stdout.strip()
+    # hazard once suites could run concurrently (#1393). The ID lives in
+    # ``<data_dir>/instance-id`` (written by klangkd at startup, #1553); read
+    # it directly rather than shelling out to a console script (#1565).
+    _id_file = Path(data_dir) / "instance-id"
+    instance_id = _id_file.read_text().strip() if _id_file.exists() else ""
     if instance_id:
         result = subprocess.run(
             [
