@@ -236,6 +236,16 @@ operators or integrators to act when upgrading.
 
 ### Removed
 
+- **In-container guards on container cleanup:** the
+  `/.dockerenv` / `/run/.containerenv` early-return checks in
+  `reap_instance_containers()` and `shutdown()` are gone. Both operations are
+  scoped by the `klangk.instance` label filter, which already excludes any
+  container this klangkd didn't create (unrelated host containers, or
+  containers created by an outer klangkd with a different instance ID), so
+  the guards protected against an impossible case. A side effect was that
+  8 container-cleanup logic tests failed whenever pytest ran inside a
+  container (distrobox, CI-in-docker, klangk-in-klangk); the suite is now
+  portable across host environments with no test-side patching (#1556).
 - **devenv `klangk:kill-containers` task and `scripts.kill-containers`:**
   klangkd now reaps its own instance's leftover containers at startup
   (in `reap_instance_containers`, immediately after `prewarm_podman`),
