@@ -9749,19 +9749,33 @@ class TestTokenRenewal:
         session.container_id = "test-cid"
 
         try:
+            # Drive the renewal loop on a fast clock (so the first renewal
+            # fires well within the test's wait) while giving the minted
+            # token a wide (1h) lifetime. Decoupling trigger timing from
+            # token lifetime avoids the wall-clock race that made this
+            # test flaky on slow CI runners (#1564): the renewed token
+            # used to be minted with a ~0.36s lifetime (expire_hours=
+            # 0.0001) and was already expired by the time the decode
+            # assertion ran on a loaded runner.
+            original_sleep = asyncio.sleep
+
+            async def fast_sleep(delay, *a, **kw):
+                await original_sleep(min(delay, 0.01))
+
             with (
                 patch.object(
-                    app_state.auth, "workspace_token_expire_hours", 0.0001
+                    app_state.auth, "workspace_token_expire_hours", 1.0
                 ),
                 patch.object(
                     _mock_term,
                     "set_workspace_token",
                     new_callable=AsyncMock,
                 ) as mock_set,
+                patch("asyncio.sleep", side_effect=fast_sleep),
             ):
                 expiry = datetime.now(timezone.utc) + timedelta(seconds=0.1)
                 session.start_token_renewal(expiry)
-                await asyncio.sleep(0.5)
+                await original_sleep(0.5)
                 session._token_renewal_task.cancel()
                 try:
                     await session._token_renewal_task
