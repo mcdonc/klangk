@@ -174,6 +174,23 @@ async def _empty_async_generator():
         yield
 
 
+async def _await_agent_run(workspace_id: str) -> None:
+    """Wait for a workspace's in-flight agent run to finish.
+
+    ``handle_chat_send`` schedules ``handle_agent_mention`` as a
+    fire-and-forget ``asyncio.create_task`` and returns immediately, so a
+    test can't observe the run's side effects (the ``send_prompt`` call,
+    the broadcasts) until that task has executed.  Awaiting the registered
+    task directly — instead of ``asyncio.sleep`` — removes the wall-clock
+    race that made the agent-mention tests flaky under ``-n auto``, where
+    CPU contention from sibling xdist workers let the 0.1s sleep elapse
+    before the task reached ``send_prompt`` (#1581).
+    """
+    task = _ws_constants.agent_tasks.get(workspace_id)
+    if task is not None:
+        await task
+
+
 def _base_conn(user=None, ws=None, app_state=None):
     if ws is None:
         ws = _mock_sock()
@@ -8744,7 +8761,7 @@ class TestChatSend:
                 await conn.handle_chat_send(
                     {"message": "@clanker what time is it?"}
                 )
-                await asyncio.sleep(0.1)
+                await _await_agent_run(workspace["id"])
             # Prompt was sent with the user's question
             mock_session.send_prompt.assert_awaited_once()
             calls = [c[0][0] for c in sock.send_json.call_args_list]
@@ -8796,7 +8813,7 @@ class TestChatSend:
                 return_value=mock_session,
             ):
                 await conn.handle_chat_send({"message": "@clanker"})
-                await asyncio.sleep(0.1)
+                await _await_agent_run(workspace["id"])
             calls = [c[0][0] for c in sock.send_json.call_args_list]
             agent_msgs = [
                 c
@@ -8827,7 +8844,7 @@ class TestChatSend:
                 side_effect=RuntimeError("boom"),
             ):
                 await conn.handle_chat_send({"message": "@clanker help"})
-                await asyncio.sleep(0.1)
+                await _await_agent_run(workspace["id"])
             calls = [c[0][0] for c in sock.send_json.call_args_list]
             agent_msgs = [
                 c
@@ -8867,7 +8884,7 @@ class TestChatSend:
                 return_value=mock_session,
             ):
                 await conn.handle_chat_send({"message": "@clanker hello"})
-                await asyncio.sleep(0.1)
+                await _await_agent_run(workspace["id"])
             calls = [c[0][0] for c in sock.send_json.call_args_list]
             sys_msgs = [
                 c
