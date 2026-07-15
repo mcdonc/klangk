@@ -1802,3 +1802,25 @@ class TestDB:
         assert db_mod.get_current_db() is new_db
         db_mod.reset_current_db(token)
         assert db_mod.get_current_db() is original
+
+
+class TestUsersBackstopBranches:
+    """Cover backstop branches not reached by app code (now on the
+    UsersModel methods) — list_groups q-filter and the update_email /
+    update_password SQL paths (#1573)."""
+
+    async def test_list_groups_with_query(self, db):
+        await model.create_group("queried")
+        result = await model.list_groups(q="quer")
+        assert result["total"] >= 1
+        assert any(g["name"] == "queried" for g in result["groups"])
+
+    async def test_update_email_backstop_sql(self, user):
+        await model.update_email(user["id"], "moved@example.com")
+        fetched = await model.get_user_by_email("moved@example.com")
+        assert fetched["id"] == user["id"]
+
+    async def test_update_password_backstop_sql(self, user):
+        await model.update_password(user["id"], "newhash")
+        fetched = await model.get_user_by_email(user["email"])
+        assert fetched["password_hash"] == "newhash"

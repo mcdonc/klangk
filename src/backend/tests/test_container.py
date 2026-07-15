@@ -2540,7 +2540,9 @@ class TestHealthMonitorRunOne:
                 monitor.registry.app_state.podman, "exec_container", exec_mock
             ),
             patch.object(
-                model, "get_user_handle", AsyncMock(return_value="owner")
+                monitor.registry.app_state.model.users,
+                "get_user_handle",
+                AsyncMock(return_value="owner"),
             ),
             patch.object(
                 monitor.registry.app_state.workspaces,
@@ -2583,7 +2585,9 @@ class TestHealthMonitorRunOne:
                 AsyncMock(return_value=(1, "", "curl: connection refused")),
             ),
             patch.object(
-                model, "get_user_handle", AsyncMock(return_value="owner")
+                monitor.registry.app_state.model.users,
+                "get_user_handle",
+                AsyncMock(return_value="owner"),
             ),
             patch.object(
                 monitor.registry.app_state.workspaces,
@@ -2613,7 +2617,9 @@ class TestHealthMonitorRunOne:
                 AsyncMock(return_value=(2, "all good on stdout", "")),
             ),
             patch.object(
-                model, "get_user_handle", AsyncMock(return_value="owner")
+                monitor.registry.app_state.model.users,
+                "get_user_handle",
+                AsyncMock(return_value="owner"),
             ),
             patch.object(
                 monitor.registry.app_state.workspaces,
@@ -2643,7 +2649,9 @@ class TestHealthMonitorRunOne:
                 AsyncMock(return_value=(127, "", "")),
             ),
             patch.object(
-                model, "get_user_handle", AsyncMock(return_value="owner")
+                monitor.registry.app_state.model.users,
+                "get_user_handle",
+                AsyncMock(return_value="owner"),
             ),
             patch.object(
                 monitor.registry.app_state.workspaces,
@@ -2683,7 +2691,9 @@ class TestHealthMonitorRunOne:
                 AsyncMock(side_effect=podman.PodmanError(500, "boom")),
             ),
             patch.object(
-                model, "get_user_handle", AsyncMock(return_value="owner")
+                monitor.registry.app_state.model.users,
+                "get_user_handle",
+                AsyncMock(return_value="owner"),
             ),
             patch.object(
                 monitor.registry.app_state.workspaces,
@@ -2719,7 +2729,9 @@ class TestHealthMonitorRunOne:
         st = _health_state(owner_id="uid-owner")
         with (
             patch.object(
-                model, "get_user_handle", AsyncMock(return_value=None)
+                monitor.registry.app_state.model.users,
+                "get_user_handle",
+                AsyncMock(return_value=None),
             ),
             patch.object(
                 monitor.registry.app_state.podman, "exec_container"

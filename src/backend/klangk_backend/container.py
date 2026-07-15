@@ -397,7 +397,9 @@ class HealthMonitor:
         owner_id = state.owner_id
         if owner_id is None:
             return "unhealthy", "no owner recorded for workspace"
-        handle = await model.get_user_handle(owner_id)
+        handle = await self.registry.app_state.model.users.get_user_handle(
+            owner_id
+        )
         if not handle:
             return "unhealthy", f"owner {owner_id} has no handle"
         # Resolve the owner's container home the same way
@@ -1457,7 +1459,7 @@ class ContainerRegistry:
         t_env = time.monotonic()
         # Resolve the agent home at this async seam (``_build_env`` is
         # sync) so every exec process inherits KLANGK_AGENT_HOME (#1157).
-        agent_home = f"/home/{await model.agent_handle()}"
+        agent_home = f"/home/{await self.app_state.model.users.agent_handle()}"
         ssl_dir = ssl_cert_dir(self.settings)
         if ssl_dir:
             logger.info(

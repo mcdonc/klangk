@@ -291,7 +291,9 @@ class Connection:
         # Ensure the per-user home symlink exists BEFORE starting the
         # container, because mounts under /home/{handle}/ need the
         # symlink in place so podman doesn't auto-create a real dir.
-        handle = await model.get_user_handle(self.user["id"])
+        handle = await self.app_state.model.users.get_user_handle(
+            self.user["id"]
+        )
         workspace_home = self.app_state.workspaces.home_path(workspace_id)
         (
             self._user_home,
@@ -876,7 +878,9 @@ class Connection:
             send_error(self.sock, "Not connected to a workspace")
             return
         try:
-            await model.set_user_handle(self.user["id"], handle)
+            await self.app_state.model.users.set_user_handle(
+                self.user["id"], handle
+            )
             # Update the per-workspace symlink.
             workspace = self.workspace
             if workspace:

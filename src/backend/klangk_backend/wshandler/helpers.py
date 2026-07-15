@@ -33,7 +33,7 @@ async def get_presence_list(
     # Include agent only if its RPC process is alive in this workspace.
 
     if sockets.app_state.agents.is_running(workspace_id):
-        agent_user = await model.get_agent_user()
+        agent_user = await sockets.app_state.model.users.get_agent_user()
         users.append(
             {
                 "user_id": model.AGENT_USER_ID,

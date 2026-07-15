@@ -41,7 +41,6 @@ from .. import (
     acl,
     container,
     emailsvc,
-    model,
     oidc,
     wshandler,
 )
@@ -271,7 +270,7 @@ async def my_permissions(
     returns permissions for all static resources.
     """
     principals = await acl.get_principals(user["id"])
-    groups = await model.get_user_groups(user["id"])
+    groups = await request.app.state.model.users.get_user_groups(user["id"])
     if resource is not None:
         permissions = await acl.permissions_for_resources(
             [resource], principals, ALL_PERMISSIONS

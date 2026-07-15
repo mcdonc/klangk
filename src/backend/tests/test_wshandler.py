@@ -754,8 +754,9 @@ class TestHandleTerminalStart:
                 "klangk_backend.wshandler.controllers.model.get_workspace",
                 new=AsyncMock(return_value={"setup_state": "complete"}),
             ),
-            patch(
-                "klangk_backend.wshandler.controllers.model.agent_handle",
+            patch.object(
+                app_state.model.users,
+                "agent_handle",
                 new=AsyncMock(return_value="clanker"),
             ),
             patch.object(
@@ -1159,8 +1160,9 @@ class TestHandleTerminalStart:
                 "klangk_backend.wshandler.controllers.model.get_workspace",
                 new=AsyncMock(return_value={"setup_state": "complete"}),
             ),
-            patch(
-                "klangk_backend.wshandler.controllers.model.agent_handle",
+            patch.object(
+                app_state.model.users,
+                "agent_handle",
                 new=AsyncMock(return_value="clanker"),
             ),
             patch.object(
@@ -6150,8 +6152,9 @@ class TestTerminalController:
                         ]
                     ),
                 ),
-                patch(
-                    "klangk_backend.wshandler.controllers.model.agent_handle",
+                patch.object(
+                    app_state.model.users,
+                    "agent_handle",
                     new=AsyncMock(return_value="clanker"),
                 ),
             ):
@@ -6223,8 +6226,9 @@ class TestTerminalController:
                         ]
                     ),
                 ),
-                patch(
-                    "klangk_backend.wshandler.controllers.model.agent_handle",
+                patch.object(
+                    app_state.model.users,
+                    "agent_handle",
                     new=AsyncMock(side_effect=RuntimeError("db down")),
                 ),
             ):
@@ -6269,8 +6273,9 @@ class TestTerminalController:
                 "klangk_backend.wshandler.controllers.model.get_workspace",
                 new=AsyncMock(return_value={"setup_state": "complete"}),
             ),
-            patch(
-                "klangk_backend.wshandler.controllers.model.agent_handle",
+            patch.object(
+                conn.app_state.model.users,
+                "agent_handle",
                 new=AsyncMock(return_value="clanker"),
             ),
             patch.object(
