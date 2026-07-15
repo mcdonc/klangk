@@ -249,7 +249,8 @@ class TestNginxAclConfig:
     # remembering its Depends(auth).
 
     def test_catch_all_denies_container_subnets(self, tmp_path):
-        """Catch-all `location /` denies the explicit container subnets."""
+        """Catch-all `location /` denies the explicit container subnets — via
+        the http-scope geo block, keyed on the pre-realip peer (#1546)."""
         conf = _render_conf(
             {
                 "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16",
@@ -257,39 +258,37 @@ class TestNginxAclConfig:
             },
             str(tmp_path),
         )
-        catch_all = re.search(r"location / \{(.*?)\}", conf, re.DOTALL).group(
-            1
-        )
-        assert "deny 10.89.0.0/24;" in catch_all
-        assert "deny 172.30.0.0/16;" in catch_all
-        assert "allow all;" in catch_all
+        # The container-source set lives in the geo block (http scope),
+        # not as inline `deny` lines on location / anymore.
+        assert "geo $realip_remote_addr $container_source {" in conf
+        assert "10.89.0.0/24 1;" in conf
+        assert "172.30.0.0/16 1;" in conf
+        # The catch-all guard references the geo's variable. The guard
+        # line is unique in the config, so assert on the whole conf.
+        assert "if ($container_source) { return 403; }" in conf
 
     def test_catch_all_never_denies_loopback(self, tmp_path):
-        """Loopback is never denied on the catch-all even when it appears in
+        """Loopback is never flagged by the geo even when it appears in
         KLANGK_CONTAINER_SUBNETS — local browsers connect via loopback and
         must reach the full UI/API."""
         conf = _render_conf(
             {"KLANGK_CONTAINER_SUBNETS": "127.0.0.1,10.89.0.0/24"},
             str(tmp_path),
         )
-        catch_all = re.search(r"location / \{(.*?)\}", conf, re.DOTALL).group(
-            1
-        )
-        assert "deny 10.89.0.0/24;" in catch_all
-        assert "deny 127.0.0.1;" not in catch_all
-        assert "allow all;" in catch_all
+        assert "10.89.0.0/24 1;" in conf
+        assert "127.0.0.1 1;" not in conf
+        assert "default 0;" in conf
 
     def test_catch_all_deny_present_when_containers_configured(self, tmp_path):
-        """The deny-by-default ACL is always present on the catch-all whenever
-        container subnets are configured — there is no way to opt out of it."""
+        """The container-source guard is always present on the catch-all
+        whenever non-loopback container subnets are configured — there is
+        no way to opt out of the brute-force cap (#1376)."""
         conf = _render_conf(
             {"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"}, str(tmp_path)
         )
-        catch_all = re.search(r"location / \{(.*?)\}", conf, re.DOTALL).group(
-            1
-        )
-        assert "deny 10.89.0.0/24;" in catch_all
-        assert "allow all;" in catch_all
+        assert "geo $realip_remote_addr $container_source {" in conf
+        assert "10.89.0.0/24 1;" in conf
+        assert "if ($container_source) { return 403; }" in conf
 
 
 class TestNginxHostedBlock:
@@ -590,8 +589,10 @@ class TestNginxDenyByDefault:
             raise RuntimeError("Backend did not start")
 
         # Start nginx via the Python renderer (#1396) with the host IP as
-        # the (sole) container source IP. CONTAINER_DENY on the catch-all
-        # then denies exactly that IP.
+        # the (sole) container source IP. The browser catch-all's container
+        # guard (geo on $realip_remote_addr) then denies a *direct* request
+        # from exactly that IP — while a trusted-proxy request whose XFF is
+        # that IP still passes (the peer is the proxy, not a container source).
         from klangk_backend.nginx import NginxRenderer, tcp_upstream
         from klangk_backend.settings import KlangkSettings
         import types
@@ -654,6 +655,22 @@ class TestNginxDenyByDefault:
             timeout=5,
         )
         assert r.status_code == 403
+
+    def test_proxied_request_with_container_xff_is_allowed(self, stack):
+        """A request whose *immediate* peer is trusted (loopback) but whose
+        ``X-Forwarded-For`` is a container-source IP must reach the backend
+        (NOT 403). This is the #1546 fix: the container guard keys on the
+        pre-realip peer (``$realip_remote_addr``), not the realip-rewritten
+        ``$remote_addr`` — so a trusted proxy forwarding a host/container IP
+        as the real client is not denied. Without the fix this would 403.
+        """
+        r = httpx.get(
+            f"http://127.0.0.1:{stack['browser_port']}/api/v1/users",
+            headers={"X-Forwarded-For": stack["host_ip"]},
+            timeout=5,
+        )
+        # Reached the backend (not nginx-denied): 401 unauth is fine.
+        assert r.status_code != 403
 
     def test_api_allowed_from_loopback(self, stack):
         """From loopback, the same /api/v1 path reaches the backend (not 403) —
