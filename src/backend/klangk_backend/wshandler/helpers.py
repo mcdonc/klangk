@@ -107,7 +107,8 @@ async def reset_workspace_state(
 async def disconnect_all_websockets(sockets: WebSocketState) -> None:
     """Drop every WebSocket connection and clear all session state.
 
-    Used by the SIGHUP runtime-restart path (see ``main.runtime_shutdown``).
+    Used by the SIGHUP runtime-restart path (see
+    ``main.Lifecycle.runtime_shutdown``).
     Connected clients are closed with code 1012 so they reconnect and
     rebuild state against the freshly-started containers.
     """

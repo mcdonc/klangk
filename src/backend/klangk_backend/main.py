@@ -59,73 +59,260 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def seed_default_acls(admin_group_id: str) -> None:
-    """Seed default ACL entries if none exist yet."""
-    existing = await model.get_acl_tree_summary()
-    if existing:
-        return
-    # /: Authenticated users can view, deny everyone else
-    await model.add_acl_entry(
-        "/",
-        0,
-        ACTION_ALLOW,
-        "view",
-        PRINCIPAL_SYSTEM,
-        system_principal=SYSTEM_AUTHENTICATED,
-    )
-    await model.add_acl_entry(
-        "/",
-        1,
-        ACTION_DENY,
-        "*",
-        PRINCIPAL_SYSTEM,
-        system_principal=SYSTEM_EVERYONE,
-    )
-    # /workspaces: Authenticated users can create
-    await model.add_acl_entry(
-        "/workspaces",
-        0,
-        ACTION_ALLOW,
-        "create",
-        PRINCIPAL_SYSTEM,
-        system_principal=SYSTEM_AUTHENTICATED,
-    )
-    # /groups: Authenticated users can create groups
-    await model.add_acl_entry(
-        "/groups",
-        0,
-        ACTION_ALLOW,
-        "create",
-        PRINCIPAL_SYSTEM,
-        system_principal=SYSTEM_AUTHENTICATED,
-    )
-    # /admin: admin group gets full access, deny everyone else
-    await model.add_acl_entry(
-        "/admin",
-        0,
-        ACTION_ALLOW,
-        "*",
-        PRINCIPAL_GROUP,
-        group_id=admin_group_id,
-    )
-    await model.add_acl_entry(
-        "/admin",
-        1,
-        ACTION_DENY,
-        "*",
-        PRINCIPAL_SYSTEM,
-        system_principal=SYSTEM_EVERYONE,
-    )
-    logger.info("Seeded default ACL entries")
+class Lifecycle:
+    """App-level bringup/shutdown and DB seeding (#1571).
 
+    Owns the startup/shutdown/restart sequence plus the default-user,
+    agent-user, and ACL seeding that runs at lifespan start. Constructed
+    once in :func:`build_app` and stored on ``app.state.lifecycle``, the
+    same ``X(app_state)`` pattern every other owned subsystem uses
+    (``Auth``, ``Workspaces``, ``ContainerRegistry``, ...). The lifespan
+    and the SIGHUP restart path call its methods rather than module-level
+    free functions; concurrent SIGHUP signals serialize on a per-instance
+    lock so a second signal arriving mid-restart queues behind the first
+    instead of racing.
 
-async def ensure_admin_group() -> str:
-    """Ensure the 'admin' group exists. Returns the group ID."""
-    group = await model.get_group_by_name("admin")
-    if group is None:
-        group = await model.create_group("admin", description="Administrators")
-        logger.info("Created admin group: %s", group["id"])
-    return group["id"]
+    Pure helpers with no ``app_state`` dependency
+    (:func:`_is_loopback_bind`, :func:`enforce_no_auth_bind_safety`,
+    :func:`setup_logfire`, :func:`register_exception_handlers`) stay
+    module-level.
+    """
+
+    def __init__(self, app_state):
+        self.app_state = app_state
+        # Serializes concurrent SIGHUP-triggered restarts so a second
+        # signal arriving mid-restart queues behind the first instead of
+        # racing. Lazily created on first restart so the lock binds to the
+        # running event loop (the constructor runs in build_app, outside a
+        # loop).
+        self._restart_lock: asyncio.Lock | None = None
+
+    async def seed_default_acls(self, admin_group_id: str) -> None:
+        """Seed default ACL entries if none exist yet."""
+        existing = await model.get_acl_tree_summary()
+        if existing:
+            return
+        # /: Authenticated users can view, deny everyone else
+        await model.add_acl_entry(
+            "/",
+            0,
+            ACTION_ALLOW,
+            "view",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_AUTHENTICATED,
+        )
+        await model.add_acl_entry(
+            "/",
+            1,
+            ACTION_DENY,
+            "*",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_EVERYONE,
+        )
+        # /workspaces: Authenticated users can create
+        await model.add_acl_entry(
+            "/workspaces",
+            0,
+            ACTION_ALLOW,
+            "create",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_AUTHENTICATED,
+        )
+        # /groups: Authenticated users can create groups
+        await model.add_acl_entry(
+            "/groups",
+            0,
+            ACTION_ALLOW,
+            "create",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_AUTHENTICATED,
+        )
+        # /admin: admin group gets full access, deny everyone else
+        await model.add_acl_entry(
+            "/admin",
+            0,
+            ACTION_ALLOW,
+            "*",
+            PRINCIPAL_GROUP,
+            group_id=admin_group_id,
+        )
+        await model.add_acl_entry(
+            "/admin",
+            1,
+            ACTION_DENY,
+            "*",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_EVERYONE,
+        )
+        logger.info("Seeded default ACL entries")
+
+    async def ensure_admin_group(self) -> str:
+        """Ensure the 'admin' group exists. Returns the group ID."""
+        group = await model.get_group_by_name("admin")
+        if group is None:
+            group = await model.create_group(
+                "admin", description="Administrators"
+            )
+            logger.info("Created admin group: %s", group["id"])
+        return group["id"]
+
+    async def seed_default_user(self) -> None:
+        """Create default user if it doesn't exist.
+
+        If KLANGK_DEFAULT_PASSWORD is set, use it. Otherwise generate a
+        random password and print it to the console (only on first
+        creation).
+        """
+        settings = self.app_state.settings
+        admin_group_id = await self.ensure_admin_group()
+        await self.seed_default_acls(admin_group_id)
+
+        email = settings.default_user
+        password = settings.default_password
+        existing = await model.get_user_by_email(email)
+        if existing is None:
+            generated = password is None
+            if generated:
+                password = secrets.token_urlsafe(16)
+            password_hash = bcrypt.hashpw(
+                password.encode(), bcrypt.gensalt()
+            ).decode()
+            user = await model.create_user(email, password_hash, verified=True)
+            await model.add_user_to_group(user["id"], admin_group_id)
+            if generated:
+                logger.info(
+                    "Created default admin user '%s'"
+                    " (password printed to stderr)",
+                    email,
+                )
+                # Print password to stderr only — keep it out of structured
+                # logs where it could be shipped to a log aggregator.
+                print(
+                    f"{_GREEN}Default admin password for"
+                    f" '{email}': {password}{_RESET}",
+                    file=sys.stderr,
+                )
+            else:
+                logger.info("Created default user '%s' in admin group", email)
+        else:
+            # Ensure existing default user is in admin group
+            await model.add_user_to_group(existing["id"], admin_group_id)
+
+    async def seed_agent_user(self) -> None:
+        """Ensure the chat agent user exists in the DB.
+
+        Reads email/handle from env vars (with defaults) and upserts the
+        agent row.  This is the ONLY place the env vars are consulted.
+
+        Refuses to seed the agent with a handle already owned by another
+        user.  A colliding agent handle is destructive:
+        ``ensure_home_symlink`` would later migrate that user's home files
+        into the agent's tree via its workspace-import adoption branch.
+        The ``users.handle`` UNIQUE constraint is the structural backstop,
+        but we fail loudly here with an actionable message instead of
+        letting a bare ``IntegrityError`` abort startup mid-sequence.
+        See #1137.
+        """
+        settings = self.app_state.settings
+        email = settings.agent_email
+        handle = settings.agent_handle
+        async with model.transaction() as db:
+            # Pre-check: refuse a handle already claimed by a non-agent user.
+            # Runs in the same transaction as the upsert so there is no
+            # check-then-act window.
+            cursor = await db.execute(
+                "SELECT id FROM users WHERE handle = ? AND id != ?",
+                (handle, AGENT_USER_ID),
+            )
+            if await cursor.fetchone() is not None:
+                raise RuntimeError(
+                    f"Cannot seed chat agent: handle {handle!r} is already"
+                    " used by another user. Set KLANGK_AGENT_HANDLE to a"
+                    " unique value."
+                )
+            await db.execute(
+                "INSERT INTO users (id, email, password_hash, verified,"
+                " provider, handle)"
+                " VALUES (?, ?, NULL, 1, 'system', ?)"
+                " ON CONFLICT(id) DO UPDATE SET email = ?, handle = ?",
+                (AGENT_USER_ID, email, handle, email, handle),
+            )
+        model.clear_agent_cache()
+        logger.info("Seeded agent user '%s' (%s)", handle, email)
+
+    async def startup(self) -> None:
+        """Container-side startup (self-healing on re-run).
+
+        Warms podman, reaps leftover containers from a previous run,
+        launches the idle and health background loops, and auto-starts
+        workspaces. Every step is idempotent -- ``init_db`` uses
+        ``CREATE TABLE IF NOT EXISTS``, the loop starters are gated on
+        ``task is None``, and ``auto_start`` re-creates stopped containers
+        -- so re-running this after ``runtime_shutdown`` is exactly the
+        SIGHUP restart path.
+        """
+        app_state = self.app_state
+        registry = app_state.container_registry
+        await registry.prewarm_podman()
+        await registry.reap_instance_containers()
+        registry.start_cleanup_loop()
+        registry.start_health_loop()
+        n = await app_state.workspaces.auto_start_workspaces()
+        if n:  # pragma: no cover
+            logger.info("Auto-started %d workspace(s)", n)
+
+    async def runtime_shutdown(self) -> None:
+        """Stop the runtime, keeping the HTTP listener and DB alive.
+
+        Drops every WebSocket client (code 1012 = "reconnect"), tears down
+        agent subprocesses and in-flight agent runs, then stops all
+        containers and cancels the idle/health loops.  Used by both the
+        normal process-shutdown path and the SIGHUP restart path -- the
+        difference is only whether ``startup()`` runs again afterwards.
+        """
+        app_state = self.app_state
+        await wshandler.disconnect_all_websockets(app_state.sockets)
+        await app_state.agents.stop_all_sessions()
+        wshandler.clear_agent_mention_state()
+        await app_state.container_registry.shutdown()
+
+    async def process_shutdown(self) -> None:
+        """Full process teardown (run once, at the very end)."""
+        # instance_id() resolves from the file if startup didn't get there;
+        # if there's genuinely no PID file (startup crashed early)
+        # remove_pid_file no-ops on the missing file.
+        app_state = self.app_state
+        app_state.util.remove_pid_file()
+        await app_state.db.dispose_engine()
+
+    async def restart_runtime(self) -> None:
+        """Graceful runtime restart: stop containers, keep the listener.
+
+        Triggered by SIGHUP.  Closes all WebSocket clients (code 1012),
+        stops containers and background loops, then re-runs container-side
+        startup (prewarm, adopt, loops, auto-start).  The HTTP listener
+        and DB engine stay up throughout -- clients reconnect
+        automatically, and in-flight HTTP requests are never dropped.
+        """
+        if self._restart_lock is None:
+            self._restart_lock = asyncio.Lock()
+        async with self._restart_lock:
+            logger.info("SIGHUP: restarting runtime (keeping HTTP listener)")
+            await self.runtime_shutdown()
+            await self.startup()
+            logger.info("SIGHUP: runtime restarted")
+
+    def on_sighup(self) -> None:
+        """Schedule a runtime restart on the running event loop.
+
+        Signal callbacks can't be async, so this just creates a task.  The
+        restart itself is serialized by ``_restart_lock``.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # pragma: no cover - no loop during shutdown
+            return
+        loop.create_task(self.restart_runtime())
 
 
 # Addresses that are safe for no-auth single-user (``none``) mode: only the
@@ -192,132 +379,6 @@ def enforce_no_auth_bind_safety(app_state) -> None:
     )
 
 
-async def seed_default_user(settings) -> None:
-    """Create default user if it doesn't exist.
-
-    If KLANGK_DEFAULT_PASSWORD is set, use it. Otherwise generate a random
-    password and print it to the console (only on first creation).
-    """
-    admin_group_id = await ensure_admin_group()
-    await seed_default_acls(admin_group_id)
-
-    email = settings.default_user
-    password = settings.default_password
-    existing = await model.get_user_by_email(email)
-    if existing is None:
-        generated = password is None
-        if generated:
-            password = secrets.token_urlsafe(16)
-        password_hash = bcrypt.hashpw(
-            password.encode(), bcrypt.gensalt()
-        ).decode()
-        user = await model.create_user(email, password_hash, verified=True)
-        await model.add_user_to_group(user["id"], admin_group_id)
-        if generated:
-            logger.info(
-                "Created default admin user '%s' (password printed to stderr)",
-                email,
-            )
-            # Print password to stderr only — keep it out of structured
-            # logs where it could be shipped to a log aggregator.
-            print(
-                f"{_GREEN}Default admin password for"
-                f" '{email}': {password}{_RESET}",
-                file=sys.stderr,
-            )
-        else:
-            logger.info("Created default user '%s' in admin group", email)
-    else:
-        # Ensure existing default user is in admin group
-        await model.add_user_to_group(existing["id"], admin_group_id)
-
-
-async def seed_agent_user(settings) -> None:
-    """Ensure the chat agent user exists in the DB.
-
-    Reads email/handle from env vars (with defaults) and upserts the
-    agent row.  This is the ONLY place the env vars are consulted.
-
-    Refuses to seed the agent with a handle already owned by another user.
-    A colliding agent handle is destructive: ``ensure_home_symlink`` would
-    later migrate that user's home files into the agent's tree via its
-    workspace-import adoption branch.  The ``users.handle`` UNIQUE
-    constraint is the structural backstop, but we fail loudly here with an
-    actionable message instead of letting a bare ``IntegrityError`` abort
-    startup mid-sequence.  See #1137.
-    """
-    email = settings.agent_email
-    handle = settings.agent_handle
-    async with model.transaction() as db:
-        # Pre-check: refuse a handle already claimed by a non-agent user.
-        # Runs in the same transaction as the upsert so there is no
-        # check-then-act window.
-        cursor = await db.execute(
-            "SELECT id FROM users WHERE handle = ? AND id != ?",
-            (handle, AGENT_USER_ID),
-        )
-        if await cursor.fetchone() is not None:
-            raise RuntimeError(
-                f"Cannot seed chat agent: handle {handle!r} is already used"
-                " by another user. Set KLANGK_AGENT_HANDLE to a"
-                " unique value."
-            )
-        await db.execute(
-            "INSERT INTO users (id, email, password_hash, verified,"
-            " provider, handle)"
-            " VALUES (?, ?, NULL, 1, 'system', ?)"
-            " ON CONFLICT(id) DO UPDATE SET email = ?, handle = ?",
-            (AGENT_USER_ID, email, handle, email, handle),
-        )
-    model.clear_agent_cache()
-    logger.info("Seeded agent user '%s' (%s)", handle, email)
-
-
-async def startup(app_state) -> None:
-    """Container-side startup (self-healing on re-run).
-
-    Warms podman, reaps leftover containers from a previous run, launches
-    the idle and health background loops, and auto-starts workspaces.
-    Every
-    step is idempotent -- ``init_db`` uses ``CREATE TABLE IF NOT
-    EXISTS``, the loop starters are gated on ``task is None``, and
-    ``auto_start`` re-creates stopped containers -- so re-running this
-    after ``runtime_shutdown`` is exactly the SIGHUP restart path.
-    """
-    registry = app_state.container_registry
-    await registry.prewarm_podman()
-    await registry.reap_instance_containers()
-    registry.start_cleanup_loop()
-    registry.start_health_loop()
-    n = await app_state.workspaces.auto_start_workspaces()
-    if n:  # pragma: no cover
-        logger.info("Auto-started %d workspace(s)", n)
-
-
-async def runtime_shutdown(app_state) -> None:
-    """Stop the runtime, keeping the HTTP listener and DB alive.
-
-    Drops every WebSocket client (code 1012 = "reconnect"), tears down
-    agent subprocesses and in-flight agent runs, then stops all
-    containers and cancels the idle/health loops.  Used by both the
-    normal process-shutdown path and the SIGHUP restart path -- the
-    difference is only whether ``startup()`` runs again afterwards.
-    """
-    await wshandler.disconnect_all_websockets(app_state.sockets)
-    await app_state.agents.stop_all_sessions()
-    wshandler.clear_agent_mention_state()
-    await app_state.container_registry.shutdown()
-
-
-async def process_shutdown(app_state) -> None:
-    """Full process teardown (run once, at the very end)."""
-    # instance_id() resolves from the file if startup didn't get there; if
-    # there's genuinely no PID file (startup crashed early) remove_pid_file
-    # no-ops on the missing file.
-    app_state.util.remove_pid_file()
-    await app_state.db.dispose_engine()
-
-
 # ---------------------------------------------------------------------------
 # nginx child-process ownership (#1396, #1463)
 # ---------------------------------------------------------------------------
@@ -327,42 +388,6 @@ async def process_shutdown(app_state) -> None:
 # backoff + clean SIGTERM to the process group on shutdown). No external
 # supervisor library — bespoke, matching uvicorn's own precedent. devenv /
 # supervisord remain only the outer restart layer for uvicorn (klangkd).
-
-# Serializes concurrent SIGHUP-triggered restarts so a second signal
-# arriving mid-restart queues behind the first instead of racing.
-_restart_lock: asyncio.Lock | None = None
-
-
-async def restart_runtime(app_state, nginx_watchdog) -> None:
-    """Graceful runtime restart: stop containers, keep the listener.
-
-    Triggered by SIGHUP.  Closes all WebSocket clients (code 1012),
-    stops containers and background loops, then re-runs container-side
-    startup (prewarm, adopt, loops, auto-start).  The HTTP listener
-    and DB engine stay up throughout -- clients reconnect
-    automatically, and in-flight HTTP requests are never dropped.
-    """
-    global _restart_lock
-    if _restart_lock is None:
-        _restart_lock = asyncio.Lock()
-    async with _restart_lock:
-        logger.info("SIGHUP: restarting runtime (keeping HTTP listener)")
-        await runtime_shutdown(app_state)
-        await startup(app_state)
-        logger.info("SIGHUP: runtime restarted")
-
-
-def on_sighup(app_state, nginx_watchdog) -> None:
-    """Schedule a runtime restart on the running event loop.
-
-    Signal callbacks can't be async, so this just creates a task.  The
-    restart itself is serialized by ``_restart_lock``.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:  # pragma: no cover - no loop during shutdown
-        return
-    loop.create_task(restart_runtime(app_state, nginx_watchdog))
 
 
 @asynccontextmanager
@@ -405,8 +430,8 @@ async def lifespan(app: FastAPI):
     app.state.oidc.init_providers()
     enforce_no_auth_bind_safety(app.state)
     app.state.oidc.load_login_hook()
-    await seed_default_user(app.state.settings)
-    await seed_agent_user(app.state.settings)
+    await app.state.lifecycle.seed_default_user()
+    await app.state.lifecycle.seed_agent_user()
     registry = app.state.container_registry
 
     async def _on_workspace_killed(ws_id):
@@ -416,7 +441,7 @@ async def lifespan(app: FastAPI):
     registry.set_on_container_status_changed(
         app.state.sockets.notify_container_status
     )
-    await startup(app.state)
+    await app.state.lifecycle.startup()
     # Start nginx (only when bound to a UDS — klangkd; no-op for TCP tests).
     # Rendered + owned by Python (#1396); replaces scripts/nginx.sh.
     await app.state.nginx_watchdog.start()
@@ -429,17 +454,15 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(
         signal.SIGHUP,
-        on_sighup,
-        app.state,
-        app.state.nginx_watchdog,
+        app.state.lifecycle.on_sighup,
     )
     try:
         yield
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
         await app.state.nginx_watchdog.stop()
-        await runtime_shutdown(app.state)
-        await process_shutdown(app.state)
+        await app.state.lifecycle.runtime_shutdown()
+        await app.state.lifecycle.process_shutdown()
         model.db.reset_current_db(_db_token)
         logger.info("Klangk backend stopped")
 
@@ -607,6 +630,11 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # hosting-info derivation, and customize-dir resolver (previously
     # module-level functions + import-time globals in util.py).
     app.state.util = util_mod.Util(app.state)
+    # #1571: Lifecycle(app_state) owns the startup/shutdown/restart
+    # sequence and the default-user / agent-user / ACL seeding that runs
+    # at lifespan start (previously module-level free functions in this
+    # module). The lifespan and the SIGHUP restart path call its methods.
+    app.state.lifecycle = Lifecycle(app.state)
 
     app.add_middleware(
         CORSMiddleware,
