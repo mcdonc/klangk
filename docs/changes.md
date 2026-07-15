@@ -100,6 +100,15 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **`bringup.py` folded into `ContainerRegistry`** — the container
+  bring-up hook (provision the agent home, fire the service command) is
+  now `ContainerRegistry._bringup`, called inline from `start_container`
+  with no `app_state` threading (it reads `self.app_state`). The
+  standalone `bringup.py` module and its free function are deleted; the
+  sole caller (`start_container`) drops the `app_state=` argument. The
+  last "free function that takes `app_state`" pattern outside `model/`
+  is gone (#1568).
+
 - **PID-file helpers moved onto `Util`** (`app.state.util`). The
   `pid_file_path` / `check_pid_file` / `write_pid_file` / `remove_pid_file`
   functions are now methods of the same `Util` that owns the instance ID —

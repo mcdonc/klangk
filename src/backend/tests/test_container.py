@@ -12,7 +12,6 @@ import pytest
 
 from klangk_backend import (
     auth as auth_mod,
-    bringup,
     container,
     model,
     podman,
@@ -59,14 +58,14 @@ def _make_app_state(registry=None, sockets=None):
 def _stub_bringup(monkeypatch):
     """Block every container-mechanics test from spawning real processes.
 
-    ``start_container`` calls ``bringup.bringup`` at the create choke
-    point (#1244), which otherwise reaches ``agent.ensure_agent_home``
-    and spawns a real ``podman exec`` subprocess. These tests exercise
-    port/sudo/reuse mechanics against a fake ``new-cid`` — they must
-    never touch real podman. Bring-up has its own dedicated coverage
-    (test_bringup.py).
+    ``start_container`` calls ``ContainerRegistry._bringup`` at the create
+    choke point (#1244), which otherwise reaches
+    ``agent.ensure_agent_home`` and spawns a real ``podman exec``
+    subprocess. These tests exercise port/sudo/reuse mechanics against a
+    fake ``new-cid`` — they must never touch real podman. Bring-up has its
+    own dedicated coverage (test_bringup.py).
     """
-    monkeypatch.setattr(bringup, "bringup", AsyncMock())
+    monkeypatch.setattr(container.ContainerRegistry, "_bringup", AsyncMock())
 
 
 class TestParseIdleTimeout:
