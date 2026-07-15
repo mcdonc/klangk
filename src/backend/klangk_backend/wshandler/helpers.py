@@ -167,9 +167,11 @@ def format_idle_timeout(seconds: int | float) -> str:
     return f" — idle timeout: {mins:.1f}m"
 
 
-def format_container_info(workspace_id: str, ports: list) -> tuple[str, str]:
+def format_container_info(
+    workspace_id: str, ports: list, instance_id: str
+) -> tuple[str, str]:
     """Return (container_name, ports_str) for status messages."""
-    name = f"klangk-{model.get_instance_id()}-{workspace_id[:12]}"
+    name = f"klangk-{instance_id}-{workspace_id[:12]}"
     ports_str = f" (ports {','.join(str(p) for p in ports)})" if ports else ""
     return name, ports_str
 

@@ -21,9 +21,26 @@ Exit codes: 0 on success, 1 when the instance-ID file is absent, 2 on
 bad usage.
 """
 
+import os
 import sys
 
-from .model.instance import instance_id_path
+from .settings import KlangkSettings
+from .util import Util
+
+
+class _ShimAppState:
+    """Minimal stand-in ``app.state`` for the instance-id shim.
+
+    The real ``Util`` reads ``app_state.settings``; that's all the shim
+    needs (it never touches the DB, podman, or anything else on app.state).
+    Avoids constructing a full app state — or a module-level global — for a
+    process whose only job is to print one file's contents.
+    """
+
+    __slots__ = ("settings",)
+
+    def __init__(self, settings: KlangkSettings):
+        self.settings = settings
 
 
 def main() -> None:
@@ -32,7 +49,12 @@ def main() -> None:
         print("usage: klangk-instance-id", file=sys.stderr)
         raise SystemExit(2)
 
-    path = instance_id_path()
+    # External process: no app_state. Build a Util from env-derived settings
+    # just to reuse the same path resolution (<data_dir>/instance-id) the
+    # server uses. We never call instance_id()/resolve_instance_id() here —
+    # the shim is read-only and never writes the file.
+    util = Util(_ShimAppState(KlangkSettings(os.environ)))
+    path = util.instance_id_path()
     if not path.exists():
         print(
             f"klangk-instance-id: {path} does not exist "

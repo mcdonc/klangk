@@ -9,7 +9,6 @@ import tempfile
 from pathlib import Path
 
 from . import container, model
-from .model.instance import get_instance_id
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +186,7 @@ class Workspaces:
         """
         return {
             "name": ws["name"],
-            "instance_id": get_instance_id(),
+            "instance_id": self.app_state.util.instance_id(),
             "image": ws.get("image"),
             "service_command": ws.get("service_command"),
             "auto_start": ws.get("auto_start", False),

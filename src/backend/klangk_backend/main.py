@@ -294,18 +294,18 @@ def runtime_dir() -> Path:
     return fallback
 
 
-def pid_file_path() -> Path:
-    """Return the PID file path for this instance."""
-    return runtime_dir() / f"klangk-{model.get_instance_id()}.pid"
+def pid_file_path(instance_id: str) -> Path:
+    """Return the PID file path for ``instance_id``."""
+    return runtime_dir() / f"klangk-{instance_id}.pid"
 
 
-def check_pid_file() -> int | None:
+def check_pid_file(instance_id: str) -> int | None:
     """Check if another instance is running.
 
     Returns the PID of the running process, or None if no live process
     holds the PID file.  Removes stale PID files automatically.
     """
-    path = pid_file_path()
+    path = pid_file_path(instance_id)
     try:
         pid = int(path.read_text().strip())
     except (FileNotFoundError, ValueError):
@@ -326,17 +326,17 @@ def check_pid_file() -> int | None:
     return pid
 
 
-def write_pid_file() -> None:
+def write_pid_file(instance_id: str) -> None:
     """Write the current PID to the instance PID file."""
-    path = pid_file_path()
+    path = pid_file_path(instance_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(str(os.getpid()))
 
 
-def remove_pid_file() -> None:
+def remove_pid_file(instance_id: str) -> None:
     """Remove the PID file (best-effort)."""
     try:
-        path = pid_file_path()
+        path = pid_file_path(instance_id)
         # Only remove if it contains our PID (another instance may
         # have overwritten it after we were signalled to stop).
         if path.read_text().strip() == str(os.getpid()):
@@ -383,7 +383,10 @@ async def runtime_shutdown(app_state) -> None:
 
 async def process_shutdown(app_state) -> None:
     """Full process teardown (run once, at the very end)."""
-    remove_pid_file()
+    # instance_id() resolves from the file if startup didn't get there; if
+    # there's genuinely no PID file (startup crashed early) remove_pid_file
+    # no-ops on the missing file.
+    remove_pid_file(app_state.util.instance_id())
     await app_state.db.dispose_engine()
 
 
@@ -443,18 +446,18 @@ async def lifespan(app: FastAPI):
     # starts clean.
     _db_token = model.db.set_current_db(app.state.db)
     await model.init_db()
-    model.resolve_instance_id()
+    instance_id = app.state.util.resolve_instance_id()
 
-    existing_pid = check_pid_file()
+    existing_pid = check_pid_file(instance_id)
     if existing_pid is not None:
         logger.error(
             "Another klangk instance (PID %d) is already running "
             "for instance %s — refusing to start",
             existing_pid,
-            model.get_instance_id(),
+            instance_id,
         )
         raise SystemExit(1)
-    write_pid_file()
+    write_pid_file(instance_id)
 
     # Make the backend process itself trust deployer-supplied CAs (#1181)
     # before any outbound TLS happens (OIDC discovery, SMTP relay, LLM-proxy

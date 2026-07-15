@@ -37,7 +37,6 @@ from ..model import (
     PRINCIPAL_GROUP,
     PRINCIPAL_USER,
 )
-from ..model.instance import get_instance_id
 from ..util import (
     sanitize_disposition_name,
 )
@@ -631,7 +630,7 @@ async def _extract_archive_metadata(
             status_code=400,
             detail="Archive is missing instance_id",
         )
-    local_instance_id = get_instance_id()
+    local_instance_id = app_state.util.instance_id()
     if archive_instance_id != local_instance_id:
         raise HTTPException(
             status_code=400,

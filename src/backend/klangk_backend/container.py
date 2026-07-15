@@ -281,7 +281,7 @@ class IdleMonitor:
     def start_cleanup_loop(self) -> None:
         logger.info(
             "Instance: %s, idle timeout: %ds, check interval: %ds",
-            model.get_instance_id(),
+            self.registry.app_state.util.instance_id(),
             self.registry.idle_timeout_seconds,
             self.registry.check_interval_seconds,
         )
@@ -1185,8 +1185,8 @@ class ContainerRegistry:
 
         return env_vars
 
-    @staticmethod
     async def _ensure_volumes(
+        self,
         extra_mounts: list[str] | None,
         user_id: str | None,
         podman,
@@ -1201,7 +1201,7 @@ class ContainerRegistry:
                 if info is None:
                     labels = {
                         "klangk.managed": "true",
-                        "klangk.instance": model.get_instance_id(),
+                        "klangk.instance": self.app_state.util.instance_id(),
                     }
                     if user_id:
                         labels["klangk.user-id"] = user_id
@@ -1210,7 +1210,7 @@ class ContainerRegistry:
                     vol_labels = info.get("Labels") or {}
                     if (
                         vol_labels.get("klangk.instance")
-                        != model.get_instance_id()
+                        != self.app_state.util.instance_id()
                     ):
                         raise ValueError(
                             f"Volume {source!r} is not managed "
@@ -1319,8 +1319,8 @@ class ContainerRegistry:
 
         return cid
 
-    @staticmethod
     async def _resolve_port_conflict(
+        self,
         cid: str,
         container_name: str,
         publish: list[tuple[int, int]],
@@ -1333,7 +1333,7 @@ class ContainerRegistry:
         )
         wanted_ports = {hp for hp, _cp in publish}
         stale = await podman.list_containers(
-            f"klangk.instance={model.get_instance_id()}"
+            f"klangk.instance={self.app_state.util.instance_id()}"
         )
         for c in stale:
             stale_id = c.get("Id") or c.get("ID", "")
@@ -1447,7 +1447,7 @@ class ContainerRegistry:
             (host_port, CONTAINER_PORT_START + i)
             for i, host_port in enumerate(host_ports)
         ]
-        iid = model.get_instance_id()
+        iid = self.app_state.util.instance_id()
         container_name = f"klangk-{iid}-{workspace_id[:12]}"
         allow_sudo = self.settings.allow_sudo.strip().lower() in (
             "1",
@@ -1649,7 +1649,7 @@ class ContainerRegistry:
         """
         try:
             containers = await self.app_state.podman.list_containers(
-                f"klangk.instance={model.get_instance_id()}"
+                f"klangk.instance={self.app_state.util.instance_id()}"
             )
         except (podman.PodmanError, OSError) as e:
             logger.warning("Error scanning for leftover containers: %s", e)
@@ -1687,7 +1687,7 @@ class ContainerRegistry:
         tasks = [self.stop_and_remove_container(cid) for cid in tracked_ids]
         try:
             containers = await self.app_state.podman.list_containers(
-                f"klangk.instance={model.get_instance_id()}"
+                f"klangk.instance={self.app_state.util.instance_id()}"
             )
             for c in containers:
                 cid = c.get("Id") or c.get("ID", "")

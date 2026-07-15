@@ -11,7 +11,6 @@ from pydantic import BaseModel
 
 from .. import (
     auth,
-    model,
 )
 from ..podman import PodmanError as PodmanError
 from ._common import get_app_state_dep
@@ -41,7 +40,7 @@ async def list_volumes(
     app_state=Depends(get_app_state_dep),
 ):
     volumes = await app_state.podman.list_volumes(
-        f"klangk.instance={model.get_instance_id()}"
+        f"klangk.instance={app_state.util.instance_id()}"
     )
     uid = user["id"]
     return [
@@ -72,7 +71,7 @@ async def create_volume(
         body.name,
         {
             "klangk.managed": "true",
-            "klangk.instance": model.get_instance_id(),
+            "klangk.instance": app_state.util.instance_id(),
             "klangk.user-id": user["id"],
         },
     )
@@ -89,7 +88,7 @@ async def delete_volume(
     if info is None:
         raise HTTPException(status_code=404, detail="Volume not found")
     labels = info.get("Labels") or {}
-    if labels.get("klangk.instance") != model.get_instance_id():
+    if labels.get("klangk.instance") != app_state.util.instance_id():
         raise HTTPException(
             status_code=404,
             detail="Volume not managed by this Klangk instance",

@@ -1761,53 +1761,6 @@ class TestTransactionCancelNoLeak:
         assert not open_ids
 
 
-class TestInstanceId:
-    @pytest.fixture(autouse=True)
-    def _clear_cache(self):
-        from klangk_backend.model import instance
-
-        instance._cache = None
-        yield
-        instance._cache = None
-
-    def test_generates_uuid(self, temp_data_dir):
-        """First boot generates and persists a UUID-4 to the file."""
-        result = model.resolve_instance_id()
-        parsed = uuid.UUID(result)
-        assert parsed.version == 4
-        assert model.get_instance_id() == result
-        # The ID was persisted to <data_dir>/instance-id.
-        from klangk_backend.model import instance
-
-        assert instance.instance_id_path().read_text().strip() == result
-
-    def test_persisted_value_survives(self, temp_data_dir):
-        """Second resolve returns the same persisted ID (read from file)."""
-        first = model.resolve_instance_id()
-        from klangk_backend.model import instance
-
-        instance._cache = None
-        second = model.resolve_instance_id()
-        assert first == second
-
-    def test_empty_file_is_recreated(self, temp_data_dir):
-        """An empty/garbage instance-id file is regenerated, not fatal."""
-        from klangk_backend.model import instance
-
-        path = instance.instance_id_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("   \n")  # whitespace-only -> treated as missing
-        instance._cache = None
-        result = model.resolve_instance_id()
-        assert uuid.UUID(result).version == 4
-        assert path.read_text().strip() == result
-
-    def test_get_instance_id_before_resolve(self, temp_data_dir):
-        """get_instance_id raises before resolve_instance_id is called."""
-        with pytest.raises(RuntimeError, match="not yet resolved"):
-            model.get_instance_id()
-
-
 class TestDB:
     """Tests for the DB(settings) class (#1452)."""
 

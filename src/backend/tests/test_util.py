@@ -1,5 +1,8 @@
 """Tests for util: file- and command-backed secret resolution."""
 
+import uuid
+
+
 from klangk_backend.settings import resolve_dynamic_config
 from klangk_backend.util import (
     MAX_PORT,
@@ -156,6 +159,51 @@ class TestCustomizeDir:
     def test_defaults_to_state_dir_custom(self):
         u = _util({"KLANGK_STATE_DIR": "/tmp/state"})
         assert u.customize_dir() == "/tmp/state/custom"
+
+
+class TestInstanceId:
+    """Util.resolve_instance_id / instance_id / instance_id_path (#1553)."""
+
+    def test_path_is_in_data_dir(self, tmp_path):
+        u = _util({"KLANGK_DATA_DIR": str(tmp_path)})
+        assert u.instance_id_path() == tmp_path / "instance-id"
+
+    def test_resolve_generates_and_persists_uuid(self, tmp_path):
+        """First resolve generates a UUID-4 and writes it to the file."""
+        u = _util({"KLANGK_DATA_DIR": str(tmp_path)})
+        result = u.resolve_instance_id()
+        assert uuid.UUID(result).version == 4
+        assert u.instance_id() == result
+        # Persisted to <data_dir>/instance-id.
+        assert u.instance_id_path().read_text().strip() == result
+
+    def test_persisted_value_survives(self, tmp_path):
+        """A second Util (fresh process) reads back the same ID from the file."""
+        first = _util({"KLANGK_DATA_DIR": str(tmp_path)}).resolve_instance_id()
+        second = _util(
+            {"KLANGK_DATA_DIR": str(tmp_path)}
+        ).resolve_instance_id()
+        assert first == second
+
+    def test_empty_file_is_recreated(self, tmp_path):
+        """An empty/garbage instance-id file is regenerated, not fatal."""
+        u = _util({"KLANGK_DATA_DIR": str(tmp_path)})
+        path = u.instance_id_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("   \n")  # whitespace-only -> treated as missing
+        result = u.resolve_instance_id()
+        assert uuid.UUID(result).version == 4
+        assert path.read_text().strip() == result
+
+    def test_instance_id_resolves_lazily(self, tmp_path):
+        """instance_id() resolves on first use when resolve wasn't called."""
+        u = _util({"KLANGK_DATA_DIR": str(tmp_path)})
+        # No resolve_instance_id() call — instance_id() does it lazily.
+        result = u.instance_id()
+        assert uuid.UUID(result).version == 4
+        assert u.instance_id_path().read_text().strip() == result
+        # Second call returns the cached value (same object, no re-read).
+        assert u.instance_id() == result
 
 
 class TestSanitizeDispositionName:

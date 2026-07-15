@@ -10,8 +10,11 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import os
 import socket
 import subprocess
+import uuid
+from pathlib import Path
 from typing import TypeVar
 
 T = TypeVar("T")
@@ -207,10 +210,10 @@ class Util:
     """App-state-owned helpers that transitively depend on settings (#1503).
 
     Holds the proxy-trust / forwarded-header logic, hosting-info derivation,
-    and the customize-dir resolver — everything in ``util.py`` that reads
-    config. Config is read from ``self.settings`` at call time, not frozen at
-    import (the #1426 anti-pattern). The UDS-mode flag (set at bind time from
-    the lifespan) lives on the instance too.
+    the customize-dir resolver, and the instance identity — everything in
+    ``util.py`` that reads config. Config is read from ``self.settings`` at
+    call time, not frozen at import (the #1426 anti-pattern). The UDS-mode
+    flag (set at bind time from the lifespan) lives on the instance too.
 
     Wired onto ``app.state.util`` in ``build_app``; consumers reach it via
     ``app_state.util`` or ``request.app.state.util``.
@@ -219,6 +222,9 @@ class Util:
     def __init__(self, app_state):
         self.app_state = app_state
         self.settings = app_state.settings
+        # Instance identity: resolved once at startup by resolve_instance_id()
+        # and cached here — no module global (#1553).
+        self._instance_id: str | None = None
         # UDS mode flag (#1396): set to True only when the server is bound to a
         # UNIX domain socket. Over a UDS there is no TCP peer, so uvicorn
         # leaves ``request.client`` as ``None``. The socket file is 0600 in a
@@ -243,6 +249,60 @@ class Util:
         Defaults to ``<state_dir>/custom`` (derived in ``_require_dirs``).
         """
         return self.settings.customize_dir
+
+    # --- Instance identity ------------------------------------------------
+
+    #: Filename of the instance-ID file within ``data_dir``.
+    INSTANCE_ID_FILENAME = "instance-id"
+
+    def instance_id_path(self) -> Path:
+        """Return ``<data_dir>/instance-id`` for this instance's data dir.
+
+        Resolves ``data_dir`` from ``self.settings``. Does **not** open the
+        SQLite DB — only the path is computed.
+        """
+        return Path(self.settings.data_dir) / self.INSTANCE_ID_FILENAME
+
+    def resolve_instance_id(self) -> str:
+        """Read the instance ID from ``<data_dir>/instance-id``, creating it if absent.
+
+        Called once at startup (top of the lifespan, before seed/admin setup).
+        If the file exists its (stripped) contents are used; otherwise a UUID-4
+        is generated and written **atomically** — ``instance-id.tmp`` then
+        ``os.replace`` — since the file is the only copy and a torn write
+        would be fatal. An empty/garbage file is regenerated the same way.
+
+        The resolved value is cached on this ``Util`` instance for the process
+        lifetime; :meth:`instance_id` returns the cache and never touches the
+        filesystem.
+        """
+        path = self.instance_id_path()
+        resolved: str | None = None
+        if path.exists():
+            resolved = path.read_text().strip() or None
+
+        if resolved is None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            resolved = str(uuid.uuid4())
+            tmp = path.parent / f"{path.name}.tmp"
+            tmp.write_text(resolved)
+            os.replace(tmp, path)
+
+        self._instance_id = resolved
+        return resolved
+
+    def instance_id(self) -> str:
+        """Return the instance ID, resolving it lazily on first use.
+
+        Startup calls :meth:`resolve_instance_id` explicitly to write the file
+        early (so external readers like the ``klangk-instance-id`` shim never
+        race a long startup), but a read always works — if resolve hasn't run
+        yet, it resolves now using ``self.settings``. No module global: the
+        resolved value lives on this ``Util`` instance (#1553).
+        """
+        if self._instance_id is None:
+            self.resolve_instance_id()
+        return self._instance_id
 
     # --- Proxy trust / forwarded headers ---------------------------------
     #
