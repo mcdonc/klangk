@@ -55,6 +55,10 @@ def _make_app_state(settings=None):
     from klangk_backend.model import db as db_mod
 
     app_state.db = db_mod.DB(settings)
+    # #1572: Model(app_state) composing the converted domains.
+    from klangk_backend.model import Model
+
+    app_state.model = Model(app_state)
     app_state.agents = agent_mod.Agents(app_state)
     app_state.email = emailsvc_mod.EmailService(app_state)
     app_state.util = util_mod.Util(app_state)
@@ -409,6 +413,7 @@ class TestLifespan:
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
         app.state.db = app_state.db
+        app.state.model = app_state.model
         app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
@@ -454,6 +459,7 @@ class TestLifespan:
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
         app.state.db = app_state.db
+        app.state.model = app_state.model
         app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)
@@ -680,6 +686,7 @@ class TestStartupShutdownRestart:
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
         app.state.db = app_state.db
+        app.state.model = app_state.model
         app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
         app.state.oidc = oidc.OIDC(app.state)
         app.state.plugins = plugins.Plugins(app.state)

@@ -130,12 +130,14 @@ class PortAllocator:
         # until the container's first start reconcile (#1237).
         count = min(count, self.registry.ports_per_workspace_cap())
         async with self.port_lock:
-            return await model.find_and_allocate_ports(
+            return await self.registry.app_state.model.ports.find_and_allocate_ports(
                 workspace_id, count, self.registry.port_range_start
             )
 
     async def get_workspace_ports(self, workspace_id: str) -> list[int]:
-        return await model.get_workspace_ports(workspace_id)
+        return await self.registry.app_state.model.ports.get_workspace_ports(
+            workspace_id
+        )
 
 
 class BrowserRouter:
@@ -1113,17 +1115,23 @@ class ContainerRegistry:
         """
         num_ports = min(num_ports, self.ports_per_workspace_cap())
         async with self.port_lock:
-            host_ports = await model.get_workspace_ports(workspace_id)
+            host_ports = await self.app_state.model.ports.get_workspace_ports(
+                workspace_id
+            )
             if len(host_ports) < num_ports:
-                new_ports = await model.find_and_allocate_ports(
-                    workspace_id,
-                    num_ports - len(host_ports),
-                    self.port_range_start,
+                new_ports = (
+                    await self.app_state.model.ports.find_and_allocate_ports(
+                        workspace_id,
+                        num_ports - len(host_ports),
+                        self.port_range_start,
+                    )
                 )
                 host_ports.extend(new_ports)
             elif len(host_ports) > num_ports:
                 excess = host_ports[num_ports:]
-                await model.remove_port_allocations(workspace_id, excess)
+                await self.app_state.model.ports.remove_port_allocations(
+                    workspace_id, excess
+                )
                 host_ports = host_ports[:num_ports]
         return host_ports
 

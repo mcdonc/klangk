@@ -34,7 +34,11 @@ import types
 
 def _auth():
     """Standalone Auth for token forging (default secret matches the app)."""
-    return auth_mod.Auth(types.SimpleNamespace(settings=make_settings({})))
+    from _helpers import wire_db_and_model
+
+    state = types.SimpleNamespace(settings=make_settings({}))
+    wire_db_and_model(state)
+    return auth_mod.Auth(state)
 
 
 DEFAULT_EMAIL = "admin@example.com"
@@ -76,6 +80,11 @@ async def mode_server(db, monkeypatch):
     app.state.util = util_mod.Util(app.state)
 
     app.state.auth = auth_mod.Auth(app.state)
+    # #1572: Auth (login/refresh/logout) reaches app.state.model.{tokens,
+    # login_attempts}; wire db + model onto the app state.
+    from _helpers import wire_db_and_model
+
+    wire_db_and_model(app.state)
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)
     register_exception_handlers(app)

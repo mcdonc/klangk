@@ -104,13 +104,22 @@ def _make_app_state(registry=None, sockets=None):
     app_state.util = util_mod.Util(app_state)
 
     app_state.auth = auth_mod.Auth(app_state)
+    # #1572: ContainerRegistry reaches app_state.model.ports; Auth reaches
+    # app_state.model.{tokens,login_attempts}.
+    from _helpers import wire_db_and_model
+
+    wire_db_and_model(app_state)
     return app_state
 
 
 def _auth():
     """A standalone Auth for token forging (same default secret as the
     app fixture, so tokens round-trip through app.state.auth.decode_*)."""
-    return auth_mod.Auth(types.SimpleNamespace(settings=make_settings({})))
+    from _helpers import wire_db_and_model
+
+    state = types.SimpleNamespace(settings=make_settings({}))
+    wire_db_and_model(state)
+    return auth_mod.Auth(state)
 
 
 def _mock_sock(headers=None, query_params=None):

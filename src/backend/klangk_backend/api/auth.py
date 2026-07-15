@@ -108,7 +108,7 @@ async def register(
 
     # Insert user and send email in a transaction — if the email fails,
     # the user insert is rolled back so they can try again.
-    async with model.transaction() as db:
+    async with app_state.model.transaction() as db:
         await model.insert_unverified_user(
             db, user_id, req.email, password_hash
         )
@@ -421,7 +421,7 @@ async def change_email(
         raise HTTPException(status_code=400, detail="Email already in use")
     await model.update_email(user["id"], req.email)
     # Mark as unverified and send verification email
-    async with model.transaction() as db:
+    async with app_state.model.transaction() as db:
         await db.execute(
             "UPDATE users SET verified = 0 WHERE id = ?",
             (user["id"],),
@@ -539,7 +539,9 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
         )
     invitation_id, email = result
 
-    invitation = await model.get_invitation(invitation_id)
+    invitation = await request.app.state.model.invitations.get_invitation(
+        invitation_id
+    )
     if invitation is None or invitation["status"] != "pending":
         raise HTTPException(
             status_code=400, detail="Invitation is no longer valid"
@@ -555,7 +557,9 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
 
     password_hash = auth.hash_password(req.password)
     user = await model.create_user(email, password_hash, verified=True)
-    await model.mark_invitation_accepted(invitation_id)
+    await request.app.state.model.invitations.mark_invitation_accepted(
+        invitation_id
+    )
 
     access_token = request.app.state.auth.create_token(
         user["id"], user["email"]

@@ -32,6 +32,7 @@ from .db import (
     transaction,
 )
 from .schema import init_db
+from .model import Model
 from .users import (
     AGENT_USER_ID,
     AgentPrincipalError,
@@ -177,6 +178,8 @@ __all__ = (
     "transaction",
     # schema
     "init_db",
+    # composition root
+    "Model",
     # users
     "AGENT_USER_ID",
     "AgentPrincipalError",

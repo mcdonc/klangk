@@ -29,3 +29,31 @@ def make_settings(
     )
     env.setdefault("KLANGK_DATA_DIR", tempfile.mkdtemp(prefix="klangk-data-"))
     return KlangkSettings(env=env, config_file=config_file)
+
+
+def wire_db_and_model(state) -> None:
+    """Attach ``db`` + ``model`` to a test ``app_state`` namespace (#1572).
+
+    App code reaches the converted domains (tokens, login_attempts,
+    invitations, ports) via ``app_state.model.<domain>.<method>``, which
+    resolves ``self.app_state.db``. Every test that builds an ``app_state``
+    namespace and constructs an owned instance that touches those domains
+    (``Auth``, ``ContainerRegistry``, …) must wire both.
+
+    Reuses the ContextVar-bound DB when one exists (the autouse
+    ``temp_data_dir`` fixture binds it and runs ``init_db`` against it), so
+    ``app_state.db`` is the *same* schema-bearing instance the rest of the
+    test reaches via the backstop — not a fresh DB on a different temp path
+    (which would hit "no such table"). Idempotent: skips re-wiring when
+    already present.
+    """
+    from klangk_backend.model import Model
+    from klangk_backend.model.db import DB, get_current_db
+
+    if getattr(state, "db", None) is None:
+        try:
+            state.db = get_current_db()
+        except LookupError:
+            state.db = DB(state.settings)
+    if getattr(state, "model", None) is None:
+        state.model = Model(state)

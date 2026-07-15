@@ -397,7 +397,9 @@ class Auth:
     async def login(self, req: LoginRequest) -> TokenResponse:
         # Check if locked out before doing any expensive work
         if self.login_lockout_failures > 0:
-            attempt_info = await model.get_login_attempt_info(req.email)
+            attempt_info = await self.app_state.model.login_attempts.get_login_attempt_info(
+                req.email
+            )
             is_locked, msg = is_locked_out(attempt_info)
             if is_locked:
                 raise HTTPException(status_code=429, detail=msg)
@@ -416,15 +418,21 @@ class Auth:
                 # if so, reset the count instead of incrementing, so old
                 # failures stop counting toward the threshold.
                 reset = self.window_elapsed(attempt_info)
-                await model.record_failed_login(req.email, reset=reset)
+                await self.app_state.model.login_attempts.record_failed_login(
+                    req.email, reset=reset
+                )
                 # Check if this attempt triggered a lockout
-                updated_info = await model.get_login_attempt_info(req.email)
+                updated_info = await self.app_state.model.login_attempts.get_login_attempt_info(
+                    req.email
+                )
                 if self.should_lockout(updated_info):
                     locked_until = datetime.now(timezone.utc) + timedelta(
                         seconds=self.login_lockout_duration
                     )
-                    await model.set_login_lockout(
-                        req.email, locked_until.isoformat()
+                    await (
+                        self.app_state.model.login_attempts.set_login_lockout(
+                            req.email, locked_until.isoformat()
+                        )
                     )
                     raise HTTPException(
                         status_code=429,
@@ -438,7 +446,9 @@ class Auth:
             )
 
         if self.login_lockout_failures > 0:
-            await model.clear_login_attempts(req.email)
+            await self.app_state.model.login_attempts.clear_login_attempts(
+                req.email
+            )
         token = self.create_token(user["id"], user["email"])
         return TokenResponse(access_token=token)
 
@@ -459,9 +469,11 @@ class Auth:
             if not all([user_id, email, jti, exp]):  # pragma: no cover
                 raise HTTPException(status_code=401, detail="Invalid token")
 
-            if await model.is_token_blocklisted(jti):
+            if await self.app_state.model.tokens.is_token_blocklisted(jti):
                 # Already refreshed — return the cached replacement
-                cached = await model.get_refreshed_token(jti)
+                cached = await self.app_state.model.tokens.get_refreshed_token(
+                    jti
+                )
                 if cached is not None:
                     return TokenResponse(access_token=cached)
                 raise HTTPException(
@@ -476,7 +488,9 @@ class Auth:
             expires_at = datetime.fromtimestamp(
                 exp, tz=timezone.utc
             ).isoformat()
-            await model.blocklist_token(jti, expires_at, new_token=new_token)
+            await self.app_state.model.tokens.blocklist_token(
+                jti, expires_at, new_token=new_token
+            )
             return TokenResponse(access_token=new_token)
 
         except ExpiredSignatureError:
@@ -484,7 +498,9 @@ class Auth:
             payload = self.decode_token(token, allow_expired=True)
             jti = payload.get("jti")
             if jti:
-                cached = await model.get_refreshed_token(jti)
+                cached = await self.app_state.model.tokens.get_refreshed_token(
+                    jti
+                )
                 if cached is not None:
                     return TokenResponse(access_token=cached)
             raise HTTPException(status_code=401, detail="Token expired")
@@ -505,7 +521,7 @@ class Auth:
             jti = payload.get("jti")
             if user_id is None or jti is None:
                 return None
-            if await model.is_token_blocklisted(jti):
+            if await self.app_state.model.tokens.is_token_blocklisted(jti):
                 return None
             return await model.get_user_by_id(user_id)
         except ExpiredSignatureError:
@@ -523,7 +539,9 @@ class Auth:
                 expires_at = datetime.fromtimestamp(
                     exp, tz=timezone.utc
                 ).isoformat()
-                await model.blocklist_token(jti, expires_at)
+                await self.app_state.model.tokens.blocklist_token(
+                    jti, expires_at
+                )
         except JWTError:
             pass
 
@@ -548,7 +566,7 @@ async def get_current_user(
         if user_id is None or jti is None:
             raise HTTPException(status_code=401, detail="Invalid token")
 
-        if await model.is_token_blocklisted(jti):
+        if await request.app.state.model.tokens.is_token_blocklisted(jti):
             raise HTTPException(
                 status_code=401, detail="Token has been revoked"
             )
@@ -575,7 +593,7 @@ async def get_current_user_optional(
         jti = payload.get("jti")
         if user_id is None or jti is None:
             return None
-        if await model.is_token_blocklisted(jti):
+        if await request.app.state.model.tokens.is_token_blocklisted(jti):
             return None
         return await model.get_user_by_id(user_id)
     except JWTError:
