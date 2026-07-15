@@ -3850,12 +3850,27 @@ class TestBrowserBridge:
 # --- Volume routes ---
 
 
+def _instance_id():
+    """The instance ID this server uses (read from <data_dir>/instance-id).
+
+    Matches the value the volume routes validate ``klangk.instance`` labels
+    against. Uses the active test data_dir (KLANGK_DATA_DIR in os.environ, set
+    by the temp_data_dir fixture) so it agrees with the ``app`` fixture's util.
+    Not a cached global — a fresh read each call.
+    """
+    from klangk_backend.settings import KlangkSettings
+
+    ns = types.SimpleNamespace(settings=KlangkSettings(os.environ))
+    ns.util = util_mod.Util(ns)
+    return ns.util.instance_id()
+
+
 def _managed_volume(user_id="test-user"):
     """An inspect_volume result owned by this klangk instance."""
     return {
         "Labels": {
             "klangk.managed": "true",
-            "klangk.instance": model.get_instance_id(),
+            "klangk.instance": _instance_id(),
             "klangk.user-id": user_id,
         }
     }
@@ -3873,7 +3888,7 @@ class TestVolumeRoutes:
                         "Name": "my-vol",
                         "CreatedAt": "2026-01-01T00:00:00Z",
                         "Labels": {
-                            "klangk.instance": model.get_instance_id(),
+                            "klangk.instance": _instance_id(),
                             "klangk.user-id": user["id"],
                         },
                     },
@@ -3881,7 +3896,7 @@ class TestVolumeRoutes:
                         "Name": "other-vol",
                         "CreatedAt": "2026-01-01T00:00:00Z",
                         "Labels": {
-                            "klangk.instance": model.get_instance_id(),
+                            "klangk.instance": _instance_id(),
                             "klangk.user-id": "someone-else",
                         },
                     },
@@ -5948,14 +5963,13 @@ class TestWorkspaceMetadata:
         """Build a Workspaces instance for testing (#1484)."""
         import types as types_mod
 
-        return ws_mod.Workspaces(
-            types_mod.SimpleNamespace(settings=make_settings({}))
-        )
+        ns = types_mod.SimpleNamespace(settings=make_settings({}))
+        ns.util = util_mod.Util(ns)
+        return ws_mod.Workspaces(ns)
 
     def test_extracts_metadata(self):
-        from klangk_backend.model.instance import get_instance_id
-
-        ws = {
+        ws = self._ws()
+        ws_dict = {
             "name": "myws",
             "image": "ubuntu",
             "service_command": "bash",
@@ -5964,10 +5978,10 @@ class TestWorkspaceMetadata:
             "env": {"FOO": "bar"},
             "num_ports": 3,
         }
-        meta = self._ws().workspace_metadata(ws)
+        meta = ws.workspace_metadata(ws_dict)
         assert meta == {
             "name": "myws",
-            "instance_id": get_instance_id(),
+            "instance_id": ws.app_state.util.instance_id(),
             "image": "ubuntu",
             "service_command": "bash",
             "auto_start": True,
@@ -5982,10 +5996,9 @@ class TestWorkspaceMetadata:
         assert meta["num_ports"] == 5
 
     def test_includes_instance_id(self):
-        from klangk_backend.model.instance import get_instance_id
-
-        meta = self._ws().workspace_metadata({"name": "x"})
-        assert meta["instance_id"] == get_instance_id()
+        ws = self._ws()
+        meta = ws.workspace_metadata({"name": "x"})
+        assert meta["instance_id"] == ws.app_state.util.instance_id()
 
 
 class TestArchiveUserData:
@@ -6152,10 +6165,17 @@ class TestWorkspaceExportImport:
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
     def _meta(self, **overrides):
-        """Build workspace metadata dict with instance_id included."""
-        from klangk_backend.model.instance import get_instance_id
+        """Build workspace metadata dict with instance_id included.
 
-        d = {"instance_id": get_instance_id()}
+        The instance ID is read from the active test data_dir (the same file
+        the server's app.state.util reads), so this matches whatever the
+        import endpoint validates against.
+        """
+        from klangk_backend.settings import KlangkSettings
+
+        ns = types.SimpleNamespace(settings=KlangkSettings(os.environ))
+        ns.util = util_mod.Util(ns)
+        d = {"instance_id": ns.util.instance_id()}
         d.update(overrides)
         return d
 
@@ -6323,12 +6343,14 @@ class TestWorkspaceExportImport:
         import json
         import tarfile
 
-        from klangk_backend.model.instance import get_instance_id
+        from klangk_backend.settings import KlangkSettings
 
+        ns = types.SimpleNamespace(settings=KlangkSettings(os.environ))
+        ns.util = util_mod.Util(ns)
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             meta = json.dumps(
-                {"name": "same-inst", "instance_id": get_instance_id()}
+                {"name": "same-inst", "instance_id": ns.util.instance_id()}
             ).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)

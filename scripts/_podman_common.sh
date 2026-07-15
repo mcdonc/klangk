@@ -1,7 +1,6 @@
 # shellcheck shell=bash
 # Shared helpers for podman build/pull scripts. Sourced (not executed) by:
-#   build-workspace-image.sh, build-backend-image.sh, build-base-image.sh,
-#   pull-base-image.sh
+#   build-workspace-image.sh, build-base-image.sh, pull-base-image.sh
 #
 # Sets SIG_POLICY_ARGS, expanded into every `podman build` / `podman pull`
 # invocation via "${SIG_POLICY_ARGS[@]}".

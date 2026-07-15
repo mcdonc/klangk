@@ -1761,57 +1761,6 @@ class TestTransactionCancelNoLeak:
         assert not open_ids
 
 
-class TestInstanceId:
-    @pytest.fixture(autouse=True)
-    def _clear_cache(self):
-        from klangk_backend.model import instance
-
-        instance._cache = None
-        yield
-        instance._cache = None
-
-    async def test_generates_uuid(self, temp_data_dir):
-        """First boot generates and persists a UUID-4."""
-        await model.init_db()
-        result = await model.resolve_instance_id()
-        parsed = uuid.UUID(result)
-        assert parsed.version == 4
-        assert model.get_instance_id() == result
-
-    async def test_persisted_value_survives(self, temp_data_dir):
-        """Second resolve returns the same persisted ID."""
-        await model.init_db()
-        first = await model.resolve_instance_id()
-        from klangk_backend.model import instance
-
-        instance._cache = None
-        second = await model.resolve_instance_id()
-        assert first == second
-
-    def test_sync_generates_uuid(self, temp_data_dir):
-        """Sync variant generates and persists a UUID-4."""
-        result = model.resolve_instance_id_sync()
-        parsed = uuid.UUID(result)
-        assert parsed.version == 4
-        assert model.get_instance_id() == result
-
-    def test_sync_agrees_with_async(self, temp_data_dir):
-        """Sync and async variants return the same ID."""
-        sync_id = model.resolve_instance_id_sync()
-        from klangk_backend.model import instance
-
-        instance._cache = None
-        # Use sync again (async would need init_db first); just verify
-        # the sync path reads back what it wrote.
-        again = model.resolve_instance_id_sync()
-        assert sync_id == again
-
-    def test_get_instance_id_before_resolve(self, temp_data_dir):
-        """get_instance_id raises before resolve_instance_id is called."""
-        with pytest.raises(RuntimeError, match="not yet resolved"):
-            model.get_instance_id()
-
-
 class TestDB:
     """Tests for the DB(settings) class (#1452)."""
 

@@ -455,7 +455,9 @@ class Connection:
             workspace_id
         )
         status = getattr(self, "container_status", "created")
-        container_name, ports_str = format_container_info(workspace_id, ports)
+        container_name, ports_str = format_container_info(
+            workspace_id, ports, self.app_state.util.instance_id()
+        )
         status_msg = {
             "connected": f"Connected to running container "
             f"{container_name}{ports_str}",
@@ -555,7 +557,9 @@ class Connection:
         ports = await self.app_state.container_registry.get_workspace_ports(
             workspace_id
         )
-        container_name, ports_str = format_container_info(workspace_id, ports)
+        container_name, ports_str = format_container_info(
+            workspace_id, ports, self.app_state.util.instance_id()
+        )
         status_msg = f"Container restarted {container_name}{ports_str}"
 
         timeout_mins = (

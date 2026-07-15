@@ -288,12 +288,6 @@ async def init_db() -> None:
                 accepted_at TEXT
             )
         """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS instance_metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-        """)
         # Migration: drop legacy role and workspace_access tables
         for table in ("user_roles", "roles", "workspace_access"):
             await db.execute(f"DROP TABLE IF EXISTS {table}")  # noqa: S608

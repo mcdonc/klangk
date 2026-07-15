@@ -199,7 +199,7 @@ async def get_config(app_state=Depends(get_app_state_dep)):
         "login_banner": s.login_banner,
         "oidc_providers": app_state.oidc.list_providers(),
         "auth_modes": app_state.oidc.auth_modes(),
-        "instance_id": model.get_instance_id(),
+        "instance_id": app_state.util.instance_id(),
         # Whether per-workspace auto-start (start the container on server
         # boot) is permitted. The web UI gates its "Auto start" checkbox on
         # this so users can't toggle a setting the server will reject (#1115).
