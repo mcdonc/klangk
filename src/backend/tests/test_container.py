@@ -13,6 +13,7 @@ import pytest
 from klangk_backend import (
     auth as auth_mod,
     container,
+    files as files_mod,
     model,
     podman,
     util as util_mod,
@@ -47,6 +48,7 @@ def _make_app_state(registry=None, sockets=None):
     from klangk_backend.workspaces import Workspaces
 
     app_state.workspaces = Workspaces(app_state)
+    app_state.files = files_mod.Files(app_state)
     # #1503: container.py reaches derive_hosting_info via app_state.util.
     app_state.util = util_mod.Util(app_state)
 

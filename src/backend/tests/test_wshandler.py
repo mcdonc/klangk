@@ -19,6 +19,7 @@ from klangk_backend import (
     agent as agent_mod,
     auth as auth_mod,
     emailsvc as emailsvc_mod,
+    files as files_mod,
     util as util_mod,
     model,
     wshandler,
@@ -99,6 +100,7 @@ def _make_app_state(registry=None, sockets=None):
     # its methods via patch.object(_mock_term, ...).
     app_state.terminal = _mock_term
     app_state.workspaces = ws_mod.Workspaces(app_state)
+    app_state.files = files_mod.Files(app_state)
     app_state.agents = agent_mod.Agents(app_state)
     app_state.email = emailsvc_mod.EmailService(app_state)
     app_state.util = util_mod.Util(app_state)

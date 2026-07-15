@@ -100,6 +100,15 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **`Files(app_state)` class** — the eight stateful file operations in
+  `klangk_backend/files.py` (list/read/write/delete/rename/stat/stream)
+  are now methods on a `Files(app_state)` class wired as
+  `app.state.files`, instead of free functions that took `podman` as a
+  trailing argument. `api/files.py` calls them as
+  `app_state.files.*(...)`; the class owns the `podman` reference the
+  same way `Workspaces`/`Terminal` do. The pure `validate_path` helper
+  stays module-level. No behavior change for API consumers (#1566).
+
 - **`bringup.py` folded into `ContainerRegistry`** — the container
   bring-up hook (provision the agent home, fire the service command) is
   now `ContainerRegistry._bringup`, called inline from `start_container`

@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from _helpers import make_settings
+from klangk_backend import files as files_mod
 from klangk_backend.agent import (
     AgentError,
     AgentProcessDied,
@@ -65,6 +66,7 @@ def _make_app_state(cid="cid"):
         podman=mock_pod,
     )
     app_state.workspaces = MagicMock()
+    app_state.files = files_mod.Files(app_state)
     app_state.sockets = MagicMock()
     return app_state
 

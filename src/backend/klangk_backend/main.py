@@ -21,6 +21,7 @@ from . import (
     auth,
     container,
     emailsvc,
+    files,
     model,
     nginx as nginx_mod,
     oidc,
@@ -579,6 +580,11 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # settings.data_dir at construction, not frozen at import) + CRUD/path
     # helpers.
     app.state.workspaces = workspaces.Workspaces(app.state)
+    # #1566: Files(app_state) owns the podman-exec file operations
+    # (list/read/write/delete/rename/stream), previously free functions
+    # in files.py that threaded podman through every call. The class owns
+    # the podman reference, the same way Workspaces/Terminal do.
+    app.state.files = files.Files(app.state)
     # #1452: DB(settings) owns the engine cache + data dir (computed from
     # settings, not frozen at import). Bound as the active DB for the
     # lifespan's context in the lifespan itself (#1520: no module-global
