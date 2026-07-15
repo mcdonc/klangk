@@ -88,6 +88,15 @@ operators or integrators to act when upgrading.
   suites now run with `pytest-timeout` (`--timeout=60`). A hanging test
   fails after 60s instead of burning the whole job budget. New
   `pytest-timeout` dev dependency (#1513).
+- **klangk nginx now rewrites `$remote_addr` to the real client IP** via the
+  realip module (`set_real_ip_from <each KLANGK_TRUSTED_PROXY_CIDRS entry>` +
+  `real_ip_header X-Forwarded-For` + `real_ip_recursive on`). Without this,
+  `proxy_set_header X-Real-IP $remote_addr` clobbered the real client IP the
+  outer proxy forwarded with the proxy's own IP, so the backend's
+  `client_is_loopback` / `derive_hosting_info` resolved the proxy IP, not the
+  browser's — a regression from stable/1.0 where the customer proxy hit
+  uvicorn directly. Suppressed entirely when `KLANGK_REJECT_PROXY_HEADERS` is
+  set (#1558).
 
 ### Changed
 

@@ -221,6 +221,77 @@ class TestRenderConfig:
         assert "proxy_set_header X-Forwarded-Proto $scheme;" in conf
         assert "proxy_set_header X-Forwarded-Host $http_host;" in conf
 
+
+class TestRealipBlock:
+    """The realip module directives so ``$remote_addr`` is the real client (#1558)."""
+
+    def test_default_loopback_trust(self):
+        s = make_settings({"KLANGK_PORT": "8997"})
+        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
+        assert "set_real_ip_from 127.0.0.1;" in conf
+        assert "set_real_ip_from ::1;" in conf
+        assert "real_ip_header X-Forwarded-For;" in conf
+        assert "real_ip_recursive on;" in conf
+
+    def test_custom_cidrs(self):
+        s = make_settings(
+            {
+                "KLANGK_PORT": "8997",
+                "KLANGK_TRUSTED_PROXY_CIDRS": "10.100.0.0/24,127.0.0.1",
+            }
+        )
+        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
+        assert "set_real_ip_from 10.100.0.0/24;" in conf
+        assert "set_real_ip_from 127.0.0.1;" in conf
+
+    def test_suppressed_when_reject_proxy_headers(self):
+        s = make_settings(
+            {"KLANGK_PORT": "8997", "KLANGK_REJECT_PROXY_HEADERS": "1"}
+        )
+        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
+        assert "set_real_ip_from" not in conf
+        assert "real_ip_header" not in conf
+
+    def test_present_in_headless(self):
+        s = make_settings(env={"KLANGK_EGRESS_PORT": "8995"})
+        conf = _renderer(s).render_config(uds_upstream("/tmp/klangk.sock"))
+        assert "set_real_ip_from 127.0.0.1;" in conf
+        assert "real_ip_header X-Forwarded-For;" in conf
+
+    def test_invalid_entries_skipped(self):
+        s = make_settings(
+            {
+                "KLANGK_PORT": "8997",
+                "KLANGK_TRUSTED_PROXY_CIDRS": "127.0.0.1,not-a-cidr,10.0.0.0/8",
+            }
+        )
+        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
+        assert "set_real_ip_from 127.0.0.1;" in conf
+        assert "set_real_ip_from 10.0.0.0/8;" in conf
+        assert "not-a-cidr" not in conf
+
+    def test_empty_and_all_invalid_falls_back_to_loopback(self):
+        """Empty tokens are skipped; if every entry is invalid, loopback is used."""
+        s = make_settings(
+            {
+                "KLANGK_PORT": "8997",
+                "KLANGK_TRUSTED_PROXY_CIDRS": ",not-valid,",
+            }
+        )
+        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
+        assert "set_real_ip_from 127.0.0.1;" in conf
+        assert "set_real_ip_from ::1;" in conf
+        assert "not-valid" not in conf
+
+    def test_block_at_http_scope(self):
+        """The realip directives sit at ``http {}`` scope, outside any server block."""
+        s = make_settings({"KLANGK_PORT": "8997"})
+        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
+        # set_real_ip_from must appear before the first 'server {' block.
+        realip_pos = conf.index("set_real_ip_from")
+        first_server = conf.index("server {")
+        assert realip_pos < first_server
+
     def test_file_cmd_resolution_from_yaml(self, tmp_path):
         """file:/cmd: values resolve in the renderer."""
         secret = tmp_path / "llm.key"
