@@ -566,7 +566,7 @@ class TestContainerAclFallback:
 
         s = make_settings({})
         monkeypatch.setattr(nginx_mod, "detect_host_ipv4s", lambda: [])
-        acl, _deny = _renderer(s).compute_container_acls()
+        acl, _ = _renderer(s).compute_container_acls()
         assert "allow 172.16.0.0/12;" in acl
         assert "allow 10.0.0.0/8;" in acl
         # The fallback non-loopback ranges land in the geo block (the

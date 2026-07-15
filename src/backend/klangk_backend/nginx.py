@@ -550,7 +550,7 @@ class NginxRenderer:
         egress_listen = self._settings.egress_listen
         client_max_body_size = self.compute_client_max_body_size()
         resolvers = self.detect_dns_resolvers()
-        acl, _deny = self.compute_container_acls()
+        acl, _ = self.compute_container_acls()
         egress_locations = self._egress_locations(upstream, acl, resolvers)
         realip = self._realip_block()
         return f"""daemon off;
