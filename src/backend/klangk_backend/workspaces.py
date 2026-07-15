@@ -460,8 +460,8 @@ class Workspaces:
         Thin wrapper around ``self.app_state.container_registry.start_container``
         that unpacks the workspace dict. The agent home provisioning and the
         service command firing happen at the single create choke point
-        inside ``start_container`` (see ``bringup.bringup``, #1244), so
-        they no longer live here.
+        inside ``start_container`` (see ``ContainerRegistry._bringup``, #1244),
+        so they no longer live here.
 
         ``idle_timeout`` is left at its default; only
         ``auto_start_workspaces`` (the boot path) pins it to 0.

@@ -462,8 +462,8 @@ class TestStartWorkspace:
     """Tests for start_workspace: the thin dict-unpacking wrapper.
 
     The service-command firing and agent-home provisioning moved to
-    the create choke point inside start_container (see bringup.bringup,
-    #1244), and idle_timeout pinning moved to auto_start_workspaces
+    the create choke point inside start_container (see
+    ContainerRegistry._bringup, #1244), and idle_timeout pinning moved to auto_start_workspaces
     (boot path only). So start_workspace itself only unpacks the
     workspace dict and delegates to registry.start_container.
     """

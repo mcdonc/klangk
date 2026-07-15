@@ -5,7 +5,7 @@ import logging
 import os
 import time
 
-from . import bringup, model, podman
+from . import model, podman
 from .podman import PodmanError
 
 logger = logging.getLogger(__name__)
@@ -966,6 +966,37 @@ class ContainerRegistry:
 
     # --- Container lifecycle ---
 
+    async def _bringup(
+        self,
+        workspace_id: str,
+        container_id: str,
+        service_command: str | None,
+        setup_state: str | None,
+    ) -> None:
+        """Provision the agent home and fire the service command.
+
+        Called at the single choke point: every freshly-created container
+        (the tail of :meth:`start_container`). Idempotent via
+        :meth:`terminal.ensure_service_session` (per-container lock +
+        window-exists check), so calling this on every fresh create is safe:
+        after the first fire it is a no-op. The create-time deferral for
+        workspaces whose ``setup.sh`` has not run yet is handled by gating
+        on ``setup_state`` -- the CLI sandbox driver marks such workspaces
+        ``"pending"`` at create, and the fire lands later once setup
+        completes and the WS connect path runs.
+        """
+        agent_home = await self.app_state.agents.ensure_agent_home(
+            workspace_id, container_id
+        )
+        if not service_command:
+            return
+        await self.app_state.terminal.ensure_service_session(
+            container_id,
+            agent_home,
+            service_command,
+            setup_state=setup_state,
+        )
+
     async def start_container(
         self,
         workspace_id: str,
@@ -1506,12 +1537,8 @@ class ContainerRegistry:
         # fresh container regardless of caller. ensure_service_session
         # is idempotent, and setup_state gates the create-time deferral
         # for workspaces whose setup.sh has not run yet.
-        await bringup.bringup(
-            workspace_id,
-            container_id,
-            service_command,
-            setup_state,
-            app_state=self.app_state,
+        await self._bringup(
+            workspace_id, container_id, service_command, setup_state
         )
         logger.info(
             "workspace-open: DONE — new container created and started: %.3fs",
