@@ -1059,40 +1059,18 @@ class TestPidFile:
         # Should not raise
         util.remove_pid_file()
 
-    async def test_pid_file_path_uses_runtime_dir(self, db):
-        """pid_file_path() embeds the instance ID and lives under runtime_dir."""
-        util = util_mod.Util(types.SimpleNamespace(settings=make_settings({})))
+    async def test_pid_file_path_uses_state_dir(self, tmp_path):
+        """pid_file_path() lives in state_dir and embeds the instance ID."""
+        util = util_mod.Util(
+            types.SimpleNamespace(
+                settings=make_settings({"KLANGK_STATE_DIR": str(tmp_path)})
+            )
+        )
         monkeypatch_id = "12345678-1234-1234-1234-123456789abc"
         util._instance_id = monkeypatch_id
         path = util.pid_file_path()
-        assert path.parent == util_mod.Util.runtime_dir()
+        assert path.parent == tmp_path
         assert path.name == f"klangk-{monkeypatch_id}.pid"
-
-    def test_runtime_dir_prefers_xdg(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-        assert util_mod.Util.runtime_dir() == tmp_path
-
-    def test_runtime_dir_linux_run_user(self, monkeypatch):
-        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-        linux_run = Path(f"/run/user/{os.getuid()}")
-        if linux_run.is_dir():
-            assert util_mod.Util.runtime_dir() == linux_run
-
-    def test_runtime_dir_fallback(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-        # Make /run/user/<uid> appear non-existent
-        orig_is_dir = Path.is_dir
-
-        def fake_is_dir(self):
-            if str(self).startswith("/run/user/"):
-                return False
-            return orig_is_dir(self)
-
-        monkeypatch.setattr(Path, "is_dir", fake_is_dir)
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-        result = util_mod.Util.runtime_dir()
-        assert result == tmp_path / ".klangk" / "run"
-        assert result.exists()
 
 
 class TestBuildApp:

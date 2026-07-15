@@ -24,7 +24,7 @@ Net effect: a _full_ stop. Workspaces go away; on the next start,
 
 ## SIGHUP — graceful runtime restart (#1212)
 
-Sent by `kill -HUP $(cat $XDG_RUNTIME_DIR/klangk-<instance>.pid)`, or by
+Sent by `kill -HUP $(cat $KLANGK_STATE_DIR/klangk-<instance>.pid)`, or by
 your service manager's "reload" action.
 
 SIGHUP is **not** a process restart — the HTTP listener and the database

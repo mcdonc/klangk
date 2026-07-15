@@ -308,39 +308,27 @@ class Util:
 
     # --- PID file ---------------------------------------------------------
     #
-    # Moved from module-scope functions in ``main.py`` (#1565): the PID file
-    # is part of instance identity (its name embeds the instance ID), so the
-    # read/write/check helpers belong on the same ``Util`` that owns the ID.
-    # The lifespan calls these around the bind/supervise sequence; there is no
-    # ``instance_id`` argument to thread because each method reads
-    # :meth:`instance_id`.
-
-    @staticmethod
-    def runtime_dir() -> Path:
-        """Per-user runtime dir for the PID file.
-
-        Prefer XDG_RUNTIME_DIR (set on most Linux desktops), then the Linux
-        /run/user/<uid> location, and finally ~/.klangk/run/ as a portable
-        fallback (macOS has no /run and tempfile.gettempdir() may return
-        per-process dirs under App Sandbox).
-        """
-        xdg = os.environ.get("XDG_RUNTIME_DIR")
-        if xdg:
-            return Path(xdg)
-        linux_run = Path(f"/run/user/{os.getuid()}")
-        if linux_run.is_dir():
-            return linux_run
-        fallback = Path.home() / ".klangk" / "run"
-        fallback.mkdir(parents=True, exist_ok=True)
-        return fallback
+    # The PID file is per-process runtime state — the same kind of artifact
+    # as the UDS socket (``<state_dir>/klangk.sock``) and rendered nginx.conf,
+    # so it lives directly in ``state_dir`` (which the settings validator
+    # requires and even documents as the pid-file home). There is no separate
+    # ``runtime_dir()`` fallback chain: ``KLANGK_STATE_DIR`` is required to
+    # boot, so it is always present by the time a PID file path is computed.
+    # (Earlier releases probed XDG_RUNTIME_DIR / ``/run/user/<uid>`` /
+    # ``~/.klangk/run`` — portable-fallback logic from when state_dir was
+    # optional (#773); dead weight now that it's required.) The helpers read
+    # :meth:`instance_id`, so there is no ``instance_id`` argument to thread.
 
     def pid_file_path(self) -> Path:
         """Return the PID file path for this instance's ID.
 
-        The name embeds the instance ID (``klangk-<id>.pid``) so multiple
-        klangk instances per user don't collide on one PID file.
+        Lives in ``state_dir`` next to the UDS socket. The name embeds the
+        instance ID (``klangk-<id>.pid``) so multiple klangk instances per
+        user don't collide on one PID file.
         """
-        return self.runtime_dir() / f"klangk-{self.instance_id()}.pid"
+        return (
+            Path(self.settings.state_dir) / f"klangk-{self.instance_id()}.pid"
+        )
 
     def check_pid_file(self) -> int | None:
         """Check if another instance is running.
