@@ -355,6 +355,62 @@ class NginxRenderer:
             "    }\n"
         )
 
+    def _reject_proxy_headers(self) -> bool:
+        """True if KLANGK_REJECT_PROXY_HEADERS is set (hard trust-off)."""
+        raw = self._settings.reject_proxy_headers
+        return bool(raw and str(raw).strip().lower() in ("1", "true", "yes"))
+
+    def _realip_block(self) -> str:
+        """Emit nginx realip directives so ``$remote_addr`` is the real client.
+
+        Without the realip module ``$remote_addr`` is always the immediate
+        peer (the outer reverse proxy), and ``proxy_set_header X-Real-IP
+        $remote_addr`` clobbers the real client IP the proxy forwarded — so
+        the backend's ``client_is_loopback`` / ``derive_hosting_info`` resolve
+        the proxy's IP, not the browser's (#1558, regression from
+        stable/1.0 where the customer proxy hit uvicorn directly). With
+        these directives nginx rewrites ``$remote_addr`` from
+        ``X-Forwarded-For``, but **only when the immediate peer is in the
+        trusted set** (``set_real_ip_from``): a direct, non-proxy connection
+        cannot spoof XFF.
+
+        Reuses ``KLANGK_TRUSTED_PROXY_CIDRS`` — the same trust set the
+        Python ``peer_trusted()`` / ``client_is_loopback()`` helpers consult
+        — so nginx and the backend agree on which peers are trusted.
+        Suppressed entirely when ``KLANGK_REJECT_PROXY_HEADERS`` is set (hard
+        trust-off), preserving the fail-closed posture.
+        """
+        if self._reject_proxy_headers():
+            return ""
+        raw = self._settings.trusted_proxy_cidrs
+        entries: list[str] = []
+        for token in (raw or "").split(","):
+            token = token.strip()
+            if not token:
+                continue
+            # Validate so an invalid entry doesn't crash nginx at start
+            # (mirrors util.trusted_proxy_cidrs()'s skip-and-log).
+            try:
+                ipaddress.ip_address(token)
+            except ValueError:
+                try:
+                    ipaddress.ip_network(token, strict=False)
+                except ValueError:
+                    logger.warning(
+                        "Ignoring an invalid KLANGK_TRUSTED_PROXY_CIDRS "
+                        "entry in nginx realip block"
+                    )
+                    continue
+            entries.append(token)
+        if not entries:
+            entries = ["127.0.0.1", "::1"]
+        lines = "\n".join(f"  set_real_ip_from {e};" for e in entries)
+        return (
+            f"{lines}\n"
+            "  real_ip_header X-Forwarded-For;\n"
+            "  real_ip_recursive on;\n"
+        )
+
     def _trust_outer_proxy(self) -> bool:
         raw = self._settings.trust_outer_proxy
         return str(raw).strip().lower() in ("1", "true", "yes")
@@ -441,6 +497,7 @@ class NginxRenderer:
         resolvers = self.detect_dns_resolvers()
         acl, _deny = self.compute_container_acls()
         egress_locations = self._egress_locations(upstream, acl, resolvers)
+        realip = self._realip_block()
         return f"""daemon off;
 pid /tmp/nginx.pid;
 error_log stderr;
@@ -454,7 +511,7 @@ http {{
   scgi_temp_path /tmp/nginx_scgi;
 
   client_max_body_size {client_max_body_size};
-
+{realip}
   server {{
     listen {egress_listen}:{egress_port};
 {egress_locations}  }}
@@ -486,6 +543,7 @@ http {{
 
         hosted_block = self._build_hosted_block()
         egress_locations = self._egress_locations(upstream, acl, resolvers)
+        realip = self._realip_block()
         trust = self._trust_outer_proxy()
         if trust:
             forwarded_headers = (
@@ -532,7 +590,7 @@ http {{
   }}
 
   client_max_body_size {client_max_body_size};
-
+{realip}
   # --- Container-egress listener (container → backend via host.containers.internal) ---
   server {{
     listen {egress_listen}:{egress_port};
