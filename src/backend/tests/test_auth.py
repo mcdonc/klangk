@@ -18,15 +18,24 @@ from klangk_backend.auth import Auth
 
 def _auth(env=None):
     """Build an Auth instance from explicit env (no os.environ)."""
-    return Auth(_types.SimpleNamespace(settings=make_settings(env)))
+    from _helpers import wire_db_and_model
+
+    state = _types.SimpleNamespace(settings=make_settings(env))
+    wire_db_and_model(state)
+    return Auth(state)
 
 
 def _req(auth=None):
-    """A request-like with app.state.auth for the FastAPI dep callables."""
+    """A request-like whose ``app.state`` is the auth's app_state.
+
+    Exposes ``app.state.auth`` (the FastAPI dep reads it) plus the
+    ``model``/``db`` the dep callables reach (#1572).
+    """
     if auth is None:
         auth = _auth()
+    auth.app_state.auth = auth
     return _types.SimpleNamespace(
-        app=_types.SimpleNamespace(state=_types.SimpleNamespace(auth=auth))
+        app=_types.SimpleNamespace(state=auth.app_state)
     )
 
 

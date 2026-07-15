@@ -33,7 +33,11 @@ import types
 def _auth():
     """A standalone Auth for token forging (same default secret as the
     app fixture, so tokens round-trip through app.state.auth.decode_*)."""
-    return auth_mod.Auth(types.SimpleNamespace(settings=make_settings({})))
+    from _helpers import wire_db_and_model
+
+    state = types.SimpleNamespace(settings=make_settings({}))
+    wire_db_and_model(state)
+    return auth_mod.Auth(state)
 
 
 # Aliases for the raw-JWT test that builds a token by hand.
@@ -73,6 +77,12 @@ async def app(db, temp_data_dir):
     app.state.util = util_mod.Util(app.state)
 
     app.state.auth = auth_mod.Auth(app.state)
+    # #1572: wire DB + Model(app_state) so converted domains (tokens,
+    # login_attempts, invitations, ports) reached via app_state.model.*
+    # resolve the same per-test DB the ContextVar backstop binds.
+    from _helpers import wire_db_and_model
+
+    wire_db_and_model(app.state)
 
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)

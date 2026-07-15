@@ -109,6 +109,21 @@ operators or integrators to act when upgrading.
   last "free function that takes `app_state`" pattern outside `model/`
   is gone (#1568).
 
+- **`Model(app_state)` composition root introduced (#1572).** A new
+  `app.state.model = Model(app.state)` (wired in `build_app` after
+  `app.state.db`) composes the per-domain data-access sub-objects.
+  Four standalone domains land first — `tokens`, `login_attempts`,
+  `invitations`, `ports` — as `TokensModel` / `LoginAttemptsModel` /
+  `InvitationsModel` / `PortsModel` (`app_state.model.tokens.X(...)`
+  etc.), each resolving the DB through `self.app_state.db` (the single
+  app-wide instance). App code for these domains now goes through
+  `app_state.model.<domain>.<method>`; the larger domains (`users`,
+  `acl`, `workspaces`, `chat`) still use the module-level free functions
+  via the `_current_db` ContextVar backstop until their follow-up issues.
+  No behavior change — same DB, same queries; this is the foundation slice
+  of #1563 and closes the #1551 divergence class for the four converted
+  domains.
+
 - **PID-file helpers moved onto `Util`** (`app.state.util`). The
   `pid_file_path` / `check_pid_file` / `write_pid_file` / `remove_pid_file`
   functions are now methods of the same `Util` that owns the instance ID —

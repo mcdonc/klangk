@@ -60,14 +60,20 @@ async def send_invitation(
             status_code=400, detail="A user with this email already exists"
         )
 
-    pending = await model.get_pending_invitation_by_email(req.email)
+    pending = (
+        await app_state.model.invitations.get_pending_invitation_by_email(
+            req.email
+        )
+    )
     if pending is not None:
         raise HTTPException(
             status_code=400,
             detail="A pending invitation already exists for this email",
         )
 
-    invitation = await model.create_invitation(req.email, admin["id"])
+    invitation = await app_state.model.invitations.create_invitation(
+        req.email, admin["id"]
+    )
     token = app_state.auth.create_invitation_token(invitation["id"], req.email)
 
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
@@ -100,6 +106,7 @@ async def list_invitations(
     order: str = "desc",
     q: str | None = None,
     admin: dict = Depends(acl.has_permission("admin")),
+    app_state=Depends(get_app_state_dep),
 ):
     """List invitations (admin only), server-side paginated/sorted/filtered.
 
@@ -108,7 +115,7 @@ async def list_invitations(
     of ``email`` | ``invited_by`` | ``created``, ``order`` is ``asc`` |
     ``desc``, and ``q`` is a substring filter on the invitee email.
     """
-    return await model.list_invitations(
+    return await app_state.model.invitations.list_invitations(
         page=page, page_size=page_size, sort=sort, order=order, q=q
     )
 
@@ -117,9 +124,12 @@ async def list_invitations(
 async def revoke_invitation(
     invitation_id: str,
     admin: dict = Depends(acl.has_permission("admin")),
+    app_state=Depends(get_app_state_dep),
 ):
     """Revoke a pending invitation (admin only)."""
-    revoked = await model.revoke_invitation(invitation_id)
+    revoked = await app_state.model.invitations.revoke_invitation(
+        invitation_id
+    )
     if not revoked:
         raise HTTPException(
             status_code=404,
@@ -136,7 +146,9 @@ async def resend_invitation(
     app_state=Depends(get_app_state_dep),
 ):
     """Resend an invitation email (admin only)."""
-    invitation = await model.get_invitation(invitation_id)
+    invitation = await app_state.model.invitations.get_invitation(
+        invitation_id
+    )
     if invitation is None or invitation["status"] != "pending":
         raise HTTPException(
             status_code=404,
@@ -221,7 +233,7 @@ async def admin_create_user(
             f"/#/verify?token={verification_token}"
         )
 
-        async with model.transaction() as db:
+        async with app_state.model.transaction() as db:
             await model.insert_unverified_user(
                 db, user_id, req.email, password_hash
             )
@@ -328,13 +340,15 @@ async def update_user(
 
 @router.post("/admin/users/{user_id}/unlockout")
 async def unlock_user(
-    user_id: str, admin: dict = Depends(acl.has_permission("admin"))
+    user_id: str,
+    admin: dict = Depends(acl.has_permission("admin")),
+    app_state=Depends(get_app_state_dep),
 ):
     """Reset a user's login lockout so they can log in immediately."""
     user = await model.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    await model.clear_login_attempts(user["email"])
+    await app_state.model.login_attempts.clear_login_attempts(user["email"])
     return {"status": "unlocked"}
 
 

@@ -584,6 +584,14 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # lifespan's context in the lifespan itself (#1520: no module-global
     # backstop — the model/ free functions reach it via a ContextVar).
     app.state.db = model.db.DB(settings)
+    # #1563 / #1572: Model(app_state) composes the per-domain data-access
+    # sub-objects (tokens, login_attempts, invitations, ports here; users,
+    # acl, workspaces, chat arrive in follow-up issues). Each reaches the
+    # DB via self.app_state.db — the single instance wired just above — so
+    # every code path resolves the same DB (the #1551 divergence class is
+    # structurally impossible for these domains). The not-yet-converted
+    # domains still go through the _current_db ContextVar backstop.
+    app.state.model = model.Model(app.state)
     app.state.agents = agent.Agents(app.state)
     # #1483: EmailService(app_state) owns SMTP/sendmail transport + the
     # Jinja template env (previously module-level functions reading

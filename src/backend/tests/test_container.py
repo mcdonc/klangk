@@ -51,6 +51,12 @@ def _make_app_state(registry=None, sockets=None):
     app_state.util = util_mod.Util(app_state)
 
     app_state.auth = auth_mod.Auth(app_state)
+    # #1572: ContainerRegistry reaches app_state.model.ports; Auth reaches
+    # app_state.model.{tokens,login_attempts}. Wire db + model onto the
+    # namespace (the ContextVar backstop binds the same DB for the rest).
+    from _helpers import wire_db_and_model
+
+    wire_db_and_model(app_state)
     return app_state
 
 

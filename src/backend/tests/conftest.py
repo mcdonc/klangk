@@ -200,6 +200,13 @@ def app_state(temp_data_dir):
     state.workspaces = Workspaces(state)
     state.email = EmailService(state)
     state.util = Util(state)
+    # #1572: wire DB + Model(app_state) so converted domains (tokens,
+    # login_attempts, invitations, ports) reached via app_state.model.*
+    # resolve the per-test DB (the same one the ContextVar backstop binds
+    # for the not-yet-converted domains).
+    from _helpers import wire_db_and_model
+
+    wire_db_and_model(state)
     # Resolve the instance ID into the per-test util (writes
     # <data_dir>/instance-id), so consumers of app_state.util.instance_id()
     # get a real value without each test calling resolve explicitly.
