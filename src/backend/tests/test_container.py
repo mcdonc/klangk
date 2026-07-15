@@ -2296,7 +2296,7 @@ class TestPrewarmPodman:
         # Should not raise
 
 
-class TestAdoptOrphanedContainers:
+class TestReapInstanceContainers:
     def setup_method(self):
         app_state = _make_app_state()
         self.registry = app_state.container_registry
@@ -2314,12 +2314,12 @@ class TestAdoptOrphanedContainers:
             ),
             remove_container=AsyncMock(),
         ) as mocks:
-            await self.registry.adopt_orphaned_containers()
-        # Orphaned containers are removed, not adopted.
+            await self.registry.reap_instance_containers()
+        # Leftover containers are removed at startup.
         assert "ws-orphan" not in self.registry.states
         mocks.remove_container.assert_awaited_once_with("orphan-123")
 
-    async def test_removes_orphan_without_labels(self):
+    async def test_removes_container_without_labels(self):
         with patch_podman(
             self.registry,
             list_containers=AsyncMock(
@@ -2327,21 +2327,22 @@ class TestAdoptOrphanedContainers:
             ),
             remove_container=AsyncMock(),
         ) as mocks:
-            await self.registry.adopt_orphaned_containers()
+            await self.registry.reap_instance_containers()
         assert "unknown" not in self.registry.states
         mocks.remove_container.assert_awaited_once_with("orphan-x")
 
-    async def test_skips_already_tracked(self):
+    async def test_removes_even_when_tracked(self):
+        """At startup the registry is empty, so every leftover is reaped --
+        including one whose ID happens to match a tracked container (which
+        cannot happen at real startup, but the reap is unconditional)."""
         self.registry.track_activity("tracked-456", "ws-tracked")
         with patch_podman(
             self.registry,
             list_containers=AsyncMock(return_value=[{"Id": "tracked-456"}]),
             remove_container=AsyncMock(),
         ) as mocks:
-            await self.registry.adopt_orphaned_containers()
-        # Already tracked → not removed.
-        assert self.registry.states["ws-tracked"].container_id == "tracked-456"
-        mocks.remove_container.assert_not_awaited()
+            await self.registry.reap_instance_containers()
+        mocks.remove_container.assert_awaited_once_with("tracked-456")
 
     async def test_podman_error_handled(self):
         with patch_podman(
@@ -2350,7 +2351,7 @@ class TestAdoptOrphanedContainers:
                 side_effect=podman.PodmanError(500, "fail")
             ),
         ):
-            await self.registry.adopt_orphaned_containers()
+            await self.registry.reap_instance_containers()
         # Should not raise
 
     async def test_remove_podman_error_handled(self):
@@ -2369,10 +2370,36 @@ class TestAdoptOrphanedContainers:
                 side_effect=podman.PodmanError(500, "remove failed")
             ),
         ) as mocks:
-            await self.registry.adopt_orphaned_containers()
+            await self.registry.reap_instance_containers()
         mocks.remove_container.assert_awaited_once_with("orphan-bad")
-        # Container was not adopted — just skipped after failed removal.
+        # Container was not adopted -- just skipped after failed removal.
         assert "ws-bad" not in self.registry.states
+
+    async def test_skipped_inside_container(self):
+        """The reap is a no-op when klangkd runs inside a container."""
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(),
+            remove_container=AsyncMock(),
+        ) as mocks:
+            with patch(
+                "os.path.exists", side_effect=lambda p: p == "/.dockerenv"
+            ):
+                await self.registry.reap_instance_containers()
+        mocks.list_containers.assert_not_awaited()
+        mocks.remove_container.assert_not_awaited()
+
+    async def test_skips_empty_id(self):
+        """A container dict with no Id/ID is skipped, not passed to remove."""
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[{"Id": "good-1"}, {"Labels": None}]
+            ),
+            remove_container=AsyncMock(),
+        ) as mocks:
+            await self.registry.reap_instance_containers()
+        mocks.remove_container.assert_awaited_once_with("good-1")
 
 
 class TestBrowserRegistry:

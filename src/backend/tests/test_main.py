@@ -422,7 +422,7 @@ class TestLifespan:
         with (
             patch.object(
                 registry,
-                "adopt_orphaned_containers",
+                "reap_instance_containers",
                 new_callable=AsyncMock,
             ) as mock_adopt,
             patch.object(registry, "start_cleanup_loop") as mock_start,
@@ -467,7 +467,7 @@ class TestLifespan:
         with (
             patch.object(
                 registry,
-                "adopt_orphaned_containers",
+                "reap_instance_containers",
                 new_callable=AsyncMock,
             ),
             patch.object(registry, "start_cleanup_loop"),
@@ -528,7 +528,7 @@ class TestStartupShutdownRestart:
             ) as mock_prewarm,
             patch.object(
                 registry,
-                "adopt_orphaned_containers",
+                "reap_instance_containers",
                 new_callable=AsyncMock,
             ) as mock_adopt,
             patch.object(registry, "start_cleanup_loop") as mock_cleanup,
@@ -697,7 +697,7 @@ class TestStartupShutdownRestart:
             ) as mock_remove,
             patch.object(
                 registry,
-                "adopt_orphaned_containers",
+                "reap_instance_containers",
                 new_callable=AsyncMock,
             ),
             patch.object(registry, "start_cleanup_loop"),
