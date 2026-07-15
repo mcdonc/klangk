@@ -397,6 +397,26 @@ set-password <email>` (set a known password for the default user — whose
   `KLANGK_PORT`/`KLANGK_LISTEN` are retained for tests that launch uvicorn
   over TCP directly but are unused under `klangkd`.
 
+### Fixed
+
+- **The browser-listener container-source deny no longer false-positives
+  behind a trusted proxy co-located on klangk's host** (#1546). The
+  `location /` deny (#1376) was an inline `deny <ip>; allow all;` list,
+  which nginx evaluates against `$remote_addr`. After #1560's realip
+  directives rewrite `$remote_addr` to the `X-Forwarded-For` client, a
+  trusted outer proxy running on the same host as klangk (whose forwarded
+  real client is a host interface IP, e.g. a `10.100.0.0/24` bridge) made
+  every proxied browser request land on a denied host IP → 403 for the whole
+  UI/API. The deny is now a `geo $realip_remote_addr $container_source { … }`
+  block + `if ($container_source) { return 403; }` on the catch-all, keyed on
+  the _immediate_ TCP peer (`$realip_remote_addr`, pre-realip) instead of the
+  rewritten real client. So: a container connecting directly via pasta NAT is
+  still denied (brute-force cap intact); a request through a trusted proxy is
+  let through (its peer is the proxy, not a container source) while
+  `X-Real-IP`/`X-Forwarded-For` still carry the real client to the backend.
+  An upstream proxy on the same host now works out of the box — no
+  `KLANGK_CONTAINER_SUBNETS` escape hatch needed.
+
 ### Security
 
 - **nginx now denies container source IPs by default on the catch-all

@@ -207,58 +207,113 @@ class NginxRenderer:
             pass
         return " ".join(servers) or "8.8.8.8"
 
-    def compute_container_acls(self) -> tuple[str, str]:
-        """Build the CONTAINER_ACL (allowlist) and CONTAINER_DENY (blocklist) text.
+    def _container_source_entries(self) -> tuple[list[str], list[str]]:
+        """Resolve the container source IP/CIDR set → ``(acl_entries, deny_entries)``.
 
-        Returns ``(acl_block, deny_block)`` where each is the indented
-        ``allow``/``deny`` directives (no leading/trailing newline). Two
-        complementary ACLs from one source set (#1376):
+        - ``acl_entries``: every source, loopback included — drives the egress
+          CONTAINER_ACL allowlist (containers connect from these IPs).
+        - ``deny_entries``: non-loopback sources only — drives the browser
+          catch-all guard. Loopback is excluded so a local browser keeps full
+          UI/API access.
 
-        - CONTAINER_ACL: allowlist on the three container endpoints
-          (llm-proxy, browser-delegate, post-chat-message). Allows the container
-          source IPs, denies everyone else.
-        - CONTAINER_DENY: blocklist on the catch-all ``location /``. Denies the
-          container source IPs so a container reaches ONLY those three endpoints,
-          not the whole /api/v1/* tree. Loopback is ALWAYS excluded (local
-          browsers need the full UI/API).
-
-        With an explicit ``KLANGK_CONTAINER_SUBNETS`` override, 127.0.0.1 is NOT
-        implicitly added to CONTAINER_ACL (the operator's list is used verbatim).
+        Source: explicit ``KLANGK_CONTAINER_SUBNETS`` if set (used verbatim,
+        127.0.0.1 NOT implicitly added), else auto-detected host IPv4s, else
+        the RFC1918 fallback.
         """
         explicit = self._settings.container_subnets
         if explicit:
-            subnets = [
+            entries = [
                 s.strip() for s in str(explicit).split(",") if s.strip()
             ]
-            acl_lines = [f"      allow {s};" for s in subnets]
-            deny_lines = [
-                f"      deny {s};" for s in subnets if not _is_loopback(s)
-            ]
-            if not deny_lines:
+            deny_entries = [s for s in entries if not _is_loopback(s)]
+            if not deny_entries:
                 logger.warning(
                     "container source set has no non-loopback entries — "
                     "catch-all location / denies nothing (deny-by-default inactive)"
                 )
-        else:
-            addrs = detect_host_ipv4s()
-            if addrs:
-                acl_lines = [f"      allow {a};" for a in addrs]
-                deny_lines = [
-                    f"      deny {a};" for a in addrs if not _is_loopback(a)
-                ]
-            else:
-                logger.warning(
-                    "container subnet detection failed, using fallback RFC1918 ranges"
-                )
-                acl_lines = [
-                    f"      allow {s};" for s in _FALLBACK_ACL_SUBNETS
-                ]
-                deny_lines = [
-                    f"      deny {s};" for s in _FALLBACK_DENY_SUBNETS
-                ]
-        acl = "\n".join(acl_lines) + "\n      deny all;"
-        deny = "\n".join(deny_lines) + "\n      allow all;"
-        return acl, deny
+            return entries, deny_entries
+        addrs = detect_host_ipv4s()
+        if addrs:
+            return addrs, [a for a in addrs if not _is_loopback(a)]
+        logger.warning(
+            "container subnet detection failed, using fallback RFC1918 ranges"
+        )
+        return list(_FALLBACK_ACL_SUBNETS), list(_FALLBACK_DENY_SUBNETS)
+
+    def compute_container_acls(self) -> tuple[str, str]:
+        """Build the CONTAINER_ACL (egress allowlist) and browser deny guard.
+
+        Returns ``(acl, deny_guard)``:
+
+        - ``acl``: ``allow <src>;`` lines + ``deny all;`` for the three
+          container-egress locations (llm-proxy, browser-delegate,
+          post-chat-message). Keyed on nginx's ``$remote_addr`` — fine because
+          egress is reached *directly* by containers (pasta NAT), with no proxy
+          in front to rewrite it.
+        - ``deny_guard``: an ``if ($container_source) { return 403; }`` line
+          for the browser catch-all ``location /``. ``$container_source`` is a
+          flag set by :meth:`compute_container_geo`.
+        """
+        acl_entries, _deny_entries = self._container_source_entries()
+        acl = "\n".join(f"      allow {e};" for e in acl_entries)
+        acl = acl + "\n      deny all;"
+        deny_guard = "      if ($container_source) { return 403; }\n"
+        return acl, deny_guard
+
+    def compute_container_geo(self) -> str:
+        """The ``geo`` block that flags container-source peers (http scope).
+
+        Plain-English version of what this does and why:
+
+        **What.** Builds a lookup table: for each incoming request, nginx takes
+        the address the connection came from and sets ``$container_source`` to
+        ``1`` if that address is a workspace-container source, ``0`` otherwise.
+        The browser catch-all ``location /`` then does
+        ``if ($container_source) { return 403; }`` — a container trying to
+        reach the browser UI is refused, everyone else gets through. This is
+        the brute-force cap from #1376 (a container can hammer only its own
+        token-gated egress endpoints, not ``/api/v1/auth/login`` etc.).
+
+        **Why ``$realip_remote_addr`` and not ``$remote_addr``.**
+        ``$remote_addr`` is the *effective* client: #1560's realip directives
+        rewrite it to the real browser IP (from ``X-Forwarded-For``) whenever
+        the immediate peer is a trusted proxy. Keying the guard on that would
+        mean: when a trusted proxy forwards a request whose real client is one
+        of klangk's own host interface IPs (e.g. a proxy co-located on the same
+        host, #1546), nginx rewrites ``$remote_addr`` to that host IP, the guard
+        matches a container source, and every proxied browser request returns
+        403. ``$realip_remote_addr`` is the address the realip module *started
+        with* — the actual TCP peer, before any rewrite. So:
+
+          * request through a trusted proxy → peer is the *proxy's* IP (not a
+            container source) → allowed, and ``$remote_addr`` still carries the
+            real client for the backend's IP-trust checks;
+          * container connecting directly (pasta NAT) → peer is a host IP that
+            *is* a container source → denied (brute-force cap intact);
+          * LAN browser connecting directly → peer is its LAN IP → allowed.
+
+        This needs the realip module compiled into nginx (it provides the
+        ``$realip_remote_addr`` variable) — already required by #1560's
+        ``set_real_ip_from`` directives. When proxy-header trust is off
+        (``KLANGK_REJECT_PROXY_HEADERS``), no realip directives fire,
+        ``$remote_addr`` is never rewritten, and ``$realip_remote_addr`` simply
+        equals it — correct either way.
+
+        Loopback is never listed (it maps to the ``default 0`` → allowed), so
+        local browsers are unaffected. With no non-loopback container sources
+        at all, the block still declares the variable (default 0) so the
+        ``location /`` guard references a defined variable.
+        """
+        _acl_entries, deny_entries = self._container_source_entries()
+        body = (
+            "\n".join(f"    {e} 1;" for e in deny_entries)
+            if deny_entries
+            else ""
+        )
+        body = f"    default 0;\n{body}" if body else "    default 0;"
+        return (
+            f"  geo $realip_remote_addr $container_source {{\n{body}\n  }}\n"
+        )
 
     def compute_client_max_body_size(self) -> str:
         """Derive nginx ``client_max_body_size`` from ``KLANGK_FILE_UPLOAD_SIZE_MAX``.
@@ -544,6 +599,11 @@ http {{
         hosted_block = self._build_hosted_block()
         egress_locations = self._egress_locations(upstream, acl, resolvers)
         realip = self._realip_block()
+        # The container-source flag used by the browser catch-all's
+        # ``if ($container_source) { return 403; }`` guard (the deny value
+        # above). http-scope ``geo`` keyed on the pre-realip peer — see
+        # compute_container_geo().
+        geo = self.compute_container_geo()
         trust = self._trust_outer_proxy()
         if trust:
             forwarded_headers = (
@@ -591,7 +651,7 @@ http {{
 
   client_max_body_size {client_max_body_size};
 {realip}
-  # --- Container-egress listener (container → backend via host.containers.internal) ---
+{geo}  # --- Container-egress listener (container → backend via host.containers.internal) ---
   server {{
     listen {egress_listen}:{egress_port};
 {egress_locations}  }}

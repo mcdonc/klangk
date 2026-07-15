@@ -6,6 +6,7 @@ real nginx — the runtime ACL enforcement is covered by the e2e suite
 """
 
 import asyncio
+import re
 from unittest.mock import Mock
 
 import pytest
@@ -71,23 +72,14 @@ class TestContainerAcls:
         assert "deny all;" in acl
         # 127.0.0.1 NOT implicitly added on explicit override.
         assert "allow 127.0.0.1;" not in acl
-        # Deny block denies the non-loopback subnets.
-        assert "deny 10.89.0.0/24;" in deny
-        assert "allow all;" in deny
-
-    def test_loopback_excluded_from_deny(self):
-        s = make_settings(
-            env={"KLANGK_CONTAINER_SUBNETS": "127.0.0.1,10.89.0.0/24"}
-        )
-        _, deny = _renderer(s).compute_container_acls()
-        assert "deny 10.89.0.0/24;" in deny
-        assert "deny 127.0.0.1;" not in deny
-        assert "allow all;" in deny
+        # The browser catch-all guard now references the geo flag
+        # ($container_source), keyed on the pre-realip peer — see
+        # TestContainerGeo for the source-set assertions.
+        assert "if ($container_source) { return 403; }" in deny
 
     def test_all_loopback_warns(self, caplog):
         s = make_settings({"KLANGK_CONTAINER_SUBNETS": "127.0.0.1"})
-        _, deny = _renderer(s).compute_container_acls()
-        assert "allow all;" in deny
+        _renderer(s)._container_source_entries()
         assert "no non-loopback" in caplog.text
 
     def test_auto_detect_or_fallback(self):
@@ -96,7 +88,79 @@ class TestContainerAcls:
         acl, deny = _renderer(s).compute_container_acls()
         # Must produce *something* (host IPs or fallback).
         assert "deny all;" in acl
-        assert "allow all;" in deny
+        assert "if ($container_source)" in deny
+
+
+class TestContainerGeo:
+    """The http-scope ``geo`` block that flags container-source peers (#1376,
+    #1546).
+
+    The browser catch-all ``location /`` denies requests whose *immediate*
+    TCP peer is a container source (pasta NAT) — capping brute-force surface
+    — but must NOT deny requests that only *look* like a container source
+    after #1560's realip rewrite (a trusted proxy co-located on the host,
+    whose forwarded real client is a host IP). So the geo is keyed on
+    ``$realip_remote_addr`` (the pre-realip peer), never ``$remote_addr``.
+    """
+
+    def test_explicit_subnets_listed_loopback_excluded(self):
+        s = make_settings(
+            env={"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16"}
+        )
+        geo = _renderer(s).compute_container_geo()
+        assert "geo $realip_remote_addr $container_source {" in geo
+        assert "10.89.0.0/24 1;" in geo
+        assert "172.30.0.0/16 1;" in geo
+        assert "default 0;" in geo
+
+    def test_loopback_never_flagged(self):
+        """Loopback maps to default 0 (allowed) even when listed in the set —
+        local browsers keep full UI/API access."""
+        s = make_settings(
+            env={"KLANGK_CONTAINER_SUBNETS": "127.0.0.1,10.89.0.0/24"}
+        )
+        geo = _renderer(s).compute_container_geo()
+        assert "10.89.0.0/24 1;" in geo
+        assert "127.0.0.1 1;" not in geo
+
+    def test_empty_or_all_loopback_still_emits_block(self):
+        """Even with no non-loopback sources, the ``$container_source`` variable
+        is declared (default 0) so the ``location /`` guard references a
+        defined variable."""
+        s = make_settings({"KLANGK_CONTAINER_SUBNETS": "127.0.0.1"})
+        geo = _renderer(s).compute_container_geo()
+        assert "geo $realip_remote_addr $container_source {" in geo
+        assert "default 0;" in geo
+        # No source lines beyond the default.
+        assert geo.count(" 1;") == 0
+
+    def test_uses_realip_remote_addr_not_remote_addr(self):
+        """Regression guard (#1546): the geo must key on the *immediate* peer
+        (``$realip_remote_addr``), not the realip-rewritten real client
+        (``$remote_addr``) — otherwise a co-located trusted proxy whose real
+        client is a host IP is denied on every browser request."""
+        s = make_settings(env={"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"})
+        geo = _renderer(s).compute_container_geo()
+        assert "$realip_remote_addr" in geo
+        assert "$remote_addr $container_source" not in geo
+
+    def test_geo_emitted_in_full_config_at_http_scope(self):
+        s = make_settings(
+            {
+                "KLANGK_PORT": "8997",
+                "KLANGK_EGRESS_PORT": "8995",
+                "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
+            }
+        )
+        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
+        # geo block present, before the first server block (http scope).
+        geo_pos = conf.index("geo $realip_remote_addr $container_source")
+        first_server = conf.index("server {")
+        assert geo_pos < first_server
+        # The catch-all guard references the geo's variable.
+        catch_all = re.search(r"location / \{(.*?)\n    \}", conf, re.DOTALL)
+        assert catch_all, "location / not found"
+        assert "if ($container_source) { return 403; }" in catch_all.group(1)
 
 
 class TestDnsResolvers:
@@ -502,11 +566,14 @@ class TestContainerAclFallback:
 
         s = make_settings({})
         monkeypatch.setattr(nginx_mod, "detect_host_ipv4s", lambda: [])
-        acl, deny = _renderer(s).compute_container_acls()
+        acl, _deny = _renderer(s).compute_container_acls()
         assert "allow 172.16.0.0/12;" in acl
         assert "allow 10.0.0.0/8;" in acl
-        assert "deny 172.16.0.0/12;" in deny
-        assert "allow all;" in deny
+        # The fallback non-loopback ranges land in the geo block (the
+        # container-source flag), not as inline `deny` lines anymore.
+        geo = _renderer(s).compute_container_geo()
+        assert "172.16.0.0/12 1;" in geo
+        assert "10.0.0.0/8 1;" in geo
 
 
 class TestWriteConfig:
