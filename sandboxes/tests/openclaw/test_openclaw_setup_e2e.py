@@ -161,14 +161,23 @@ def _start_server(data_dir, port, extra_env=None):
     }
     log_path = os.path.join(data_dir, "server.log")
     log_file = open(log_path, "w")  # noqa: SIM115
+    # Launch via runtestserver.py (build_app() explicitly) — the composition
+    # root is sealed (#1454), so there's no module-level ``app`` for
+    # ``uvicorn klangk_backend.main:app`` to import.
     proc = subprocess.Popen(
         [
-            "uvicorn",
-            "klangk_backend.main:app",
+            "python3",
+            os.path.join(REPO_ROOT, "src", "backend", "e2e-tests", "runtestserver.py"),
             "--host",
             "0.0.0.0",
             "--port",
             port,
+            "--ws-max-size",
+            "16777216",
+            "--ws-ping-interval",
+            "20",
+            "--ws-ping-timeout",
+            "20",
         ],
         cwd=os.path.join(REPO_ROOT, "src", "backend"),
         env=env,
