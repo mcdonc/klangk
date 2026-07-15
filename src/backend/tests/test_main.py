@@ -431,11 +431,11 @@ class TestLifespan:
                 "shutdown",
                 new_callable=AsyncMock,
             ) as mock_shutdown,
-            patch(
-                "klangk_backend.main.check_pid_file", return_value=None
+            patch.object(
+                util_mod.Util, "check_pid_file", return_value=None
             ) as mock_check,
-            patch("klangk_backend.main.write_pid_file") as mock_write,
-            patch("klangk_backend.main.remove_pid_file") as mock_remove,
+            patch.object(util_mod.Util, "write_pid_file") as mock_write,
+            patch.object(util_mod.Util, "remove_pid_file") as mock_remove,
         ):
             async with main.lifespan(app):
                 mock_check.assert_called_once()
@@ -472,9 +472,9 @@ class TestLifespan:
             ),
             patch.object(registry, "start_cleanup_loop"),
             patch.object(registry, "shutdown", new_callable=AsyncMock),
-            patch("klangk_backend.main.check_pid_file", return_value=None),
-            patch("klangk_backend.main.write_pid_file"),
-            patch("klangk_backend.main.remove_pid_file"),
+            patch.object(util_mod.Util, "check_pid_file", return_value=None),
+            patch.object(util_mod.Util, "write_pid_file"),
+            patch.object(util_mod.Util, "remove_pid_file"),
             patch(
                 "klangk_backend.main.wshandler.reset_workspace_state",
                 new_callable=AsyncMock,
@@ -498,7 +498,7 @@ class TestLifespan:
         # pid-file refuse check (#1520); point it at the conftest-bound DB.
         app.state.db = db_mod.get_current_db()
         with (
-            patch("klangk_backend.main.check_pid_file", return_value=12345),
+            patch.object(util_mod.Util, "check_pid_file", return_value=12345),
             pytest.raises(SystemExit),
         ):
             async with main.lifespan(app):
@@ -580,7 +580,7 @@ class TestStartupShutdownRestart:
         app_state = _make_app_state()
         app_state.db = AsyncMock()
         with (
-            patch("klangk_backend.main.remove_pid_file") as mock_remove,
+            patch.object(util_mod.Util, "remove_pid_file") as mock_remove,
         ):
             await main.process_shutdown(app_state)
         mock_remove.assert_called_once()
@@ -705,9 +705,9 @@ class TestStartupShutdownRestart:
             ),
             patch.object(registry, "start_cleanup_loop"),
             patch.object(registry, "shutdown", new_callable=AsyncMock),
-            patch("klangk_backend.main.check_pid_file", return_value=None),
-            patch("klangk_backend.main.write_pid_file"),
-            patch("klangk_backend.main.remove_pid_file"),
+            patch.object(util_mod.Util, "check_pid_file", return_value=None),
+            patch.object(util_mod.Util, "write_pid_file"),
+            patch.object(util_mod.Util, "remove_pid_file"),
         ):
             async with main.lifespan(app):
                 mock_add.assert_called_once()
@@ -975,25 +975,39 @@ class TestCorsOrigins:
 
 
 class TestPidFile:
+    """PID-file helpers are methods of ``Util`` (``app.state.util``) since
+    #1565 — the PID file is part of instance identity, so read/write/check
+    live on the same ``Util`` that owns the ID."""
+
+    def _util_with_pid_file(self, monkeypatch, pid_file):
+        """A Util whose ``pid_file_path()`` returns ``pid_file``.
+
+        ``instance_id()`` is short-circuited so it never touches the
+        filesystem (the real path would read ``<data_dir>/instance-id``)."""
+        util = util_mod.Util(types.SimpleNamespace(settings=make_settings({})))
+        monkeypatch.setattr(util, "_instance_id", "iid")
+        monkeypatch.setattr(util, "pid_file_path", lambda: pid_file)
+        return util
+
     def test_check_pid_file_no_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            main, "pid_file_path", lambda iid: tmp_path / "klangk-test.pid"
+        util = self._util_with_pid_file(
+            monkeypatch, tmp_path / "klangk-test.pid"
         )
-        assert main.check_pid_file("iid") is None
+        assert util.check_pid_file() is None
 
     def test_check_pid_file_stale_pid(self, tmp_path, monkeypatch):
         pid_file = tmp_path / "klangk-test.pid"
         # Use a PID that (almost certainly) doesn't exist
         pid_file.write_text("2000000")
-        monkeypatch.setattr(main, "pid_file_path", lambda iid: pid_file)
-        assert main.check_pid_file("iid") is None
+        util = self._util_with_pid_file(monkeypatch, pid_file)
+        assert util.check_pid_file() is None
         assert not pid_file.exists()
 
     def test_check_pid_file_own_pid(self, tmp_path, monkeypatch):
         pid_file = tmp_path / "klangk-test.pid"
         pid_file.write_text(str(os.getpid()))
-        monkeypatch.setattr(main, "pid_file_path", lambda iid: pid_file)
-        assert main.check_pid_file("iid") is None
+        util = self._util_with_pid_file(monkeypatch, pid_file)
+        assert util.check_pid_file() is None
 
     def test_check_pid_file_live_pid_permission_error(
         self, tmp_path, monkeypatch
@@ -1001,9 +1015,9 @@ class TestPidFile:
         pid_file = tmp_path / "klangk-test.pid"
         # PID 1 (init) is always alive
         pid_file.write_text("1")
-        monkeypatch.setattr(main, "pid_file_path", lambda iid: pid_file)
+        util = self._util_with_pid_file(monkeypatch, pid_file)
         # os.kill(1, 0) raises PermissionError for non-root
-        result = main.check_pid_file("iid")
+        result = util.check_pid_file()
         assert result == 1
 
     def test_check_pid_file_live_foreign_pid(self, tmp_path, monkeypatch):
@@ -1012,68 +1026,51 @@ class TestPidFile:
         # Use a PID we know is alive and can signal (our parent process)
         ppid = os.getppid()
         pid_file.write_text(str(ppid))
-        monkeypatch.setattr(main, "pid_file_path", lambda iid: pid_file)
-        result = main.check_pid_file("iid")
+        util = self._util_with_pid_file(monkeypatch, pid_file)
+        result = util.check_pid_file()
         assert result == ppid
 
     def test_check_pid_file_invalid_content(self, tmp_path, monkeypatch):
         pid_file = tmp_path / "klangk-test.pid"
         pid_file.write_text("not-a-number")
-        monkeypatch.setattr(main, "pid_file_path", lambda iid: pid_file)
-        assert main.check_pid_file("iid") is None
+        util = self._util_with_pid_file(monkeypatch, pid_file)
+        assert util.check_pid_file() is None
 
     def test_write_and_remove_pid_file(self, tmp_path, monkeypatch):
         pid_file = tmp_path / "klangk-test.pid"
-        monkeypatch.setattr(main, "pid_file_path", lambda iid: pid_file)
-        main.write_pid_file("iid")
+        util = self._util_with_pid_file(monkeypatch, pid_file)
+        util.write_pid_file()
         assert pid_file.read_text() == str(os.getpid())
-        main.remove_pid_file("iid")
+        util.remove_pid_file()
         assert not pid_file.exists()
 
     def test_remove_pid_file_only_own_pid(self, tmp_path, monkeypatch):
         pid_file = tmp_path / "klangk-test.pid"
         pid_file.write_text("99999")
-        monkeypatch.setattr(main, "pid_file_path", lambda iid: pid_file)
-        main.remove_pid_file("iid")
+        util = self._util_with_pid_file(monkeypatch, pid_file)
+        util.remove_pid_file()
         # File should still exist — not our PID
         assert pid_file.exists()
 
     def test_remove_pid_file_missing(self, tmp_path, monkeypatch):
-        pid_file = tmp_path / "klangk-test.pid"
-        monkeypatch.setattr(main, "pid_file_path", lambda iid: pid_file)
+        util = self._util_with_pid_file(
+            monkeypatch, tmp_path / "klangk-test.pid"
+        )
         # Should not raise
-        main.remove_pid_file("iid")
+        util.remove_pid_file()
 
-    async def test_pid_file_path_uses_runtime_dir(self, db):
-        path = main.pid_file_path("iid")
-        assert path.parent == main.runtime_dir()
-        assert path.name == "klangk-iid.pid"
-
-    def test_runtime_dir_prefers_xdg(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-        assert main.runtime_dir() == tmp_path
-
-    def test_runtime_dir_linux_run_user(self, monkeypatch):
-        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-        linux_run = Path(f"/run/user/{os.getuid()}")
-        if linux_run.is_dir():
-            assert main.runtime_dir() == linux_run
-
-    def test_runtime_dir_fallback(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-        # Make /run/user/<uid> appear non-existent
-        orig_is_dir = Path.is_dir
-
-        def fake_is_dir(self):
-            if str(self).startswith("/run/user/"):
-                return False
-            return orig_is_dir(self)
-
-        monkeypatch.setattr(Path, "is_dir", fake_is_dir)
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-        result = main.runtime_dir()
-        assert result == tmp_path / ".klangk" / "run"
-        assert result.exists()
+    async def test_pid_file_path_uses_state_dir(self, tmp_path):
+        """pid_file_path() lives in state_dir and embeds the instance ID."""
+        util = util_mod.Util(
+            types.SimpleNamespace(
+                settings=make_settings({"KLANGK_STATE_DIR": str(tmp_path)})
+            )
+        )
+        monkeypatch_id = "12345678-1234-1234-1234-123456789abc"
+        util._instance_id = monkeypatch_id
+        path = util.pid_file_path()
+        assert path.parent == tmp_path
+        assert path.name == f"klangk-{monkeypatch_id}.pid"
 
 
 class TestBuildApp:

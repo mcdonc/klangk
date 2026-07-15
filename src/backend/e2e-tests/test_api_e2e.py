@@ -18,6 +18,7 @@ import pytest
 
 from klangk_backend.model import free_port
 from _e2e_env import clean_env, close_popen_pipes
+from pathlib import Path
 
 
 def _start_server(data_dir, port):
@@ -74,12 +75,11 @@ def _stop_server(proc, data_dir):
     except (ProcessLookupError, subprocess.TimeoutExpired):
         pass
     close_popen_pipes(proc)
-    instance_id = subprocess.run(
-        ["klangk-instance-id"],
-        capture_output=True,
-        text=True,
-        env=clean_env(KLANGK_DATA_DIR=data_dir, KLANGK_STATE_DIR=data_dir),
-    ).stdout.strip()
+    # The instance ID lives in ``<data_dir>/instance-id`` (written by klangkd
+    # at startup, #1553); read it directly rather than shelling out to a
+    # console script (#1565).
+    _id_file = Path(data_dir) / "instance-id"
+    instance_id = _id_file.read_text().strip() if _id_file.exists() else ""
     result = subprocess.run(
         [
             "podman",

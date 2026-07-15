@@ -210,10 +210,11 @@ class Util:
     """App-state-owned helpers that transitively depend on settings (#1503).
 
     Holds the proxy-trust / forwarded-header logic, hosting-info derivation,
-    the customize-dir resolver, and the instance identity — everything in
-    ``util.py`` that reads config. Config is read from ``self.settings`` at
-    call time, not frozen at import (the #1426 anti-pattern). The UDS-mode
-    flag (set at bind time from the lifespan) lives on the instance too.
+    the customize-dir resolver, the instance identity, and the instance's PID
+    file — everything in ``util.py`` that reads config. Config is read from
+    ``self.settings`` at call time, not frozen at import (the #1426
+    anti-pattern). The UDS-mode flag (set at bind time from the lifespan)
+    lives on the instance too.
 
     Wired onto ``app.state.util`` in ``build_app``; consumers reach it via
     ``app_state.util`` or ``request.app.state.util``.
@@ -295,14 +296,82 @@ class Util:
         """Return the instance ID, resolving it lazily on first use.
 
         Startup calls :meth:`resolve_instance_id` explicitly to write the file
-        early (so external readers like the ``klangk-instance-id`` shim never
-        race a long startup), but a read always works — if resolve hasn't run
-        yet, it resolves now using ``self.settings``. No module global: the
-        resolved value lives on this ``Util`` instance (#1553).
+        early (so external readers (e.g. E2E harnesses that read it directly
+        to scope container cleanup) never race a long startup), but a read
+        always works — if resolve hasn't run yet, it resolves now using
+        ``self.settings``. No module global: the resolved value lives on this
+        ``Util`` instance (#1553).
         """
         if self._instance_id is None:
             self.resolve_instance_id()
         return self._instance_id
+
+    # --- PID file ---------------------------------------------------------
+    #
+    # The PID file is per-process runtime state — the same kind of artifact
+    # as the UDS socket (``<state_dir>/klangk.sock``) and rendered nginx.conf,
+    # so it lives directly in ``state_dir`` (which the settings validator
+    # requires and even documents as the pid-file home). There is no separate
+    # ``runtime_dir()`` fallback chain: ``KLANGK_STATE_DIR`` is required to
+    # boot, so it is always present by the time a PID file path is computed.
+    # (Earlier releases probed XDG_RUNTIME_DIR / ``/run/user/<uid>`` /
+    # ``~/.klangk/run`` — portable-fallback logic from when state_dir was
+    # optional (#773); dead weight now that it's required.) The helpers read
+    # :meth:`instance_id`, so there is no ``instance_id`` argument to thread.
+
+    def pid_file_path(self) -> Path:
+        """Return the PID file path for this instance's ID.
+
+        Lives in ``state_dir`` next to the UDS socket. The name embeds the
+        instance ID (``klangk-<id>.pid``) so multiple klangk instances per
+        user don't collide on one PID file.
+        """
+        return (
+            Path(self.settings.state_dir) / f"klangk-{self.instance_id()}.pid"
+        )
+
+    def check_pid_file(self) -> int | None:
+        """Check if another instance is running.
+
+        Returns the PID of the running process, or None if no live process
+        holds the PID file.  Removes stale PID files automatically.
+        """
+        path = self.pid_file_path()
+        try:
+            pid = int(path.read_text().strip())
+        except (FileNotFoundError, ValueError):
+            return None
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, OverflowError):
+            # Process is dead or PID is invalid — stale PID file.
+            path.unlink(missing_ok=True)
+            return None
+        except PermissionError:
+            # Process exists but we can't signal it (different user).
+            return pid
+        # Don't treat our own PID as a conflict (e.g., after a crash that
+        # left the PID file behind and the OS recycled the PID).
+        if pid == os.getpid():
+            return None
+        return pid
+
+    def write_pid_file(self) -> None:
+        """Write the current PID to the instance PID file."""
+        path = self.pid_file_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(os.getpid()))
+
+    def remove_pid_file(self) -> None:
+        """Remove the PID file (best-effort)."""
+        try:
+            path = self.pid_file_path()
+            # Only remove if it contains our PID (another instance may
+            # have overwritten it after we were signalled to stop).
+            if path.read_text().strip() == str(os.getpid()):
+                path.unlink()
+        except (FileNotFoundError, ValueError, OSError):
+            pass
 
     # --- Proxy trust / forwarded headers ---------------------------------
     #

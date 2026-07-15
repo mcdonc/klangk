@@ -29,7 +29,6 @@ dependencies = [
 ]
 
 [project.scripts]
-klangk-instance-id = "klangk_backend._instance_id:main"
 klangkd = "klangk_backend.klangkd:app"
 
 [tool.pytest.ini_options]

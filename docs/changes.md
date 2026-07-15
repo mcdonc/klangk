@@ -100,6 +100,17 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **PID-file helpers moved onto `Util`** (`app.state.util`). The
+  `pid_file_path` / `check_pid_file` / `write_pid_file` / `remove_pid_file`
+  functions are now methods of the same `Util` that owns the instance ID —
+  the PID file's name embeds the ID, so the two belong together. The lifespan
+  reads `app.state.util.check_pid_file()` etc. with no `instance_id` argument
+  threaded through; the file name and multi-instance isolation are unchanged.
+  The PID file now lives in `state_dir` (next to the UDS socket), and the old
+  `runtime_dir()` fallback chain (XDG_RUNTIME_DIR / `/run/user/<uid>` /
+  `~/.klangk/run`, from #773) is removed — `KLANGK_STATE_DIR` is required to
+  boot, so that fallback solved a problem that can't occur (#1565).
+
 - **`KLANGK_PORT` is now the nginx browser port, not uvicorn's bind.** Under
   `klangkd` uvicorn always binds the UDS (`KLANGK_SOCKET`); `KLANGK_PORT` is
   the nginx listener for the browser UI + API + hosted apps. **Unset ⇒
@@ -249,16 +260,21 @@ operators or integrators to act when upgrading.
   ID is now a single line of text in `<data_dir>/instance-id`, not a row in
   SQLite. The file lives in `data_dir` (next to `klangk.db`) because it
   _identifies the data_ — its lifetime is tied to the data, not to a process
-  run, so it does not belong in the reboot-wiped `runtime_dir()` next to the
-  PID file. The `instance_metadata` table, the `model/instance.py` module,
+  run, so it does not belong alongside the per-process PID file / UDS socket
+  in `state_dir`. The `instance_metadata` table, the `model/instance.py` module,
   and the `resolve_instance_id_sync()` DB-opening helper are gone; there is
   no migration path (no existing installs). Instance identity is owned by
   `Util` (`app.state.util`): `resolve_instance_id()` writes the file at
   startup, `instance_id()` returns it using the same settings instance as
-  every other config-backed helper — no module-level cache/global. The
-  `klangk-instance-id` console script reads the file and never opens the DB;
-  if the file is absent it errors (klangkd hasn't booted) rather than
-  generating an ID — only klangkd writes (#1553).
+  every other config-backed helper — no module-level cache/global (#1553).
+
+- **`klangk-instance-id` console script:** the entry point and its
+  `_instance_id.py` module are gone. Now that the ID is a file at a fixed
+  name (`instance-id`) under `<data_dir>`, every caller reads it directly
+  (`Path(data_dir) / "instance-id"`) instead of shelling out to a process
+  whose only job was to print that file's contents. The `_ShimAppState`
+  fake-`app.state` it needed to reproduce path resolution goes with it
+  (#1565).
 
 - **In-container guards on container cleanup:** the
   `/.dockerenv` / `/run/.containerenv` early-return checks in
