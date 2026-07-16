@@ -78,7 +78,7 @@ def _start_server(data_dir, port, extra_env=None):
                 os.path.dirname(__file__),
                 "..",
                 "..",
-                "backend",
+                "klangkd-tests",
                 "e2e-tests",
                 "runtestserver.py",
             ),

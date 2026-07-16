@@ -87,7 +87,7 @@ def _start_server(data_dir, port, health_interval="2"):
                 os.path.dirname(__file__),
                 "..",
                 "..",
-                "backend",
+                "klangkd-tests",
                 "e2e-tests",
                 "runtestserver.py",
             ),
