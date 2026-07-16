@@ -203,8 +203,10 @@ class TestVerifyWorkspaceToken:
 
 
 class TestWorkspaceChat:
-    async def test_post_agent_message(self, client, user):
-        workspace = await model.create_workspace(user["id"], "chat-ws")
+    async def test_post_agent_message(self, client, user, app_state):
+        workspace = await app_state.model.workspaces.create_workspace(
+            user["id"], "chat-ws"
+        )
         token = _auth().create_workspace_token(workspace["id"])
         resp = await client.post(
             "/api/v1/workspaces/post-chat-message",
@@ -217,8 +219,12 @@ class TestWorkspaceChat:
         assert data["message_type"] == model.MSG_AGENT
         assert data["workspace_id"] == workspace["id"]
 
-    async def test_broadcasts_to_websocket(self, client, user, sockets):
-        workspace = await model.create_workspace(user["id"], "bcast-ws")
+    async def test_broadcasts_to_websocket(
+        self, client, user, sockets, app_state
+    ):
+        workspace = await app_state.model.workspaces.create_workspace(
+            user["id"], "bcast-ws"
+        )
         token = _auth().create_workspace_token(workspace["id"])
         session = sockets.get_or_create_session(workspace["id"])
         mock_sock = MagicMock()
@@ -260,8 +266,10 @@ class TestWorkspaceChat:
         )
         assert resp.status_code == 404
 
-    async def test_empty_message_rejected(self, client, user):
-        workspace = await model.create_workspace(user["id"], "empty-ws")
+    async def test_empty_message_rejected(self, client, user, app_state):
+        workspace = await app_state.model.workspaces.create_workspace(
+            user["id"], "empty-ws"
+        )
         token = _auth().create_workspace_token(workspace["id"])
         resp = await client.post(
             "/api/v1/workspaces/post-chat-message",
@@ -1679,7 +1687,7 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 404
 
     async def test_delete_workspace_with_container(
-        self, client, app, user, registry
+        self, client, app, user, registry, app_state
     ):
         headers = await _auth_headers(client)
         create_resp = await client.post(
@@ -1689,7 +1697,9 @@ class TestWorkspaceRoutes:
         )
         ws_id = create_resp.json()["id"]
         # Simulate a running container
-        await model.update_workspace_container(ws_id, "fake-container-id")
+        await app_state.model.workspaces.update_workspace_container(
+            ws_id, "fake-container-id"
+        )
 
         with (
             patch.object(
@@ -3187,7 +3197,7 @@ class TestTransferOwnership:
         assert resp.status_code == 409
         assert "already the owner" in resp.json()["detail"]
 
-    async def test_transfer_duplicate_name(self, client, user):
+    async def test_transfer_duplicate_name(self, client, user, app_state):
         headers = await _auth_headers(client)
         resp = await client.post(
             "/api/v1/workspaces",
@@ -3198,7 +3208,9 @@ class TestTransferOwnership:
 
         target = await model.create_user("xfer-dup@test.com", "pass")
         # Create a workspace with the same name owned by the target
-        await model.create_workspace_with_acl(target["id"], "dup-name-ws")
+        await app_state.model.workspaces.create_workspace_with_acl(
+            target["id"], "dup-name-ws"
+        )
 
         resp = await client.post(
             f"/api/v1/workspaces/{ws_id}/transfer",
@@ -3253,8 +3265,8 @@ class TestTransferOwnership:
         assert resp.status_code == 409
         assert "agent" in resp.json()["detail"].lower()
 
-    async def test_transfer_workspace_not_found(self, client, user):
-        result = await model.transfer_workspace(
+    async def test_transfer_workspace_not_found(self, client, user, app_state):
+        result = await app_state.model.workspaces.transfer_workspace(
             "nonexistent-ws-id", user["id"]
         )
         assert result is None
@@ -5112,7 +5124,7 @@ class TestAdminEndpoints:
         assert "system agent" in resp.json()["detail"]
 
     async def test_delete_user_cascades_workspaces(
-        self, client, app, admin_user, user, registry
+        self, client, app, admin_user, user, registry, app_state
     ):
         """Deleting a user cascades to their ws_mod."""
         headers = await self._admin_headers(client)
@@ -5141,7 +5153,9 @@ class TestAdminEndpoints:
             )
         assert resp.status_code == 200
         # Workspace should be gone (CASCADE)
-        ws_list = await model.get_user_workspaces_with_containers(user["id"])
+        ws_list = await app_state.model.workspaces.get_user_workspaces_with_containers(
+            user["id"]
+        )
         assert len(ws_list) == 0
 
     async def test_list_user_workspaces_admin(self, client, admin_user, user):
@@ -6066,10 +6080,14 @@ class TestArchiveUserData:
         members = listing.stdout.strip().split("\n")
         assert any(m.startswith("home/") or m == "home" for m in members)
 
-    async def test_archive_multiple_workspaces(self, user, app):
+    async def test_archive_multiple_workspaces(self, user, app, app_state):
         """Creates separate archives for each workspace."""
-        ws1 = await model.create_workspace(user["id"], "ws-one")
-        ws2 = await model.create_workspace(user["id"], "ws-two")
+        ws1 = await app_state.model.workspaces.create_workspace(
+            user["id"], "ws-one"
+        )
+        ws2 = await app_state.model.workspaces.create_workspace(
+            user["id"], "ws-two"
+        )
 
         for ws in [ws1, ws2]:
             home = app.state.workspaces.home_path(ws["id"])
@@ -6084,10 +6102,14 @@ class TestArchiveUserData:
         assert any("ws-one" in n for n in names)
         assert any("ws-two" in n for n in names)
 
-    async def test_archive_paginates_more_than_one_page(self, user, app):
+    async def test_archive_paginates_more_than_one_page(
+        self, user, app, app_state
+    ):
         """Archival pages through every workspace when there are >10."""
         for i in range(12):
-            ws = await model.create_workspace(user["id"], f"ws-{i:02d}")
+            ws = await app_state.model.workspaces.create_workspace(
+                user["id"], f"ws-{i:02d}"
+            )
             home = app.state.workspaces.home_path(ws["id"])
             home.mkdir(parents=True, exist_ok=True)
             (home / "file.txt").write_text("data")

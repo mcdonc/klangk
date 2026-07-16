@@ -43,8 +43,6 @@ class TestCreateWorkspace:
 
     async def test_invalid_setup_state_rejected(self, user, app_state):
         """Invalid setup_state raises ValueError (#1033)."""
-        from klangk_backend import model
-
         # Service layer (goes through create_workspace_with_acl).
         with pytest.raises(ValueError, match="Invalid setup_state"):
             await app_state.workspaces.create_workspace(
@@ -54,7 +52,7 @@ class TestCreateWorkspace:
             )
         # Row-only model primitive validates the same way.
         with pytest.raises(ValueError, match="Invalid setup_state"):
-            await model.create_workspace(
+            await app_state.model.workspaces.create_workspace(
                 user["id"], "bad-row", setup_state="bogus"
             )
 
@@ -88,31 +86,35 @@ class TestCreateWorkspace:
 
 async def test_update_workspace_invalid_setup_state_rejected(user, app_state):
     """update_workspace rejects an invalid setup_state (#1033)."""
-    from klangk_backend.model import update_workspace
-
     ws = await app_state.workspaces.create_workspace(user["id"], "upd-state")
     with pytest.raises(ValueError, match="Invalid setup_state"):
-        await update_workspace(ws["id"], ws["user_id"], setup_state="bogus")
+        await app_state.model.workspaces.update_workspace(
+            ws["id"], ws["user_id"], setup_state="bogus"
+        )
 
 
 async def test_update_workspace_sets_setup_state(user, app_state):
     """update_workspace can transition setup_state (#1033)."""
-    from klangk_backend.model import get_workspace, update_workspace
-
     ws = await app_state.workspaces.create_workspace(
         user["id"], "upd-ok", setup_state="pending"
     )
     assert ws["setup_state"] == "pending"
-    await update_workspace(ws["id"], ws["user_id"], setup_state="complete")
-    refreshed = await get_workspace(ws["id"])
+    await app_state.model.workspaces.update_workspace(
+        ws["id"], ws["user_id"], setup_state="complete"
+    )
+    refreshed = await app_state.model.workspaces.get_workspace(ws["id"])
     assert refreshed["setup_state"] == "complete"
 
 
-async def test_create_workspace_with_acl_seeds_owner_and_role_groups(user):
+async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
+    user, app_state
+):
     """create_workspace_with_acl seeds the owner ACE + 4 role groups (#128)."""
     from klangk_backend import model
 
-    ws = await model.create_workspace_with_acl(user["id"], "seeded")
+    ws = await app_state.model.workspaces.create_workspace_with_acl(
+        user["id"], "seeded"
+    )
     resource = f"/workspaces/{ws['id']}"
 
     # Owner ACE at position 0 grants the creator everything.
@@ -141,7 +143,9 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(user):
     assert len(entries) == 1 + 1 + 5 + 7 + 2
 
 
-async def test_create_workspace_with_acl_rollback_on_seeding_failure(user):
+async def test_create_workspace_with_acl_rollback_on_seeding_failure(
+    user, app_state
+):
     """If ACL seeding fails, the row and any partial ACEs/groups are rolled
     back — nothing is orphaned (#128)."""
     from klangk_backend import model
@@ -154,25 +158,29 @@ async def test_create_workspace_with_acl_rollback_on_seeding_failure(user):
         raise RuntimeError("seeding boom")
 
     with patch.object(
-        model_ws,
+        model_ws.WorkspacesModel,
         "_seed_workspace_acl",
         new_callable=AsyncMock,
         side_effect=_boom,
     ):
         with pytest.raises(RuntimeError, match="seeding boom"):
-            await model.create_workspace_with_acl(user["id"], "orphan-test")
+            await app_state.model.workspaces.create_workspace_with_acl(
+                user["id"], "orphan-test"
+            )
 
     ws_id = captured["id"]
     resource = f"/workspaces/{ws_id}"
 
     # No workspace row, no ACL entries, no role groups left behind.
-    assert await model.get_workspace(ws_id) is None
+    assert await app_state.model.workspaces.get_workspace(ws_id) is None
     assert await model.get_acl_entries(resource) == []
     for suffix in ["owners", "coders", "collaborators", "spectators"]:
         assert await model.get_group_by_name(f"{suffix}-{ws_id}") is None
 
     # Name is reusable — proves full cleanup of the row.
-    ws = await model.create_workspace_with_acl(user["id"], "orphan-test")
+    ws = await app_state.model.workspaces.create_workspace_with_acl(
+        user["id"], "orphan-test"
+    )
     assert ws["name"] == "orphan-test"
 
 

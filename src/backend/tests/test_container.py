@@ -352,13 +352,17 @@ class TestPortAllocation:
         assert len(ports) == 3
         assert all(p >= self.registry.port_range_start for p in ports)
 
-    async def test_allocate_ports_avoids_used(self, workspace, user):
+    async def test_allocate_ports_avoids_used(
+        self, workspace, user, app_state
+    ):
         # Allocate some ports for workspace 1
         ports1 = await model.find_and_allocate_ports(
             workspace["id"], 3, self.registry.port_range_start
         )
         # Create second workspace and allocate
-        ws2 = await model.create_workspace(user["id"], "ws2")
+        ws2 = await app_state.model.workspaces.create_workspace(
+            user["id"], "ws2"
+        )
         ports2 = await model.find_and_allocate_ports(
             ws2["id"], 3, self.registry.port_range_start
         )
@@ -579,7 +583,9 @@ class TestStartContainer:
             )
         assert "!ALL" in str(_sudo_call(p).args[1])
 
-    async def test_sudo_toggled_off_to_on(self, workspace, monkeypatch):
+    async def test_sudo_toggled_off_to_on(
+        self, workspace, monkeypatch, app_state
+    ):
         """Start with sudo disabled, restart with sudo enabled."""
         monkeypatch.setattr(self.registry.settings, "allow_sudo", "false")
         with patch_podman(self.registry) as p:
@@ -590,7 +596,9 @@ class TestStartContainer:
 
         # "Restart" — remove container state so start_container creates a new one
         self.registry.states.clear()
-        await model.update_workspace_container(workspace["id"], None)
+        await app_state.model.workspaces.update_workspace_container(
+            workspace["id"], None
+        )
         monkeypatch.setattr(self.registry.settings, "allow_sudo", "true")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -598,7 +606,9 @@ class TestStartContainer:
             )
         assert "NOPASSWD:ALL" in str(_sudo_call(p).args[1])
 
-    async def test_sudo_toggled_on_to_off(self, workspace, monkeypatch):
+    async def test_sudo_toggled_on_to_off(
+        self, workspace, monkeypatch, app_state
+    ):
         """Start with sudo enabled, restart with sudo disabled."""
         monkeypatch.setattr(self.registry.settings, "allow_sudo", "true")
         with patch_podman(self.registry) as p:
@@ -608,7 +618,9 @@ class TestStartContainer:
         assert "NOPASSWD:ALL" in str(_sudo_call(p).args[1])
 
         self.registry.states.clear()
-        await model.update_workspace_container(workspace["id"], None)
+        await app_state.model.workspaces.update_workspace_container(
+            workspace["id"], None
+        )
         monkeypatch.setattr(self.registry.settings, "allow_sudo", "false")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -616,7 +628,9 @@ class TestStartContainer:
             )
         assert "!ALL" in str(_sudo_call(p).args[1])
 
-    async def test_container_id_persisted_before_start(self, workspace, user):
+    async def test_container_id_persisted_before_start(
+        self, workspace, user, app_state
+    ):
         # If `start` fails, the id created just before it must already be on
         # record so the next connect can inspect/recreate it rather than
         # orphaning a created-but-unrecorded container.
@@ -628,11 +642,15 @@ class TestStartContainer:
                 await self.registry.start_container(
                     workspace["id"], "/tmp/ws", "/tmp/home"
                 )
-        ws = await model.get_workspace(workspace["id"], user["id"])
+        ws = await app_state.model.workspaces.get_workspace(
+            workspace["id"], user["id"]
+        )
         assert ws["container_id"] == "new-cid"
         assert workspace["id"] in self.registry.states
 
-    async def test_cancel_during_start_still_persists(self, workspace, user):
+    async def test_cancel_during_start_still_persists(
+        self, workspace, user, app_state
+    ):
         # The connecting client can disconnect mid-startup, cancelling this
         # coroutine. The shield must let create+persist+start finish so a
         # running container is never orphaned with a NULL container_id.
@@ -658,7 +676,9 @@ class TestStartContainer:
                 await task
 
         # Despite the cancel, the container was started and recorded.
-        ws = await model.get_workspace(workspace["id"], user["id"])
+        ws = await app_state.model.workspaces.get_workspace(
+            workspace["id"], user["id"]
+        )
         assert ws["container_id"] == "new-cid"
         p.start_container.assert_awaited_once_with("new-cid")
         assert workspace["id"] in self.registry.states
@@ -1946,9 +1966,11 @@ class TestStopUserContainers:
         app_state = _make_app_state()
         self.registry = app_state.container_registry
 
-    async def test_stop_user_containers(self, user, workspace):
+    async def test_stop_user_containers(self, user, workspace, app_state):
         # Set container_id on the workspace
-        await model.update_workspace_container(workspace["id"], "cid")
+        await app_state.model.workspaces.update_workspace_container(
+            workspace["id"], "cid"
+        )
         self.registry.track_activity("cid", workspace["id"])
 
         with patch_podman(self.registry) as p:
@@ -1956,8 +1978,12 @@ class TestStopUserContainers:
         p.remove_container.assert_awaited_once_with("cid")
         assert workspace["id"] not in self.registry.states
 
-    async def test_stop_user_calls_workspace_killed(self, user, workspace):
-        await model.update_workspace_container(workspace["id"], "cid")
+    async def test_stop_user_calls_workspace_killed(
+        self, user, workspace, app_state
+    ):
+        await app_state.model.workspaces.update_workspace_container(
+            workspace["id"], "cid"
+        )
         self.registry.track_activity("cid", workspace["id"])
 
         killed_cb = AsyncMock()

@@ -475,8 +475,12 @@ class TestHandles:
         assert len(results) > 0
         assert results[0]["handle"] == user["handle"]
 
-    async def test_get_workspace_members_includes_handle(self, user):
-        ws = await model.create_workspace(user["id"], "member-ws")
+    async def test_get_workspace_members_includes_handle(
+        self, user, app_state
+    ):
+        ws = await app_state.model.workspaces.create_workspace(
+            user["id"], "member-ws"
+        )
         other = await model.create_user(
             "other@test.com", "hash", verified=True
         )
@@ -489,39 +493,47 @@ class TestHandles:
             model.PRINCIPAL_USER,
             user_id=other["id"],
         )
-        members = await model.get_workspace_members(ws["id"])
+        members = await app_state.model.workspaces.get_workspace_members(
+            ws["id"]
+        )
         assert len(members) == 1
         assert members[0]["handle"] == other["handle"]
 
 
 class TestWorkspaces:
-    async def test_create_workspace(self, user):
-        ws = await model.create_workspace(user["id"], "my-workspace")
+    async def test_create_workspace(self, user, app_state):
+        ws = await app_state.model.workspaces.create_workspace(
+            user["id"], "my-workspace"
+        )
         assert ws["name"] == "my-workspace"
         assert ws["user_id"] == user["id"]
         assert "id" in ws
         assert "created_at" in ws
 
-    async def test_list_workspaces(self, user):
-        await model.create_workspace(user["id"], "ws1")
-        await model.create_workspace(user["id"], "ws2")
-        result = await model.list_workspaces(user["id"])
+    async def test_list_workspaces(self, user, app_state):
+        await app_state.model.workspaces.create_workspace(user["id"], "ws1")
+        await app_state.model.workspaces.create_workspace(user["id"], "ws2")
+        result = await app_state.model.workspaces.list_workspaces(user["id"])
         names = [ws["name"] for ws in result["items"]]
         assert "ws1" in names
         assert "ws2" in names
         assert result["has_more"] is False
         assert result["next_offset"] is None
 
-    async def test_list_workspaces_pagination(self, user):
+    async def test_list_workspaces_pagination(self, user, app_state):
         for i in range(3):
-            await model.create_workspace(user["id"], f"ws{i}")
+            await app_state.model.workspaces.create_workspace(
+                user["id"], f"ws{i}"
+            )
         # Page size 2: first page has 2 items and signals more.
-        page1 = await model.list_workspaces(user["id"], limit=2, offset=0)
+        page1 = await app_state.model.workspaces.list_workspaces(
+            user["id"], limit=2, offset=0
+        )
         assert len(page1["items"]) == 2
         assert page1["has_more"] is True
         assert page1["next_offset"] == 2
         # Second page returns the remaining item, no more.
-        page2 = await model.list_workspaces(
+        page2 = await app_state.model.workspaces.list_workspaces(
             user["id"], limit=2, offset=page1["next_offset"]
         )
         assert len(page2["items"]) == 1
@@ -532,68 +544,100 @@ class TestWorkspaces:
         page2_ids = {ws["id"] for ws in page2["items"]}
         assert page1_ids.isdisjoint(page2_ids)
 
-    async def test_list_workspaces_exact_page_no_extra_fetch(self, user):
+    async def test_list_workspaces_exact_page_no_extra_fetch(
+        self, user, app_state
+    ):
         """When total items == limit, has_more must be False (no phantom page)."""
         for i in range(2):
-            await model.create_workspace(user["id"], f"exact{i}")
-        result = await model.list_workspaces(user["id"], limit=2, offset=0)
+            await app_state.model.workspaces.create_workspace(
+                user["id"], f"exact{i}"
+            )
+        result = await app_state.model.workspaces.list_workspaces(
+            user["id"], limit=2, offset=0
+        )
         assert len(result["items"]) == 2
         assert result["has_more"] is False
         assert result["next_offset"] is None
 
-    async def test_list_workspaces_offset_beyond_end(self, user):
-        await model.create_workspace(user["id"], "only")
-        result = await model.list_workspaces(user["id"], offset=10)
+    async def test_list_workspaces_offset_beyond_end(self, user, app_state):
+        await app_state.model.workspaces.create_workspace(user["id"], "only")
+        result = await app_state.model.workspaces.list_workspaces(
+            user["id"], offset=10
+        )
         assert result["items"] == []
         assert result["has_more"] is False
         assert result["next_offset"] is None
 
-    async def test_get_workspace(self, workspace, user):
-        found = await model.get_workspace(workspace["id"], user["id"])
+    async def test_get_workspace(self, workspace, user, app_state):
+        found = await app_state.model.workspaces.get_workspace(
+            workspace["id"], user["id"]
+        )
         assert found is not None
         assert found["name"] == "test-workspace"
 
-    async def test_get_workspace_wrong_user(self, workspace):
-        found = await model.get_workspace(workspace["id"], "wrong-user-id")
+    async def test_get_workspace_wrong_user(self, workspace, app_state):
+        found = await app_state.model.workspaces.get_workspace(
+            workspace["id"], "wrong-user-id"
+        )
         assert found is None
 
-    async def test_delete_workspace(self, workspace, user):
-        deleted = await model.delete_workspace(workspace["id"], user["id"])
+    async def test_delete_workspace(self, workspace, user, app_state):
+        deleted = await app_state.model.workspaces.delete_workspace(
+            workspace["id"], user["id"]
+        )
         assert deleted is True
-        found = await model.get_workspace(workspace["id"], user["id"])
+        found = await app_state.model.workspaces.get_workspace(
+            workspace["id"], user["id"]
+        )
         assert found is None
 
-    async def test_delete_workspace_not_found(self, user):
-        deleted = await model.delete_workspace("fake-id", user["id"])
+    async def test_delete_workspace_not_found(self, user, app_state):
+        deleted = await app_state.model.workspaces.delete_workspace(
+            "fake-id", user["id"]
+        )
         assert deleted is False
 
-    async def test_duplicate_workspace_name(self, user):
-        await model.create_workspace(user["id"], "unique-name")
+    async def test_duplicate_workspace_name(self, user, app_state):
+        await app_state.model.workspaces.create_workspace(
+            user["id"], "unique-name"
+        )
         with pytest.raises(Exception):
-            await model.create_workspace(user["id"], "unique-name")
+            await app_state.model.workspaces.create_workspace(
+                user["id"], "unique-name"
+            )
 
-    async def test_create_workspace_with_auto_start(self, user):
-        ws = await model.create_workspace(
+    async def test_create_workspace_with_auto_start(self, user, app_state):
+        ws = await app_state.model.workspaces.create_workspace(
             user["id"], "auto-ws", auto_start=True
         )
         assert ws["auto_start"] is True
-        found = await model.get_workspace(ws["id"], user["id"])
+        found = await app_state.model.workspaces.get_workspace(
+            ws["id"], user["id"]
+        )
         assert found["auto_start"] is True
 
-    async def test_update_workspace_auto_start(self, user):
-        ws = await model.create_workspace(user["id"], "no-auto")
+    async def test_update_workspace_auto_start(self, user, app_state):
+        ws = await app_state.model.workspaces.create_workspace(
+            user["id"], "no-auto"
+        )
         assert ws["auto_start"] is False
-        updated = await model.update_workspace(
+        updated = await app_state.model.workspaces.update_workspace(
             ws["id"], user["id"], auto_start=True
         )
         assert updated is True
-        found = await model.get_workspace(ws["id"], user["id"])
+        found = await app_state.model.workspaces.get_workspace(
+            ws["id"], user["id"]
+        )
         assert found["auto_start"] is True
 
-    async def test_list_auto_start_workspaces(self, user):
-        await model.create_workspace(user["id"], "normal-ws")
-        await model.create_workspace(user["id"], "auto-ws", auto_start=True)
-        result = await model.list_auto_start_workspaces()
+    async def test_list_auto_start_workspaces(self, user, app_state):
+        await app_state.model.workspaces.create_workspace(
+            user["id"], "normal-ws"
+        )
+        await app_state.model.workspaces.create_workspace(
+            user["id"], "auto-ws", auto_start=True
+        )
+        result = await app_state.model.workspaces.list_auto_start_workspaces()
         assert len(result) == 1
         assert result[0]["name"] == "auto-ws"
         assert result[0]["auto_start"] is True
@@ -614,26 +658,32 @@ class TestWorkspaceSharing:
             user_id=user_id,
         )
 
-    async def test_share_workspace(self, workspace, user):
+    async def test_share_workspace(self, workspace, user, app_state):
         other = await model.create_user("other@example.com", "hash")
         await self._share(workspace["id"], other["id"])
-        members = await model.get_workspace_members(workspace["id"])
+        members = await app_state.model.workspaces.get_workspace_members(
+            workspace["id"]
+        )
         assert len(members) == 1
         assert members[0]["id"] == other["id"]
         assert members[0]["email"] == "other@example.com"
 
-    async def test_get_workspace_without_user_id(self, workspace, user):
+    async def test_get_workspace_without_user_id(
+        self, workspace, user, app_state
+    ):
         """get_workspace without user_id returns any workspace."""
-        found = await model.get_workspace(workspace["id"])
+        found = await app_state.model.workspaces.get_workspace(workspace["id"])
         assert found is not None
         assert found["name"] == "test-workspace"
 
-    async def test_get_workspace_wrong_owner(self, workspace, user):
+    async def test_get_workspace_wrong_owner(self, workspace, user, app_state):
         other = await model.create_user("other@example.com", "hash")
-        found = await model.get_workspace(workspace["id"], other["id"])
+        found = await app_state.model.workspaces.get_workspace(
+            workspace["id"], other["id"]
+        )
         assert found is None
 
-    async def test_unshare_workspace(self, workspace, user):
+    async def test_unshare_workspace(self, workspace, user, app_state):
         other = await model.create_user("other@example.com", "hash")
         await self._share(workspace["id"], other["id"])
         # Remove ACL entries for other user
@@ -650,42 +700,60 @@ class TestWorkspaceSharing:
         for i, entry in enumerate(remaining):
             entry["position"] = i
         await model.replace_acl_entries(resource, remaining)
-        members = await model.get_workspace_members(workspace["id"])
+        members = await app_state.model.workspaces.get_workspace_members(
+            workspace["id"]
+        )
         assert len(members) == 0
 
-    async def test_get_workspace_members_empty(self, workspace):
-        members = await model.get_workspace_members(workspace["id"])
+    async def test_get_workspace_members_empty(self, workspace, app_state):
+        members = await app_state.model.workspaces.get_workspace_members(
+            workspace["id"]
+        )
         assert members == []
 
-    async def test_share_workspace_idempotent(self, workspace, user):
+    async def test_share_workspace_idempotent(
+        self, workspace, user, app_state
+    ):
         other = await model.create_user("other@example.com", "hash")
         await self._share(workspace["id"], other["id"])
         await self._share(workspace["id"], other["id"])
-        members = await model.get_workspace_members(workspace["id"])
+        members = await app_state.model.workspaces.get_workspace_members(
+            workspace["id"]
+        )
         # Two ACEs but same user — get_workspace_members uses DISTINCT
         assert len(members) == 1
 
-    async def test_get_workspace_members_ordered(self, workspace, user):
+    async def test_get_workspace_members_ordered(
+        self, workspace, user, app_state
+    ):
         u_b = await model.create_user("b@example.com", "hash")
         u_a = await model.create_user("a@example.com", "hash")
         await self._share(workspace["id"], u_b["id"])
         await self._share(workspace["id"], u_a["id"])
-        members = await model.get_workspace_members(workspace["id"])
+        members = await app_state.model.workspaces.get_workspace_members(
+            workspace["id"]
+        )
         assert members[0]["email"] == "a@example.com"
         assert members[1]["email"] == "b@example.com"
 
-    async def test_acl_cascade_on_user_delete(self, workspace, user):
+    async def test_acl_cascade_on_user_delete(
+        self, workspace, user, app_state
+    ):
         other = await model.create_user("other@example.com", "hash")
         await self._share(workspace["id"], other["id"])
         # Delete the user — CASCADE should remove ACL entries
         await model.delete_user(other["id"])
-        members = await model.get_workspace_members(workspace["id"])
+        members = await app_state.model.workspaces.get_workspace_members(
+            workspace["id"]
+        )
         assert members == []
 
-    async def test_list_shared_workspaces(self, workspace, user):
+    async def test_list_shared_workspaces(self, workspace, user, app_state):
         other = await model.create_user("other@example.com", "hash")
         await self._share(workspace["id"], other["id"])
-        result = await model.list_shared_workspaces(other["id"])
+        result = await app_state.model.workspaces.list_shared_workspaces(
+            other["id"]
+        )
         assert len(result["items"]) == 1
         assert result["items"][0]["id"] == workspace["id"]
         assert result["items"][0]["name"] == "test-workspace"
@@ -693,24 +761,28 @@ class TestWorkspaceSharing:
         assert result["has_more"] is False
         assert result["next_offset"] is None
 
-    async def test_list_shared_workspaces_empty(self, user):
-        result = await model.list_shared_workspaces(user["id"])
+    async def test_list_shared_workspaces_empty(self, user, app_state):
+        result = await app_state.model.workspaces.list_shared_workspaces(
+            user["id"]
+        )
         assert result["items"] == []
         assert result["has_more"] is False
         assert result["next_offset"] is None
 
-    async def test_list_shared_workspaces_pagination(self, user):
+    async def test_list_shared_workspaces_pagination(self, user, app_state):
         other = await model.create_user("sharer@example.com", "hash")
         for i in range(3):
-            ws = await model.create_workspace(user["id"], f"shared{i}")
+            ws = await app_state.model.workspaces.create_workspace(
+                user["id"], f"shared{i}"
+            )
             await self._share(ws["id"], other["id"])
-        page1 = await model.list_shared_workspaces(
+        page1 = await app_state.model.workspaces.list_shared_workspaces(
             other["id"], limit=2, offset=0
         )
         assert len(page1["items"]) == 2
         assert page1["has_more"] is True
         assert page1["next_offset"] == 2
-        page2 = await model.list_shared_workspaces(
+        page2 = await app_state.model.workspaces.list_shared_workspaces(
             other["id"], limit=2, offset=page1["next_offset"]
         )
         assert len(page2["items"]) == 1
@@ -718,14 +790,16 @@ class TestWorkspaceSharing:
         assert page2["next_offset"] is None
 
     async def test_list_shared_workspaces_exact_page_no_extra_fetch(
-        self, user
+        self, user, app_state
     ):
         """When total shared items == limit, has_more must be False."""
         other = await model.create_user("sharer2@example.com", "hash")
         for i in range(2):
-            ws = await model.create_workspace(user["id"], f"exact_shared{i}")
+            ws = await app_state.model.workspaces.create_workspace(
+                user["id"], f"exact_shared{i}"
+            )
             await self._share(ws["id"], other["id"])
-        result = await model.list_shared_workspaces(
+        result = await app_state.model.workspaces.list_shared_workspaces(
             other["id"], limit=2, offset=0
         )
         assert len(result["items"]) == 2
@@ -771,16 +845,22 @@ class TestPortAllocations:
         ports = await model.get_workspace_ports(workspace["id"])
         assert ports == [9000, 9002]
 
-    async def test_ports_cascade_on_workspace_delete(self, workspace, user):
+    async def test_ports_cascade_on_workspace_delete(
+        self, workspace, user, app_state
+    ):
         await model.add_port_allocations(workspace["id"], [9000, 9001])
-        await model.delete_workspace(workspace["id"], user["id"])
+        await app_state.model.workspaces.delete_workspace(
+            workspace["id"], user["id"]
+        )
         ports = await model.get_workspace_ports(workspace["id"])
         assert ports == []
 
-    async def test_duplicate_port_rejected(self, workspace, user):
+    async def test_duplicate_port_rejected(self, workspace, user, app_state):
         await model.add_port_allocations(workspace["id"], [9000])
         # Create second workspace
-        ws2 = await model.create_workspace(user["id"], "ws2")
+        ws2 = await app_state.model.workspaces.create_workspace(
+            user["id"], "ws2"
+        )
         with pytest.raises(Exception):
             await model.add_port_allocations(ws2["id"], [9000])
 
@@ -800,11 +880,13 @@ class TestPortAllocations:
         assert stored == [9000, 9001, 9002]
 
     async def test_find_and_allocate_skips_used(
-        self, workspace, user, monkeypatch
+        self, workspace, user, monkeypatch, app_state
     ):
         monkeypatch.setattr(util, "port_in_use", lambda p: False)
         await model.add_port_allocations(workspace["id"], [9000, 9002])
-        ws2 = await model.create_workspace(user["id"], "ws2")
+        ws2 = await app_state.model.workspaces.create_workspace(
+            user["id"], "ws2"
+        )
         ports = await model.find_and_allocate_ports(ws2["id"], 3, 9000)
         assert ports == [9001, 9003, 9004]
 
@@ -828,7 +910,7 @@ class TestPortAllocations:
             )
 
     async def test_find_and_allocate_respects_max_port(
-        self, workspace, user, monkeypatch
+        self, workspace, user, monkeypatch, app_state
     ):
         """The scan never exceeds MAX_PORT and raises if it can't fulfil."""
         # Only the last two ports are free; requesting two succeeds, three raises.
@@ -838,7 +920,9 @@ class TestPortAllocations:
             workspace["id"], 2, model.MAX_PORT - 1
         )
         assert ports == [model.MAX_PORT - 1, model.MAX_PORT]
-        ws2 = await model.create_workspace(user["id"], "ws-max")
+        ws2 = await app_state.model.workspaces.create_workspace(
+            user["id"], "ws-max"
+        )
         with pytest.raises(ValueError):
             await model.find_and_allocate_ports(
                 ws2["id"], 3, model.MAX_PORT - 1
@@ -846,116 +930,154 @@ class TestPortAllocations:
 
 
 class TestServiceCommand:
-    async def test_create_with_service_command(self, user):
-        ws = await model.create_workspace(
+    async def test_create_with_service_command(self, user, app_state):
+        ws = await app_state.model.workspaces.create_workspace(
             user["id"], "cmd-ws", service_command="pi"
         )
         assert ws["service_command"] == "pi"
-        fetched = await model.get_workspace(ws["id"], user["id"])
+        fetched = await app_state.model.workspaces.get_workspace(
+            ws["id"], user["id"]
+        )
         assert fetched["service_command"] == "pi"
 
-    async def test_update_service_command(self, workspace, user):
-        updated = await model.update_workspace(
+    async def test_update_service_command(self, workspace, user, app_state):
+        updated = await app_state.model.workspaces.update_workspace(
             workspace["id"], user["id"], service_command="pi"
         )
         assert updated is True
-        ws = await model.get_workspace(workspace["id"], user["id"])
+        ws = await app_state.model.workspaces.get_workspace(
+            workspace["id"], user["id"]
+        )
         assert ws["service_command"] == "pi"
 
-    async def test_clear_service_command(self, workspace, user):
-        await model.update_workspace(
+    async def test_clear_service_command(self, workspace, user, app_state):
+        await app_state.model.workspaces.update_workspace(
             workspace["id"], user["id"], service_command="pi"
         )
-        await model.update_workspace(
+        await app_state.model.workspaces.update_workspace(
             workspace["id"], user["id"], service_command=None
         )
-        ws = await model.get_workspace(workspace["id"], user["id"])
+        ws = await app_state.model.workspaces.get_workspace(
+            workspace["id"], user["id"]
+        )
         assert ws["service_command"] is None
 
-    async def test_update_nonexistent_workspace(self, user):
-        updated = await model.update_workspace(
+    async def test_update_nonexistent_workspace(self, user, app_state):
+        updated = await app_state.model.workspaces.update_workspace(
             "nonexistent", user["id"], service_command="pi"
         )
         assert updated is False
 
-    async def test_update_multiple_fields(self, workspace, user):
-        await model.update_workspace(
+    async def test_update_multiple_fields(self, workspace, user, app_state):
+        await app_state.model.workspaces.update_workspace(
             workspace["id"],
             user["id"],
             name="renamed",
             service_command="pi",
         )
-        ws = await model.get_workspace(workspace["id"], user["id"])
+        ws = await app_state.model.workspaces.get_workspace(
+            workspace["id"], user["id"]
+        )
         assert ws["name"] == "renamed"
         assert ws["service_command"] == "pi"
 
-    async def test_create_with_mounts(self, user):
+    async def test_create_with_mounts(self, user, app_state):
         mounts = ["/home/me/project:/work/project"]
-        ws = await model.create_workspace(
+        ws = await app_state.model.workspaces.create_workspace(
             user["id"], "mount-ws", mounts=mounts
         )
         assert ws["mounts"] == mounts
-        fetched = await model.get_workspace(ws["id"], user["id"])
+        fetched = await app_state.model.workspaces.get_workspace(
+            ws["id"], user["id"]
+        )
         assert fetched["mounts"] == mounts
 
-    async def test_update_mounts(self, workspace, user):
+    async def test_update_mounts(self, workspace, user, app_state):
         mounts = ["/data:/mnt/data:ro"]
-        await model.update_workspace(
+        await app_state.model.workspaces.update_workspace(
             workspace["id"], user["id"], mounts=mounts
         )
-        ws = await model.get_workspace(workspace["id"], user["id"])
+        ws = await app_state.model.workspaces.get_workspace(
+            workspace["id"], user["id"]
+        )
         assert ws["mounts"] == mounts
 
-    async def test_list_includes_mounts(self, user):
+    async def test_list_includes_mounts(self, user, app_state):
         mounts = ["/tmp/test:/work/test"]
-        await model.create_workspace(user["id"], "mount-list", mounts=mounts)
-        result = await model.list_workspaces(user["id"])
+        await app_state.model.workspaces.create_workspace(
+            user["id"], "mount-list", mounts=mounts
+        )
+        result = await app_state.model.workspaces.list_workspaces(user["id"])
         match = [w for w in result["items"] if w["name"] == "mount-list"]
         assert match[0]["mounts"] == mounts
 
-    async def test_update_ignores_unknown_fields(self, workspace, user):
-        result = await model.update_workspace(
+    async def test_update_ignores_unknown_fields(
+        self, workspace, user, app_state
+    ):
+        result = await app_state.model.workspaces.update_workspace(
             workspace["id"], user["id"], bogus="ignored"
         )
         assert result is False
 
-    async def test_update_no_fields(self, workspace, user):
-        result = await model.update_workspace(workspace["id"], user["id"])
+    async def test_update_no_fields(self, workspace, user, app_state):
+        result = await app_state.model.workspaces.update_workspace(
+            workspace["id"], user["id"]
+        )
         assert result is False
 
-    async def test_list_includes_service_command(self, user):
-        await model.create_workspace(
+    async def test_list_includes_service_command(self, user, app_state):
+        await app_state.model.workspaces.create_workspace(
             user["id"], "cmd-ws", service_command="pi"
         )
-        result = await model.list_workspaces(user["id"])
+        result = await app_state.model.workspaces.list_workspaces(user["id"])
         match = [w for w in result["items"] if w["name"] == "cmd-ws"]
         assert len(match) == 1
         assert match[0]["service_command"] == "pi"
 
 
 class TestContainerTracking:
-    async def test_update_workspace_container(self, workspace, user):
-        await model.update_workspace_container(
+    async def test_update_workspace_container(
+        self, workspace, user, app_state
+    ):
+        await app_state.model.workspaces.update_workspace_container(
             workspace["id"], "container-123"
         )
-        ws = await model.get_workspace(workspace["id"], user["id"])
+        ws = await app_state.model.workspaces.get_workspace(
+            workspace["id"], user["id"]
+        )
         assert ws["container_id"] == "container-123"
 
-    async def test_clear_workspace_container(self, workspace, user):
-        await model.update_workspace_container(
+    async def test_clear_workspace_container(self, workspace, user, app_state):
+        await app_state.model.workspaces.update_workspace_container(
             workspace["id"], "container-123"
         )
-        await model.update_workspace_container(workspace["id"], None)
-        ws = await model.get_workspace(workspace["id"], user["id"])
+        await app_state.model.workspaces.update_workspace_container(
+            workspace["id"], None
+        )
+        ws = await app_state.model.workspaces.get_workspace(
+            workspace["id"], user["id"]
+        )
         assert ws["container_id"] is None
 
-    async def test_get_user_workspaces_with_containers(self, user):
-        ws1 = await model.create_workspace(user["id"], "ws-c1")
-        ws2 = await model.create_workspace(user["id"], "ws-c2")
-        await model.create_workspace(user["id"], "ws-c3")  # no container
-        await model.update_workspace_container(ws1["id"], "cid-1")
-        await model.update_workspace_container(ws2["id"], "cid-2")
-        result = await model.get_user_workspaces_with_containers(user["id"])
+    async def test_get_user_workspaces_with_containers(self, user, app_state):
+        ws1 = await app_state.model.workspaces.create_workspace(
+            user["id"], "ws-c1"
+        )
+        ws2 = await app_state.model.workspaces.create_workspace(
+            user["id"], "ws-c2"
+        )
+        await app_state.model.workspaces.create_workspace(
+            user["id"], "ws-c3"
+        )  # no container
+        await app_state.model.workspaces.update_workspace_container(
+            ws1["id"], "cid-1"
+        )
+        await app_state.model.workspaces.update_workspace_container(
+            ws2["id"], "cid-2"
+        )
+        result = await app_state.model.workspaces.get_user_workspaces_with_containers(
+            user["id"]
+        )
         ids = {r["id"] for r in result}
         assert ws1["id"] in ids
         assert ws2["id"] in ids
@@ -963,8 +1085,12 @@ class TestContainerTracking:
         for r in result:
             assert r["container_id"] is not None
 
-    async def test_get_user_workspaces_with_containers_empty(self, user):
-        result = await model.get_user_workspaces_with_containers(user["id"])
+    async def test_get_user_workspaces_with_containers_empty(
+        self, user, app_state
+    ):
+        result = await app_state.model.workspaces.get_user_workspaces_with_containers(
+            user["id"]
+        )
         assert result == []
 
 
@@ -1173,11 +1299,15 @@ class TestChatMessages:
         assert msgs[1]["message"] == "msg3"
         assert msgs[2]["message"] == "msg4"
 
-    async def test_chat_messages_cascade_delete(self, workspace, user):
+    async def test_chat_messages_cascade_delete(
+        self, workspace, user, app_state
+    ):
         await model.add_chat_message(
             workspace["id"], "uid", "u@test.com", "bye"
         )
-        await model.delete_workspace(workspace["id"], user["id"])
+        await app_state.model.workspaces.delete_workspace(
+            workspace["id"], user["id"]
+        )
         msgs = await model.get_chat_messages(workspace["id"])
         assert msgs == []
 
@@ -1350,7 +1480,9 @@ class TestChatMentions:
         assert len(msgs) == 1
         assert msgs[0]["mentions"] == [user["id"]]
 
-    async def test_mentions_cascade_with_message(self, workspace, user):
+    async def test_mentions_cascade_with_message(
+        self, workspace, user, app_state
+    ):
         """Deleting a workspace cascades to chat_mentions."""
         await model.add_chat_message(
             workspace["id"],
@@ -1358,7 +1490,9 @@ class TestChatMentions:
             user["email"],
             f"@{user['email']}",
         )
-        await model.delete_workspace(workspace["id"], user["id"])
+        await app_state.model.workspaces.delete_workspace(
+            workspace["id"], user["id"]
+        )
         msgs = await model.get_chat_messages(workspace["id"])
         assert msgs == []
 
@@ -1547,12 +1681,16 @@ class TestReplaceAclEntriesAgentGuard:
 
 
 class TestCreateWorkspaceWithAclAgentGuard:
-    async def test_create_workspace_with_acl_rejects_agent(self, db):
+    async def test_create_workspace_with_acl_rejects_agent(
+        self, db, app_state
+    ):
         # Choke-point guard (#1135): the owner ACE is written by
         # _seed_workspace_acl via raw SQL (can't call the guarded
         # add_acl_entry), so the public entry point guards the creator.
         with pytest.raises(model.AgentPrincipalError, match="system agent"):
-            await model.create_workspace_with_acl(model.AGENT_USER_ID, "ws")
+            await app_state.model.workspaces.create_workspace_with_acl(
+                model.AGENT_USER_ID, "ws"
+            )
 
 
 class TestSchemaAgentBackstops:
@@ -1904,26 +2042,41 @@ class TestWorkspacesBackstopBranches:
     the invalid-setup_state guard, the list q-filter, and the
     role-group teardown in delete_workspace (#1575)."""
 
-    async def test_get_workspace_by_id_found_and_missing(self, user):
-        ws = await model.create_workspace(user["id"], "lookup")
-        found = await model.get_workspace_by_id(ws["id"])
+    async def test_get_workspace_by_id_found_and_missing(
+        self, user, app_state
+    ):
+        ws = await app_state.model.workspaces.create_workspace(
+            user["id"], "lookup"
+        )
+        found = await app_state.model.workspaces.get_workspace_by_id(ws["id"])
         assert found["name"] == "lookup"
-        assert await model.get_workspace_by_id("nope") is None
+        assert (
+            await app_state.model.workspaces.get_workspace_by_id("nope")
+            is None
+        )
 
-    async def test_list_workspaces_with_query(self, user):
-        await model.create_workspace(user["id"], "alpha")
-        await model.create_workspace(user["id"], "beta")
-        result = await model.list_workspaces(user["id"], q="alp")
+    async def test_list_workspaces_with_query(self, user, app_state):
+        await app_state.model.workspaces.create_workspace(user["id"], "alpha")
+        await app_state.model.workspaces.create_workspace(user["id"], "beta")
+        result = await app_state.model.workspaces.list_workspaces(
+            user["id"], q="alp"
+        )
         assert [w["name"] for w in result["items"]] == ["alpha"]
 
-    async def test_create_workspace_with_acl_invalid_setup_state(self, user):
+    async def test_create_workspace_with_acl_invalid_setup_state(
+        self, user, app_state
+    ):
         with pytest.raises(ValueError):
-            await model.create_workspace_with_acl(
+            await app_state.model.workspaces.create_workspace_with_acl(
                 user["id"], "bad", setup_state="bogus"
             )
 
-    async def test_delete_workspace_tears_down_role_groups(self, user):
-        ws = await model.create_workspace_with_acl(user["id"], "seeded")
+    async def test_delete_workspace_tears_down_role_groups(
+        self, user, app_state
+    ):
+        ws = await app_state.model.workspaces.create_workspace_with_acl(
+            user["id"], "seeded"
+        )
         # The four role groups exist before delete.
         async with model.transaction() as db:
             cur = await db.execute(
@@ -1931,7 +2084,12 @@ class TestWorkspacesBackstopBranches:
                 (f"%-{ws['id']}",),
             )
             assert len(await cur.fetchall()) == 4
-        assert await model.delete_workspace(ws["id"], user["id"]) is True
+        assert (
+            await app_state.model.workspaces.delete_workspace(
+                ws["id"], user["id"]
+            )
+            is True
+        )
         # Role groups + memberships + ACEs gone after delete.
         async with model.transaction() as db:
             cur = await db.execute(
@@ -1940,10 +2098,14 @@ class TestWorkspacesBackstopBranches:
             )
             assert await cur.fetchall() == []
 
-    async def test_transfer_workspace_moves_ownership(self, user):
+    async def test_transfer_workspace_moves_ownership(self, user, app_state):
         other = await model.create_user("newowner@x.com", "h")
-        ws = await model.create_workspace_with_acl(user["id"], "xfer")
-        transferred = await model.transfer_workspace(ws["id"], other["id"])
+        ws = await app_state.model.workspaces.create_workspace_with_acl(
+            user["id"], "xfer"
+        )
+        transferred = await app_state.model.workspaces.transfer_workspace(
+            ws["id"], other["id"]
+        )
         assert transferred["user_id"] == other["id"]
         # Owner ACE (position 0) now points at the new owner.
         entries = await model.get_acl_entries(f"/workspaces/{ws['id']}")
@@ -1952,14 +2114,29 @@ class TestWorkspacesBackstopBranches:
         )
         assert owner_ace["user_id"] == other["id"]
 
-    async def test_transfer_workspace_guards(self, user):
+    async def test_transfer_workspace_guards(self, user, app_state):
         other = await model.create_user("newowner2@x.com", "h")
-        ws = await model.create_workspace_with_acl(user["id"], "xfer-guard")
+        ws = await app_state.model.workspaces.create_workspace_with_acl(
+            user["id"], "xfer-guard"
+        )
         with pytest.raises(model.AgentPrincipalError):
-            await model.transfer_workspace(ws["id"], model.AGENT_USER_ID)
+            await app_state.model.workspaces.transfer_workspace(
+                ws["id"], model.AGENT_USER_ID
+            )
         with pytest.raises(ValueError, match="already the owner"):
-            await model.transfer_workspace(ws["id"], user["id"])
-        await model.create_workspace_with_acl(other["id"], "xfer-guard")
+            await app_state.model.workspaces.transfer_workspace(
+                ws["id"], user["id"]
+            )
+        await app_state.model.workspaces.create_workspace_with_acl(
+            other["id"], "xfer-guard"
+        )
         with pytest.raises(ValueError, match="already owns"):
-            await model.transfer_workspace(ws["id"], other["id"])
-        assert await model.transfer_workspace("missing", other["id"]) is None
+            await app_state.model.workspaces.transfer_workspace(
+                ws["id"], other["id"]
+            )
+        assert (
+            await app_state.model.workspaces.transfer_workspace(
+                "missing", other["id"]
+            )
+            is None
+        )
