@@ -10,8 +10,8 @@ built with (#1563, #1551).
 
 Foundation (#1572): only the four standalone domains are composed here
 (``tokens``, ``login_attempts``, ``invitations``, ``ports``). ``users``
-(#1573) and ``acl`` (#1574) are added; the remaining domains
-(``workspaces``, ``chat``) are added in their own issues; until then
+(#1573), ``acl`` (#1574), and ``workspaces`` (#1575) are added; the
+remaining domains (``chat``) are added in their own issues; until then
 they're still reached via the module-level free functions + the
 ``_current_db`` ContextVar backstop in ``model/db.py``.
 """
@@ -24,6 +24,7 @@ from .tokens import TokensModel
 from .login_attempts import LoginAttemptsModel
 from .invitations import InvitationsModel
 from .users import UsersModel
+from .workspaces import WorkspacesModel
 from .schema import init_db
 
 
@@ -44,6 +45,7 @@ class Model:
         self.ports = PortsModel(app_state)
         self.users = UsersModel(app_state)
         self.acl = ACLModel(app_state)
+        self.workspaces = WorkspacesModel(app_state)
 
     @asynccontextmanager
     async def transaction(self):

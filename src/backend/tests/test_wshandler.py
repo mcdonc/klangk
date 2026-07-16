@@ -750,8 +750,9 @@ class TestHandleTerminalStart:
                 ],
             ),
             patch.object(_mock_term, "attach_browser", new_callable=AsyncMock),
-            patch(
-                "klangk_backend.wshandler.controllers.model.get_workspace",
+            patch.object(
+                app_state.model.workspaces,
+                "get_workspace",
                 new=AsyncMock(return_value={"setup_state": "complete"}),
             ),
             patch.object(
@@ -1156,8 +1157,9 @@ class TestHandleTerminalStart:
                 "klangk_backend.wshandler.controllers.TerminalSession", MockTS
             ),
             patch.object(_mock_term, "attach_browser", new_callable=AsyncMock),
-            patch(
-                "klangk_backend.wshandler.controllers.model.get_workspace",
+            patch.object(
+                app_state.model.workspaces,
+                "get_workspace",
                 new=AsyncMock(return_value={"setup_state": "complete"}),
             ),
             patch.object(
@@ -5679,9 +5681,9 @@ class TestTerminalController:
 
     async def test_setup_state_db_error_defaults_to_complete(self):
         """If the setup_state lookup raises, default to 'complete'."""
-        ctrl, _, _ = self._controller()
+        ctrl, _, conn = self._controller()
         with patch.object(
-            _ws_controllers.model,
+            conn.app_state.model.workspaces,
             "get_workspace",
             new_callable=AsyncMock,
             side_effect=RuntimeError("db down"),
@@ -5691,9 +5693,9 @@ class TestTerminalController:
 
     async def test_setup_state_workspace_missing_defaults_to_complete(self):
         """If get_workspace returns None, default to 'complete'."""
-        ctrl, _, _ = self._controller()
+        ctrl, _, conn = self._controller()
         with patch.object(
-            _ws_controllers.model,
+            conn.app_state.model.workspaces,
             "get_workspace",
             new_callable=AsyncMock,
             return_value=None,
@@ -5703,9 +5705,9 @@ class TestTerminalController:
 
     async def test_setup_state_returns_workspace_value(self):
         """Returns the workspace's actual setup_state when present (#1033)."""
-        ctrl, _, _ = self._controller()
+        ctrl, _, conn = self._controller()
         with patch.object(
-            _ws_controllers.model,
+            conn.app_state.model.workspaces,
             "get_workspace",
             new_callable=AsyncMock,
             return_value={"setup_state": "pending"},
@@ -6269,8 +6271,9 @@ class TestTerminalController:
         ctrl, _, conn = self._controller()
         conn._service_command = "./run.sh"
         with (
-            patch(
-                "klangk_backend.wshandler.controllers.model.get_workspace",
+            patch.object(
+                conn.app_state.model.workspaces,
+                "get_workspace",
                 new=AsyncMock(return_value={"setup_state": "complete"}),
             ),
             patch.object(
@@ -7792,9 +7795,11 @@ class TestSharedTerminalController:
     async def test_delete_shared_terminal_other_user_denied(
         self, user, temp_data_dir
     ):
-        ctrl, sock, _ = self._controller(user=user)
-        with patch(
-            "klangk_backend.model.get_workspace_by_id", new=AsyncMock()
+        ctrl, sock, conn = self._controller(user=user)
+        with patch.object(
+            conn.app_state.model.workspaces,
+            "get_workspace_by_id",
+            new=AsyncMock(),
         ) as gw:
             gw.return_value = {"user_id": "someone-else"}
             await ctrl.delete_shared_terminal(
@@ -7837,8 +7842,9 @@ class TestSharedTerminalController:
             # model.get_workspace_by_id to authorize; return a workspace
             # owned by the current user so the delete is permitted.
             with (
-                patch(
-                    "klangk_backend.model.get_workspace_by_id",
+                patch.object(
+                    app_state.model.workspaces,
+                    "get_workspace_by_id",
                     new=AsyncMock(return_value={"user_id": user["id"]}),
                 ),
                 patch.object(_mock_term, "kill_joiner_sessions") as kill,

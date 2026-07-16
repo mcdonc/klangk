@@ -304,7 +304,9 @@ class Workspaces:
         archived_ws_ids: list[str] = []
         offset = 0
         while True:
-            page = await model.list_workspaces(user_id, offset=offset)
+            page = await self.app_state.model.workspaces.list_workspaces(
+                user_id, offset=offset
+            )
             user_workspaces = page["items"]
             if not user_workspaces:
                 break
@@ -357,16 +359,18 @@ class Workspaces:
         setup_state: str | None = None,
         health_check: str | None = None,
     ) -> dict:
-        workspace = await model.create_workspace_with_acl(
-            user_id,
-            name,
-            image=image,
-            service_command=service_command,
-            auto_start=auto_start,
-            mounts=mounts,
-            env=env,
-            setup_state=setup_state or model.SETUP_STATE_COMPLETE,
-            health_check=health_check,
+        workspace = (
+            await self.app_state.model.workspaces.create_workspace_with_acl(
+                user_id,
+                name,
+                image=image,
+                service_command=service_command,
+                auto_start=auto_start,
+                mounts=mounts,
+                env=env,
+                setup_state=setup_state or model.SETUP_STATE_COMPLETE,
+                health_check=health_check,
+            )
         )
         home = self.home_path(workspace["id"])
         home.mkdir(parents=True, exist_ok=True)
@@ -383,7 +387,9 @@ class Workspaces:
             )
         except Exception:
             # Clean up the DB record and directories on port allocation failure
-            await model.delete_workspace(workspace["id"], user_id)
+            await self.app_state.model.workspaces.delete_workspace(
+                workspace["id"], user_id
+            )
             await _async_rmtree(home, f"workspace {workspace['id']} rollback")
             raise
         return workspace
@@ -397,21 +403,27 @@ class Workspaces:
         order: str = "desc",
         q: str | None = None,
     ) -> dict:
-        return await model.list_workspaces(
+        return await self.app_state.model.workspaces.list_workspaces(
             user_id, limit, offset, sort, order, q
         )
 
     async def get_workspace(
         self, workspace_id: str, user_id: str | None = None
     ) -> dict | None:
-        return await model.get_workspace(workspace_id, user_id)
+        return await self.app_state.model.workspaces.get_workspace(
+            workspace_id, user_id
+        )
 
     async def delete_workspace(self, workspace_id: str, user_id: str) -> bool:
-        workspace = await model.get_workspace(workspace_id, user_id)
+        workspace = await self.app_state.model.workspaces.get_workspace(
+            workspace_id, user_id
+        )
         if workspace is None:
             return False
 
-        deleted = await model.delete_workspace(workspace_id, user_id)
+        deleted = await self.app_state.model.workspaces.delete_workspace(
+            workspace_id, user_id
+        )
         if deleted:
             ws_dir = self.safe_path(workspace_id)
             await _async_rmtree(ws_dir, f"workspace {workspace_id}")
@@ -501,7 +513,9 @@ class Workspaces:
         if not self.settings.allow_autostart:
             return 0
 
-        ws_list = await model.list_auto_start_workspaces()
+        ws_list = (
+            await self.app_state.model.workspaces.list_auto_start_workspaces()
+        )
         started = 0
         for i, ws in enumerate(ws_list):
             if i > 0:

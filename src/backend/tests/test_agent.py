@@ -74,6 +74,10 @@ def _make_app_state(cid="cid"):
     app_state.model.users.agent_email = AsyncMock(
         return_value="clanker@example.com"
     )
+    # #1575: agent.py reaches app_state.model.workspaces.get_workspace_by_id.
+    app_state.model.workspaces.get_workspace_by_id = AsyncMock(
+        return_value=None
+    )
     return app_state
 
 
@@ -852,8 +856,6 @@ class TestGetSession:
 
 class TestEnsureAgentHome:
     async def test_provisions_home_and_runs_setup(self, tmp_path):
-        from klangk_backend import model
-
         fake_ws = {"user_id": "owner1"}
         fake_home = tmp_path / "home"
         fake_home.mkdir()
@@ -873,7 +875,11 @@ class TestEnsureAgentHome:
         agents.app_state.podman = _mock_pod
 
         with (
-            patch.object(model, "get_workspace_by_id", return_value=fake_ws),
+            patch.object(
+                agents.app_state.model.workspaces,
+                "get_workspace_by_id",
+                return_value=fake_ws,
+            ),
             patch(
                 "asyncio.create_subprocess_exec",
                 return_value=mock_proc,
@@ -899,7 +905,6 @@ class TestEnsureAgentHome:
         the lazy chat-start path retries on first mention (#1162).
         The return value (container home) is unaffected by the rc.
         """
-        from klangk_backend import model
 
         fake_home = tmp_path / "home"
         fake_home.mkdir()
@@ -922,7 +927,9 @@ class TestEnsureAgentHome:
 
         with (
             patch.object(
-                model, "get_workspace_by_id", return_value={"user_id": "o"}
+                agents.app_state.model.workspaces,
+                "get_workspace_by_id",
+                return_value={"user_id": "o"},
             ),
             patch("asyncio.create_subprocess_exec", return_value=mock_proc),
         ):
@@ -932,8 +939,6 @@ class TestEnsureAgentHome:
         assert result == "/home/clanker"
 
     async def test_skips_skel_when_home_already_exists(self, tmp_path):
-        from klangk_backend import model
-
         fake_home = tmp_path / "home"
         fake_home.mkdir()
 
@@ -951,7 +956,9 @@ class TestEnsureAgentHome:
 
         with (
             patch.object(
-                model, "get_workspace_by_id", return_value={"user_id": "o"}
+                agents.app_state.model.workspaces,
+                "get_workspace_by_id",
+                return_value={"user_id": "o"},
             ),
         ):
             result = await agents.ensure_agent_home("ws1", "cid")
@@ -961,12 +968,14 @@ class TestEnsureAgentHome:
         ws.populate_home_skel.assert_not_awaited()
 
     async def test_workspace_not_found_raises(self):
-        from klangk_backend import model
-
         agents = _make_agents()
         agents.app_state.podman = _mock_pod
 
-        with patch.object(model, "get_workspace_by_id", return_value=None):
+        with patch.object(
+            agents.app_state.model.workspaces,
+            "get_workspace_by_id",
+            return_value=None,
+        ):
             with pytest.raises(AgentSetupError, match="not found"):
                 await agents.ensure_agent_home("ws-gone", "cid")
 
@@ -975,8 +984,6 @@ class TestEnsureHome:
     async def test_ensure_home_creates_dir_and_runs_login_shell(
         self, tmp_path
     ):
-        from klangk_backend import model
-
         agents = _make_agents()
         session = AgentSession("ws1", agents=agents)
 
@@ -998,7 +1005,7 @@ class TestEnsureHome:
 
         with (
             patch.object(
-                model,
+                agents.app_state.model.workspaces,
                 "get_workspace_by_id",
                 return_value=fake_ws,
             ),
@@ -1025,13 +1032,16 @@ class TestEnsureHome:
         assert result == "/home/clanker"
 
     async def test_ensure_home_workspace_not_in_db(self):
-        from klangk_backend import model
         from klangk_backend.agent import AgentSetupError
 
         agents = _make_agents()
         session = AgentSession("ws-gone", agents=agents)
 
-        with patch.object(model, "get_workspace_by_id", return_value=None):
+        with patch.object(
+            agents.app_state.model.workspaces,
+            "get_workspace_by_id",
+            return_value=None,
+        ):
             with pytest.raises(AgentSetupError, match="not found in database"):
                 await session._ensure_home("cid")
 
@@ -1187,7 +1197,7 @@ class TestMonitorProcess:
 
         with (
             patch.object(
-                model,
+                agents.app_state.model.workspaces,
                 "get_workspace_by_id",
                 new_callable=AsyncMock,
                 return_value={"id": "ws-mon"},
@@ -1459,7 +1469,7 @@ class TestMonitorProcess:
 
         with (
             patch.object(
-                model,
+                agents.app_state.model.workspaces,
                 "get_workspace_by_id",
                 new_callable=AsyncMock,
                 return_value={"id": "ws-rc"},

@@ -420,7 +420,9 @@ class TerminalController:
         rather than silently disabling service commands.
         """
         try:
-            ws = await model.get_workspace(self._conn.workspace_id)
+            ws = await self._conn.app_state.model.workspaces.get_workspace(
+                self._conn.workspace_id
+            )
         except Exception:
             return "complete"
         if ws is None:
@@ -1356,7 +1358,7 @@ class SharedTerminalController:
         # not be trusted blindly, otherwise any collaborator with the
         # share-terminals permission could close other users' windows.
         if owner_user_id != self._conn.user["id"]:
-            workspace = await model.get_workspace_by_id(
+            workspace = await self._conn.app_state.model.workspaces.get_workspace_by_id(
                 self._conn.workspace_id
             )
             if (

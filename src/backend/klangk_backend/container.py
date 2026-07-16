@@ -5,7 +5,7 @@ import logging
 import os
 import time
 
-from . import model, podman
+from . import podman
 from .podman import PodmanError
 
 logger = logging.getLogger(__name__)
@@ -1307,7 +1307,9 @@ class ContainerRegistry:
             "workspace-open: create container image (podman create): %.3fs",
             time.monotonic() - t_create,
         )
-        await model.update_workspace_container(workspace_id, cid)
+        await self.app_state.model.workspaces.update_workspace_container(
+            workspace_id, cid
+        )
         self.track_activity(
             cid,
             workspace_id,
@@ -1634,7 +1636,9 @@ class ContainerRegistry:
 
     async def stop_user_containers(self, user_id: str) -> None:
         """Stop all containers for a user (called on logout)."""
-        workspaces = await model.get_user_workspaces_with_containers(user_id)
+        workspaces = await self.app_state.model.workspaces.get_user_workspaces_with_containers(
+            user_id
+        )
         for ws in workspaces:
             if ws["container_id"]:
                 await self.notify_workspace_killed(ws["id"])
