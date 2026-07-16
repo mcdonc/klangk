@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 # --- Runtime SSL/CA certificate injection (#1181) -------------------------
 from .ssl_trust import (  # noqa: E402
     SSL_MOUNT_DEST as _SSL_MOUNT_DEST,
-    ssl_cert_dir,
     ssl_env_vars,
 )
 
@@ -1460,7 +1459,7 @@ class ContainerRegistry:
         # Resolve the agent home at this async seam (``_build_env`` is
         # sync) so every exec process inherits KLANGK_AGENT_HOME (#1157).
         agent_home = f"/home/{await self.app_state.model.users.agent_handle()}"
-        ssl_dir = ssl_cert_dir(self.settings)
+        ssl_dir = self.app_state.ssl_trust.ssl_cert_dir()
         if ssl_dir:
             logger.info(
                 "Runtime SSL trust enabled: mounting %s at %s",

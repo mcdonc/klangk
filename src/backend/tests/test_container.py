@@ -16,6 +16,7 @@ from klangk_backend import (
     files as files_mod,
     model,
     podman,
+    ssl_trust,
     util as util_mod,
 )
 from _helpers import make_settings
@@ -51,6 +52,9 @@ def _make_app_state(registry=None, sockets=None):
     app_state.files = files_mod.Files(app_state)
     # #1503: container.py reaches derive_hosting_info via app_state.util.
     app_state.util = util_mod.Util(app_state)
+    # #1567: ContainerRegistry reaches the cert-dir resolver via
+    # app_state.ssl_trust (the settings-dependent SSL trust surface).
+    app_state.ssl_trust = ssl_trust.SSLTrust(app_state)
 
     app_state.auth = auth_mod.Auth(app_state)
     # #1572: ContainerRegistry reaches app_state.model.ports; Auth reaches
@@ -113,33 +117,33 @@ class TestSslCertDir:
     """Runtime SSL/CA certificate injection (#1181): ssl_cert_dir() resolver."""
 
     def test_unset_returns_none(self):
-        assert container.ssl_cert_dir(make_settings({})) is None
+        assert self._trust(make_settings({})).ssl_cert_dir() is None
 
     def test_missing_dir_returns_none(self, tmp_path):
         gone = tmp_path / "does-not-exist"
         s = make_settings({"KLANGK_SSL_CERT_DIR": str(gone)})
-        assert container.ssl_cert_dir(s) is None
+        assert self._trust(s).ssl_cert_dir() is None
 
     def test_empty_dir_returns_none(self, tmp_path):
         # Dir exists but contains no .pem/.crt.
         (tmp_path / "readme.txt").write_text("no certs here")
         s = make_settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
-        assert container.ssl_cert_dir(s) is None
+        assert self._trust(s).ssl_cert_dir() is None
 
     def test_dir_with_pem_returns_path(self, tmp_path):
         (tmp_path / "ca.pem").write_text("-----BEGIN CERTIFICATE-----")
         s = make_settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
-        assert container.ssl_cert_dir(s) == str(tmp_path.resolve())
+        assert self._trust(s).ssl_cert_dir() == str(tmp_path.resolve())
 
     def test_dir_with_crt_returns_path(self, tmp_path):
         (tmp_path / "my-ca.crt").write_text("-----BEGIN CERTIFICATE-----")
         s = make_settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
-        assert container.ssl_cert_dir(s) == str(tmp_path.resolve())
+        assert self._trust(s).ssl_cert_dir() == str(tmp_path.resolve())
 
     def test_extension_case_insensitive(self, tmp_path):
         (tmp_path / "CA.PEM").write_text("-----BEGIN CERTIFICATE-----")
         s = make_settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
-        assert container.ssl_cert_dir(s) == str(tmp_path.resolve())
+        assert self._trust(s).ssl_cert_dir() == str(tmp_path.resolve())
 
     def test_ssl_env_vars_empty_without_dir(self):
         assert container.ssl_env_vars(None) == []
@@ -152,6 +156,11 @@ class TestSslCertDir:
             "CURL_CA_BUNDLE=/tmp/klangk/ca-bundle.crt",
             "NODE_EXTRA_CA_CERTS=/tmp/klangk/ca-bundle.crt",
         ]
+
+    @staticmethod
+    def _trust(s) -> ssl_trust.SSLTrust:
+        """SSLTrust owning the given settings (#1567)."""
+        return ssl_trust.SSLTrust(types.SimpleNamespace(settings=s))
 
 
 class TestImagePullPolicy:
@@ -902,18 +911,18 @@ class TestStartContainer:
         assert not any(e.startswith("SSL_CERT_FILE=") for e in env)
 
     async def test_no_ssl_trust_when_dir_has_no_certs(
-        self, workspace, tmp_path
+        self, workspace, tmp_path, monkeypatch
     ):
         """A cert dir with no .pem/.crt is not mounted (#1181)."""
         ssl_dir = tmp_path / "ssl"
         ssl_dir.mkdir()
         (ssl_dir / "notes.txt").write_text("not a cert")
-        # Point the registry's settings at the empty cert dir so ssl_cert_dir()
-        # actually evaluates it (previously this was an inert setenv against
-        # os.environ that the registry — built from make_settings({}) — never
-        # saw; the test passed for the wrong reason).
-        self.registry.settings = make_settings(
-            {"KLANGK_SSL_CERT_DIR": str(ssl_dir)}
+        # Point the registry's SSLTrust at the empty cert dir so ssl_cert_dir()
+        # actually evaluates it (previously this reassigned registry.settings,
+        # which the resolver now reaches only via app_state.ssl_trust; patch the
+        # settings field the SSLTrust instance reads instead).
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "ssl_cert_dir", str(ssl_dir)
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
