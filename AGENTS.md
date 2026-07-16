@@ -98,9 +98,12 @@ Add an entry for anything an **operator, integrator, or end user** would notice:
 new/changed config or defaults, behavior changes, security fixes, notable fixes,
 new features.
 
-**Skip** entries for: pure internal refactors, test/CI/doc churn with no user-visible
-effect, dependency bumps that don't change behavior. If in doubt, add it — it's easier
-to trim at release time than to reconstruct.
+**Skip** entries for: pure internal refactors (moving code between modules,
+renaming internal classes/variables, restructuring state objects), test/CI/doc
+churn with no user-visible effect, and dependency bumps that don't change
+behavior. Internal architecture changes (e.g. "X is now a class instead of free
+functions", "Y now takes app instead of app_state") are invisible to users and
+create noise — do not add changelog entries for them.
 
 ### When to garden for a release
 

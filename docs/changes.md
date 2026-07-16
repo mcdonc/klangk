@@ -16,12 +16,6 @@ Entries use the following conventions:
 - **Security** — fixes for vulnerabilities, in lieu of or in addition to a
   dedicated security advisory.
 
-<!-- IMPORTANT for AI agents: only add changelog entries for changes that are
-     visible to operators or end users (new settings, behavior changes, bug
-     fixes, removed features). Do NOT add entries for internal refactoring,
-     code reorganization, test infrastructure changes, or module restructuring
-     — those are invisible to users and create noise. -->
-
 A `Breaking` subsection may appear under any version for changes that require
 operators or integrators to act when upgrading.
 
