@@ -1,28 +1,27 @@
-"""Shared core: async engine, connection wrappers, and transaction helpers.
+"""Shared core: async engine, connection wrappers, and the :class:`DB`.
 
-All DB access in the per-domain modules goes through :func:`transaction`
-and :func:`fetchone` defined here.  The engine state also lives here so
-test fixtures that rebind it can target a single, obvious location.
+All DB access in the per-domain modules goes through ``app_state.db`` —
+a single owned :class:`DB` instance reached via ``self.app_state.db``
+inside each ``XModel(app_state)`` (and the request path's
+``request.app.state.db``).  The engine state lives on :class:`DB` so a
+test fixture that rebinds it targets a single, obvious location.
 
 #1452: the import-time ``data_dir`` / ``DB_PATH`` globals (frozen from a
 global env read at import) are gone. All DB state/derivation lives on
 :class:`DB`, trivially constructed from settings.
 
-#1520: the module-level ``_db`` singleton (#1492's bridge) is gone. The
-active :class:`DB` is now carried by a :class:`~contextvars.ContextVar`
-built at startup (:func:`set_current_db`) and read by the module-level
-``transaction`` / ``fetchone`` / ``get_db`` delegates via
-:func:`get_current_db`. This keeps the ~50 ``model/`` call sites working
-without threading a ``DB`` through every signature (that larger pass is
-out of scope — see #1452 scope fence) while giving each task/request its
-own context-owned instance instead of one process-wide module global.
+#1563 / #1578: the ``_current_db`` :class:`~contextvars.ContextVar` and
+its module-level ``transaction`` / ``fetchone`` / ``get_db`` delegates
+are gone — every call site now threads ``app_state.db`` explicitly.  The
+old delegates were the #1551 divergence path (``get_current_db()``'s
+lazy env-only ``DB(KlangkSettings(os.environ))`` fallback built a
+different DB than the server); with them removed the divergence is
+structurally impossible.
 """
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
-from contextvars import ContextVar, Token
 from pathlib import Path
 
 from sqlalchemy import event
@@ -207,72 +206,3 @@ class DB:
         async with self.transaction() as db:
             cursor = await db.execute(query, params)
             return await cursor.fetchone()
-
-
-# ---------------------------------------------------------------------------
-# Context-owned DB instance + delegation functions
-#
-# The active :class:`DB` is bound at startup (:func:`set_current_db`) into a
-# :class:`~contextvars.ContextVar` and read by the module-level
-# ``transaction`` / ``fetchone`` / ``get_db`` delegates via
-# :func:`get_current_db`. Each task/request sees the instance bound in its
-# own context (a child of the lifespan's context), not a process-wide module
-# global — so concurrent requests are isolated and the active ``DB`` is always
-# the one bound by the app serving this context (#1520). The delegates keep
-# their signatures so the ~50 ``model/`` call sites that do
-# ``from .db import transaction`` keep working without threading a ``DB``
-# through every signature (that larger pass is explicitly out of scope — see
-# #1452 scope fence).
-# ---------------------------------------------------------------------------
-
-_current_db: ContextVar[DB] = ContextVar("klangk_db")
-
-
-def set_current_db(db: DB) -> Token[DB]:
-    """Bind ``db`` as the active DB for the current context.
-
-    Called once at lifespan startup (before any DB access) with
-    ``app.state.db``. Returns the reset :class:`Token` — callers that bind
-    for a bounded scope (tests, request dependencies) pass it to
-    :func:`reset_current_db` on teardown.
-    """
-    return _current_db.set(db)
-
-
-def reset_current_db(token: Token[DB]) -> None:
-    """Reset the active-DB ContextVar to its pre-bind state (teardown)."""
-    _current_db.reset(token)
-
-
-def get_current_db() -> DB:
-    """Return the DB bound in the current context.
-
-    If nothing is bound (standalone import-and-query / ops REPL path, before
-    the lifespan has run), lazily constructs one from the live environment and
-    binds it for the current context. This preserves the pre-#1520 REPL
-    ergonomics while making the lazily-built instance context-owned rather
-    than a module singleton.
-    """
-    try:
-        return _current_db.get()
-    except LookupError:
-        db = DB(KlangkSettings(os.environ))
-        _current_db.set(db)
-        return db
-
-
-async def get_db() -> Connection:
-    """Module-level delegate to the current DB's :meth:`DB.get_db`."""
-    return await get_current_db().get_db()
-
-
-@asynccontextmanager
-async def transaction():
-    """Module-level delegate to the current DB's :meth:`DB.transaction`."""
-    async with get_current_db().transaction() as db:
-        yield db
-
-
-async def fetchone(query: str, params: tuple = ()) -> Row | None:
-    """Module-level delegate to the current DB's :meth:`DB.fetchone`."""
-    return await get_current_db().fetchone(query, params)

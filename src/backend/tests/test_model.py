@@ -8,13 +8,14 @@ import pytest
 import sqlalchemy.exc
 
 from klangk_backend import model, util
+from _helpers import get_test_db
 
 
 class TestMigration:
-    async def test_migrate_old_schema(self, temp_data_dir):
+    async def test_migrate_old_schema(self, temp_data_dir, app_state):
         """Migrates a pre-OIDC database: password_hash NOT NULL, no
         provider/external_id columns."""
-        db_path = model.db.get_current_db().db_path
+        db_path = get_test_db().db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db = await aiosqlite.connect(str(db_path))
         try:
@@ -35,17 +36,17 @@ class TestMigration:
         finally:
             await db.close()
 
-        await model.init_db()
+        await app_state.model.init_db()
 
         # Old user survived migration
-        user = await model.get_user_by_email("old@example.com")
+        user = await app_state.model.users.get_user_by_email("old@example.com")
         assert user is not None
         assert user["password_hash"] == "hash"
         assert user["provider"] == "local"
         assert user["external_id"] is None
 
         # Can create OIDC user (NULL password_hash)
-        oidc_user = await model.create_user(
+        oidc_user = await app_state.model.users.create_user(
             "new@example.com",
             password_hash=None,
             verified=True,
@@ -54,9 +55,11 @@ class TestMigration:
         )
         assert oidc_user["id"]
 
-    async def test_migrate_workspaces_adds_auto_start(self, temp_data_dir):
+    async def test_migrate_workspaces_adds_auto_start(
+        self, temp_data_dir, app_state
+    ):
         """Migrates a workspaces table missing the auto_start column."""
-        db_path = model.db.get_current_db().db_path
+        db_path = get_test_db().db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db = await aiosqlite.connect(str(db_path))
         try:
@@ -100,10 +103,10 @@ class TestMigration:
         finally:
             await db.close()
 
-        await model.init_db()
+        await app_state.model.init_db()
 
         # Verify column was added and old data survived
-        async with model.transaction() as db:
+        async with app_state.db.transaction() as db:
             cursor = await db.execute("PRAGMA table_info(workspaces)")
             cols = {row[1] for row in await cursor.fetchall()}
             assert "auto_start" in cols
@@ -115,11 +118,11 @@ class TestMigration:
             assert row[0] == 0  # default value
 
     async def test_migrate_workspaces_renames_default_command(
-        self, temp_data_dir
+        self, temp_data_dir, app_state
     ):
         """init_db renames the legacy default_command column to service_command
         (#1203), preserving existing data."""
-        db_path = model.db.get_current_db().db_path
+        db_path = get_test_db().db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db = await aiosqlite.connect(str(db_path))
         try:
@@ -166,10 +169,10 @@ class TestMigration:
         finally:
             await db.close()
 
-        await model.init_db()
+        await app_state.model.init_db()
 
         # Column was renamed (old gone, new present) and data survived.
-        async with model.transaction() as db:
+        async with app_state.db.transaction() as db:
             cursor = await db.execute("PRAGMA table_info(workspaces)")
             cols = {row[1] for row in await cursor.fetchall()}
             assert "service_command" in cols
@@ -181,14 +184,16 @@ class TestMigration:
             row = await cursor.fetchone()
             assert row[0] == "echo hello"
 
-    async def test_migrate_workspaces_adds_mounts_and_env(self, temp_data_dir):
+    async def test_migrate_workspaces_adds_mounts_and_env(
+        self, temp_data_dir, app_state
+    ):
         """init_db adds mounts/env columns to tables that predate them (#1264).
 
         These columns exist in CREATE TABLE but had no ADD COLUMN migration,
         so a DB created before they shipped lacked them. init_db must add
         them on upgrade (NULL by default) without touching existing rows.
         """
-        db_path = model.db.get_current_db().db_path
+        db_path = get_test_db().db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db = await aiosqlite.connect(str(db_path))
         try:
@@ -234,11 +239,11 @@ class TestMigration:
         finally:
             await db.close()
 
-        await model.init_db()
+        await app_state.model.init_db()
 
         # Both columns added; old row survived and reads back as NULL
         # (no mounts, no env overrides).
-        async with model.transaction() as conn:
+        async with app_state.db.transaction() as conn:
             cursor = await conn.execute("PRAGMA table_info(workspaces)")
             cols = {row[1] for row in await cursor.fetchall()}
             assert "mounts" in cols
@@ -253,127 +258,151 @@ class TestMigration:
 
 
 class TestUsers:
-    async def test_create_user(self, db):
-        user = await model.create_user("alice@example.com", "hash123")
+    async def test_create_user(self, db, app_state):
+        user = await app_state.model.users.create_user(
+            "alice@example.com", "hash123"
+        )
         assert user["email"] == "alice@example.com"
         assert "id" in user
         assert user["handle"] == "alice"
 
-    async def test_get_user_by_email(self, user):
-        found = await model.get_user_by_email("testuser@example.com")
+    async def test_get_user_by_email(self, user, app_state):
+        found = await app_state.model.users.get_user_by_email(
+            "testuser@example.com"
+        )
         assert found is not None
         assert found["id"] == user["id"]
 
-    async def test_get_user_by_email_not_found(self, db):
-        found = await model.get_user_by_email("nonexistent")
+    async def test_get_user_by_email_not_found(self, db, app_state):
+        found = await app_state.model.users.get_user_by_email("nonexistent")
         assert found is None
 
-    async def test_get_user_by_id(self, user):
-        found = await model.get_user_by_id(user["id"])
+    async def test_get_user_by_id(self, user, app_state):
+        found = await app_state.model.users.get_user_by_id(user["id"])
         assert found is not None
         assert found["email"] == "testuser@example.com"
 
-    async def test_get_user_by_id_not_found(self, db):
-        found = await model.get_user_by_id("fake-id")
+    async def test_get_user_by_id_not_found(self, db, app_state):
+        found = await app_state.model.users.get_user_by_id("fake-id")
         assert found is None
 
 
 class TestHandles:
-    async def test_create_user_assigns_handle(self, db):
-        user = await model.create_user("alice@example.com", "hash")
+    async def test_create_user_assigns_handle(self, db, app_state):
+        user = await app_state.model.users.create_user(
+            "alice@example.com", "hash"
+        )
         assert user["handle"] == "alice"
 
-    async def test_create_user_handle_conflict_appends_suffix(self, db):
-        await model.create_user("alice@example.com", "hash")
-        user2 = await model.create_user("alice@other.com", "hash")
+    async def test_create_user_handle_conflict_appends_suffix(
+        self, db, app_state
+    ):
+        await app_state.model.users.create_user("alice@example.com", "hash")
+        user2 = await app_state.model.users.create_user(
+            "alice@other.com", "hash"
+        )
         assert user2["handle"] == "alice-2"
 
-    async def test_create_user_handle_from_special_email(self, db):
-        user = await model.create_user("Alice+Dev@foo.com", "hash")
+    async def test_create_user_handle_from_special_email(self, db, app_state):
+        user = await app_state.model.users.create_user(
+            "Alice+Dev@foo.com", "hash"
+        )
         assert user["handle"] == "alicedev"
 
-    async def test_create_user_empty_local_part(self, db):
-        user = await model.create_user("@foo.com", "hash")
+    async def test_create_user_empty_local_part(self, db, app_state):
+        user = await app_state.model.users.create_user("@foo.com", "hash")
         assert user["handle"] == "user"
 
-    async def test_create_user_long_email(self, db):
-        user = await model.create_user("a" * 100 + "@foo.com", "hash")
+    async def test_create_user_long_email(self, db, app_state):
+        user = await app_state.model.users.create_user(
+            "a" * 100 + "@foo.com", "hash"
+        )
         assert len(user["handle"]) <= model.MAX_HANDLE_LEN
 
-    async def test_get_user_handle(self, user):
-        handle = await model.get_user_handle(user["id"])
+    async def test_get_user_handle(self, user, app_state):
+        handle = await app_state.model.users.get_user_handle(user["id"])
         assert handle == user["handle"]
 
-    async def test_get_user_handle_not_found(self, db):
-        handle = await model.get_user_handle("fake-id")
+    async def test_get_user_handle_not_found(self, db, app_state):
+        handle = await app_state.model.users.get_user_handle("fake-id")
         assert handle is None
 
-    async def test_set_user_handle(self, user):
-        await model.set_user_handle(user["id"], "newname")
-        handle = await model.get_user_handle(user["id"])
+    async def test_set_user_handle(self, user, app_state):
+        await app_state.model.users.set_user_handle(user["id"], "newname")
+        handle = await app_state.model.users.get_user_handle(user["id"])
         assert handle == "newname"
 
-    async def test_set_user_handle_conflict(self, db):
-        u1 = await model.create_user("a@a.com", "hash")
-        await model.create_user("b@b.com", "hash")
+    async def test_set_user_handle_conflict(self, db, app_state):
+        u1 = await app_state.model.users.create_user("a@a.com", "hash")
+        await app_state.model.users.create_user("b@b.com", "hash")
         with pytest.raises(ValueError, match="already taken"):
-            await model.set_user_handle(u1["id"], "b")
+            await app_state.model.users.set_user_handle(u1["id"], "b")
 
-    async def test_set_user_handle_rejects_agent_handle(self, db):
+    async def test_set_user_handle_rejects_agent_handle(self, db, app_state):
         # A human must not be able to take the live agent's handle (#1160)
         # — independent of DB seeding, not just DB-uniqueness coincidence.
 
-        model.clear_agent_cache()
-        user = await model.create_user("someone@example.com", "hash")
+        app_state.model.users.clear_agent_cache()
+        user = await app_state.model.users.create_user(
+            "someone@example.com", "hash"
+        )
         with pytest.raises(
             ValueError, match="reserved for the workspace agent"
         ):
-            await model.set_user_handle(user["id"], await model.agent_handle())
+            await app_state.model.users.set_user_handle(
+                user["id"], await app_state.model.users.agent_handle()
+            )
         # The rejection is the agent handle specifically (clanker), not a
         # generic conflict — a different handle still works.
-        await model.set_user_handle(user["id"], "someone-else")
+        await app_state.model.users.set_user_handle(user["id"], "someone-else")
 
-    async def test_set_user_handle_rejects_agent_handle_unseeded(self, db):
+    async def test_set_user_handle_rejects_agent_handle_unseeded(
+        self, db, app_state
+    ):
         # The fallback agent handle (clanker) is rejected even when the
         # agent row has NOT been seeded — the gap DB-uniqueness leaves.
 
-        model.clear_agent_cache()
-        user = await model.create_user("someone@example.com", "hash")
+        app_state.model.users.clear_agent_cache()
+        user = await app_state.model.users.create_user(
+            "someone@example.com", "hash"
+        )
         with pytest.raises(
             ValueError, match="reserved for the workspace agent"
         ):
-            await model.set_user_handle(user["id"], "clanker")
+            await app_state.model.users.set_user_handle(user["id"], "clanker")
 
-    async def test_create_user_agent_email_gets_suffixed(self, db):
+    async def test_create_user_agent_email_gets_suffixed(self, db, app_state):
         # A derived handle colliding with the agent handle is suffixed,
         # not refused (registration derives, doesn't choose) — but the
         # user must never end up WITH the agent handle (#1160).
 
-        model.clear_agent_cache()
-        user = await model.create_user("clanker@example.com", "hash")
-        assert user["handle"] != await model.agent_handle()
+        app_state.model.users.clear_agent_cache()
+        user = await app_state.model.users.create_user(
+            "clanker@example.com", "hash"
+        )
+        assert user["handle"] != await app_state.model.users.agent_handle()
         assert user["handle"] == "clanker-2"
 
-    async def test_set_user_handle_invalid(self, user):
+    async def test_set_user_handle_invalid(self, user, app_state):
         with pytest.raises(ValueError, match="empty"):
-            await model.set_user_handle(user["id"], "")
+            await app_state.model.users.set_user_handle(user["id"], "")
         with pytest.raises(ValueError, match="characters"):
-            await model.set_user_handle(user["id"], "a" * 100)
+            await app_state.model.users.set_user_handle(user["id"], "a" * 100)
         with pytest.raises(ValueError, match="dot"):
-            await model.set_user_handle(user["id"], ".hidden")
+            await app_state.model.users.set_user_handle(user["id"], ".hidden")
         with pytest.raises(ValueError, match="reserved"):
-            await model.set_user_handle(user["id"], "work")
+            await app_state.model.users.set_user_handle(user["id"], "work")
         with pytest.raises(ValueError, match="lowercase"):
-            await model.set_user_handle(user["id"], "Alice")
+            await app_state.model.users.set_user_handle(user["id"], "Alice")
 
-    async def test_get_user_by_handle(self, user):
-        found = await model.get_user_by_handle(user["handle"])
+    async def test_get_user_by_handle(self, user, app_state):
+        found = await app_state.model.users.get_user_by_handle(user["handle"])
         assert found is not None
         assert found["id"] == user["id"]
         assert found["handle"] == user["handle"]
 
-    async def test_get_user_by_handle_not_found(self, db):
-        found = await model.get_user_by_handle("nonexistent")
+    async def test_get_user_by_handle_not_found(self, db, app_state):
+        found = await app_state.model.users.get_user_by_handle("nonexistent")
         assert found is None
 
     async def test_derive_handle(self):
@@ -383,31 +412,42 @@ class TestHandles:
         assert model.derive_handle("@foo.com") == "user"
         assert model.derive_handle("admin") == "admin"
 
-    async def test_generate_handle_derives_and_uniquifies(self, db):
+    async def test_generate_handle_derives_and_uniquifies(self, db, app_state):
         """generate_handle is the shared generator — derive + unique (#1256)."""
         # Fresh email → derives the local part, no suffix.
-        async with model.transaction() as conn:
+        async with app_state.db.transaction() as conn:
             assert (
-                await model.generate_handle(conn, "alice@example.com")
+                await app_state.model.users.generate_handle(
+                    conn, "alice@example.com"
+                )
                 == "alice"
             )
         # After alice exists, the same email gets a -2 suffix.
-        await model.create_user("alice@example.com", "hash", verified=True)
-        async with model.transaction() as conn:
+        await app_state.model.users.create_user(
+            "alice@example.com", "hash", verified=True
+        )
+        async with app_state.db.transaction() as conn:
             assert (
-                await model.generate_handle(conn, "alice@example.com")
+                await app_state.model.users.generate_handle(
+                    conn, "alice@example.com"
+                )
                 == "alice-2"
             )
             # Different local part still derives cleanly.
             assert (
-                await model.generate_handle(conn, "bob.smith@foo.com")
+                await app_state.model.users.generate_handle(
+                    conn, "bob.smith@foo.com"
+                )
                 == "bob.smith"
             )
             # Garbage local part falls back to the "user" base.
-            assert await model.generate_handle(conn, "@foo.com") == "user"
+            assert (
+                await app_state.model.users.generate_handle(conn, "@foo.com")
+                == "user"
+            )
 
     async def test_insert_unverified_user_derives_handle_and_marks_unverified(
-        self, db
+        self, db, app_state
     ):
         """insert_unverified_user inserts verified=0 + derived handle (#1256).
 
@@ -417,12 +457,12 @@ class TestHandles:
         """
         user_id = str(uuid.uuid4())
         # Committed happy path: insert, commit, then read back.
-        async with model.transaction() as conn:
-            handle = await model.insert_unverified_user(
+        async with app_state.db.transaction() as conn:
+            handle = await app_state.model.users.insert_unverified_user(
                 conn, user_id, "carol@example.com", "somehash"
             )
         assert handle == "carol"
-        cursor = await model.fetchone(
+        cursor = await app_state.db.fetchone(
             "SELECT email, handle, verified, password_hash FROM users"
             " WHERE id = ?",
             (user_id,),
@@ -438,12 +478,12 @@ class TestHandles:
         # on when the verification email send fails.
         bad_id = str(uuid.uuid4())
         with pytest.raises(Exception):
-            async with model.transaction() as conn:
-                await model.insert_unverified_user(
+            async with app_state.db.transaction() as conn:
+                await app_state.model.users.insert_unverified_user(
                     conn, bad_id, "dave@example.com", "h"
                 )
                 raise RuntimeError("simulate email-send failure")
-        assert await model.get_user_by_id(bad_id) is None
+        assert await app_state.model.users.get_user_by_id(bad_id) is None
 
     async def test_validate_handle(self):
         assert model.validate_handle("alice") is None
@@ -453,25 +493,25 @@ class TestHandles:
         assert model.validate_handle("work") is not None
         assert model.validate_handle("Alice") is not None
 
-    async def test_handle_conflict_truncates_long_suffix(self, db):
+    async def test_handle_conflict_truncates_long_suffix(self, db, app_state):
         """When base handle is near max length, suffix is truncated."""
         long = "a" * model.MAX_HANDLE_LEN
-        u1 = await model.create_user(long + "@a.com", "hash")
+        u1 = await app_state.model.users.create_user(long + "@a.com", "hash")
         assert u1["handle"] == long
-        u2 = await model.create_user(long + "@b.com", "hash")
+        u2 = await app_state.model.users.create_user(long + "@b.com", "hash")
         assert len(u2["handle"]) <= model.MAX_HANDLE_LEN
         assert u2["handle"].endswith("-2")
 
-    async def test_get_user_by_email_includes_handle(self, user):
-        found = await model.get_user_by_email(user["email"])
+    async def test_get_user_by_email_includes_handle(self, user, app_state):
+        found = await app_state.model.users.get_user_by_email(user["email"])
         assert found["handle"] == user["handle"]
 
-    async def test_get_user_by_id_includes_handle(self, user):
-        found = await model.get_user_by_id(user["id"])
+    async def test_get_user_by_id_includes_handle(self, user, app_state):
+        found = await app_state.model.users.get_user_by_id(user["id"])
         assert found["handle"] == user["handle"]
 
-    async def test_search_users_includes_handle(self, user):
-        results = await model.search_users("testuser")
+    async def test_search_users_includes_handle(self, user, app_state):
+        results = await app_state.model.users.search_users("testuser")
         assert len(results) > 0
         assert results[0]["handle"] == user["handle"]
 
@@ -481,11 +521,11 @@ class TestHandles:
         ws = await app_state.model.workspaces.create_workspace(
             user["id"], "member-ws"
         )
-        other = await model.create_user(
+        other = await app_state.model.users.create_user(
             "other@test.com", "hash", verified=True
         )
         resource = f"/workspaces/{ws['id']}"
-        await model.add_acl_entry(
+        await app_state.model.acl.add_acl_entry(
             resource,
             0,
             model.ACTION_ALLOW,
@@ -644,12 +684,12 @@ class TestWorkspaces:
 
 
 class TestWorkspaceSharing:
-    async def _share(self, workspace_id, user_id):
+    async def _share(self, app_state, workspace_id, user_id):
         """Grant a user access via ACL entry."""
         resource = f"/workspaces/{workspace_id}"
-        existing = await model.get_acl_entries(resource)
+        existing = await app_state.model.acl.get_acl_entries(resource)
         max_pos = max((e["position"] for e in existing), default=-1)
-        await model.add_acl_entry(
+        await app_state.model.acl.add_acl_entry(
             resource,
             max_pos + 1,
             model.ACTION_ALLOW,
@@ -659,8 +699,10 @@ class TestWorkspaceSharing:
         )
 
     async def test_share_workspace(self, workspace, user, app_state):
-        other = await model.create_user("other@example.com", "hash")
-        await self._share(workspace["id"], other["id"])
+        other = await app_state.model.users.create_user(
+            "other@example.com", "hash"
+        )
+        await self._share(app_state, workspace["id"], other["id"])
         members = await app_state.model.workspaces.get_workspace_members(
             workspace["id"]
         )
@@ -677,18 +719,22 @@ class TestWorkspaceSharing:
         assert found["name"] == "test-workspace"
 
     async def test_get_workspace_wrong_owner(self, workspace, user, app_state):
-        other = await model.create_user("other@example.com", "hash")
+        other = await app_state.model.users.create_user(
+            "other@example.com", "hash"
+        )
         found = await app_state.model.workspaces.get_workspace(
             workspace["id"], other["id"]
         )
         assert found is None
 
     async def test_unshare_workspace(self, workspace, user, app_state):
-        other = await model.create_user("other@example.com", "hash")
-        await self._share(workspace["id"], other["id"])
+        other = await app_state.model.users.create_user(
+            "other@example.com", "hash"
+        )
+        await self._share(app_state, workspace["id"], other["id"])
         # Remove ACL entries for other user
         resource = f"/workspaces/{workspace['id']}"
-        entries = await model.get_acl_entries(resource)
+        entries = await app_state.model.acl.get_acl_entries(resource)
         remaining = [
             e
             for e in entries
@@ -699,7 +745,7 @@ class TestWorkspaceSharing:
         ]
         for i, entry in enumerate(remaining):
             entry["position"] = i
-        await model.replace_acl_entries(resource, remaining)
+        await app_state.model.acl.replace_acl_entries(resource, remaining)
         members = await app_state.model.workspaces.get_workspace_members(
             workspace["id"]
         )
@@ -714,9 +760,11 @@ class TestWorkspaceSharing:
     async def test_share_workspace_idempotent(
         self, workspace, user, app_state
     ):
-        other = await model.create_user("other@example.com", "hash")
-        await self._share(workspace["id"], other["id"])
-        await self._share(workspace["id"], other["id"])
+        other = await app_state.model.users.create_user(
+            "other@example.com", "hash"
+        )
+        await self._share(app_state, workspace["id"], other["id"])
+        await self._share(app_state, workspace["id"], other["id"])
         members = await app_state.model.workspaces.get_workspace_members(
             workspace["id"]
         )
@@ -726,10 +774,10 @@ class TestWorkspaceSharing:
     async def test_get_workspace_members_ordered(
         self, workspace, user, app_state
     ):
-        u_b = await model.create_user("b@example.com", "hash")
-        u_a = await model.create_user("a@example.com", "hash")
-        await self._share(workspace["id"], u_b["id"])
-        await self._share(workspace["id"], u_a["id"])
+        u_b = await app_state.model.users.create_user("b@example.com", "hash")
+        u_a = await app_state.model.users.create_user("a@example.com", "hash")
+        await self._share(app_state, workspace["id"], u_b["id"])
+        await self._share(app_state, workspace["id"], u_a["id"])
         members = await app_state.model.workspaces.get_workspace_members(
             workspace["id"]
         )
@@ -739,18 +787,22 @@ class TestWorkspaceSharing:
     async def test_acl_cascade_on_user_delete(
         self, workspace, user, app_state
     ):
-        other = await model.create_user("other@example.com", "hash")
-        await self._share(workspace["id"], other["id"])
+        other = await app_state.model.users.create_user(
+            "other@example.com", "hash"
+        )
+        await self._share(app_state, workspace["id"], other["id"])
         # Delete the user — CASCADE should remove ACL entries
-        await model.delete_user(other["id"])
+        await app_state.model.users.delete_user(other["id"])
         members = await app_state.model.workspaces.get_workspace_members(
             workspace["id"]
         )
         assert members == []
 
     async def test_list_shared_workspaces(self, workspace, user, app_state):
-        other = await model.create_user("other@example.com", "hash")
-        await self._share(workspace["id"], other["id"])
+        other = await app_state.model.users.create_user(
+            "other@example.com", "hash"
+        )
+        await self._share(app_state, workspace["id"], other["id"])
         result = await app_state.model.workspaces.list_shared_workspaces(
             other["id"]
         )
@@ -770,12 +822,14 @@ class TestWorkspaceSharing:
         assert result["next_offset"] is None
 
     async def test_list_shared_workspaces_pagination(self, user, app_state):
-        other = await model.create_user("sharer@example.com", "hash")
+        other = await app_state.model.users.create_user(
+            "sharer@example.com", "hash"
+        )
         for i in range(3):
             ws = await app_state.model.workspaces.create_workspace(
                 user["id"], f"shared{i}"
             )
-            await self._share(ws["id"], other["id"])
+            await self._share(app_state, ws["id"], other["id"])
         page1 = await app_state.model.workspaces.list_shared_workspaces(
             other["id"], limit=2, offset=0
         )
@@ -793,12 +847,14 @@ class TestWorkspaceSharing:
         self, user, app_state
     ):
         """When total shared items == limit, has_more must be False."""
-        other = await model.create_user("sharer2@example.com", "hash")
+        other = await app_state.model.users.create_user(
+            "sharer2@example.com", "hash"
+        )
         for i in range(2):
             ws = await app_state.model.workspaces.create_workspace(
                 user["id"], f"exact_shared{i}"
             )
-            await self._share(ws["id"], other["id"])
+            await self._share(app_state, ws["id"], other["id"])
         result = await app_state.model.workspaces.list_shared_workspaces(
             other["id"], limit=2, offset=0
         )
@@ -808,104 +864,138 @@ class TestWorkspaceSharing:
 
 
 class TestSearchUsers:
-    async def test_search_by_prefix(self, user):
-        await model.create_user("alice@example.com", "hash")
-        await model.create_user("alice2@example.com", "hash")
-        await model.create_user("bob@example.com", "hash")
-        results = await model.search_users("alice")
+    async def test_search_by_prefix(self, user, app_state):
+        await app_state.model.users.create_user("alice@example.com", "hash")
+        await app_state.model.users.create_user("alice2@example.com", "hash")
+        await app_state.model.users.create_user("bob@example.com", "hash")
+        results = await app_state.model.users.search_users("alice")
         assert len(results) == 2
         assert all(r["email"].startswith("alice") for r in results)
 
-    async def test_search_no_results(self, db):
-        results = await model.search_users("zzzzz")
+    async def test_search_no_results(self, db, app_state):
+        results = await app_state.model.users.search_users("zzzzz")
         assert results == []
 
-    async def test_search_with_limit(self, user):
+    async def test_search_with_limit(self, user, app_state):
         for i in range(5):
-            await model.create_user(f"match{i}@example.com", "hash")
-        results = await model.search_users("match", limit=3)
+            await app_state.model.users.create_user(
+                f"match{i}@example.com", "hash"
+            )
+        results = await app_state.model.users.search_users("match", limit=3)
         assert len(results) == 3
 
 
 class TestPortAllocations:
-    async def test_add_and_get_ports(self, workspace):
-        await model.add_port_allocations(workspace["id"], [9000, 9001, 9002])
-        ports = await model.get_workspace_ports(workspace["id"])
+    async def test_add_and_get_ports(self, workspace, app_state):
+        await app_state.model.ports.add_port_allocations(
+            workspace["id"], [9000, 9001, 9002]
+        )
+        ports = await app_state.model.ports.get_workspace_ports(
+            workspace["id"]
+        )
         assert ports == [9000, 9001, 9002]
 
-    async def test_get_all_allocated_ports(self, workspace):
-        await model.add_port_allocations(workspace["id"], [9000, 9001])
-        all_ports = await model.get_all_allocated_ports()
+    async def test_get_all_allocated_ports(self, workspace, app_state):
+        await app_state.model.ports.add_port_allocations(
+            workspace["id"], [9000, 9001]
+        )
+        all_ports = await app_state.model.ports.get_all_allocated_ports()
         assert 9000 in all_ports
         assert 9001 in all_ports
 
-    async def test_remove_ports(self, workspace):
-        await model.add_port_allocations(workspace["id"], [9000, 9001, 9002])
-        await model.remove_port_allocations(workspace["id"], [9001])
-        ports = await model.get_workspace_ports(workspace["id"])
+    async def test_remove_ports(self, workspace, app_state):
+        await app_state.model.ports.add_port_allocations(
+            workspace["id"], [9000, 9001, 9002]
+        )
+        await app_state.model.ports.remove_port_allocations(
+            workspace["id"], [9001]
+        )
+        ports = await app_state.model.ports.get_workspace_ports(
+            workspace["id"]
+        )
         assert ports == [9000, 9002]
 
     async def test_ports_cascade_on_workspace_delete(
         self, workspace, user, app_state
     ):
-        await model.add_port_allocations(workspace["id"], [9000, 9001])
+        await app_state.model.ports.add_port_allocations(
+            workspace["id"], [9000, 9001]
+        )
         await app_state.model.workspaces.delete_workspace(
             workspace["id"], user["id"]
         )
-        ports = await model.get_workspace_ports(workspace["id"])
+        ports = await app_state.model.ports.get_workspace_ports(
+            workspace["id"]
+        )
         assert ports == []
 
     async def test_duplicate_port_rejected(self, workspace, user, app_state):
-        await model.add_port_allocations(workspace["id"], [9000])
+        await app_state.model.ports.add_port_allocations(
+            workspace["id"], [9000]
+        )
         # Create second workspace
         ws2 = await app_state.model.workspaces.create_workspace(
             user["id"], "ws2"
         )
         with pytest.raises(Exception):
-            await model.add_port_allocations(ws2["id"], [9000])
+            await app_state.model.ports.add_port_allocations(ws2["id"], [9000])
 
-    async def test_get_workspace_ports_empty(self, workspace):
-        ports = await model.get_workspace_ports(workspace["id"])
+    async def test_get_workspace_ports_empty(self, workspace, app_state):
+        ports = await app_state.model.ports.get_workspace_ports(
+            workspace["id"]
+        )
         assert ports == []
 
-    async def test_get_all_allocated_ports_empty(self, db):
-        all_ports = await model.get_all_allocated_ports()
+    async def test_get_all_allocated_ports_empty(self, db, app_state):
+        all_ports = await app_state.model.ports.get_all_allocated_ports()
         assert all_ports == set()
 
-    async def test_find_and_allocate_ports(self, workspace, monkeypatch):
+    async def test_find_and_allocate_ports(
+        self, workspace, monkeypatch, app_state
+    ):
         monkeypatch.setattr(util, "port_in_use", lambda p: False)
-        ports = await model.find_and_allocate_ports(workspace["id"], 3, 9000)
+        ports = await app_state.model.ports.find_and_allocate_ports(
+            workspace["id"], 3, 9000
+        )
         assert ports == [9000, 9001, 9002]
-        stored = await model.get_workspace_ports(workspace["id"])
+        stored = await app_state.model.ports.get_workspace_ports(
+            workspace["id"]
+        )
         assert stored == [9000, 9001, 9002]
 
     async def test_find_and_allocate_skips_used(
         self, workspace, user, monkeypatch, app_state
     ):
         monkeypatch.setattr(util, "port_in_use", lambda p: False)
-        await model.add_port_allocations(workspace["id"], [9000, 9002])
+        await app_state.model.ports.add_port_allocations(
+            workspace["id"], [9000, 9002]
+        )
         ws2 = await app_state.model.workspaces.create_workspace(
             user["id"], "ws2"
         )
-        ports = await model.find_and_allocate_ports(ws2["id"], 3, 9000)
+        ports = await app_state.model.ports.find_and_allocate_ports(
+            ws2["id"], 3, 9000
+        )
         assert ports == [9001, 9003, 9004]
 
     async def test_find_and_allocate_skips_os_bound_ports(
-        self, workspace, monkeypatch
+        self, workspace, monkeypatch, app_state
     ):
         monkeypatch.setattr(util, "port_in_use", lambda p: p in {9001, 9003})
-        ports = await model.find_and_allocate_ports(workspace["id"], 3, 9000)
+        ports = await app_state.model.ports.find_and_allocate_ports(
+            workspace["id"], 3, 9000
+        )
         assert ports == [9000, 9002, 9004]
 
     async def test_find_and_allocate_raises_when_exhausted(
-        self, workspace, monkeypatch
+        self, workspace, monkeypatch, app_state
     ):
         """Exhausting the port range fails fast instead of looping forever."""
         # Every port at/after start is treated as in-use; asking for any
         # ports from a start of MAX_PORT guarantees immediate exhaustion.
         monkeypatch.setattr(util, "port_in_use", lambda p: True)
         with pytest.raises(ValueError):
-            await model.find_and_allocate_ports(
+            await app_state.model.ports.find_and_allocate_ports(
                 workspace["id"], 1, model.MAX_PORT
             )
 
@@ -916,7 +1006,7 @@ class TestPortAllocations:
         # Only the last two ports are free; requesting two succeeds, three raises.
         free = {model.MAX_PORT - 1, model.MAX_PORT}
         monkeypatch.setattr(util, "port_in_use", lambda p: p not in free)
-        ports = await model.find_and_allocate_ports(
+        ports = await app_state.model.ports.find_and_allocate_ports(
             workspace["id"], 2, model.MAX_PORT - 1
         )
         assert ports == [model.MAX_PORT - 1, model.MAX_PORT]
@@ -924,7 +1014,7 @@ class TestPortAllocations:
             user["id"], "ws-max"
         )
         with pytest.raises(ValueError):
-            await model.find_and_allocate_ports(
+            await app_state.model.ports.find_and_allocate_ports(
                 ws2["id"], 3, model.MAX_PORT - 1
             )
 
@@ -1095,61 +1185,98 @@ class TestContainerTracking:
 
 
 class TestTokenBlocklist:
-    async def test_blocklist_and_check(self, db):
-        await model.blocklist_token("jti-1", "2099-01-01T00:00:00Z")
-        assert await model.is_token_blocklisted("jti-1") is True
+    async def test_blocklist_and_check(self, db, app_state):
+        await app_state.model.tokens.blocklist_token(
+            "jti-1", "2099-01-01T00:00:00Z"
+        )
+        assert (
+            await app_state.model.tokens.is_token_blocklisted("jti-1") is True
+        )
 
-    async def test_not_blocklisted(self, db):
-        assert await model.is_token_blocklisted("jti-unknown") is False
+    async def test_not_blocklisted(self, db, app_state):
+        assert (
+            await app_state.model.tokens.is_token_blocklisted("jti-unknown")
+            is False
+        )
 
-    async def test_blocklist_duplicate_ignored(self, db):
-        await model.blocklist_token("jti-2", "2099-01-01T00:00:00Z")
+    async def test_blocklist_duplicate_ignored(self, db, app_state):
+        await app_state.model.tokens.blocklist_token(
+            "jti-2", "2099-01-01T00:00:00Z"
+        )
         # INSERT OR IGNORE should not raise
-        await model.blocklist_token("jti-2", "2099-01-01T00:00:00Z")
-        assert await model.is_token_blocklisted("jti-2") is True
+        await app_state.model.tokens.blocklist_token(
+            "jti-2", "2099-01-01T00:00:00Z"
+        )
+        assert (
+            await app_state.model.tokens.is_token_blocklisted("jti-2") is True
+        )
 
 
 class TestLoginAttempts:
-    async def test_record_and_get_attempts(self, db):
-        await model.record_failed_login("alice@example.com")
-        info = await model.get_login_attempt_info("alice@example.com")
+    async def test_record_and_get_attempts(self, db, app_state):
+        await app_state.model.login_attempts.record_failed_login(
+            "alice@example.com"
+        )
+        info = await app_state.model.login_attempts.get_login_attempt_info(
+            "alice@example.com"
+        )
         assert info is not None
         assert info["attempt_count"] == 1
         assert info["locked_until"] is None
 
-    async def test_record_multiple_attempts(self, db):
+    async def test_record_multiple_attempts(self, db, app_state):
         for _ in range(3):
-            await model.record_failed_login("alice@example.com")
-        info = await model.get_login_attempt_info("alice@example.com")
+            await app_state.model.login_attempts.record_failed_login(
+                "alice@example.com"
+            )
+        info = await app_state.model.login_attempts.get_login_attempt_info(
+            "alice@example.com"
+        )
         assert info["attempt_count"] == 3
 
-    async def test_get_attempt_info_nonexistent(self, db):
-        info = await model.get_login_attempt_info("nobody@example.com")
+    async def test_get_attempt_info_nonexistent(self, db, app_state):
+        info = await app_state.model.login_attempts.get_login_attempt_info(
+            "nobody@example.com"
+        )
         assert info is None
 
-    async def test_set_and_get_lockout(self, db):
+    async def test_set_and_get_lockout(self, db, app_state):
         from datetime import datetime, timedelta, timezone
 
-        await model.record_failed_login("alice@example.com")
+        await app_state.model.login_attempts.record_failed_login(
+            "alice@example.com"
+        )
         locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
-        await model.set_login_lockout(
+        await app_state.model.login_attempts.set_login_lockout(
             "alice@example.com", locked_until.isoformat()
         )
-        info = await model.get_login_attempt_info("alice@example.com")
+        info = await app_state.model.login_attempts.get_login_attempt_info(
+            "alice@example.com"
+        )
         assert info["locked_until"] is not None
 
-    async def test_clear_attempts(self, db):
-        await model.record_failed_login("alice@example.com")
-        await model.record_failed_login("alice@example.com")
-        await model.clear_login_attempts("alice@example.com")
-        info = await model.get_login_attempt_info("alice@example.com")
+    async def test_clear_attempts(self, db, app_state):
+        await app_state.model.login_attempts.record_failed_login(
+            "alice@example.com"
+        )
+        await app_state.model.login_attempts.record_failed_login(
+            "alice@example.com"
+        )
+        await app_state.model.login_attempts.clear_login_attempts(
+            "alice@example.com"
+        )
+        info = await app_state.model.login_attempts.get_login_attempt_info(
+            "alice@example.com"
+        )
         assert info is None  # row deleted
 
-    async def test_clear_attempts_nonexistent(self, db):
+    async def test_clear_attempts_nonexistent(self, db, app_state):
         # Should not raise
-        await model.clear_login_attempts("nobody@example.com")
+        await app_state.model.login_attempts.clear_login_attempts(
+            "nobody@example.com"
+        )
 
-    async def test_record_resets_count(self, db):
+    async def test_record_resets_count(self, db, app_state):
         """reset=True starts a fresh count and clears stale lockout."""
         from datetime import datetime, timedelta, timezone
 
@@ -1157,41 +1284,55 @@ class TestLoginAttempts:
         stale_lock = (
             datetime.now(timezone.utc) - timedelta(minutes=1)
         ).isoformat()
-        async with model.transaction() as raw_db:
+        async with app_state.db.transaction() as raw_db:
             await raw_db.execute(
                 "INSERT INTO login_attempts"
                 " (email, attempt_count, first_attempt_at, locked_until)"
                 " VALUES (?, 5, ?, ?)",
                 ("alice@example.com", old, stale_lock),
             )
-        await model.record_failed_login("alice@example.com", reset=True)
-        info = await model.get_login_attempt_info("alice@example.com")
+        await app_state.model.login_attempts.record_failed_login(
+            "alice@example.com", reset=True
+        )
+        info = await app_state.model.login_attempts.get_login_attempt_info(
+            "alice@example.com"
+        )
         assert info["attempt_count"] == 1
         assert info["locked_until"] is None
         # first_attempt_at moved forward to ~now.
         first = datetime.fromisoformat(info["first_attempt_at"])
         assert (datetime.now(timezone.utc) - first).total_seconds() < 5
 
-    async def test_record_reset_upserts_missing_row(self, db):
+    async def test_record_reset_upserts_missing_row(self, db, app_state):
         """reset=True on a row that doesn't exist inserts count=1."""
-        await model.record_failed_login("alice@example.com", reset=True)
-        info = await model.get_login_attempt_info("alice@example.com")
+        await app_state.model.login_attempts.record_failed_login(
+            "alice@example.com", reset=True
+        )
+        info = await app_state.model.login_attempts.get_login_attempt_info(
+            "alice@example.com"
+        )
         assert info is not None
         assert info["attempt_count"] == 1
         assert info["locked_until"] is None
 
-    async def test_record_increments_within_window(self, db):
+    async def test_record_increments_within_window(self, db, app_state):
         """reset=False (default) increments the count."""
-        await model.record_failed_login("alice@example.com")
-        await model.record_failed_login("alice@example.com")
-        info = await model.get_login_attempt_info("alice@example.com")
+        await app_state.model.login_attempts.record_failed_login(
+            "alice@example.com"
+        )
+        await app_state.model.login_attempts.record_failed_login(
+            "alice@example.com"
+        )
+        info = await app_state.model.login_attempts.get_login_attempt_info(
+            "alice@example.com"
+        )
         assert info["attempt_count"] == 2
 
 
 class TestChatMessagesMigration:
-    async def test_migrate_adds_message_type_column(self, db):
+    async def test_migrate_adds_message_type_column(self, db, app_state):
         """init_db adds message_type column to existing tables that lack it."""
-        async with model.transaction() as raw_db:
+        async with app_state.db.transaction() as raw_db:
             # Drop and recreate without message_type to simulate old schema
             await raw_db.execute("DROP TABLE IF EXISTS chat_mentions")
             await raw_db.execute("DROP TABLE IF EXISTS chat_messages")
@@ -1207,9 +1348,9 @@ class TestChatMessagesMigration:
             """)
 
         # Re-run init_db — should add message_type via ALTER TABLE
-        await model.init_db()
+        await app_state.model.init_db()
 
-        async with model.transaction() as migrated_db:
+        async with app_state.db.transaction() as migrated_db:
             cursor = await migrated_db.execute(
                 "PRAGMA table_info(chat_messages)"
             )
@@ -1218,8 +1359,8 @@ class TestChatMessagesMigration:
 
 
 class TestChatMessages:
-    async def test_add_chat_message(self, workspace, user):
-        msg = await model.add_chat_message(
+    async def test_add_chat_message(self, workspace, user, app_state):
+        msg = await app_state.model.chat.add_chat_message(
             workspace["id"], user["id"], "testuser@example.com", "hello"
         )
         assert msg["workspace_id"] == workspace["id"]
@@ -1232,8 +1373,10 @@ class TestChatMessages:
         assert "created_at" in msg
         assert msg["mentions"] == []
 
-    async def test_add_chat_message_with_type(self, workspace, user):
-        msg = await model.add_chat_message(
+    async def test_add_chat_message_with_type(
+        self, workspace, user, app_state
+    ):
+        msg = await app_state.model.chat.add_chat_message(
             workspace["id"],
             user["id"],
             "testuser@example.com",
@@ -1242,7 +1385,7 @@ class TestChatMessages:
         )
         assert msg["message_type"] == model.MSG_SYSTEM
 
-        agent_msg = await model.add_chat_message(
+        agent_msg = await app_state.model.chat.add_chat_message(
             workspace["id"],
             user["id"],
             "agent@bot",
@@ -1251,14 +1394,14 @@ class TestChatMessages:
         )
         assert agent_msg["message_type"] == model.MSG_AGENT
 
-    async def test_get_chat_messages(self, workspace, user):
-        await model.add_chat_message(
+    async def test_get_chat_messages(self, workspace, user, app_state):
+        await app_state.model.chat.add_chat_message(
             workspace["id"], user["id"], "testuser@example.com", "first"
         )
-        await model.add_chat_message(
+        await app_state.model.chat.add_chat_message(
             workspace["id"], user["id"], "testuser@example.com", "second"
         )
-        msgs = await model.get_chat_messages(workspace["id"])
+        msgs = await app_state.model.chat.get_chat_messages(workspace["id"])
         assert len(msgs) == 2
         assert msgs[0]["message"] == "first"
         assert msgs[1]["message"] == "second"
@@ -1269,31 +1412,35 @@ class TestChatMessages:
         assert msgs[0]["mentions"] == []
         assert msgs[1]["mentions"] == []
 
-    async def test_get_chat_messages_preserves_type(self, workspace, user):
-        await model.add_chat_message(
+    async def test_get_chat_messages_preserves_type(
+        self, workspace, user, app_state
+    ):
+        await app_state.model.chat.add_chat_message(
             workspace["id"],
             "uid",
             "u@test.com",
             "joined",
             message_type=model.MSG_SYSTEM,
         )
-        await model.add_chat_message(
+        await app_state.model.chat.add_chat_message(
             workspace["id"],
             "uid",
             "u@test.com",
             "hello",
         )
-        msgs = await model.get_chat_messages(workspace["id"])
+        msgs = await app_state.model.chat.get_chat_messages(workspace["id"])
         assert len(msgs) == 2
         assert msgs[0]["message_type"] == model.MSG_SYSTEM
         assert msgs[1]["message_type"] == model.MSG_USER
 
-    async def test_get_chat_messages_limit(self, workspace, user):
+    async def test_get_chat_messages_limit(self, workspace, user, app_state):
         for i in range(5):
-            await model.add_chat_message(
+            await app_state.model.chat.add_chat_message(
                 workspace["id"], "uid", "u@test.com", f"msg{i}"
             )
-        msgs = await model.get_chat_messages(workspace["id"], limit=3)
+        msgs = await app_state.model.chat.get_chat_messages(
+            workspace["id"], limit=3
+        )
         assert len(msgs) == 3
         assert msgs[0]["message"] == "msg2"
         assert msgs[1]["message"] == "msg3"
@@ -1302,80 +1449,90 @@ class TestChatMessages:
     async def test_chat_messages_cascade_delete(
         self, workspace, user, app_state
     ):
-        await model.add_chat_message(
+        await app_state.model.chat.add_chat_message(
             workspace["id"], "uid", "u@test.com", "bye"
         )
         await app_state.model.workspaces.delete_workspace(
             workspace["id"], user["id"]
         )
-        msgs = await model.get_chat_messages(workspace["id"])
+        msgs = await app_state.model.chat.get_chat_messages(workspace["id"])
         assert msgs == []
 
-    async def test_delete_chat_message(self, workspace, user):
-        msg = await model.add_chat_message(
+    async def test_delete_chat_message(self, workspace, user, app_state):
+        msg = await app_state.model.chat.add_chat_message(
             workspace["id"], user["id"], "u@test.com", "to delete"
         )
-        deleted = await model.delete_chat_message(msg["id"], user["id"])
+        deleted = await app_state.model.chat.delete_chat_message(
+            msg["id"], user["id"]
+        )
         assert deleted
-        msgs = await model.get_chat_messages(workspace["id"])
+        msgs = await app_state.model.chat.get_chat_messages(workspace["id"])
         assert msgs[0]["message"] == "<message deleted by author>"
 
-    async def test_delete_chat_message_wrong_user(self, workspace, user):
-        msg = await model.add_chat_message(
+    async def test_delete_chat_message_wrong_user(
+        self, workspace, user, app_state
+    ):
+        msg = await app_state.model.chat.add_chat_message(
             workspace["id"], user["id"], "u@test.com", "mine"
         )
-        deleted = await model.delete_chat_message(msg["id"], "other-uid")
+        deleted = await app_state.model.chat.delete_chat_message(
+            msg["id"], "other-uid"
+        )
         assert not deleted
-        msgs = await model.get_chat_messages(workspace["id"])
+        msgs = await app_state.model.chat.get_chat_messages(workspace["id"])
         assert msgs[0]["message"] == "mine"
 
 
 class TestChatMessagesPagination:
-    async def test_get_messages_before(self, workspace, user):
+    async def test_get_messages_before(self, workspace, user, app_state):
         msgs = []
         for i in range(5):
             msgs.append(
-                await model.add_chat_message(
+                await app_state.model.chat.add_chat_message(
                     workspace["id"], "uid", "u@test.com", f"msg{i}"
                 )
             )
         # Load messages before the last one
-        older = await model.get_chat_messages_before(
+        older = await app_state.model.chat.get_chat_messages_before(
             workspace["id"], msgs[4]["id"], limit=50
         )
         assert len(older) == 4
         assert older[0]["message"] == "msg0"
         assert older[3]["message"] == "msg3"
 
-    async def test_get_messages_before_with_limit(self, workspace, user):
+    async def test_get_messages_before_with_limit(
+        self, workspace, user, app_state
+    ):
         msgs = []
         for i in range(5):
             msgs.append(
-                await model.add_chat_message(
+                await app_state.model.chat.add_chat_message(
                     workspace["id"], "uid", "u@test.com", f"msg{i}"
                 )
             )
-        older = await model.get_chat_messages_before(
+        older = await app_state.model.chat.get_chat_messages_before(
             workspace["id"], msgs[4]["id"], limit=2
         )
         assert len(older) == 2
         assert older[0]["message"] == "msg2"
         assert older[1]["message"] == "msg3"
 
-    async def test_get_messages_before_invalid_id(self, workspace, user):
-        older = await model.get_chat_messages_before(
+    async def test_get_messages_before_invalid_id(
+        self, workspace, user, app_state
+    ):
+        older = await app_state.model.chat.get_chat_messages_before(
             workspace["id"], "nonexistent", limit=50
         )
         assert older == []
 
     async def test_get_messages_before_includes_mentions(
-        self, workspace, user
+        self, workspace, user, app_state
     ):
         # Create a user and add ACL so mention resolution finds them
-        target = await model.create_user(
+        target = await app_state.model.users.create_user(
             "mention-pag@test.com", "pass", verified=True
         )
-        await model.add_acl_entry(
+        await app_state.model.acl.add_acl_entry(
             f"/workspaces/{workspace['id']}",
             0,
             model.ACTION_ALLOW,
@@ -1383,13 +1540,13 @@ class TestChatMessagesPagination:
             model.PRINCIPAL_USER,
             user_id=target["id"],
         )
-        await model.add_chat_message(
+        await app_state.model.chat.add_chat_message(
             workspace["id"], "uid", "u@test.com", f"hey @{target['handle']}"
         )
-        anchor = await model.add_chat_message(
+        anchor = await app_state.model.chat.add_chat_message(
             workspace["id"], "uid", "u@test.com", "anchor"
         )
-        older = await model.get_chat_messages_before(
+        older = await app_state.model.chat.get_chat_messages_before(
             workspace["id"], anchor["id"]
         )
         assert len(older) == 1
@@ -1397,9 +1554,9 @@ class TestChatMessagesPagination:
 
 
 class TestChatMentions:
-    async def test_mention_workspace_owner(self, workspace, user):
+    async def test_mention_workspace_owner(self, workspace, user, app_state):
         """@mentioning the workspace owner resolves to their user ID."""
-        msg = await model.add_chat_message(
+        msg = await app_state.model.chat.add_chat_message(
             workspace["id"],
             user["id"],
             user["email"],
@@ -1407,12 +1564,12 @@ class TestChatMentions:
         )
         assert msg["mentions"] == [user["id"]]
 
-    async def test_mention_workspace_member(self, workspace, user):
+    async def test_mention_workspace_member(self, workspace, user, app_state):
         """@mentioning a workspace member (via ACL) resolves."""
-        member = await model.create_user(
+        member = await app_state.model.users.create_user(
             "member@test.com", "hash", verified=True
         )
-        await model.add_acl_entry(
+        await app_state.model.acl.add_acl_entry(
             f"/workspaces/{workspace['id']}",
             0,
             model.ACTION_ALLOW,
@@ -1420,7 +1577,7 @@ class TestChatMentions:
             model.PRINCIPAL_USER,
             user_id=member["id"],
         )
-        msg = await model.add_chat_message(
+        msg = await app_state.model.chat.add_chat_message(
             workspace["id"],
             user["id"],
             user["email"],
@@ -1428,10 +1585,14 @@ class TestChatMentions:
         )
         assert msg["mentions"] == [member["id"]]
 
-    async def test_mention_non_member_ignored(self, workspace, user):
+    async def test_mention_non_member_ignored(
+        self, workspace, user, app_state
+    ):
         """@mentioning someone not in the workspace produces no mentions."""
-        await model.create_user("outsider@test.com", "hash", verified=True)
-        msg = await model.add_chat_message(
+        await app_state.model.users.create_user(
+            "outsider@test.com", "hash", verified=True
+        )
+        msg = await app_state.model.chat.add_chat_message(
             workspace["id"],
             user["id"],
             user["email"],
@@ -1439,10 +1600,12 @@ class TestChatMentions:
         )
         assert msg["mentions"] == []
 
-    async def test_mention_multiple_users(self, workspace, user):
+    async def test_mention_multiple_users(self, workspace, user, app_state):
         """Multiple @mentions in one message resolve correctly."""
-        member = await model.create_user("m@test.com", "hash", verified=True)
-        await model.add_acl_entry(
+        member = await app_state.model.users.create_user(
+            "m@test.com", "hash", verified=True
+        )
+        await app_state.model.acl.add_acl_entry(
             f"/workspaces/{workspace['id']}",
             0,
             model.ACTION_ALLOW,
@@ -1450,7 +1613,7 @@ class TestChatMentions:
             model.PRINCIPAL_USER,
             user_id=member["id"],
         )
-        msg = await model.add_chat_message(
+        msg = await app_state.model.chat.add_chat_message(
             workspace["id"],
             user["id"],
             user["email"],
@@ -1458,9 +1621,9 @@ class TestChatMentions:
         )
         assert set(msg["mentions"]) == {user["id"], member["id"]}
 
-    async def test_mention_deduplication(self, workspace, user):
+    async def test_mention_deduplication(self, workspace, user, app_state):
         """Duplicate @mentions produce only one entry."""
-        msg = await model.add_chat_message(
+        msg = await app_state.model.chat.add_chat_message(
             workspace["id"],
             user["id"],
             user["email"],
@@ -1468,15 +1631,15 @@ class TestChatMentions:
         )
         assert msg["mentions"] == [user["id"]]
 
-    async def test_mentions_in_history(self, workspace, user):
+    async def test_mentions_in_history(self, workspace, user, app_state):
         """get_chat_messages includes mentions from the DB."""
-        await model.add_chat_message(
+        await app_state.model.chat.add_chat_message(
             workspace["id"],
             user["id"],
             user["email"],
             f"hello @{user['handle']}",
         )
-        msgs = await model.get_chat_messages(workspace["id"])
+        msgs = await app_state.model.chat.get_chat_messages(workspace["id"])
         assert len(msgs) == 1
         assert msgs[0]["mentions"] == [user["id"]]
 
@@ -1484,7 +1647,7 @@ class TestChatMentions:
         self, workspace, user, app_state
     ):
         """Deleting a workspace cascades to chat_mentions."""
-        await model.add_chat_message(
+        await app_state.model.chat.add_chat_message(
             workspace["id"],
             user["id"],
             user["email"],
@@ -1493,45 +1656,63 @@ class TestChatMentions:
         await app_state.model.workspaces.delete_workspace(
             workspace["id"], user["id"]
         )
-        msgs = await model.get_chat_messages(workspace["id"])
+        msgs = await app_state.model.chat.get_chat_messages(workspace["id"])
         assert msgs == []
 
-    async def test_no_mention_pattern(self, workspace, user):
+    async def test_no_mention_pattern(self, workspace, user, app_state):
         """Messages without @ produce empty mentions."""
-        msg = await model.add_chat_message(
+        msg = await app_state.model.chat.add_chat_message(
             workspace["id"], user["id"], user["email"], "just plain text"
         )
         assert msg["mentions"] == []
 
 
 class TestInvitations:
-    async def test_create_and_get(self, db, admin_user):
-        inv = await model.create_invitation("a@b.com", admin_user["id"])
+    async def test_create_and_get(self, db, admin_user, app_state):
+        inv = await app_state.model.invitations.create_invitation(
+            "a@b.com", admin_user["id"]
+        )
         assert inv["email"] == "a@b.com"
         assert inv["status"] == "pending"
 
-        fetched = await model.get_invitation(inv["id"])
+        fetched = await app_state.model.invitations.get_invitation(inv["id"])
         assert fetched["email"] == "a@b.com"
         assert fetched["status"] == "pending"
 
-    async def test_get_nonexistent(self, db):
-        assert await model.get_invitation("nonexistent") is None
+    async def test_get_nonexistent(self, db, app_state):
+        assert (
+            await app_state.model.invitations.get_invitation("nonexistent")
+            is None
+        )
 
-    async def test_get_pending_by_email(self, db, admin_user):
-        await model.create_invitation("p@b.com", admin_user["id"])
-        pending = await model.get_pending_invitation_by_email("p@b.com")
+    async def test_get_pending_by_email(self, db, admin_user, app_state):
+        await app_state.model.invitations.create_invitation(
+            "p@b.com", admin_user["id"]
+        )
+        pending = (
+            await app_state.model.invitations.get_pending_invitation_by_email(
+                "p@b.com"
+            )
+        )
         assert pending is not None
         assert pending["email"] == "p@b.com"
 
-    async def test_get_pending_by_email_none(self, db):
+    async def test_get_pending_by_email_none(self, db, app_state):
         assert (
-            await model.get_pending_invitation_by_email("no@one.com") is None
+            await app_state.model.invitations.get_pending_invitation_by_email(
+                "no@one.com"
+            )
+            is None
         )
 
-    async def test_list(self, db, admin_user):
-        await model.create_invitation("x@b.com", admin_user["id"])
-        await model.create_invitation("y@b.com", admin_user["id"])
-        result = await model.list_invitations()
+    async def test_list(self, db, admin_user, app_state):
+        await app_state.model.invitations.create_invitation(
+            "x@b.com", admin_user["id"]
+        )
+        await app_state.model.invitations.create_invitation(
+            "y@b.com", admin_user["id"]
+        )
+        result = await app_state.model.invitations.list_invitations()
         invs = result["invitations"]
         assert len(invs) >= 2
         emails = [i["email"] for i in invs]
@@ -1544,30 +1725,42 @@ class TestInvitations:
         assert result["total"] >= 2
         assert result["pending_count"] >= 2
 
-    async def test_mark_accepted(self, db, admin_user):
-        inv = await model.create_invitation("acc@b.com", admin_user["id"])
-        assert await model.mark_invitation_accepted(inv["id"])
-        fetched = await model.get_invitation(inv["id"])
+    async def test_mark_accepted(self, db, admin_user, app_state):
+        inv = await app_state.model.invitations.create_invitation(
+            "acc@b.com", admin_user["id"]
+        )
+        assert await app_state.model.invitations.mark_invitation_accepted(
+            inv["id"]
+        )
+        fetched = await app_state.model.invitations.get_invitation(inv["id"])
         assert fetched["status"] == "accepted"
         assert fetched["accepted_at"] is not None
         # Can't accept again
-        assert not await model.mark_invitation_accepted(inv["id"])
+        assert not await app_state.model.invitations.mark_invitation_accepted(
+            inv["id"]
+        )
 
-    async def test_revoke(self, db, admin_user):
-        inv = await model.create_invitation("rev@b.com", admin_user["id"])
-        assert await model.revoke_invitation(inv["id"])
-        fetched = await model.get_invitation(inv["id"])
+    async def test_revoke(self, db, admin_user, app_state):
+        inv = await app_state.model.invitations.create_invitation(
+            "rev@b.com", admin_user["id"]
+        )
+        assert await app_state.model.invitations.revoke_invitation(inv["id"])
+        fetched = await app_state.model.invitations.get_invitation(inv["id"])
         assert fetched["status"] == "revoked"
         # Can't revoke again
-        assert not await model.revoke_invitation(inv["id"])
+        assert not await app_state.model.invitations.revoke_invitation(
+            inv["id"]
+        )
 
-    async def test_revoke_nonexistent(self, db):
-        assert not await model.revoke_invitation("nonexistent")
+    async def test_revoke_nonexistent(self, db, app_state):
+        assert not await app_state.model.invitations.revoke_invitation(
+            "nonexistent"
+        )
 
 
 class TestOIDCUsers:
-    async def test_create_oidc_user(self, db):
-        user = await model.create_user(
+    async def test_create_oidc_user(self, db, app_state):
+        user = await app_state.model.users.create_user(
             "oidc@example.com",
             password_hash=None,
             verified=True,
@@ -1577,78 +1770,95 @@ class TestOIDCUsers:
         assert user["id"]
         assert user["email"] == "oidc@example.com"
 
-    async def test_get_by_external_id(self, db):
-        await model.create_user(
+    async def test_get_by_external_id(self, db, app_state):
+        await app_state.model.users.create_user(
             "ext@example.com",
             password_hash=None,
             verified=True,
             provider="kc",
             external_id="ext-456",
         )
-        found = await model.get_user_by_external_id("kc", "ext-456")
+        found = await app_state.model.users.get_user_by_external_id(
+            "kc", "ext-456"
+        )
         assert found is not None
         assert found["email"] == "ext@example.com"
         assert found["provider"] == "kc"
         assert found["external_id"] == "ext-456"
 
-    async def test_get_by_external_id_not_found(self, db):
-        assert await model.get_user_by_external_id("kc", "nope") is None
+    async def test_get_by_external_id_not_found(self, db, app_state):
+        assert (
+            await app_state.model.users.get_user_by_external_id("kc", "nope")
+            is None
+        )
 
-    async def test_link_oidc_identity(self, db):
-        user = await model.create_user(
+    async def test_link_oidc_identity(self, db, app_state):
+        user = await app_state.model.users.create_user(
             "link@example.com", "hash", verified=True
         )
-        await model.link_oidc_identity(user["id"], "kc", "linked-sub")
-        found = await model.get_user_by_external_id("kc", "linked-sub")
+        await app_state.model.users.link_oidc_identity(
+            user["id"], "kc", "linked-sub"
+        )
+        found = await app_state.model.users.get_user_by_external_id(
+            "kc", "linked-sub"
+        )
         assert found is not None
         assert found["id"] == user["id"]
 
-    async def test_get_user_by_email_includes_oidc_fields(self, db):
-        await model.create_user(
+    async def test_get_user_by_email_includes_oidc_fields(self, db, app_state):
+        await app_state.model.users.create_user(
             "fields@example.com",
             password_hash=None,
             verified=True,
             provider="google",
             external_id="g-789",
         )
-        user = await model.get_user_by_email("fields@example.com")
+        user = await app_state.model.users.get_user_by_email(
+            "fields@example.com"
+        )
         assert user["provider"] == "google"
         assert user["external_id"] == "g-789"
         assert user["password_hash"] is None
 
 
 class TestUpdatePasswordAgentGuard:
-    async def test_update_password_rejects_agent_user(self, db):
+    async def test_update_password_rejects_agent_user(self, db, app_state):
         with pytest.raises(model.AgentPrincipalError, match="system agent"):
-            await model.update_password(model.AGENT_USER_ID, "hash")
+            await app_state.model.users.update_password(
+                model.AGENT_USER_ID, "hash"
+            )
 
 
 class TestUpdateEmailAgentGuard:
-    async def test_update_email_rejects_agent_user(self, db):
+    async def test_update_email_rejects_agent_user(self, db, app_state):
         with pytest.raises(model.AgentPrincipalError, match="system agent"):
-            await model.update_email(model.AGENT_USER_ID, "new@example.com")
+            await app_state.model.users.update_email(
+                model.AGENT_USER_ID, "new@example.com"
+            )
 
 
 class TestDeleteUserAgentGuard:
-    async def test_delete_user_rejects_agent_user(self, db):
+    async def test_delete_user_rejects_agent_user(self, db, app_state):
         with pytest.raises(model.AgentPrincipalError, match="system agent"):
-            await model.delete_user(model.AGENT_USER_ID)
+            await app_state.model.users.delete_user(model.AGENT_USER_ID)
 
 
 class TestAddUserToGroupAgentGuard:
-    async def test_add_user_to_group_rejects_agent(self, db):
+    async def test_add_user_to_group_rejects_agent(self, db, app_state):
         # Choke-point guard (#1135): every add_user_to_group caller
         # (role grants, group-member add, OIDC sync) is covered here.
         with pytest.raises(model.AgentPrincipalError, match="system agent"):
-            await model.add_user_to_group(model.AGENT_USER_ID, "g")
+            await app_state.model.users.add_user_to_group(
+                model.AGENT_USER_ID, "g"
+            )
 
 
 class TestAddAclEntryAgentGuard:
-    async def test_add_acl_entry_rejects_agent(self, db):
+    async def test_add_acl_entry_rejects_agent(self, db, app_state):
         # Choke-point guard (#1135): direct PRINCIPAL_USER ACE grants
         # (e.g. add_workspace_member) are covered here.
         with pytest.raises(model.AgentPrincipalError, match="system agent"):
-            await model.add_acl_entry(
+            await app_state.model.acl.add_acl_entry(
                 "/workspaces/x",
                 0,
                 model.ACTION_ALLOW,
@@ -1659,12 +1869,12 @@ class TestAddAclEntryAgentGuard:
 
 
 class TestReplaceAclEntriesAgentGuard:
-    async def test_replace_acl_entries_rejects_agent(self, db):
+    async def test_replace_acl_entries_rejects_agent(self, db, app_state):
         # Choke-point guard (#1135): replace_acl_entries is the second
         # writer into acl_entries (a raw INSERT, fed request-body
         # user_id by the PUT-acl endpoints) — guarded like add_acl_entry.
         with pytest.raises(model.AgentPrincipalError, match="system agent"):
-            await model.replace_acl_entries(
+            await app_state.model.acl.replace_acl_entries(
                 "/workspaces/x",
                 [
                     {
@@ -1702,11 +1912,13 @@ class TestSchemaAgentBackstops:
     found (replace_acl_entries, the seed path).
     """
 
-    async def test_acl_entries_rejects_agent_user_principal(self, agent_user):
+    async def test_acl_entries_rejects_agent_user_principal(
+        self, agent_user, app_state
+    ):
         # (A) CHECK on acl_entries: covers both writers (add_acl_entry and
         # replace_acl_entries).
         with pytest.raises(sqlalchemy.exc.IntegrityError):
-            async with model.transaction() as db:
+            async with app_state.db.transaction() as db:
                 await db.execute(
                     "INSERT INTO acl_entries"
                     " (resource, position, action, principal_type,"
@@ -1715,74 +1927,76 @@ class TestSchemaAgentBackstops:
                     (model.AGENT_USER_ID,),
                 )
 
-    async def test_user_groups_rejects_agent(self, agent_user):
+    async def test_user_groups_rejects_agent(self, agent_user, app_state):
         # (B) CHECK on user_groups: role grants, member adds, OIDC sync.
-        group = await model.create_group("g")
+        group = await app_state.model.users.create_group("g")
         with pytest.raises(sqlalchemy.exc.IntegrityError):
-            async with model.transaction() as db:
+            async with app_state.db.transaction() as db:
                 await db.execute(
                     "INSERT INTO user_groups (user_id, group_id, source)"
                     " VALUES (?, ?, 'manual')",
                     (model.AGENT_USER_ID, group["id"]),
                 )
 
-    async def test_workspaces_rejects_agent_owner(self, agent_user):
+    async def test_workspaces_rejects_agent_owner(self, agent_user, app_state):
         # (C) CHECK on workspaces.user_id (the owner column).
         with pytest.raises(sqlalchemy.exc.IntegrityError):
-            async with model.transaction() as db:
+            async with app_state.db.transaction() as db:
                 await db.execute(
                     "INSERT INTO workspaces (id, user_id, name)"
                     " VALUES ('ws', ?, 'n')",
                     (model.AGENT_USER_ID,),
                 )
 
-    async def test_users_rejects_agent_password(self, agent_user):
+    async def test_users_rejects_agent_password(self, agent_user, app_state):
         # (D) CHECK: the agent must never carry a password.
         with pytest.raises(sqlalchemy.exc.IntegrityError):
-            async with model.transaction() as db:
+            async with app_state.db.transaction() as db:
                 await db.execute(
                     "UPDATE users SET password_hash = ? WHERE id = ?",
                     ("x", model.AGENT_USER_ID),
                 )
 
-    async def test_agent_row_cannot_be_deleted(self, agent_user):
+    async def test_agent_row_cannot_be_deleted(self, agent_user, app_state):
         # (E) BEFORE DELETE trigger: the agent row is undeletable.
         with pytest.raises(sqlalchemy.exc.IntegrityError):
-            async with model.transaction() as db:
+            async with app_state.db.transaction() as db:
                 await db.execute(
                     "DELETE FROM users WHERE id = ?",
                     (model.AGENT_USER_ID,),
                 )
 
-    async def test_agent_identity_columns_immutable(self, agent_user):
+    async def test_agent_identity_columns_immutable(
+        self, agent_user, app_state
+    ):
         # (F) BEFORE UPDATE trigger on provider/external_id: the agent must
         # stay provider='system' with no linked OIDC identity (the #1145
         # skeleton-key vector). link_oidc_identity sets exactly these.
         with pytest.raises(sqlalchemy.exc.IntegrityError):
-            async with model.transaction() as db:
+            async with app_state.db.transaction() as db:
                 await db.execute(
                     "UPDATE users SET provider = ? WHERE id = ?",
                     ("oidc", model.AGENT_USER_ID),
                 )
         with pytest.raises(sqlalchemy.exc.IntegrityError):
-            async with model.transaction() as db:
+            async with app_state.db.transaction() as db:
                 await db.execute(
                     "UPDATE users SET external_id = ? WHERE id = ?",
                     ("sub", model.AGENT_USER_ID),
                 )
 
-    async def test_agent_email_remains_mutable(self, agent_user):
+    async def test_agent_email_remains_mutable(self, agent_user, app_state):
         # F deliberately does NOT guard email: it is legitimately re-seeded
         # from env at boot (ON CONFLICT DO UPDATE SET email). Email policy
         # lives at the fn layer (#1145), not the schema. This test pins that
         # decision so a future "add an email trigger" change can't silently
         # break boot-time re-seeding.
-        async with model.transaction() as db:
+        async with app_state.db.transaction() as db:
             await db.execute(
                 "UPDATE users SET email = ? WHERE id = ?",
                 ("new@example.com", model.AGENT_USER_ID),
             )
-        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+        agent = await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
         assert agent["email"] == "new@example.com"
 
 
@@ -1824,6 +2038,38 @@ class TestUniqueHandleFallback:
         parts = result.rsplit("-", 1)
         assert len(parts[1]) == 8  # sha256[:8]
 
+    async def test_truncates_long_suffix(self, db):
+        """A base near MAX_HANDLE_LEN gets its numeric suffix truncated."""
+        from klangk_backend.model import MAX_HANDLE_LEN, unique_handle
+
+        long = "a" * MAX_HANDLE_LEN
+        # First collision on the base, then the -2 suffix fits within the limit
+        # (MAX_HANDLE_LEN is large), so the truncation branch fires for the
+        # longer candidates as ``i`` grows — exercise it directly with a base
+        # whose ``-{i}`` form would exceed the cap.
+
+        class _Cursor:
+            def __init__(self, hit):
+                self._hit = hit
+
+            async def fetchone(self):
+                return self._hit
+
+        class _Db:
+            def __init__(self):
+                self.n = 0
+
+            async def execute(self, query, params=()):
+                # agent-handle probe returns nothing; collision probe hits
+                # once to force suffixing, then the truncation path.
+                if "id = ?" in query:
+                    return _Cursor(None)
+                self.n += 1
+                return _Cursor((1,) if self.n == 1 else None)
+
+        result = await unique_handle(_Db(), long)
+        assert len(result) <= MAX_HANDLE_LEN
+
 
 class TestTransactionCancelNoLeak:
     """Regression: cancelling a task mid ``transaction()`` must not leak
@@ -1856,14 +2102,14 @@ class TestTransactionCancelNoLeak:
         return open_ids
 
     async def test_cancel_during_acquire_closes_connection(
-        self, temp_data_dir, monkeypatch
+        self, temp_data_dir, monkeypatch, app_state
     ):
-        await model.init_db()
+        await app_state.model.init_db()
         open_ids = self._track_aiosqlite(monkeypatch)
 
         async def bg():
             # fetchone -> transaction -> get_db -> engine.connect().
-            await model.db.fetchone("SELECT 1")
+            await app_state.db.fetchone("SELECT 1")
             await asyncio.sleep(30)  # keep the task alive to cancel
 
         task = asyncio.create_task(bg())
@@ -1884,13 +2130,13 @@ class TestTransactionCancelNoLeak:
         )
 
     async def test_normal_transaction_closes_connection(
-        self, temp_data_dir, monkeypatch
+        self, temp_data_dir, monkeypatch, app_state
     ):
         """Sanity: a transaction that runs to completion closes its conn."""
-        await model.init_db()
+        await app_state.model.init_db()
         open_ids = self._track_aiosqlite(monkeypatch)
 
-        async with model.db.transaction() as db:
+        async with app_state.db.transaction() as db:
             await db.execute("CREATE TABLE IF NOT EXISTS t (x)")
 
         import gc
@@ -1912,55 +2158,30 @@ class TestDB:
         assert str(db.db_path).endswith("klangk.db")
         assert db.engine is None
 
-    def test_get_current_db_lazy_constructs(self, temp_data_dir):
-        """get_current_db lazily constructs a DB from settings when nothing is bound."""
-        from contextvars import Context
-
-        from klangk_backend.model import db as db_mod
-
-        # A fresh Context has no vars set, so get_current_db's LookupError
-        # path fires and lazily builds a DB from the (monkeypatched) env.
-        ctx = Context()
-        result = ctx.run(db_mod.get_current_db)
-        assert result is not None
-        assert result.db_path.name == "klangk.db"
-        # The lazily-built instance is now bound for that context.
-        assert ctx.run(db_mod.get_current_db) is result
-
-    def test_set_current_db_replaces_instance(self, temp_data_dir):
-        """set_current_db binds a DB for the current context; reset restores it."""
-        from klangk_backend.model import db as db_mod
-        from klangk_backend.model.db import DB
-        from klangk_backend.settings import KlangkSettings
-        import os
-
-        original = db_mod.get_current_db()
-        new_db = DB(KlangkSettings(os.environ))
-        token = db_mod.set_current_db(new_db)
-        assert db_mod.get_current_db() is new_db
-        db_mod.reset_current_db(token)
-        assert db_mod.get_current_db() is original
-
 
 class TestUsersBackstopBranches:
     """Cover backstop branches not reached by app code (now on the
     UsersModel methods) — list_groups q-filter and the update_email /
     update_password SQL paths (#1573)."""
 
-    async def test_list_groups_with_query(self, db):
-        await model.create_group("queried")
-        result = await model.list_groups(q="quer")
+    async def test_list_groups_with_query(self, db, app_state):
+        await app_state.model.users.create_group("queried")
+        result = await app_state.model.users.list_groups(q="quer")
         assert result["total"] >= 1
         assert any(g["name"] == "queried" for g in result["groups"])
 
-    async def test_update_email_backstop_sql(self, user):
-        await model.update_email(user["id"], "moved@example.com")
-        fetched = await model.get_user_by_email("moved@example.com")
+    async def test_update_email_backstop_sql(self, user, app_state):
+        await app_state.model.users.update_email(
+            user["id"], "moved@example.com"
+        )
+        fetched = await app_state.model.users.get_user_by_email(
+            "moved@example.com"
+        )
         assert fetched["id"] == user["id"]
 
-    async def test_update_password_backstop_sql(self, user):
-        await model.update_password(user["id"], "newhash")
-        fetched = await model.get_user_by_email(user["email"])
+    async def test_update_password_backstop_sql(self, user, app_state):
+        await app_state.model.users.update_password(user["id"], "newhash")
+        fetched = await app_state.model.users.get_user_by_email(user["email"])
         assert fetched["password_hash"] == "newhash"
 
 
@@ -1974,9 +2195,11 @@ class TestAclBackstopBranches:
     callers are exercised directly here.
     """
 
-    async def test_resolved_delete_by_principal_and_tree(self, db, user):
-        group = await model.create_group("bs-group")
-        await model.add_acl_entry(
+    async def test_resolved_delete_by_principal_and_tree(
+        self, db, user, app_state
+    ):
+        group = await app_state.model.users.create_group("bs-group")
+        await app_state.model.acl.add_acl_entry(
             "/bs-res",
             0,
             model.ACTION_ALLOW,
@@ -1984,7 +2207,7 @@ class TestAclBackstopBranches:
             model.PRINCIPAL_USER,
             user_id=user["id"],
         )
-        await model.add_acl_entry(
+        await app_state.model.acl.add_acl_entry(
             "/bs-res",
             1,
             model.ACTION_ALLOW,
@@ -1992,7 +2215,7 @@ class TestAclBackstopBranches:
             model.PRINCIPAL_GROUP,
             group_id=group["id"],
         )
-        await model.add_acl_entry(
+        await app_state.model.acl.add_acl_entry(
             "/bs-res",
             2,
             model.ACTION_ALLOW,
@@ -2001,22 +2224,33 @@ class TestAclBackstopBranches:
             system_principal=model.SYSTEM_EVERYONE,
         )
         # resolved view names the principal (user / group / system paths)
-        resolved = await model.get_acl_entries_resolved("/bs-res")
+        resolved = await app_state.model.acl.get_acl_entries_resolved(
+            "/bs-res"
+        )
         assert len(resolved) == 3
         assert any(r.get("principal") == "Everyone" for r in resolved)
         # by-principal lookups
         assert (
-            len(await model.get_acl_entries_by_principal_user(user["id"])) == 1
+            len(
+                await app_state.model.acl.get_acl_entries_by_principal_user(
+                    user["id"]
+                )
+            )
+            == 1
         )
         assert (
-            len(await model.get_acl_entries_by_principal_group(group["id"]))
+            len(
+                await app_state.model.acl.get_acl_entries_by_principal_group(
+                    group["id"]
+                )
+            )
             == 1
         )
         # tree summary lists the resource
-        tree = await model.get_acl_tree_summary()
+        tree = await app_state.model.acl.get_acl_tree_summary()
         assert any(row["resource"] == "/bs-res" for row in tree)
         # replace with a fresh non-empty entry set (covers the INSERT loop)
-        await model.replace_acl_entries(
+        await app_state.model.acl.replace_acl_entries(
             "/bs-res",
             [
                 {
@@ -2030,10 +2264,15 @@ class TestAclBackstopBranches:
                 }
             ],
         )
-        after = await model.get_acl_entries("/bs-res")
+        after = await app_state.model.acl.get_acl_entries("/bs-res")
         assert len(after) == 1
         # delete returns the count
-        assert await model.delete_acl_entries_for_resource("/bs-res") == 1
+        assert (
+            await app_state.model.acl.delete_acl_entries_for_resource(
+                "/bs-res"
+            )
+            == 1
+        )
 
 
 class TestWorkspacesBackstopBranches:
@@ -2078,7 +2317,7 @@ class TestWorkspacesBackstopBranches:
             user["id"], "seeded"
         )
         # The four role groups exist before delete.
-        async with model.transaction() as db:
+        async with app_state.db.transaction() as db:
             cur = await db.execute(
                 "SELECT name FROM groups WHERE name LIKE ?",
                 (f"%-{ws['id']}",),
@@ -2091,7 +2330,7 @@ class TestWorkspacesBackstopBranches:
             is True
         )
         # Role groups + memberships + ACEs gone after delete.
-        async with model.transaction() as db:
+        async with app_state.db.transaction() as db:
             cur = await db.execute(
                 "SELECT name FROM groups WHERE name LIKE ?",
                 (f"%-{ws['id']}",),
@@ -2099,7 +2338,7 @@ class TestWorkspacesBackstopBranches:
             assert await cur.fetchall() == []
 
     async def test_transfer_workspace_moves_ownership(self, user, app_state):
-        other = await model.create_user("newowner@x.com", "h")
+        other = await app_state.model.users.create_user("newowner@x.com", "h")
         ws = await app_state.model.workspaces.create_workspace_with_acl(
             user["id"], "xfer"
         )
@@ -2108,14 +2347,16 @@ class TestWorkspacesBackstopBranches:
         )
         assert transferred["user_id"] == other["id"]
         # Owner ACE (position 0) now points at the new owner.
-        entries = await model.get_acl_entries(f"/workspaces/{ws['id']}")
+        entries = await app_state.model.acl.get_acl_entries(
+            f"/workspaces/{ws['id']}"
+        )
         owner_ace = next(
             e for e in entries if e["position"] == 0 and e["permission"] == "*"
         )
         assert owner_ace["user_id"] == other["id"]
 
     async def test_transfer_workspace_guards(self, user, app_state):
-        other = await model.create_user("newowner2@x.com", "h")
+        other = await app_state.model.users.create_user("newowner2@x.com", "h")
         ws = await app_state.model.workspaces.create_workspace_with_acl(
             user["id"], "xfer-guard"
         )

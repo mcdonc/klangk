@@ -69,14 +69,14 @@ async def test_list_shared_workspaces(ws, app_state, user):
     other = await app_state.model.users.create_user("other@x.com", "h")
     ws_row = await ws.create_workspace_with_acl(other["id"], "shared-ws")
     # Grant ``user`` a direct user-level Allow ACE on the workspace.
-    from klangk_backend import model as _m
+    from klangk_backend.model import ACTION_ALLOW, PRINCIPAL_USER
 
-    await _m.add_acl_entry(
+    await app_state.model.acl.add_acl_entry(
         f"/workspaces/{ws_row['id']}",
         100,
-        _m.ACTION_ALLOW,
+        ACTION_ALLOW,
         "terminal",
-        _m.PRINCIPAL_USER,
+        PRINCIPAL_USER,
         user_id=user["id"],
     )
     shared = await ws.list_shared_workspaces(user["id"])
@@ -102,14 +102,14 @@ async def test_get_workspace_access_control(ws, user):
 async def test_get_workspace_members(ws, app_state, user):
     other = await app_state.model.users.create_user("member@x.com", "h")
     ws_row = await ws.create_workspace_with_acl(user["id"], "members-ws")
-    from klangk_backend import model as _m
+    from klangk_backend.model import ACTION_ALLOW, PRINCIPAL_USER
 
-    await _m.add_acl_entry(
+    await app_state.model.acl.add_acl_entry(
         f"/workspaces/{ws_row['id']}",
         100,
-        _m.ACTION_ALLOW,
+        ACTION_ALLOW,
         "terminal",
-        _m.PRINCIPAL_USER,
+        PRINCIPAL_USER,
         user_id=other["id"],
     )
     members = await ws.get_workspace_members(ws_row["id"])
@@ -181,9 +181,9 @@ async def test_transfer_workspace(ws, app_state, user):
     transferred = await ws.transfer_workspace(ws_row["id"], new_owner["id"])
     assert transferred["user_id"] == new_owner["id"]
     # Owner ACE + owners-group membership moved to the new owner.
-    from klangk_backend import model as _m
-
-    entries = await _m.get_acl_entries(f"/workspaces/{ws_row['id']}")
+    entries = await app_state.model.acl.get_acl_entries(
+        f"/workspaces/{ws_row['id']}"
+    )
     owner_ace = next(
         e for e in entries if e["position"] == 0 and e["permission"] == "*"
     )

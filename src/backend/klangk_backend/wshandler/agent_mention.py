@@ -5,7 +5,7 @@ import logging
 import re
 
 from ..agent import AgentProcessDied, ephemeral_system_message
-from .. import model
+from ..model import AGENT_USER_ID, MSG_AGENT, MSG_USER
 from .constants import (
     agent_conversations as agent_conversations,
     agent_tasks as agent_tasks,
@@ -35,13 +35,13 @@ def get_agent_mention_re(handle: str) -> re.Pattern:
     )
 
 
-async def mentions_agent(text: str) -> bool:
+async def mentions_agent(text: str, app_state) -> bool:
     """Return True if the message text mentions the agent."""
-    handle = await model.agent_handle()
+    handle = await app_state.model.users.agent_handle()
     return bool(get_agent_mention_re(handle).search(text))
 
 
-async def addresses_other_user(text: str) -> bool:
+async def addresses_other_user(text: str, app_state) -> bool:
     """Return True if the message is directed at someone else.
 
     A message that *starts* with ``@someone`` (not the agent) is
@@ -52,7 +52,7 @@ async def addresses_other_user(text: str) -> bool:
     if not m:
         return False
     mention = m.group().lstrip("@").lower()
-    handle = await model.agent_handle()
+    handle = await app_state.model.users.agent_handle()
     return mention != handle.lower()
 
 
@@ -128,13 +128,13 @@ async def handle_agent_mention(
     chronological = recent
     last_agent_idx = -1
     for i, m in enumerate(chronological):
-        if m.get("message_type", 0) == model.MSG_AGENT:
+        if m.get("message_type", 0) == MSG_AGENT:
             last_agent_idx = i
     # Messages from other users (not the current prompt sender)
     other_msgs = [
         m
         for m in chronological[last_agent_idx + 1 :]
-        if m.get("message_type", 0) == model.MSG_USER
+        if m.get("message_type", 0) == MSG_USER
         and m.get("message", "").strip() != user_text.strip()
     ]
     if other_msgs:
@@ -188,10 +188,10 @@ async def handle_agent_mention(
 
     agent_msg = await sockets.app_state.model.chat.add_chat_message(
         workspace_id,
-        model.AGENT_USER_ID,
+        AGENT_USER_ID,
         agent_email,
         response_text,
-        message_type=model.MSG_AGENT,
+        message_type=MSG_AGENT,
     )
     session = sockets.get_session(workspace_id)
     if session:

@@ -743,14 +743,14 @@ class Connection:
         user_id = self.user["id"]
         conv = agent_conversations.get(workspace_id)
 
-        if await mentions_agent(text):
+        if await mentions_agent(text, self.app_state):
             should_route = True
             agent_conversations[workspace_id] = {
                 "user_id": user_id,
                 "time": time.monotonic(),
                 "interjected": False,
             }
-        elif conv and not await addresses_other_user(text):
+        elif conv and not await addresses_other_user(text, self.app_state):
             if user_id == conv["user_id"]:
                 if not conv["interjected"]:
                     # No interjection — route indefinitely

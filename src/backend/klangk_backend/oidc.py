@@ -17,7 +17,6 @@ from urllib.parse import urlencode
 import httpx
 from jose import jwt as jose_jwt
 
-from . import model
 from .exceptions import ConfigurationError
 from .util import resolve_file_value
 
@@ -137,28 +136,6 @@ def client_kwargs(provider: OIDCProvider) -> dict:
     return kwargs
 
 
-async def sync_oidc_groups(
-    user_id: str,
-    groups: set[str],
-) -> None:
-    """Sync group memberships from the login hook result."""
-    # Resolve group names to IDs, auto-creating missing groups
-    desired_ids: set[str] = set()
-    for name in groups:
-        group = await model.get_group_by_name(name)
-        if group is None:
-            group = await model.create_group(name)
-            logger.info("Auto-created group %r from OIDC hook", name)
-        desired_ids.add(group["id"])
-
-    # Diff against current oidc_sync memberships
-    current_ids = set(await model.get_user_oidc_sync_group_ids(user_id))
-    for gid in desired_ids - current_ids:
-        await model.add_user_to_group(user_id, gid, source="oidc_sync")
-    for gid in current_ids - desired_ids:
-        await model.remove_user_from_group(user_id, gid)
-
-
 # ---------------------------------------------------------------------------
 # OIDC — instance with provider registry, caches, and login-hook state (#1450)
 # ---------------------------------------------------------------------------
@@ -182,6 +159,29 @@ class OIDC:
         self.jwks_cache: dict[str, _CachedJWKS] = {}
         self.login_hook: Callable | None = None
         self.login_hook_is_async: bool = False
+
+    async def sync_oidc_groups(
+        self,
+        user_id: str,
+        groups: set[str],
+    ) -> None:
+        """Sync group memberships from the login hook result."""
+        users = self.app_state.model.users
+        # Resolve group names to IDs, auto-creating missing groups
+        desired_ids: set[str] = set()
+        for name in groups:
+            group = await users.get_group_by_name(name)
+            if group is None:
+                group = await users.create_group(name)
+                logger.info("Auto-created group %r from OIDC hook", name)
+            desired_ids.add(group["id"])
+
+        # Diff against current oidc_sync memberships
+        current_ids = set(await users.get_user_oidc_sync_group_ids(user_id))
+        for gid in desired_ids - current_ids:
+            await users.add_user_to_group(user_id, gid, source="oidc_sync")
+        for gid in current_ids - desired_ids:
+            await users.remove_user_from_group(user_id, gid)
 
     # --- config loading ---
 

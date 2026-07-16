@@ -64,11 +64,15 @@ class Model:
         return await self.app_state.db.get_db()
 
     async def init_db(self):
-        """Create/migrate the schema.
+        """Create/migrate the schema on this model's owned DB.
 
-        Reached through the active ContextVar DB until #1578 dissolves it;
-        ``Model`` itself holds no schema logic — the per-domain sub-objects
-        are added incrementally and the ContextVar backstop serves the
-        not-yet-converted ones.
+        Pulls a raw connection from ``self.app_state.db`` and hands it to
+        :func:`init_db` (which commits + closes it). The schema bootstrap
+        reaches the same single DB instance as every request path — there
+        is no ambient/connectionless path (#1578, #1551).
         """
-        await init_db()
+        db = await self.app_state.db.get_db()
+        try:
+            await init_db(db)
+        finally:
+            await db.close()

@@ -22,7 +22,6 @@ from klangk_backend import (
     emailsvc as emailsvc_mod,
     util as util_mod,
     main,
-    model,
     oidc as oidc_mod,
     plugins as plugins_mod,
 )
@@ -60,7 +59,7 @@ _current_app = None
 
 
 @pytest.fixture
-async def mode_server(db, monkeypatch):
+async def mode_server(db, monkeypatch, app_state):
     """Boot a real-router server whose default admin user is seeded the way
     the real lifespan seeds it (``main.Lifecycle.seed_default_user``), then flip modes
     by changing ``KLANGK_AUTH_MODES`` between requests.
@@ -76,7 +75,7 @@ async def mode_server(db, monkeypatch):
             "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
         }
     ).seed_default_user()
-    default_user = await model.get_user_by_email(DEFAULT_EMAIL)
+    default_user = await app_state.model.users.get_user_by_email(DEFAULT_EMAIL)
     assert default_user is not None, "seed_default_user must create the user"
 
     app = FastAPI()
@@ -369,7 +368,7 @@ class TestChangePasswordReality:
         assert resp.status_code == 200
 
     async def test_change_password_refuses_passwordless_user(
-        self, mode_server, monkeypatch
+        self, mode_server, monkeypatch, app_state
     ):
         """A genuinely password-less (OIDC-only) account IS refused by
         self-service change-password — that 403 path exists, it just does not
@@ -378,7 +377,7 @@ class TestChangePasswordReality:
         _none()
 
         # A user with no password hash (an OIDC-only style account).
-        oidc_user = await model.create_user(
+        oidc_user = await app_state.model.users.create_user(
             "oidc-only@example.com", None, verified=True
         )
         # Mint a token for that user so the request authenticates.
@@ -402,7 +401,7 @@ class TestChangePasswordReality:
 
 class TestRestartIdempotency:
     async def test_reseed_after_mode_switch_is_safe(
-        self, mode_server, monkeypatch
+        self, mode_server, monkeypatch, app_state
     ):
         """Re-running the lifespan seed (a restart with a new mode, same DB)
         must not duplicate the user or drop its admin membership."""
@@ -425,7 +424,7 @@ class TestRestartIdempotency:
             }
         ).seed_default_user()  # simulate restart in password mode
 
-        again = await model.get_user_by_email(DEFAULT_EMAIL)
+        again = await app_state.model.users.get_user_by_email(DEFAULT_EMAIL)
         assert again["id"] == user["id"]
         # Still admin (membership re-asserted, not lost) — ask the canonical
         # /my-permissions source the CLI and frontend both use.

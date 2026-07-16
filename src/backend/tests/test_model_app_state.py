@@ -2,7 +2,7 @@
 
 The per-domain ``*Model`` classes (tokens, login_attempts, invitations, ports)
 and the ``Model`` transaction/init helpers are exercised here through
-``app_state.model`` — the same surface app code is migrating to. The
+``app_state_with_schema.model`` — the same surface app code is migrating to. The
 module-level free-function backstops that lost their app-code callers (they
 moved to the class methods) are covered here too.
 """
@@ -86,9 +86,21 @@ class TestTokensModel:
 
     async def test_free_function_backstop(self, app_state_with_schema):
         # The ContextVar-backed free function still works (backstop, #1578).
-        await model.blocklist_token("ff-jti", "2099-01-01", new_token="ff-new")
-        assert await model.get_refreshed_token("ff-jti") == "ff-new"
-        assert await model.is_token_blocklisted("ff-jti") is True
+        await app_state_with_schema.model.tokens.blocklist_token(
+            "ff-jti", "2099-01-01", new_token="ff-new"
+        )
+        assert (
+            await app_state_with_schema.model.tokens.get_refreshed_token(
+                "ff-jti"
+            )
+            == "ff-new"
+        )
+        assert (
+            await app_state_with_schema.model.tokens.is_token_blocklisted(
+                "ff-jti"
+            )
+            is True
+        )
 
 
 class TestLoginAttemptsModel:
@@ -140,8 +152,14 @@ class TestInvitationsModel:
     async def test_free_function_backstop_list_with_q(
         self, app_state_with_schema, user
     ):
-        await model.create_invitation("q@y.com", user["id"])
-        listed = await model.list_invitations(q="q@y")
+        await app_state_with_schema.model.invitations.create_invitation(
+            "q@y.com", user["id"]
+        )
+        listed = (
+            await app_state_with_schema.model.invitations.list_invitations(
+                q="q@y"
+            )
+        )
         assert listed["total"] == 1
 
 
@@ -167,7 +185,7 @@ class TestACLModel:
     both copies are kept until #1578, so both need coverage. The backstop
     is covered indirectly by ``klangk_backend/acl.py`` (still on the
     ContextVar path) and directly in ``test_model.py``; this class covers
-    the class methods through ``app_state.model.acl`` — the surface the
+    the class methods through ``app_state_with_schema.model.acl`` — the surface the
     API routes and the seed now use.
     """
 
@@ -227,7 +245,9 @@ class TestACLModel:
         self, app_state_with_schema, user
     ):
         a = app_state_with_schema.model.acl
-        group = await model.create_group("acl-group")
+        group = await app_state_with_schema.model.users.create_group(
+            "acl-group"
+        )
         await a.add_acl_entry(
             "/by-princ",
             0,
@@ -298,3 +318,82 @@ class TestACLModel:
                     }
                 ],
             )
+
+
+class TestNoConfigDivergenceRegression:
+    """#1551 / #1578: the DB a request/seed path uses is the one the app was
+    built with (``app_state.db``), never an env-only lazy fallback.
+
+    Pre-#1578, ``model.db.get_current_db()`` lazily built
+    ``DB(KlangkSettings(os.environ))`` when nothing was bound — so a process
+    started from a config file whose ``data_dir`` differed from ambient
+    ``KLANGK_DATA_DIR`` would read/write a *different* SQLite file than the
+    one ``init_db`` had populated. With the ContextVar + delegates gone, every
+    path reaches ``app_state.db``; this test asserts the divergence is
+    structurally impossible.
+    """
+
+    def test_no_env_only_db_construction_path_exists(self):
+        """The ContextVar, its binders, and the module-level DB delegates that
+        hid the env-only fallback are gone from model.db."""
+        import klangk_backend.model.db as db_mod
+
+        for gone in (
+            "set_current_db",
+            "reset_current_db",
+            "get_current_db",
+        ):
+            assert not hasattr(db_mod, gone), (
+                f"model.db.{gone} must be gone (it was the #1551 divergence path)"
+            )
+        # No ambient/lazy DB delegate on the package either.
+        assert not hasattr(model, "get_current_db")
+        assert not hasattr(model, "transaction")
+        assert not hasattr(model, "fetchone")
+
+    async def test_db_follows_settings_not_env(self, tmp_path, monkeypatch):
+        """init_db + a model write both land on the config-file data_dir,
+        never on the ambient ``KLANGK_DATA_DIR`` dir."""
+        import types
+
+        from _helpers import make_settings
+
+        config_data = tmp_path / "d"
+        ambient_data = tmp_path / "amb"
+        config_data.mkdir()
+        ambient_data.mkdir()
+
+        # Ambient env points at a DIFFERENT data dir than the app's settings.
+        monkeypatch.setenv("KLANGK_DATA_DIR", str(ambient_data))
+        monkeypatch.setenv("KLANGK_STATE_DIR", str(tmp_path / "as"))
+
+        # The app is built from settings whose data_dir is the configured one
+        # (mirrors a config-file-launched process). Build the owned DB + Model
+        # directly from those settings — NOT via wire_db_and_model, which
+        # reuses the shared per-test DB and would mask the divergence.
+        from klangk_backend.model import Model
+        from klangk_backend.model.db import DB
+
+        settings = make_settings(
+            {
+                "KLANGK_DATA_DIR": str(config_data),
+                "KLANGK_STATE_DIR": str(tmp_path / "cs"),
+            }
+        )
+        state = types.SimpleNamespace(settings=settings)
+        state.db = DB(settings)
+        state.model = Model(state)
+
+        # The owned DB resolves to the configured path, not the ambient one.
+        assert state.db.db_path.parent == config_data
+        assert str(state.db.db_path).startswith(str(config_data))
+
+        await state.model.init_db()
+        await state.model.users.create_user(
+            "divergence@example.com", "hash", verified=True
+        )
+
+        # Exactly one klangk.db exists, under the configured data_dir.
+        assert (config_data / "klangk.db").exists()
+        # Nothing was written under the ambient env data_dir.
+        assert not list(ambient_data.glob("*.db"))

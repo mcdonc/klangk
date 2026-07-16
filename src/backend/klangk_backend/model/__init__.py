@@ -4,18 +4,19 @@ Historically all database access — users, workspaces, ACL, chat, ports,
 login attempts, and the schema — lived in a single ~2000-line
 ``model.py``.  That module has been split into per-domain submodules
 (``db``, ``schema``, ``users``, ``acl``, ``workspaces``, ``ports``,
-``chat``, ``login_attempts``, ``tokens``, ``invitations``).
+``chat``, ``login_attempts``, ``tokens``, ``invitations``), and each
+domain is exposed as an ``XModel(app_state)`` method-bearing class
+composed under :class:`~klangk_backend.model.model.Model`.
 
-This package re-exports every public (and the few private) names from
-those submodules so existing call sites keep working unchanged, e.g.::
-
-    from . import model
-    model.create_user(...)
-    from .model import ACTION_ALLOW
-
-Only the handful of tests that poke at module-level globals need to
-target the owning submodule directly (``model.db`` for engine state,
-``model.ports`` for the port-in-use probe).
+Call sites reach data access through the owned instance —
+``app_state.model.users.create_user(...)`` — so there is one ``DB`` for
+the whole app (``app_state.db``) and no implicit cross-task state
+(#1563, #1578). The module-level ContextVar backstop
+(``_current_db`` / ``set_current_db`` / ``transaction`` / ``fetchone``
+/ ``get_db``) and the per-domain free-function duplicates are gone
+(#1578): the only module-level names re-exported here are the constants
+and the pure helpers (which never touched a connection) plus the
+composition root (``Model``) and the schema bootstrap (``init_db``).
 """
 
 from .db import (
@@ -23,13 +24,7 @@ from .db import (
     Connection,
     CursorResult,
     Row,
-    fetchone,
-    get_current_db,
-    get_db,
     logger,
-    reset_current_db,
-    set_current_db,
-    transaction,
 )
 from .schema import init_db
 from .model import Model
@@ -40,44 +35,15 @@ from .users import (
     HANDLE_RE,
     MAX_HANDLE_LEN,
     RESERVED_HANDLES,
-    agent_user_cache,
-    backfill_handles,
-    hash_fallback_handle,
-    unique_handle,
-    add_user_to_group,
-    agent_email,
-    agent_handle,
     clear_agent_cache,
-    create_group,
-    create_user,
-    delete_group,
-    delete_user,
     derive_handle,
     generate_handle,
-    get_agent_user,
-    get_group_by_name,
-    get_group_members,
-    get_user_by_email,
-    get_user_by_external_id,
-    get_user_by_handle,
-    get_user_by_id,
-    get_user_group_ids,
-    get_user_groups,
-    get_user_handle,
-    get_user_oidc_sync_group_ids,
-    insert_unverified_user,
-    link_oidc_identity,
-    list_groups,
-    remove_user_from_group,
-    search_users,
-    set_user_handle,
-    update_email,
-    update_password,
+    hash_fallback_handle,
+    unique_handle,
+    backfill_handles,
     validate_handle,
-    verify_user,
 )
 from .acl import (
-    ACLModel,
     ACTION_ALLOW,
     ACTION_DENY,
     PRINCIPAL_GROUP,
@@ -86,15 +52,6 @@ from .acl import (
     SYSTEM_AUTHENTICATED,
     SYSTEM_EVERYONE,
     row_to_acl_entry,
-    add_acl_entry,
-    delete_acl_entries_for_resource,
-    get_acl_entries,
-    get_acl_entries_by_principal_group,
-    get_acl_entries_by_principal_user,
-    get_acl_entries_map,
-    get_acl_entries_resolved,
-    get_acl_tree_summary,
-    replace_acl_entries,
 )
 from .workspaces import (
     DEFAULT_PORTS_PER_WORKSPACE,
@@ -107,47 +64,17 @@ from .workspaces import (
 )
 from .ports import (
     MAX_PORT,
-    port_in_use,
     free_port,
+    port_in_use,
     scan_free_ports,
-    add_port_allocations,
-    find_and_allocate_ports,
-    get_all_allocated_ports,
-    get_workspace_ports,
-    remove_port_allocations,
 )
 from .chat import (
     MSG_AGENT,
     MSG_SYSTEM,
     MSG_USER,
     MENTION_RE,
-    ChatModel,
-    add_chat_message,
-    delete_chat_message,
-    get_chat_messages,
-    get_chat_messages_before,
-    parse_mentions,
 )
-from .login_attempts import (
-    clear_login_attempts,
-    get_login_attempt_info,
-    record_failed_login,
-    set_login_lockout,
-)
-from .tokens import (
-    blocklist_token,
-    get_refreshed_token,
-    is_token_blocklisted,
-)
-from .invitations import (
-    ADMIN_INVITATION_SORT_COLUMNS,
-    create_invitation,
-    get_invitation,
-    get_pending_invitation_by_email,
-    list_invitations,
-    mark_invitation_accepted,
-    revoke_invitation,
-)
+from .invitations import ADMIN_INVITATION_SORT_COLUMNS
 
 __all__ = (
     # db
@@ -155,61 +82,26 @@ __all__ = (
     "Connection",
     "CursorResult",
     "Row",
-    "fetchone",
-    "get_current_db",
-    "get_db",
     "logger",
-    "reset_current_db",
-    "set_current_db",
-    "transaction",
     # schema
     "init_db",
     # composition root
     "Model",
-    # users
+    # users — constants + pure/db-param helpers (methods live on Model.users)
     "AGENT_USER_ID",
     "AgentPrincipalError",
     "ADMIN_USER_SORT_COLUMNS",
     "HANDLE_RE",
     "MAX_HANDLE_LEN",
     "RESERVED_HANDLES",
-    "agent_user_cache",
-    "backfill_handles",
-    "hash_fallback_handle",
-    "unique_handle",
-    "add_user_to_group",
-    "agent_email",
-    "agent_handle",
     "clear_agent_cache",
-    "create_group",
-    "create_user",
-    "delete_group",
-    "delete_user",
     "derive_handle",
     "generate_handle",
-    "get_agent_user",
-    "get_group_by_name",
-    "get_group_members",
-    "get_user_by_email",
-    "get_user_by_external_id",
-    "get_user_by_handle",
-    "get_user_by_id",
-    "get_user_group_ids",
-    "get_user_groups",
-    "get_user_handle",
-    "get_user_oidc_sync_group_ids",
-    "insert_unverified_user",
-    "link_oidc_identity",
-    "list_groups",
-    "remove_user_from_group",
-    "search_users",
-    "set_user_handle",
-    "update_email",
-    "update_password",
+    "hash_fallback_handle",
+    "unique_handle",
+    "backfill_handles",
     "validate_handle",
-    "verify_user",
-    # acl
-    "ACLModel",
+    # acl — constants + pure helper
     "ACTION_ALLOW",
     "ACTION_DENY",
     "PRINCIPAL_GROUP",
@@ -218,60 +110,24 @@ __all__ = (
     "SYSTEM_AUTHENTICATED",
     "SYSTEM_EVERYONE",
     "row_to_acl_entry",
-    "add_acl_entry",
-    "delete_acl_entries_for_resource",
-    "get_acl_entries",
-    "get_acl_entries_by_principal_group",
-    "get_acl_entries_by_principal_user",
-    "get_acl_entries_map",
-    "get_acl_entries_resolved",
-    "get_acl_tree_summary",
-    "replace_acl_entries",
-    # workspaces
+    # workspaces — constants + pure helper
     "DEFAULT_PORTS_PER_WORKSPACE",
     "SORT_COLUMNS",
     "sort_order_clause",
-    # setup_state lifecycle (#1033)
     "SETUP_STATE_COMPLETE",
     "SETUP_STATE_FAILED",
     "SETUP_STATE_PENDING",
     "SETUP_STATES",
-    # ports
+    # ports — constants + pure socket probe (re-exported via util too)
     "MAX_PORT",
     "port_in_use",
     "free_port",
     "scan_free_ports",
-    "add_port_allocations",
-    "find_and_allocate_ports",
-    "get_all_allocated_ports",
-    "get_workspace_ports",
-    "remove_port_allocations",
-    # chat
+    # chat — message-type constants + mention regex
     "MSG_AGENT",
     "MSG_SYSTEM",
     "MSG_USER",
     "MENTION_RE",
-    "ChatModel",
-    "add_chat_message",
-    "delete_chat_message",
-    "get_chat_messages",
-    "get_chat_messages_before",
-    "parse_mentions",
-    # login_attempts
-    "clear_login_attempts",
-    "get_login_attempt_info",
-    "record_failed_login",
-    "set_login_lockout",
-    # tokens
-    "blocklist_token",
-    "get_refreshed_token",
-    "is_token_blocklisted",
-    # invitations
+    # invitations — sort columns
     "ADMIN_INVITATION_SORT_COLUMNS",
-    "create_invitation",
-    "get_invitation",
-    "get_pending_invitation_by_email",
-    "list_invitations",
-    "mark_invitation_accepted",
-    "revoke_invitation",
 )
