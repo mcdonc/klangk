@@ -16,6 +16,12 @@ Entries use the following conventions:
 - **Security** — fixes for vulnerabilities, in lieu of or in addition to a
   dedicated security advisory.
 
+<!-- IMPORTANT for AI agents: only add changelog entries for changes that are
+     visible to operators or end users (new settings, behavior changes, bug
+     fixes, removed features). Do NOT add entries for internal refactoring,
+     code reorganization, test infrastructure changes, or module restructuring
+     — those are invisible to users and create noise. -->
+
 A `Breaking` subsection may appear under any version for changes that require
 operators or integrators to act when upgrading.
 
@@ -123,17 +129,6 @@ operators or integrators to act when upgrading.
   `KLANGK_FRONTEND_DIR` remounts the Flutter static-files directory
   without a process restart.
 
-- **PID-file helpers moved onto `Util`** (`app.state.util`). The
-  `pid_file_path` / `check_pid_file` / `write_pid_file` / `remove_pid_file`
-  functions are now methods of the same `Util` that owns the instance ID —
-  the PID file's name embeds the ID, so the two belong together. The lifespan
-  reads `app.state.util.check_pid_file()` etc. with no `instance_id` argument
-  threaded through; the file name and multi-instance isolation are unchanged.
-  The PID file now lives in `state_dir` (next to the UDS socket), and the old
-  `runtime_dir()` fallback chain (XDG_RUNTIME_DIR / `/run/user/<uid>` /
-  `~/.klangk/run`, from #773) is removed — `KLANGK_STATE_DIR` is required to
-  boot, so that fallback solved a problem that can't occur (#1565).
-
 - **`KLANGK_PORT` is now the nginx browser port, not uvicorn's bind.** Under
   `klangkd` uvicorn always binds the UDS (`KLANGK_SOCKET`); `KLANGK_PORT` is
   the nginx listener for the browser UI + API + hosted apps. **Unset ⇒
@@ -152,113 +147,11 @@ operators or integrators to act when upgrading.
   firewalled independently. `KLANGK_EGRESS_PORT` must differ from
   `KLANGK_PORT` (#1542).
 
-- **`classify_listen` / `listen_is_socket` removed** — `KLANGK_LISTEN` is no
-  longer polymorphic; template selection keys off `KLANGK_PORT` (unset ⇒
-  headless, set ⇒ full) instead (#1542).
-
-- **E2E test envs are now hermetic (#1526):** all E2E suites (backend,
-  CLI, frontend) build subprocess envs via a shared `clean_env()` helper
-  (`_e2e_env.py` / `e2e-env.ts`) that strips every `KLANGK*` /
-  `_KLANGK*` / `KLANGKC*` / `LOGFIRE*` var from the ambient env before
-  applying the test's explicit overrides. No more `{**os.environ, ...}` /
-  `{...process.env, ...}` spreads — a stray config var in the CI runner's
-  env (or leaked by a prior test) can no longer silently change results.
-  The baseline defaults (`KLANGK_AUTH_MODES=password`, `_KLANGK_DISABLE_NGINX=1`)
-  moved from session-scoped `os.environ` mutations in `conftest.py` into
-  `clean_env()`, eliminating the in-process mutation too. Each server launch
-  now sets `KLANGK_STATE_DIR` to a fresh temp dir explicitly (the required
-  validator no longer relies on devenv seeding it), and `clean_env()`
-  forwards the three build-infra vars (`KLANGK_PLUGINS_DIR`,
-  `KLANGK_IMAGE_NAME`, `KLANGK_VERSION_FILE`) that locate the artifacts
-  devenv's `klangk:build-workspace-image` task produces.
-
-- **The `main:app` ASGI shim is gone (#1454).** `main.py` no longer exposes
-  an `app` attribute or a lazy `__getattr__` — the composition root is sealed.
-  `klangkd` is the only production entry point (constructs the app explicitly
-  via `build_app(settings)` and passes the object to uvicorn). The E2E suites
-  launch `e2e-tests/runtestserver.py` (a test-only launcher that builds the
-  app and passes the object to uvicorn) instead of the `klangk_backend.main:app`
-  string import — no `module:app` string import anywhere.
-
-- **`resolve_env_value` / `resolve_env_bool` / `get_settings` retired
-  (#1518):** the transitional config-reading shims are deleted. Every
-  call-time caller now reads `app_state.settings.<field>` directly: `main.py`
-  (`seed_default_user`, `seed_agent_user`, `enforce_no_auth_bind_safety`,
-  `setup_logfire`), `ssl_trust.py` (`ssl_cert_dir`,
-  `apply_backend_ssl_trust` — both now take `settings`; the merged CA bundle
-  moved from `<data_dir>/ssl/ca-bundle.crt` to
-  `<state_dir>/ssl/ca-bundle.crt`), `agent.py`
-  (`is_disabled`), `model/db.py` (`get_default_db` constructs
-  `KlangkSettings(os.environ)`). `KLANGKC_DEBUG_SSH_AGENT` and the LOGFIRE\_\*
-  vars are plain `os.environ.get`. The only surviving resolver is
-  `resolve_dynamic_config` (plugins' dynamic keys — real `file:`/`cmd:`
-  deref on keys outside the settings model). `listen_is_socket` now takes
-  a required `value` arg (no settings singleton fallback).
-
-- **`NginxWatchdog` moved from `main.py` to `nginx.py`** — it owns the nginx
-  child process + renders config via `NginxRenderer`, so it belongs with the
-  renderer (#1518).
-
 - **`KLANGK_FRONTEND_DIR` setting (#1456):** the built Flutter Web UI is
   served from `settings.frontend_dir` (defaults to the repo-relative
   `src/frontend/build/web` computed in `KlangkSettings`; `klangkd`
   deployments override it). Previously the path was hardcoded in `build_app`,
   so installed-package deployments silently skipped mounting the UI.
-
-- **Settings field defaults lifted into `KlangkSettings` (#1514):** the
-  `str | None = None` fields whose consumers applied a fixed `or "default"`
-  fallback at read time are now non-optional `str` with the default baked in:
-  `dns_servers`, `llm_model`, `llm_api_key`, `userns`
-  (`keep-id:uid=1000,gid=1000`), `disable_registration`, `disable_invites`,
-  `prevent_insecure_jwt_secret`, `trust_outer_proxy`, `disable_tmux`,
-  `allow_sudo`, `allow_autostart`, `hosted_ports_per_workspace`,
-  `email_templates_dir`, `smtp_reply_to`. The scattered `or ""` /
-  `or "keep-id:..."` fallbacks in `auth.py`, `container.py`, `nginx.py`,
-  `terminal.py`, `emailsvc.py`, and `api/_common.py` are gone; consumers
-  read `self.settings.<field>` directly. (The product-name / legal-link /
-  branding fields were already lifted in #1516/#1517.)
-
-- **Last import-time config reads removed from the API and wshandler
-  packages (#1516):** `api/__init__.py`, `api/_common.py`, and
-  `wshandler/constants.py` no longer read config at module import time.
-  The `/config` endpoint (`product_name`, `login_banner`, legal/support
-  URLs, `logo_url`, `allow_autostart`) and `/version` read the frozen
-  `app_state.settings` directly. The `FILE_UPLOAD_SIZE_MAX` module constant
-  is gone — `files.py`/`workspaces.py` read
-  `app_state.settings.file_upload_size_max`. `KLANGKWS_DEBUG` and
-  `KLANGK_TEST_MODE` (plain flags, not secrets) read `os.environ` directly
-  with no `file:`/`cmd:` resolution. The test collection-time
-  `KLANGK_STATE_DIR`/`KLANGK_DATA_DIR` env workaround in `conftest.py` is
-  removed — test collection no longer needs env pre-set.
-
-- **`resolve_env_value` (KLANGK path) no longer re-resolves `file:`/`cmd:`**
-  — the field is already resolved at construction. The function survives for
-  plugins' dynamic keys (non-`KLANGK_`, discovered from `package.json`) and
-  not-yet-migrated modules; core code should read `app_state.settings.field`
-  directly (#1461).
-- **Public `resolve_indirection` removed** — the logic is now private
-  (`_resolve_indirection`), called only by the model validator and the
-  non-`KLANGK_` path of `resolve_env_value` (#1461).
-- **Proxy-trust / hosting helpers are instance methods on `Util(app_state)`:**
-  `util.py` no longer reads config at import time. `reject_proxy_headers`,
-  `trusted_proxy_cidrs`, `peer_trusted`, `connection_peer_is_trusted`,
-  `client_is_loopback`, `derive_hosting_info`, `customize_dir`, `cors_origins`,
-  and `set_uds_mode` are now methods on `Util`, reading `self.settings` at
-  call time. The module globals `_REJECT_PROXY`, `_TRUSTED_PROXY_CIDRS`, and
-  `_UDS_MODE` are gone. `klangkd` arms UDS trust via
-  `app.state.util.set_uds_mode(True)` after `build_app` (#1503, #1426).
-- **Auth config is instance-owned on `Auth(app_state)`:** `auth.py` no longer
-  reads config at import time. The module globals (`SECRET_KEY`,
-  `ALGORITHM`, `TOKEN_EXPIRE_HOURS`, `MIN_PASSWORD_LENGTH`, `LOGIN_LOCKOUT_*`,
-  `INVITE_TOKEN_EXPIRE_HOURS`, `WORKSPACE_TOKEN_EXPIRE_HOURS`) and the
-  call-time `resolve_env_value` reads are gone; each is an instance attr or
-  method reading `self.settings`. Token create/decode, register/login/
-  refresh/logout, `registration_enabled`/`invitations_enabled`, and
-  `require_secure_jwt_secret` are methods on `Auth`, reached via
-  `app.state.auth.*`. Pure helpers (password hashing, email validation, the
-  lockout predicate) and the FastAPI dependency callables stay module-level.
-  `_INSECURE_DEFAULT_SECRET` consolidated into `settings.INSECURE_DEFAULT_SECRET`
-  (#1501, #1426).
 
 ### Deprecated
 
