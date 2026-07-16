@@ -35,6 +35,9 @@ class ChatModel:
     def __init__(self, app_state):
         self.app_state = app_state
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+
     async def parse_mentions(
         self, db: Connection, message: str, workspace_id: str
     ) -> list[str]:

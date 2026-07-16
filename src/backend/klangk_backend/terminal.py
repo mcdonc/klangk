@@ -226,6 +226,9 @@ class Terminal:
     def __init__(self, app_state):
         self._app_state = app_state
 
+    def reconfigure(self, app_state) -> None:
+        self._app_state = app_state
+
     @property
     def podman(self) -> Podman:
         return self._app_state.podman

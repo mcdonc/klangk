@@ -139,6 +139,9 @@ class Auth:
         self.verify_token_expire_hours = 72
         self.reset_token_expire_hours = 1
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+
     # --- settings-derived config (read live off app_state, #1608) ---
 
     @property

@@ -34,6 +34,9 @@ class InvitationsModel:
     def __init__(self, app_state):
         self.app_state = app_state
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+
     async def create_invitation(self, email: str, invited_by: str) -> dict:
         """Create a new invitation. Returns the invitation dict."""
         async with self.app_state.db.transaction() as db:

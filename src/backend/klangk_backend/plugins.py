@@ -38,6 +38,10 @@ class Plugins:
         # Resolved values: {env_key: str}
         self.values: dict[str, str] = {}
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+        self.load()
+
     @property
     def plugins_dir(self) -> str:
         # Read live off app_state (#1608) so a SIGHUP settings reload picks

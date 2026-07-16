@@ -95,6 +95,9 @@ class Agents:
         self._agents: dict[str, "AgentSession"] = {}
         self._agents_lock = asyncio.Lock()
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+
     def is_disabled(self) -> bool:
         """True if the chat agent has been disabled by an admin.
 

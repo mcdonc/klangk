@@ -151,6 +151,10 @@ class SSLTrust:
     def __init__(self, app_state):
         self.app_state = app_state
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+        self.apply_backend_ssl_trust()
+
     def ssl_cert_dir(self) -> str | None:
         """Return the deployer SSL cert dir if it should be trusted, else ``None``.
 

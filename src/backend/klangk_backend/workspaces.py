@@ -134,6 +134,9 @@ class Workspaces:
     def __init__(self, app_state):
         self.app_state = app_state
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+
     # --- settings-derived paths (read live off app_state, #1608) ---
 
     @property

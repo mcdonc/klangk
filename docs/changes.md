@@ -108,6 +108,15 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **SIGHUP now reloads configuration (#1587).** Sending `SIGHUP` to
+  `klangkd` re-resolves `KlangkSettings` from the environment / YAML
+  config file and applies the new values before recycling the runtime.
+  Invalid config denies the restart (runtime left on last-known-good,
+  reason logged at `ERROR`). Settings bound for the process lifetime
+  (`KLANGK_PORT`, `KLANGK_LISTEN`, `KLANGK_DATA_DIR`, `KLANGK_STATE_DIR`)
+  are warned but require a full restart to apply. See
+  [Process Signals](deployment/signals.md).
+
 - **The `_current_db` ContextVar and its module-level DB delegates are
   gone (#1578, fixes #1551).** Every data-access path now reaches the DB
   through the single owned `app_state.db` — `model.db`'s `_current_db`

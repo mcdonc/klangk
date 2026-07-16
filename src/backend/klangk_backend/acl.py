@@ -165,6 +165,9 @@ class ACL:
     def __init__(self, app_state):
         self.app_state = app_state
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+
     async def get_principals(self, user_id: str) -> dict:
         """Build principal info for the given user."""
         group_ids = await self.app_state.model.users.get_user_group_ids(

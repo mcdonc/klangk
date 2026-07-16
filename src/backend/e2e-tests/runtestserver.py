@@ -27,9 +27,10 @@ def main() -> None:
     parser.add_argument("--ws-max-size", type=int, default=16777216)
     parser.add_argument("--ws-ping-interval", type=int, default=20)
     parser.add_argument("--ws-ping-timeout", type=int, default=20)
+    parser.add_argument("--config", default=None, help="YAML config file")
     args = parser.parse_args()
 
-    app = build_app(KlangkSettings(os.environ))
+    app = build_app(KlangkSettings(os.environ, config_file=args.config))
     uvicorn.run(
         app,
         host=args.host,

@@ -168,6 +168,9 @@ class UsersModel:
     def __init__(self, app_state):
         self.app_state = app_state
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+
     async def get_agent_user(self) -> dict:
         """Return the agent user dict from DB, cached after first call."""
         global agent_user_cache

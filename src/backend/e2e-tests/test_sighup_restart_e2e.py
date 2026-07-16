@@ -1,4 +1,4 @@
-"""End-to-end tests for graceful runtime restart on SIGHUP (#1212).
+"""End-to-end tests for graceful runtime restart on SIGHUP (#1212, #1587).
 
 SIGHUP triggers an in-place runtime restart: every WebSocket client is
 closed with code 1012, all workspace containers are stopped, the
@@ -6,13 +6,18 @@ idle/health loops are cancelled, then container-side startup re-runs
 (prewarm, adopt, loops, auto-start).  The HTTP listener and DB stay up
 throughout.
 
+Since #1587, SIGHUP also **reloads configuration**: the settings are
+re-resolved from the environment + config file, and reloadable values
+take effect without a process restart.
+
 These tests start a real server on a private port, open WebSocket
-sessions, send SIGHUP, and assert the four acceptance criteria:
+sessions, send SIGHUP, and assert the acceptance criteria:
 
 1. HTTP stays available across the restart (no refused connections).
 2. WebSocket clients are closed with code 1012 and can reconnect.
 3. A second SIGHUP during a restart queues behind it (serialized).
 4. Workspace containers are stopped and then auto-started again.
+5. A config file change is picked up after SIGHUP (#1587).
 
 Requires: podman available, klangk image built.
 
@@ -325,3 +330,114 @@ async def test_containers_stopped_then_autostarted(server, auth):
         )
     except httpx.ReadTimeout:
         pass
+
+
+# --- Config reload via SIGHUP (#1587) ---
+
+
+def test_config_reload_via_sighup():
+    """#5: A config file change is picked up after SIGHUP (#1587).
+
+    Writes a YAML config with product_name="Before", starts a server
+    with --config, asserts /api/v1/config returns "Before", rewrites the
+    file to "After", sends SIGHUP, and asserts the endpoint returns
+    "After".
+    """
+    import yaml
+
+    data_dir = tempfile.mkdtemp(prefix="klangk-reload-e2e-")
+    state_dir = tempfile.mkdtemp(prefix="klangk-reload-e2e-state-")
+    port = str(free_port())
+
+    config_path = os.path.join(state_dir, "klangk.yaml")
+    with open(config_path, "w") as f:
+        yaml.dump({"product_name": "Before"}, f)
+
+    env = clean_env(
+        KLANGK_PORT=port,
+        KLANGK_DATA_DIR=data_dir,
+        KLANGK_STATE_DIR=state_dir,
+        KLANGK_JWT_SECRET="reload-e2e-secret",
+        KLANGK_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGK_DEFAULT_USER="test@example.com",
+        KLANGK_DEFAULT_PASSWORD="testpass",
+        KLANGK_TEST_MODE="1",
+        KLANGK_IDLE_TIMEOUT_SECONDS="300",
+        KLANGK_PORT_RANGE_START=str(free_port()),
+        LOGFIRE_TOKEN="",
+        KLANGK_LLM_BASE_URL="",
+        KLANGK_LLM_API_KEY="",
+        KLANGK_LLM_MODEL="",
+    )
+    proc = subprocess.Popen(
+        [
+            "python3",
+            os.path.join(os.path.dirname(__file__), "runtestserver.py"),
+            "--host",
+            "0.0.0.0",
+            "--port",
+            port,
+            "--config",
+            config_path,
+        ],
+        cwd=os.path.join(os.path.dirname(__file__), ".."),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    base_url = f"http://localhost:{port}"
+    try:
+        for _ in range(60):
+            try:
+                if (
+                    httpx.get(f"{base_url}/health", timeout=2).status_code
+                    == 200
+                ):
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+        else:
+            stdout = proc.stdout.read().decode() if proc.stdout else ""
+            raise RuntimeError(f"Server failed to start:\n{stdout}")
+
+        # Login.
+        resp = httpx.post(
+            f"{base_url}/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "testpass"},
+            timeout=10,
+        )
+        assert resp.status_code == 200
+        headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+        # Assert initial config.
+        resp = httpx.get(
+            f"{base_url}/api/v1/config", headers=headers, timeout=10
+        )
+        assert resp.status_code == 200
+        assert resp.json()["product_name"] == "Before"
+
+        # Rewrite the config file and send SIGHUP.
+        with open(config_path, "w") as f:
+            yaml.dump({"product_name": "After"}, f)
+        os.kill(proc.pid, subprocess.signal.SIGHUP)
+
+        # Wait for the restart to complete and assert the new value.
+        time.sleep(5)
+        assert _wait_http_ok({"url": base_url, "proc": proc}), (
+            "server did not recover after SIGHUP"
+        )
+        resp = httpx.get(
+            f"{base_url}/api/v1/config", headers=headers, timeout=10
+        )
+        assert resp.status_code == 200
+        assert resp.json()["product_name"] == "After"
+    finally:
+        try:
+            proc.kill()
+            proc.wait(timeout=10)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            pass
+        close_popen_pipes(proc)
+        shutil.rmtree(data_dir, ignore_errors=True)
+        shutil.rmtree(state_dir, ignore_errors=True)

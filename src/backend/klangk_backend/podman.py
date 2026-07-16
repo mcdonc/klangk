@@ -73,6 +73,9 @@ class Podman:
     def __init__(self, app_state):
         self.app_state = app_state
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+
     @property
     def _bin(self) -> str:
         return self.app_state.settings.podman_bin
