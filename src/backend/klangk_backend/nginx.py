@@ -169,6 +169,9 @@ class NginxRenderer:
     def __init__(self, app_state) -> None:
         self._app_state = app_state
 
+    def reconfigure(self, app_state) -> None:
+        self._app_state = app_state
+
     # -- DNS / ACL / size computation --------------------------------------
 
     def detect_dns_resolvers(self) -> str:
@@ -757,7 +760,7 @@ class NginxWatchdog:
 
     def reconfigure(self, app_state) -> None:
         self._app_state = app_state
-        self._renderer = NginxRenderer(app_state)
+        self._renderer.reconfigure(app_state)
 
     async def _watch(
         self, bin_path: str, conf_path: str
