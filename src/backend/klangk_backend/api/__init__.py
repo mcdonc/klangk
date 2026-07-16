@@ -38,7 +38,6 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from .. import (
-    acl,
     container,
     emailsvc,
     oidc,
@@ -269,10 +268,10 @@ async def my_permissions(
     specific resource path (e.g., ``/workspaces/{id}``). Otherwise
     returns permissions for all static resources.
     """
-    principals = await acl.get_principals(user["id"])
+    principals = await request.app.state.acl.get_principals(user["id"])
     groups = await request.app.state.model.users.get_user_groups(user["id"])
     if resource is not None:
-        permissions = await acl.permissions_for_resources(
+        permissions = await request.app.state.acl.permissions_for_resources(
             [resource], principals, ALL_PERMISSIONS
         )
         perms = permissions.get(resource, [])
@@ -284,7 +283,7 @@ async def my_permissions(
         }
     # Batch all static resources into a single ACL query instead of
     # awaiting check_permission() per resource/permission pair.
-    permissions = await acl.permissions_for_resources(
+    permissions = await request.app.state.acl.permissions_for_resources(
         STATIC_RESOURCES, principals, ALL_PERMISSIONS
     )
     return {

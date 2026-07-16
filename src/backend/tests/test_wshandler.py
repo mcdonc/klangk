@@ -17,6 +17,7 @@ from fastapi import WebSocketDisconnect
 
 from klangk_backend import (
     agent as agent_mod,
+    acl as acl_mod,
     auth as auth_mod,
     emailsvc as emailsvc_mod,
     files as files_mod,
@@ -6461,8 +6462,10 @@ class TestShareWindowHandlers:
         ]
         await session.add_subscriber(sock, "cid")
         try:
-            with patch(
-                "klangk_backend.acl.check_permission", return_value=True
+            with patch.object(
+                acl_mod.ACL,
+                "check_permission",
+                new=AsyncMock(return_value=True),
             ):
                 await conn.handle_share_window({"window_id": "@1"})
             assert session.terminal_windows[user["id"]][1]["shared"] is True
@@ -6480,7 +6483,9 @@ class TestShareWindowHandlers:
         conn.workspace_id = "ws-1"
         conn.container_id = "cid"
         conn._user_home = "/home/admin"
-        with patch("klangk_backend.acl.check_permission", return_value=False):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=False)
+        ):
             await conn.handle_share_window({"window_id": "@0"})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Permission" in c.get("message", "") for c in calls)
@@ -6500,8 +6505,10 @@ class TestShareWindowHandlers:
         await session.add_subscriber(sock, "cid")
         try:
             with (
-                patch(
-                    "klangk_backend.acl.check_permission", return_value=True
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
                 ),
                 patch.object(_mock_term, "kill_joiner_sessions") as mock_kill,
             ):
@@ -6524,8 +6531,10 @@ class TestShareWindowHandlers:
                 {"name": "1", "index": 0, "id": "@0", "shared": False},
                 {"name": "build", "index": 1, "id": "@1", "shared": True},
             ]
-            with patch(
-                "klangk_backend.acl.check_permission", return_value=True
+            with patch.object(
+                acl_mod.ACL,
+                "check_permission",
+                new=AsyncMock(return_value=True),
             ):
                 await conn.handle_list_shared_terminals()
             calls = [c[0][0] for c in sock.send_json.call_args_list]
@@ -6571,8 +6580,10 @@ class TestShareWindowHandlers:
         sockets.connections[owner_sock] = owner_conn
         sockets.connections[viewer_sock] = viewer_conn
         try:
-            with patch(
-                "klangk_backend.acl.check_permission", return_value=True
+            with patch.object(
+                acl_mod.ACL,
+                "check_permission",
+                new=AsyncMock(return_value=True),
             ):
                 await owner_conn.handle_list_shared_terminals()
             calls = [c[0][0] for c in owner_sock.send_json.call_args_list]
@@ -6608,8 +6619,10 @@ class TestShareWindowHandlers:
                 {"name": "1", "index": 0, "id": "@0", "shared": False}
             ]
             with (
-                patch(
-                    "klangk_backend.acl.check_permission", return_value=True
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
                 ),
                 patch.object(
                     _mock_term,
@@ -6645,7 +6658,9 @@ class TestShareWindowHandlers:
         conn.container_id = "cid"
         conn._user_home = "/home/admin"
         conn.workspace_id = "ws-1"
-        with patch("klangk_backend.acl.check_permission", return_value=True):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=True)
+        ):
             await conn.handle_share_window({})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("id" in c.get("message", "").lower() for c in calls)
@@ -6663,8 +6678,10 @@ class TestShareWindowHandlers:
             {"name": "1", "index": 0, "id": "@0", "shared": False}
         ]
         try:
-            with patch(
-                "klangk_backend.acl.check_permission", return_value=True
+            with patch.object(
+                acl_mod.ACL,
+                "check_permission",
+                new=AsyncMock(return_value=True),
             ):
                 await conn.handle_share_window({"window_id": "@99"})
             calls = [c[0][0] for c in sock.send_json.call_args_list]
@@ -6680,7 +6697,9 @@ class TestShareWindowHandlers:
         conn.container_id = "cid"
         conn._user_home = "/home/admin"
         conn.workspace_id = "no-session-ws"
-        with patch("klangk_backend.acl.check_permission", return_value=True):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=True)
+        ):
             await conn.handle_share_window({"window_id": "@0"})
         # No error — early return
 
@@ -6693,7 +6712,9 @@ class TestShareWindowHandlers:
         conn = _base_conn(user=user, ws=sock)
         conn.container_id = "cid"
         conn._user_home = "/home/admin"
-        with patch("klangk_backend.acl.check_permission", return_value=False):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=False)
+        ):
             await conn.handle_unshare_window({"window_id": "@0"})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Permission" in c.get("message", "") for c in calls)
@@ -6704,7 +6725,9 @@ class TestShareWindowHandlers:
         conn.container_id = "cid"
         conn._user_home = "/home/admin"
         conn.workspace_id = "ws-1"
-        with patch("klangk_backend.acl.check_permission", return_value=True):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=True)
+        ):
             await conn.handle_unshare_window({})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("id" in c.get("message", "").lower() for c in calls)
@@ -6722,8 +6745,10 @@ class TestShareWindowHandlers:
             {"name": "1", "index": 0, "id": "@0", "shared": True}
         ]
         try:
-            with patch(
-                "klangk_backend.acl.check_permission", return_value=True
+            with patch.object(
+                acl_mod.ACL,
+                "check_permission",
+                new=AsyncMock(return_value=True),
             ):
                 await conn.handle_unshare_window({"window_id": "@99"})
             calls = [c[0][0] for c in sock.send_json.call_args_list]
@@ -6739,7 +6764,9 @@ class TestShareWindowHandlers:
         conn.container_id = "cid"
         conn._user_home = "/home/admin"
         conn.workspace_id = "no-session-ws"
-        with patch("klangk_backend.acl.check_permission", return_value=True):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=True)
+        ):
             await conn.handle_unshare_window({"window_id": "@0"})
 
     async def test_unshare_kill_error_handled(self, user):
@@ -6757,8 +6784,10 @@ class TestShareWindowHandlers:
         await session.add_subscriber(sock, "cid")
         try:
             with (
-                patch(
-                    "klangk_backend.acl.check_permission", return_value=True
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
                 ),
                 patch.object(
                     _mock_term,
@@ -6790,8 +6819,10 @@ class TestShareWindowHandlers:
         registry.track_activity("cid", "ws-1")
         try:
             with (
-                patch(
-                    "klangk_backend.acl.check_permission", return_value=True
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
                 ),
                 patch.object(_ws_controllers, "TerminalSession") as MockTS,
                 patch.object(_mock_term, "select_window"),
@@ -6846,8 +6877,10 @@ class TestShareWindowHandlers:
         registry.track_activity("cid", "ws-1")
         try:
             with (
-                patch(
-                    "klangk_backend.acl.check_permission", return_value=True
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
                 ),
                 patch.object(_ws_controllers, "TerminalSession") as MockTS,
                 patch.object(_mock_term, "select_window"),
@@ -6894,7 +6927,9 @@ class TestShareWindowHandlers:
         conn = _base_conn(user=user, ws=sock)
         conn.container_id = "cid"
         conn._user_home = "/home/x"
-        with patch("klangk_backend.acl.check_permission", return_value=False):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=False)
+        ):
             await conn.handle_join_shared_terminal(
                 {"user_id": "x", "window_id": "@99"}
             )
@@ -6907,7 +6942,9 @@ class TestShareWindowHandlers:
         conn.container_id = "cid"
         conn._user_home = "/home/x"
         conn.workspace_id = "ws-1"
-        with patch("klangk_backend.acl.check_permission", return_value=True):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=True)
+        ):
             await conn.handle_join_shared_terminal({})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("required" in c.get("message", "").lower() for c in calls)
@@ -6937,8 +6974,10 @@ class TestShareWindowHandlers:
 
         try:
             with (
-                patch(
-                    "klangk_backend.acl.check_permission", return_value=True
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
                 ),
                 patch.object(_ws_controllers, "TerminalSession") as MockTS,
                 patch.object(
@@ -6987,8 +7026,10 @@ class TestShareWindowHandlers:
 
         try:
             with (
-                patch(
-                    "klangk_backend.acl.check_permission", return_value=True
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
                 ),
                 patch.object(_ws_controllers, "TerminalSession") as MockTS,
                 patch.object(
@@ -7050,8 +7091,10 @@ class TestShareWindowHandlers:
 
         try:
             with (
-                patch(
-                    "klangk_backend.acl.check_permission", return_value=True
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
                 ),
                 patch.object(_ws_controllers, "TerminalSession") as MockTS,
                 patch.object(
@@ -7100,8 +7143,10 @@ class TestShareWindowHandlers:
         ]
         try:
             with (
-                patch(
-                    "klangk_backend.acl.check_permission", return_value=True
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
                 ),
                 patch.object(_ws_controllers, "TerminalSession") as MockTS,
             ):
@@ -7128,7 +7173,9 @@ class TestShareWindowHandlers:
         conn.container_id = "cid"
         conn._user_home = "/home/x"
         conn.workspace_id = "no-session"
-        with patch("klangk_backend.acl.check_permission", return_value=True):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=True)
+        ):
             await conn.handle_join_shared_terminal(
                 {"user_id": "x", "window_id": "@99"}
             )
@@ -7144,8 +7191,10 @@ class TestShareWindowHandlers:
         conn.workspace_id = "ws-1"
         sockets.get_or_create_session("ws-1", app_state)
         try:
-            with patch(
-                "klangk_backend.acl.check_permission", return_value=True
+            with patch.object(
+                acl_mod.ACL,
+                "check_permission",
+                new=AsyncMock(return_value=True),
             ):
                 await conn.handle_join_shared_terminal(
                     {"user_id": "nobody", "window_id": "@99"}
@@ -7166,8 +7215,10 @@ class TestShareWindowHandlers:
                 {"name": "build", "index": 1, "id": "@1", "shared": True},
             ]
             with (
-                patch(
-                    "klangk_backend.acl.check_permission", return_value=True
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
                 ),
                 patch.object(_mock_term, "kill_joiner_sessions"),
                 patch.object(_mock_term, "close_window", return_value=[]),
@@ -7189,7 +7240,9 @@ class TestShareWindowHandlers:
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         conn.container_id = "cid"
-        with patch("klangk_backend.acl.check_permission", return_value=False):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=False)
+        ):
             await conn.handle_delete_shared_terminal(
                 {"user_id": "x", "window_id": "@99"}
             )
@@ -7201,7 +7254,9 @@ class TestShareWindowHandlers:
         conn = _base_conn(user=user, ws=sock)
         conn.container_id = "cid"
         conn.workspace_id = "ws-1"
-        with patch("klangk_backend.acl.check_permission", return_value=True):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=True)
+        ):
             await conn.handle_delete_shared_terminal({})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("required" in c.get("message", "").lower() for c in calls)
@@ -7215,8 +7270,10 @@ class TestShareWindowHandlers:
         conn.workspace_id = "ws-1"
         sockets.get_or_create_session("ws-1", app_state)
         try:
-            with patch(
-                "klangk_backend.acl.check_permission", return_value=True
+            with patch.object(
+                acl_mod.ACL,
+                "check_permission",
+                new=AsyncMock(return_value=True),
             ):
                 await conn.handle_delete_shared_terminal(
                     {"user_id": user["id"], "window_id": "@99"}
@@ -7250,8 +7307,10 @@ class TestShareWindowHandlers:
             {"name": "build", "index": 0, "id": "@0", "shared": True},
         ]
         try:
-            with patch(
-                "klangk_backend.acl.check_permission", return_value=True
+            with patch.object(
+                acl_mod.ACL,
+                "check_permission",
+                new=AsyncMock(return_value=True),
             ):
                 await conn.handle_delete_shared_terminal(
                     {"user_id": other["id"], "window_id": "@0"}
@@ -7285,8 +7344,10 @@ class TestShareWindowHandlers:
                 {"name": "build", "index": 0, "id": "@0", "shared": True},
             ]
             with (
-                patch(
-                    "klangk_backend.acl.check_permission", return_value=True
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
                 ),
                 patch.object(_mock_term, "kill_joiner_sessions"),
                 patch.object(_mock_term, "close_window", return_value=[]),
@@ -7309,8 +7370,10 @@ class TestShareWindowHandlers:
         ]
         try:
             with (
-                patch(
-                    "klangk_backend.acl.check_permission", return_value=True
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
                 ),
                 patch.object(
                     _mock_term,
@@ -7333,7 +7396,11 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/admin"
         conn.workspace_id = "no-session"
         with (
-            patch("klangk_backend.acl.check_permission", return_value=True),
+            patch.object(
+                acl_mod.ACL,
+                "check_permission",
+                new=AsyncMock(return_value=True),
+            ),
             patch.object(_mock_term, "new_window", return_value=[]),
         ):
             await conn.handle_create_shared_terminal({"name": "dev"})
@@ -7344,7 +7411,9 @@ class TestShareWindowHandlers:
         conn = _base_conn(user=user, ws=sock)
         conn.container_id = "cid"
         conn.workspace_id = "no-session"
-        with patch("klangk_backend.acl.check_permission", return_value=True):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=True)
+        ):
             await conn.handle_delete_shared_terminal(
                 {"user_id": user["id"], "window_id": "@99"}
             )
@@ -7359,7 +7428,9 @@ class TestShareWindowHandlers:
         conn = _base_conn(user=user, ws=sock)
         conn.container_id = "cid"
         conn._user_home = "/home/admin"
-        with patch("klangk_backend.acl.check_permission", return_value=False):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=False)
+        ):
             await conn.handle_create_shared_terminal({"name": "x"})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Permission" in c.get("message", "") for c in calls)
@@ -7370,7 +7441,9 @@ class TestShareWindowHandlers:
         conn.container_id = "cid"
         conn._user_home = "/home/admin"
         conn.workspace_id = "ws-1"
-        with patch("klangk_backend.acl.check_permission", return_value=True):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=True)
+        ):
             await conn.handle_create_shared_terminal({"name": ""})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Name" in c.get("message", "") for c in calls)
@@ -7382,7 +7455,11 @@ class TestShareWindowHandlers:
         conn._user_home = "/home/admin"
         conn.workspace_id = "ws-1"
         with (
-            patch("klangk_backend.acl.check_permission", return_value=True),
+            patch.object(
+                acl_mod.ACL,
+                "check_permission",
+                new=AsyncMock(return_value=True),
+            ),
             patch.object(
                 _mock_term,
                 "new_window",
@@ -7403,7 +7480,9 @@ class TestShareWindowHandlers:
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         conn.workspace_id = "ws-1"
-        with patch("klangk_backend.acl.check_permission", return_value=False):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=False)
+        ):
             await conn.handle_list_shared_terminals()
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Permission" in c.get("message", "") for c in calls)
@@ -7412,7 +7491,9 @@ class TestShareWindowHandlers:
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         conn.workspace_id = "no-session"
-        with patch("klangk_backend.acl.check_permission", return_value=True):
+        with patch.object(
+            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=True)
+        ):
             await conn.handle_list_shared_terminals()
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         shared = [c for c in calls if c.get("type") == "shared_terminals"]

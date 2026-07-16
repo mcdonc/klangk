@@ -6,7 +6,6 @@ import time
 from datetime import datetime, timedelta, timezone
 
 
-from .. import acl as _acl
 from .. import container, model
 from ..terminal import TerminalSession
 from ..podman import ExecSession
@@ -423,8 +422,8 @@ class Connection:
             send_error(self.sock, "Missing workspaceId")
             return
 
-        principals = await _acl.get_principals(self.user["id"])
-        if not await _acl.check_permission(
+        principals = await self.app_state.acl.get_principals(self.user["id"])
+        if not await self.app_state.acl.check_permission(
             f"/workspaces/{workspace_id}", principals, "terminal"
         ):
             send_error(self.sock, "Permission denied")
@@ -639,8 +638,8 @@ class Connection:
         """Check if the connected user has a workspace permission."""
         if not self.workspace_id:
             return False
-        principals = await _acl.get_principals(self.user["id"])
-        return await _acl.check_permission(
+        principals = await self.app_state.acl.get_principals(self.user["id"])
+        return await self.app_state.acl.check_permission(
             f"/workspaces/{self.workspace_id}", principals, perm
         )
 

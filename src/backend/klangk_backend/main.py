@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import (
+    acl,
     agent,
     auth,
     container,
@@ -626,6 +627,12 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # domains still go through the _current_db ContextVar backstop.
     app.state.model = model.Model(app.state)
     app.state.agents = agent.Agents(app.state)
+    # #1577: ACL(app_state) owns the FastAPI permission layer — the
+    # resource-tree walk / principal resolution that the ``has_permission``
+    # dependency (resolved per-request from ``request.app.state.acl``) and
+    # the WebSocket connection layer delegate to. Reached through
+    # ``self.app_state.model.{users,acl}``, so wired after ``app.state.model``.
+    app.state.acl = acl.ACL(app.state)
     # #1483: EmailService(app_state) owns SMTP/sendmail transport + the
     # Jinja template env (previously module-level functions reading
     # resolve_env_value at call time).
