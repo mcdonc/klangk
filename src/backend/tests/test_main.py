@@ -66,7 +66,19 @@ def _make_app_state(settings=None):
     app_state.util = util_mod.Util(app_state)
 
     app_state.auth = auth_mod.Auth(app_state)
+    # #1571: Lifecycle(app_state) owns startup/shutdown/restart + seeding.
+    app_state.lifecycle = main.Lifecycle(app_state)
     return app_state
+
+
+def _lifecycle(settings):
+    """A ``Lifecycle`` whose app_state carries just ``settings``.
+
+    The seed methods read only ``self.app_state.settings`` (DB access goes
+    through the model/ ContextVar backstop bound by the ``db`` fixture),
+    so a bare namespace is enough for the seed-focused tests below.
+    """
+    return main.Lifecycle(types.SimpleNamespace(settings=settings))
 
 
 # --- Seed default user ---
@@ -74,14 +86,14 @@ def _make_app_state(settings=None):
 
 class TestSeedDefaultUser:
     async def test_creates_user_when_missing(self, db):
-        await main.seed_default_user(
+        await _lifecycle(
             make_settings(
                 {
                     "KLANGK_DEFAULT_USER": "seed-test",
                     "KLANGK_DEFAULT_PASSWORD": "seed-pass",
                 }
             )
-        )
+        ).seed_default_user()
         user = await model.get_user_by_email("seed-test")
         assert user is not None
 
@@ -92,16 +104,16 @@ class TestSeedDefaultUser:
                 "KLANGK_DEFAULT_PASSWORD": "seed-pass",
             }
         )
-        await main.seed_default_user(s)
+        await _lifecycle(s).seed_default_user()
         # Call again — should not raise
-        await main.seed_default_user(s)
+        await _lifecycle(s).seed_default_user()
         user = await model.get_user_by_email("seed-test")
         assert user is not None
 
     async def test_generates_password_when_not_set(self, db, capsys):
-        await main.seed_default_user(
+        await _lifecycle(
             make_settings({"KLANGK_DEFAULT_USER": "gen-test"})
-        )
+        ).seed_default_user()
         # Swallow the incidental generated-password print to stderr
         # (asserted explicitly by test_generated_password_printed_to_stderr).
         capsys.readouterr()
@@ -119,9 +131,9 @@ class TestSeedDefaultUser:
         import logging
 
         with caplog.at_level(logging.INFO):
-            await main.seed_default_user(
+            await _lifecycle(
                 make_settings({"KLANGK_DEFAULT_USER": "log-test"})
-            )
+            ).seed_default_user()
         # Password must NOT appear in log output (security)
         assert "password printed to stderr" in caplog.text
         assert "log-test" in caplog.text
@@ -274,36 +286,36 @@ class TestNoAuthBindSafety:
 
 class TestSeedAgentUser:
     async def test_creates_agent_user(self, db):
-        await main.seed_agent_user(make_settings({}))
+        await _lifecycle(make_settings({})).seed_agent_user()
         user = await model.get_user_by_id(model.AGENT_USER_ID)
         assert user is not None
         assert user["email"] == "clanker@example.com"
         assert user["handle"] == "clanker"
 
     async def test_custom_env_vars(self, db):
-        await main.seed_agent_user(
+        await _lifecycle(
             make_settings(
                 {
                     "KLANGK_AGENT_EMAIL": "bot@test.com",
                     "KLANGK_AGENT_HANDLE": "TestBot",
                 }
             )
-        )
+        ).seed_agent_user()
         user = await model.get_user_by_id(model.AGENT_USER_ID)
         assert user is not None
         assert user["email"] == "bot@test.com"
         assert user["handle"] == "TestBot"
 
     async def test_upserts_existing(self, db):
-        await main.seed_agent_user(make_settings({}))
-        await main.seed_agent_user(
+        await _lifecycle(make_settings({})).seed_agent_user()
+        await _lifecycle(
             make_settings(
                 {
                     "KLANGK_AGENT_EMAIL": "new@test.com",
                     "KLANGK_AGENT_HANDLE": "NewBot",
                 }
             )
-        )
+        ).seed_agent_user()
         user = await model.get_user_by_id(model.AGENT_USER_ID)
         assert user["email"] == "new@test.com"
         assert user["handle"] == "NewBot"
@@ -311,7 +323,7 @@ class TestSeedAgentUser:
     async def test_clears_cache(self, db):
         # Prime cache with fallback
         await model.get_agent_user()
-        await main.seed_agent_user(make_settings({}))
+        await _lifecycle(make_settings({})).seed_agent_user()
         # Cache should now reflect DB values
         agent = await model.get_agent_user()
         assert agent["email"] == "clanker@example.com"
@@ -347,9 +359,9 @@ class TestSeedAgentUser:
         )
         assert human["handle"] == "alice"
         with pytest.raises(RuntimeError, match="alice"):
-            await main.seed_agent_user(
+            await _lifecycle(
                 make_settings({"KLANGK_AGENT_HANDLE": "alice"})
-            )
+            ).seed_agent_user()
         # Human user is untouched.
         refreshed = await model.get_user_by_id(human["id"])
         assert refreshed["handle"] == "alice"
@@ -358,14 +370,16 @@ class TestSeedAgentUser:
 
     async def test_seed_rename_to_human_handle_refuses(self, db):
         """Re-seeding the agent onto a human's handle fails, leaves agent as-is."""
-        await main.seed_agent_user(make_settings({}))  # agent handle = clanker
+        await _lifecycle(
+            make_settings({})
+        ).seed_agent_user()  # agent handle = clanker
         human = await model.create_user(
             "alice@example.com", "hash", verified=True
         )
         with pytest.raises(RuntimeError, match="already used by another user"):
-            await main.seed_agent_user(
+            await _lifecycle(
                 make_settings({"KLANGK_AGENT_HANDLE": "alice"})
-            )
+            ).seed_agent_user()
         # Agent keeps its original handle; human untouched.
         agent = await model.get_user_by_id(model.AGENT_USER_ID)
         assert agent["handle"] == "clanker"
@@ -393,9 +407,9 @@ class TestSeedAgentUser:
         (home / "alice").symlink_to(f".users/{human['id']}")
 
         with pytest.raises(RuntimeError):
-            await main.seed_agent_user(
+            await _lifecycle(
                 make_settings({"KLANGK_AGENT_HANDLE": "alice"})
-            )
+            ).seed_agent_user()
 
         # Human's files are exactly where they were — nothing migrated.
         assert (human_dir / "secret.txt").read_text() == "alice's secrets"
@@ -425,6 +439,7 @@ class TestLifespan:
         app.state.util = util_mod.Util(app.state)
 
         app.state.auth = auth_mod.Auth(app.state)
+        app.state.lifecycle = app_state.lifecycle
         registry = app_state.container_registry
         with (
             patch.object(
@@ -471,6 +486,7 @@ class TestLifespan:
         app.state.util = util_mod.Util(app.state)
 
         app.state.auth = auth_mod.Auth(app.state)
+        app.state.lifecycle = app_state.lifecycle
         registry = app_state.container_registry
         with (
             patch.object(
@@ -517,17 +533,6 @@ class TestLifespan:
 
 
 class TestStartupShutdownRestart:
-    @pytest.fixture(autouse=True)
-    def _reset_restart_lock(self):
-        # ``main._restart_lock`` is a module-global lazily created on first
-        # use. Without a reset, lock state leaks across tests, making them
-        # order-dependent (and breaking some tests in isolation or under
-        # pytest-randomly's shuffle). Reset to the pre-first-use floor before
-        # every test in this class so each one is self-contained (#1242).
-        main._restart_lock = None
-        yield
-        main._restart_lock = None
-
     async def test_startup_calls_container_sequence(self):
         app_state = _make_app_state()
         registry = app_state.container_registry
@@ -551,7 +556,7 @@ class TestStartupShutdownRestart:
                 return_value=0,
             ) as mock_autostart,
         ):
-            await main.startup(app_state)
+            await app_state.lifecycle.startup()
         mock_prewarm.assert_awaited_once()
         mock_adopt.assert_awaited_once()
         mock_cleanup.assert_called_once()
@@ -578,7 +583,7 @@ class TestStartupShutdownRestart:
                 registry, "shutdown", new_callable=AsyncMock
             ) as mock_shutdown,
         ):
-            await main.runtime_shutdown(app_state)
+            await app_state.lifecycle.runtime_shutdown()
         mock_disc.assert_awaited_once()
         mock_stop_agents.assert_awaited_once()
         mock_clear.assert_called_once()
@@ -590,72 +595,65 @@ class TestStartupShutdownRestart:
         with (
             patch.object(util_mod.Util, "remove_pid_file") as mock_remove,
         ):
-            await main.process_shutdown(app_state)
+            await app_state.lifecycle.process_shutdown()
         mock_remove.assert_called_once()
         app_state.db.dispose_engine.assert_awaited_once()
 
     async def test_restart_runtime_runs_shutdown_then_startup(self):
-        main._restart_lock = None  # force fresh lock creation
         app_state = _make_app_state()
-        wd = nginx_mod.NginxWatchdog(app_state)
+        lc = app_state.lifecycle
+        lc._restart_lock = None  # force fresh lock creation
         with (
-            patch(
-                "klangk_backend.main.runtime_shutdown", new_callable=AsyncMock
+            patch.object(
+                lc, "runtime_shutdown", new_callable=AsyncMock
             ) as mock_down,
-            patch(
-                "klangk_backend.main.startup", new_callable=AsyncMock
-            ) as mock_up,
+            patch.object(lc, "startup", new_callable=AsyncMock) as mock_up,
         ):
-            await main.restart_runtime(app_state, wd)
-        mock_down.assert_awaited_once_with(app_state)
-        mock_up.assert_awaited_once_with(app_state)
+            await lc.restart_runtime()
+        mock_down.assert_awaited_once()
+        mock_up.assert_awaited_once()
         # Lock was created and is now held-free.
-        assert main._restart_lock is not None
+        assert lc._restart_lock is not None
 
     async def test_restart_runtime_reuses_existing_lock(self):
         # Seed a lock explicitly; ``restart_runtime`` must reuse it rather
-        # than create a new one. (Previously this relied on a prior test's
-        # side effect of populating the module-global, which made it
-        # order-dependent and broken in isolation — #1242.)
-        main._restart_lock = asyncio.Lock()
-        existing = main._restart_lock
+        # than create a new one. The lock is now per-instance (#1571), so a
+        # fresh Lifecycle starts at the pre-first-use floor without a
+        # cross-test reset fixture.
         app_state = _make_app_state()
-        wd = nginx_mod.NginxWatchdog(app_state)
+        lc = app_state.lifecycle
+        lc._restart_lock = asyncio.Lock()
+        existing = lc._restart_lock
         with (
-            patch(
-                "klangk_backend.main.runtime_shutdown", new_callable=AsyncMock
-            ),
-            patch("klangk_backend.main.startup", new_callable=AsyncMock),
+            patch.object(lc, "runtime_shutdown", new_callable=AsyncMock),
+            patch.object(lc, "startup", new_callable=AsyncMock),
         ):
-            await main.restart_runtime(app_state, wd)
+            await lc.restart_runtime()
         # Same lock object reused, not replaced.
-        assert main._restart_lock is existing
+        assert lc._restart_lock is existing
 
     async def test_restart_lock_serializes_concurrent_calls(self):
         """Two restarts kicked off together run strictly one-after-another."""
-        main._restart_lock = None
+        app_state = _make_app_state()
+        lc = app_state.lifecycle
+        lc._restart_lock = None
         order = []
 
-        async def fake_shutdown(app_state):
+        async def fake_shutdown():
             order.append("down-start")
             await asyncio.sleep(0.01)
             order.append("down-end")
 
-        async def fake_startup(app_state):
+        async def fake_startup():
             order.append("up")
 
-        app_state = _make_app_state()
-        wd = nginx_mod.NginxWatchdog(app_state)
         with (
-            patch(
-                "klangk_backend.main.runtime_shutdown",
-                side_effect=fake_shutdown,
-            ),
-            patch("klangk_backend.main.startup", side_effect=fake_startup),
+            patch.object(lc, "runtime_shutdown", side_effect=fake_shutdown),
+            patch.object(lc, "startup", side_effect=fake_startup),
         ):
             await asyncio.gather(
-                main.restart_runtime(app_state, wd),
-                main.restart_runtime(app_state, wd),
+                lc.restart_runtime(),
+                lc.restart_runtime(),
             )
         # Two complete down-start...down-end...up cycles, never interleaved.
         assert order == [
@@ -670,15 +668,15 @@ class TestStartupShutdownRestart:
     async def test_on_sighup_schedules_restart(self):
         """on_sighup creates a task that runs restart_runtime."""
         app_state = _make_app_state()
-        wd = nginx_mod.NginxWatchdog(app_state)
-        with patch(
-            "klangk_backend.main.restart_runtime", new_callable=AsyncMock
+        lc = app_state.lifecycle
+        with patch.object(
+            lc, "restart_runtime", new_callable=AsyncMock
         ) as mock_restart:
-            main.on_sighup(app_state, wd)
+            lc.on_sighup()
             # Let the scheduled task run.
             await asyncio.sleep(0)
             await asyncio.sleep(0)
-        mock_restart.assert_awaited_once_with(app_state, wd)
+        mock_restart.assert_awaited_once()
 
     async def test_lifespan_registers_sighup_handler(self, db):
         """The lifespan installs (and removes) a SIGHUP handler."""
@@ -698,6 +696,7 @@ class TestStartupShutdownRestart:
         app.state.util = util_mod.Util(app.state)
 
         app.state.auth = auth_mod.Auth(app.state)
+        app.state.lifecycle = app_state.lifecycle
         registry = app_state.container_registry
         loop = asyncio.get_running_loop()
         with (

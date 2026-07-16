@@ -100,6 +100,19 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **`Lifecycle(app_state)` class** — the app-level lifecycle functions in
+  `klangk_backend/main.py` (DB seeding of the default user / agent user /
+  default ACLs, plus `startup` / `runtime_shutdown` / `process_shutdown` /
+  `restart_runtime` / `on_sighup`) are now methods on a `Lifecycle(app_state)`
+  class wired as `app.state.lifecycle`, instead of module-level free
+  functions with `app_state` threaded in. The lifespan and the SIGHUP
+  restart path call its methods; the per-process restart lock that
+  serialized SIGHUP restarts moved from a module global to a per-instance
+  attribute. Pure helpers with no `app_state` dependency
+  (`_is_loopback_bind`, `enforce_no_auth_bind_safety`, `setup_logfire`,
+  `register_exception_handlers`) stay module-level. No behavior change
+  (#1571).
+
 - **`Files(app_state)` class** — the eight stateful file operations in
   `klangk_backend/files.py` (list/read/write/delete/rename/stat/stream)
   are now methods on a `Files(app_state)` class wired as

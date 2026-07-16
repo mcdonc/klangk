@@ -2512,9 +2512,11 @@ class TestWorkspaceSharingRoutes:
     ):
         # role=None is removal-from-all-roles — harmless cleanup, so the
         # guard (which only fires on a grant) must let it through.
-        from klangk_backend.main import seed_agent_user
+        from klangk_backend.main import Lifecycle
 
-        await seed_agent_user(make_settings({}))
+        await Lifecycle(
+            types.SimpleNamespace(settings=make_settings({}))
+        ).seed_agent_user()
         agent = await model.get_user_by_id(model.AGENT_USER_ID)
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -2564,9 +2566,11 @@ class TestWorkspaceSharingRoutes:
         # handler translates AgentPrincipalError to HTTP 400. This is the
         # one HTTP-level grant test kept to prove the wiring; the choke
         # points themselves are unit-tested in test_model.py.
-        from klangk_backend.main import seed_agent_user
+        from klangk_backend.main import Lifecycle
 
-        await seed_agent_user(make_settings({}))
+        await Lifecycle(
+            types.SimpleNamespace(settings=make_settings({}))
+        ).seed_agent_user()
         agent = await model.get_user_by_id(model.AGENT_USER_ID)
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -3225,9 +3229,11 @@ class TestTransferOwnership:
         assert resp.status_code == 403
 
     async def test_transfer_to_agent_rejected(self, client, user):
-        from klangk_backend.main import seed_agent_user
+        from klangk_backend.main import Lifecycle
 
-        await seed_agent_user(make_settings({}))
+        await Lifecycle(
+            types.SimpleNamespace(settings=make_settings({}))
+        ).seed_agent_user()
         agent = await model.get_user_by_id(model.AGENT_USER_ID)
 
         headers = await _auth_headers(client)
@@ -5092,9 +5098,11 @@ class TestAdminEndpoints:
         assert resp.status_code == 404
 
     async def test_delete_agent_user_rejected(self, client, admin_user, db):
-        from klangk_backend.main import seed_agent_user
+        from klangk_backend.main import Lifecycle
 
-        await seed_agent_user(make_settings({}))
+        await Lifecycle(
+            types.SimpleNamespace(settings=make_settings({}))
+        ).seed_agent_user()
         headers = await self._admin_headers(client)
         resp = await client.delete(
             f"/api/v1/admin/users/{model.AGENT_USER_ID}", headers=headers
@@ -5214,9 +5222,11 @@ class TestAdminEndpoints:
         self, client, app, admin_user, db
     ):
         # Seed the agent user so it exists in the DB
-        from klangk_backend.main import seed_agent_user
+        from klangk_backend.main import Lifecycle
 
-        await seed_agent_user(make_settings({}))
+        await Lifecycle(
+            types.SimpleNamespace(settings=make_settings({}))
+        ).seed_agent_user()
         headers = await self._admin_headers(client)
         resp = await client.patch(
             f"/api/v1/admin/users/{model.AGENT_USER_ID}",
