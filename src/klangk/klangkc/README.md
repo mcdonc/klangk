@@ -33,4 +33,4 @@ klangkc shell my-project               # drop into a shell
 
 ## Documentation
 
-Full documentation: https://mcdonc.github.io/klangk/reference/cli/
+Full documentation: <https://mcdonc.github.io/klangk/reference/cli/>
