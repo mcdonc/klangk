@@ -223,7 +223,7 @@ class Lifecycle:
         settings = self.app_state.settings
         email = settings.agent_email
         handle = settings.agent_handle
-        async with model.transaction() as db:
+        async with self.app_state.db.transaction() as db:
             # Pre-check: refuse a handle already claimed by a non-agent user.
             # Runs in the same transaction as the upsert so there is no
             # check-then-act window.
@@ -244,7 +244,7 @@ class Lifecycle:
                 " ON CONFLICT(id) DO UPDATE SET email = ?, handle = ?",
                 (AGENT_USER_ID, email, handle, email, handle),
             )
-        model.clear_agent_cache()
+        self.app_state.model.users.clear_agent_cache()
         logger.info("Seeded agent user '%s' (%s)", handle, email)
 
     async def startup(self) -> None:
@@ -399,13 +399,12 @@ def enforce_no_auth_bind_safety(app_state) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # #1520: bind app.state.db as the active DB for this lifespan's context
-    # before any DB access. Request/SIGHUP tasks inherit this context, so the
-    # model/ free functions (transaction/fetchone/get_db) reach the right DB
-    # without a module global. Reset on teardown so a follow-up bind (tests)
-    # starts clean.
-    _db_token = model.db.set_current_db(app.state.db)
-    await model.init_db()
+    # Schema bootstrap: reach the DB through the single owned
+    # ``app.state.db`` (wired in ``build_app``). No ambient ContextVar
+    # bind — every data-access path resolves ``app.state.db`` directly
+    # (#1563, #1578), which is the #1551 fix (the old env-only lazy
+    # fallback that could build a different DB is gone).
+    await app.state.model.init_db()
     app.state.util.resolve_instance_id()
 
     existing_pid = app.state.util.check_pid_file()
@@ -470,7 +469,6 @@ async def lifespan(app: FastAPI):
         await app.state.nginx_watchdog.stop()
         await app.state.lifecycle.runtime_shutdown()
         await app.state.lifecycle.process_shutdown()
-        model.db.reset_current_db(_db_token)
         logger.info("Klangk backend stopped")
 
 

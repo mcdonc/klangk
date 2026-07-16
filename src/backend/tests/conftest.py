@@ -48,59 +48,60 @@ def temp_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("KLANGK_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", str(tmp_path / "customize"))
     monkeypatch.delenv("KLANGK_IMAGE_PULL_POLICY", raising=False)
-    # Rebuild the DB instance from the new env so the engine cache and
-    # db_path point at the per-test temp dir (#1452: no import-time globals
-    # to rebind — construct a fresh DB from settings; #1520: bind it via the
-    # ContextVar, not a module global).
-    import klangk_backend.model as model
-    from klangk_backend.model import db as db_mod
+    # Build the per-test DB from the new env so the engine cache and db_path
+    # point at the per-test temp dir (#1452: no import-time globals). Stash it
+    # in the per-test holder so the ``app_state`` fixture (and any
+    # ``wire_db_and_model`` caller) reuses this exact schema-bearing instance —
+    # not a fresh DB on a different temp path (which would hit "no such
+    # table"). This replaces the pre-#1578 ``_current_db`` ContextVar bind
+    # (#1578); its env-only lazy fallback was the #1551 divergence path.
+    from klangk_backend.model.db import DB
+    from _helpers import set_test_db, reset_test_db
 
-    _db_token = db_mod.set_current_db(db_mod.DB(KlangkSettings(os.environ)))
+    set_test_db(DB(KlangkSettings(os.environ)))
     # Clear agent caches so each test starts fresh.
-    model.clear_agent_cache()
+    from klangk_backend.model import clear_agent_cache
+
+    clear_agent_cache()
     yield tmp_path
-    db_mod.reset_current_db(_db_token)
+    reset_test_db()
 
 
 @pytest.fixture
-async def db(temp_data_dir):
-    """Initialize a fresh database."""
-    import klangk_backend.model as model
-
-    await model.init_db()
-    return temp_data_dir
+async def db(app_state):
+    """Initialize the schema and return the per-test DB."""
+    await app_state.model.init_db()
+    return app_state.db
 
 
 @pytest.fixture
-async def agent_user(db):
+async def agent_user(app_state):
     """Seed the chat agent user into the DB."""
-    import klangk_backend.model as model
+    from klangk_backend.model import AGENT_USER_ID
 
-    async with model.transaction() as agent_db:
+    await app_state.model.init_db()
+    async with app_state.db.transaction() as agent_db:
         await agent_db.execute(
             "INSERT OR REPLACE INTO users"
             " (id, email, password_hash, verified, provider, handle)"
             " VALUES (?, ?, NULL, 1, 'system', ?)",
-            (model.AGENT_USER_ID, "clanker@example.com", "clanker"),
+            (AGENT_USER_ID, "clanker@example.com", "clanker"),
         )
-    model.clear_agent_cache()
+    app_state.model.users.clear_agent_cache()
 
 
 @pytest.fixture
-async def user(db):
+async def user(app_state):
     """Create a test user and return it."""
-    import klangk_backend.model as model
-
-    user = await model.create_user(
+    await app_state.model.init_db()
+    return await app_state.model.users.create_user(
         "testuser@example.com", _TEST_PASSWORD_HASH, verified=True
     )
-    return user
 
 
 @pytest.fixture
-async def admin_group(db):
+async def admin_group(app_state):
     """Create the admin group and seed default ACLs."""
-    import klangk_backend.model as model
     from klangk_backend.model import (
         ACTION_ALLOW,
         ACTION_DENY,
@@ -110,9 +111,13 @@ async def admin_group(db):
         SYSTEM_EVERYONE,
     )
 
-    group = await model.create_group("admin", description="Administrators")
+    await app_state.model.init_db()
+    group = await app_state.model.users.create_group(
+        "admin", description="Administrators"
+    )
+    acl = app_state.model.acl
     # Seed default ACLs
-    await model.add_acl_entry(
+    await acl.add_acl_entry(
         "/",
         0,
         ACTION_ALLOW,
@@ -120,7 +125,7 @@ async def admin_group(db):
         PRINCIPAL_SYSTEM,
         system_principal=SYSTEM_AUTHENTICATED,
     )
-    await model.add_acl_entry(
+    await acl.add_acl_entry(
         "/",
         1,
         ACTION_DENY,
@@ -128,7 +133,7 @@ async def admin_group(db):
         PRINCIPAL_SYSTEM,
         system_principal=SYSTEM_EVERYONE,
     )
-    await model.add_acl_entry(
+    await acl.add_acl_entry(
         "/workspaces",
         0,
         ACTION_ALLOW,
@@ -136,7 +141,7 @@ async def admin_group(db):
         PRINCIPAL_SYSTEM,
         system_principal=SYSTEM_AUTHENTICATED,
     )
-    await model.add_acl_entry(
+    await acl.add_acl_entry(
         "/admin",
         0,
         ACTION_ALLOW,
@@ -144,7 +149,7 @@ async def admin_group(db):
         PRINCIPAL_GROUP,
         group_id=group["id"],
     )
-    await model.add_acl_entry(
+    await acl.add_acl_entry(
         "/admin",
         1,
         ACTION_DENY,
@@ -156,25 +161,27 @@ async def admin_group(db):
 
 
 @pytest.fixture
-async def admin_user(admin_group):
+async def admin_user(admin_group, app_state):
     """Create a test user in the admin group and return it."""
-    import klangk_backend.model as model
-
-    user = await model.create_user(
+    user = await app_state.model.users.create_user(
         "testadmin@example.com", _TEST_PASSWORD_HASH, verified=True
     )
-    await model.add_user_to_group(user["id"], admin_group["id"])
+    await app_state.model.users.add_user_to_group(
+        user["id"], admin_group["id"]
+    )
     return user
 
 
 @pytest.fixture
-def app_state(temp_data_dir):
+async def app_state(temp_data_dir):
     """Build a minimal app_state with owned instances wired (#1484).
 
     Shared across all test files — each test file that needs app_state
     requests it rather than defining its own. Built fresh per test from
     the temp_data_dir's settings so every owned instance points at the
-    per-test tmp dir.
+    per-test tmp dir. Also initializes the schema on ``app_state.db`` so
+    every test that requests ``app_state`` (or ``db``) starts with a
+    schema'd DB (#1578).
     """
     import types
 
@@ -200,13 +207,17 @@ def app_state(temp_data_dir):
     state.workspaces = Workspaces(state)
     state.email = EmailService(state)
     state.util = Util(state)
-    # #1572: wire DB + Model(app_state) so converted domains (tokens,
-    # login_attempts, invitations, ports) reached via app_state.model.*
-    # resolve the per-test DB (the same one the ContextVar backstop binds
-    # for the not-yet-converted domains).
+    # Wire DB + Model(app_state) so every domain reached via
+    # app_state.model.* resolves the per-test DB (#1578). With the
+    # _current_db ContextVar gone, app_state.db is the single owner.
     from _helpers import wire_db_and_model
 
     wire_db_and_model(state)
+    # NOTE: schema is NOT initialized here. ``db`` and the seed fixtures
+    # (``user``/``agent_user``/``admin_group``) call ``init_db`` themselves
+    # so that migration tests can request ``app_state``, plant a legacy
+    # schema via aiosqlite, and only then run ``app_state.model.init_db()``
+    # (#1578).
     # Resolve the instance ID into the per-test util (writes
     # <data_dir>/instance-id), so consumers of app_state.util.instance_id()
     # get a real value without each test calling resolve explicitly.

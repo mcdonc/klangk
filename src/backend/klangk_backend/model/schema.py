@@ -1,12 +1,21 @@
 """Database schema creation and in-place migrations (``init_db``)."""
 
-from .db import get_db
 from .acl import PRINCIPAL_USER
 from .users import AGENT_USER_ID, backfill_handles
 
 
-async def init_db() -> None:
-    db = await get_db()
+async def init_db(db) -> None:
+    """Create/migrate the schema on the given connection.
+
+    ``db`` is a raw connection (``await app_state.db.get_db()``) acquired by
+    the caller — typically :meth:`Model.init_db`, which pulls it from the
+    single owned ``app_state.db``. ``init_db`` owns the commit and closes
+    the connection. Requiring the connection (rather than reaching for an
+    ambient one) is the #1551 fix: the old env-only lazy
+    ``DB(KlangkSettings(os.environ))`` fallback built a different DB than
+    the server, which is the divergence #1551 describes. With it gone, every
+    path reaches the one ``app.state.db`` (#1578).
+    """
     try:
         await db.execute(f"""
             CREATE TABLE IF NOT EXISTS users (

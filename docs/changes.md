@@ -100,6 +100,26 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **The `_current_db` ContextVar and its module-level DB delegates are
+  gone (#1578, fixes #1551).** Every data-access path now reaches the DB
+  through the single owned `app_state.db` — `model.db`'s `_current_db`
+  `ContextVar`, `set_current_db` / `reset_current_db` / `get_current_db`,
+  and the module-level `get_db()` / `transaction()` / `fetchone()`
+  delegates are deleted. This removes the #1551 divergence path:
+  `get_current_db()`'s lazy `DB(KlangkSettings(os.environ))` fallback
+  could build a different DB than the server (which is built from a
+  config file), so a process whose config-file `data_dir` differed from
+  ambient `KLANGK_DATA_DIR` silently read/wrote a second SQLite file.
+  With the fallback gone, every path (lifespan `init_db`, request
+  handlers, startup seed) resolves the one `app.state.db`. The
+  per-domain module-level free-function backstops (users, acl, chat,
+  ports, tokens, login_attempts, invitations) are deleted too — their
+  method equivalents on `app_state.model.<domain>` are the single
+  owners; only the pure helpers (`row_to_acl_entry`, `sort_order_clause`,
+  the handle helpers) and the `db`-param helpers used by the schema
+  migration remain. `schema.init_db` now takes the connection explicitly;
+  `Model.init_db` pulls it from `app_state.db`.
+
 - **Production callers of the users data-access layer now reach it via
   `app_state.model.users.*` (#1596).** The seeding path (`Lifecycle`:
   `ensure_admin_group` / `seed_default_user`), the OIDC JIT-provisioning

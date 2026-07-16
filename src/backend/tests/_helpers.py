@@ -12,6 +12,34 @@ import tempfile
 
 from klangk_backend.settings import KlangkSettings
 
+# Per-test DB holder (#1578). The autouse ``temp_data_dir`` fixture builds a
+# DB from the per-test settings and stashes it here (``set_test_db``); the
+# ``app_state`` fixture and ``wire_db_and_model`` read it via ``get_test_db``
+# so every ``app_state.db`` in the test points at the same schema-bearing
+# instance. This replaces the pre-#1578 ``_current_db`` ContextVar, which
+# is gone (its env-only lazy fallback was the #1551 divergence path).
+# Cleared on fixture teardown.
+_test_db = None
+
+
+def set_test_db(db) -> None:
+    """Stash the per-test DB so ``wire_db_and_model`` can reuse it."""
+    global _test_db
+    _test_db = db
+
+
+def get_test_db():
+    """Return the per-test DB, or raise ``LookupError`` if none is set."""
+    if _test_db is None:
+        raise LookupError("no per-test DB; call set_test_db first")
+    return _test_db
+
+
+def reset_test_db() -> None:
+    """Clear the per-test DB (fixture teardown)."""
+    global _test_db
+    _test_db = None
+
 
 def make_settings(
     env: dict | None = None, config_file: str | None = None
@@ -43,20 +71,19 @@ def wire_db_and_model(state) -> None:
     ``app_state`` namespace and constructs an owned instance that touches
     those domains (``Auth``, ``ContainerRegistry``, …) must wire all three.
 
-    Reuses the ContextVar-bound DB when one exists (the autouse
-    ``temp_data_dir`` fixture binds it and runs ``init_db`` against it), so
-    ``app_state.db`` is the *same* schema-bearing instance the rest of the
-    test reaches via the backstop — not a fresh DB on a different temp path
-    (which would hit "no such table"). Idempotent: skips re-wiring when
-    already present.
+    Reuses the per-test DB (the autouse ``temp_data_dir`` fixture builds
+    one and runs ``init_db`` against it) so ``app_state.db`` is the *same*
+    schema-bearing instance the rest of the test reaches — not a fresh DB
+    on a different temp path (which would hit "no such table"). Idempotent:
+    skips re-wiring when already present.
     """
     from klangk_backend.model import Model
-    from klangk_backend.model.db import DB, get_current_db
+    from klangk_backend.model.db import DB
     from klangk_backend.acl import ACL
 
     if getattr(state, "db", None) is None:
         try:
-            state.db = get_current_db()
+            state.db = get_test_db()
         except LookupError:
             state.db = DB(state.settings)
     if getattr(state, "model", None) is None:

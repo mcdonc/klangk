@@ -926,35 +926,51 @@ class TestCallLoginHook:
 
 
 class TestSyncOidcGroups:
-    async def test_creates_groups_and_adds_memberships(self, db):
-        from klangk_backend import model
+    async def test_creates_groups_and_adds_memberships(self, db, app_state):
 
-        user = await model.create_user("sync2@example.com", "hash")
-        await oidc.sync_oidc_groups(user["id"], {"new-group-a", "new-group-b"})
-        groups = await model.get_user_groups(user["id"])
+        user = await app_state.model.users.create_user(
+            "sync2@example.com", "hash"
+        )
+        await oidc.OIDC(app_state).sync_oidc_groups(
+            user["id"], {"new-group-a", "new-group-b"}
+        )
+        groups = await app_state.model.users.get_user_groups(user["id"])
         names = {g["name"] for g in groups}
         assert "new-group-a" in names
         assert "new-group-b" in names
-        sync_ids = await model.get_user_oidc_sync_group_ids(user["id"])
+        sync_ids = await app_state.model.users.get_user_oidc_sync_group_ids(
+            user["id"]
+        )
         assert len(sync_ids) == 2
 
-    async def test_removes_stale_oidc_sync(self, db):
-        from klangk_backend import model
+    async def test_removes_stale_oidc_sync(self, db, app_state):
 
-        user = await model.create_user("sync3@example.com", "hash")
-        group = await model.create_group("old-group")
-        await model.add_user_to_group(user["id"], group["id"], "oidc_sync")
+        user = await app_state.model.users.create_user(
+            "sync3@example.com", "hash"
+        )
+        group = await app_state.model.users.create_group("old-group")
+        await app_state.model.users.add_user_to_group(
+            user["id"], group["id"], "oidc_sync"
+        )
 
-        await oidc.sync_oidc_groups(user["id"], set())
-        assert await model.get_user_oidc_sync_group_ids(user["id"]) == []
+        await oidc.OIDC(app_state).sync_oidc_groups(user["id"], set())
+        assert (
+            await app_state.model.users.get_user_oidc_sync_group_ids(
+                user["id"]
+            )
+            == []
+        )
 
-    async def test_preserves_manual_memberships(self, db):
-        from klangk_backend import model
+    async def test_preserves_manual_memberships(self, db, app_state):
 
-        user = await model.create_user("sync4@example.com", "hash")
-        group = await model.create_group("manual-group")
-        await model.add_user_to_group(user["id"], group["id"], "manual")
+        user = await app_state.model.users.create_user(
+            "sync4@example.com", "hash"
+        )
+        group = await app_state.model.users.create_group("manual-group")
+        await app_state.model.users.add_user_to_group(
+            user["id"], group["id"], "manual"
+        )
 
-        await oidc.sync_oidc_groups(user["id"], set())
-        all_ids = await model.get_user_group_ids(user["id"])
+        await oidc.OIDC(app_state).sync_oidc_groups(user["id"], set())
+        all_ids = await app_state.model.users.get_user_group_ids(user["id"])
         assert group["id"] in all_ids

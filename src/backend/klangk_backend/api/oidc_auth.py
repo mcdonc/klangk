@@ -281,7 +281,7 @@ async def oidc_callback(
     )
 
     if hook_groups is not None:
-        await oidc.sync_oidc_groups(user["id"], hook_groups)
+        await request.app.state.oidc.sync_oidc_groups(user["id"], hook_groups)
 
     access_token = request.app.state.auth.create_token(user["id"], email)
     return _build_redirect_response(

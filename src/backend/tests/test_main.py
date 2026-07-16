@@ -94,7 +94,7 @@ def _lifecycle(settings):
 
 
 class TestSeedDefaultUser:
-    async def test_creates_user_when_missing(self, db):
+    async def test_creates_user_when_missing(self, db, app_state):
         await _lifecycle(
             make_settings(
                 {
@@ -103,10 +103,10 @@ class TestSeedDefaultUser:
                 }
             )
         ).seed_default_user()
-        user = await model.get_user_by_email("seed-test")
+        user = await app_state.model.users.get_user_by_email("seed-test")
         assert user is not None
 
-    async def test_skips_existing_user(self, db):
+    async def test_skips_existing_user(self, db, app_state):
         s = make_settings(
             {
                 "KLANGK_DEFAULT_USER": "seed-test",
@@ -116,22 +116,24 @@ class TestSeedDefaultUser:
         await _lifecycle(s).seed_default_user()
         # Call again — should not raise
         await _lifecycle(s).seed_default_user()
-        user = await model.get_user_by_email("seed-test")
+        user = await app_state.model.users.get_user_by_email("seed-test")
         assert user is not None
 
-    async def test_generates_password_when_not_set(self, db, capsys):
+    async def test_generates_password_when_not_set(
+        self, db, capsys, app_state
+    ):
         await _lifecycle(
             make_settings({"KLANGK_DEFAULT_USER": "gen-test"})
         ).seed_default_user()
         # Swallow the incidental generated-password print to stderr
         # (asserted explicitly by test_generated_password_printed_to_stderr).
         capsys.readouterr()
-        user = await model.get_user_by_email("gen-test")
+        user = await app_state.model.users.get_user_by_email("gen-test")
         assert user is not None
         # User exists and is in the admin group
-        admin_group = await model.get_group_by_name("admin")
+        admin_group = await app_state.model.users.get_group_by_name("admin")
         assert admin_group is not None
-        group_ids = await model.get_user_group_ids(user["id"])
+        group_ids = await app_state.model.users.get_user_group_ids(user["id"])
         assert admin_group["id"] in group_ids
 
     async def test_generated_password_printed_to_stderr(
@@ -294,14 +296,14 @@ class TestNoAuthBindSafety:
 
 
 class TestSeedAgentUser:
-    async def test_creates_agent_user(self, db):
+    async def test_creates_agent_user(self, db, app_state):
         await _lifecycle(make_settings({})).seed_agent_user()
-        user = await model.get_user_by_id(model.AGENT_USER_ID)
+        user = await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
         assert user is not None
         assert user["email"] == "clanker@example.com"
         assert user["handle"] == "clanker"
 
-    async def test_custom_env_vars(self, db):
+    async def test_custom_env_vars(self, db, app_state):
         await _lifecycle(
             make_settings(
                 {
@@ -310,12 +312,12 @@ class TestSeedAgentUser:
                 }
             )
         ).seed_agent_user()
-        user = await model.get_user_by_id(model.AGENT_USER_ID)
+        user = await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
         assert user is not None
         assert user["email"] == "bot@test.com"
         assert user["handle"] == "TestBot"
 
-    async def test_upserts_existing(self, db):
+    async def test_upserts_existing(self, db, app_state):
         await _lifecycle(make_settings({})).seed_agent_user()
         await _lifecycle(
             make_settings(
@@ -325,25 +327,25 @@ class TestSeedAgentUser:
                 }
             )
         ).seed_agent_user()
-        user = await model.get_user_by_id(model.AGENT_USER_ID)
+        user = await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
         assert user["email"] == "new@test.com"
         assert user["handle"] == "NewBot"
 
-    async def test_clears_cache(self, db):
+    async def test_clears_cache(self, db, app_state):
         # Prime cache with fallback
-        await model.get_agent_user()
+        await app_state.model.users.get_agent_user()
         await _lifecycle(make_settings({})).seed_agent_user()
         # Cache should now reflect DB values
-        agent = await model.get_agent_user()
+        agent = await app_state.model.users.get_agent_user()
         assert agent["email"] == "clanker@example.com"
 
-    async def test_users_handle_has_unique_constraint(self, db):
+    async def test_users_handle_has_unique_constraint(self, db, app_state):
         """The users.handle UNIQUE constraint is the structural backstop.
 
         Confirms a duplicate handle raises IntegrityError at the DB layer,
         independent of seed_agent_user's pre-check.  See #1137.
         """
-        async with model.transaction() as db_conn:
+        async with app_state.db.transaction() as db_conn:
             await db_conn.execute(
                 "INSERT INTO users (id, email, handle)"
                 " VALUES ('uid-a', 'a@x.com', 'alice')"
@@ -356,14 +358,16 @@ class TestSeedAgentUser:
         # The underlying driver-level cause is the sqlite UNIQUE violation.
         assert isinstance(exc_info.value.orig, sqlite3.IntegrityError)
 
-    async def test_seed_refuses_handle_collision_with_human(self, db):
+    async def test_seed_refuses_handle_collision_with_human(
+        self, db, app_state
+    ):
         """Seeding the agent with a live user's handle fails cleanly.
 
         The destructive path is ensure_home_symlink migrating that user's
         files into the agent's tree; the guard must abort before any such
         work.  See #1137.
         """
-        human = await model.create_user(
+        human = await app_state.model.users.create_user(
             "alice@example.com", "hash", verified=True
         )
         assert human["handle"] == "alice"
@@ -372,17 +376,20 @@ class TestSeedAgentUser:
                 make_settings({"KLANGK_AGENT_HANDLE": "alice"})
             ).seed_agent_user()
         # Human user is untouched.
-        refreshed = await model.get_user_by_id(human["id"])
+        refreshed = await app_state.model.users.get_user_by_id(human["id"])
         assert refreshed["handle"] == "alice"
         # Agent was not created with the colliding handle.
-        assert await model.get_user_by_id(model.AGENT_USER_ID) is None
+        assert (
+            await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
+            is None
+        )
 
-    async def test_seed_rename_to_human_handle_refuses(self, db):
+    async def test_seed_rename_to_human_handle_refuses(self, db, app_state):
         """Re-seeding the agent onto a human's handle fails, leaves agent as-is."""
         await _lifecycle(
             make_settings({})
         ).seed_agent_user()  # agent handle = clanker
-        human = await model.create_user(
+        human = await app_state.model.users.create_user(
             "alice@example.com", "hash", verified=True
         )
         with pytest.raises(RuntimeError, match="already used by another user"):
@@ -390,12 +397,14 @@ class TestSeedAgentUser:
                 make_settings({"KLANGK_AGENT_HANDLE": "alice"})
             ).seed_agent_user()
         # Agent keeps its original handle; human untouched.
-        agent = await model.get_user_by_id(model.AGENT_USER_ID)
+        agent = await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
         assert agent["handle"] == "clanker"
-        refreshed = await model.get_user_by_id(human["id"])
+        refreshed = await app_state.model.users.get_user_by_id(human["id"])
         assert refreshed["handle"] == "alice"
 
-    async def test_collision_leaves_human_files_untouched(self, db, tmp_path):
+    async def test_collision_leaves_human_files_untouched(
+        self, db, tmp_path, app_state
+    ):
         """A handle collision never reaches ensure_home_symlink's adoption.
 
         Builds the on-disk layout that the destructive branch would migrate
@@ -403,7 +412,7 @@ class TestSeedAgentUser:
         confirms a colliding agent seed aborts before any file moves.  See
         #1137.
         """
-        human = await model.create_user(
+        human = await app_state.model.users.create_user(
             "alice@example.com", "hash", verified=True
         )
         # Stand up the destructive-branch precondition directly on disk.
@@ -431,7 +440,7 @@ class TestSeedAgentUser:
 
 
 class TestLifespan:
-    async def test_lifespan_starts_and_stops(self, db):
+    async def test_lifespan_starts_and_stops(self, db, app_state):
         app = FastAPI()
         app_state = _make_app_state()
         app.state.container_registry = app_state.container_registry
@@ -477,7 +486,7 @@ class TestLifespan:
             mock_shutdown.assert_awaited_once()
             mock_remove.assert_called_once()
 
-    async def test_lifespan_workspace_killed_resets_state(self, db):
+    async def test_lifespan_workspace_killed_resets_state(self, db, app_state):
         """The workspace-killed callback threads app.state into
         reset_workspace_state (sockets, workspace_id) — #1475."""
         app = FastAPI()
@@ -522,17 +531,18 @@ class TestLifespan:
                 await registry.on_workspace_killed("ws-killed")
         mock_reset.assert_awaited_once_with(app.state.sockets, "ws-killed")
 
-    async def test_lifespan_refuses_if_pid_alive(self, db):
-        from klangk_backend.model import db as db_mod
+    async def test_lifespan_refuses_if_pid_alive(self, db, app_state):
 
         app = FastAPI()
         app_state = _make_app_state()
         app.state.settings = app_state.settings
         app.state.ssl_trust = app_state.ssl_trust
         app.state.util = util_mod.Util(app.state)
-        # The lifespan binds app.state.db into the ContextVar before the
-        # pid-file refuse check (#1520); point it at the conftest-bound DB.
-        app.state.db = db_mod.get_current_db()
+        # The lifespan reaches the DB through ``app.state.db`` +
+        # ``app.state.model`` (no ContextVar bind post-#1578); point both at
+        # the test-built app_state so init_db runs before the pid refuse.
+        app.state.db = app_state.db
+        app.state.model = app_state.model
         with (
             patch.object(util_mod.Util, "check_pid_file", return_value=12345),
             pytest.raises(SystemExit),
@@ -545,7 +555,7 @@ class TestLifespan:
 
 
 class TestStartupShutdownRestart:
-    async def test_startup_calls_container_sequence(self):
+    async def test_startup_calls_container_sequence(self, app_state):
         app_state = _make_app_state()
         registry = app_state.container_registry
         with (
@@ -575,7 +585,7 @@ class TestStartupShutdownRestart:
         mock_health.assert_called_once()
         mock_autostart.assert_awaited_once()
 
-    async def test_runtime_shutdown_tears_down_layers(self):
+    async def test_runtime_shutdown_tears_down_layers(self, app_state):
         app_state = _make_app_state()
         registry = app_state.container_registry
         with (
@@ -601,7 +611,7 @@ class TestStartupShutdownRestart:
         mock_clear.assert_called_once()
         mock_shutdown.assert_awaited_once()
 
-    async def test_process_shutdown_disposes(self):
+    async def test_process_shutdown_disposes(self, app_state):
         app_state = _make_app_state()
         app_state.db = AsyncMock()
         with (
@@ -611,7 +621,7 @@ class TestStartupShutdownRestart:
         mock_remove.assert_called_once()
         app_state.db.dispose_engine.assert_awaited_once()
 
-    async def test_restart_runtime_runs_shutdown_then_startup(self):
+    async def test_restart_runtime_runs_shutdown_then_startup(self, app_state):
         app_state = _make_app_state()
         lc = app_state.lifecycle
         lc._restart_lock = None  # force fresh lock creation
@@ -627,7 +637,7 @@ class TestStartupShutdownRestart:
         # Lock was created and is now held-free.
         assert lc._restart_lock is not None
 
-    async def test_restart_runtime_reuses_existing_lock(self):
+    async def test_restart_runtime_reuses_existing_lock(self, app_state):
         # Seed a lock explicitly; ``restart_runtime`` must reuse it rather
         # than create a new one. The lock is now per-instance (#1571), so a
         # fresh Lifecycle starts at the pre-first-use floor without a
@@ -644,7 +654,7 @@ class TestStartupShutdownRestart:
         # Same lock object reused, not replaced.
         assert lc._restart_lock is existing
 
-    async def test_restart_lock_serializes_concurrent_calls(self):
+    async def test_restart_lock_serializes_concurrent_calls(self, app_state):
         """Two restarts kicked off together run strictly one-after-another."""
         app_state = _make_app_state()
         lc = app_state.lifecycle
@@ -677,7 +687,7 @@ class TestStartupShutdownRestart:
             "up",
         ]
 
-    async def test_on_sighup_schedules_restart(self):
+    async def test_on_sighup_schedules_restart(self, app_state):
         """on_sighup creates a task that runs restart_runtime."""
         app_state = _make_app_state()
         lc = app_state.lifecycle
@@ -690,7 +700,7 @@ class TestStartupShutdownRestart:
             await asyncio.sleep(0)
         mock_restart.assert_awaited_once()
 
-    async def test_lifespan_registers_sighup_handler(self, db):
+    async def test_lifespan_registers_sighup_handler(self, db, app_state):
         """The lifespan installs (and removes) a SIGHUP handler."""
         app = FastAPI()
         app_state = _make_app_state()
@@ -1154,7 +1164,7 @@ class TestBuildApp:
 class TestGetAppStateDep:
     """Tests for get_app_state_dep per-request bridge (#1426)."""
 
-    def test_returns_app_state(self):
+    def test_returns_app_state(self, app_state):
         settings = make_settings({})
         app = main.build_app(settings)
         request = MagicMock()

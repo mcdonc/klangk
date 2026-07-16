@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 from _helpers import make_settings
 from klangk_backend import files as files_mod
+from klangk_backend.model.chat import ChatModel
 from klangk_backend.agent import (
     AgentError,
     AgentProcessDied,
@@ -39,18 +40,19 @@ def _mock_container_registry():
 
 
 @pytest.fixture(autouse=True)
-async def _seed_agent_db(db):
+async def _seed_agent_db(app_state):
     """Seed the agent user so agent_handle()/agent_email() work."""
-    import klangk_backend.model as model
+    from klangk_backend.model import AGENT_USER_ID
 
-    async with model.transaction() as agent_db:
+    await app_state.model.init_db()
+    async with app_state.db.transaction() as agent_db:
         await agent_db.execute(
             "INSERT OR REPLACE INTO users"
             " (id, email, password_hash, verified, provider, handle)"
             " VALUES (?, ?, NULL, 1, 'system', ?)",
-            (model.AGENT_USER_ID, "clanker@example.com", "clanker"),
+            (AGENT_USER_ID, "clanker@example.com", "clanker"),
         )
-    model.clear_agent_cache()
+    app_state.model.users.clear_agent_cache()
 
 
 def _make_app_state(cid="cid"):
@@ -626,10 +628,9 @@ class TestAgentSession:
         assert session._restart_attempts == 0
         assert session._gave_up is False
 
-    async def test_recovery_then_death_still_restarts(self):
+    async def test_recovery_then_death_still_restarts(self, app_state):
         """3 deaths -> successful recovery -> a 4th death must still restart,
         not permanently give up (the bug from #895)."""
-        from klangk_backend import model
 
         agents = _make_agents()
         session = AgentSession("ws-recover", agents=agents)
@@ -659,7 +660,7 @@ class TestAgentSession:
 
         with (
             patch.object(
-                model,
+                ChatModel,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
@@ -855,7 +856,7 @@ class TestGetSession:
 
 
 class TestEnsureAgentHome:
-    async def test_provisions_home_and_runs_setup(self, tmp_path):
+    async def test_provisions_home_and_runs_setup(self, tmp_path, app_state):
         fake_ws = {"user_id": "owner1"}
         fake_home = tmp_path / "home"
         fake_home.mkdir()
@@ -898,7 +899,9 @@ class TestEnsureAgentHome:
         assert "/opt/klangk/bin/klangk-setup-pi" in argv
         assert "--force" in argv
 
-    async def test_setup_failure_does_not_abort_but_logs(self, tmp_path):
+    async def test_setup_failure_does_not_abort_but_logs(
+        self, tmp_path, app_state
+    ):
         """klangk-setup-pi failure logs a warning but doesn't raise.
 
         Provisioning is best-effort: the workspace stays usable, and
@@ -938,7 +941,9 @@ class TestEnsureAgentHome:
 
         assert result == "/home/clanker"
 
-    async def test_skips_skel_when_home_already_exists(self, tmp_path):
+    async def test_skips_skel_when_home_already_exists(
+        self, tmp_path, app_state
+    ):
         fake_home = tmp_path / "home"
         fake_home.mkdir()
 
@@ -967,7 +972,7 @@ class TestEnsureAgentHome:
         # created=False -> skel should NOT be called
         ws.populate_home_skel.assert_not_awaited()
 
-    async def test_workspace_not_found_raises(self):
+    async def test_workspace_not_found_raises(self, app_state):
         agents = _make_agents()
         agents.app_state.podman = _mock_pod
 
@@ -1031,7 +1036,7 @@ class TestEnsureHome:
         result = await session._ensure_home("cid")
         assert result == "/home/clanker"
 
-    async def test_ensure_home_workspace_not_in_db(self):
+    async def test_ensure_home_workspace_not_in_db(self, app_state):
         from klangk_backend.agent import AgentSetupError
 
         agents = _make_agents()
@@ -1186,7 +1191,7 @@ class TestSpawnSerialization:
 
 
 class TestMonitorProcess:
-    async def test_monitor_broadcasts_on_death(self):
+    async def test_monitor_broadcasts_on_death(self, app_state):
         from klangk_backend import model
 
         agents = _make_agents()
@@ -1203,7 +1208,7 @@ class TestMonitorProcess:
                 return_value={"id": "ws-mon"},
             ),
             patch.object(
-                model,
+                ChatModel,
                 "add_chat_message",
                 new_callable=AsyncMock,
             ) as mock_chat,
@@ -1246,8 +1251,7 @@ class TestMonitorProcess:
         assert session._monitor_task is None
         assert session._proc is None
 
-    async def test_monitor_auto_restarts(self):
-        from klangk_backend import model
+    async def test_monitor_auto_restarts(self, app_state):
 
         agents = _make_agents()
         session = AgentSession("ws-restart", agents=agents)
@@ -1268,7 +1272,7 @@ class TestMonitorProcess:
 
         with (
             patch.object(
-                model,
+                ChatModel,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
@@ -1287,8 +1291,7 @@ class TestMonitorProcess:
             mock_start.assert_awaited_once()
             assert session._restart_attempts == 1
 
-    async def test_monitor_gives_up_after_max_retries(self):
-        from klangk_backend import model
+    async def test_monitor_gives_up_after_max_retries(self, app_state):
 
         agents = _make_agents()
         session = AgentSession("ws-giveup", agents=agents)
@@ -1310,7 +1313,7 @@ class TestMonitorProcess:
 
         with (
             patch.object(
-                model,
+                ChatModel,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
@@ -1334,7 +1337,7 @@ class TestMonitorProcess:
         with pytest.raises(AgentError, match="gave up"):
             await session.ensure_started()
 
-    async def test_gave_up_reset_on_container_change(self):
+    async def test_gave_up_reset_on_container_change(self, app_state):
         session = _make_session("ws-gaveup2")
         session._gave_up = True
         session._last_container_id = "old-cid"
@@ -1347,8 +1350,7 @@ class TestMonitorProcess:
         assert session._gave_up is False
         assert session._restart_attempts == 0
 
-    async def test_monitor_logs_stderr(self, caplog):
-        from klangk_backend import model
+    async def test_monitor_logs_stderr(self, caplog, app_state):
         import logging
 
         agents = _make_agents()
@@ -1372,7 +1374,7 @@ class TestMonitorProcess:
 
         with (
             patch.object(
-                model,
+                ChatModel,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
@@ -1385,9 +1387,8 @@ class TestMonitorProcess:
             "container not running" in r.message for r in caplog.records
         )
 
-    async def test_monitor_stderr_read_error(self):
+    async def test_monitor_stderr_read_error(self, app_state):
         """Monitor handles stderr read errors gracefully."""
-        from klangk_backend import model
 
         agents = _make_agents()
         session = AgentSession("ws-stderr-err", agents=agents)
@@ -1409,7 +1410,7 @@ class TestMonitorProcess:
 
         with (
             patch.object(
-                model,
+                ChatModel,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
@@ -1418,8 +1419,7 @@ class TestMonitorProcess:
             await session._monitor_process(mock_proc)
             assert session._gave_up is True
 
-    async def test_monitor_restart_failure_logged(self):
-        from klangk_backend import model
+    async def test_monitor_restart_failure_logged(self, app_state):
 
         agents = _make_agents()
         session = AgentSession("ws-fail", agents=agents)
@@ -1440,7 +1440,7 @@ class TestMonitorProcess:
 
         with (
             patch.object(
-                model,
+                ChatModel,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
@@ -1458,7 +1458,7 @@ class TestMonitorProcess:
             await session._monitor_process(mock_proc)
             # Should not raise, just log
 
-    async def test_broadcast_reconnect(self):
+    async def test_broadcast_reconnect(self, app_state):
         from klangk_backend import model
 
         agents = _make_agents()
@@ -1475,7 +1475,7 @@ class TestMonitorProcess:
                 return_value={"id": "ws-rc"},
             ),
             patch.object(
-                model,
+                ChatModel,
                 "add_chat_message",
                 new_callable=AsyncMock,
             ) as mock_chat,
@@ -1499,9 +1499,10 @@ class TestMonitorProcess:
         # Should not raise when workspace has been deleted
         await agents.broadcast_agent_reconnect("deleted-ws-id")
 
-    async def test_monitor_skips_restart_if_container_gone(self, caplog):
+    async def test_monitor_skips_restart_if_container_gone(
+        self, caplog, app_state
+    ):
         """Monitor does not restart when the container has been removed."""
-        from klangk_backend import model
         import logging
 
         agents = _make_agents()
@@ -1523,7 +1524,7 @@ class TestMonitorProcess:
 
         with (
             patch.object(
-                model,
+                ChatModel,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
@@ -1548,8 +1549,7 @@ class TestMonitorProcess:
 
         assert any("Container gone" in r.message for r in caplog.records)
 
-    async def test_monitor_skips_restart_if_already_restarted(self):
-        from klangk_backend import model
+    async def test_monitor_skips_restart_if_already_restarted(self, app_state):
 
         agents = _make_agents()
         session = AgentSession("ws-skip", agents=agents)
@@ -1574,7 +1574,7 @@ class TestMonitorProcess:
 
         with (
             patch.object(
-                model,
+                ChatModel,
                 "add_chat_message",
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},

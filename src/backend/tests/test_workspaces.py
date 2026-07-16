@@ -118,7 +118,7 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
     resource = f"/workspaces/{ws['id']}"
 
     # Owner ACE at position 0 grants the creator everything.
-    entries = await model.get_acl_entries(resource)
+    entries = await app_state.model.acl.get_acl_entries(resource)
     owner_aces = [
         e
         for e in entries
@@ -131,10 +131,16 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
 
     # All four role groups exist and the creator is in owners.
     for suffix in ["owners", "coders", "collaborators", "spectators"]:
-        group = await model.get_group_by_name(f"{suffix}-{ws['id']}")
+        group = await app_state.model.users.get_group_by_name(
+            f"{suffix}-{ws['id']}"
+        )
         assert group is not None, f"expected {suffix} group"
-    owner_group = await model.get_group_by_name(f"owners-{ws['id']}")
-    assert owner_group["id"] in await model.get_user_group_ids(user["id"])
+    owner_group = await app_state.model.users.get_group_by_name(
+        f"owners-{ws['id']}"
+    )
+    assert owner_group["id"] in await app_state.model.users.get_user_group_ids(
+        user["id"]
+    )
 
     # Position counter is global across all groups (no collisions).
     positions = sorted(e["position"] for e in entries)
@@ -148,7 +154,6 @@ async def test_create_workspace_with_acl_rollback_on_seeding_failure(
 ):
     """If ACL seeding fails, the row and any partial ACEs/groups are rolled
     back — nothing is orphaned (#128)."""
-    from klangk_backend import model
     from klangk_backend.model import workspaces as model_ws
 
     captured: dict = {}
@@ -173,9 +178,12 @@ async def test_create_workspace_with_acl_rollback_on_seeding_failure(
 
     # No workspace row, no ACL entries, no role groups left behind.
     assert await app_state.model.workspaces.get_workspace(ws_id) is None
-    assert await model.get_acl_entries(resource) == []
+    assert await app_state.model.acl.get_acl_entries(resource) == []
     for suffix in ["owners", "coders", "collaborators", "spectators"]:
-        assert await model.get_group_by_name(f"{suffix}-{ws_id}") is None
+        assert (
+            await app_state.model.users.get_group_by_name(f"{suffix}-{ws_id}")
+            is None
+        )
 
     # Name is reusable — proves full cleanup of the row.
     ws = await app_state.model.workspaces.create_workspace_with_acl(

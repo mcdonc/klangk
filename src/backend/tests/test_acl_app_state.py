@@ -28,11 +28,10 @@ async def ac(app_state, db):
     return app_state.acl
 
 
-async def test_get_principals(ac, user):
-    from klangk_backend import model
+async def test_get_principals(ac, user, app_state):
 
-    group = await model.create_group("g")
-    await model.add_user_to_group(user["id"], group["id"])
+    group = await app_state.model.users.create_group("g")
+    await app_state.model.users.add_user_to_group(user["id"], group["id"])
     principals = await ac.get_principals(user["id"])
     assert principals == {
         "user_id": user["id"],
@@ -41,11 +40,10 @@ async def test_get_principals(ac, user):
     }
 
 
-async def test_check_permission_allow_and_deny(ac, user):
-    from klangk_backend import model
+async def test_check_permission_allow_and_deny(ac, user, app_state):
 
     # Allow on exact resource via user principal.
-    await model.add_acl_entry(
+    await app_state.model.acl.add_acl_entry(
         "/ws-allow",
         0,
         ACTION_ALLOW,
@@ -59,7 +57,7 @@ async def test_check_permission_allow_and_deny(ac, user):
     assert await ac.check_permission("/ws-allow", principals, "edit") is False
 
     # Deny wins over a deeper allow (first-match-wins on the walked path).
-    await model.add_acl_entry(
+    await app_state.model.acl.add_acl_entry(
         "/ws-deny",
         0,
         ACTION_DENY,
@@ -70,11 +68,10 @@ async def test_check_permission_allow_and_deny(ac, user):
     assert await ac.check_permission("/ws-deny", principals, "view") is False
 
 
-async def test_check_permission_walks_to_parent(ac, user):
-    from klangk_backend import model
+async def test_check_permission_walks_to_parent(ac, user, app_state):
 
     # Allow at the parent; a child resource inherits it via the walk.
-    await model.add_acl_entry(
+    await app_state.model.acl.add_acl_entry(
         "/parent",
         0,
         ACTION_ALLOW,
@@ -90,10 +87,9 @@ async def test_check_permission_walks_to_parent(ac, user):
     assert await ac.check_permission("/unrelated", principals, "view") is False
 
 
-async def test_permissions_for_resources(ac, user):
-    from klangk_backend import model
+async def test_permissions_for_resources(ac, user, app_state):
 
-    await model.add_acl_entry(
+    await app_state.model.acl.add_acl_entry(
         "/r1",
         0,
         ACTION_ALLOW,
@@ -101,7 +97,7 @@ async def test_permissions_for_resources(ac, user):
         PRINCIPAL_USER,
         user_id=user["id"],
     )
-    await model.add_acl_entry(
+    await app_state.model.acl.add_acl_entry(
         "/r2",
         0,
         ACTION_ALLOW,
@@ -119,12 +115,11 @@ async def test_permissions_for_resources(ac, user):
     assert await ac.permissions_for_resources([], principals, ["view"]) == {}
 
 
-async def test_permissions_for_resources_via_group(ac, user):
-    from klangk_backend import model
+async def test_permissions_for_resources_via_group(ac, user, app_state):
 
-    group = await model.create_group("editors")
-    await model.add_user_to_group(user["id"], group["id"])
-    await model.add_acl_entry(
+    group = await app_state.model.users.create_group("editors")
+    await app_state.model.users.add_user_to_group(user["id"], group["id"])
+    await app_state.model.acl.add_acl_entry(
         "/grp-res",
         0,
         ACTION_ALLOW,

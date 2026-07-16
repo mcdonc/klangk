@@ -14,7 +14,6 @@ from klangk_backend import (
     auth as auth_mod,
     container,
     files as files_mod,
-    model,
     podman,
     ssl_trust,
     util as util_mod,
@@ -345,8 +344,8 @@ class TestPortAllocation:
         app_state = _make_app_state()
         self.registry = app_state.container_registry
 
-    async def test_allocate_ports(self, workspace):
-        ports = await model.find_and_allocate_ports(
+    async def test_allocate_ports(self, workspace, app_state):
+        ports = await app_state.model.ports.find_and_allocate_ports(
             workspace["id"], 3, self.registry.port_range_start
         )
         assert len(ports) == 3
@@ -356,29 +355,29 @@ class TestPortAllocation:
         self, workspace, user, app_state
     ):
         # Allocate some ports for workspace 1
-        ports1 = await model.find_and_allocate_ports(
+        ports1 = await app_state.model.ports.find_and_allocate_ports(
             workspace["id"], 3, self.registry.port_range_start
         )
         # Create second workspace and allocate
         ws2 = await app_state.model.workspaces.create_workspace(
             user["id"], "ws2"
         )
-        ports2 = await model.find_and_allocate_ports(
+        ports2 = await app_state.model.ports.find_and_allocate_ports(
             ws2["id"], 3, self.registry.port_range_start
         )
         # No overlap
         assert set(ports1).isdisjoint(set(ports2))
 
-    async def test_get_workspace_ports(self, workspace):
+    async def test_get_workspace_ports(self, workspace, app_state):
         app_state = _make_app_state()
         registry = app_state.container_registry
-        allocated = await model.find_and_allocate_ports(
+        allocated = await app_state.model.ports.find_and_allocate_ports(
             workspace["id"], 2, self.registry.port_range_start
         )
         retrieved = await registry.get_workspace_ports(workspace["id"])
         assert retrieved == sorted(allocated)
 
-    async def test_get_workspace_ports_empty(self, workspace):
+    async def test_get_workspace_ports_empty(self, workspace, app_state):
         app_state = _make_app_state()
         registry = app_state.container_registry
         ports = await registry.get_workspace_ports(workspace["id"])
@@ -762,7 +761,9 @@ class TestStartContainer:
         # host.containers.internal must be resolvable
         assert "host.containers.internal:host-gateway" in kwargs["add_hosts"]
 
-    async def test_workspace_token_written_to_container(self, workspace):
+    async def test_workspace_token_written_to_container(
+        self, workspace, app_state
+    ):
         """Workspace token is written to the container via set_workspace_token."""
         with (
             patch_podman(self.registry),
@@ -967,9 +968,9 @@ class TestStartContainer:
         ports = await self.registry.get_workspace_ports(workspace["id"])
         assert len(ports) == 3
 
-    async def test_excess_ports_trimmed(self, workspace):
+    async def test_excess_ports_trimmed(self, workspace, app_state):
         # Pre-allocate more ports than needed
-        await model.find_and_allocate_ports(
+        await app_state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
         )
         with patch_podman(self.registry):
@@ -998,13 +999,13 @@ class TestStartContainer:
         assert len(ports) == 3
 
     async def test_cap_zero_releases_existing_ports(
-        self, workspace, monkeypatch
+        self, workspace, monkeypatch, app_state
     ):
         """cap=0 trims an existing workspace's allocations on next start."""
         monkeypatch.setattr(
             self.registry.settings, "hosted_ports_per_workspace", "0"
         )
-        await model.find_and_allocate_ports(
+        await app_state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
         )
         with patch_podman(self.registry):
@@ -1095,7 +1096,9 @@ class TestStartContainer:
         assert env_dict["MY_VAR"] == "hello"
         assert env_dict["FOO"] == "bar"
 
-    async def test_plugins_env_injected(self, workspace, monkeypatch):
+    async def test_plugins_env_injected(
+        self, workspace, monkeypatch, app_state
+    ):
         monkeypatch.setattr(
             self.registry.app_state.plugins,
             "declarations",
@@ -1129,9 +1132,11 @@ class TestStartContainerPortConflict:
         app_state = _make_app_state()
         self.registry = app_state.container_registry
 
-    async def test_port_conflict_removes_stale_and_retries(self, workspace):
+    async def test_port_conflict_removes_stale_and_retries(
+        self, workspace, app_state
+    ):
         # Pre-allocate ports so we know exactly which ones the workspace gets.
-        allocated = await model.find_and_allocate_ports(
+        allocated = await app_state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
         )
         conflict_port = allocated[0]
@@ -1171,8 +1176,10 @@ class TestStartContainerPortConflict:
         remove_calls = [c.args[0] for c in p.remove_container.call_args_list]
         assert "stale-cid" in remove_calls
 
-    async def test_port_conflict_skips_own_container(self, workspace):
-        allocated = await model.find_and_allocate_ports(
+    async def test_port_conflict_skips_own_container(
+        self, workspace, app_state
+    ):
+        allocated = await app_state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
         )
         conflict_port = allocated[0]
@@ -1234,9 +1241,9 @@ class TestStartContainerPortConflict:
             )
         # other-cid doesn't hold our ports — should not be removed
 
-    async def test_port_conflict_stale_vanished(self, workspace):
+    async def test_port_conflict_stale_vanished(self, workspace, app_state):
         """Stale container gone by the time we inspect it."""
-        await model.find_and_allocate_ports(
+        await app_state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
         )
         start_calls = []
@@ -1262,9 +1269,9 @@ class TestStartContainerPortConflict:
             c.args[0] == "gone-cid" for c in p.remove_container.call_args_list
         )
 
-    async def test_port_conflict_bad_port_bindings(self, workspace):
+    async def test_port_conflict_bad_port_bindings(self, workspace, app_state):
         """Malformed HostPort values don't crash the retry."""
-        await model.find_and_allocate_ports(
+        await app_state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
         )
         start_calls = []
@@ -1296,9 +1303,11 @@ class TestStartContainerPortConflict:
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
 
-    async def test_port_conflict_remove_error_logged(self, workspace):
+    async def test_port_conflict_remove_error_logged(
+        self, workspace, app_state
+    ):
         """Error removing stale container is logged, not raised."""
-        allocated = await model.find_and_allocate_ports(
+        allocated = await app_state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
         )
         conflict_port = allocated[0]
@@ -1548,7 +1557,7 @@ class TestExtraMountsVolumeCreation:
         app_state = _make_app_state()
         self.registry = app_state.container_registry
 
-    async def test_auto_creates_named_volume(self, workspace):
+    async def test_auto_creates_named_volume(self, workspace, app_state):
         """Named volumes (no leading /) are auto-created with klangk labels."""
         # inspect_volume returns None (default) → volume is created.
         with patch_podman(self.registry) as p:
@@ -1569,7 +1578,7 @@ class TestExtraMountsVolumeCreation:
         )
         assert labels["klangk.user-id"] == "user-123"
 
-    async def test_existing_volume_not_recreated(self, workspace):
+    async def test_existing_volume_not_recreated(self, workspace, app_state):
         """Existing volumes owned by this instance and user are used as-is."""
         with patch_podman(
             self.registry,
@@ -1625,7 +1634,7 @@ class TestExtraMountsVolumeCreation:
                     extra_mounts=["bare:/data"],
                 )
 
-    async def test_cross_user_volume_rejected(self, workspace):
+    async def test_cross_user_volume_rejected(self, workspace, app_state):
         """A volume owned by another user is refused."""
         with patch_podman(
             self.registry,
@@ -1648,7 +1657,9 @@ class TestExtraMountsVolumeCreation:
                     user_id="user-me",
                 )
 
-    async def test_volume_without_user_label_allowed(self, workspace):
+    async def test_volume_without_user_label_allowed(
+        self, workspace, app_state
+    ):
         """A volume with no user-id label (pre-existing) is allowed."""
         with patch_podman(
             self.registry,
@@ -2566,7 +2577,7 @@ class TestHealthMonitorRunOne:
 
     """_run_one: rc 0 → healthy, non-zero/error → unhealthy (with reason)."""
 
-    async def test_exit_zero_is_healthy(self):
+    async def test_exit_zero_is_healthy(self, app_state):
         monitor = _health_registry().health
         st = _health_state()
         exec_mock = AsyncMock(return_value=(0, "", ""))
@@ -2608,7 +2619,9 @@ class TestHealthMonitorRunOne:
         assert call.args[1][:2] == ["bash", "-c"]
         assert call.args[1][2] == st.health_check
 
-    async def test_nonzero_exit_is_unhealthy_with_stderr_reason(self):
+    async def test_nonzero_exit_is_unhealthy_with_stderr_reason(
+        self, app_state
+    ):
         # The stderr that explains the non-zero exit is captured as the
         # reason instead of being thrown away (#1088).
         monitor = _health_registry().health
@@ -2641,7 +2654,7 @@ class TestHealthMonitorRunOne:
         assert "connection refused" in message
         assert "exited 1" in message
 
-    async def test_nonzero_exit_falls_back_to_stdout(self):
+    async def test_nonzero_exit_falls_back_to_stdout(self, app_state):
         # No stderr → the reason uses stdout instead.
         monitor = _health_registry().health
         st = _health_state()
@@ -2672,7 +2685,7 @@ class TestHealthMonitorRunOne:
         assert status == "unhealthy"
         assert "all good on stdout" in message
 
-    async def test_nonzero_exit_no_output_reports_exit_code(self):
+    async def test_nonzero_exit_no_output_reports_exit_code(self, app_state):
         # Non-zero exit but no output at all → still surface the exit
         # code so it isn't a complete black box (#1088).
         monitor = _health_registry().health
@@ -2714,7 +2727,7 @@ class TestHealthMonitorRunOne:
             "exited 1: "
         )
 
-    async def test_exec_error_is_unhealthy_with_reason(self):
+    async def test_exec_error_is_unhealthy_with_reason(self, app_state):
         # The podman/timeout failure text is captured as the reason
         # instead of being discarded (#1088).
         monitor = _health_registry().health
@@ -2747,7 +2760,7 @@ class TestHealthMonitorRunOne:
         assert "PodmanError" in message
         assert "boom" in message
 
-    async def test_no_owner_is_unhealthy_with_reason(self):
+    async def test_no_owner_is_unhealthy_with_reason(self, app_state):
         monitor = _health_registry().health
         st = _health_state(owner_id=None)
         with patch.object(
@@ -2758,7 +2771,7 @@ class TestHealthMonitorRunOne:
         assert "owner" in message
         exec_mock.assert_not_called()
 
-    async def test_no_handle_is_unhealthy_with_reason(self):
+    async def test_no_handle_is_unhealthy_with_reason(self, app_state):
         # Owner exists in the state but has no handle resolved.
         monitor = _health_registry().health
         st = _health_state(owner_id="uid-owner")
@@ -2976,7 +2989,7 @@ class TestHealthMonitorStartupGrace:
 
     """_broadcast fans out to ALL connections, not just the session."""
 
-    def test_fans_out_via_notify_service_health(self):
+    def test_fans_out_via_notify_service_health(self, app_state):
         reg = _health_registry()
         monitor = reg.health
         sock = _mock_sock_for_health()
@@ -3084,7 +3097,7 @@ class TestHealthMonitorLoopSkips:
 class TestHealthMonitorBroadcastSeq:
     """_broadcast bumps per-workspace seq and forwards live fields."""
 
-    def test_bumps_seq_each_emit_and_forwards_fields(self):
+    def test_bumps_seq_each_emit_and_forwards_fields(self, app_state):
         reg = _health_registry()
         monitor = reg.health
         sock = _mock_sock_for_health()
@@ -3119,7 +3132,7 @@ class TestHealthMonitorDeath:
         app_state = _make_app_state()
         self.registry = app_state.container_registry
 
-    def test_broadcast_death_emits_terminal_frame(self):
+    def test_broadcast_death_emits_terminal_frame(self, app_state):
         reg = _health_registry()
         monitor = reg.health
         sock = _mock_sock_for_health()
@@ -3173,7 +3186,9 @@ class TestHealthMonitorDeath:
         assert frame["running"] is False
         assert seen_state_present == [True]
 
-    async def test_notify_workspace_killed_skips_non_health_checked(self):
+    async def test_notify_workspace_killed_skips_non_health_checked(
+        self, app_state
+    ):
         # A workspace with no health_check never appeared on the stream,
         # so its death emits no terminal frame.
         sock = _mock_sock_for_health()
@@ -3189,7 +3204,7 @@ class TestHealthMonitorDeath:
             self.registry.states.pop(st.workspace_id, None)
         sock.send_json.assert_not_called()
 
-    async def test_notify_workspace_killed_no_state_no_emit(self):
+    async def test_notify_workspace_killed_no_state_no_emit(self, app_state):
         # If the state is already gone (double-kill), nothing to emit.
         sock = _mock_sock_for_health()
         try:
@@ -3201,7 +3216,7 @@ class TestHealthMonitorDeath:
             self.registry.app_state.sockets.connections.pop(sock, None)
         sock.send_json.assert_not_called()
 
-    async def test_idle_cleanup_emits_death_frame(self):
+    async def test_idle_cleanup_emits_death_frame(self, app_state):
         """Idle-timeout kills must emit the death frame before removing state.
 
         Regression test for #1343: cleanup_idle_containers called
@@ -3261,7 +3276,7 @@ class TestHealthLoopHeartbeat:
     Emitting from the loop (not a standalone task) ties heartbeat
     presence to the loop being alive."""
 
-    async def test_heartbeats_sent_each_tick_to_opted_in(self):
+    async def test_heartbeats_sent_each_tick_to_opted_in(self, app_state):
         reg = _health_registry()
         monitor = reg.health
         sock = _mock_sock_for_health()
@@ -3373,7 +3388,7 @@ class TestRegistryConnections:
 
     """HealthMonitor reaches WebSocketState via the registry, not a module global (#1464)."""
 
-    def test_connections_property_reads_from_registry(self):
+    def test_connections_property_reads_from_registry(self, app_state):
         """The connections property returns self.registry.app_state.sockets."""
         from klangk_backend.wshandler.session import WebSocketState
 
