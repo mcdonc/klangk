@@ -70,15 +70,15 @@ class Podman:
     per-call ``get_settings()`` reacharound.
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     @property
     def _bin(self) -> str:
-        return self.app_state.settings.podman_bin
+        return self.app.state.settings.podman_bin
 
     @property
     def bin(self) -> str:

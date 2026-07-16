@@ -42,8 +42,8 @@ logger = logging.getLogger(__name__)
 class Connection:
     """Per-WebSocket connection state and command handlers."""
 
-    def __init__(self, ws: SafeWebSocket, user: dict, app_state):
-        self.app_state = app_state
+    def __init__(self, ws: SafeWebSocket, user: dict, app):
+        self.app = app
         self.sock = ws
         self.user = user
         self.workspace_id: str | None = None
@@ -278,31 +278,31 @@ class Connection:
     ) -> None:
         """Start/restart container for a workspace."""
         host_path = str(
-            self.app_state.workspaces.get_workspace_host_path(workspace_id)
+            self.app.state.workspaces.get_workspace_host_path(workspace_id)
         )
         home_path = str(
-            self.app_state.workspaces.get_home_host_path(workspace_id)
+            self.app.state.workspaces.get_home_host_path(workspace_id)
         )
         cfg_path = str(
-            self.app_state.workspaces.get_config_host_path(workspace_id)
+            self.app.state.workspaces.get_config_host_path(workspace_id)
         )
 
         # Ensure the per-user home symlink exists BEFORE starting the
         # container, because mounts under /home/{handle}/ need the
         # symlink in place so podman doesn't auto-create a real dir.
-        handle = await self.app_state.model.users.get_user_handle(
+        handle = await self.app.state.model.users.get_user_handle(
             self.user["id"]
         )
-        workspace_home = self.app_state.workspaces.home_path(workspace_id)
+        workspace_home = self.app.state.workspaces.home_path(workspace_id)
         (
             self._user_home,
             self._home_created,
-        ) = await self.app_state.workspaces.ensure_home_symlink(
+        ) = await self.app.state.workspaces.ensure_home_symlink(
             workspace_home, handle, self.user["id"]
         )
 
         hosting_hostname, hosting_proto, hosting_base_path = (
-            self.app_state.util.derive_hosting_info(
+            self.app.state.util.derive_hosting_info(
                 self.sock.headers,
                 self.sock.client.host if self.sock.client else None,
             )
@@ -310,7 +310,7 @@ class Connection:
         (
             container_id,
             container_status,
-        ) = await self.app_state.container_registry.start_container(
+        ) = await self.app.state.container_registry.start_container(
             workspace_id,
             host_path,
             home_path,
@@ -335,11 +335,11 @@ class Connection:
         self.container_id = container_id
         self._service_command = workspace.get("service_command")
 
-        session = self.app_state.sockets.get_or_create_session(
-            workspace_id, app_state=self.app_state
+        session = self.app.state.sockets.get_or_create_session(
+            workspace_id, app=self.app
         )
         token_expiry = datetime.now(timezone.utc) + timedelta(
-            hours=self.app_state.auth.workspace_token_expire_hours
+            hours=self.app.state.auth.workspace_token_expire_hours
         )
         await session.add_subscriber(
             self.sock, container_id, token_expiry=token_expiry
@@ -358,7 +358,7 @@ class Connection:
         # No await between lock release and callback registration — the idle
         # loop cannot interleave here in asyncio's single-threaded model.
         # If an await is added before on_idle_stop, move registration inside the lock.
-        self.app_state.container_registry.on_idle_stop(workspace_id, on_idle)
+        self.app.state.container_registry.on_idle_stop(workspace_id, on_idle)
 
         # Cache workspace info for auto-restart
         self.workspace = workspace
@@ -369,7 +369,7 @@ class Connection:
         # Populate skeleton if this is a new user home (symlink was
         # created above, before container start).
         if self._home_created:
-            await self.app_state.workspaces.populate_home_skel(
+            await self.app.state.workspaces.populate_home_skel(
                 container_id, self.user["id"]
             )
 
@@ -377,7 +377,7 @@ class Connection:
 
     async def _send_chat_history(self, workspace_id: str) -> None:
         """Send chat history to the connecting user."""
-        chat_history = await self.app_state.model.chat.get_chat_messages(
+        chat_history = await self.app.state.model.chat.get_chat_messages(
             workspace_id
         )
         if chat_history:
@@ -390,10 +390,10 @@ class Connection:
     ) -> None:
         """Send presence list and broadcast join to other subscribers."""
         presence = await get_presence_list(
-            workspace_id, self.app_state.sockets
+            workspace_id, self.app.state.sockets
         )
         self.sock.send_json({"type": "presence_list", "users": presence})
-        session = self.app_state.sockets.get_session(workspace_id)
+        session = self.app.state.sockets.get_session(workspace_id)
         if session and not rejoining:
             join_msg = {
                 "type": "presence_join",
@@ -405,7 +405,7 @@ class Connection:
                 if sock is not self.sock:
                     sock.send_json(join_msg)
 
-            sys_msg = await self.app_state.model.chat.add_chat_message(
+            sys_msg = await self.app.state.model.chat.add_chat_message(
                 workspace_id,
                 self.user["id"],
                 self.user["email"],
@@ -422,13 +422,13 @@ class Connection:
             send_error(self.sock, "Missing workspaceId")
             return
 
-        principals = await self.app_state.acl.get_principals(self.user["id"])
-        if not await self.app_state.acl.check_permission(
+        principals = await self.app.state.acl.get_principals(self.user["id"])
+        if not await self.app.state.acl.check_permission(
             f"/workspaces/{workspace_id}", principals, "terminal"
         ):
             send_error(self.sock, "Permission denied")
             return
-        workspace = await self.app_state.workspaces.get_workspace(workspace_id)
+        workspace = await self.app.state.workspaces.get_workspace(workspace_id)
         if workspace is None:
             send_error(self.sock, "Workspace not found")
             return
@@ -454,12 +454,12 @@ class Connection:
         )
 
         t_post = time.monotonic()
-        ports = await self.app_state.container_registry.get_workspace_ports(
+        ports = await self.app.state.container_registry.get_workspace_ports(
             workspace_id
         )
         status = getattr(self, "container_status", "created")
         container_name, ports_str = format_container_info(
-            workspace_id, ports, self.app_state.util.instance_id()
+            workspace_id, ports, self.app.state.util.instance_id()
         )
         status_msg = {
             "connected": f"Connected to running container "
@@ -469,7 +469,7 @@ class Connection:
             "created": f"Created new container {container_name}{ports_str}",
         }.get(status, "Container ready")
         status_msg += format_idle_timeout(
-            self.app_state.container_registry.idle_timeout_seconds
+            self.app.state.container_registry.idle_timeout_seconds
         )
 
         self.sock.send_json(
@@ -488,7 +488,7 @@ class Connection:
         if self.container_id:
             asyncio.create_task(self._start_agent_if_needed())
 
-        rejoining = self.app_state.sockets.cancel_pending_leave(
+        rejoining = self.app.state.sockets.cancel_pending_leave(
             workspace_id, self.user["id"]
         )
         await self._broadcast_join(workspace_id, rejoining)
@@ -540,7 +540,7 @@ class Connection:
             logger.warning("Cleanup error during restart: %s", e)
 
         if workspace is None:
-            workspace = await self.app_state.workspaces.get_workspace(
+            workspace = await self.app.state.workspaces.get_workspace(
                 workspace_id, user["id"]
             )
         if workspace is None:
@@ -548,25 +548,25 @@ class Connection:
             return
 
         await self.start_workspace_container(workspace_id, workspace)
-        self.app_state.container_registry.record_activity(self.container_id)
+        self.app.state.container_registry.record_activity(self.container_id)
 
         # Update container_id on ALL connections to this workspace
         # so they don't try to exec into the old (removed) container.
         new_cid = self.container_id
-        for sock, conn in list(self.app_state.sockets.connections.items()):
+        for sock, conn in list(self.app.state.sockets.connections.items()):
             if conn.workspace_id == workspace_id and conn is not self:
                 conn.container_id = new_cid
 
-        ports = await self.app_state.container_registry.get_workspace_ports(
+        ports = await self.app.state.container_registry.get_workspace_ports(
             workspace_id
         )
         container_name, ports_str = format_container_info(
-            workspace_id, ports, self.app_state.util.instance_id()
+            workspace_id, ports, self.app.state.util.instance_id()
         )
         status_msg = f"Container restarted {container_name}{ports_str}"
 
         timeout_mins = (
-            self.app_state.container_registry.idle_timeout_seconds / 60
+            self.app.state.container_registry.idle_timeout_seconds / 60
         )
         if timeout_mins == int(timeout_mins):
             status_msg += f" — idle timeout: {int(timeout_mins)}m"
@@ -595,26 +595,26 @@ class Connection:
 
         workspace_id = self.workspace_id
         container_id = self.container_id
-        session = self.app_state.sockets.get_session(workspace_id)
+        session = self.app.state.sockets.get_session(workspace_id)
 
         # Clear container_id on ALL connections to prevent stale exec attempts.
-        for sock, conn_obj in list(self.app_state.sockets.connections.items()):
+        for sock, conn_obj in list(self.app.state.sockets.connections.items()):
             if conn_obj.workspace_id == workspace_id:
                 conn_obj.container_id = None
 
-        await self.app_state.container_registry.notify_workspace_killed(
+        await self.app.state.container_registry.notify_workspace_killed(
             workspace_id
         )
 
         try:
-            await self.app_state.container_registry.stop_and_remove_container(
+            await self.app.state.container_registry.stop_and_remove_container(
                 container_id
             )
         except Exception as e:
             logger.warning("Error stopping container: %s", e)
 
         # Stop the Pi RPC subprocess now that its container is gone.
-        await self.app_state.agents.stop_session(workspace_id)
+        await self.app.state.agents.stop_session(workspace_id)
 
         # Notify subscribers AFTER the container is fully stopped, so
         # reconnecting clients don't find a half-dead container.
@@ -638,8 +638,8 @@ class Connection:
         """Check if the connected user has a workspace permission."""
         if not self.workspace_id:
             return False
-        principals = await self.app_state.acl.get_principals(self.user["id"])
-        return await self.app_state.acl.check_permission(
+        principals = await self.app.state.acl.get_principals(self.user["id"])
+        return await self.app.state.acl.check_permission(
             f"/workspaces/{self.workspace_id}", principals, perm
         )
 
@@ -698,7 +698,7 @@ class Connection:
 
     async def handle_heartbeat(self) -> None:
         if self.container_id is not None:
-            self.app_state.container_registry.record_activity(
+            self.app.state.container_registry.record_activity(
                 self.container_id
             )
 
@@ -725,10 +725,10 @@ class Connection:
         text = msg.get("message", "").strip()
         if not text:
             return
-        chat_msg = await self.app_state.model.chat.add_chat_message(
+        chat_msg = await self.app.state.model.chat.add_chat_message(
             workspace_id, self.user["id"], self.user["email"], text
         )
-        session = self.app_state.sockets.get_session(workspace_id)
+        session = self.app.state.sockets.get_session(workspace_id)
         if session:
             session.broadcast({"type": "chat_message", **chat_msg})
 
@@ -743,14 +743,14 @@ class Connection:
         user_id = self.user["id"]
         conv = agent_conversations.get(workspace_id)
 
-        if await mentions_agent(text, self.app_state):
+        if await mentions_agent(text, self.app):
             should_route = True
             agent_conversations[workspace_id] = {
                 "user_id": user_id,
                 "time": time.monotonic(),
                 "interjected": False,
             }
-        elif conv and not await addresses_other_user(text, self.app_state):
+        elif conv and not await addresses_other_user(text, self.app):
             if user_id == conv["user_id"]:
                 if not conv["interjected"]:
                     # No interjection — route indefinitely
@@ -778,7 +778,7 @@ class Connection:
             cancel_agent_task(workspace_id)
             agent_tasks[workspace_id] = asyncio.create_task(
                 handle_agent_mention(
-                    self.app_state.sockets,
+                    self.app.state.sockets,
                     workspace_id,
                     self.container_id,
                     text,
@@ -795,11 +795,11 @@ class Connection:
         message_id = msg.get("message_id", "")
         if not message_id:
             return
-        deleted = await self.app_state.model.chat.delete_chat_message(
+        deleted = await self.app.state.model.chat.delete_chat_message(
             message_id, self.user["id"]
         )
         if deleted:
-            session = self.app_state.sockets.get_session(workspace_id)
+            session = self.app.state.sockets.get_session(workspace_id)
             if session:
                 session.broadcast(
                     {
@@ -817,7 +817,7 @@ class Connection:
         if not before_id:
             return
         limit = min(msg.get("limit", 50), 100)
-        messages = await self.app_state.model.chat.get_chat_messages_before(
+        messages = await self.app.state.model.chat.get_chat_messages_before(
             workspace_id, before_id, limit
         )
         self.sock.send_json(
@@ -831,18 +831,18 @@ class Connection:
     async def _start_agent_if_needed(self) -> None:
         """Start the Pi RPC agent so it shows in presence."""
         try:
-            session = await self.app_state.agents.get_session(
+            session = await self.app.state.agents.get_session(
                 self.workspace_id
             )
             await session.ensure_started()
             # Broadcast updated presence now that agent is alive
             if self.workspace_id:
-                ws_session = self.app_state.sockets.get_session(
+                ws_session = self.app.state.sockets.get_session(
                     self.workspace_id
                 )
                 if ws_session:
                     presence = await get_presence_list(
-                        self.workspace_id, self.app_state.sockets
+                        self.workspace_id, self.app.state.sockets
                     )
                     ws_session.broadcast(
                         {"type": "presence_list", "users": presence}
@@ -858,7 +858,7 @@ class Connection:
 
     async def handle_ui_ready(self) -> None:
         if self.workspace_id:
-            sess = self.app_state.sockets.get_session(self.workspace_id)
+            sess = self.app.state.sockets.get_session(self.workspace_id)
             if sess:
                 sess.browser_subscribers.add(self.sock)
         status_msg = self.pending_status_msg
@@ -866,10 +866,10 @@ class Connection:
         if status_msg:
             send_event(self.sock, "container_ready", status_msg)
         # Send shared terminal list from in-memory state.
-        ws_session = self.app_state.sockets.get_session(self.workspace_id)
+        ws_session = self.app.state.sockets.get_session(self.workspace_id)
         if ws_session:
             terminals = get_shared_terminals(
-                ws_session, self.app_state.sockets
+                ws_session, self.app.state.sockets
             )
             self.sock.send_json(
                 {"type": "shared_terminals", "terminals": terminals}
@@ -881,23 +881,23 @@ class Connection:
             send_error(self.sock, "Not connected to a workspace")
             return
         try:
-            await self.app_state.model.users.set_user_handle(
+            await self.app.state.model.users.set_user_handle(
                 self.user["id"], handle
             )
             # Update the per-workspace symlink.
             workspace = self.workspace
             if workspace:
-                workspace_home = self.app_state.workspaces.home_path(
+                workspace_home = self.app.state.workspaces.home_path(
                     self.workspace_id
                 )
                 (
                     container_home,
                     created,
-                ) = await self.app_state.workspaces.ensure_home_symlink(
+                ) = await self.app.state.workspaces.ensure_home_symlink(
                     workspace_home, handle, self.user["id"]
                 )
                 if created and self.container_id:
-                    await self.app_state.workspaces.populate_home_skel(
+                    await self.app.state.workspaces.populate_home_skel(
                         self.container_id,
                         self.user["id"],
                     )
@@ -922,13 +922,13 @@ class Connection:
         workspace_id = self.workspace_id
         idle_cb = self._idle_cb
         if workspace_id and idle_cb:
-            self.app_state.container_registry.remove_idle_callback(
+            self.app.state.container_registry.remove_idle_callback(
                 workspace_id, idle_cb
             )
             self._idle_cb = None
 
         # Revoke per-connection browser registrations
-        self.app_state.container_registry.revoke_browser(self.sock)
+        self.app.state.container_registry.revoke_browser(self.sock)
         self.browser_id = None
 
         await self.stop_terminal()
@@ -939,7 +939,7 @@ class Connection:
         # If no subscribers remain, remove the session entirely. The container
         # is NOT killed — idle timeout handles that.
         session = (
-            self.app_state.sockets.get_session(workspace_id)
+            self.app.state.sockets.get_session(workspace_id)
             if workspace_id
             else None
         )
@@ -950,16 +950,16 @@ class Connection:
                 # other connections.  If they reconnect within the delay
                 # window the leave (and re-join) are suppressed.
                 still_connected = any(
-                    self.app_state.sockets.connections.get(s) is not None
-                    and self.app_state.sockets.connections[s].user["id"]
+                    self.app.state.sockets.connections.get(s) is not None
+                    and self.app.state.sockets.connections[s].user["id"]
                     == self.user["id"]
                     for s in session.subscribers
                 )
                 if not still_connected:
-                    self.app_state.sockets.schedule_pending_leave(
+                    self.app.state.sockets.schedule_pending_leave(
                         workspace_id, self.user, session
                     )
             else:
                 # Lock is released by remove_subscriber, so use the
                 # lock-acquiring version.
-                await self.app_state.sockets.remove_session(workspace_id)
+                await self.app.state.sockets.remove_session(workspace_id)

@@ -20,7 +20,9 @@ def _auth(env=None):
     """Build an Auth instance from explicit env (no os.environ)."""
     from _helpers import wire_db_and_model
 
-    state = _types.SimpleNamespace(settings=make_settings(env))
+    state = _types.SimpleNamespace(
+        state=_types.SimpleNamespace(settings=make_settings(env))
+    )
     wire_db_and_model(state)
     return Auth(state)
 
@@ -33,10 +35,8 @@ def _req(auth=None):
     """
     if auth is None:
         auth = _auth()
-    auth.app_state.auth = auth
-    return _types.SimpleNamespace(
-        app=_types.SimpleNamespace(state=auth.app_state)
-    )
+    auth.app.state.auth = auth
+    return _types.SimpleNamespace(app=auth.app)
 
 
 class TestPasswordHashing:
@@ -171,7 +171,7 @@ class TestRegister:
         (regression for #877)."""
         a = _auth()
         with patch.object(
-            a.app_state.model.users,
+            a.app.state.model.users,
             "create_user",
             side_effect=SAIntegrityError(
                 "statement", {}, Exception("UNIQUE constraint failed")
@@ -246,7 +246,7 @@ class TestLogin:
     async def test_login_oidc_only_user_no_password_hash(self, db, app_state):
         """OIDC-only users have no password hash; login must return 401
         (Invalid credentials) rather than crashing with a 500."""
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "oidc@example.com", None, verified=True, provider="oidc"
         )
         with pytest.raises(HTTPException) as exc_info:
@@ -262,7 +262,7 @@ class TestLogin:
         import bcrypt
 
         password_hash = bcrypt.hashpw(b"testpass", bcrypt.gensalt()).decode()
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "unverified@example.com", password_hash, verified=False
         )
         with pytest.raises(HTTPException) as exc_info:
@@ -302,8 +302,10 @@ class TestLoginRateLimit:
                     )
                 )
             assert exc_info.value.status_code == 401
-        info = await app_state.model.login_attempts.get_login_attempt_info(
-            "testuser@example.com"
+        info = (
+            await app_state.state.model.login_attempts.get_login_attempt_info(
+                "testuser@example.com"
+            )
         )
         assert info["attempt_count"] == _auth().login_lockout_failures - 1
 
@@ -336,7 +338,7 @@ class TestLoginRateLimit:
         permanently locked out by failures spread across days.
         """
         old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-        async with app_state.db.transaction() as raw_db:
+        async with app_state.state.db.transaction() as raw_db:
             await raw_db.execute(
                 "INSERT INTO login_attempts"
                 " (email, attempt_count, first_attempt_at)"
@@ -355,8 +357,10 @@ class TestLoginRateLimit:
                 )
             )
         assert exc_info.value.status_code == 401  # not 429
-        info = await app_state.model.login_attempts.get_login_attempt_info(
-            "testuser@example.com"
+        info = (
+            await app_state.state.model.login_attempts.get_login_attempt_info(
+                "testuser@example.com"
+            )
         )
         assert info["attempt_count"] == 1
 
@@ -381,10 +385,10 @@ class TestLoginRateLimit:
     ):
         """Lockout message includes remaining minutes."""
         locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
-        await app_state.model.login_attempts.record_failed_login(
+        await app_state.state.model.login_attempts.record_failed_login(
             "testuser@example.com"
         )
-        await app_state.model.login_attempts.set_login_lockout(
+        await app_state.state.model.login_attempts.set_login_lockout(
             "testuser@example.com", locked_until.isoformat()
         )
         with pytest.raises(HTTPException) as exc_info:
@@ -399,10 +403,10 @@ class TestLoginRateLimit:
     async def test_expired_lockout_allows_login(self, user, app_state):
         """An expired lockout doesn't block the user from logging in."""
         expired_until = datetime.now(timezone.utc) - timedelta(minutes=1)
-        await app_state.model.login_attempts.record_failed_login(
+        await app_state.state.model.login_attempts.record_failed_login(
             "testuser@example.com"
         )
-        await app_state.model.login_attempts.set_login_lockout(
+        await app_state.state.model.login_attempts.set_login_lockout(
             "testuser@example.com", expired_until.isoformat()
         )
         result = await _auth().login(
@@ -415,10 +419,10 @@ class TestLoginRateLimit:
     async def test_login_blocked_while_lockout_active(self, user, app_state):
         """Active lockout returns 429 with a countdown."""
         locked_until = datetime.now(timezone.utc) + timedelta(minutes=10)
-        await app_state.model.login_attempts.record_failed_login(
+        await app_state.state.model.login_attempts.record_failed_login(
             "testuser@example.com"
         )
-        await app_state.model.login_attempts.set_login_lockout(
+        await app_state.state.model.login_attempts.set_login_lockout(
             "testuser@example.com", locked_until.isoformat()
         )
         with pytest.raises(HTTPException) as exc_info:
@@ -484,10 +488,10 @@ class TestLoginRateLimit:
 
     async def test_login_clears_attempts(self, db, user, app_state):
         """Successful login clears failed attempt counts."""
-        await app_state.model.login_attempts.record_failed_login(
+        await app_state.state.model.login_attempts.record_failed_login(
             "testuser@example.com"
         )
-        await app_state.model.login_attempts.record_failed_login(
+        await app_state.state.model.login_attempts.record_failed_login(
             "testuser@example.com"
         )
         result = await _auth().login(
@@ -496,8 +500,10 @@ class TestLoginRateLimit:
             )
         )
         assert result.access_token
-        info = await app_state.model.login_attempts.get_login_attempt_info(
-            "testuser@example.com"
+        info = (
+            await app_state.state.model.login_attempts.get_login_attempt_info(
+                "testuser@example.com"
+            )
         )
         assert info is None
 
@@ -520,19 +526,21 @@ class TestVerification:
         import bcrypt
 
         password_hash = bcrypt.hashpw(b"pass", bcrypt.gensalt()).decode()
-        user = await app_state.model.users.create_user(
+        user = await app_state.state.model.users.create_user(
             "toverify@example.com", password_hash, verified=False
         )
         assert not user["verified"]
-        result = await app_state.model.users.verify_user(user["id"])
+        result = await app_state.state.model.users.verify_user(user["id"])
         assert result is True
-        updated = await app_state.model.users.get_user_by_email(
+        updated = await app_state.state.model.users.get_user_by_email(
             "toverify@example.com"
         )
         assert updated["verified"] is True
 
     async def test_verify_nonexistent_user(self, db, app_state):
-        result = await app_state.model.users.verify_user("nonexistent-id")
+        result = await app_state.state.model.users.verify_user(
+            "nonexistent-id"
+        )
         assert result is False
 
 
@@ -741,25 +749,25 @@ class TestLogout:
 class TestRefreshToken:
     async def test_refresh_returns_new_token(self, db, app_state):
         """Refreshing a valid token returns a new token."""
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "a@b.com", auth.hash_password("pw"), verified=True
         )
-        user = await app_state.model.users.get_user_by_email("a@b.com")
+        user = await app_state.state.model.users.get_user_by_email("a@b.com")
         token = _auth().create_token(user["id"], user["email"])
         result = await _auth().refresh_token(token)
         assert result.access_token != token
         # Old JTI should be blocklisted
         old_payload = _auth().decode_token(token, allow_expired=True)
-        assert await app_state.model.tokens.is_token_blocklisted(
+        assert await app_state.state.model.tokens.is_token_blocklisted(
             old_payload["jti"]
         )
 
     async def test_refresh_idempotent(self, db, app_state):
         """Refreshing the same token twice returns the same new token."""
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "a@b.com", auth.hash_password("pw"), verified=True
         )
-        user = await app_state.model.users.get_user_by_email("a@b.com")
+        user = await app_state.state.model.users.get_user_by_email("a@b.com")
         token = _auth().create_token(user["id"], user["email"])
         result1 = await _auth().refresh_token(token)
         result2 = await _auth().refresh_token(token)
@@ -767,10 +775,10 @@ class TestRefreshToken:
 
     async def test_refresh_expired_token_returns_401(self, db, app_state):
         """Refreshing an expired token with no prior refresh returns 401."""
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "a@b.com", auth.hash_password("pw"), verified=True
         )
-        user = await app_state.model.users.get_user_by_email("a@b.com")
+        user = await app_state.state.model.users.get_user_by_email("a@b.com")
         expired = jwt.encode(
             {
                 "sub": user["id"],
@@ -789,15 +797,15 @@ class TestRefreshToken:
         self, db, app_state
     ):
         """Refreshing an expired token returns cached new token if within window."""
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "a@b.com", auth.hash_password("pw"), verified=True
         )
-        user = await app_state.model.users.get_user_by_email("a@b.com")
+        user = await app_state.state.model.users.get_user_by_email("a@b.com")
         # Simulate a token that was refreshed, then expired
         expires_at = (
             datetime.now(timezone.utc) + timedelta(hours=1)
         ).isoformat()
-        await app_state.model.tokens.blocklist_token(
+        await app_state.state.model.tokens.blocklist_token(
             "old-jti", expires_at, new_token="cached-new-token"
         )
         expired = jwt.encode(
@@ -819,14 +827,14 @@ class TestRefreshToken:
         """Cached replacement is returned even when the old token's
         blocklist expires_at has passed — the new token's own exp
         governs its validity."""
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "a@b.com", auth.hash_password("pw"), verified=True
         )
-        user = await app_state.model.users.get_user_by_email("a@b.com")
+        user = await app_state.state.model.users.get_user_by_email("a@b.com")
         expires_at = (
             datetime.now(timezone.utc) - timedelta(hours=1)
         ).isoformat()
-        await app_state.model.tokens.blocklist_token(
+        await app_state.state.model.tokens.blocklist_token(
             "old-jti", expires_at, new_token="cached-replacement"
         )
         expired = jwt.encode(
@@ -851,10 +859,10 @@ class TestRefreshToken:
 
     async def test_refresh_revoked_token_returns_401(self, db, app_state):
         """Refreshing a revoked (logged out) token returns 401."""
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "a@b.com", auth.hash_password("pw"), verified=True
         )
-        user = await app_state.model.users.get_user_by_email("a@b.com")
+        user = await app_state.state.model.users.get_user_by_email("a@b.com")
         token = _auth().create_token(user["id"], user["email"])
         await _auth().logout(token)
         with pytest.raises(HTTPException) as exc_info:

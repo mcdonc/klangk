@@ -26,9 +26,11 @@ def _settings(env: dict):
 def _trust(s) -> ssl_trust.SSLTrust:
     """Build an SSLTrust owning the given settings (#1567).
 
-    SSLTrust only reads ``app_state.settings``, so a bare namespace is enough.
+    SSLTrust only reads ``app_state.state.settings``, so a bare namespace is enough.
     """
-    return ssl_trust.SSLTrust(types.SimpleNamespace(settings=s))
+    return ssl_trust.SSLTrust(
+        types.SimpleNamespace(state=types.SimpleNamespace(settings=s))
+    )
 
 
 @pytest.fixture(autouse=True)

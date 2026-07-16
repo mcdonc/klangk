@@ -1,8 +1,8 @@
 """Direct coverage for ``ACL(app_state)`` — the FastAPI permission layer (#1577).
 
-Exercises the three DB-touching methods on ``app_state.acl``
+Exercises the three DB-touching methods on ``app_state.state.acl``
 (``get_principals``, ``check_permission``, ``permissions_for_resources``),
-which reach the model layer through ``self.app_state.model.{users,acl}`` —
+which reach the model layer through ``self.app_state.state.model.{users,acl}`` —
 and the ``has_permission`` dependency factory, whose closure resolves
 ``request.app.state.acl`` per request. Mirrors the #1572–#1575
 ``test_model_*`` pattern: ``app_state`` (db + model + acl wired via the
@@ -24,14 +24,16 @@ from klangk_backend.model import (
 
 @pytest.fixture
 async def ac(app_state, db):
-    """``app_state.acl`` with the schema initialized."""
-    return app_state.acl
+    """``app_state.state.acl`` with the schema initialized."""
+    return app_state.state.acl
 
 
 async def test_get_principals(ac, user, app_state):
 
-    group = await app_state.model.users.create_group("g")
-    await app_state.model.users.add_user_to_group(user["id"], group["id"])
+    group = await app_state.state.model.users.create_group("g")
+    await app_state.state.model.users.add_user_to_group(
+        user["id"], group["id"]
+    )
     principals = await ac.get_principals(user["id"])
     assert principals == {
         "user_id": user["id"],
@@ -43,7 +45,7 @@ async def test_get_principals(ac, user, app_state):
 async def test_check_permission_allow_and_deny(ac, user, app_state):
 
     # Allow on exact resource via user principal.
-    await app_state.model.acl.add_acl_entry(
+    await app_state.state.model.acl.add_acl_entry(
         "/ws-allow",
         0,
         ACTION_ALLOW,
@@ -57,7 +59,7 @@ async def test_check_permission_allow_and_deny(ac, user, app_state):
     assert await ac.check_permission("/ws-allow", principals, "edit") is False
 
     # Deny wins over a deeper allow (first-match-wins on the walked path).
-    await app_state.model.acl.add_acl_entry(
+    await app_state.state.model.acl.add_acl_entry(
         "/ws-deny",
         0,
         ACTION_DENY,
@@ -71,7 +73,7 @@ async def test_check_permission_allow_and_deny(ac, user, app_state):
 async def test_check_permission_walks_to_parent(ac, user, app_state):
 
     # Allow at the parent; a child resource inherits it via the walk.
-    await app_state.model.acl.add_acl_entry(
+    await app_state.state.model.acl.add_acl_entry(
         "/parent",
         0,
         ACTION_ALLOW,
@@ -89,7 +91,7 @@ async def test_check_permission_walks_to_parent(ac, user, app_state):
 
 async def test_permissions_for_resources(ac, user, app_state):
 
-    await app_state.model.acl.add_acl_entry(
+    await app_state.state.model.acl.add_acl_entry(
         "/r1",
         0,
         ACTION_ALLOW,
@@ -97,7 +99,7 @@ async def test_permissions_for_resources(ac, user, app_state):
         PRINCIPAL_USER,
         user_id=user["id"],
     )
-    await app_state.model.acl.add_acl_entry(
+    await app_state.state.model.acl.add_acl_entry(
         "/r2",
         0,
         ACTION_ALLOW,
@@ -117,9 +119,11 @@ async def test_permissions_for_resources(ac, user, app_state):
 
 async def test_permissions_for_resources_via_group(ac, user, app_state):
 
-    group = await app_state.model.users.create_group("editors")
-    await app_state.model.users.add_user_to_group(user["id"], group["id"])
-    await app_state.model.acl.add_acl_entry(
+    group = await app_state.state.model.users.create_group("editors")
+    await app_state.state.model.users.add_user_to_group(
+        user["id"], group["id"]
+    )
+    await app_state.state.model.acl.add_acl_entry(
         "/grp-res",
         0,
         ACTION_ALLOW,

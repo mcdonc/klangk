@@ -13,19 +13,19 @@ class TokensModel:
 
     Constructed by :class:`~klangk_backend.model.model.Model` and reached
     via ``app_state.model.tokens``. Reaches the DB through
-    ``self.app_state.db`` (the single DB instance for the whole app).
+    ``self.app.state.db`` (the single DB instance for the whole app).
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     async def blocklist_token(
         self, jti: str, expires_at: str, new_token: str | None = None
     ) -> None:
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             await db.execute(
                 "INSERT OR IGNORE INTO token_blocklist"
                 " (jti, expires_at, new_token) VALUES (?, ?, ?)",
@@ -33,7 +33,7 @@ class TokensModel:
             )
 
     async def is_token_blocklisted(self, jti: str) -> bool:
-        row = await self.app_state.db.fetchone(
+        row = await self.app.state.db.fetchone(
             "SELECT 1 FROM token_blocklist WHERE jti = ?",
             (jti,),
         )
@@ -45,7 +45,7 @@ class TokensModel:
         The returned token is a full JWT whose own ``exp`` claim governs
         its validity — no additional expiry check is needed here.
         """
-        row = await self.app_state.db.fetchone(
+        row = await self.app.state.db.fetchone(
             "SELECT new_token FROM token_blocklist"
             " WHERE jti = ? AND new_token IS NOT NULL",
             (jti,),

@@ -24,15 +24,19 @@ from klangk_backend.settings import KlangkSettings
 
 
 def _renderer(settings):
-    """Wrap settings in a minimal app_state and build a NginxRenderer (#1469)."""
-    return NginxRenderer(types.SimpleNamespace(settings=settings))
+    """Wrap settings in a minimal mock app and build a NginxRenderer (#1469)."""
+    return NginxRenderer(
+        types.SimpleNamespace(state=types.SimpleNamespace(settings=settings))
+    )
 
 
 def _wd(settings):
-    """Build a NginxWatchdog from settings (wrapped in a minimal app_state)."""
+    """Build a NginxWatchdog from settings (wrapped in a minimal mock app)."""
     from klangk_backend.nginx import NginxWatchdog
 
-    return NginxWatchdog(types.SimpleNamespace(settings=settings))
+    return NginxWatchdog(
+        types.SimpleNamespace(state=types.SimpleNamespace(settings=settings))
+    )
 
 
 class TestUpstreams:

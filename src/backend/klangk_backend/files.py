@@ -58,18 +58,18 @@ class Files:
     argument), the same way ``Workspaces`` / ``Terminal`` own theirs.
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     async def list_files(
         self, container_id: str, path: str = "/"
     ) -> list[dict]:
         """List files and directories at the given path inside the container."""
         path = validate_path(path)
-        rc, out, _err = await self.app_state.podman.exec_container(
+        rc, out, _err = await self.app.state.podman.exec_container(
             container_id,
             [
                 "find",
@@ -125,7 +125,7 @@ class Files:
         """Stat a single path.  Returns ``{"is_dir": bool, "size": int}``
         or ``None`` if the path does not exist."""
         path = validate_path(path)
-        rc, out, _err = await self.app_state.podman.exec_container(
+        rc, out, _err = await self.app.state.podman.exec_container(
             container_id,
             ["stat", "-L", "--format", "%F\t%s", "--", path],
             user=EXEC_USER,
@@ -151,7 +151,7 @@ class Files:
             return None
         if info["size"] > 1_000_000:
             return None
-        rc, out, _err = await self.app_state.podman.exec_container(
+        rc, out, _err = await self.app.state.podman.exec_container(
             container_id,
             ["cat", "--", path],
             user=EXEC_USER,
@@ -165,7 +165,7 @@ class Files:
     ) -> AsyncGenerator[bytes, None]:
         """Stream file contents as raw bytes for download."""
         path = validate_path(path)
-        return self.app_state.podman.exec_container_stream(
+        return self.app.state.podman.exec_container_stream(
             container_id,
             ["cat", "--", path],
             user=EXEC_USER,
@@ -178,7 +178,7 @@ class Files:
         path = validate_path(path)
         # Use sh -c with readlink to resolve symlinks before tar -C,
         # because tar -C does not follow symlinks on all implementations.
-        return self.app_state.podman.exec_container_stream(
+        return self.app.state.podman.exec_container_stream(
             container_id,
             [
                 "sh",
@@ -194,14 +194,14 @@ class Files:
         """Delete a file or directory.  Returns the path deleted."""
         path = validate_path(path)
         # Check existence first
-        rc, _out, _err = await self.app_state.podman.exec_container(
+        rc, _out, _err = await self.app.state.podman.exec_container(
             container_id,
             ["test", "-e", path],
             user=EXEC_USER,
         )
         if rc != 0:
             raise FileNotFoundError("Path not found")
-        rc, _out, err = await self.app_state.podman.exec_container(
+        rc, _out, err = await self.app.state.podman.exec_container(
             container_id,
             ["rm", "-rf", "--", path],
             user=EXEC_USER,
@@ -217,7 +217,7 @@ class Files:
         old_path = validate_path(old_path)
         new_path = validate_path(new_path)
         # Check source exists
-        rc, _out, _err = await self.app_state.podman.exec_container(
+        rc, _out, _err = await self.app.state.podman.exec_container(
             container_id,
             ["test", "-e", old_path],
             user=EXEC_USER,
@@ -225,7 +225,7 @@ class Files:
         if rc != 0:
             raise FileNotFoundError("Source path not found")
         # Check dest does not exist
-        rc, _out, _err = await self.app_state.podman.exec_container(
+        rc, _out, _err = await self.app.state.podman.exec_container(
             container_id,
             ["test", "-e", new_path],
             user=EXEC_USER,
@@ -234,13 +234,13 @@ class Files:
             raise FileExistsError("Destination already exists")
         # Create parent directory
         parent = posixpath.dirname(new_path)
-        await self.app_state.podman.exec_container(
+        await self.app.state.podman.exec_container(
             container_id,
             ["mkdir", "-p", "--", parent],
             user=EXEC_USER,
         )
         # Move
-        rc, _out, err = await self.app_state.podman.exec_container(
+        rc, _out, err = await self.app.state.podman.exec_container(
             container_id,
             ["mv", "--", old_path, new_path],
             user=EXEC_USER,
@@ -257,7 +257,7 @@ class Files:
         # mkdir -p + cat > file in one sh invocation.
         # Path is passed as $1 (positional arg), never interpolated into the
         # command string, so shell metacharacters in the path are harmless.
-        rc, _out, err = await self.app_state.podman.exec_container(
+        rc, _out, err = await self.app.state.podman.exec_container(
             container_id,
             [
                 "sh",

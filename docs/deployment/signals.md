@@ -37,11 +37,13 @@ nginx/Postgres convention):
    file), the restart is **denied** — the runtime stays running on its
    last-known-good config and the reason is logged at `ERROR` level.
 2. **Apply reloadable settings.** The new `KlangkSettings` instance is
-   swapped onto `app_state.settings`; all subsystems read it live. The
+   swapped onto `app.state.settings`; all subsystems read it live. The
    OIDC discovery/JWKS caches are cleared and providers re-initialized,
    plugins are re-scanned, SSL trust is re-applied, and the agent user
    is re-seeded (so `KLANGK_AGENT_EMAIL`/`_HANDLE` changes take effect
-   in the DB).
+   in the DB). CORS origins (`KLANGK_CORS_ORIGINS`) are picked up
+   automatically by the live CORS middleware; `KLANGK_FRONTEND_DIR` is
+   remounted if it changed (#1610).
 3. **Close every WebSocket client** with close code `1012` ("service
    restarted"). Both the web UI and `klangkc monitor` reconnect
    automatically with backoff and rebuild their state on reconnect.

@@ -23,7 +23,9 @@ def _oidc(settings: KlangkSettings | None = None) -> oidc.OIDC:
     tests pass explicit settings to vary a field (#1457: construct
     directly, never via os.environ).
     """
-    app_state = types.SimpleNamespace(settings=settings or make_settings({}))
+    app_state = types.SimpleNamespace(
+        state=types.SimpleNamespace(settings=settings or make_settings({}))
+    )
     return oidc.OIDC(app_state)
 
 
@@ -928,34 +930,36 @@ class TestCallLoginHook:
 class TestSyncOidcGroups:
     async def test_creates_groups_and_adds_memberships(self, db, app_state):
 
-        user = await app_state.model.users.create_user(
+        user = await app_state.state.model.users.create_user(
             "sync2@example.com", "hash"
         )
         await oidc.OIDC(app_state).sync_oidc_groups(
             user["id"], {"new-group-a", "new-group-b"}
         )
-        groups = await app_state.model.users.get_user_groups(user["id"])
+        groups = await app_state.state.model.users.get_user_groups(user["id"])
         names = {g["name"] for g in groups}
         assert "new-group-a" in names
         assert "new-group-b" in names
-        sync_ids = await app_state.model.users.get_user_oidc_sync_group_ids(
-            user["id"]
+        sync_ids = (
+            await app_state.state.model.users.get_user_oidc_sync_group_ids(
+                user["id"]
+            )
         )
         assert len(sync_ids) == 2
 
     async def test_removes_stale_oidc_sync(self, db, app_state):
 
-        user = await app_state.model.users.create_user(
+        user = await app_state.state.model.users.create_user(
             "sync3@example.com", "hash"
         )
-        group = await app_state.model.users.create_group("old-group")
-        await app_state.model.users.add_user_to_group(
+        group = await app_state.state.model.users.create_group("old-group")
+        await app_state.state.model.users.add_user_to_group(
             user["id"], group["id"], "oidc_sync"
         )
 
         await oidc.OIDC(app_state).sync_oidc_groups(user["id"], set())
         assert (
-            await app_state.model.users.get_user_oidc_sync_group_ids(
+            await app_state.state.model.users.get_user_oidc_sync_group_ids(
                 user["id"]
             )
             == []
@@ -963,14 +967,16 @@ class TestSyncOidcGroups:
 
     async def test_preserves_manual_memberships(self, db, app_state):
 
-        user = await app_state.model.users.create_user(
+        user = await app_state.state.model.users.create_user(
             "sync4@example.com", "hash"
         )
-        group = await app_state.model.users.create_group("manual-group")
-        await app_state.model.users.add_user_to_group(
+        group = await app_state.state.model.users.create_group("manual-group")
+        await app_state.state.model.users.add_user_to_group(
             user["id"], group["id"], "manual"
         )
 
         await oidc.OIDC(app_state).sync_oidc_groups(user["id"], set())
-        all_ids = await app_state.model.users.get_user_group_ids(user["id"])
+        all_ids = await app_state.state.model.users.get_user_group_ids(
+            user["id"]
+        )
         assert group["id"] in all_ids

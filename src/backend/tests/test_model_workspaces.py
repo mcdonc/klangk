@@ -1,8 +1,8 @@
 """Direct coverage for ``WorkspacesModel(app_state)`` (#1575).
 
-Exercises every method on ``app_state.model.workspaces`` — the
+Exercises every method on ``app_state.state.model.workspaces`` — the
 app_state-owned form app code migrated to — including the cross-domain
-shared-workspace listing (which reaches ``app_state.model.users``) and
+shared-workspace listing (which reaches ``app_state.state.model.users``) and
 the agent-principal / setup-state guards. Mirrors the #1573
 ``test_model_users.py`` pattern: ``app_state`` (db + model wired via the
 ContextVar DB) with the schema initialized.
@@ -19,8 +19,8 @@ from klangk_backend.model.users import AGENT_USER_ID, AgentPrincipalError
 
 @pytest.fixture
 async def ws(app_state, db):
-    """``app_state.model.workspaces`` with the schema initialized."""
-    return app_state.model.workspaces
+    """``app_state.state.model.workspaces`` with the schema initialized."""
+    return app_state.state.model.workspaces
 
 
 async def test_create_workspace_with_acl_and_get(ws, user):
@@ -66,12 +66,12 @@ async def test_list_workspaces_with_query(ws, user):
 
 
 async def test_list_shared_workspaces(ws, app_state, user):
-    other = await app_state.model.users.create_user("other@x.com", "h")
+    other = await app_state.state.model.users.create_user("other@x.com", "h")
     ws_row = await ws.create_workspace_with_acl(other["id"], "shared-ws")
     # Grant ``user`` a direct user-level Allow ACE on the workspace.
     from klangk_backend.model import ACTION_ALLOW, PRINCIPAL_USER
 
-    await app_state.model.acl.add_acl_entry(
+    await app_state.state.model.acl.add_acl_entry(
         f"/workspaces/{ws_row['id']}",
         100,
         ACTION_ALLOW,
@@ -100,11 +100,11 @@ async def test_get_workspace_access_control(ws, user):
 
 
 async def test_get_workspace_members(ws, app_state, user):
-    other = await app_state.model.users.create_user("member@x.com", "h")
+    other = await app_state.state.model.users.create_user("member@x.com", "h")
     ws_row = await ws.create_workspace_with_acl(user["id"], "members-ws")
     from klangk_backend.model import ACTION_ALLOW, PRINCIPAL_USER
 
-    await app_state.model.acl.add_acl_entry(
+    await app_state.state.model.acl.add_acl_entry(
         f"/workspaces/{ws_row['id']}",
         100,
         ACTION_ALLOW,
@@ -176,12 +176,12 @@ async def test_update_workspace_fields(ws, user):
 
 
 async def test_transfer_workspace(ws, app_state, user):
-    new_owner = await app_state.model.users.create_user("new@x.com", "h")
+    new_owner = await app_state.state.model.users.create_user("new@x.com", "h")
     ws_row = await ws.create_workspace_with_acl(user["id"], "transfer-me")
     transferred = await ws.transfer_workspace(ws_row["id"], new_owner["id"])
     assert transferred["user_id"] == new_owner["id"]
     # Owner ACE + owners-group membership moved to the new owner.
-    entries = await app_state.model.acl.get_acl_entries(
+    entries = await app_state.state.model.acl.get_acl_entries(
         f"/workspaces/{ws_row['id']}"
     )
     owner_ace = next(
@@ -191,7 +191,9 @@ async def test_transfer_workspace(ws, app_state, user):
 
 
 async def test_transfer_workspace_guards(ws, app_state, user):
-    new_owner = await app_state.model.users.create_user("new2@x.com", "h")
+    new_owner = await app_state.state.model.users.create_user(
+        "new2@x.com", "h"
+    )
     ws_row = await ws.create_workspace_with_acl(user["id"], "guard-me")
     # Agent principal cannot receive a workspace.
     with pytest.raises(AgentPrincipalError):

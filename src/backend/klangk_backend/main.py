@@ -92,8 +92,8 @@ class Lifecycle:
     module-level.
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
         # Serializes concurrent SIGHUP-triggered restarts so a second
         # signal arriving mid-restart queues behind the first instead of
         # racing. Lazily created on first restart so the lock binds to the
@@ -101,8 +101,8 @@ class Lifecycle:
         # loop).
         self._restart_lock: asyncio.Lock | None = None
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
         self._pending_agent_reseed = True
 
     async def apply_pending_reseed(self) -> None:
@@ -114,11 +114,11 @@ class Lifecycle:
 
     async def seed_default_acls(self, admin_group_id: str) -> None:
         """Seed default ACL entries if none exist yet."""
-        existing = await self.app_state.model.acl.get_acl_tree_summary()
+        existing = await self.app.state.model.acl.get_acl_tree_summary()
         if existing:
             return
         # /: Authenticated users can view, deny everyone else
-        await self.app_state.model.acl.add_acl_entry(
+        await self.app.state.model.acl.add_acl_entry(
             "/",
             0,
             ACTION_ALLOW,
@@ -126,7 +126,7 @@ class Lifecycle:
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_AUTHENTICATED,
         )
-        await self.app_state.model.acl.add_acl_entry(
+        await self.app.state.model.acl.add_acl_entry(
             "/",
             1,
             ACTION_DENY,
@@ -135,7 +135,7 @@ class Lifecycle:
             system_principal=SYSTEM_EVERYONE,
         )
         # /workspaces: Authenticated users can create
-        await self.app_state.model.acl.add_acl_entry(
+        await self.app.state.model.acl.add_acl_entry(
             "/workspaces",
             0,
             ACTION_ALLOW,
@@ -144,7 +144,7 @@ class Lifecycle:
             system_principal=SYSTEM_AUTHENTICATED,
         )
         # /groups: Authenticated users can create groups
-        await self.app_state.model.acl.add_acl_entry(
+        await self.app.state.model.acl.add_acl_entry(
             "/groups",
             0,
             ACTION_ALLOW,
@@ -153,7 +153,7 @@ class Lifecycle:
             system_principal=SYSTEM_AUTHENTICATED,
         )
         # /admin: admin group gets full access, deny everyone else
-        await self.app_state.model.acl.add_acl_entry(
+        await self.app.state.model.acl.add_acl_entry(
             "/admin",
             0,
             ACTION_ALLOW,
@@ -161,7 +161,7 @@ class Lifecycle:
             PRINCIPAL_GROUP,
             group_id=admin_group_id,
         )
-        await self.app_state.model.acl.add_acl_entry(
+        await self.app.state.model.acl.add_acl_entry(
             "/admin",
             1,
             ACTION_DENY,
@@ -173,9 +173,9 @@ class Lifecycle:
 
     async def ensure_admin_group(self) -> str:
         """Ensure the 'admin' group exists. Returns the group ID."""
-        group = await self.app_state.model.users.get_group_by_name("admin")
+        group = await self.app.state.model.users.get_group_by_name("admin")
         if group is None:
-            group = await self.app_state.model.users.create_group(
+            group = await self.app.state.model.users.create_group(
                 "admin", description="Administrators"
             )
             logger.info("Created admin group: %s", group["id"])
@@ -188,13 +188,13 @@ class Lifecycle:
         random password and print it to the console (only on first
         creation).
         """
-        settings = self.app_state.settings
+        settings = self.app.state.settings
         admin_group_id = await self.ensure_admin_group()
         await self.seed_default_acls(admin_group_id)
 
         email = settings.default_user
         password = settings.default_password
-        existing = await self.app_state.model.users.get_user_by_email(email)
+        existing = await self.app.state.model.users.get_user_by_email(email)
         if existing is None:
             generated = password is None
             if generated:
@@ -202,10 +202,10 @@ class Lifecycle:
             password_hash = bcrypt.hashpw(
                 password.encode(), bcrypt.gensalt()
             ).decode()
-            user = await self.app_state.model.users.create_user(
+            user = await self.app.state.model.users.create_user(
                 email, password_hash, verified=True
             )
-            await self.app_state.model.users.add_user_to_group(
+            await self.app.state.model.users.add_user_to_group(
                 user["id"], admin_group_id
             )
             if generated:
@@ -225,7 +225,7 @@ class Lifecycle:
                 logger.info("Created default user '%s' in admin group", email)
         else:
             # Ensure existing default user is in admin group
-            await self.app_state.model.users.add_user_to_group(
+            await self.app.state.model.users.add_user_to_group(
                 existing["id"], admin_group_id
             )
 
@@ -244,10 +244,10 @@ class Lifecycle:
         letting a bare ``IntegrityError`` abort startup mid-sequence.
         See #1137.
         """
-        settings = self.app_state.settings
+        settings = self.app.state.settings
         email = settings.agent_email
         handle = settings.agent_handle
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             # Pre-check: refuse a handle already claimed by a non-agent user.
             # Runs in the same transaction as the upsert so there is no
             # check-then-act window.
@@ -268,7 +268,7 @@ class Lifecycle:
                 " ON CONFLICT(id) DO UPDATE SET email = ?, handle = ?",
                 (AGENT_USER_ID, email, handle, email, handle),
             )
-        self.app_state.model.users.clear_agent_cache()
+        self.app.state.model.users.clear_agent_cache()
         logger.info("Seeded agent user '%s' (%s)", handle, email)
 
     async def startup(self) -> None:
@@ -282,13 +282,13 @@ class Lifecycle:
         -- so re-running this after ``runtime_shutdown`` is exactly the
         SIGHUP restart path.
         """
-        app_state = self.app_state
-        registry = app_state.container_registry
+        state = self.app.state
+        registry = state.container_registry
         await registry.prewarm_podman()
         await registry.reap_instance_containers()
         registry.start_cleanup_loop()
         registry.start_health_loop()
-        n = await app_state.workspaces.auto_start_workspaces()
+        n = await state.workspaces.auto_start_workspaces()
         if n:  # pragma: no cover
             logger.info("Auto-started %d workspace(s)", n)
 
@@ -301,20 +301,20 @@ class Lifecycle:
         normal process-shutdown path and the SIGHUP restart path -- the
         difference is only whether ``startup()`` runs again afterwards.
         """
-        app_state = self.app_state
-        await wshandler.disconnect_all_websockets(app_state.sockets)
-        await app_state.agents.stop_all_sessions()
+        state = self.app.state
+        await wshandler.disconnect_all_websockets(state.sockets)
+        await state.agents.stop_all_sessions()
         wshandler.clear_agent_mention_state()
-        await app_state.container_registry.shutdown()
+        await state.container_registry.shutdown()
 
     async def process_shutdown(self) -> None:
         """Full process teardown (run once, at the very end)."""
         # instance_id() resolves from the file if startup didn't get there;
         # if there's genuinely no PID file (startup crashed early)
         # remove_pid_file no-ops on the missing file.
-        app_state = self.app_state
-        app_state.util.remove_pid_file()
-        await app_state.db.dispose_engine()
+        state = self.app.state
+        state.util.remove_pid_file()
+        await state.db.dispose_engine()
 
     async def restart_runtime(self) -> None:
         """Graceful runtime restart: stop containers, keep the listener.
@@ -324,9 +324,9 @@ class Lifecycle:
         restart is **denied** -- the running runtime is left untouched on
         its last-known-good config rather than torn down against a broken
         one.  On a valid reload the settings are **swapped** onto
-        ``app_state.settings`` and the OIDC/plugins/SSL-trust/agent-user
+        ``app.state.settings`` and the OIDC/plugins/SSL-trust/agent-user
         steps are re-run, then the runtime recycles.  All subsystems read
-        settings live via ``self.app_state.settings`` (#1608), so the swap
+        settings live via ``self.app.state.settings`` (#1608), so the swap
         propagates automatically with no per-subsystem ``reconfigure()``.
         """
         if self._restart_lock is None:
@@ -360,7 +360,7 @@ class Lifecycle:
         is ``None`` and ``error`` is the deny reason.
         """
         try:
-            new = self.app_state.settings.reload()
+            new = self.app.state.settings.reload()
         except Exception as exc:  # noqa: BLE001 — surface any failure
             return None, str(exc)
         return new, None
@@ -368,7 +368,7 @@ class Lifecycle:
     async def _apply_reloaded_settings(self, new: KlangkSettings) -> None:
         """Swap settings and call ``reconfigure(app_state)`` on every subsystem.
 
-        All subsystems read ``self.app_state.settings`` live (#1608), so
+        All subsystems read ``self.app.state.settings`` live (#1608), so
         swapping the instance propagates automatically.  Each subsystem's
         ``reconfigure(app_state)`` handles any cached runtime state that
         needs refreshing (OIDC caches, plugin declarations, SSL trust,
@@ -376,11 +376,12 @@ class Lifecycle:
         best-effort: a failure is logged at warning level and skipped so
         one bad step can't leave the runtime half-reconfigured.
         """
-        app_state = self.app_state
-        self._warn_non_reloadable(app_state.settings, new)
-        app_state.settings = new
+        app = self.app
+        old = app.state.settings
+        self._warn_non_reloadable(old, new)
+        app.state.settings = new
 
-        # Every app_state subsystem that implements reconfigure().
+        # Every app.state subsystem that implements reconfigure().
         subsystems = [
             "ssl_trust",
             "auth",
@@ -403,7 +404,7 @@ class Lifecycle:
         ]
         for name in subsystems:
             try:
-                getattr(app_state, name).reconfigure(app_state)
+                getattr(app.state, name).reconfigure(app)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "SIGHUP: %s reconfigure failed (skipped): %s", name, exc
@@ -411,10 +412,31 @@ class Lifecycle:
         # Lifecycle.reconfigure flags an agent re-seed; apply it now
         # (async, so it can't run inside the sync reconfigure loop).
         try:
-            await app_state.lifecycle.apply_pending_reseed()
+            await app.state.lifecycle.apply_pending_reseed()
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "SIGHUP: agent user re-seed failed (skipped): %s", exc
+            )
+        # #1610: remount frontend_dir if it changed.
+        if old.frontend_dir != new.frontend_dir:
+            self._remount_frontend(app, new)
+
+    def _remount_frontend(self, app, settings: KlangkSettings) -> None:
+        """Replace the ``/`` StaticFiles mount when ``frontend_dir`` changes."""
+        # Drop the old frontend mount (by name).
+        app.routes[:] = [
+            r
+            for r in app.routes
+            if not (hasattr(r, "name") and r.name == "frontend")
+        ]
+        new_dir = Path(settings.frontend_dir)
+        if new_dir.exists():
+            setup_static_files(app, new_dir)
+            logger.info("SIGHUP: frontend_dir remounted → %s", new_dir)
+        else:
+            logger.info(
+                "SIGHUP: frontend_dir %s does not exist; UI not served",
+                new_dir,
             )
 
     def _warn_non_reloadable(
@@ -466,7 +488,7 @@ def _is_loopback_bind(host: str) -> bool:
         return False
 
 
-def enforce_no_auth_bind_safety(app_state) -> None:
+def enforce_no_auth_bind_safety(app) -> None:
     """Refuse to start in ``none`` auth mode unless the browser bind is loopback.
 
     ``KLANGK_AUTH_MODES=none`` freely issues a token for the seeded default
@@ -482,15 +504,15 @@ def enforce_no_auth_bind_safety(app_state) -> None:
     all — the backend serves only the UDS (same-uid trust boundary), and
     ``/auth/local`` is never exposed over TCP — so the gate is a no-op (#1542).
     """
-    if app_state.oidc.auth_modes() != "none":
+    if app.state.oidc.auth_modes() != "none":
         return
     # Headless: no browser listener rendered → /auth/local not exposed on TCP.
-    if app_state.settings.port is None:
+    if app.state.settings.port is None:
         return
-    host = app_state.settings.listen
+    host = app.state.settings.listen
     if _is_loopback_bind(host):
         return
-    if app_state.settings.allow_insecure_no_auth.strip().lower() in (
+    if app.state.settings.allow_insecure_no_auth.strip().lower() in (
         "1",
         "true",
         "yes",
@@ -559,7 +581,7 @@ async def lifespan(app: FastAPI):
     app.state.auth.require_secure_jwt_secret()
     app.state.plugins.load()
     app.state.oidc.init_providers()
-    enforce_no_auth_bind_safety(app.state)
+    enforce_no_auth_bind_safety(app)
     app.state.oidc.load_login_hook()
     await app.state.lifecycle.seed_default_user()
     await app.state.lifecycle.seed_agent_user()
@@ -640,6 +662,44 @@ def register_exception_handlers(application: FastAPI) -> None:
     )
 
 
+# --- Live CORS middleware (#1610) ---
+# Instead of a static CORSMiddleware, this wrapper re-reads allowed origins
+# from app.state.util.cors_origins() on every request so a SIGHUP reload
+# of KLANGK_CORS_ORIGINS takes effect without a process restart.
+
+
+class LiveCORSMiddleware:
+    """CORS middleware that reads allowed origins from app state on each request.
+
+    Delegates to a ``CORSMiddleware`` instance that is rebuilt whenever the
+    origin list changes.  The check-and-rebuild is O(1) most of the time
+    (pointer comparison of the settings object).
+    """
+
+    def __init__(self, app_asgi, *, fastapi_app: FastAPI) -> None:
+        self.app = app_asgi
+        self._fastapi_app = fastapi_app
+        self._last_settings = None
+        self._inner: CORSMiddleware | None = None
+
+    def _rebuild_if_needed(self) -> CORSMiddleware:
+        current = self._fastapi_app.state.settings
+        if current is not self._last_settings or self._inner is None:
+            self._last_settings = current
+            self._inner = CORSMiddleware(
+                self.app,
+                allow_origins=self._fastapi_app.state.util.cors_origins(),
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
+        return self._inner
+
+    async def __call__(self, scope, receive, send):
+        inner = self._rebuild_if_needed()
+        await inner(scope, receive, send)
+
+
 # --- Static files (Flutter Web) ---
 # Must be last so API routes take priority
 
@@ -705,84 +765,78 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # #1567: SSLTrust(app_state) owns the settings-dependent trust surface
     # (cert-dir resolver + backend-process trust applier). The 4 pure
     # path/bundle helpers stay module-level in ssl_trust.py.
-    app.state.ssl_trust = ssl_trust.SSLTrust(app.state)
-    app.state.auth = auth.Auth(app.state)
+    app.state.ssl_trust = ssl_trust.SSLTrust(app)
+    app.state.auth = auth.Auth(app)
     # #1468: Podman(settings) owns the resolved binary path + the ~20 CLI
     # wrappers. Constructed before the registry/terminal so they reach it
-    # via self.app_state.podman (#1426).
-    app.state.podman = podman.Podman(app.state)
+    # via self.app.state.podman (#1426).
+    app.state.podman = podman.Podman(app)
     # Slice 2c (#1475): the WebSocketState is an owned instance wired onto
     # app.state.sockets. Constructed before the registry so it reaches it
-    # via self.app_state.sockets — no module-level singleton.
-    app.state.sockets = wshandler.WebSocketState(app.state)
+    # via self.app.state.sockets — no module-level singleton.
+    app.state.sockets = wshandler.WebSocketState(app)
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
-    app.state.container_registry = container.ContainerRegistry(app.state)
+    app.state.container_registry = container.ContainerRegistry(app)
     # Slice 2b (#1463): nginx watchdog is an owned instance with start/stop
     # lifecycle methods called by the lifespan.
-    app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
+    app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app)
     # #1480: Terminal(app_state) groups the ~25 tmux-session
     # management functions that share a Podman dependency. Reaches podman,
     # the registry, and settings through the single app_state reference.
-    app.state.terminal = terminal.Terminal(app.state)
+    app.state.terminal = terminal.Terminal(app)
     # #1450: OIDC(app_state) owns the provider registry, discovery/JWKS
     # caches, and login-hook state (previously module globals). Reaches
     # config through self.settings.
-    app.state.oidc = oidc.OIDC(app.state)
+    app.state.oidc = oidc.OIDC(app)
     # #1451: Plugins(app_state) owns the plugins dir (computed from
     # settings, not frozen at import), declarations, and resolved values
     # (previously module globals).
-    app.state.plugins = plugins.Plugins(app.state)
+    app.state.plugins = plugins.Plugins(app)
     # #1484: Workspaces(app_state) owns the workspace root (computed from
     # settings.data_dir at construction, not frozen at import) + CRUD/path
     # helpers.
-    app.state.workspaces = workspaces.Workspaces(app.state)
+    app.state.workspaces = workspaces.Workspaces(app)
     # #1566: Files(app_state) owns the podman-exec file operations
     # (list/read/write/delete/rename/stream), previously free functions
     # in files.py that threaded podman through every call. The class owns
     # the podman reference, the same way Workspaces/Terminal do.
-    app.state.files = files.Files(app.state)
+    app.state.files = files.Files(app)
     # #1452: DB(settings) owns the engine cache + data dir (computed from
     # settings, not frozen at import). Bound as the active DB for the
     # lifespan's context in the lifespan itself (#1520: no module-global
     # backstop — the model/ free functions reach it via a ContextVar).
-    app.state.db = model.db.DB(app.state)
+    app.state.db = model.db.DB(app)
     # #1563 / #1572: Model(app_state) composes the per-domain data-access
     # sub-objects (tokens, login_attempts, invitations, ports here; users,
     # acl, workspaces, chat arrive in follow-up issues). Each reaches the
-    # DB via self.app_state.db — the single instance wired just above — so
+    # DB via self.app.state.db — the single instance wired just above — so
     # every code path resolves the same DB (the #1551 divergence class is
     # structurally impossible for these domains). The not-yet-converted
     # domains still go through the _current_db ContextVar backstop.
-    app.state.model = model.Model(app.state)
-    app.state.agents = agent.Agents(app.state)
+    app.state.model = model.Model(app)
+    app.state.agents = agent.Agents(app)
     # #1577: ACL(app_state) owns the FastAPI permission layer — the
     # resource-tree walk / principal resolution that the ``has_permission``
     # dependency (resolved per-request from ``request.app.state.acl``) and
     # the WebSocket connection layer delegate to. Reached through
-    # ``self.app_state.model.{users,acl}``, so wired after ``app.state.model``.
-    app.state.acl = acl.ACL(app.state)
+    # ``self.app.state.model.{users,acl}``, so wired after ``app.state.model``.
+    app.state.acl = acl.ACL(app)
     # #1483: EmailService(app_state) owns SMTP/sendmail transport + the
     # Jinja template env (previously module-level functions reading
     # resolve_env_value at call time).
-    app.state.email = emailsvc.EmailService(app.state)
+    app.state.email = emailsvc.EmailService(app)
     # #1503: Util(app_state) owns the proxy-trust / forwarded-header logic,
     # hosting-info derivation, and customize-dir resolver (previously
     # module-level functions + import-time globals in util.py).
-    app.state.util = util_mod.Util(app.state)
+    app.state.util = util_mod.Util(app)
     # #1571: Lifecycle(app_state) owns the startup/shutdown/restart
     # sequence and the default-user / agent-user / ACL seeding that runs
     # at lifespan start (previously module-level free functions in this
     # module). The lifespan and the SIGHUP restart path call its methods.
-    app.state.lifecycle = Lifecycle(app.state)
+    app.state.lifecycle = Lifecycle(app)
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=app.state.util.cors_origins(),
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    app.add_middleware(LiveCORSMiddleware, fastapi_app=app)
 
     app.include_router(root_router)
     app.include_router(router, prefix=API_PREFIX)
@@ -791,7 +845,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
 
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):  # pragma: no cover
-        await handle_websocket(ws, app.state)
+        await handle_websocket(ws, app)
 
     # Frontend UI dir, resolved from settings (#1456). Mounted only when it
     # exists (absent in installed-package deployments -> UI not served).
@@ -805,7 +859,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
 # Re-export from _common so existing callers (e.g. tests) that do
 # ``from klangk_backend.main import get_app_state_dep`` keep working.
 # The canonical home is ``api._common`` (avoids main <-> api circular import).
-from .api._common import get_app_state_dep  # noqa: F401, E402
+from .api._common import get_app_dep  # noqa: F401, E402
 
 
 # --- ASGI app ---

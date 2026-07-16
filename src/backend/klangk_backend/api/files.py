@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from .. import (
     acl,
 )
-from ._common import get_app_state_dep
+from ._common import get_app_dep
 from ..util import (
     sanitize_disposition_name,
 )
@@ -45,11 +45,11 @@ async def list_files(
     workspace_id: str,
     path: str = "/",
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    cid = _require_container(workspace_id, app_state.container_registry)
+    cid = _require_container(workspace_id, app.state.container_registry)
     try:
-        return await app_state.files.list_files(cid, path)
+        return await app.state.files.list_files(cid, path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -59,11 +59,11 @@ async def read_file(
     workspace_id: str,
     path: str,
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    cid = _require_container(workspace_id, app_state.container_registry)
+    cid = _require_container(workspace_id, app.state.container_registry)
     try:
-        content = await app_state.files.read_file(cid, path)
+        content = await app.state.files.read_file(cid, path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if content is None:
@@ -78,11 +78,11 @@ async def delete_file(
     workspace_id: str,
     path: str,
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    cid = _require_container(workspace_id, app_state.container_registry)
+    cid = _require_container(workspace_id, app.state.container_registry)
     try:
-        deleted = await app_state.files.delete_path(cid, path)
+        deleted = await app.state.files.delete_path(cid, path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError:
@@ -102,11 +102,11 @@ async def rename_file(
     workspace_id: str,
     body: RenameFileRequest,
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    cid = _require_container(workspace_id, app_state.container_registry)
+    cid = _require_container(workspace_id, app.state.container_registry)
     try:
-        renamed = await app_state.files.rename_path(
+        renamed = await app.state.files.rename_path(
             cid, body.old_path, body.new_path
         )
     except ValueError as e:
@@ -127,11 +127,11 @@ async def download_file(
     workspace_id: str,
     path: str,
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    cid = _require_container(workspace_id, app_state.container_registry)
+    cid = _require_container(workspace_id, app.state.container_registry)
     try:
-        info = await app_state.files.stat_path(cid, path)
+        info = await app.state.files.stat_path(cid, path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if info is None:
@@ -139,14 +139,14 @@ async def download_file(
     name = sanitize_disposition_name(posixpath.basename(path) or "download")
     if not info["is_dir"]:
         return StreamingResponse(
-            app_state.files.stream_file(cid, path),
+            app.state.files.stream_file(cid, path),
             media_type="application/octet-stream",
             headers={
                 "Content-Disposition": f'attachment; filename="{name}"',
             },
         )
     return StreamingResponse(
-        app_state.files.stream_dir_tar(cid, path),
+        app.state.files.stream_dir_tar(cid, path),
         media_type="application/gzip",
         headers={
             "Content-Disposition": f'attachment; filename="{name}.tar.gz"',
@@ -160,15 +160,15 @@ async def upload_file(
     file: UploadFile,
     path: str = "",
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    cid = _require_container(workspace_id, app_state.container_registry)
+    cid = _require_container(workspace_id, app.state.container_registry)
 
     filename = path if path else posixpath.basename(file.filename or "")
     if not filename:  # pragma: no cover
         raise HTTPException(status_code=400, detail="No filename provided")
 
-    max_upload = int(app_state.settings.file_upload_size_max)
+    max_upload = int(app.state.settings.file_upload_size_max)
     buf = io.BytesIO()
     total = 0
     while chunk := await file.read(1024 * 1024):
@@ -181,7 +181,7 @@ async def upload_file(
         buf.write(chunk)
 
     try:
-        saved_path = await app_state.files.write_file(
+        saved_path = await app.state.files.write_file(
             cid, filename, buf.getvalue()
         )
     except ValueError as e:

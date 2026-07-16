@@ -10,16 +10,18 @@ from klangk_backend import workspaces as ws_mod
 
 class TestCreateWorkspace:
     async def test_creates_workspace_and_dirs(self, user, app_state):
-        ws = await app_state.workspaces.create_workspace(user["id"], "my-ws")
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "my-ws"
+        )
         assert ws["name"] == "my-ws"
         assert ws["user_id"] == user["id"]
         assert "id" in ws
 
-        data_path = app_state.workspaces.workspace_path(ws["id"])
+        data_path = app_state.state.workspaces.workspace_path(ws["id"])
         assert data_path.exists()
         assert data_path.is_dir()
 
-        home_dir = app_state.workspaces.home_path(ws["id"])
+        home_dir = app_state.state.workspaces.home_path(ws["id"])
         assert home_dir.exists()
         assert home_dir.is_dir()
 
@@ -28,44 +30,49 @@ class TestCreateWorkspace:
         assert users_dir.is_dir()
 
     async def test_allocates_ports(self, user, app_state):
-        ws = await app_state.workspaces.create_workspace(user["id"], "ported")
-        registry = app_state.container_registry
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "ported"
+        )
+        registry = app_state.state.container_registry
         ports = await registry.get_workspace_ports(ws["id"])
         assert len(ports) == ws["num_ports"]
         assert all(
-            p >= app_state.container_registry.port_range_start for p in ports
+            p >= app_state.state.container_registry.port_range_start
+            for p in ports
         )
 
     async def test_duplicate_name_fails(self, user, app_state):
-        await app_state.workspaces.create_workspace(user["id"], "unique")
+        await app_state.state.workspaces.create_workspace(user["id"], "unique")
         with pytest.raises(Exception):
-            await app_state.workspaces.create_workspace(user["id"], "unique")
+            await app_state.state.workspaces.create_workspace(
+                user["id"], "unique"
+            )
 
     async def test_invalid_setup_state_rejected(self, user, app_state):
         """Invalid setup_state raises ValueError (#1033)."""
         # Service layer (goes through create_workspace_with_acl).
         with pytest.raises(ValueError, match="Invalid setup_state"):
-            await app_state.workspaces.create_workspace(
+            await app_state.state.workspaces.create_workspace(
                 user["id"],
                 "bad-state",
                 setup_state="bogus",
             )
         # Row-only model primitive validates the same way.
         with pytest.raises(ValueError, match="Invalid setup_state"):
-            await app_state.model.workspaces.create_workspace(
+            await app_state.state.model.workspaces.create_workspace(
                 user["id"], "bad-row", setup_state="bogus"
             )
 
     async def test_setup_state_defaults_to_complete(self, user, app_state):
         """Workspaces without a setup command default to 'complete'."""
-        ws = await app_state.workspaces.create_workspace(
+        ws = await app_state.state.workspaces.create_workspace(
             user["id"], "default-state"
         )
         assert ws["setup_state"] == "complete"
 
     async def test_allocate_ports_failure_cleans_up(self, user, app_state):
         """If allocate_ports raises, DB record and directories are removed."""
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         with patch.object(
             registry,
             "allocate_ports",
@@ -73,36 +80,42 @@ class TestCreateWorkspace:
             side_effect=RuntimeError("port exhaustion"),
         ):
             with pytest.raises(RuntimeError, match="port exhaustion"):
-                await app_state.workspaces.create_workspace(user["id"], "boom")
+                await app_state.state.workspaces.create_workspace(
+                    user["id"], "boom"
+                )
 
         # DB record should have been cleaned up
-        result = await app_state.workspaces.list_workspaces(user["id"])
+        result = await app_state.state.workspaces.list_workspaces(user["id"])
         assert all(ws["name"] != "boom" for ws in result["items"])
 
         # Name should be reusable (proves full cleanup)
-        ws = await app_state.workspaces.create_workspace(user["id"], "boom")
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "boom"
+        )
         assert ws["name"] == "boom"
 
 
 async def test_update_workspace_invalid_setup_state_rejected(user, app_state):
     """update_workspace rejects an invalid setup_state (#1033)."""
-    ws = await app_state.workspaces.create_workspace(user["id"], "upd-state")
+    ws = await app_state.state.workspaces.create_workspace(
+        user["id"], "upd-state"
+    )
     with pytest.raises(ValueError, match="Invalid setup_state"):
-        await app_state.model.workspaces.update_workspace(
+        await app_state.state.model.workspaces.update_workspace(
             ws["id"], ws["user_id"], setup_state="bogus"
         )
 
 
 async def test_update_workspace_sets_setup_state(user, app_state):
     """update_workspace can transition setup_state (#1033)."""
-    ws = await app_state.workspaces.create_workspace(
+    ws = await app_state.state.workspaces.create_workspace(
         user["id"], "upd-ok", setup_state="pending"
     )
     assert ws["setup_state"] == "pending"
-    await app_state.model.workspaces.update_workspace(
+    await app_state.state.model.workspaces.update_workspace(
         ws["id"], ws["user_id"], setup_state="complete"
     )
-    refreshed = await app_state.model.workspaces.get_workspace(ws["id"])
+    refreshed = await app_state.state.model.workspaces.get_workspace(ws["id"])
     assert refreshed["setup_state"] == "complete"
 
 
@@ -112,13 +125,13 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
     """create_workspace_with_acl seeds the owner ACE + 4 role groups (#128)."""
     from klangk_backend import model
 
-    ws = await app_state.model.workspaces.create_workspace_with_acl(
+    ws = await app_state.state.model.workspaces.create_workspace_with_acl(
         user["id"], "seeded"
     )
     resource = f"/workspaces/{ws['id']}"
 
     # Owner ACE at position 0 grants the creator everything.
-    entries = await app_state.model.acl.get_acl_entries(resource)
+    entries = await app_state.state.model.acl.get_acl_entries(resource)
     owner_aces = [
         e
         for e in entries
@@ -131,16 +144,16 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
 
     # All four role groups exist and the creator is in owners.
     for suffix in ["owners", "coders", "collaborators", "spectators"]:
-        group = await app_state.model.users.get_group_by_name(
+        group = await app_state.state.model.users.get_group_by_name(
             f"{suffix}-{ws['id']}"
         )
         assert group is not None, f"expected {suffix} group"
-    owner_group = await app_state.model.users.get_group_by_name(
+    owner_group = await app_state.state.model.users.get_group_by_name(
         f"owners-{ws['id']}"
     )
-    assert owner_group["id"] in await app_state.model.users.get_user_group_ids(
-        user["id"]
-    )
+    assert owner_group[
+        "id"
+    ] in await app_state.state.model.users.get_user_group_ids(user["id"])
 
     # Position counter is global across all groups (no collisions).
     positions = sorted(e["position"] for e in entries)
@@ -169,7 +182,7 @@ async def test_create_workspace_with_acl_rollback_on_seeding_failure(
         side_effect=_boom,
     ):
         with pytest.raises(RuntimeError, match="seeding boom"):
-            await app_state.model.workspaces.create_workspace_with_acl(
+            await app_state.state.model.workspaces.create_workspace_with_acl(
                 user["id"], "orphan-test"
             )
 
@@ -177,16 +190,18 @@ async def test_create_workspace_with_acl_rollback_on_seeding_failure(
     resource = f"/workspaces/{ws_id}"
 
     # No workspace row, no ACL entries, no role groups left behind.
-    assert await app_state.model.workspaces.get_workspace(ws_id) is None
-    assert await app_state.model.acl.get_acl_entries(resource) == []
+    assert await app_state.state.model.workspaces.get_workspace(ws_id) is None
+    assert await app_state.state.model.acl.get_acl_entries(resource) == []
     for suffix in ["owners", "coders", "collaborators", "spectators"]:
         assert (
-            await app_state.model.users.get_group_by_name(f"{suffix}-{ws_id}")
+            await app_state.state.model.users.get_group_by_name(
+                f"{suffix}-{ws_id}"
+            )
             is None
         )
 
     # Name is reusable — proves full cleanup of the row.
-    ws = await app_state.model.workspaces.create_workspace_with_acl(
+    ws = await app_state.state.model.workspaces.create_workspace_with_acl(
         user["id"], "orphan-test"
     )
     assert ws["name"] == "orphan-test"
@@ -194,7 +209,7 @@ async def test_create_workspace_with_acl_rollback_on_seeding_failure(
 
 class TestListWorkspaces:
     async def test_list_empty(self, user, app_state):
-        result = await app_state.workspaces.list_workspaces(user["id"])
+        result = await app_state.state.workspaces.list_workspaces(user["id"])
         assert result == {
             "items": [],
             "has_more": False,
@@ -202,9 +217,9 @@ class TestListWorkspaces:
         }
 
     async def test_list_multiple(self, user, app_state):
-        await app_state.workspaces.create_workspace(user["id"], "ws-a")
-        await app_state.workspaces.create_workspace(user["id"], "ws-b")
-        result = await app_state.workspaces.list_workspaces(user["id"])
+        await app_state.state.workspaces.create_workspace(user["id"], "ws-a")
+        await app_state.state.workspaces.create_workspace(user["id"], "ws-b")
+        result = await app_state.state.workspaces.list_workspaces(user["id"])
         names = [ws["name"] for ws in result["items"]]
         assert "ws-a" in names
         assert "ws-b" in names
@@ -213,18 +228,26 @@ class TestListWorkspaces:
 
 class TestGetWorkspace:
     async def test_get_existing(self, user, app_state):
-        ws = await app_state.workspaces.create_workspace(user["id"], "findme")
-        found = await app_state.workspaces.get_workspace(ws["id"], user["id"])
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "findme"
+        )
+        found = await app_state.state.workspaces.get_workspace(
+            ws["id"], user["id"]
+        )
         assert found is not None
         assert found["name"] == "findme"
 
     async def test_get_nonexistent(self, user, app_state):
-        found = await app_state.workspaces.get_workspace("fake-id", user["id"])
+        found = await app_state.state.workspaces.get_workspace(
+            "fake-id", user["id"]
+        )
         assert found is None
 
     async def test_get_wrong_user(self, user, app_state):
-        ws = await app_state.workspaces.create_workspace(user["id"], "mine")
-        found = await app_state.workspaces.get_workspace(
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "mine"
+        )
+        found = await app_state.state.workspaces.get_workspace(
             ws["id"], "other-user"
         )
         assert found is None
@@ -232,47 +255,55 @@ class TestGetWorkspace:
 
 class TestDeleteWorkspace:
     async def test_delete_removes_db_and_dirs(self, user, app_state):
-        ws = await app_state.workspaces.create_workspace(user["id"], "doomed")
-        data_path = app_state.workspaces.workspace_path(ws["id"])
-        home_dir = app_state.workspaces.home_path(ws["id"])
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "doomed"
+        )
+        data_path = app_state.state.workspaces.workspace_path(ws["id"])
+        home_dir = app_state.state.workspaces.home_path(ws["id"])
         (data_path / "file.txt").write_text("hello")
         (home_dir / ".bashrc").write_text("# custom")
 
-        deleted = await app_state.workspaces.delete_workspace(
+        deleted = await app_state.state.workspaces.delete_workspace(
             ws["id"], user["id"]
         )
         assert deleted is True
         assert (
-            await app_state.workspaces.get_workspace(ws["id"], user["id"])
+            await app_state.state.workspaces.get_workspace(
+                ws["id"], user["id"]
+            )
             is None
         )
         assert not data_path.exists()
         assert not home_dir.exists()
 
     async def test_delete_nonexistent(self, user, app_state):
-        deleted = await app_state.workspaces.delete_workspace(
+        deleted = await app_state.state.workspaces.delete_workspace(
             "fake-id", user["id"]
         )
         assert deleted is False
 
     async def test_delete_cascades_ports(self, user, app_state):
-        ws = await app_state.workspaces.create_workspace(user["id"], "ported")
-        registry = app_state.container_registry
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "ported"
+        )
+        registry = app_state.state.container_registry
         ports_before = await registry.get_workspace_ports(ws["id"])
         assert len(ports_before) > 0
 
-        await app_state.workspaces.delete_workspace(ws["id"], user["id"])
+        await app_state.state.workspaces.delete_workspace(ws["id"], user["id"])
         ports_after = await registry.get_workspace_ports(ws["id"])
         assert ports_after == []
 
     async def test_delete_missing_dirs_ok(self, user, app_state):
-        ws = await app_state.workspaces.create_workspace(user["id"], "no-dirs")
-        home_dir = app_state.workspaces.home_path(ws["id"])
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "no-dirs"
+        )
+        home_dir = app_state.state.workspaces.home_path(ws["id"])
         import shutil
 
         shutil.rmtree(home_dir)
 
-        deleted = await app_state.workspaces.delete_workspace(
+        deleted = await app_state.state.workspaces.delete_workspace(
             ws["id"], user["id"]
         )
         assert deleted is True
@@ -282,37 +313,37 @@ class TestHostPaths:
     def test_workspace_host_path_creates_dir(
         self, user, temp_data_dir, app_state
     ):
-        path = app_state.workspaces.get_workspace_host_path("ws-1")
+        path = app_state.state.workspaces.get_workspace_host_path("ws-1")
         assert path.exists()
         assert path.is_dir()
 
     def test_home_host_path_creates_dir(self, user, temp_data_dir, app_state):
-        path = app_state.workspaces.get_home_host_path("ws-1")
+        path = app_state.state.workspaces.get_home_host_path("ws-1")
         assert path.exists()
         assert path.is_dir()
 
     def test_workspace_host_path_idempotent(
         self, user, temp_data_dir, app_state
     ):
-        path1 = app_state.workspaces.get_workspace_host_path("ws-1")
-        path2 = app_state.workspaces.get_workspace_host_path("ws-1")
+        path1 = app_state.state.workspaces.get_workspace_host_path("ws-1")
+        path2 = app_state.state.workspaces.get_workspace_host_path("ws-1")
         assert path1 == path2
 
     def test_paths_are_under_data_dir(self, user, temp_data_dir, app_state):
-        path = app_state.workspaces.get_workspace_host_path("ws-1")
+        path = app_state.state.workspaces.get_workspace_host_path("ws-1")
         assert str(path).startswith(str(temp_data_dir))
 
-        home = app_state.workspaces.get_home_host_path("ws-1")
+        home = app_state.state.workspaces.get_home_host_path("ws-1")
         assert str(home).startswith(str(temp_data_dir))
 
 
 class TestEnsureHomeSymlink:
     async def test_creates_symlink(self, user, app_state):
-        ws = await app_state.workspaces.create_workspace(
+        ws = await app_state.state.workspaces.create_workspace(
             user["id"], "symlink-ws"
         )
-        home = app_state.workspaces.home_path(ws["id"])
-        result, created = await app_state.workspaces.ensure_home_symlink(
+        home = app_state.state.workspaces.home_path(ws["id"])
+        result, created = await app_state.state.workspaces.ensure_home_symlink(
             home, "alice", "uid-1"
         )
         assert result == "/home/alice"
@@ -323,24 +354,28 @@ class TestEnsureHomeSymlink:
         assert (home / ".users" / "uid-1").is_dir()
 
     async def test_idempotent(self, user, app_state):
-        ws = await app_state.workspaces.create_workspace(
+        ws = await app_state.state.workspaces.create_workspace(
             user["id"], "symlink-ws2"
         )
-        home = app_state.workspaces.home_path(ws["id"])
-        await app_state.workspaces.ensure_home_symlink(home, "bob", "uid-1")
-        result, created = await app_state.workspaces.ensure_home_symlink(
+        home = app_state.state.workspaces.home_path(ws["id"])
+        await app_state.state.workspaces.ensure_home_symlink(
+            home, "bob", "uid-1"
+        )
+        result, created = await app_state.state.workspaces.ensure_home_symlink(
             home, "bob", "uid-1"
         )
         assert result == "/home/bob"
         assert created is False
 
     async def test_rename_removes_old_symlink(self, user, app_state):
-        ws = await app_state.workspaces.create_workspace(
+        ws = await app_state.state.workspaces.create_workspace(
             user["id"], "symlink-ws3"
         )
-        home = app_state.workspaces.home_path(ws["id"])
-        await app_state.workspaces.ensure_home_symlink(home, "alice", "uid-1")
-        result, created = await app_state.workspaces.ensure_home_symlink(
+        home = app_state.state.workspaces.home_path(ws["id"])
+        await app_state.state.workspaces.ensure_home_symlink(
+            home, "alice", "uid-1"
+        )
+        result, created = await app_state.state.workspaces.ensure_home_symlink(
             home, "alicia", "uid-1"
         )
         assert result == "/home/alicia"
@@ -353,10 +388,10 @@ class TestEnsureHomeSymlink:
 
         The old user's files should be adopted into the new user dir.
         """
-        ws = await app_state.workspaces.create_workspace(
+        ws = await app_state.state.workspaces.create_workspace(
             user["id"], "symlink-ws4"
         )
-        home = app_state.workspaces.home_path(ws["id"])
+        home = app_state.state.workspaces.home_path(ws["id"])
         # Simulate imported workspace: symlink for old user ID with files.
         (home / ".users").mkdir(parents=True, exist_ok=True)
         old_dir = home / ".users" / "old-uid"
@@ -365,7 +400,7 @@ class TestEnsureHomeSymlink:
         (old_dir / ".profile").write_text("# old profile")
         (home / "admin").symlink_to(".users/old-uid")
         # New user connects — different user ID, same handle.
-        result, created = await app_state.workspaces.ensure_home_symlink(
+        result, created = await app_state.state.workspaces.ensure_home_symlink(
             home, "admin", "new-uid"
         )
         assert result == "/home/admin"
@@ -412,18 +447,20 @@ class TestPopulateHomeSkel:
 class TestAutoStartWorkspaces:
     async def test_returns_zero_when_env_not_set(self, user, app_state):
         # allow_autostart unset -> skip entirely
-        result = await app_state.workspaces.auto_start_workspaces()
+        result = await app_state.state.workspaces.auto_start_workspaces()
         assert result == 0
 
     async def test_starts_auto_start_workspaces(self, user, app_state):
-        registry = app_state.container_registry
-        ws1 = await app_state.workspaces.create_workspace(
+        registry = app_state.state.container_registry
+        ws1 = await app_state.state.workspaces.create_workspace(
             user["id"], "auto-ws1", auto_start=True
         )
-        ws2 = await app_state.workspaces.create_workspace(
+        ws2 = await app_state.state.workspaces.create_workspace(
             user["id"], "auto-ws2", auto_start=True
         )
-        await app_state.workspaces.create_workspace(user["id"], "normal-ws")
+        await app_state.state.workspaces.create_workspace(
+            user["id"], "normal-ws"
+        )
 
         # Pre-populate states so idle_timeout can be set.
         from klangk_backend.container import ContainerState
@@ -435,7 +472,9 @@ class TestAutoStartWorkspaces:
             ws2["id"], "cid-2", registry
         )
         try:
-            with patch.object(app_state.settings, "allow_autostart", "1"):
+            with patch.object(
+                app_state.state.settings, "allow_autostart", "1"
+            ):
                 with patch.object(
                     registry,
                     "start_container",
@@ -446,9 +485,7 @@ class TestAutoStartWorkspaces:
                         "klangk_backend.workspaces.asyncio.sleep",
                         new_callable=AsyncMock,
                     ) as mock_sleep:
-                        result = (
-                            await app_state.workspaces.auto_start_workspaces()
-                        )
+                        result = await app_state.state.workspaces.auto_start_workspaces()
             assert result == 2
             assert mock_start.await_count == 2
             mock_sleep.assert_awaited_once()
@@ -459,18 +496,20 @@ class TestAutoStartWorkspaces:
             registry.states.pop(ws2["id"], None)
 
     async def test_handles_start_failure_gracefully(self, user, app_state):
-        registry = app_state.container_registry
-        await app_state.workspaces.create_workspace(
+        registry = app_state.state.container_registry
+        await app_state.state.workspaces.create_workspace(
             user["id"], "fail-ws", auto_start=True
         )
-        with patch.object(app_state.settings, "allow_autostart", "1"):
+        with patch.object(app_state.state.settings, "allow_autostart", "1"):
             with patch.object(
                 registry,
                 "start_container",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("container failed"),
             ):
-                result = await app_state.workspaces.auto_start_workspaces()
+                result = (
+                    await app_state.state.workspaces.auto_start_workspaces()
+                )
         assert result == 0
 
 
@@ -485,8 +524,8 @@ class TestStartWorkspace:
     """
 
     async def test_unpacks_dict_and_starts_container(self, user, app_state):
-        registry = app_state.container_registry
-        ws = await app_state.workspaces.create_workspace(
+        registry = app_state.state.container_registry
+        ws = await app_state.state.workspaces.create_workspace(
             user["id"],
             "start-ws",
             auto_start=True,
@@ -499,7 +538,9 @@ class TestStartWorkspace:
                 new_callable=AsyncMock,
                 return_value=("cid-x", "created"),
             ) as mock_start:
-                cid, status = await app_state.workspaces.start_workspace(ws)
+                cid, status = await app_state.state.workspaces.start_workspace(
+                    ws
+                )
             assert cid == "cid-x"
             assert status == "created"
             mock_start.assert_awaited_once()
@@ -513,8 +554,8 @@ class TestStartWorkspace:
 
     async def test_does_not_pin_idle_timeout(self, user, app_state):
         """Only the boot path (auto_start_workspaces) pins idle_timeout."""
-        registry = app_state.container_registry
-        ws = await app_state.workspaces.create_workspace(
+        registry = app_state.state.container_registry
+        ws = await app_state.state.workspaces.create_workspace(
             user["id"],
             "start-ws-no-idle",
             auto_start=True,
@@ -534,7 +575,7 @@ class TestStartWorkspace:
                 new_callable=AsyncMock,
                 return_value=("cid-y", "created"),
             ):
-                await app_state.workspaces.start_workspace(ws)
+                await app_state.state.workspaces.start_workspace(ws)
             assert registry.states[ws["id"]].idle_timeout == default_timeout
         finally:
             registry.states.pop(ws["id"], None)

@@ -35,13 +35,13 @@ def get_agent_mention_re(handle: str) -> re.Pattern:
     )
 
 
-async def mentions_agent(text: str, app_state) -> bool:
+async def mentions_agent(text: str, app) -> bool:
     """Return True if the message text mentions the agent."""
-    handle = await app_state.model.users.agent_handle()
+    handle = await app.state.model.users.agent_handle()
     return bool(get_agent_mention_re(handle).search(text))
 
 
-async def addresses_other_user(text: str, app_state) -> bool:
+async def addresses_other_user(text: str, app) -> bool:
     """Return True if the message is directed at someone else.
 
     A message that *starts* with ``@someone`` (not the agent) is
@@ -52,7 +52,7 @@ async def addresses_other_user(text: str, app_state) -> bool:
     if not m:
         return False
     mention = m.group().lstrip("@").lower()
-    handle = await app_state.model.users.agent_handle()
+    handle = await app.state.model.users.agent_handle()
     return mention != handle.lower()
 
 
@@ -105,7 +105,7 @@ async def handle_agent_mention(
     then not injected and "my" is left for the agent to disambiguate.
     """
 
-    agent_handle = await sockets.app_state.model.users.agent_handle()
+    agent_handle = await sockets.app.state.model.users.agent_handle()
     agent_re = get_agent_mention_re(agent_handle)
     prompt = agent_re.sub("", user_text).strip()
     if not prompt:
@@ -122,7 +122,7 @@ async def handle_agent_mention(
     # we only need to show interjections from other participants that
     # Pi hasn't seen (since Pi's multi-turn history only has the
     # conversation between the mentioning user and itself).
-    recent = await sockets.app_state.model.chat.get_chat_messages(
+    recent = await sockets.app.state.model.chat.get_chat_messages(
         workspace_id, limit=50
     )
     chronological = recent
@@ -145,7 +145,7 @@ async def handle_agent_mention(
         context = "\n".join(context_lines)
         prompt = f"[Other participants said:\n{context}]\n\n{prompt}"
 
-    agent_email = await sockets.app_state.model.users.agent_email()
+    agent_email = await sockets.app.state.model.users.agent_email()
 
     # Notify clients the agent is thinking
     session = sockets.get_session(workspace_id)
@@ -159,7 +159,7 @@ async def handle_agent_mention(
         )
 
     try:
-        pi = await sockets.app_state.agents.get_session(workspace_id)
+        pi = await sockets.app.state.agents.get_session(workspace_id)
         response_text = await pi.send_prompt(prompt)
     except asyncio.CancelledError:  # pragma: no cover
         response_text = "Stopped."
@@ -186,7 +186,7 @@ async def handle_agent_mention(
             "Sorry, I encountered an error processing your request."
         )
 
-    agent_msg = await sockets.app_state.model.chat.add_chat_message(
+    agent_msg = await sockets.app.state.model.chat.add_chat_message(
         workspace_id,
         AGENT_USER_ID,
         agent_email,

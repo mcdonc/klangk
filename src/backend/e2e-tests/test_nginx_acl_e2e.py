@@ -50,7 +50,9 @@ def _render_conf(env_overrides, tmpdir=None):
     import types
 
     return NginxRenderer(
-        types.SimpleNamespace(settings=KlangkSettings(env))
+        types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=KlangkSettings(env))
+        )
     ).render_config(tcp_upstream("127.0.0.1", "19998"))
 
 
@@ -426,7 +428,9 @@ class TestNginxAclEnforcement:
         os.makedirs(nginx_state, exist_ok=True)
         conf_path = os.path.join(nginx_state, "nginx.conf")
         NginxRenderer(
-            types.SimpleNamespace(settings=KlangkSettings(nginx_env))
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(settings=KlangkSettings(nginx_env))
+            )
         ).write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
         nginx_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],
@@ -609,7 +613,9 @@ class TestNginxDenyByDefault:
         os.makedirs(nginx_state, exist_ok=True)
         conf_path = os.path.join(nginx_state, "nginx.conf")
         NginxRenderer(
-            types.SimpleNamespace(settings=KlangkSettings(nginx_env))
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(settings=KlangkSettings(nginx_env))
+            )
         ).write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
         nginx_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],
@@ -801,7 +807,9 @@ class TestNginxAuthLocalAcl:
         os.makedirs(nginx_state, exist_ok=True)
         conf_path = os.path.join(nginx_state, "nginx.conf")
         NginxRenderer(
-            types.SimpleNamespace(settings=KlangkSettings(nginx_env))
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(settings=KlangkSettings(nginx_env))
+            )
         ).write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
         nginx_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],

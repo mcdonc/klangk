@@ -36,7 +36,9 @@ def _auth():
     app fixture, so tokens round-trip through app.state.auth.decode_*)."""
     from _helpers import wire_db_and_model
 
-    state = types.SimpleNamespace(settings=make_settings({}))
+    state = types.SimpleNamespace(
+        state=types.SimpleNamespace(settings=make_settings({}))
+    )
     wire_db_and_model(state)
     return auth_mod.Auth(state)
 
@@ -66,25 +68,25 @@ async def app(db, temp_data_dir):
     )
     app.state.settings = settings
     app.state.podman = _mock_pod
-    sockets = WebSocketState(app.state)
+    sockets = WebSocketState(app)
     app.state.sockets = sockets
-    registry = ContainerRegistry(app.state)
+    registry = ContainerRegistry(app)
     app.state.container_registry = registry
-    app.state.oidc = oidc_mod.OIDC(app.state)
-    app.state.plugins = plugins_mod.Plugins(app.state)
-    app.state.workspaces = ws_mod.Workspaces(app.state)
-    app.state.files = files_mod.Files(app.state)
-    app.state.agents = agent.Agents(app.state)
-    app.state.email = emailsvc_mod.EmailService(app.state)
-    app.state.util = util_mod.Util(app.state)
+    app.state.oidc = oidc_mod.OIDC(app)
+    app.state.plugins = plugins_mod.Plugins(app)
+    app.state.workspaces = ws_mod.Workspaces(app)
+    app.state.files = files_mod.Files(app)
+    app.state.agents = agent.Agents(app)
+    app.state.email = emailsvc_mod.EmailService(app)
+    app.state.util = util_mod.Util(app)
 
-    app.state.auth = auth_mod.Auth(app.state)
-    # #1572: wire DB + Model(app_state) so converted domains (tokens,
-    # login_attempts, invitations, ports) reached via app_state.model.*
-    # resolve the same per-test DB the ContextVar backstop binds.
+    app.state.auth = auth_mod.Auth(app)
+    # #1572: wire DB + Model so converted domains (tokens,
+    # login_attempts, invitations, ports) reached via app.state.model.*
+    # resolve the same per-test DB.
     from _helpers import wire_db_and_model
 
-    wire_db_and_model(app.state)
+    wire_db_and_model(app)
 
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)
@@ -127,7 +129,7 @@ async def _oidc_user_headers(app_state, email="oidc@example.com"):
     mirroring what the OIDC callback does.  Used to exercise the
     authenticated endpoints that must not 500 on a NULL hash (#890).
     """
-    user = await app_state.model.users.create_user(
+    user = await app_state.state.model.users.create_user(
         email, None, verified=True, provider="oidc"
     )
     token = _auth().create_token(user["id"], user["email"])
@@ -206,7 +208,7 @@ class TestVerifyWorkspaceToken:
 
 class TestWorkspaceChat:
     async def test_post_agent_message(self, client, user, app_state):
-        workspace = await app_state.model.workspaces.create_workspace(
+        workspace = await app_state.state.model.workspaces.create_workspace(
             user["id"], "chat-ws"
         )
         token = _auth().create_workspace_token(workspace["id"])
@@ -224,7 +226,7 @@ class TestWorkspaceChat:
     async def test_broadcasts_to_websocket(
         self, client, user, sockets, app_state
     ):
-        workspace = await app_state.model.workspaces.create_workspace(
+        workspace = await app_state.state.model.workspaces.create_workspace(
             user["id"], "bcast-ws"
         )
         token = _auth().create_workspace_token(workspace["id"])
@@ -269,7 +271,7 @@ class TestWorkspaceChat:
         assert resp.status_code == 404
 
     async def test_empty_message_rejected(self, client, user, app_state):
-        workspace = await app_state.model.workspaces.create_workspace(
+        workspace = await app_state.state.model.workspaces.create_workspace(
             user["id"], "empty-ws"
         )
         token = _auth().create_workspace_token(workspace["id"])
@@ -325,8 +327,10 @@ class TestVersion:
 
         app.state.plugins = app.state.plugins.__class__(
             types_mod.SimpleNamespace(
-                settings=make_settings(
-                    env={"KLANGK_PLUGINS_DIR": str(tmp_path / "plugins")}
+                state=types_mod.SimpleNamespace(
+                    settings=make_settings(
+                        env={"KLANGK_PLUGINS_DIR": str(tmp_path / "plugins")}
+                    )
                 )
             )
         )
@@ -588,7 +592,7 @@ class TestAuthRoutes:
                 },
             )
         assert resp.status_code == 200
-        user = await app_state.model.users.get_user_by_email(
+        user = await app_state.state.model.users.get_user_by_email(
             "handleme@example.com"
         )
         assert user is not None
@@ -634,7 +638,7 @@ class TestAuthRoutes:
             )
         assert resp.status_code == 503
         # User should not exist — transaction was rolled back
-        user = await app_state.model.users.get_user_by_email(
+        user = await app_state.state.model.users.get_user_by_email(
             "fail@example.com"
         )
         assert user is None
@@ -672,7 +676,7 @@ class TestAuthRoutes:
         import bcrypt
 
         password_hash = bcrypt.hashpw(b"pass", bcrypt.gensalt()).decode()
-        user = await app_state.model.users.create_user(
+        user = await app_state.state.model.users.create_user(
             "unverified@example.com", password_hash, verified=False
         )
         token = _auth().create_verification_token(user["id"])
@@ -756,7 +760,7 @@ class TestLocalLogin:
         monkeypatch.setattr(
             app.state.settings, "default_user", "local@example.com"
         )
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "local@example.com",
             auth_mod.hash_password("unused"),
             verified=True,
@@ -778,7 +782,7 @@ class TestLocalLogin:
         monkeypatch.setattr(
             app.state.settings, "default_user", "local@example.com"
         )
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "local@example.com",
             auth_mod.hash_password("unused"),
             verified=True,
@@ -827,7 +831,7 @@ class TestLocalLogin:
         monkeypatch.setattr(
             app.state.settings, "default_user", "local@example.com"
         )
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "local@example.com",
             auth_mod.hash_password("unused"),
             verified=True,
@@ -853,7 +857,7 @@ class TestLocalLogin:
         monkeypatch.setattr(
             app.state.settings, "default_user", "local@example.com"
         )
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "local@example.com",
             auth_mod.hash_password("unused"),
             verified=True,
@@ -875,7 +879,7 @@ class TestLocalLogin:
         monkeypatch.setattr(
             app.state.settings, "default_user", "local@example.com"
         )
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "local@example.com",
             auth_mod.hash_password("unused"),
             verified=True,
@@ -890,7 +894,7 @@ class TestLocalLogin:
 class TestResendVerification:
     async def _create_unverified_user(self, app_state):
         password_hash = auth_mod.hash_password("testpass")
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "unverified@example.com", password_hash, verified=False
         )
 
@@ -963,7 +967,7 @@ class TestResendVerification:
         self, client, db, app_state
     ):
         """OIDC-only users have no password hash; must 401, not 500 (#890)."""
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "oidc@example.com", None, verified=False, provider="oidc"
         )
         resp = await client.post(
@@ -1055,7 +1059,7 @@ class TestResendVerification:
 class TestForgotPassword:
     async def _create_user(self, app_state):
         password_hash = auth_mod.hash_password("oldpass")
-        return await app_state.model.users.create_user(
+        return await app_state.state.model.users.create_user(
             "forgot@example.com", password_hash, verified=True
         )
 
@@ -1135,7 +1139,7 @@ class TestForgotPassword:
 class TestResetPassword:
     async def _create_user(self, app_state):
         password_hash = auth_mod.hash_password("oldpass")
-        return await app_state.model.users.create_user(
+        return await app_state.state.model.users.create_user(
             "reset@example.com", password_hash, verified=True
         )
 
@@ -1284,7 +1288,7 @@ class TestChangeEmail:
         assert data["needs_verification"] is True
         mock_send.assert_awaited_once()
         # User should be unverified
-        updated = await app_state.model.users.get_user_by_email(
+        updated = await app_state.state.model.users.get_user_by_email(
             "new@example.com"
         )
         assert updated is not None
@@ -1307,7 +1311,7 @@ class TestChangeEmail:
     ):
         # Create another user
         password_hash = auth_mod.hash_password("other")
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "other@example.com", password_hash, verified=True
         )
         headers = await _auth_headers(client)
@@ -1693,7 +1697,7 @@ class TestWorkspaceRoutes:
         """ACL passes but workspace doesn't exist."""
         headers = await _auth_headers(client)
         fake_id = "fake-del-id"
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             f"/workspaces/{fake_id}",
             0,
             model.ACTION_ALLOW,
@@ -1717,7 +1721,7 @@ class TestWorkspaceRoutes:
         )
         ws_id = create_resp.json()["id"]
         # Simulate a running container
-        await app_state.model.workspaces.update_workspace_container(
+        await app_state.state.model.workspaces.update_workspace_container(
             ws_id, "fake-container-id"
         )
 
@@ -1753,13 +1757,15 @@ class TestWorkspaceRoutes:
 
         # Verify role groups were created
         for suffix in ["owners", "coders", "collaborators", "spectators"]:
-            group = await app_state.model.users.get_group_by_name(
+            group = await app_state.state.model.users.get_group_by_name(
                 f"{suffix}-{ws_id}"
             )
             assert group is not None, f"expected {suffix} group to exist"
 
         # Verify ACL entries exist for the workspace
-        acl = await app_state.model.acl.get_acl_entries(f"/workspaces/{ws_id}")
+        acl = await app_state.state.model.acl.get_acl_entries(
+            f"/workspaces/{ws_id}"
+        )
         assert len(acl) > 0
 
         with patch.object(
@@ -1774,13 +1780,15 @@ class TestWorkspaceRoutes:
 
         # Role groups should be gone
         for suffix in ["owners", "coders", "collaborators", "spectators"]:
-            group = await app_state.model.users.get_group_by_name(
+            group = await app_state.state.model.users.get_group_by_name(
                 f"{suffix}-{ws_id}"
             )
             assert group is None, f"expected {suffix} group to be deleted"
 
         # ACL entries should be gone
-        acl = await app_state.model.acl.get_acl_entries(f"/workspaces/{ws_id}")
+        acl = await app_state.state.model.acl.get_acl_entries(
+            f"/workspaces/{ws_id}"
+        )
         assert len(acl) == 0
 
     async def test_create_notifies_creator(self, client, user, sockets):
@@ -1865,7 +1873,7 @@ class TestWorkspaceRoutes:
     async def test_restart_not_found(self, client, user, app_state):
         headers = await _auth_headers(client)
         fake_id = "fake-restart-id"
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             f"/workspaces/{fake_id}",
             0,
             model.ACTION_ALLOW,
@@ -1933,7 +1941,7 @@ class TestWorkspaceRoutes:
     async def test_workspace_status_not_found(self, client, user, app_state):
         headers = await _auth_headers(client)
         fake_id = "fake-status-id"
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             f"/workspaces/{fake_id}",
             0,
             model.ACTION_ALLOW,
@@ -2040,7 +2048,7 @@ class TestWorkspaceRoutes:
         """ACL passes but workspace doesn't exist."""
         headers = await _auth_headers(client)
         fake_id = "fake-ws-id"
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             f"/workspaces/{fake_id}",
             0,
             model.ACTION_ALLOW,
@@ -2197,7 +2205,7 @@ class TestWorkspaceRoutes:
         """ACL passes but workspace doesn't exist."""
         headers = await _auth_headers(client)
         fake_id = "fake-dup-id"
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             f"/workspaces/{fake_id}",
             0,
             model.ACTION_ALLOW,
@@ -2252,15 +2260,17 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         dup_id = resp.json()["id"]
         for suffix in ["owners", "coders", "collaborators", "spectators"]:
-            group = await app_state.model.users.get_group_by_name(
+            group = await app_state.state.model.users.get_group_by_name(
                 f"{suffix}-{dup_id}"
             )
             assert group is not None, f"expected {suffix} group on duplicate"
         # Creator should be in the owners group
-        owners = await app_state.model.users.get_group_by_name(
+        owners = await app_state.state.model.users.get_group_by_name(
             f"owners-{dup_id}"
         )
-        members = await app_state.model.users.get_group_members(owners["id"])
+        members = await app_state.state.model.users.get_group_members(
+            owners["id"]
+        )
         assert any(m["id"] == user["id"] for m in members)
 
 
@@ -2270,7 +2280,7 @@ class TestWorkspaceRoutes:
 class TestWorkspaceSharingRoutes:
     async def _create_other_user(self, app_state):
         password_hash = auth_mod.hash_password("otherpass")
-        return await app_state.model.users.create_user(
+        return await app_state.state.model.users.create_user(
             "other@example.com", password_hash, verified=True
         )
 
@@ -2561,10 +2571,14 @@ class TestWorkspaceSharingRoutes:
 
         from _helpers import wire_db_and_model
 
-        _seed_state = types.SimpleNamespace(settings=make_settings({}))
+        _seed_state = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=make_settings({}))
+        )
         wire_db_and_model(_seed_state)
         await Lifecycle(_seed_state).seed_agent_user()
-        agent = await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
+        agent = await app_state.state.model.users.get_user_by_id(
+            model.AGENT_USER_ID
+        )
         headers = await _auth_headers(client)
         resp = await client.post(
             "/api/v1/workspaces",
@@ -2619,10 +2633,14 @@ class TestWorkspaceSharingRoutes:
 
         from _helpers import wire_db_and_model
 
-        _seed_state = types.SimpleNamespace(settings=make_settings({}))
+        _seed_state = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=make_settings({}))
+        )
         wire_db_and_model(_seed_state)
         await Lifecycle(_seed_state).seed_agent_user()
-        agent = await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
+        agent = await app_state.state.model.users.get_user_by_id(
+            model.AGENT_USER_ID
+        )
         headers = await _auth_headers(client)
         resp = await client.post(
             "/api/v1/workspaces",
@@ -2640,7 +2658,7 @@ class TestWorkspaceSharingRoutes:
         # Confirm the guard actually blocked the grant: no ACE entry on
         # this workspace names the agent as the user principal.
         resource = f"/workspaces/{ws_id}"
-        entries = await app_state.model.acl.get_acl_entries(resource)
+        entries = await app_state.state.model.acl.get_acl_entries(resource)
         assert not any(e["user_id"] == agent["id"] for e in entries)
 
     async def test_remove_member(self, client, user, app_state):
@@ -2765,8 +2783,10 @@ class TestWorkspaceACL:
         )
         ws_id = resp.json()["id"]
         # Add a group ACE
-        group = await app_state.model.users.create_group("test-acl-group")
-        await app_state.model.acl.add_acl_entry(
+        group = await app_state.state.model.users.create_group(
+            "test-acl-group"
+        )
+        await app_state.state.model.acl.add_acl_entry(
             f"/workspaces/{ws_id}",
             100,
             model.ACTION_ALLOW,
@@ -2861,7 +2881,7 @@ class TestWorkspaceRoles:
         )
         ws_id = resp.json()["id"]
         # Create a second user
-        target = await app_state.model.users.create_user(
+        target = await app_state.state.model.users.create_user(
             "role-target@test.com", "pass"
         )
         resp = await client.post(
@@ -2884,7 +2904,7 @@ class TestWorkspaceRoles:
             "/api/v1/workspaces", headers=headers, json={"name": "rm-role-ws"}
         )
         ws_id = resp.json()["id"]
-        target = await app_state.model.users.create_user(
+        target = await app_state.state.model.users.create_user(
             "role-rm@test.com", "pass"
         )
         # Add then remove
@@ -2980,10 +3000,10 @@ class TestWorkspaceRoles:
         )
         ws_id = resp.json()["id"]
         # Delete the spectators group to simulate missing role group
-        group = await app_state.model.users.get_group_by_name(
+        group = await app_state.state.model.users.get_group_by_name(
             f"spectators-{ws_id}"
         )
-        await app_state.model.users.delete_group(group["id"])
+        await app_state.state.model.users.delete_group(group["id"])
         resp = await client.post(
             f"/api/v1/workspaces/{ws_id}/roles/spectators",
             headers=headers,
@@ -3001,10 +3021,10 @@ class TestWorkspaceRoles:
             json={"name": "norole-rm-ws"},
         )
         ws_id = resp.json()["id"]
-        group = await app_state.model.users.get_group_by_name(
+        group = await app_state.state.model.users.get_group_by_name(
             f"coders-{ws_id}"
         )
-        await app_state.model.users.delete_group(group["id"])
+        await app_state.state.model.users.delete_group(group["id"])
         resp = await client.delete(
             f"/api/v1/workspaces/{ws_id}/roles/coders/some-id",
             headers=headers,
@@ -3021,10 +3041,10 @@ class TestWorkspaceRoles:
             json={"name": "missing-grp-ws"},
         )
         ws_id = resp.json()["id"]
-        group = await app_state.model.users.get_group_by_name(
+        group = await app_state.state.model.users.get_group_by_name(
             f"spectators-{ws_id}"
         )
-        await app_state.model.users.delete_group(group["id"])
+        await app_state.state.model.users.delete_group(group["id"])
         resp = await client.get(
             f"/api/v1/workspaces/{ws_id}/roles", headers=headers
         )
@@ -3041,7 +3061,7 @@ class TestChangeWorkspaceRole:
             "/api/v1/workspaces", headers=headers, json={"name": "chg-role-ws"}
         )
         ws_id = resp.json()["id"]
-        target = await app_state.model.users.create_user(
+        target = await app_state.state.model.users.create_user(
             "chg-role@test.com", "pass"
         )
         # Add as coder
@@ -3098,7 +3118,9 @@ class TestChangeWorkspaceRole:
             "/api/v1/workspaces", headers=headers, json={"name": "rm-all-ws"}
         )
         ws_id = resp.json()["id"]
-        await app_state.model.users.create_user("rm-all@test.com", "pass")
+        await app_state.state.model.users.create_user(
+            "rm-all@test.com", "pass"
+        )
         await client.patch(
             f"/api/v1/workspaces/{ws_id}/roles",
             headers=headers,
@@ -3125,7 +3147,9 @@ class TestChangeWorkspaceRole:
             "/api/v1/workspaces", headers=headers, json={"name": "bad-chg-ws"}
         )
         ws_id = resp.json()["id"]
-        await app_state.model.users.create_user("bad-chg@test.com", "pass")
+        await app_state.state.model.users.create_user(
+            "bad-chg@test.com", "pass"
+        )
         resp = await client.patch(
             f"/api/v1/workspaces/{ws_id}/roles",
             headers=headers,
@@ -3156,12 +3180,14 @@ class TestChangeWorkspaceRole:
             json={"name": "miss-grp-chg-ws"},
         )
         ws_id = resp.json()["id"]
-        await app_state.model.users.create_user("miss-grp@test.com", "pass")
+        await app_state.state.model.users.create_user(
+            "miss-grp@test.com", "pass"
+        )
         # Delete the target role group
-        group = await app_state.model.users.get_group_by_name(
+        group = await app_state.state.model.users.get_group_by_name(
             f"spectators-{ws_id}"
         )
-        await app_state.model.users.delete_group(group["id"])
+        await app_state.state.model.users.delete_group(group["id"])
         resp = await client.patch(
             f"/api/v1/workspaces/{ws_id}/roles",
             headers=headers,
@@ -3180,7 +3206,9 @@ class TestChangeWorkspaceRole:
             json={"name": "skip-miss-ws"},
         )
         ws_id = resp.json()["id"]
-        await app_state.model.users.create_user("skip-miss@test.com", "pass")
+        await app_state.state.model.users.create_user(
+            "skip-miss@test.com", "pass"
+        )
         # Add user to coders
         await client.patch(
             f"/api/v1/workspaces/{ws_id}/roles",
@@ -3188,10 +3216,10 @@ class TestChangeWorkspaceRole:
             json={"email": "skip-miss@test.com", "role": "coders"},
         )
         # Delete spectators group — should not break removal
-        group = await app_state.model.users.get_group_by_name(
+        group = await app_state.state.model.users.get_group_by_name(
             f"spectators-{ws_id}"
         )
-        await app_state.model.users.delete_group(group["id"])
+        await app_state.state.model.users.delete_group(group["id"])
         # Change role — removal phase should skip missing group
         resp = await client.patch(
             f"/api/v1/workspaces/{ws_id}/roles",
@@ -3212,7 +3240,7 @@ class TestTransferOwnership:
         assert resp.status_code == 200
         ws_id = resp.json()["id"]
 
-        target = await app_state.model.users.create_user(
+        target = await app_state.state.model.users.create_user(
             "xfer-target@test.com", "pass"
         )
         resp = await client.post(
@@ -3266,11 +3294,11 @@ class TestTransferOwnership:
         )
         ws_id = resp.json()["id"]
 
-        target = await app_state.model.users.create_user(
+        target = await app_state.state.model.users.create_user(
             "xfer-dup@test.com", "pass"
         )
         # Create a workspace with the same name owned by the target
-        await app_state.model.workspaces.create_workspace_with_acl(
+        await app_state.state.model.workspaces.create_workspace_with_acl(
             target["id"], "dup-name-ws"
         )
 
@@ -3291,13 +3319,13 @@ class TestTransferOwnership:
         )
         ws_id = resp.json()["id"]
 
-        other = await app_state.model.users.create_user(
+        other = await app_state.state.model.users.create_user(
             "xfer-other@test.com", "pass"
         )
         other_token = _auth().create_token(other["id"], other["email"])
         other_headers = {"Authorization": f"Bearer {other_token}"}
 
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "xfer-target2@test.com", "pass"
         )
         resp = await client.post(
@@ -3312,10 +3340,14 @@ class TestTransferOwnership:
 
         from _helpers import wire_db_and_model
 
-        _seed_state = types.SimpleNamespace(settings=make_settings({}))
+        _seed_state = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=make_settings({}))
+        )
         wire_db_and_model(_seed_state)
         await Lifecycle(_seed_state).seed_agent_user()
-        agent = await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
+        agent = await app_state.state.model.users.get_user_by_id(
+            model.AGENT_USER_ID
+        )
 
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -3334,7 +3366,7 @@ class TestTransferOwnership:
         assert "agent" in resp.json()["detail"].lower()
 
     async def test_transfer_workspace_not_found(self, client, user, app_state):
-        result = await app_state.model.workspaces.transfer_workspace(
+        result = await app_state.state.model.workspaces.transfer_workspace(
             "nonexistent-ws-id", user["id"]
         )
         assert result is None
@@ -3348,7 +3380,7 @@ class TestTransferOwnership:
         )
         ws_id = resp.json()["id"]
 
-        target = await app_state.model.users.create_user(
+        target = await app_state.state.model.users.create_user(
             "xfer-acl@test.com", "pass"
         )
         resp = await client.post(
@@ -3381,7 +3413,7 @@ class TestWorkspaceGroupSharing:
             json={"name": "group-share-ws"},
         )
         ws_id = resp.json()["id"]
-        group = await app_state.model.users.create_group("devs")
+        group = await app_state.state.model.users.create_group("devs")
 
         resp = await client.post(
             f"/api/v1/workspaces/{ws_id}/groups",
@@ -3406,7 +3438,7 @@ class TestWorkspaceGroupSharing:
             "/api/v1/workspaces", headers=headers, json={"name": "group-rm-ws"}
         )
         ws_id = resp.json()["id"]
-        group = await app_state.model.users.create_group("temp-devs")
+        group = await app_state.state.model.users.create_group("temp-devs")
 
         await client.post(
             f"/api/v1/workspaces/{ws_id}/groups",
@@ -3459,7 +3491,7 @@ class TestUserGroupEndpoints:
         """Any authenticated user with create permission can create groups."""
         headers = await _auth_headers(client)
         # Need create permission on /groups — seed it
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/groups",
             0,
             model.ACTION_ALLOW,
@@ -3477,7 +3509,7 @@ class TestUserGroupEndpoints:
         assert group["name"] == "user-group"
 
         # Creator should have * ACE on /groups/{id}
-        entries = await app_state.model.acl.get_acl_entries(
+        entries = await app_state.state.model.acl.get_acl_entries(
             f"/groups/{group['id']}"
         )
         assert len(entries) >= 1
@@ -3490,7 +3522,7 @@ class TestUserGroupEndpoints:
         self, client, admin_user, user, app_state
     ):
         headers = await _auth_headers(client)
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/groups",
             0,
             model.ACTION_ALLOW,
@@ -3512,7 +3544,7 @@ class TestUserGroupEndpoints:
 
     async def test_update_own_group(self, client, admin_user, user, app_state):
         headers = await _auth_headers(client)
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/groups",
             0,
             model.ACTION_ALLOW,
@@ -3535,7 +3567,7 @@ class TestUserGroupEndpoints:
 
     async def test_delete_own_group(self, client, admin_user, user, app_state):
         headers = await _auth_headers(client)
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/groups",
             0,
             model.ACTION_ALLOW,
@@ -3554,7 +3586,7 @@ class TestUserGroupEndpoints:
         )
         assert resp.status_code == 200
         # ACEs should be cleaned up
-        entries = await app_state.model.acl.get_acl_entries(
+        entries = await app_state.state.model.acl.get_acl_entries(
             f"/groups/{group_id}"
         )
         assert entries == []
@@ -3563,7 +3595,7 @@ class TestUserGroupEndpoints:
         self, client, admin_user, user, app_state
     ):
         headers = await _auth_headers(client)
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/groups",
             0,
             model.ACTION_ALLOW,
@@ -3603,7 +3635,7 @@ class TestUserGroupEndpoints:
     async def test_update_nonexistent_group(self, client, user, app_state):
         headers = await _auth_headers(client)
         # Grant * on fake group so ACL passes
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/groups/fake-id",
             0,
             model.ACTION_ALLOW,
@@ -3622,7 +3654,7 @@ class TestUserGroupEndpoints:
         self, client, admin_user, user, app_state
     ):
         headers = await _auth_headers(client)
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/groups",
             0,
             model.ACTION_ALLOW,
@@ -3645,7 +3677,7 @@ class TestUserGroupEndpoints:
 
     async def test_delete_nonexistent_group(self, client, user, app_state):
         headers = await _auth_headers(client)
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/groups/fake-del",
             0,
             model.ACTION_ALLOW,
@@ -3660,7 +3692,7 @@ class TestUserGroupEndpoints:
         self, client, user, app_state
     ):
         headers = await _auth_headers(client)
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/groups/fake-mem",
             0,
             model.ACTION_ALLOW,
@@ -3675,7 +3707,7 @@ class TestUserGroupEndpoints:
 
     async def test_add_member_nonexistent_group(self, client, user, app_state):
         headers = await _auth_headers(client)
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/groups/fake-add",
             0,
             model.ACTION_ALLOW,
@@ -3694,7 +3726,7 @@ class TestUserGroupEndpoints:
         self, client, admin_user, user, app_state
     ):
         headers = await _auth_headers(client)
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/groups",
             0,
             model.ACTION_ALLOW,
@@ -3717,7 +3749,7 @@ class TestUserGroupEndpoints:
 
     async def test_remove_nonmember(self, client, admin_user, user, app_state):
         headers = await _auth_headers(client)
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/groups",
             0,
             model.ACTION_ALLOW,
@@ -3975,9 +4007,11 @@ def _instance_id():
     """
     from klangk_backend.settings import KlangkSettings
 
-    ns = types.SimpleNamespace(settings=KlangkSettings(os.environ))
-    ns.util = util_mod.Util(ns)
-    return ns.util.instance_id()
+    ns = types.SimpleNamespace(
+        state=types.SimpleNamespace(settings=KlangkSettings(os.environ))
+    )
+    ns.state.util = util_mod.Util(ns)
+    return ns.state.util.instance_id()
 
 
 def _managed_volume(user_id="test-user"):
@@ -4848,7 +4882,7 @@ class TestSetIdleTimeout:
 
 class TestGroups:
     async def test_create_group(self, db, app_state):
-        group = await app_state.model.users.create_group(
+        group = await app_state.state.model.users.create_group(
             "editors", "Editor group"
         )
         assert group["name"] == "editors"
@@ -4856,63 +4890,88 @@ class TestGroups:
         assert group["id"]
 
     async def test_get_group_by_name(self, db, app_state):
-        await app_state.model.users.create_group("testers")
-        found = await app_state.model.users.get_group_by_name("testers")
+        await app_state.state.model.users.create_group("testers")
+        found = await app_state.state.model.users.get_group_by_name("testers")
         assert found is not None
         assert found["name"] == "testers"
 
     async def test_add_user_to_group(self, user, app_state):
-        group = await app_state.model.users.create_group("devs")
-        await app_state.model.users.add_user_to_group(user["id"], group["id"])
-        group_ids = await app_state.model.users.get_user_group_ids(user["id"])
+        group = await app_state.state.model.users.create_group("devs")
+        await app_state.state.model.users.add_user_to_group(
+            user["id"], group["id"]
+        )
+        group_ids = await app_state.state.model.users.get_user_group_ids(
+            user["id"]
+        )
         assert group["id"] in group_ids
 
     async def test_add_user_to_group_idempotent(self, user, app_state):
-        group = await app_state.model.users.create_group("devs")
-        await app_state.model.users.add_user_to_group(user["id"], group["id"])
-        await app_state.model.users.add_user_to_group(user["id"], group["id"])
-        group_ids = await app_state.model.users.get_user_group_ids(user["id"])
+        group = await app_state.state.model.users.create_group("devs")
+        await app_state.state.model.users.add_user_to_group(
+            user["id"], group["id"]
+        )
+        await app_state.state.model.users.add_user_to_group(
+            user["id"], group["id"]
+        )
+        group_ids = await app_state.state.model.users.get_user_group_ids(
+            user["id"]
+        )
         assert group_ids.count(group["id"]) == 1
 
     async def test_get_groups_empty(self, user, app_state):
-        group_ids = await app_state.model.users.get_user_group_ids(user["id"])
+        group_ids = await app_state.state.model.users.get_user_group_ids(
+            user["id"]
+        )
         assert group_ids == []
 
     async def test_remove_user_from_group(self, user, app_state):
-        group = await app_state.model.users.create_group("devs")
-        await app_state.model.users.add_user_to_group(user["id"], group["id"])
-        removed = await app_state.model.users.remove_user_from_group(
+        group = await app_state.state.model.users.create_group("devs")
+        await app_state.state.model.users.add_user_to_group(
+            user["id"], group["id"]
+        )
+        removed = await app_state.state.model.users.remove_user_from_group(
             user["id"], group["id"]
         )
         assert removed is True
-        group_ids = await app_state.model.users.get_user_group_ids(user["id"])
+        group_ids = await app_state.state.model.users.get_user_group_ids(
+            user["id"]
+        )
         assert group["id"] not in group_ids
 
     async def test_cascade_delete_user(self, db, app_state):
         """Deleting a user cascades to user_groups."""
-        user = await app_state.model.users.create_user("delme", "hash")
-        group = await app_state.model.users.create_group("devs")
-        await app_state.model.users.add_user_to_group(user["id"], group["id"])
-        assert group["id"] in await app_state.model.users.get_user_group_ids(
-            user["id"]
+        user = await app_state.state.model.users.create_user("delme", "hash")
+        group = await app_state.state.model.users.create_group("devs")
+        await app_state.state.model.users.add_user_to_group(
+            user["id"], group["id"]
         )
-        async with app_state.db.transaction() as db_conn:
+        assert group[
+            "id"
+        ] in await app_state.state.model.users.get_user_group_ids(user["id"])
+        async with app_state.state.db.transaction() as db_conn:
             await db_conn.execute(
                 "DELETE FROM users WHERE id = ?", (user["id"],)
             )
-        assert await app_state.model.users.get_user_group_ids(user["id"]) == []
+        assert (
+            await app_state.state.model.users.get_user_group_ids(user["id"])
+            == []
+        )
 
     async def test_cascade_delete_group(self, user, app_state):
         """Deleting a group cascades to user_groups."""
-        group = await app_state.model.users.create_group("temp")
-        await app_state.model.users.add_user_to_group(user["id"], group["id"])
-        assert group["id"] in await app_state.model.users.get_user_group_ids(
-            user["id"]
+        group = await app_state.state.model.users.create_group("temp")
+        await app_state.state.model.users.add_user_to_group(
+            user["id"], group["id"]
         )
-        await app_state.model.users.delete_group(group["id"])
         assert group[
             "id"
-        ] not in await app_state.model.users.get_user_group_ids(user["id"])
+        ] in await app_state.state.model.users.get_user_group_ids(user["id"])
+        await app_state.state.model.users.delete_group(group["id"])
+        assert group[
+            "id"
+        ] not in await app_state.state.model.users.get_user_group_ids(
+            user["id"]
+        )
 
     async def test_jwt_has_no_roles(self, user):
         """JWT tokens no longer include roles."""
@@ -4965,7 +5024,7 @@ class TestAdminEndpoints:
         headers = await self._admin_headers(client)
         # Create 12 users so the default page is full but not exhaustive.
         for i in range(12):
-            await app_state.model.users.create_user(
+            await app_state.state.model.users.create_user(
                 f"u{i}@example.com", None, verified=True
             )
         resp = await client.get("/api/v1/admin/users", headers=headers)
@@ -4981,7 +5040,7 @@ class TestAdminEndpoints:
     ):
         headers = await self._admin_headers(client)
         for i in range(5):
-            await app_state.model.users.create_user(
+            await app_state.state.model.users.create_user(
                 f"pg{i}@example.com", None, verified=True
             )
         page1 = await client.get(
@@ -5014,7 +5073,9 @@ class TestAdminEndpoints:
             "alpha@example.com",
             "bravo@example.com",
         ]:
-            await app_state.model.users.create_user(e, None, verified=True)
+            await app_state.state.model.users.create_user(
+                e, None, verified=True
+            )
         resp = await client.get(
             "/api/v1/admin/users?sort=email&order=asc&page_size=50",
             headers=headers,
@@ -5032,7 +5093,9 @@ class TestAdminEndpoints:
             "alpha@example.com",
             "bravo@example.com",
         ]:
-            await app_state.model.users.create_user(e, None, verified=True)
+            await app_state.state.model.users.create_user(
+                e, None, verified=True
+            )
         asc = await client.get(
             "/api/v1/admin/users?sort=email&order=asc&page_size=50",
             headers=headers,
@@ -5049,10 +5112,10 @@ class TestAdminEndpoints:
         self, client, admin_user, app_state
     ):
         headers = await self._admin_headers(client)
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "needle@example.com", None, verified=True
         )
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "haystack@example.com", None, verified=True
         )
         resp = await client.get(
@@ -5147,7 +5210,7 @@ class TestAdminEndpoints:
         mock_email.assert_called_once()
         # User should exist but not be verified, with a derived handle
         # (regression: #1256 — this branch used to INSERT without a handle).
-        user = await app_state.model.users.get_user_by_email(
+        user = await app_state.state.model.users.get_user_by_email(
             "verify@example.com"
         )
         assert user is not None
@@ -5225,7 +5288,9 @@ class TestAdminEndpoints:
 
         from _helpers import wire_db_and_model
 
-        _seed_state = types.SimpleNamespace(settings=make_settings({}))
+        _seed_state = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=make_settings({}))
+        )
         wire_db_and_model(_seed_state)
         await Lifecycle(_seed_state).seed_agent_user()
         headers = await self._admin_headers(client)
@@ -5265,7 +5330,7 @@ class TestAdminEndpoints:
             )
         assert resp.status_code == 200
         # Workspace should be gone (CASCADE)
-        ws_list = await app_state.model.workspaces.get_user_workspaces_with_containers(
+        ws_list = await app_state.state.model.workspaces.get_user_workspaces_with_containers(
             user["id"]
         )
         assert len(ws_list) == 0
@@ -5318,7 +5383,7 @@ class TestAdminEndpoints:
             headers=headers,
         )
         assert resp.status_code == 200
-        updated = await app_state.model.users.get_user_by_id(user["id"])
+        updated = await app_state.state.model.users.get_user_by_id(user["id"])
         assert updated["email"] == "renamed"
 
     async def test_update_password(self, client, admin_user, user):
@@ -5353,7 +5418,9 @@ class TestAdminEndpoints:
 
         from _helpers import wire_db_and_model
 
-        _seed_state = types.SimpleNamespace(settings=make_settings({}))
+        _seed_state = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=make_settings({}))
+        )
         wire_db_and_model(_seed_state)
         await Lifecycle(_seed_state).seed_agent_user()
         headers = await self._admin_headers(client)
@@ -5368,13 +5435,17 @@ class TestAdminEndpoints:
     async def test_unlock_user(self, client, admin_user, user, app_state):
         headers = await self._admin_headers(client)
         # Lock out the user
-        await app_state.model.login_attempts.record_failed_login(user["email"])
-        await app_state.model.login_attempts.set_login_lockout(
+        await app_state.state.model.login_attempts.record_failed_login(
+            user["email"]
+        )
+        await app_state.state.model.login_attempts.set_login_lockout(
             user["email"], "2099-01-01T00:00:00+00:00"
         )
         # Verify locked
-        info = await app_state.model.login_attempts.get_login_attempt_info(
-            user["email"]
+        info = (
+            await app_state.state.model.login_attempts.get_login_attempt_info(
+                user["email"]
+            )
         )
         assert info["locked_until"] is not None
         # Unlock via admin endpoint
@@ -5384,8 +5455,10 @@ class TestAdminEndpoints:
         assert resp.status_code == 200
         assert resp.json()["status"] == "unlocked"
         # Verify lockout cleared
-        info = await app_state.model.login_attempts.get_login_attempt_info(
-            user["email"]
+        info = (
+            await app_state.state.model.login_attempts.get_login_attempt_info(
+                user["email"]
+            )
         )
         assert info is None
 
@@ -5433,7 +5506,7 @@ class TestGroupEndpoints:
     ):
         headers = await self._admin_headers(client)
         for i in range(12):
-            await app_state.model.users.create_group(f"size-{i}")
+            await app_state.state.model.users.create_group(f"size-{i}")
         resp = await client.get("/api/v1/admin/groups", headers=headers)
         assert resp.status_code == 200
         body = resp.json()
@@ -5447,7 +5520,7 @@ class TestGroupEndpoints:
     ):
         headers = await self._admin_headers(client)
         for i in range(5):
-            await app_state.model.users.create_group(f"pg-{i}")
+            await app_state.state.model.users.create_group(f"pg-{i}")
         page1 = await client.get(
             "/api/v1/admin/groups?page=1&page_size=3", headers=headers
         )
@@ -5474,7 +5547,7 @@ class TestGroupEndpoints:
     ):
         headers = await self._admin_headers(client)
         for n in ["charlie", "alpha", "bravo"]:
-            await app_state.model.users.create_group(n)
+            await app_state.state.model.users.create_group(n)
         resp = await client.get(
             "/api/v1/admin/groups?sort=name&order=asc&page_size=200",
             headers=headers,
@@ -5488,7 +5561,7 @@ class TestGroupEndpoints:
     ):
         headers = await self._admin_headers(client)
         for n in ["charlie", "alpha", "bravo"]:
-            await app_state.model.users.create_group(n)
+            await app_state.state.model.users.create_group(n)
         asc = await client.get(
             "/api/v1/admin/groups?sort=name&order=asc&page_size=200",
             headers=headers,
@@ -5505,8 +5578,8 @@ class TestGroupEndpoints:
         self, client, admin_user, app_state
     ):
         headers = await self._admin_headers(client)
-        await app_state.model.users.create_group("needle-group")
-        await app_state.model.users.create_group("haystack-group")
+        await app_state.state.model.users.create_group("needle-group")
+        await app_state.state.model.users.create_group("haystack-group")
         resp = await client.get(
             "/api/v1/admin/groups?q=needle&page_size=200",
             headers=headers,
@@ -5725,7 +5798,7 @@ class TestACLEndpoints:
     async def test_get_acl_by_group(self, client, admin_user, app_state):
         headers = await self._admin_headers(client)
         # Get the admin group ID
-        groups = (await app_state.model.users.list_groups())["groups"]
+        groups = (await app_state.state.model.users.list_groups())["groups"]
         admin_group = next(g for g in groups if g["name"] == "admin")
         resp = await client.get(
             f"/api/v1/admin/acl/by-principal/group/{admin_group['id']}",
@@ -6124,8 +6197,10 @@ class TestWorkspaceMetadata:
         """Build a Workspaces instance for testing (#1484)."""
         import types as types_mod
 
-        ns = types_mod.SimpleNamespace(settings=make_settings({}))
-        ns.util = util_mod.Util(ns)
+        ns = types_mod.SimpleNamespace(
+            state=types_mod.SimpleNamespace(settings=make_settings({}))
+        )
+        ns.state.util = util_mod.Util(ns)
         return ws_mod.Workspaces(ns)
 
     def test_extracts_metadata(self, app_state):
@@ -6142,7 +6217,7 @@ class TestWorkspaceMetadata:
         meta = ws.workspace_metadata(ws_dict)
         assert meta == {
             "name": "myws",
-            "instance_id": ws.app_state.util.instance_id(),
+            "instance_id": ws.app.state.util.instance_id(),
             "image": "ubuntu",
             "service_command": "bash",
             "auto_start": True,
@@ -6159,7 +6234,7 @@ class TestWorkspaceMetadata:
     def test_includes_instance_id(self, app_state):
         ws = self._ws()
         meta = ws.workspace_metadata({"name": "x"})
-        assert meta["instance_id"] == ws.app_state.util.instance_id()
+        assert meta["instance_id"] == ws.app.state.util.instance_id()
 
 
 class TestArchiveUserData:
@@ -6206,10 +6281,10 @@ class TestArchiveUserData:
 
     async def test_archive_multiple_workspaces(self, user, app, app_state):
         """Creates separate archives for each workspace."""
-        ws1 = await app_state.model.workspaces.create_workspace(
+        ws1 = await app_state.state.model.workspaces.create_workspace(
             user["id"], "ws-one"
         )
-        ws2 = await app_state.model.workspaces.create_workspace(
+        ws2 = await app_state.state.model.workspaces.create_workspace(
             user["id"], "ws-two"
         )
 
@@ -6231,7 +6306,7 @@ class TestArchiveUserData:
     ):
         """Archival pages through every workspace when there are >10."""
         for i in range(12):
-            ws = await app_state.model.workspaces.create_workspace(
+            ws = await app_state.state.model.workspaces.create_workspace(
                 user["id"], f"ws-{i:02d}"
             )
             home = app.state.workspaces.home_path(ws["id"])
@@ -6342,9 +6417,11 @@ class TestWorkspaceExportImport:
         """
         from klangk_backend.settings import KlangkSettings
 
-        ns = types.SimpleNamespace(settings=KlangkSettings(os.environ))
-        ns.util = util_mod.Util(ns)
-        d = {"instance_id": ns.util.instance_id()}
+        ns = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=KlangkSettings(os.environ))
+        )
+        ns.state.util = util_mod.Util(ns)
+        d = {"instance_id": ns.state.util.instance_id()}
         d.update(overrides)
         return d
 
@@ -6514,12 +6591,17 @@ class TestWorkspaceExportImport:
 
         from klangk_backend.settings import KlangkSettings
 
-        ns = types.SimpleNamespace(settings=KlangkSettings(os.environ))
-        ns.util = util_mod.Util(ns)
+        ns = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=KlangkSettings(os.environ))
+        )
+        ns.state.util = util_mod.Util(ns)
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             meta = json.dumps(
-                {"name": "same-inst", "instance_id": ns.util.instance_id()}
+                {
+                    "name": "same-inst",
+                    "instance_id": ns.state.util.instance_id(),
+                }
             ).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
@@ -7401,15 +7483,17 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 200
         ws_id = resp.json()["id"]
         for suffix in ["owners", "coders", "collaborators", "spectators"]:
-            group = await app_state.model.users.get_group_by_name(
+            group = await app_state.state.model.users.get_group_by_name(
                 f"{suffix}-{ws_id}"
             )
             assert group is not None, f"expected {suffix} group on import"
         # Importer should be in the owners group
-        owners = await app_state.model.users.get_group_by_name(
+        owners = await app_state.state.model.users.get_group_by_name(
             f"owners-{ws_id}"
         )
-        members = await app_state.model.users.get_group_members(owners["id"])
+        members = await app_state.state.model.users.get_group_members(
+            owners["id"]
+        )
         assert any(m["id"] == user["id"] for m in members)
 
 
@@ -7637,16 +7721,16 @@ class TestInvitations:
         # Two invitations from two different inviters. Sorting by
         # ``invited_by`` must track the inviter's email (the value the UI
         # displays), not the invitee's email.
-        inviter_a = await app_state.model.users.create_user(
+        inviter_a = await app_state.state.model.users.create_user(
             "aaa-admin@example.com", None, verified=True
         )
-        inviter_z = await app_state.model.users.create_user(
+        inviter_z = await app_state.state.model.users.create_user(
             "zzz-admin@example.com", None, verified=True
         )
-        await app_state.model.invitations.create_invitation(
+        await app_state.state.model.invitations.create_invitation(
             "zeta@example.com", inviter_z["id"]
         )
-        await app_state.model.invitations.create_invitation(
+        await app_state.state.model.invitations.create_invitation(
             "alpha@example.com", inviter_a["id"]
         )
         headers = await self._admin_headers(client)
@@ -7960,7 +8044,7 @@ class TestInvitations:
         token = _auth().create_invitation_token(inv_id, "race@example.com")
 
         # Simulate race: create user with that email before accepting
-        await app_state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "race@example.com", auth_mod.hash_password("pass"), verified=True
         )
 
@@ -8195,7 +8279,7 @@ class TestOIDCCallback:
         assert "token=" in location
 
         # User was created
-        user = await app_state.model.users.get_user_by_email(
+        user = await app_state.state.model.users.get_user_by_email(
             "oidcuser@example.com"
         )
         assert user is not None
@@ -8235,17 +8319,19 @@ class TestOIDCCallback:
         )
         assert resp.status_code == 302
 
-        user = await app_state.model.users.get_user_by_email(
+        user = await app_state.state.model.users.get_user_by_email(
             "hookuser@example.com"
         )
-        groups = await app_state.model.users.get_user_groups(user["id"])
+        groups = await app_state.state.model.users.get_user_groups(user["id"])
         names = {g["name"] for g in groups}
         assert "admin" in names
         assert "power-users" in names
 
         # Verify source is oidc_sync
-        sync_ids = await app_state.model.users.get_user_oidc_sync_group_ids(
-            user["id"]
+        sync_ids = (
+            await app_state.state.model.users.get_user_oidc_sync_group_ids(
+                user["id"]
+            )
         )
         assert len(sync_ids) == 2
 
@@ -8268,7 +8354,7 @@ class TestOIDCCallback:
         assert resp.status_code == 302
 
         # Existing user was linked
-        linked = await app_state.model.users.get_user_by_external_id(
+        linked = await app_state.state.model.users.get_user_by_external_id(
             "test", "new-sub"
         )
         assert linked is not None
@@ -8589,7 +8675,7 @@ class TestOIDCCallback:
         assert resp.status_code == 403
         assert resp.json()["detail"] == "Login denied by server policy"
         assert (
-            await app_state.model.users.get_user_by_email(
+            await app_state.state.model.users.get_user_by_email(
                 "oidcuser@example.com"
             )
             is None
@@ -8615,7 +8701,7 @@ class TestOIDCCallback:
         assert resp.status_code == 403
         assert "not verified" in resp.json()["detail"]
         assert (
-            await app_state.model.users.get_user_by_email(
+            await app_state.state.model.users.get_user_by_email(
                 "oidcuser@example.com"
             )
             is None
@@ -8671,7 +8757,7 @@ class TestOIDCCallback:
         )
         assert resp.status_code == 302
         assert (
-            await app_state.model.users.get_user_by_email(
+            await app_state.state.model.users.get_user_by_email(
                 "oidcuser@example.com"
             )
             is not None
@@ -8693,7 +8779,7 @@ class TestOIDCCallback:
             follow_redirects=False,
         )
         assert resp.status_code == 302
-        user = await app_state.model.users.get_user_by_external_id(
+        user = await app_state.state.model.users.get_user_by_external_id(
             "test", "oidc-sub-123"
         )
         assert user is not None
@@ -8826,7 +8912,9 @@ class TestOIDCCallbackAgentGuard:
         """OIDC login resolving the agent by external_id is rejected."""
         # The DB trigger blocks linking OIDC identity to the agent, so
         # mock get_user_by_external_id to simulate a pre-linked agent.
-        agent = await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
+        agent = await app_state.state.model.users.get_user_by_id(
+            model.AGENT_USER_ID
+        )
         monkeypatch.setattr(
             app.state.model.users,
             "get_user_by_external_id",
@@ -8850,7 +8938,7 @@ class TestOIDCLogout:
     ):
         """OIDC user with logout_redirect gets IdP logout URL in response."""
         # Create OIDC user
-        user = await app_state.model.users.create_user(
+        user = await app_state.state.model.users.create_user(
             "oidc-logout@example.com",
             password_hash=None,
             verified=True,
@@ -8902,7 +8990,7 @@ class TestOIDCLogout:
         self, client, app, db, app_state
     ):
         """OIDC user with logout_redirect=false gets no URL."""
-        user = await app_state.model.users.create_user(
+        user = await app_state.state.model.users.create_user(
             "oidc-nologout@example.com",
             password_hash=None,
             verified=True,
@@ -8941,7 +9029,7 @@ class TestHandleEndpoints:
         assert data["status"] == "updated"
         assert data["handle"] == "newhandle"
         # Verify it actually changed in the DB
-        updated = await app_state.model.users.get_user_by_id(user["id"])
+        updated = await app_state.state.model.users.get_user_by_id(user["id"])
         assert updated["handle"] == "newhandle"
 
     async def test_change_handle_refreshes_presence(
@@ -8995,7 +9083,7 @@ class TestHandleEndpoints:
         self, client, admin_user, user, app_state
     ):
         # Set admin_user's handle to something known
-        await app_state.model.users.set_user_handle(
+        await app_state.state.model.users.set_user_handle(
             admin_user["id"], "taken-handle"
         )
         # Try to set user's handle to the same
@@ -9047,7 +9135,7 @@ class TestHandleEndpoints:
             headers=admin_headers,
         )
         assert resp.status_code == 200
-        updated = await app_state.model.users.get_user_by_id(user["id"])
+        updated = await app_state.state.model.users.get_user_by_id(user["id"])
         assert updated["handle"] == "admin-set-handle"
 
     async def test_admin_change_handle_refreshes_presence(

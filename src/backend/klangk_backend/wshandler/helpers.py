@@ -32,8 +32,8 @@ async def get_presence_list(
             )
     # Include agent only if its RPC process is alive in this workspace.
 
-    if sockets.app_state.agents.is_running(workspace_id):
-        agent_user = await sockets.app_state.model.users.get_agent_user()
+    if sockets.app.state.agents.is_running(workspace_id):
+        agent_user = await sockets.app.state.model.users.get_agent_user()
         users.append(
             {
                 "user_id": model.AGENT_USER_ID,
@@ -137,7 +137,7 @@ async def refresh_user_handle(
         if session:
             presence = await get_presence_list(ws_id, sockets)
             session.broadcast({"type": "presence_list", "users": presence})
-            sys_msg = await sockets.app_state.model.chat.add_chat_message(
+            sys_msg = await sockets.app.state.model.chat.add_chat_message(
                 ws_id,
                 user_id,
                 user_email,

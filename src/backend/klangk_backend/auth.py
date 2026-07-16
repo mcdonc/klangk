@@ -132,49 +132,49 @@ class Auth:
     TOKEN_EXPIRED = "TOKEN_EXPIRED"
     WORKSPACE_TOKEN_EXPIRED = "WORKSPACE_TOKEN_EXPIRED"
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
         self.algorithm = "HS256"
         # Fixed-policy token lifetimes (not env-driven).
         self.verify_token_expire_hours = 72
         self.reset_token_expire_hours = 1
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     # --- settings-derived config (read live off app_state, #1608) ---
 
     @property
     def secret(self) -> str:
-        return self.app_state.settings.jwt_secret
+        return self.app.state.settings.jwt_secret
 
     @property
     def token_expire_hours(self) -> float:
-        return float(self.app_state.settings.access_token_hours)
+        return float(self.app.state.settings.access_token_hours)
 
     @property
     def min_password_length(self) -> int:
-        return int(self.app_state.settings.min_password_length)
+        return int(self.app.state.settings.min_password_length)
 
     @property
     def login_lockout_failures(self) -> int:
-        return int(self.app_state.settings.login_lockout_failures)
+        return int(self.app.state.settings.login_lockout_failures)
 
     @property
     def login_lockout_duration(self) -> int:
-        return int(self.app_state.settings.login_lockout_duration)
+        return int(self.app.state.settings.login_lockout_duration)
 
     @property
     def login_lockout_window(self) -> int:
-        return int(self.app_state.settings.login_lockout_window)
+        return int(self.app.state.settings.login_lockout_window)
 
     @property
     def invite_token_expire_hours(self) -> int:
-        return int(self.app_state.settings.invite_expire_hours)
+        return int(self.app.state.settings.invite_expire_hours)
 
     @property
     def workspace_token_expire_hours(self) -> float:
-        return float(self.app_state.settings.workspace_token_hours)
+        return float(self.app.state.settings.workspace_token_hours)
 
     # --- secret / startup guard ---
 
@@ -191,7 +191,7 @@ class Auth:
         """
         if self.jwt_secret_is_secure():
             return
-        prevent = self.app_state.settings.prevent_insecure_jwt_secret.lower()
+        prevent = self.app.state.settings.prevent_insecure_jwt_secret.lower()
         if prevent in ("1", "true", "yes"):
             raise ConfigurationError(
                 "KLANGK_JWT_SECRET is unset or the insecure default. Set a "
@@ -206,12 +206,12 @@ class Auth:
 
     def registration_enabled(self) -> bool:
         """Check if public registration is enabled."""
-        val = self.app_state.settings.disable_registration
+        val = self.app.state.settings.disable_registration
         return val.lower() not in ("1", "true", "yes")
 
     def invitations_enabled(self) -> bool:
         """Check if admin invitations are enabled."""
-        val = self.app_state.settings.disable_invites
+        val = self.app.state.settings.disable_invites
         return val.lower() not in ("1", "true", "yes")
 
     def validate_password_length(self, password: str) -> None:
@@ -395,7 +395,7 @@ class Auth:
             raise HTTPException(
                 status_code=403, detail="Registration is disabled"
             )
-        existing = await self.app_state.model.users.get_user_by_email(
+        existing = await self.app.state.model.users.get_user_by_email(
             req.email
         )
         if existing is not None:
@@ -410,7 +410,7 @@ class Auth:
         # opaque error as the pre-check (avoids user enumeration and an
         # unhandled HTTP 500).
         try:
-            user = await self.app_state.model.users.create_user(
+            user = await self.app.state.model.users.create_user(
                 req.email, password_hash, verified=verified
             )
         except SAIntegrityError:
@@ -425,14 +425,14 @@ class Auth:
     async def login(self, req: LoginRequest) -> TokenResponse:
         # Check if locked out before doing any expensive work
         if self.login_lockout_failures > 0:
-            attempt_info = await self.app_state.model.login_attempts.get_login_attempt_info(
+            attempt_info = await self.app.state.model.login_attempts.get_login_attempt_info(
                 req.email
             )
             is_locked, msg = is_locked_out(attempt_info)
             if is_locked:
                 raise HTTPException(status_code=429, detail=msg)
 
-        user = await self.app_state.model.users.get_user_by_email(req.email)
+        user = await self.app.state.model.users.get_user_by_email(req.email)
         # OIDC-only users have no password hash; treat that as invalid
         # credentials rather than letting verify_password crash on None.
         if (
@@ -446,11 +446,11 @@ class Auth:
                 # if so, reset the count instead of incrementing, so old
                 # failures stop counting toward the threshold.
                 reset = self.window_elapsed(attempt_info)
-                await self.app_state.model.login_attempts.record_failed_login(
+                await self.app.state.model.login_attempts.record_failed_login(
                     req.email, reset=reset
                 )
                 # Check if this attempt triggered a lockout
-                updated_info = await self.app_state.model.login_attempts.get_login_attempt_info(
+                updated_info = await self.app.state.model.login_attempts.get_login_attempt_info(
                     req.email
                 )
                 if self.should_lockout(updated_info):
@@ -458,7 +458,7 @@ class Auth:
                         seconds=self.login_lockout_duration
                     )
                     await (
-                        self.app_state.model.login_attempts.set_login_lockout(
+                        self.app.state.model.login_attempts.set_login_lockout(
                             req.email, locked_until.isoformat()
                         )
                     )
@@ -474,7 +474,7 @@ class Auth:
             )
 
         if self.login_lockout_failures > 0:
-            await self.app_state.model.login_attempts.clear_login_attempts(
+            await self.app.state.model.login_attempts.clear_login_attempts(
                 req.email
             )
         token = self.create_token(user["id"], user["email"])
@@ -497,9 +497,9 @@ class Auth:
             if not all([user_id, email, jti, exp]):  # pragma: no cover
                 raise HTTPException(status_code=401, detail="Invalid token")
 
-            if await self.app_state.model.tokens.is_token_blocklisted(jti):
+            if await self.app.state.model.tokens.is_token_blocklisted(jti):
                 # Already refreshed — return the cached replacement
-                cached = await self.app_state.model.tokens.get_refreshed_token(
+                cached = await self.app.state.model.tokens.get_refreshed_token(
                     jti
                 )
                 if cached is not None:
@@ -508,7 +508,7 @@ class Auth:
                     status_code=401, detail="Token has been revoked"
                 )
 
-            user = await self.app_state.model.users.get_user_by_id(user_id)
+            user = await self.app.state.model.users.get_user_by_id(user_id)
             if user is None:
                 raise HTTPException(status_code=401, detail="User not found")
 
@@ -516,7 +516,7 @@ class Auth:
             expires_at = datetime.fromtimestamp(
                 exp, tz=timezone.utc
             ).isoformat()
-            await self.app_state.model.tokens.blocklist_token(
+            await self.app.state.model.tokens.blocklist_token(
                 jti, expires_at, new_token=new_token
             )
             return TokenResponse(access_token=new_token)
@@ -526,7 +526,7 @@ class Auth:
             payload = self.decode_token(token, allow_expired=True)
             jti = payload.get("jti")
             if jti:
-                cached = await self.app_state.model.tokens.get_refreshed_token(
+                cached = await self.app.state.model.tokens.get_refreshed_token(
                     jti
                 )
                 if cached is not None:
@@ -549,9 +549,9 @@ class Auth:
             jti = payload.get("jti")
             if user_id is None or jti is None:
                 return None
-            if await self.app_state.model.tokens.is_token_blocklisted(jti):
+            if await self.app.state.model.tokens.is_token_blocklisted(jti):
                 return None
-            return await self.app_state.model.users.get_user_by_id(user_id)
+            return await self.app.state.model.users.get_user_by_id(user_id)
         except ExpiredSignatureError:
             return self.TOKEN_EXPIRED
         except JWTError:
@@ -567,7 +567,7 @@ class Auth:
                 expires_at = datetime.fromtimestamp(
                     exp, tz=timezone.utc
                 ).isoformat()
-                await self.app_state.model.tokens.blocklist_token(
+                await self.app.state.model.tokens.blocklist_token(
                     jti, expires_at
                 )
         except JWTError:

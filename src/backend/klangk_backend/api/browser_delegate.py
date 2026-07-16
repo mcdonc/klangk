@@ -12,7 +12,7 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel
 
-from ._common import get_app_state_dep
+from ._common import get_app_dep
 from ._common import (
     require_workspace_token,
 )
@@ -60,7 +60,7 @@ def _resolve_bridge_target(
 async def browser_delegate(
     body: BrowserDelegateRequest,
     workspace_id: str = Depends(require_workspace_token),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Bridge endpoint for container processes to delegate actions to the browser.
 
@@ -69,7 +69,7 @@ async def browser_delegate(
     specific browser tab's WebSocket and relays the request.
     """
     session, target_sock, payload = _resolve_bridge_target(
-        body, app_state.container_registry, app_state.sockets
+        body, app.state.container_registry, app.state.sockets
     )
     # Credential get operations may wait for user interaction (PAT dialog
     # or OAuth device flow) — allow up to 15 minutes (matching GitHub's
@@ -92,7 +92,7 @@ async def browser_delegate(
 async def browser_delegate_stream(
     body: BrowserDelegateRequest,
     workspace_id: str = Depends(require_workspace_token),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Streaming bridge: relay browser output chunks back as NDJSON.
 
@@ -102,11 +102,11 @@ async def browser_delegate_stream(
     only limit is the per-chunk idle timeout.
     """
     session, target_sock, payload = _resolve_bridge_target(
-        body, app_state.container_registry, app_state.sockets
+        body, app.state.container_registry, app.state.sockets
     )
     return StreamingResponse(
         session.dispatch_browser_request_stream_to(
-            target_sock, payload, app_state.util.bridge_idle_timeout()
+            target_sock, payload, app.state.util.bridge_idle_timeout()
         ),
         media_type="application/x-ndjson",
     )

@@ -148,11 +148,11 @@ class SSLTrust:
     explicit paths or none at all and read no settings.
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
         self.apply_backend_ssl_trust()
 
     def ssl_cert_dir(self) -> str | None:
@@ -165,9 +165,9 @@ class SSLTrust:
         of certs).  Never raises — a misconfigured path simply disables
         runtime trust.
         """
-        raw = self.app_state.settings.ssl_cert_dir
+        raw = self.app.state.settings.ssl_cert_dir
         if not raw:
-            customize = self.app_state.settings.customize_dir
+            customize = self.app.state.settings.customize_dir
             candidate = os.path.join(customize, "certs")
             if os.path.isdir(candidate):
                 raw = candidate
@@ -193,7 +193,7 @@ class SSLTrust:
         ssl_dir = self.ssl_cert_dir()
         if not ssl_dir:
             return None
-        state_dir = self.app_state.settings.state_dir
+        state_dir = self.app.state.settings.state_dir
         bundle_dir = os.path.join(state_dir, "ssl")
         try:
             os.makedirs(bundle_dir, exist_ok=True)

@@ -21,7 +21,9 @@ import types
 def _util(env=None):
     """Build a Util instance from explicit env."""
     settings = make_settings(env)
-    return Util(types.SimpleNamespace(settings=settings))
+    return Util(
+        types.SimpleNamespace(state=types.SimpleNamespace(settings=settings))
+    )
 
 
 class TestReadFileValue:

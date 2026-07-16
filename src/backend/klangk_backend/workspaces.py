@@ -131,17 +131,17 @@ class Workspaces:
     import-time env read (the frozen-at-import hazard).
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     # --- settings-derived paths (read live off app_state, #1608) ---
 
     @property
     def data_dir(self) -> Path:
-        return Path(self.app_state.settings.data_dir)
+        return Path(self.app.state.settings.data_dir)
 
     @property
     def root(self) -> Path:
@@ -195,7 +195,7 @@ class Workspaces:
         """
         return {
             "name": ws["name"],
-            "instance_id": self.app_state.util.instance_id(),
+            "instance_id": self.app.state.util.instance_id(),
             "image": ws.get("image"),
             "service_command": ws.get("service_command"),
             "auto_start": ws.get("auto_start", False),
@@ -313,7 +313,7 @@ class Workspaces:
         archived_ws_ids: list[str] = []
         offset = 0
         while True:
-            page = await self.app_state.model.workspaces.list_workspaces(
+            page = await self.app.state.model.workspaces.list_workspaces(
                 user_id, offset=offset
             )
             user_workspaces = page["items"]
@@ -369,7 +369,7 @@ class Workspaces:
         health_check: str | None = None,
     ) -> dict:
         workspace = (
-            await self.app_state.model.workspaces.create_workspace_with_acl(
+            await self.app.state.model.workspaces.create_workspace_with_acl(
                 user_id,
                 name,
                 image=image,
@@ -391,12 +391,12 @@ class Workspaces:
         terminals_dir.mkdir(exist_ok=True)
         # Allocate ports at creation time so ranges are sequential
         try:
-            await self.app_state.container_registry.allocate_ports(
+            await self.app.state.container_registry.allocate_ports(
                 workspace["id"], workspace["num_ports"]
             )
         except Exception:
             # Clean up the DB record and directories on port allocation failure
-            await self.app_state.model.workspaces.delete_workspace(
+            await self.app.state.model.workspaces.delete_workspace(
                 workspace["id"], user_id
             )
             await _async_rmtree(home, f"workspace {workspace['id']} rollback")
@@ -412,25 +412,25 @@ class Workspaces:
         order: str = "desc",
         q: str | None = None,
     ) -> dict:
-        return await self.app_state.model.workspaces.list_workspaces(
+        return await self.app.state.model.workspaces.list_workspaces(
             user_id, limit, offset, sort, order, q
         )
 
     async def get_workspace(
         self, workspace_id: str, user_id: str | None = None
     ) -> dict | None:
-        return await self.app_state.model.workspaces.get_workspace(
+        return await self.app.state.model.workspaces.get_workspace(
             workspace_id, user_id
         )
 
     async def delete_workspace(self, workspace_id: str, user_id: str) -> bool:
-        workspace = await self.app_state.model.workspaces.get_workspace(
+        workspace = await self.app.state.model.workspaces.get_workspace(
             workspace_id, user_id
         )
         if workspace is None:
             return False
 
-        deleted = await self.app_state.model.workspaces.delete_workspace(
+        deleted = await self.app.state.model.workspaces.delete_workspace(
             workspace_id, user_id
         )
         if deleted:
@@ -471,14 +471,14 @@ class Workspaces:
         user_id: str,
     ) -> None:
         """Copy /etc/skel into a new user's home directory inside the container."""
-        await populate_home_skel(container_id, user_id, self.app_state.podman)
+        await populate_home_skel(container_id, user_id, self.app.state.podman)
 
     # --- lifecycle ---
 
     async def start_workspace(self, ws: dict) -> tuple[str, str]:
         """Start a container for a workspace immediately.
 
-        Thin wrapper around ``self.app_state.container_registry.start_container``
+        Thin wrapper around ``self.app.state.container_registry.start_container``
         that unpacks the workspace dict. The agent home provisioning and the
         service command firing happen at the single create choke point
         inside ``start_container`` (see ``ContainerRegistry._bringup``, #1244),
@@ -494,7 +494,7 @@ class Workspaces:
         host_path = str(self.get_workspace_host_path(workspace_id))
         h_path = str(self.get_home_host_path(workspace_id))
         cfg_path = str(self.get_config_host_path(workspace_id))
-        cid, status = await self.app_state.container_registry.start_container(
+        cid, status = await self.app.state.container_registry.start_container(
             workspace_id,
             host_path,
             h_path,
@@ -519,11 +519,11 @@ class Workspaces:
         Skipped entirely if ``KLANGK_ALLOW_AUTOSTART`` is not set.
         Returns the number of containers started.
         """
-        if not self.app_state.settings.allow_autostart:
+        if not self.app.state.settings.allow_autostart:
             return 0
 
         ws_list = (
-            await self.app_state.model.workspaces.list_auto_start_workspaces()
+            await self.app.state.model.workspaces.list_auto_start_workspaces()
         )
         started = 0
         for i, ws in enumerate(ws_list):
@@ -535,7 +535,7 @@ class Workspaces:
                 # so they do not idle out between user connections. Only the
                 # boot path does this -- create/restart use the default idle
                 # timeout (#1244).
-                state = self.app_state.container_registry.states.get(ws["id"])
+                state = self.app.state.container_registry.states.get(ws["id"])
                 if state:
                     state.idle_timeout = 0
                 logger.info(

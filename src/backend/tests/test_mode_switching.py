@@ -35,7 +35,9 @@ def _auth():
     """Standalone Auth for token forging (default secret matches the app)."""
     from _helpers import wire_db_and_model
 
-    state = types.SimpleNamespace(settings=make_settings({}))
+    state = types.SimpleNamespace(
+        state=types.SimpleNamespace(settings=make_settings({}))
+    )
     wire_db_and_model(state)
     return auth_mod.Auth(state)
 
@@ -44,7 +46,9 @@ def _lifecycle(env):
     """A ``Lifecycle`` whose app_state can reach ``model.acl`` (#1574)."""
     from _helpers import wire_db_and_model
 
-    state = types.SimpleNamespace(settings=make_settings(env))
+    state = types.SimpleNamespace(
+        state=types.SimpleNamespace(settings=make_settings(env))
+    )
     wire_db_and_model(state)
     return main.Lifecycle(state)
 
@@ -75,22 +79,24 @@ async def mode_server(db, monkeypatch, app_state):
             "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
         }
     ).seed_default_user()
-    default_user = await app_state.model.users.get_user_by_email(DEFAULT_EMAIL)
+    default_user = await app_state.state.model.users.get_user_by_email(
+        DEFAULT_EMAIL
+    )
     assert default_user is not None, "seed_default_user must create the user"
 
     app = FastAPI()
     app.state.settings = make_settings({"KLANGK_AUTH_MODES": "none"})
-    app.state.oidc = oidc_mod.OIDC(app.state)
-    app.state.plugins = plugins_mod.Plugins(app.state)
-    app.state.email = emailsvc_mod.EmailService(app.state)
-    app.state.util = util_mod.Util(app.state)
+    app.state.oidc = oidc_mod.OIDC(app)
+    app.state.plugins = plugins_mod.Plugins(app)
+    app.state.email = emailsvc_mod.EmailService(app)
+    app.state.util = util_mod.Util(app)
 
-    app.state.auth = auth_mod.Auth(app.state)
+    app.state.auth = auth_mod.Auth(app)
     # #1572: Auth (login/refresh/logout) reaches app.state.model.{tokens,
     # login_attempts}; wire db + model onto the app state.
     from _helpers import wire_db_and_model
 
-    wire_db_and_model(app.state)
+    wire_db_and_model(app)
     app.include_router(api.root_router)
     app.include_router(api.router, prefix=API_PREFIX)
     register_exception_handlers(app)
@@ -113,7 +119,7 @@ def _set_mode(mode: str):
     """
     app = _current_app
     app.state.settings = make_settings({"KLANGK_AUTH_MODES": mode})
-    app.state.oidc = oidc_mod.OIDC(app.state)
+    app.state.oidc = oidc_mod.OIDC(app)
 
 
 def _none():
@@ -322,15 +328,15 @@ class TestDataCarriesOver:
         after flipping to password mode — modes change auth, not data."""
         client, user = mode_server
         _none()
-        ws = await app_state.model.workspaces.create_workspace(
+        ws = await app_state.state.model.workspaces.create_workspace(
             user["id"], "persists-across-switch"
         )
 
         _password()
         # Re-resolve the workspace straight from the DB the restart would see.
-        rows = (await app_state.model.workspaces.list_workspaces(user["id"]))[
-            "items"
-        ]
+        rows = (
+            await app_state.state.model.workspaces.list_workspaces(user["id"])
+        )["items"]
         names = [r["name"] for r in rows]
         assert ws["name"] in names
 
@@ -377,7 +383,7 @@ class TestChangePasswordReality:
         _none()
 
         # A user with no password hash (an OIDC-only style account).
-        oidc_user = await app_state.model.users.create_user(
+        oidc_user = await app_state.state.model.users.create_user(
             "oidc-only@example.com", None, verified=True
         )
         # Mint a token for that user so the request authenticates.
@@ -424,7 +430,9 @@ class TestRestartIdempotency:
             }
         ).seed_default_user()  # simulate restart in password mode
 
-        again = await app_state.model.users.get_user_by_email(DEFAULT_EMAIL)
+        again = await app_state.state.model.users.get_user_by_email(
+            DEFAULT_EMAIL
+        )
         assert again["id"] == user["id"]
         # Still admin (membership re-asserted, not lost) — ask the canonical
         # /my-permissions source the CLI and frontend both use.

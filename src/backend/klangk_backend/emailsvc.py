@@ -42,15 +42,15 @@ class EmailService:
     every env var the module touches has a matching typed field.
     """
 
-    def __init__(self, app_state) -> None:
-        self.app_state = app_state
+    def __init__(self, app) -> None:
+        self.app = app
         # Per-instance cached Jinja environment. Built lazily on first
         # render; reset via reset_template_env() (mainly for tests that
         # flip KLANGK_EMAIL_TEMPLATES_DIR between cases).
         self._env: Environment | None = None
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
         self._env = None
 
     # --- config ---
@@ -59,30 +59,30 @@ class EmailService:
         """Resolve KLANGK_SMTP_PASSWORD.
 
         ``file:``/``cmd:`` prefixes are dereferenced at construction by
-        ``KlangkSettings`` (#1461), so ``self.app_state.settings.smtp_password`` is
+        ``KlangkSettings`` (#1461), so ``self.app.state.settings.smtp_password`` is
         already the resolved value (or ``None`` when unset).
         """
-        return self.app_state.settings.smtp_password
+        return self.app.state.settings.smtp_password
 
     def product_name(self) -> str:
         """Configured product name (KLANGK_PRODUCT_NAME), default 'Klangk'."""
-        return self.app_state.settings.product_name
+        return self.app.state.settings.product_name
 
     def smtp_config(self) -> dict:
         """Read SMTP configuration from settings at call time."""
         return {
-            "host": self.app_state.settings.smtp_host,
-            "port": int(self.app_state.settings.smtp_port),
-            "user": self.app_state.settings.smtp_user,
+            "host": self.app.state.settings.smtp_host,
+            "port": int(self.app.state.settings.smtp_port),
+            "user": self.app.state.settings.smtp_user,
             "password": self.resolve_password(),
-            "from_addr": self.app_state.settings.smtp_from,
-            "use_tls": self.app_state.settings.smtp_use_tls.lower()
+            "from_addr": self.app.state.settings.smtp_from,
+            "use_tls": self.app.state.settings.smtp_use_tls.lower()
             in ("true", "1"),
         }
 
     def use_smtp(self) -> bool:
         """Return True if SMTP is configured, False to use sendmail."""
-        return bool(self.app_state.settings.smtp_host)
+        return bool(self.app.state.settings.smtp_host)
 
     def reply_to(self) -> str | None:
         """Configured Reply-To address (KLANGK_SMTP_REPLY_TO), or None.
@@ -91,7 +91,7 @@ class EmailService:
         distinct from the envelope From. None -> no header (today's
         behavior). See #1165 / #261.
         """
-        return self.app_state.settings.smtp_reply_to or None
+        return self.app.state.settings.smtp_reply_to or None
 
     def _set_headers(self, msg: EmailMessage) -> None:
         """Apply optional headers shared by every outgoing message."""
@@ -123,7 +123,7 @@ class EmailService:
         logger.info("Email sent via SMTP to %s", msg["To"])
 
     async def send_via_sendmail(self, msg: EmailMessage) -> None:
-        sendmail = self.app_state.settings.sendmail_path
+        sendmail = self.app.state.settings.sendmail_path
         logger.info("Using sendmail at: %s", sendmail)
         resolved = shutil.which(sendmail)
         logger.info("Resolved sendmail path: %s", resolved)
@@ -156,7 +156,7 @@ class EmailService:
 
         Mirrors what /config exposes to the frontend (see api.get_config).
         """
-        s = self.app_state.settings
+        s = self.app.state.settings
         return {
             "product_name": self.product_name(),
             "logo_url": s.logo_url,
@@ -174,7 +174,7 @@ class EmailService:
 
     def _customize_dir(self) -> str:
         """Root customization directory (defaults to ``<state_dir>/custom``)."""
-        return self.app_state.settings.customize_dir
+        return self.app.state.settings.customize_dir
 
     def _template_env(self) -> Environment:
         """Build (and cache) the Jinja environment.
@@ -187,7 +187,7 @@ class EmailService:
         """
         if self._env is None:
             loaders = []
-            user_dir = self.app_state.settings.email_templates_dir
+            user_dir = self.app.state.settings.email_templates_dir
             if not user_dir:
                 candidate = Path(self._customize_dir()) / "email-templates"
                 if candidate.is_dir():
@@ -272,7 +272,7 @@ class EmailService:
         rendered = self.render_email(
             "verify",
             link=verification_url,
-            expiry_hours=self.app_state.auth.verify_token_expire_hours,
+            expiry_hours=self.app.state.auth.verify_token_expire_hours,
         )
         await self._send(self.build_multipart(to, rendered))
         logger.info("Verification email sent to %s", to)
@@ -282,7 +282,7 @@ class EmailService:
         rendered = self.render_email(
             "reset",
             link=reset_url,
-            expiry_hours=self.app_state.auth.reset_token_expire_hours,
+            expiry_hours=self.app.state.auth.reset_token_expire_hours,
         )
         await self._send(self.build_multipart(to, rendered))
         logger.info("Password reset email sent to %s", to)
@@ -294,7 +294,7 @@ class EmailService:
         rendered = self.render_email(
             "invite",
             link=invite_url,
-            expiry_hours=self.app_state.auth.invite_token_expire_hours,
+            expiry_hours=self.app.state.auth.invite_token_expire_hours,
             invited_by=invited_by_email,
         )
         await self._send(self.build_multipart(to, rendered))

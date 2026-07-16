@@ -31,7 +31,7 @@ class _FakeContainerState:
 def _mock_container_registry():
     """Provide a default container registry state for all agent tests.
 
-    Agent code accesses ``self.app_state.container_registry.get_state()``.
+    Agent code accesses ``self.app_state.state.container_registry.get_state()``.
     The ``_make_agents`` helper wires a fake app_state with a mock
     registry whose ``get_state`` returns a ``_FakeContainerState``.
     This fixture is kept as a no-op for structural compatibility.
@@ -44,15 +44,15 @@ async def _seed_agent_db(app_state):
     """Seed the agent user so agent_handle()/agent_email() work."""
     from klangk_backend.model import AGENT_USER_ID
 
-    await app_state.model.init_db()
-    async with app_state.db.transaction() as agent_db:
+    await app_state.state.model.init_db()
+    async with app_state.state.db.transaction() as agent_db:
         await agent_db.execute(
             "INSERT OR REPLACE INTO users"
             " (id, email, password_hash, verified, provider, handle)"
             " VALUES (?, ?, NULL, 1, 'system', ?)",
             (AGENT_USER_ID, "clanker@example.com", "clanker"),
         )
-    app_state.model.users.clear_agent_cache()
+    app_state.state.model.users.clear_agent_cache()
 
 
 def _make_app_state(cid="cid"):
@@ -62,24 +62,23 @@ def _make_app_state(cid="cid"):
     mock_registry = MagicMock()
     mock_registry.get_state.return_value = _FakeContainerState(cid)
     mock_pod = MagicMock()
-    app_state = types.SimpleNamespace(
+    state = types.SimpleNamespace(
         settings=make_settings({}),
         container_registry=mock_registry,
         podman=mock_pod,
     )
-    app_state.workspaces = MagicMock()
-    app_state.files = files_mod.Files(app_state)
-    app_state.sockets = MagicMock()
-    # #1573: agent.py reaches app_state.model.users.agent_{handle,email}.
-    app_state.model = MagicMock()
-    app_state.model.users.agent_handle = AsyncMock(return_value="clanker")
-    app_state.model.users.agent_email = AsyncMock(
+    app_state = types.SimpleNamespace(state=state)
+    state.workspaces = MagicMock()
+    state.files = files_mod.Files(app_state)
+    state.sockets = MagicMock()
+    # #1573: agent.py reaches app.state.model.users.agent_{handle,email}.
+    state.model = MagicMock()
+    state.model.users.agent_handle = AsyncMock(return_value="clanker")
+    state.model.users.agent_email = AsyncMock(
         return_value="clanker@example.com"
     )
-    # #1575: agent.py reaches app_state.model.workspaces.get_workspace_by_id.
-    app_state.model.workspaces.get_workspace_by_id = AsyncMock(
-        return_value=None
-    )
+    # #1575: agent.py reaches app.state.model.workspaces.get_workspace_by_id.
+    state.model.workspaces.get_workspace_by_id = AsyncMock(return_value=None)
     return app_state
 
 
@@ -87,7 +86,7 @@ def _make_agents(cid="cid"):
     """Create an Agents instance with a fake app_state."""
     app_state = _make_app_state(cid)
     agents = Agents(app_state)
-    app_state.agents = agents
+    app_state.state.agents = agents
     return agents
 
 
@@ -140,25 +139,25 @@ class TestAgentDisabled:
 
     async def test_is_disabled_true_when_set(self):
         agents = _make_agents()
-        agents.app_state.settings.agent_disabled = "1"
+        agents.app.state.settings.agent_disabled = "1"
         assert agents.is_disabled() is True
 
     async def test_is_disabled_truthy_variants(self):
         agents = _make_agents()
         for val in ("1", "true", "YES", "True"):
-            agents.app_state.settings.agent_disabled = val
+            agents.app.state.settings.agent_disabled = val
             assert agents.is_disabled() is True, val
 
     async def test_is_disabled_falsy_variants(self):
         agents = _make_agents()
         for val in ("0", "false", "no", ""):
-            agents.app_state.settings.agent_disabled = val
+            agents.app.state.settings.agent_disabled = val
             assert agents.is_disabled() is False, val
 
     async def test_ensure_started_refuses_when_disabled(self):
         """The subprocess is never spawned when disabled."""
         session = _make_session("ws-disabled")
-        session.agents.app_state.settings.agent_disabled = "1"
+        session.agents.app.state.settings.agent_disabled = "1"
         with patch("asyncio.create_subprocess_exec") as mock_spawn:
             with pytest.raises(AgentError, match="disabled"):
                 await session.ensure_started()
@@ -167,7 +166,7 @@ class TestAgentDisabled:
     async def test_send_prompt_raises_when_disabled(self):
         """send_prompt surfaces the disabled state, never spawns."""
         session = _make_session("ws-disabled")
-        session.agents.app_state.settings.agent_disabled = "1"
+        session.agents.app.state.settings.agent_disabled = "1"
         with patch("asyncio.create_subprocess_exec") as mock_spawn:
             with pytest.raises(AgentError, match="disabled"):
                 await session.send_prompt("hello")
@@ -654,7 +653,7 @@ class TestAgentSession:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
-        agents.app_state.sockets.get_session = MagicMock(
+        agents.app.state.sockets.get_session = MagicMock(
             return_value=MagicMock()
         )
 
@@ -872,12 +871,12 @@ class TestEnsureAgentHome:
         ws.populate_home_skel = AsyncMock()
 
         agents = _make_agents()
-        agents.app_state.workspaces = ws
-        agents.app_state.podman = _mock_pod
+        agents.app.state.workspaces = ws
+        agents.app.state.podman = _mock_pod
 
         with (
             patch.object(
-                agents.app_state.model.workspaces,
+                agents.app.state.model.workspaces,
                 "get_workspace_by_id",
                 return_value=fake_ws,
             ),
@@ -925,12 +924,12 @@ class TestEnsureAgentHome:
         ws.populate_home_skel = AsyncMock()
 
         agents = _make_agents()
-        agents.app_state.workspaces = ws
-        agents.app_state.podman = _mock_pod
+        agents.app.state.workspaces = ws
+        agents.app.state.podman = _mock_pod
 
         with (
             patch.object(
-                agents.app_state.model.workspaces,
+                agents.app.state.model.workspaces,
                 "get_workspace_by_id",
                 return_value={"user_id": "o"},
             ),
@@ -956,12 +955,12 @@ class TestEnsureAgentHome:
         ws.populate_home_skel = AsyncMock()
 
         agents = _make_agents()
-        agents.app_state.workspaces = ws
-        agents.app_state.podman = _mock_pod
+        agents.app.state.workspaces = ws
+        agents.app.state.podman = _mock_pod
 
         with (
             patch.object(
-                agents.app_state.model.workspaces,
+                agents.app.state.model.workspaces,
                 "get_workspace_by_id",
                 return_value={"user_id": "o"},
             ),
@@ -974,10 +973,10 @@ class TestEnsureAgentHome:
 
     async def test_workspace_not_found_raises(self, app_state):
         agents = _make_agents()
-        agents.app_state.podman = _mock_pod
+        agents.app.state.podman = _mock_pod
 
         with patch.object(
-            agents.app_state.model.workspaces,
+            agents.app.state.model.workspaces,
             "get_workspace_by_id",
             return_value=None,
         ):
@@ -1006,11 +1005,11 @@ class TestEnsureHome:
             return_value=("/home/clanker", True)
         )
         ws.populate_home_skel = AsyncMock()
-        session.app_state.workspaces = ws
+        session.app.state.workspaces = ws
 
         with (
             patch.object(
-                agents.app_state.model.workspaces,
+                agents.app.state.model.workspaces,
                 "get_workspace_by_id",
                 return_value=fake_ws,
             ),
@@ -1043,7 +1042,7 @@ class TestEnsureHome:
         session = AgentSession("ws-gone", agents=agents)
 
         with patch.object(
-            agents.app_state.model.workspaces,
+            agents.app.state.model.workspaces,
             "get_workspace_by_id",
             return_value=None,
         ):
@@ -1196,13 +1195,13 @@ class TestMonitorProcess:
 
         agents = _make_agents()
         mock_session = MagicMock()
-        agents.app_state.sockets.get_session = MagicMock(
+        agents.app.state.sockets.get_session = MagicMock(
             return_value=mock_session
         )
 
         with (
             patch.object(
-                agents.app_state.model.workspaces,
+                agents.app.state.model.workspaces,
                 "get_workspace_by_id",
                 new_callable=AsyncMock,
                 return_value={"id": "ws-mon"},
@@ -1266,7 +1265,7 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
-        agents.app_state.sockets.get_session = MagicMock(
+        agents.app.state.sockets.get_session = MagicMock(
             return_value=MagicMock()
         )
 
@@ -1307,7 +1306,7 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
-        agents.app_state.sockets.get_session = MagicMock(
+        agents.app.state.sockets.get_session = MagicMock(
             return_value=MagicMock()
         )
 
@@ -1342,7 +1341,7 @@ class TestMonitorProcess:
         session._gave_up = True
         session._last_container_id = "old-cid"
         # Simulate container change — _resolve_container_id sees new ID.
-        session.app_state.container_registry.get_state.return_value = (
+        session.app.state.container_registry.get_state.return_value = (
             _FakeContainerState("new-cid")
         )
         cid = session._resolve_container_id()
@@ -1368,7 +1367,7 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
-        agents.app_state.sockets.get_session = MagicMock(
+        agents.app.state.sockets.get_session = MagicMock(
             return_value=MagicMock()
         )
 
@@ -1404,7 +1403,7 @@ class TestMonitorProcess:
         mock_proc.stderr.read = AsyncMock(side_effect=OSError("broken pipe"))
         session._proc = mock_proc
 
-        agents.app_state.sockets.get_session = MagicMock(
+        agents.app.state.sockets.get_session = MagicMock(
             return_value=MagicMock()
         )
 
@@ -1434,7 +1433,7 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
-        agents.app_state.sockets.get_session = MagicMock(
+        agents.app.state.sockets.get_session = MagicMock(
             return_value=MagicMock()
         )
 
@@ -1463,13 +1462,13 @@ class TestMonitorProcess:
 
         agents = _make_agents()
         mock_session = MagicMock()
-        agents.app_state.sockets.get_session = MagicMock(
+        agents.app.state.sockets.get_session = MagicMock(
             return_value=mock_session
         )
 
         with (
             patch.object(
-                agents.app_state.model.workspaces,
+                agents.app.state.model.workspaces,
                 "get_workspace_by_id",
                 new_callable=AsyncMock,
                 return_value={"id": "ws-rc"},
@@ -1518,7 +1517,7 @@ class TestMonitorProcess:
         mock_proc.stderr.feed_eof()
         session._proc = mock_proc
 
-        agents.app_state.sockets.get_session = MagicMock(
+        agents.app.state.sockets.get_session = MagicMock(
             return_value=MagicMock()
         )
 
@@ -1530,7 +1529,7 @@ class TestMonitorProcess:
                 return_value={"id": "m1", "message": "msg"},
             ),
             patch.object(
-                session.app_state.container_registry,
+                session.app.state.container_registry,
                 "get_state",
                 return_value=None,
             ),
@@ -1568,7 +1567,7 @@ class TestMonitorProcess:
             # Simulate something else restarting the proc during sleep
             session._proc = AsyncMock()
 
-        agents.app_state.sockets.get_session = MagicMock(
+        agents.app.state.sockets.get_session = MagicMock(
             return_value=MagicMock()
         )
 

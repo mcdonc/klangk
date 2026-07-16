@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from .. import (
     model,
 )
-from ._common import get_app_state_dep
+from ._common import get_app_dep
 from ._common import (
     require_workspace_token,
 )
@@ -30,14 +30,14 @@ class WorkspaceChatRequest(BaseModel):
 async def workspace_chat(
     body: WorkspaceChatRequest,
     workspace_id: str = Depends(require_workspace_token),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Post a chat message from a container using a workspace JWT.
 
     The message is stored as MSG_AGENT and broadcast to all connected
     WebSocket subscribers in the workspace.
     """
-    workspace = await app_state.model.workspaces.get_workspace_by_id(
+    workspace = await app.state.model.workspaces.get_workspace_by_id(
         workspace_id
     )
     if workspace is None:
@@ -47,14 +47,14 @@ async def workspace_chat(
     if not text:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    chat_msg = await app_state.model.chat.add_chat_message(
+    chat_msg = await app.state.model.chat.add_chat_message(
         workspace_id,
         "agent",
         "agent",
         text,
         message_type=model.MSG_AGENT,
     )
-    session = app_state.sockets.get_session(workspace_id)
+    session = app.state.sockets.get_session(workspace_id)
     if session:
         session.broadcast({"type": "chat_message", **chat_msg})
     return chat_msg

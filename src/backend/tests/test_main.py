@@ -33,66 +33,67 @@ from klangk_backend.wshandler.session import WebSocketState
 
 
 def _make_app_state(settings=None):
-    """Build a minimal app_state for tests."""
+    """Build a minimal mock app for tests."""
     if settings is None:
         # Pin a default password so the lifespan's seed_default_user does
         # not generate (and print) one to stderr on every boot (#1493).
         settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
-    # Two-phase: shell first so owned instances can take app_state at
+    # Two-phase: shell first so owned instances can take app at
     # construction (#1426).
-    app_state = types.SimpleNamespace(settings=settings)
+    app_state = types.SimpleNamespace(
+        state=types.SimpleNamespace(settings=settings)
+    )
     sockets = WebSocketState(app_state)
-    app_state.sockets = sockets
+    app_state.state.sockets = sockets
     registry = ContainerRegistry(app_state)
-    app_state.container_registry = registry
+    app_state.state.container_registry = registry
     # #1468: container.py / agent.py reach the CLI wrappers via self.podman.
     from klangk_backend.podman import Podman
 
-    app_state.podman = Podman(app_state)
-    app_state.oidc = oidc.OIDC(app_state)
-    app_state.plugins = plugins.Plugins(app_state)
-    app_state.workspaces = workspaces.Workspaces(app_state)
-    app_state.files = files_mod.Files(app_state)
+    app_state.state.podman = Podman(app_state)
+    app_state.state.oidc = oidc.OIDC(app_state)
+    app_state.state.plugins = plugins.Plugins(app_state)
+    app_state.state.workspaces = workspaces.Workspaces(app_state)
+    app_state.state.files = files_mod.Files(app_state)
     # #1520: the lifespan binds app.state.db as the active DB for its context;
     # mirror build_app so lifespan-driven tests have it.
     from klangk_backend.model import db as db_mod
 
-    app_state.db = db_mod.DB(app_state)
+    app_state.state.db = db_mod.DB(app_state)
     # #1572: Model(app_state) composing the converted domains.
     from klangk_backend.model import Model
 
-    app_state.model = Model(app_state)
-    app_state.agents = agent_mod.Agents(app_state)
-    app_state.email = emailsvc_mod.EmailService(app_state)
-    app_state.util = util_mod.Util(app_state)
+    app_state.state.model = Model(app_state)
+    app_state.state.agents = agent_mod.Agents(app_state)
+    app_state.state.email = emailsvc_mod.EmailService(app_state)
+    app_state.state.util = util_mod.Util(app_state)
     # #1567: the lifespan calls app.state.ssl_trust.apply_backend_ssl_trust().
-    app_state.ssl_trust = ssl_trust_mod.SSLTrust(app_state)
-    app_state.auth = auth_mod.Auth(app_state)
-    app_state.nginx_watchdog = nginx_mod.NginxWatchdog(app_state)
+    app_state.state.ssl_trust = ssl_trust_mod.SSLTrust(app_state)
+    app_state.state.auth = auth_mod.Auth(app_state)
+    app_state.state.nginx_watchdog = nginx_mod.NginxWatchdog(app_state)
     from klangk_backend.terminal import Terminal
     from klangk_backend.acl import ACL
 
-    app_state.terminal = Terminal(app_state)
-    app_state.acl = ACL(app_state)
+    app_state.state.terminal = Terminal(app_state)
+    app_state.state.acl = ACL(app_state)
     # #1571: Lifecycle(app_state) owns startup/shutdown/restart + seeding.
-    app_state.lifecycle = main.Lifecycle(app_state)
+    app_state.state.lifecycle = main.Lifecycle(app_state)
     return app_state
 
 
 def _lifecycle(settings):
-    """A ``Lifecycle`` whose app_state can reach ``model.acl``.
+    """A ``Lifecycle`` whose app can reach ``model.acl``.
 
-    The seed methods read ``self.app_state.settings`` and reach the DB via
-    ``self.app_state.model.acl.*`` (ACL seeding) and the model/ ContextVar
-    backstop (everything else), so the namespace needs ``db`` + ``model``
-    wired (#1574). ``wire_db_and_model`` reuses the ContextVar-bound DB the
-    ``db`` fixture set up.
+    The seed methods read ``self.app.state.settings`` and reach the DB via
+    ``self.app.state.model.acl.*`` (ACL seeding), so the namespace needs
+    ``db`` + ``model`` wired (#1574). ``wire_db_and_model`` reuses the
+    per-test DB.
     """
     from _helpers import wire_db_and_model
 
-    state = types.SimpleNamespace(settings=settings)
-    wire_db_and_model(state)
-    return main.Lifecycle(state)
+    app = types.SimpleNamespace(state=types.SimpleNamespace(settings=settings))
+    wire_db_and_model(app)
+    return main.Lifecycle(app)
 
 
 # --- Seed default user ---
@@ -108,7 +109,7 @@ class TestSeedDefaultUser:
                 }
             )
         ).seed_default_user()
-        user = await app_state.model.users.get_user_by_email("seed-test")
+        user = await app_state.state.model.users.get_user_by_email("seed-test")
         assert user is not None
 
     async def test_skips_existing_user(self, db, app_state):
@@ -121,7 +122,7 @@ class TestSeedDefaultUser:
         await _lifecycle(s).seed_default_user()
         # Call again — should not raise
         await _lifecycle(s).seed_default_user()
-        user = await app_state.model.users.get_user_by_email("seed-test")
+        user = await app_state.state.model.users.get_user_by_email("seed-test")
         assert user is not None
 
     async def test_generates_password_when_not_set(
@@ -133,12 +134,16 @@ class TestSeedDefaultUser:
         # Swallow the incidental generated-password print to stderr
         # (asserted explicitly by test_generated_password_printed_to_stderr).
         capsys.readouterr()
-        user = await app_state.model.users.get_user_by_email("gen-test")
+        user = await app_state.state.model.users.get_user_by_email("gen-test")
         assert user is not None
         # User exists and is in the admin group
-        admin_group = await app_state.model.users.get_group_by_name("admin")
+        admin_group = await app_state.state.model.users.get_group_by_name(
+            "admin"
+        )
         assert admin_group is not None
-        group_ids = await app_state.model.users.get_user_group_ids(user["id"])
+        group_ids = await app_state.state.model.users.get_user_group_ids(
+            user["id"]
+        )
         assert admin_group["id"] in group_ids
 
     async def test_generated_password_printed_to_stderr(
@@ -181,10 +186,12 @@ def _bind_safety_app_state(
     if allow_insecure is not None:
         env["KLANGK_ALLOW_INSECURE_NO_AUTH"] = allow_insecure
     settings = make_settings(env)
-    app_state = types.SimpleNamespace(settings=settings)
-    app_state.oidc = oidc.OIDC(app_state)
-    app_state.plugins = plugins.Plugins(app_state)
-    app_state.workspaces = workspaces.Workspaces(app_state)
+    app_state = types.SimpleNamespace(
+        state=types.SimpleNamespace(settings=settings)
+    )
+    app_state.state.oidc = oidc.OIDC(app_state)
+    app_state.state.plugins = plugins.Plugins(app_state)
+    app_state.state.workspaces = workspaces.Workspaces(app_state)
     return app_state
 
 
@@ -303,7 +310,9 @@ class TestNoAuthBindSafety:
 class TestSeedAgentUser:
     async def test_creates_agent_user(self, db, app_state):
         await _lifecycle(make_settings({})).seed_agent_user()
-        user = await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
+        user = await app_state.state.model.users.get_user_by_id(
+            model.AGENT_USER_ID
+        )
         assert user is not None
         assert user["email"] == "clanker@example.com"
         assert user["handle"] == "clanker"
@@ -317,7 +326,9 @@ class TestSeedAgentUser:
                 }
             )
         ).seed_agent_user()
-        user = await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
+        user = await app_state.state.model.users.get_user_by_id(
+            model.AGENT_USER_ID
+        )
         assert user is not None
         assert user["email"] == "bot@test.com"
         assert user["handle"] == "TestBot"
@@ -332,16 +343,18 @@ class TestSeedAgentUser:
                 }
             )
         ).seed_agent_user()
-        user = await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
+        user = await app_state.state.model.users.get_user_by_id(
+            model.AGENT_USER_ID
+        )
         assert user["email"] == "new@test.com"
         assert user["handle"] == "NewBot"
 
     async def test_clears_cache(self, db, app_state):
         # Prime cache with fallback
-        await app_state.model.users.get_agent_user()
+        await app_state.state.model.users.get_agent_user()
         await _lifecycle(make_settings({})).seed_agent_user()
         # Cache should now reflect DB values
-        agent = await app_state.model.users.get_agent_user()
+        agent = await app_state.state.model.users.get_agent_user()
         assert agent["email"] == "clanker@example.com"
 
     async def test_users_handle_has_unique_constraint(self, db, app_state):
@@ -350,7 +363,7 @@ class TestSeedAgentUser:
         Confirms a duplicate handle raises IntegrityError at the DB layer,
         independent of seed_agent_user's pre-check.  See #1137.
         """
-        async with app_state.db.transaction() as db_conn:
+        async with app_state.state.db.transaction() as db_conn:
             await db_conn.execute(
                 "INSERT INTO users (id, email, handle)"
                 " VALUES ('uid-a', 'a@x.com', 'alice')"
@@ -372,7 +385,7 @@ class TestSeedAgentUser:
         files into the agent's tree; the guard must abort before any such
         work.  See #1137.
         """
-        human = await app_state.model.users.create_user(
+        human = await app_state.state.model.users.create_user(
             "alice@example.com", "hash", verified=True
         )
         assert human["handle"] == "alice"
@@ -381,11 +394,15 @@ class TestSeedAgentUser:
                 make_settings({"KLANGK_AGENT_HANDLE": "alice"})
             ).seed_agent_user()
         # Human user is untouched.
-        refreshed = await app_state.model.users.get_user_by_id(human["id"])
+        refreshed = await app_state.state.model.users.get_user_by_id(
+            human["id"]
+        )
         assert refreshed["handle"] == "alice"
         # Agent was not created with the colliding handle.
         assert (
-            await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
+            await app_state.state.model.users.get_user_by_id(
+                model.AGENT_USER_ID
+            )
             is None
         )
 
@@ -394,7 +411,7 @@ class TestSeedAgentUser:
         await _lifecycle(
             make_settings({})
         ).seed_agent_user()  # agent handle = clanker
-        human = await app_state.model.users.create_user(
+        human = await app_state.state.model.users.create_user(
             "alice@example.com", "hash", verified=True
         )
         with pytest.raises(RuntimeError, match="already used by another user"):
@@ -402,9 +419,13 @@ class TestSeedAgentUser:
                 make_settings({"KLANGK_AGENT_HANDLE": "alice"})
             ).seed_agent_user()
         # Agent keeps its original handle; human untouched.
-        agent = await app_state.model.users.get_user_by_id(model.AGENT_USER_ID)
+        agent = await app_state.state.model.users.get_user_by_id(
+            model.AGENT_USER_ID
+        )
         assert agent["handle"] == "clanker"
-        refreshed = await app_state.model.users.get_user_by_id(human["id"])
+        refreshed = await app_state.state.model.users.get_user_by_id(
+            human["id"]
+        )
         assert refreshed["handle"] == "alice"
 
     async def test_collision_leaves_human_files_untouched(
@@ -417,7 +438,7 @@ class TestSeedAgentUser:
         confirms a colliding agent seed aborts before any file moves.  See
         #1137.
         """
-        human = await app_state.model.users.create_user(
+        human = await app_state.state.model.users.create_user(
             "alice@example.com", "hash", verified=True
         )
         # Stand up the destructive-branch precondition directly on disk.
@@ -448,23 +469,23 @@ class TestLifespan:
     async def test_lifespan_starts_and_stops(self, db, app_state):
         app = FastAPI()
         app_state = _make_app_state()
-        app.state.container_registry = app_state.container_registry
-        app.state.sockets = app_state.sockets
-        app.state.settings = app_state.settings
-        app.state.ssl_trust = app_state.ssl_trust
-        app.state.db = app_state.db
-        app.state.model = app_state.model
-        app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
-        app.state.oidc = oidc.OIDC(app.state)
-        app.state.plugins = plugins.Plugins(app.state)
-        app.state.workspaces = workspaces.Workspaces(app.state)
-        app.state.agents = agent_mod.Agents(app.state)
-        app.state.email = emailsvc_mod.EmailService(app.state)
-        app.state.util = util_mod.Util(app.state)
+        app.state.container_registry = app_state.state.container_registry
+        app.state.sockets = app_state.state.sockets
+        app.state.settings = app_state.state.settings
+        app.state.ssl_trust = app_state.state.ssl_trust
+        app.state.db = app_state.state.db
+        app.state.model = app_state.state.model
+        app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app)
+        app.state.oidc = oidc.OIDC(app)
+        app.state.plugins = plugins.Plugins(app)
+        app.state.workspaces = workspaces.Workspaces(app)
+        app.state.agents = agent_mod.Agents(app)
+        app.state.email = emailsvc_mod.EmailService(app)
+        app.state.util = util_mod.Util(app)
 
-        app.state.auth = auth_mod.Auth(app.state)
-        app.state.lifecycle = app_state.lifecycle
-        registry = app_state.container_registry
+        app.state.auth = auth_mod.Auth(app)
+        app.state.lifecycle = app_state.state.lifecycle
+        registry = app_state.state.container_registry
         with (
             patch.object(
                 registry,
@@ -496,23 +517,23 @@ class TestLifespan:
         reset_workspace_state (sockets, workspace_id) — #1475."""
         app = FastAPI()
         app_state = _make_app_state()
-        app.state.container_registry = app_state.container_registry
-        app.state.sockets = app_state.sockets
-        app.state.settings = app_state.settings
-        app.state.ssl_trust = app_state.ssl_trust
-        app.state.db = app_state.db
-        app.state.model = app_state.model
-        app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
-        app.state.oidc = oidc.OIDC(app.state)
-        app.state.plugins = plugins.Plugins(app.state)
-        app.state.workspaces = workspaces.Workspaces(app.state)
-        app.state.agents = agent_mod.Agents(app.state)
-        app.state.email = emailsvc_mod.EmailService(app.state)
-        app.state.util = util_mod.Util(app.state)
+        app.state.container_registry = app_state.state.container_registry
+        app.state.sockets = app_state.state.sockets
+        app.state.settings = app_state.state.settings
+        app.state.ssl_trust = app_state.state.ssl_trust
+        app.state.db = app_state.state.db
+        app.state.model = app_state.state.model
+        app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app)
+        app.state.oidc = oidc.OIDC(app)
+        app.state.plugins = plugins.Plugins(app)
+        app.state.workspaces = workspaces.Workspaces(app)
+        app.state.agents = agent_mod.Agents(app)
+        app.state.email = emailsvc_mod.EmailService(app)
+        app.state.util = util_mod.Util(app)
 
-        app.state.auth = auth_mod.Auth(app.state)
-        app.state.lifecycle = app_state.lifecycle
-        registry = app_state.container_registry
+        app.state.auth = auth_mod.Auth(app)
+        app.state.lifecycle = app_state.state.lifecycle
+        registry = app_state.state.container_registry
         with (
             patch.object(
                 registry,
@@ -540,14 +561,14 @@ class TestLifespan:
 
         app = FastAPI()
         app_state = _make_app_state()
-        app.state.settings = app_state.settings
-        app.state.ssl_trust = app_state.ssl_trust
-        app.state.util = util_mod.Util(app.state)
+        app.state.settings = app_state.state.settings
+        app.state.ssl_trust = app_state.state.ssl_trust
+        app.state.util = util_mod.Util(app)
         # The lifespan reaches the DB through ``app.state.db`` +
         # ``app.state.model`` (no ContextVar bind post-#1578); point both at
         # the test-built app_state so init_db runs before the pid refuse.
-        app.state.db = app_state.db
-        app.state.model = app_state.model
+        app.state.db = app_state.state.db
+        app.state.model = app_state.state.model
         with (
             patch.object(util_mod.Util, "check_pid_file", return_value=12345),
             pytest.raises(SystemExit),
@@ -562,7 +583,7 @@ class TestLifespan:
 class TestStartupShutdownRestart:
     async def test_startup_calls_container_sequence(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         with (
             patch.object(
                 registry,
@@ -583,7 +604,7 @@ class TestStartupShutdownRestart:
                 return_value=0,
             ) as mock_autostart,
         ):
-            await app_state.lifecycle.startup()
+            await app_state.state.lifecycle.startup()
         mock_prewarm.assert_awaited_once()
         mock_adopt.assert_awaited_once()
         mock_cleanup.assert_called_once()
@@ -592,14 +613,14 @@ class TestStartupShutdownRestart:
 
     async def test_runtime_shutdown_tears_down_layers(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         with (
             patch(
                 "klangk_backend.main.wshandler.disconnect_all_websockets",
                 new_callable=AsyncMock,
             ) as mock_disc,
             patch.object(
-                app_state.agents,
+                app_state.state.agents,
                 "stop_all_sessions",
                 new_callable=AsyncMock,
             ) as mock_stop_agents,
@@ -610,7 +631,7 @@ class TestStartupShutdownRestart:
                 registry, "shutdown", new_callable=AsyncMock
             ) as mock_shutdown,
         ):
-            await app_state.lifecycle.runtime_shutdown()
+            await app_state.state.lifecycle.runtime_shutdown()
         mock_disc.assert_awaited_once()
         mock_stop_agents.assert_awaited_once()
         mock_clear.assert_called_once()
@@ -618,17 +639,17 @@ class TestStartupShutdownRestart:
 
     async def test_process_shutdown_disposes(self, app_state):
         app_state = _make_app_state()
-        app_state.db = AsyncMock()
+        app_state.state.db = AsyncMock()
         with (
             patch.object(util_mod.Util, "remove_pid_file") as mock_remove,
         ):
-            await app_state.lifecycle.process_shutdown()
+            await app_state.state.lifecycle.process_shutdown()
         mock_remove.assert_called_once()
-        app_state.db.dispose_engine.assert_awaited_once()
+        app_state.state.db.dispose_engine.assert_awaited_once()
 
     async def test_restart_runtime_runs_shutdown_then_startup(self, app_state):
         app_state = _make_app_state()
-        lc = app_state.lifecycle
+        lc = app_state.state.lifecycle
         lc._restart_lock = None  # force fresh lock creation
         with (
             patch.object(
@@ -648,7 +669,7 @@ class TestStartupShutdownRestart:
         # fresh Lifecycle starts at the pre-first-use floor without a
         # cross-test reset fixture.
         app_state = _make_app_state()
-        lc = app_state.lifecycle
+        lc = app_state.state.lifecycle
         lc._restart_lock = asyncio.Lock()
         existing = lc._restart_lock
         with (
@@ -662,7 +683,7 @@ class TestStartupShutdownRestart:
     async def test_restart_lock_serializes_concurrent_calls(self, app_state):
         """Two restarts kicked off together run strictly one-after-another."""
         app_state = _make_app_state()
-        lc = app_state.lifecycle
+        lc = app_state.state.lifecycle
         lc._restart_lock = None
         order = []
 
@@ -695,7 +716,7 @@ class TestStartupShutdownRestart:
     async def test_restart_denies_on_invalid_config(self, app_state):
         """Invalid config denies the restart; no teardown, no startup."""
         app_state = _make_app_state()
-        lc = app_state.lifecycle
+        lc = app_state.state.lifecycle
         lc._restart_lock = None
         with (
             patch.object(
@@ -716,7 +737,7 @@ class TestStartupShutdownRestart:
     async def test_restart_reloads_then_applies_then_restarts(self, app_state):
         """Valid config: reload → apply → shutdown → startup."""
         app_state = _make_app_state()
-        lc = app_state.lifecycle
+        lc = app_state.state.lifecycle
         lc._restart_lock = None
         new_settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
         order = []
@@ -750,19 +771,19 @@ class TestStartupShutdownRestart:
 
     def test_reload_settings_returns_new_when_valid(self, app_state):
         app_state = _make_app_state()
-        lc = app_state.lifecycle
+        lc = app_state.state.lifecycle
         new, error = lc._reload_settings()
         assert new is not None
         assert error is None
-        assert new is not app_state.settings
+        assert new is not app_state.state.settings
 
     def test_reload_settings_returns_error_when_invalid(self, app_state):
         app_state = _make_app_state()
-        lc = app_state.lifecycle
+        lc = app_state.state.lifecycle
         # Pydantic models can't be patched with patch.object; patch the
         # class method instead.
         with patch.object(
-            type(app_state.settings),
+            type(app_state.state.settings),
             "reload",
             side_effect=ValueError("bad"),
         ):
@@ -773,9 +794,9 @@ class TestStartupShutdownRestart:
     async def test_apply_reloaded_settings_calls_reconfigure(self, app_state):
         """Swap + reconfigure called on every subsystem."""
         app_state = _make_app_state()
-        lc = app_state.lifecycle
+        lc = app_state.state.lifecycle
         new_settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
-        old_settings = app_state.settings
+        old_settings = app_state.state.settings
         called = []
         for attr in (
             "ssl_trust",
@@ -797,13 +818,13 @@ class TestStartupShutdownRestart:
             "util",
             "lifecycle",
         ):
-            obj = getattr(app_state, attr)
+            obj = getattr(app_state.state, attr)
             orig = obj.reconfigure
 
             def make_tracker(name, orig_fn):
-                def tracked(app_state):
+                def tracked(app):
                     called.append(name)
-                    return orig_fn(app_state)
+                    return orig_fn(app)
 
                 return tracked
 
@@ -812,8 +833,8 @@ class TestStartupShutdownRestart:
             lc, "apply_pending_reseed", new_callable=AsyncMock
         ) as mock_reseed:
             await lc._apply_reloaded_settings(new_settings)
-        assert app_state.settings is new_settings
-        assert app_state.settings is not old_settings
+        assert app_state.state.settings is new_settings
+        assert app_state.state.settings is not old_settings
         assert "ssl_trust" in called
         assert "oidc" in called
         assert "plugins" in called
@@ -825,15 +846,17 @@ class TestStartupShutdownRestart:
     ):
         """A failing reconfigure is skipped + warned, the rest still run."""
         app_state = _make_app_state()
-        lc = app_state.lifecycle
+        lc = app_state.state.lifecycle
         new_settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
         with (
             patch.object(
-                app_state.ssl_trust,
+                app_state.state.ssl_trust,
                 "reconfigure",
                 side_effect=RuntimeError("ssl boom"),
             ),
-            patch.object(app_state.oidc, "reconfigure") as mock_oidc_reconf,
+            patch.object(
+                app_state.state.oidc, "reconfigure"
+            ) as mock_oidc_reconf,
             patch.object(
                 lc, "apply_pending_reseed", new_callable=AsyncMock
             ) as mock_reseed,
@@ -848,8 +871,8 @@ class TestStartupShutdownRestart:
         self, app_state, caplog
     ):
         app_state = _make_app_state()
-        lc = app_state.lifecycle
-        old = app_state.settings
+        lc = app_state.state.lifecycle
+        old = app_state.state.settings
         new = make_settings(
             {"KLANGK_DEFAULT_PASSWORD": "test", "KLANGK_PORT": "9999"}
         )
@@ -861,7 +884,7 @@ class TestStartupShutdownRestart:
     async def test_apply_pending_reseed_noop_without_flag(self, app_state):
         """apply_pending_reseed is a no-op when reconfigure hasn't been called."""
         app_state = _make_app_state()
-        lc = app_state.lifecycle
+        lc = app_state.state.lifecycle
         with patch.object(
             lc, "seed_agent_user", new_callable=AsyncMock
         ) as mock_seed:
@@ -872,8 +895,8 @@ class TestStartupShutdownRestart:
         self, app_state, caplog
     ):
         app_state = _make_app_state()
-        lc = app_state.lifecycle
-        old = app_state.settings
+        lc = app_state.state.lifecycle
+        old = app_state.state.settings
         # Build new settings from the same env as old so only
         # reloadable fields differ.
         env = dict(old._reload_env)
@@ -889,30 +912,30 @@ class TestStartupShutdownRestart:
         """Acceptance test: editing KLANGK_AGENT_HANDLE + SIGHUP makes the
         new handle the live agent handle without a process restart."""
         app_state = _make_app_state()
-        lc = app_state.lifecycle
+        lc = app_state.state.lifecycle
 
         # Seed the initial agent user using the test DB.
         from _helpers import get_test_db
 
-        app_state.db = get_test_db()
-        app_state.model = model.Model(app_state)
+        app_state.state.db = get_test_db()
+        app_state.state.model = model.Model(app_state)
         await lc.seed_agent_user()
-        old_handle = await app_state.model.users.agent_handle()
+        old_handle = await app_state.state.model.users.agent_handle()
         assert old_handle == "clanker"
 
         # Simulate a config change: new settings with a different handle.
-        env = dict(app_state.settings._reload_env)
+        env = dict(app_state.state.settings._reload_env)
         env["KLANGK_AGENT_HANDLE"] = "newbot"
         env["KLANGK_AGENT_EMAIL"] = "newbot@example.com"
         new_settings = make_settings(env)
         await lc._apply_reloaded_settings(new_settings)
-        new_handle = await app_state.model.users.agent_handle()
+        new_handle = await app_state.state.model.users.agent_handle()
         assert new_handle == "newbot"
 
     async def test_on_sighup_schedules_restart(self, app_state):
         """on_sighup creates a task that runs restart_runtime."""
         app_state = _make_app_state()
-        lc = app_state.lifecycle
+        lc = app_state.state.lifecycle
         with patch.object(
             lc, "restart_runtime", new_callable=AsyncMock
         ) as mock_restart:
@@ -926,23 +949,23 @@ class TestStartupShutdownRestart:
         """The lifespan installs (and removes) a SIGHUP handler."""
         app = FastAPI()
         app_state = _make_app_state()
-        app.state.container_registry = app_state.container_registry
-        app.state.sockets = app_state.sockets
-        app.state.settings = app_state.settings
-        app.state.ssl_trust = app_state.ssl_trust
-        app.state.db = app_state.db
-        app.state.model = app_state.model
-        app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
-        app.state.oidc = oidc.OIDC(app.state)
-        app.state.plugins = plugins.Plugins(app.state)
-        app.state.workspaces = workspaces.Workspaces(app.state)
-        app.state.agents = agent_mod.Agents(app.state)
-        app.state.email = emailsvc_mod.EmailService(app.state)
-        app.state.util = util_mod.Util(app.state)
+        app.state.container_registry = app_state.state.container_registry
+        app.state.sockets = app_state.state.sockets
+        app.state.settings = app_state.state.settings
+        app.state.ssl_trust = app_state.state.ssl_trust
+        app.state.db = app_state.state.db
+        app.state.model = app_state.state.model
+        app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app)
+        app.state.oidc = oidc.OIDC(app)
+        app.state.plugins = plugins.Plugins(app)
+        app.state.workspaces = workspaces.Workspaces(app)
+        app.state.agents = agent_mod.Agents(app)
+        app.state.email = emailsvc_mod.EmailService(app)
+        app.state.util = util_mod.Util(app)
 
-        app.state.auth = auth_mod.Auth(app.state)
-        app.state.lifecycle = app_state.lifecycle
-        registry = app_state.container_registry
+        app.state.auth = auth_mod.Auth(app)
+        app.state.lifecycle = app_state.state.lifecycle
+        registry = app_state.state.container_registry
         loop = asyncio.get_running_loop()
         with (
             patch.object(
@@ -981,9 +1004,9 @@ class TestSetupStaticFiles:
         test_app = FastAPI()
         _settings = make_settings({})
         test_app.state.settings = _settings
-        test_app.state.util = util_mod.Util(test_app.state)
+        test_app.state.util = util_mod.Util(test_app)
 
-        test_app.state.auth = auth_mod.Auth(test_app.state)
+        test_app.state.auth = auth_mod.Auth(test_app)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -1000,9 +1023,9 @@ class TestSetupStaticFiles:
         test_app = FastAPI()
         _settings = make_settings({})
         test_app.state.settings = _settings
-        test_app.state.util = util_mod.Util(test_app.state)
+        test_app.state.util = util_mod.Util(test_app)
 
-        test_app.state.auth = auth_mod.Auth(test_app.state)
+        test_app.state.auth = auth_mod.Auth(test_app)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -1023,9 +1046,9 @@ class TestSetupStaticFiles:
         test_app = FastAPI()
         _settings = make_settings({})
         test_app.state.settings = _settings
-        test_app.state.util = util_mod.Util(test_app.state)
+        test_app.state.util = util_mod.Util(test_app)
 
-        test_app.state.auth = auth_mod.Auth(test_app.state)
+        test_app.state.auth = auth_mod.Auth(test_app)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -1044,9 +1067,9 @@ class TestSetupStaticFiles:
         test_app = FastAPI()
         _settings = make_settings({})
         test_app.state.settings = _settings
-        test_app.state.util = util_mod.Util(test_app.state)
+        test_app.state.util = util_mod.Util(test_app)
 
-        test_app.state.auth = auth_mod.Auth(test_app.state)
+        test_app.state.auth = auth_mod.Auth(test_app)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -1066,9 +1089,9 @@ class TestSetupStaticFiles:
         test_app = FastAPI()
         _settings = make_settings({})
         test_app.state.settings = _settings
-        test_app.state.util = util_mod.Util(test_app.state)
+        test_app.state.util = util_mod.Util(test_app)
 
-        test_app.state.auth = auth_mod.Auth(test_app.state)
+        test_app.state.auth = auth_mod.Auth(test_app)
         main.setup_static_files(test_app, tmp_path)
 
         transport = ASGITransport(app=test_app)
@@ -1090,9 +1113,9 @@ class TestSetupStaticFiles:
         test_app = FastAPI()
         _settings = make_settings({"KLANGK_CUSTOMIZE_DIR": str(custom)})
         test_app.state.settings = _settings
-        test_app.state.util = util_mod.Util(test_app.state)
+        test_app.state.util = util_mod.Util(test_app)
 
-        test_app.state.auth = auth_mod.Auth(test_app.state)
+        test_app.state.auth = auth_mod.Auth(test_app)
         main.setup_static_files(test_app, tmp_path)
 
         branding_route = [
@@ -1109,9 +1132,9 @@ class TestSetupStaticFiles:
         test_app = FastAPI()
         _settings = make_settings({})
         test_app.state.settings = _settings
-        test_app.state.util = util_mod.Util(test_app.state)
+        test_app.state.util = util_mod.Util(test_app)
 
-        test_app.state.auth = auth_mod.Auth(test_app.state)
+        test_app.state.auth = auth_mod.Auth(test_app)
         main.setup_static_files(test_app, tmp_path)
 
         branding_route = [
@@ -1125,9 +1148,9 @@ class TestSetupStaticFiles:
         test_app = FastAPI()
         _settings = make_settings({})
         test_app.state.settings = _settings
-        test_app.state.util = util_mod.Util(test_app.state)
+        test_app.state.util = util_mod.Util(test_app)
 
-        test_app.state.auth = auth_mod.Auth(test_app.state)
+        test_app.state.auth = auth_mod.Auth(test_app)
         main.setup_static_files(test_app, tmp_path)
         transport = ASGITransport(app=test_app)
         async with AsyncClient(
@@ -1146,9 +1169,9 @@ class TestSetupStaticFiles:
         test_app = FastAPI()
         _settings = make_settings({})
         test_app.state.settings = _settings
-        test_app.state.util = util_mod.Util(test_app.state)
+        test_app.state.util = util_mod.Util(test_app)
 
-        test_app.state.auth = auth_mod.Auth(test_app.state)
+        test_app.state.auth = auth_mod.Auth(test_app)
         main.setup_static_files(test_app, tmp_path)
         transport = ASGITransport(app=test_app)
         async with AsyncClient(
@@ -1237,7 +1260,11 @@ class TestPidFile:
 
         ``instance_id()`` is short-circuited so it never touches the
         filesystem (the real path would read ``<data_dir>/instance-id``)."""
-        util = util_mod.Util(types.SimpleNamespace(settings=make_settings({})))
+        util = util_mod.Util(
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(settings=make_settings({}))
+            )
+        )
         monkeypatch.setattr(util, "_instance_id", "iid")
         monkeypatch.setattr(util, "pid_file_path", lambda: pid_file)
         return util
@@ -1316,7 +1343,9 @@ class TestPidFile:
         """pid_file_path() lives in state_dir and embeds the instance ID."""
         util = util_mod.Util(
             types.SimpleNamespace(
-                settings=make_settings({"KLANGK_STATE_DIR": str(tmp_path)})
+                state=types.SimpleNamespace(
+                    settings=make_settings({"KLANGK_STATE_DIR": str(tmp_path)})
+                )
             )
         )
         monkeypatch_id = "12345678-1234-1234-1234-123456789abc"
@@ -1383,13 +1412,164 @@ class TestBuildApp:
         assert isinstance(app, FastAPI)
 
 
-class TestGetAppStateDep:
-    """Tests for get_app_state_dep per-request bridge (#1426)."""
+class TestGetAppDep:
+    """Tests for get_app_dep per-request bridge (#1426)."""
 
-    def test_returns_app_state(self, app_state):
+    def test_returns_app(self, app_state):
         settings = make_settings({})
         app = main.build_app(settings)
         request = MagicMock()
         request.app = app
-        app_state = main.get_app_state_dep(request)
-        assert app_state.settings is settings
+        result = main.get_app_dep(request)
+        assert result is app
+        assert result.state.settings is settings
+
+
+class TestLiveCORSMiddleware:
+    """LiveCORSMiddleware reads origins from app state on each request (#1610)."""
+
+    async def test_rebuilds_on_settings_change(self):
+        settings1 = make_settings({"KLANGK_CORS_ORIGINS": "http://a.example"})
+        app = main.build_app(settings1)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.options(
+                "/api/v1/version",
+                headers={
+                    "Origin": "http://a.example",
+                    "Access-Control-Request-Method": "GET",
+                },
+            )
+            assert (
+                resp.headers.get("access-control-allow-origin")
+                == "http://a.example"
+            )
+
+            # Swap settings with a different origin
+            settings2 = make_settings(
+                {"KLANGK_CORS_ORIGINS": "http://b.example"}
+            )
+            app.state.settings = settings2
+
+            resp2 = await client.options(
+                "/api/v1/version",
+                headers={
+                    "Origin": "http://b.example",
+                    "Access-Control-Request-Method": "GET",
+                },
+            )
+            assert (
+                resp2.headers.get("access-control-allow-origin")
+                == "http://b.example"
+            )
+
+    async def test_caches_until_settings_change(self):
+        import types as _types
+
+        settings = make_settings({"KLANGK_CORS_ORIGINS": "http://x.example"})
+        app = _types.SimpleNamespace(
+            state=_types.SimpleNamespace(
+                settings=settings,
+                util=util_mod.Util(
+                    _types.SimpleNamespace(
+                        state=_types.SimpleNamespace(settings=settings)
+                    )
+                ),
+            )
+        )
+        live_cors = main.LiveCORSMiddleware(
+            lambda scope, recv, send: None, fastapi_app=app
+        )
+        # First call builds the inner middleware
+        inner1 = live_cors._rebuild_if_needed()
+        inner2 = live_cors._rebuild_if_needed()
+        assert inner1 is inner2  # cached — same settings object
+
+        # Swap settings → inner changes
+        settings2 = make_settings({"KLANGK_CORS_ORIGINS": "http://y.example"})
+        app.state.settings = settings2
+        app.state.util = util_mod.Util(
+            _types.SimpleNamespace(
+                state=_types.SimpleNamespace(settings=settings2)
+            )
+        )
+        inner3 = live_cors._rebuild_if_needed()
+        assert inner3 is not inner1
+
+
+class TestRemountFrontend:
+    """Lifecycle._remount_frontend replaces the frontend mount (#1610)."""
+
+    async def test_remount_swaps_static_dir(self, tmp_path, app_state):
+        lc = main.Lifecycle(app_state)
+        app = FastAPI()
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        (old_dir / "index.html").write_text("old")
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
+        (new_dir / "index.html").write_text("new")
+        app.state.settings = make_settings({})
+        app.state.util = util_mod.Util(app)
+        main.setup_static_files(app, old_dir)
+
+        new_settings = make_settings({"KLANGK_FRONTEND_DIR": str(new_dir)})
+        lc._remount_frontend(app, new_settings)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/index.html")
+        assert resp.status_code == 200
+        assert b"new" in resp.content
+
+    async def test_remount_removes_mount_when_dir_missing(
+        self, tmp_path, app_state
+    ):
+        lc = main.Lifecycle(app_state)
+        app = FastAPI()
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        (old_dir / "index.html").write_text("old")
+        app.state.settings = make_settings({})
+        app.state.util = util_mod.Util(app)
+        main.setup_static_files(app, old_dir)
+
+        new_settings = make_settings(
+            {"KLANGK_FRONTEND_DIR": str(tmp_path / "nonexistent")}
+        )
+        lc._remount_frontend(app, new_settings)
+
+        # The old mount should be gone — no routes named "frontend"
+        frontend_routes = [
+            r for r in app.routes if getattr(r, "name", None) == "frontend"
+        ]
+        assert frontend_routes == []
+
+    async def test_apply_reloaded_settings_remounts_frontend(
+        self, db, tmp_path
+    ):
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        old_settings = app_state.state.settings
+        new_settings = make_settings(
+            dict(old_settings._reload_env, KLANGK_FRONTEND_DIR=str(tmp_path))
+        )
+        with patch.object(lc, "_remount_frontend") as mock_remount:
+            await lc._apply_reloaded_settings(new_settings)
+        mock_remount.assert_called_once()
+
+    async def test_apply_reloaded_settings_skips_remount_when_unchanged(
+        self, db
+    ):
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        old_settings = app_state.state.settings
+        # Same frontend_dir → no remount
+        new_settings = make_settings(dict(old_settings._reload_env))
+        with patch.object(lc, "_remount_frontend") as mock_remount:
+            await lc._apply_reloaded_settings(new_settings)
+        mock_remount.assert_not_called()

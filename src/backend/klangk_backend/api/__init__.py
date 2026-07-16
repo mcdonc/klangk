@@ -43,7 +43,7 @@ from .. import (
     oidc,
     wshandler,
 )
-from ._common import autostart_allowed, get_app_state_dep
+from ._common import autostart_allowed, get_app_dep
 
 # Imported under an alias: the ``from . import auth as _auth_routes`` line
 # below pulls in the api/auth.py *submodule*, and the import machinery writes
@@ -98,19 +98,19 @@ async def empty():
 
 
 @router.get("/version")
-async def version(app_state=Depends(get_app_state_dep)):
+async def version(app=Depends(get_app_dep)):
     """Return build version info, plus loaded plugin metadata."""
-    if version_file := app_state.settings.version_file:
+    if version_file := app.state.settings.version_file:
         if os.path.isfile(version_file):
             with open(version_file) as f:
                 info = json.load(f)
-            info["plugins"] = app_state.plugins.plugin_list()
+            info["plugins"] = app.state.plugins.plugin_list()
             return info
     return {
         "version": "dev",
         "commit": "unknown",
         "built_at": None,
-        "plugins": app_state.plugins.plugin_list(),
+        "plugins": app.state.plugins.plugin_list(),
     }
 
 
@@ -121,17 +121,17 @@ if os.environ.get("KLANGK_TEST_MODE"):  # pragma: no cover
     @router.get("/test/idle-timeout")
     async def get_idle_timeout(
         workspace_id: str | None = None,
-        app_state=Depends(get_app_state_dep),
+        app=Depends(get_app_dep),
     ):
         """Get the idle timeout (per-workspace or global default)."""
         if workspace_id:
             return {
-                "idle_timeout_seconds": app_state.container_registry.get_workspace_idle_timeout(
+                "idle_timeout_seconds": app.state.container_registry.get_workspace_idle_timeout(
                     workspace_id
                 )
             }
         return {
-            "idle_timeout_seconds": app_state.container_registry.idle_timeout_seconds
+            "idle_timeout_seconds": app.state.container_registry.idle_timeout_seconds
         }
 
     class SetIdleTimeoutRequest(BaseModel):
@@ -141,42 +141,42 @@ if os.environ.get("KLANGK_TEST_MODE"):  # pragma: no cover
     @router.post("/test/set-idle-timeout")
     async def set_idle_timeout(
         body: SetIdleTimeoutRequest,
-        app_state=Depends(get_app_state_dep),
+        app=Depends(get_app_dep),
     ):
         """Set the idle timeout. Per-workspace if workspace_id given, else global."""
         seconds = body.seconds
         workspace_id = body.workspace_id
         if workspace_id:
-            app_state.container_registry.set_workspace_idle_timeout(
+            app.state.container_registry.set_workspace_idle_timeout(
                 workspace_id, seconds
             )
         else:
-            app_state.container_registry.set_idle_timeout(seconds)
+            app.state.container_registry.set_idle_timeout(seconds)
         return {"idle_timeout_seconds": seconds}
 
     @router.get("/test/workspace-token/{workspace_id}")
     async def get_workspace_token(
         workspace_id: str,
-        app_state=Depends(get_app_state_dep),
+        app=Depends(get_app_dep),
     ):
         """Return a workspace JWT for testing (test only)."""
-        return {"token": app_state.auth.create_workspace_token(workspace_id)}
+        return {"token": app.state.auth.create_workspace_token(workspace_id)}
 
     @router.get("/test/browsers/{workspace_id}")
     async def get_browsers(
         workspace_id: str,
-        app_state=Depends(get_app_state_dep),
+        app=Depends(get_app_dep),
     ):
         """Return all active browser registrations for a workspace (test only)."""
         browsers = []
         for bid, (
             ws_id,
             sock,
-        ) in app_state.container_registry._browsers.items():
+        ) in app.state.container_registry._browsers.items():
             if ws_id == workspace_id:
                 email = None
                 if sock is not None:
-                    conn = app_state.sockets.connections.get(sock)
+                    conn = app.state.sockets.connections.get(sock)
                     if conn:
                         email = conn.user.get("email")
                 browsers.append({"browser_id": bid, "email": email})
@@ -184,11 +184,11 @@ if os.environ.get("KLANGK_TEST_MODE"):  # pragma: no cover
 
 
 @router.get("/config")
-async def get_config(app_state=Depends(get_app_state_dep)):
-    s = app_state.settings
+async def get_config(app=Depends(get_app_dep)):
+    s = app.state.settings
     config = {
-        "registration_enabled": app_state.auth.registration_enabled(),
-        "invitations_enabled": app_state.auth.invitations_enabled(),
+        "registration_enabled": app.state.auth.registration_enabled(),
+        "invitations_enabled": app.state.auth.invitations_enabled(),
         # White-label product name (KLANGK_PRODUCT_NAME). Surfaced so the
         # frontend can rename the product (tab title, app-bar logo) without
         # a rebuild; defaults to "Klangk" for back-compat (#1149).
@@ -196,16 +196,16 @@ async def get_config(app_state=Depends(get_app_state_dep)):
         "login_banner_title": s.login_banner_title,
         "login_banner": s.login_banner,
         "login_banner_every_visit": s.login_banner_every_visit,
-        "oidc_providers": app_state.oidc.list_providers(),
-        "auth_modes": app_state.oidc.auth_modes(),
-        "instance_id": app_state.util.instance_id(),
+        "oidc_providers": app.state.oidc.list_providers(),
+        "auth_modes": app.state.oidc.auth_modes(),
+        "instance_id": app.state.util.instance_id(),
         # Whether per-workspace auto-start (start the container on server
         # boot) is permitted. The web UI gates its "Auto start" checkbox on
         # this so users can't toggle a setting the server will reject (#1115).
-        "allow_autostart": autostart_allowed(app_state),
+        "allow_autostart": autostart_allowed(app),
         # Surfaced so the UI can validate password length inline (matches
         # the rule enforced server-side by auth.validate_password_length).
-        "min_password_length": app_state.auth.min_password_length,
+        "min_password_length": app.state.auth.min_password_length,
         # Deployer logo override (KLANGK_LOGO_URL). Empty when unset, in
         # which case the frontend renders the default KlangkLogo widget.
         # Supports file:/cmd: resolution like other secrets. See #1152.
@@ -219,7 +219,7 @@ async def get_config(app_state=Depends(get_app_state_dep)):
         "support_url": s.support_url,
         "support_email": s.support_email,
     }
-    config.update(app_state.plugins.frontend_config())
+    config.update(app.state.plugins.frontend_config())
     return config
 
 

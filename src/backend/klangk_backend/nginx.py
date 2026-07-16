@@ -17,7 +17,7 @@ See #1392 (design record) and #1396 (this chunk).
 The settings-driven rendering logic lives on :class:`NginxRenderer`, an
 owned instance constructed with ``app_state`` per the composition-root
 refactor (#1426, #1469).  Settings are read live via
-``self.app_state.settings`` (#1608).
+``self.app.state.settings`` (#1608).
 Pure helpers (upstream constructors, host-IP auto-detection, the minimal-
 template auth-location formatter) stay module-level — they don't read
 settings.
@@ -160,17 +160,17 @@ class NginxRenderer:
     """Settings-driven ``nginx.conf`` renderer (#1396, #1469).
 
     Constructed with ``app_state`` per the composition-root pattern; settings
-    are read live via ``self.app_state.settings`` (#1608). The renderer is a pure function of the
+    are read live via ``self.app.state.settings`` (#1608). The renderer is a pure function of the
     merged config (settings + env probes); it does not touch podman.
     ``NginxWatchdog`` owns an instance and calls :meth:`render_config` /
     :meth:`find_nginx_bin` / :meth:`write_config` from its ``_prepare`` step.
     """
 
-    def __init__(self, app_state) -> None:
-        self._app_state = app_state
+    def __init__(self, app) -> None:
+        self._app = app
 
-    def reconfigure(self, app_state) -> None:
-        self._app_state = app_state
+    def reconfigure(self, app) -> None:
+        self._app = app
 
     # -- DNS / ACL / size computation --------------------------------------
 
@@ -180,7 +180,7 @@ class NginxRenderer:
         From ``KLANGK_DNS_SERVERS`` (comma→space) if set, else parsed from
         ``/etc/resolv.conf`` (IPv6 bracketed for nginx), else ``8.8.8.8``.
         """
-        raw = self._app_state.settings.dns_servers
+        raw = self._app.state.settings.dns_servers
         if raw:
             servers = []
             for token in str(raw).split(","):
@@ -220,7 +220,7 @@ class NginxRenderer:
         127.0.0.1 NOT implicitly added), else auto-detected host IPv4s, else
         the RFC1918 fallback.
         """
-        explicit = self._app_state.settings.container_subnets
+        explicit = self._app.state.settings.container_subnets
         if explicit:
             entries = [
                 s.strip() for s in str(explicit).split(",") if s.strip()
@@ -320,7 +320,7 @@ class NginxRenderer:
 
         The setting is in bytes (default 500 MB); nginx wants ``Nm``. Minimum 1m.
         """
-        raw = self._app_state.settings.file_upload_size_max
+        raw = self._app.state.settings.file_upload_size_max
         try:
             bytes_ = int(str(raw))
         except (TypeError, ValueError):
@@ -336,7 +336,7 @@ class NginxRenderer:
         Disabled entirely when ``KLANGK_HOSTED_PORTS_PER_WORKSPACE`` is exactly 0
         — mirrors the backend's ``ports_per_workspace_cap()`` (#1237).
         """
-        raw = self._app_state.settings.hosted_ports_per_workspace
+        raw = self._app.state.settings.hosted_ports_per_workspace
         if str(raw).strip() == "0":
             return (
                 "    # Hosted-app serving is disabled "
@@ -386,10 +386,10 @@ class NginxRenderer:
         URL and key are resolved here (Python's resolver, not the retired
         ``klangk-resolve-value`` console script).
         """
-        base_url = self._app_state.settings.llm_base_url
+        base_url = self._app.state.settings.llm_base_url
         if not base_url:
             return ""
-        api_key = self._app_state.settings.llm_api_key
+        api_key = self._app.state.settings.llm_api_key
         return (
             f"    location ~ ^/llm-proxy/(.*)$ {{\n"
             f"{acl}\n"
@@ -412,7 +412,7 @@ class NginxRenderer:
 
     def _reject_proxy_headers(self) -> bool:
         """True if KLANGK_REJECT_PROXY_HEADERS is set (hard trust-off)."""
-        raw = self._app_state.settings.reject_proxy_headers
+        raw = self._app.state.settings.reject_proxy_headers
         return bool(raw and str(raw).strip().lower() in ("1", "true", "yes"))
 
     def _realip_block(self) -> str:
@@ -437,7 +437,7 @@ class NginxRenderer:
         """
         if self._reject_proxy_headers():
             return ""
-        raw = self._app_state.settings.trusted_proxy_cidrs
+        raw = self._app.state.settings.trusted_proxy_cidrs
         entries: list[str] = []
         for token in (raw or "").split(","):
             token = token.strip()
@@ -467,7 +467,7 @@ class NginxRenderer:
         )
 
     def _trust_outer_proxy(self) -> bool:
-        raw = self._app_state.settings.trust_outer_proxy
+        raw = self._app.state.settings.trust_outer_proxy
         return str(raw).strip().lower() in ("1", "true", "yes")
 
     # -- Main renderer -----------------------------------------------------
@@ -484,7 +484,7 @@ class NginxRenderer:
         settings (env > config file > defaults) plus the host-IP / DNS
         auto-detection probes.
         """
-        if self._app_state.settings.port is None:
+        if self._app.state.settings.port is None:
             return self._render_headless_config(upstream)
         return self._render_full_config(upstream)
 
@@ -546,8 +546,8 @@ class NginxRenderer:
         only served surface is container egress (plus same-uid UDS access to
         the backend, which bypasses nginx entirely).
         """
-        egress_port = self._app_state.settings.egress_port
-        egress_listen = self._app_state.settings.egress_listen
+        egress_port = self._app.state.settings.egress_port
+        egress_listen = self._app.state.settings.egress_listen
         client_max_body_size = self.compute_client_max_body_size()
         resolvers = self.detect_dns_resolvers()
         acl, _ = self.compute_container_acls()
@@ -588,10 +588,10 @@ http {{
         no ``auth_request`` infra (it has no token-gated locations); all of
         that lives in the egress block.
         """
-        listen_addr = self._app_state.settings.listen
-        port = self._app_state.settings.port
-        egress_port = self._app_state.settings.egress_port
-        egress_listen = self._app_state.settings.egress_listen
+        listen_addr = self._app.state.settings.listen
+        port = self._app.state.settings.port
+        egress_port = self._app.state.settings.egress_port
+        egress_listen = self._app.state.settings.egress_listen
         client_max_body_size = self.compute_client_max_body_size()
         resolvers = self.detect_dns_resolvers()
         acl, deny = self.compute_container_acls()
@@ -707,7 +707,7 @@ http {{
 
     def find_nginx_bin(self) -> str:
         """Locate the nginx binary: KLANGK_NGINX_BIN > PATH > /usr/sbin/nginx."""
-        configured = self._app_state.settings.nginx_bin
+        configured = self._app.state.settings.nginx_bin
         if configured:
             return str(configured)
         found = shutil.which("nginx")
@@ -746,21 +746,21 @@ class NginxWatchdog:
 
     Constructed with ``app_state`` and owns a :class:`NginxRenderer` instance
     for config rendering (#1469). Settings are read live via
-    ``self.app_state.settings`` (#1608).
+    ``self.app.state.settings`` (#1608).
     Stored on ``app.state.nginx_watchdog``; the lifespan calls
     ``.start()`` / ``.stop()``.
     """
 
-    def __init__(self, app_state) -> None:
-        self._app_state = app_state
-        self._renderer = NginxRenderer(app_state)
+    def __init__(self, app) -> None:
+        self._app = app
+        self._renderer = NginxRenderer(app)
         self._proc: asyncio.subprocess.Process | None = None
         self._task: asyncio.Task | None = None
         self._stopping = False
 
-    def reconfigure(self, app_state) -> None:
-        self._app_state = app_state
-        self._renderer.reconfigure(app_state)
+    def reconfigure(self, app) -> None:
+        self._app = app
+        self._renderer.reconfigure(app)
 
     async def _watch(
         self, bin_path: str, conf_path: str
@@ -806,9 +806,9 @@ class NginxWatchdog:
         selects headless (unset) vs full (set) templates and the nginx listen
         directives; the upstream is always the UDS.
         """
-        uds_path = self._app_state.settings.socket
+        uds_path = self._app.state.settings.socket
         conf_path = os.path.join(
-            self._app_state.settings.state_dir, "nginx.conf"
+            self._app.state.settings.state_dir, "nginx.conf"
         )
         bin_path = self._renderer.find_nginx_bin()
         self._renderer.write_config(uds_upstream(uds_path), conf_path)

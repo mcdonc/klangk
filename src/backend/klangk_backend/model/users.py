@@ -162,14 +162,14 @@ class UsersModel:
 
     Constructed by :class:`~klangk_backend.model.model.Model` and reached
     via ``app_state.model.users``. Reaches the DB through
-    ``self.app_state.db`` (the single DB instance for the whole app).
+    ``self.app.state.db`` (the single DB instance for the whole app).
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     async def get_agent_user(self) -> dict:
         """Return the agent user dict from DB, cached after first call."""
@@ -272,7 +272,7 @@ class UsersModel:
         provider: str = "local",
         external_id: str | None = None,
     ) -> dict:
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             user_id = str(uuid.uuid4())
             handle = await self.generate_handle(db, email)
             await db.execute(
@@ -314,7 +314,7 @@ class UsersModel:
 
     async def get_user_handle(self, user_id: str) -> str | None:
         """Return the handle for a user, or None if not found."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT handle FROM users WHERE id = ?", (user_id,)
             )
@@ -327,7 +327,7 @@ class UsersModel:
         if error:
             raise ValueError(error)
         await self._assert_handle_not_agent(handle)
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT id FROM users WHERE handle = ? AND id != ?",
                 (handle, user_id),
@@ -341,7 +341,7 @@ class UsersModel:
 
     async def get_user_by_handle(self, handle: str) -> dict | None:
         """Find a user by handle."""
-        row = await self.app_state.db.fetchone(
+        row = await self.app.state.db.fetchone(
             "SELECT id, email, handle FROM users WHERE handle = ?",
             (handle,),
         )
@@ -357,7 +357,7 @@ class UsersModel:
         self, provider: str, external_id: str
     ) -> dict | None:
         """Find a user by OIDC provider + external ID."""
-        row = await self.app_state.db.fetchone(
+        row = await self.app.state.db.fetchone(
             "SELECT id, email, password_hash, verified, provider,"
             " external_id, handle"
             " FROM users WHERE provider = ? AND external_id = ?",
@@ -379,7 +379,7 @@ class UsersModel:
         self, user_id: str, provider: str, external_id: str
     ) -> None:
         """Link an OIDC identity to an existing user."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             await db.execute(
                 "UPDATE users SET provider = ?, external_id = ? WHERE id = ?",
                 (provider, external_id, user_id),
@@ -387,7 +387,7 @@ class UsersModel:
 
     async def verify_user(self, user_id: str) -> bool:
         """Mark a user as verified. Returns True if updated, False if not found."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "UPDATE users SET verified = 1 WHERE id = ?", (user_id,)
             )
@@ -400,7 +400,7 @@ class UsersModel:
         group_id: str | None = None,
     ) -> dict:
         """Create a group. Returns the group dict."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             gid = group_id or str(uuid.uuid4())
             await db.execute(
                 "INSERT INTO groups (id, name, description) VALUES (?, ?, ?)",
@@ -410,7 +410,7 @@ class UsersModel:
 
     async def get_group_by_name(self, name: str) -> dict | None:
         """Find a group by name."""
-        row = await self.app_state.db.fetchone(
+        row = await self.app.state.db.fetchone(
             "SELECT id, name, description, created_at FROM groups WHERE name = ?",
             (name,),
         )
@@ -425,7 +425,7 @@ class UsersModel:
 
     async def get_group_by_id(self, group_id: str) -> dict | None:
         """Find a group by ID."""
-        row = await self.app_state.db.fetchone(
+        row = await self.app.state.db.fetchone(
             "SELECT id, name, description, created_at FROM groups WHERE id = ?",
             (group_id,),
         )
@@ -453,7 +453,7 @@ class UsersModel:
         page_size = max(1, min(page_size, 200))
         offset = (page - 1) * page_size
 
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             where_clause = ""
             params: list = []
             if q:
@@ -491,7 +491,7 @@ class UsersModel:
 
     async def delete_group(self, group_id: str) -> bool:
         """Delete a group. Returns True if deleted."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "DELETE FROM groups WHERE id = ?", (group_id,)
             )
@@ -513,7 +513,7 @@ class UsersModel:
             return False
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [group_id]
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 f"UPDATE groups SET {set_clause} WHERE id = ?",  # noqa: S608
                 values,
@@ -533,7 +533,7 @@ class UsersModel:
                 " (global fixed UUID — granting it cross-workspace"
                 " blast radius)."
             )
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             await db.execute(
                 "INSERT OR IGNORE INTO user_groups (user_id, group_id, source)"
                 " VALUES (?, ?, ?)",
@@ -544,7 +544,7 @@ class UsersModel:
         self, user_id: str, group_id: str
     ) -> bool:
         """Remove a user from a group. Returns True if removed."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "DELETE FROM user_groups WHERE user_id = ? AND group_id = ?",
                 (user_id, group_id),
@@ -553,7 +553,7 @@ class UsersModel:
 
     async def get_group_members(self, group_id: str) -> list[dict]:
         """List users in a group."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT u.id, u.email, ug.source FROM users u"
                 " JOIN user_groups ug ON u.id = ug.user_id"
@@ -572,7 +572,7 @@ class UsersModel:
 
     async def get_user_group_ids(self, user_id: str) -> list[str]:
         """Get all group IDs for a user."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT group_id FROM user_groups WHERE user_id = ?",
                 (user_id,),
@@ -581,7 +581,7 @@ class UsersModel:
 
     async def get_user_oidc_sync_group_ids(self, user_id: str) -> list[str]:
         """Get group IDs where membership source is 'oidc_sync'."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT group_id FROM user_groups"
                 " WHERE user_id = ? AND source = 'oidc_sync'",
@@ -591,7 +591,7 @@ class UsersModel:
 
     async def get_user_groups(self, user_id: str) -> list[dict]:
         """Get all groups a user belongs to."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT g.id, g.name, g.description FROM groups g"
                 " JOIN user_groups ug ON g.id = ug.group_id"
@@ -609,7 +609,7 @@ class UsersModel:
             ]
 
     async def get_user_by_email(self, email: str) -> dict | None:
-        row = await self.app_state.db.fetchone(
+        row = await self.app.state.db.fetchone(
             "SELECT id, email, password_hash, verified, provider,"
             " external_id, handle"
             " FROM users WHERE email = ?",
@@ -642,7 +642,7 @@ class UsersModel:
         page_size = max(1, min(page_size, 200))
         offset = (page - 1) * page_size
 
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             where_clause = ""
             params: list = []
             if q:
@@ -687,7 +687,7 @@ class UsersModel:
         """
         if user_id == AGENT_USER_ID:
             raise AgentPrincipalError("Cannot delete the system agent user")
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "DELETE FROM users WHERE id = ?", (user_id,)
             )
@@ -702,7 +702,7 @@ class UsersModel:
             raise AgentPrincipalError(
                 "Cannot change the email of the system agent user"
             )
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             await db.execute(
                 "UPDATE users SET email = ? WHERE id = ?", (email, user_id)
             )
@@ -717,14 +717,14 @@ class UsersModel:
             raise AgentPrincipalError(
                 "Cannot set a password on the system agent user"
             )
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             await db.execute(
                 "UPDATE users SET password_hash = ? WHERE id = ?",
                 (password_hash, user_id),
             )
 
     async def get_user_by_id(self, user_id: str) -> dict | None:
-        row = await self.app_state.db.fetchone(
+        row = await self.app.state.db.fetchone(
             "SELECT id, email, handle FROM users WHERE id = ?",
             (user_id,),
         )
@@ -738,7 +738,7 @@ class UsersModel:
 
     async def search_users(self, query: str, limit: int = 10) -> list[dict]:
         """Search users by email prefix."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT id, email, handle FROM users"
                 " WHERE email LIKE ? ORDER BY email LIMIT ?",

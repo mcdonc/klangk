@@ -139,7 +139,7 @@ def has_permission(permission: str, resource_fn=None):
 #
 # The DB-touching entry points (``get_principals``, ``check_permission``,
 # ``permissions_for_resources``) are methods reaching
-# ``self.app_state.model.{users,acl}`` (the single owned ``Model``). The
+# ``self.app.state.model.{users,acl}`` (the single owned ``Model``). The
 # FastAPI dependency factory ``has_permission`` stays module-level (it's
 # built at route-definition time and can't close over an instance); its
 # closure resolves ``request.app.state.acl`` per request, exactly like
@@ -159,18 +159,18 @@ class ACL:
     reached per-request via ``request.app.state.acl`` (by the
     ``has_permission`` dependency factory) or directly as ``app_state.acl``
     (by handlers / the WebSocket connection layer). Reaches the DB through
-    ``self.app_state.model`` — the single owned ``Model`` instance.
+    ``self.app.state.model`` — the single owned ``Model`` instance.
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     async def get_principals(self, user_id: str) -> dict:
         """Build principal info for the given user."""
-        group_ids = await self.app_state.model.users.get_user_group_ids(
+        group_ids = await self.app.state.model.users.get_user_group_ids(
             user_id
         )
         return {
@@ -193,7 +193,7 @@ class ACL:
         in memory via :func:`check_permission_inmemory`. Nothing is
         retained across requests.
         """
-        entries = await self.app_state.model.acl.get_acl_entries_map(
+        entries = await self.app.state.model.acl.get_acl_entries_map(
             resource_ancestors(resource_path)
         )
         return check_permission_inmemory(
@@ -216,7 +216,7 @@ class ACL:
         ancestor_paths: list[str] = []
         for res in resources:
             ancestor_paths.extend(resource_ancestors(res))
-        entries = await self.app_state.model.acl.get_acl_entries_map(
+        entries = await self.app.state.model.acl.get_acl_entries_map(
             ancestor_paths
         )
         result: dict[str, list[str]] = {}

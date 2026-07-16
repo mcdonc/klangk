@@ -72,21 +72,21 @@ class WorkspacesModel:
 
     Constructed by :class:`~klangk_backend.model.model.Model` and reached
     via ``app_state.model.workspaces``. Reaches the DB through
-    ``self.app_state.db`` (the single DB instance for the whole app).
+    ``self.app.state.db`` (the single DB instance for the whole app).
 
     The ``db``-param private helpers (:meth:`_insert_workspace_row` /
     :meth:`_seed_workspace_acl`) take a caller-supplied connection so they
     can run inside a larger transaction (the atomic create-with-ACL path);
-    they do not reach for ``self.app_state.db`` themselves — the atomicity
+    they do not reach for ``self.app.state.db`` themselves — the atomicity
     constraint (the owner ACE + role groups must commit/roll back with the
     row insert) is load-bearing (#128).
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     async def _insert_workspace_row(
         self,
@@ -238,7 +238,7 @@ class WorkspacesModel:
             )
         if setup_state not in SETUP_STATES:
             raise ValueError(f"Invalid setup_state: {setup_state!r}")
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             ws = await self._insert_workspace_row(
                 db,
                 user_id,
@@ -275,7 +275,7 @@ class WorkspacesModel:
         """
         if setup_state not in SETUP_STATES:
             raise ValueError(f"Invalid setup_state: {setup_state!r}")
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             return await self._insert_workspace_row(
                 db,
                 user_id,
@@ -313,7 +313,7 @@ class WorkspacesModel:
             where += " AND name LIKE '%' || ? || '%'"
             params.append(q)
         params.extend([limit + 1, offset])
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT id, name, container_id, image, service_command,"
                 " auto_start, setup_state, health_check, mounts, env,"
@@ -367,8 +367,8 @@ class WorkspacesModel:
         """
         order_by = sort_order_clause(sort, order, prefix="w")
         name_filter = " AND w.name LIKE '%' || ? || '%'" if q else ""
-        async with self.app_state.db.transaction() as db:
-            group_ids = await self.app_state.model.users.get_user_group_ids(
+        async with self.app.state.db.transaction() as db:
+            group_ids = await self.app.state.model.users.get_user_group_ids(
                 user_id
             )
             group_placeholders = ",".join("?" for _ in group_ids)
@@ -439,7 +439,7 @@ class WorkspacesModel:
         If user_id is provided, restricts to workspaces owned by that user.
         Access control for shared workspaces is handled by the ACL layer.
         """
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             if user_id is not None:
                 cursor = await db.execute(
                     "SELECT id, user_id, name, container_id, num_ports, image,"
@@ -476,7 +476,7 @@ class WorkspacesModel:
 
     async def get_workspace_by_id(self, workspace_id: str) -> dict | None:
         """Get a workspace by ID without access control (for admin use)."""
-        row = await self.app_state.db.fetchone(
+        row = await self.app.state.db.fetchone(
             "SELECT id, user_id, name, container_id, num_ports, image,"
             " service_command, setup_state, health_check, mounts, env"
             " FROM workspaces WHERE id = ?",
@@ -504,7 +504,7 @@ class WorkspacesModel:
         Returns users with direct user-level ACEs on /workspaces/{id},
         excluding the workspace owner.
         """
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT DISTINCT u.id, u.email, u.handle FROM users u"
                 " JOIN acl_entries ae ON ae.user_id = u.id"
@@ -529,7 +529,7 @@ class WorkspacesModel:
             ]
 
     async def delete_workspace(self, workspace_id: str, user_id: str) -> bool:
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "DELETE FROM workspaces WHERE id = ? AND user_id = ?",
                 (workspace_id, user_id),
@@ -577,7 +577,7 @@ class WorkspacesModel:
     async def update_workspace_container(
         self, workspace_id: str, container_id: str | None
     ) -> None:
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             await db.execute(
                 "UPDATE workspaces SET container_id = ? WHERE id = ?",
                 (container_id, workspace_id),
@@ -618,7 +618,7 @@ class WorkspacesModel:
             return False
         set_clause = ", ".join(f"{k} = ?" for k in to_set)
         values = list(to_set.values()) + [workspace_id, user_id]
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 f"UPDATE workspaces SET {set_clause}"  # noqa: S608
                 " WHERE id = ? AND user_id = ?",
@@ -646,7 +646,7 @@ class WorkspacesModel:
                 "Cannot transfer a workspace to the system agent"
             )
 
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT id, user_id, name FROM workspaces WHERE id = ?",
                 (workspace_id,),
@@ -711,7 +711,7 @@ class WorkspacesModel:
     async def get_user_workspaces_with_containers(
         self, user_id: str
     ) -> list[dict]:
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT id, container_id FROM workspaces WHERE user_id = ? AND container_id IS NOT NULL",
                 (user_id,),
@@ -724,7 +724,7 @@ class WorkspacesModel:
 
     async def list_auto_start_workspaces(self) -> list[dict]:
         """List all workspaces with auto_start enabled."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT id, user_id, name, container_id, num_ports, image,"
                 " service_command, auto_start, setup_state, health_check,"
