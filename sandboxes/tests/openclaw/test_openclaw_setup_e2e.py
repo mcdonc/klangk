@@ -167,7 +167,14 @@ def _start_server(data_dir, port, extra_env=None):
     proc = subprocess.Popen(
         [
             "python3",
-            os.path.join(REPO_ROOT, "src", "backend", "e2e-tests", "runtestserver.py"),
+            os.path.join(
+                REPO_ROOT,
+                "src",
+                "klangk",
+                "klangkd-tests",
+                "e2e-tests",
+                "runtestserver.py",
+            ),
             "--host",
             "0.0.0.0",
             "--port",
@@ -179,7 +186,7 @@ def _start_server(data_dir, port, extra_env=None):
             "--ws-ping-timeout",
             "20",
         ],
-        cwd=os.path.join(REPO_ROOT, "src", "backend"),
+        cwd=os.path.join(REPO_ROOT, "src", "klangk", "klangkd-tests"),
         env=env,
         stdout=log_file,
         stderr=subprocess.STDOUT,

@@ -24,7 +24,7 @@ import sys
 sys.path.insert(
     0,
     os.path.join(
-        os.path.dirname(__file__), "..", "..", "backend", "e2e-tests"
+        os.path.dirname(__file__), "..", "..", "klangkd-tests", "e2e-tests"
     ),
 )
 from _e2e_env import clean_env
