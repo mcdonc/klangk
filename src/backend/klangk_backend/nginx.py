@@ -757,7 +757,7 @@ class NginxWatchdog:
 
     def reconfigure(self, app_state) -> None:
         self._app_state = app_state
-        self._renderer = NginxRenderer(self._app_state)
+        self._renderer = NginxRenderer(app_state)
 
     async def _watch(
         self, bin_path: str, conf_path: str

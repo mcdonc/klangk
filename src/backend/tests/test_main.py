@@ -809,8 +809,8 @@ class TestStartupShutdownRestart:
 
             obj.reconfigure = make_tracker(attr, orig)
         with patch.object(
-            lc, "seed_agent_user", new_callable=AsyncMock
-        ) as mock_seed:
+            lc, "apply_pending_reseed", new_callable=AsyncMock
+        ) as mock_reseed:
             await lc._apply_reloaded_settings(new_settings)
         assert app_state.settings is new_settings
         assert app_state.settings is not old_settings
@@ -818,7 +818,7 @@ class TestStartupShutdownRestart:
         assert "oidc" in called
         assert "plugins" in called
         assert len(called) == 18
-        mock_seed.assert_awaited_once()
+        mock_reseed.assert_awaited_once()
 
     async def test_apply_logs_warning_when_reconfigure_fails(
         self, app_state, caplog
@@ -835,14 +835,14 @@ class TestStartupShutdownRestart:
             ),
             patch.object(app_state.oidc, "reconfigure") as mock_oidc_reconf,
             patch.object(
-                lc, "seed_agent_user", new_callable=AsyncMock
-            ) as mock_seed,
+                lc, "apply_pending_reseed", new_callable=AsyncMock
+            ) as mock_reseed,
             caplog.at_level("WARNING"),
         ):
             await lc._apply_reloaded_settings(new_settings)
         assert "ssl_trust reconfigure failed" in caplog.text
         mock_oidc_reconf.assert_called_once()
-        mock_seed.assert_awaited_once()
+        mock_reseed.assert_awaited_once()
 
     def test_warn_non_reloadable_logs_changed_settings(
         self, app_state, caplog
@@ -857,6 +857,16 @@ class TestStartupShutdownRestart:
             lc._warn_non_reloadable(old, new)
         assert "port" in caplog.text
         assert "full process restart" in caplog.text
+
+    async def test_apply_pending_reseed_noop_without_flag(self, app_state):
+        """apply_pending_reseed is a no-op when reconfigure hasn't been called."""
+        app_state = _make_app_state()
+        lc = app_state.lifecycle
+        with patch.object(
+            lc, "seed_agent_user", new_callable=AsyncMock
+        ) as mock_seed:
+            await lc.apply_pending_reseed()
+        mock_seed.assert_not_awaited()
 
     def test_warn_non_reloadable_silent_on_reloadable_only(
         self, app_state, caplog

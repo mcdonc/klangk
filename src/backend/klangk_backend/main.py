@@ -103,6 +103,14 @@ class Lifecycle:
 
     def reconfigure(self, app_state) -> None:
         self.app_state = app_state
+        self._pending_agent_reseed = True
+
+    async def apply_pending_reseed(self) -> None:
+        """Re-seed the agent user if flagged by reconfigure (#1587)."""
+        if not getattr(self, "_pending_agent_reseed", False):
+            return
+        self._pending_agent_reseed = False
+        await self.seed_agent_user()
 
     async def seed_default_acls(self, admin_group_id: str) -> None:
         """Seed default ACL entries if none exist yet."""
@@ -373,37 +381,37 @@ class Lifecycle:
         app_state.settings = new
 
         # Every app_state subsystem that implements reconfigure().
-        subsystems: list[tuple[str, str]] = [
-            ("ssl_trust", "ssl_trust"),
-            ("auth", "auth"),
-            ("podman", "podman"),
-            ("sockets", "sockets"),
-            ("container_registry", "container_registry"),
-            ("nginx_watchdog", "nginx_watchdog"),
-            ("terminal", "terminal"),
-            ("oidc", "oidc"),
-            ("plugins", "plugins"),
-            ("workspaces", "workspaces"),
-            ("files", "files"),
-            ("db", "db"),
-            ("model", "model"),
-            ("agents", "agents"),
-            ("acl", "acl"),
-            ("email", "email"),
-            ("util", "util"),
-            ("lifecycle", "lifecycle"),
+        subsystems = [
+            "ssl_trust",
+            "auth",
+            "podman",
+            "sockets",
+            "container_registry",
+            "nginx_watchdog",
+            "terminal",
+            "oidc",
+            "plugins",
+            "workspaces",
+            "files",
+            "db",
+            "model",
+            "agents",
+            "acl",
+            "email",
+            "util",
+            "lifecycle",
         ]
-        for name, attr in subsystems:
+        for name in subsystems:
             try:
-                getattr(app_state, attr).reconfigure(app_state)
+                getattr(app_state, name).reconfigure(app_state)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "SIGHUP: %s reconfigure failed (skipped): %s", name, exc
                 )
-        # The agent email/handle live in the users table; re-seed so a
-        # changed KLANGK_AGENT_EMAIL/_HANDLE takes effect in the DB.
+        # Lifecycle.reconfigure flags an agent re-seed; apply it now
+        # (async, so it can't run inside the sync reconfigure loop).
         try:
-            await self.seed_agent_user()
+            await app_state.lifecycle.apply_pending_reseed()
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "SIGHUP: agent user re-seed failed (skipped): %s", exc
