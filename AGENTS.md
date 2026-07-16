@@ -43,6 +43,35 @@ path with no test will fail the build. When iterating
 fast on one file you can scope with `-k` / a path and add `--no-cov`, but
 re-run the full suite **with** coverage (and `-n auto`) before committing.
 
+## `app` ownership rule
+
+State objects (owned subsystems constructed in `build_app` as
+`app.state.X = X(app)`) take **only `app`** and cache **only
+`self.app`**. Never cache a subobject of `app` on an instance,
+and never pass one into a constructor:
+
+```python
+# DO
+workspaces = Workspaces(app)
+podman = Podman(app)
+# read live at call time:
+path = self.app.state.settings.data_dir
+
+# DON'T — caches a stale snapshot that survives a settings reload / swap
+self.settings = app.state.settings
+self.podman = app.state.podman
+self.secret = app.state.settings.jwt_secret
+PortAllocator(self)          # pass app_state, not self
+Podman(app.state.settings)   # pass app_state, not a subobject
+```
+
+Settings-derived values (`jwt_secret`, `data_dir`, `image_name`, …) are read
+live off `self.app.state.settings.<field>` — typically via `@property` — not
+materialized into instance attributes at construction. This is what makes a
+runtime swap (the SIGHUP config reload, #1587) propagate without per-subsystem
+`reconfigure()` boilerplate. Cached subobject references silently keep the old
+value after a swap and are a recurring source of stale-config bugs (#1608).
+
 ## Process manager: devenv 2.x native (not process-compose)
 
 `devenv processes up` / `devenv up` use **devenv 2.x's built-in process manager**,
