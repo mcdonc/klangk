@@ -134,20 +134,44 @@ class Auth:
 
     def __init__(self, app_state):
         self.app_state = app_state
-        self.settings = app_state.settings
-        s = self.settings
-        self.secret = s.jwt_secret
         self.algorithm = "HS256"
-        self.token_expire_hours = float(s.access_token_hours)
-        self.min_password_length = int(s.min_password_length)
-        self.login_lockout_failures = int(s.login_lockout_failures)
-        self.login_lockout_duration = int(s.login_lockout_duration)
-        self.login_lockout_window = int(s.login_lockout_window)
-        self.invite_token_expire_hours = int(s.invite_expire_hours)
-        self.workspace_token_expire_hours = float(s.workspace_token_hours)
         # Fixed-policy token lifetimes (not env-driven).
         self.verify_token_expire_hours = 72
         self.reset_token_expire_hours = 1
+
+    # --- settings-derived config (read live off app_state, #1608) ---
+
+    @property
+    def secret(self) -> str:
+        return self.app_state.settings.jwt_secret
+
+    @property
+    def token_expire_hours(self) -> float:
+        return float(self.app_state.settings.access_token_hours)
+
+    @property
+    def min_password_length(self) -> int:
+        return int(self.app_state.settings.min_password_length)
+
+    @property
+    def login_lockout_failures(self) -> int:
+        return int(self.app_state.settings.login_lockout_failures)
+
+    @property
+    def login_lockout_duration(self) -> int:
+        return int(self.app_state.settings.login_lockout_duration)
+
+    @property
+    def login_lockout_window(self) -> int:
+        return int(self.app_state.settings.login_lockout_window)
+
+    @property
+    def invite_token_expire_hours(self) -> int:
+        return int(self.app_state.settings.invite_expire_hours)
+
+    @property
+    def workspace_token_expire_hours(self) -> float:
+        return float(self.app_state.settings.workspace_token_hours)
 
     # --- secret / startup guard ---
 
@@ -164,7 +188,7 @@ class Auth:
         """
         if self.jwt_secret_is_secure():
             return
-        prevent = self.settings.prevent_insecure_jwt_secret.lower()
+        prevent = self.app_state.settings.prevent_insecure_jwt_secret.lower()
         if prevent in ("1", "true", "yes"):
             raise ConfigurationError(
                 "KLANGK_JWT_SECRET is unset or the insecure default. Set a "
@@ -179,12 +203,12 @@ class Auth:
 
     def registration_enabled(self) -> bool:
         """Check if public registration is enabled."""
-        val = self.settings.disable_registration
+        val = self.app_state.settings.disable_registration
         return val.lower() not in ("1", "true", "yes")
 
     def invitations_enabled(self) -> bool:
         """Check if admin invitations are enabled."""
-        val = self.settings.disable_invites
+        val = self.app_state.settings.disable_invites
         return val.lower() not in ("1", "true", "yes")
 
     def validate_password_length(self, password: str) -> None:

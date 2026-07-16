@@ -27,11 +27,11 @@ def _make_app_state(registry=None, sockets=None):
     from klangk_backend.wshandler.session import WebSocketState
 
     settings = make_settings({})
-    podman_inst = Podman(settings)
     # Two-phase: build the namespace shell first so the owned instances
     # (sockets, registry, terminal, plugins) can take app_state at
     # construction and reach collaborators via self.app_state (#1426).
     app_state = types.SimpleNamespace(settings=settings)
+    podman_inst = Podman(app_state)
     app_state.podman = podman_inst
     if sockets is None:
         sockets = WebSocketState(app_state)
@@ -463,13 +463,17 @@ class TestPortsPerWorkspaceCap:
 
     def test_garbage_falls_back_to_default(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry.settings, "hosted_ports_per_workspace", "abc"
+            self.registry.app_state.settings,
+            "hosted_ports_per_workspace",
+            "abc",
         )
         assert self.registry.ports_per_workspace_cap() == 5
 
     def test_negative_clamped_to_zero(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry.settings, "hosted_ports_per_workspace", "-2"
+            self.registry.app_state.settings,
+            "hosted_ports_per_workspace",
+            "-2",
         )
         assert self.registry.ports_per_workspace_cap() == 0
 
@@ -557,7 +561,9 @@ class TestStartContainer:
         assert "!ALL" in str(call.args[1])
 
     async def test_sudo_enabled(self, workspace, monkeypatch):
-        monkeypatch.setattr(self.registry.settings, "allow_sudo", "true")
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "allow_sudo", "true"
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -567,7 +573,9 @@ class TestStartContainer:
         assert "NOPASSWD:ALL" in str(call.args[1])
 
     async def test_sudo_disabled(self, workspace, monkeypatch):
-        monkeypatch.setattr(self.registry.settings, "allow_sudo", "0")
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "allow_sudo", "0"
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -575,7 +583,9 @@ class TestStartContainer:
         assert "!ALL" in str(_sudo_call(p).args[1])
 
     async def test_sudo_disabled_false(self, workspace, monkeypatch):
-        monkeypatch.setattr(self.registry.settings, "allow_sudo", "false")
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "allow_sudo", "false"
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -586,7 +596,9 @@ class TestStartContainer:
         self, workspace, monkeypatch, app_state
     ):
         """Start with sudo disabled, restart with sudo enabled."""
-        monkeypatch.setattr(self.registry.settings, "allow_sudo", "false")
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "allow_sudo", "false"
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -598,7 +610,9 @@ class TestStartContainer:
         await app_state.model.workspaces.update_workspace_container(
             workspace["id"], None
         )
-        monkeypatch.setattr(self.registry.settings, "allow_sudo", "true")
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "allow_sudo", "true"
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -609,7 +623,9 @@ class TestStartContainer:
         self, workspace, monkeypatch, app_state
     ):
         """Start with sudo enabled, restart with sudo disabled."""
-        monkeypatch.setattr(self.registry.settings, "allow_sudo", "true")
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "allow_sudo", "true"
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -620,7 +636,9 @@ class TestStartContainer:
         await app_state.model.workspaces.update_workspace_container(
             workspace["id"], None
         )
-        monkeypatch.setattr(self.registry.settings, "allow_sudo", "false")
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "allow_sudo", "false"
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
@@ -732,8 +750,12 @@ class TestStartContainer:
 
     async def test_llm_proxy_env_vars(self, workspace, monkeypatch):
         """Container gets proxy URL, not real API keys."""
-        monkeypatch.setattr(self.registry.settings, "llm_model", "gemma4:31b")
-        monkeypatch.setattr(self.registry.settings, "egress_port", "8995")
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "llm_model", "gemma4:31b"
+        )
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "egress_port", "8995"
+        )
 
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -792,7 +814,7 @@ class TestStartContainer:
 
     async def test_pull_policy_from_env(self, workspace, monkeypatch):
         monkeypatch.setattr(
-            self.registry.settings, "image_pull_policy", "missing"
+            self.registry.app_state.settings, "image_pull_policy", "missing"
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -884,7 +906,11 @@ class TestStartContainer:
 
     async def test_terminal_banner_custom(self, workspace, monkeypatch):
         """Deployer can set a terminal banner via env var."""
-        monkeypatch.setattr(self.registry, "terminal_banner", "Custom warning")
+        monkeypatch.setattr(
+            self.registry.app_state.settings,
+            "terminal_banner",
+            "Custom warning",
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
@@ -939,7 +965,7 @@ class TestStartContainer:
         ssl_dir.mkdir()
         (ssl_dir / "notes.txt").write_text("not a cert")
         # Point the registry's SSLTrust at the empty cert dir so ssl_cert_dir()
-        # actually evaluates it (previously this reassigned registry.settings,
+        # actually evaluates it (previously this reassigned registry.app_state.settings,
         # which the resolver now reaches only via app_state.ssl_trust; patch the
         # settings field the SSLTrust instance reads instead).
         monkeypatch.setattr(
@@ -986,7 +1012,7 @@ class TestStartContainer:
     async def test_cap_clamps_allocation_down(self, workspace, monkeypatch):
         """KLANGK_HOSTED_PORTS_PER_WORKSPACE clamps num_ports down (#1237)."""
         monkeypatch.setattr(
-            self.registry.settings, "hosted_ports_per_workspace", "3"
+            self.registry.app_state.settings, "hosted_ports_per_workspace", "3"
         )
         with patch_podman(self.registry):
             await self.registry.start_container(
@@ -1003,7 +1029,7 @@ class TestStartContainer:
     ):
         """cap=0 trims an existing workspace's allocations on next start."""
         monkeypatch.setattr(
-            self.registry.settings, "hosted_ports_per_workspace", "0"
+            self.registry.app_state.settings, "hosted_ports_per_workspace", "0"
         )
         await app_state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
@@ -1021,7 +1047,7 @@ class TestStartContainer:
     async def test_cap_zero_omits_hosting_env(self, workspace, monkeypatch):
         """cap=0 suppresses KLANGK_PORT_MAPPINGS / KLANGK_HOSTING_* (#1237)."""
         monkeypatch.setattr(
-            self.registry.settings, "hosted_ports_per_workspace", "0"
+            self.registry.app_state.settings, "hosted_ports_per_workspace", "0"
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -1048,7 +1074,7 @@ class TestStartContainer:
         not just trim on the container's first start.
         """
         monkeypatch.setattr(
-            self.registry.settings, "hosted_ports_per_workspace", "0"
+            self.registry.app_state.settings, "hosted_ports_per_workspace", "0"
         )
         await self.registry.allocate_ports(workspace["id"], 5)
         assert await self.registry.get_workspace_ports(workspace["id"]) == []
@@ -1415,43 +1441,57 @@ class TestAllowedMountRoots:
 
     def test_bind_mount_allowed(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry, "allowed_mount_roots", ["/home", "/data"]
+            self.registry.app_state.settings,
+            "allowed_mount_roots",
+            "/home,/data",
         )
         assert (
             self.registry.validate_mount_spec("/home/user/src:/work") is None
         )
 
     def test_bind_mount_exact_root(self, monkeypatch):
-        monkeypatch.setattr(self.registry, "allowed_mount_roots", ["/home"])
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "allowed_mount_roots", "/home"
+        )
         assert self.registry.validate_mount_spec("/home:/work") is None
 
     def test_bind_mount_denied(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry, "allowed_mount_roots", ["/home", "/data"]
+            self.registry.app_state.settings,
+            "allowed_mount_roots",
+            "/home,/data",
         )
         err = self.registry.validate_mount_spec("/etc/passwd:/etc/passwd:ro")
         assert err is not None
         assert "allowed root" in err.lower()
 
     def test_bind_mount_traversal_denied(self, monkeypatch):
-        monkeypatch.setattr(self.registry, "allowed_mount_roots", ["/home"])
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "allowed_mount_roots", "/home"
+        )
         err = self.registry.validate_mount_spec("/home/../etc:/work")
         assert err is not None
         assert "allowed root" in err.lower()
 
     def test_named_volume_always_allowed(self, monkeypatch):
-        monkeypatch.setattr(self.registry, "allowed_mount_roots", ["/home"])
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "allowed_mount_roots", "/home"
+        )
         assert self.registry.validate_mount_spec("my-volume:/data") is None
 
     def test_no_restriction_when_empty(self, monkeypatch):
-        monkeypatch.setattr(self.registry, "allowed_mount_roots", [])
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "allowed_mount_roots", ""
+        )
         assert (
             self.registry.validate_mount_spec("/etc/shadow:/secrets") is None
         )
 
     def test_multiple_roots(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry, "allowed_mount_roots", ["/home", "/data", "/opt"]
+            self.registry.app_state.settings,
+            "allowed_mount_roots",
+            "/home,/data,/opt",
         )
         assert self.registry.validate_mount_spec("/data/files:/work") is None
         assert self.registry.validate_mount_spec("/opt/app:/app") is None
@@ -1465,7 +1505,9 @@ class TestProtectedPaths:
         self.registry = app_state.container_registry
 
     def test_docker_socket_blocked(self, monkeypatch):
-        monkeypatch.setattr(self.registry, "allowed_mount_roots", ["/"])
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "allowed_mount_roots", "/"
+        )
         err = self.registry.validate_mount_spec(
             "/var/run/docker.sock:/var/run/docker.sock"
         )
@@ -1473,7 +1515,9 @@ class TestProtectedPaths:
         assert "protected" in err.lower()
 
     def test_podman_socket_blocked(self, monkeypatch):
-        monkeypatch.setattr(self.registry, "allowed_mount_roots", ["/"])
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "allowed_mount_roots", "/"
+        )
         err = self.registry.validate_mount_spec(
             "/run/podman/podman.sock:/run/podman/podman.sock"
         )
@@ -1481,9 +1525,11 @@ class TestProtectedPaths:
         assert "protected" in err.lower()
 
     def test_data_dir_blocked(self, monkeypatch):
-        monkeypatch.setattr(self.registry, "allowed_mount_roots", ["/"])
         monkeypatch.setattr(
-            self.registry.settings, "data_dir", "/srv/klangk/data"
+            self.registry.app_state.settings, "allowed_mount_roots", "/"
+        )
+        monkeypatch.setattr(
+            self.registry.app_state.settings, "data_dir", "/srv/klangk/data"
         )
         err = self.registry.validate_mount_spec(
             "/srv/klangk/data/workspaces:/loot"
@@ -1522,9 +1568,9 @@ class TestProtectedPaths:
             link.symlink_to(str(target))
 
             monkeypatch.setattr(
-                self.registry,
+                self.registry.app_state.settings,
                 "allowed_mount_roots",
-                [str(allowed)],
+                str(allowed),
             )
             err = self.registry.validate_mount_spec(f"{link}:/mnt/data")
             assert err is None
@@ -1543,9 +1589,9 @@ class TestProtectedPaths:
             link.symlink_to(str(outside))
 
             monkeypatch.setattr(
-                self.registry,
+                self.registry.app_state.settings,
                 "allowed_mount_roots",
-                [str(allowed)],
+                str(allowed),
             )
             err = self.registry.validate_mount_spec(f"{link}:/mnt/data")
             assert err is not None
@@ -2536,7 +2582,7 @@ def _health_registry(ws_state=None):
 
     Constructs a fresh registry via ``_make_app_state`` and wires its
     ``sockets`` to the given WebSocketState (or a fresh one by default).
-    HealthMonitor reaches sockets via ``self.registry.app_state.sockets``.
+    HealthMonitor reaches sockets via ``self.app_state.sockets``.
     """
     app_state = _make_app_state(sockets=ws_state)
     return app_state.container_registry
@@ -2551,16 +2597,16 @@ def _health_state(
     setup_state="complete",
     health_status=None,
     in_startup_grace=False,
-    registry=None,
+    app_state=None,
 ):
     """Build a ContainerState wired up for health checks.
 
     *in_startup_grace* defaults to False so the core healthy/unhealthy
     tests exercise post-grace behavior; the startup-grace tests opt in.
     """
-    if registry is None:
-        registry = _health_registry()
-    st = container.ContainerState(workspace_id, container_id, registry)
+    if app_state is None:
+        app_state = _health_registry().app_state
+    st = container.ContainerState(workspace_id, container_id, app_state)
     st.health_check = health_check
     st.owner_id = owner_id
     st.setup_state = setup_state
@@ -2583,20 +2629,20 @@ class TestHealthMonitorRunOne:
         exec_mock = AsyncMock(return_value=(0, "", ""))
         with (
             patch.object(
-                monitor.registry.app_state.podman, "exec_container", exec_mock
+                monitor.app_state.podman, "exec_container", exec_mock
             ),
             patch.object(
-                monitor.registry.app_state.model.users,
+                monitor.app_state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2628,22 +2674,22 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.registry.app_state.podman,
+                monitor.app_state.podman,
                 "exec_container",
                 AsyncMock(return_value=(1, "", "curl: connection refused")),
             ),
             patch.object(
-                monitor.registry.app_state.model.users,
+                monitor.app_state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2660,22 +2706,22 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.registry.app_state.podman,
+                monitor.app_state.podman,
                 "exec_container",
                 AsyncMock(return_value=(2, "all good on stdout", "")),
             ),
             patch.object(
-                monitor.registry.app_state.model.users,
+                monitor.app_state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2692,22 +2738,22 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.registry.app_state.podman,
+                monitor.app_state.podman,
                 "exec_container",
                 AsyncMock(return_value=(127, "", "")),
             ),
             patch.object(
-                monitor.registry.app_state.model.users,
+                monitor.app_state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2734,22 +2780,22 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.registry.app_state.podman,
+                monitor.app_state.podman,
                 "exec_container",
                 AsyncMock(side_effect=podman.PodmanError(500, "boom")),
             ),
             patch.object(
-                monitor.registry.app_state.model.users,
+                monitor.app_state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2764,7 +2810,7 @@ class TestHealthMonitorRunOne:
         monitor = _health_registry().health
         st = _health_state(owner_id=None)
         with patch.object(
-            monitor.registry.app_state.podman, "exec_container"
+            monitor.app_state.podman, "exec_container"
         ) as exec_mock:
             status, message = await monitor._run_one(st)
         assert status == "unhealthy"
@@ -2777,12 +2823,12 @@ class TestHealthMonitorRunOne:
         st = _health_state(owner_id="uid-owner")
         with (
             patch.object(
-                monitor.registry.app_state.model.users,
+                monitor.app_state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value=None),
             ),
             patch.object(
-                monitor.registry.app_state.podman, "exec_container"
+                monitor.app_state.podman, "exec_container"
             ) as exec_mock,
         ):
             status, message = await monitor._run_one(st)
@@ -3034,7 +3080,9 @@ class TestHealthMonitorLoopSkips:
                 patch.object(
                     monitor, "_check_workspace", AsyncMock()
                 ) as check,
-                patch.object(reg, "health_check_interval", 0.01),
+                patch.object(
+                    reg.app_state.settings, "health_check_interval", "0.01"
+                ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
                 await asyncio.sleep(0.05)
@@ -3057,7 +3105,9 @@ class TestHealthMonitorLoopSkips:
                 patch.object(
                     monitor, "_check_workspace", AsyncMock()
                 ) as check,
-                patch.object(reg, "health_check_interval", 0.01),
+                patch.object(
+                    reg.app_state.settings, "health_check_interval", "0.01"
+                ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
                 await asyncio.sleep(0.05)
@@ -3080,7 +3130,9 @@ class TestHealthMonitorLoopSkips:
                 patch.object(
                     monitor, "_check_workspace", AsyncMock()
                 ) as check,
-                patch.object(reg, "health_check_interval", 0.01),
+                patch.object(
+                    reg.app_state.settings, "health_check_interval", "0.01"
+                ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
                 await asyncio.sleep(0.05)
@@ -3287,7 +3339,9 @@ class TestHealthLoopHeartbeat:
             )
             with (
                 patch.object(monitor, "_check_workspace", AsyncMock()),
-                patch.object(reg, "health_check_interval", 0.01),
+                patch.object(
+                    reg.app_state.settings, "health_check_interval", "0.01"
+                ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
                 await asyncio.sleep(0.05)
@@ -3377,7 +3431,7 @@ class TestRegistryServiceSessionLocks:
         settings = make_settings({})
         app_state = types_mod.SimpleNamespace(settings=settings)
         reg = container.ContainerRegistry(app_state)
-        assert reg.settings is not None
+        assert reg.app_state.settings is not None
         assert reg.app_state is app_state
 
 

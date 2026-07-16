@@ -150,7 +150,6 @@ class SSLTrust:
 
     def __init__(self, app_state):
         self.app_state = app_state
-        self.settings = app_state.settings
 
     def ssl_cert_dir(self) -> str | None:
         """Return the deployer SSL cert dir if it should be trusted, else ``None``.
@@ -162,9 +161,9 @@ class SSLTrust:
         of certs).  Never raises — a misconfigured path simply disables
         runtime trust.
         """
-        raw = self.settings.ssl_cert_dir
+        raw = self.app_state.settings.ssl_cert_dir
         if not raw:
-            customize = self.settings.customize_dir
+            customize = self.app_state.settings.customize_dir
             candidate = os.path.join(customize, "certs")
             if os.path.isdir(candidate):
                 raw = candidate
@@ -190,7 +189,7 @@ class SSLTrust:
         ssl_dir = self.ssl_cert_dir()
         if not ssl_dir:
             return None
-        state_dir = self.settings.state_dir
+        state_dir = self.app_state.settings.state_dir
         bundle_dir = os.path.join(state_dir, "ssl")
         try:
             os.makedirs(bundle_dir, exist_ok=True)

@@ -1,6 +1,7 @@
 """Tests for model: users, workspaces, messages, port allocations."""
 
 import asyncio
+import types
 import uuid
 
 import aiosqlite
@@ -2154,7 +2155,7 @@ class TestDB:
         from klangk_backend.settings import KlangkSettings
         import os
 
-        db = DB(KlangkSettings(os.environ))
+        db = DB(types.SimpleNamespace(settings=KlangkSettings(os.environ)))
         assert str(db.db_path).endswith("klangk.db")
         assert db.engine is None
 

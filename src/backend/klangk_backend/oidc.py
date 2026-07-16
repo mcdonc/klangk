@@ -153,7 +153,6 @@ class OIDC:
 
     def __init__(self, app_state):
         self.app_state = app_state
-        self.settings = app_state.settings
         self.providers: list[OIDCProvider] = []
         self.discovery_cache: dict[str, CachedDiscovery] = {}
         self.jwks_cache: dict[str, _CachedJWKS] = {}
@@ -190,19 +189,19 @@ class OIDC:
 
         Sources (checked in order, first non-empty wins):
 
-        1. **External file** — ``KLANGK_OIDC_CONFIG`` (``self.settings.oidc_config``)
+        1. **External file** — ``KLANGK_OIDC_CONFIG`` (``self.app_state.settings.oidc_config``)
            pointing at a separate YAML file.  This is an env-var override, so it
            wins over the config file (consistent with the global precedence rule:
            env > file > defaults).
         2. **Inline** — ``oidc_providers:`` list in the klangkd config file
-          (``self.settings.oidc_providers``).
+          (``self.app_state.settings.oidc_providers``).
 
         Returns an empty list if neither is configured.  Raises
         :class:`~klangk_backend.exceptions.ConfigurationError` if the external
         file path is set but doesn't exist.
         """
         # 1. External file via KLANGK_OIDC_CONFIG (env override wins)
-        config_path = self.settings.oidc_config
+        config_path = self.app_state.settings.oidc_config
         if config_path:
             if not os.path.isfile(config_path):
                 raise ConfigurationError(
@@ -215,8 +214,8 @@ class OIDC:
             return _parse_providers(raw, config_dir=config_dir)
 
         # 2. Inline providers from the config file
-        if self.settings.oidc_providers:
-            return _parse_providers(self.settings.oidc_providers)
+        if self.app_state.settings.oidc_providers:
+            return _parse_providers(self.app_state.settings.oidc_providers)
 
         return []
 
@@ -274,11 +273,11 @@ class OIDC:
         that used to default it). The deployment shape is derived from this
         knob plus ``KLANGK_LISTEN``.
 
-        Reads ``self.settings.auth_modes`` (resolved once at construction) —
+        Reads ``self.app_state.settings.auth_modes`` (resolved once at construction) —
         part of the composition-root refactor (#1426): the mode is not re-read
         from the environment at call time.
         """
-        val = self.settings.auth_modes
+        val = self.app_state.settings.auth_modes
         if val in ("oidc", "password", "both", "none"):
             return val
         return "none"
@@ -449,7 +448,7 @@ class OIDC:
 
         If not set, all OIDC logins are accepted with no group sync.
         """
-        raw = self.settings.oidc_login_hook
+        raw = self.app_state.settings.oidc_login_hook
         if not raw:
             self.login_hook = None
             self.login_hook_is_async = False

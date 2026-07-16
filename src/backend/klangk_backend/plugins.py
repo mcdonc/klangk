@@ -33,12 +33,16 @@ class Plugins:
 
     def __init__(self, app_state):
         self.app_state = app_state
-        self.settings = app_state.settings
-        self.plugins_dir = self.settings.plugins_dir
         # Loaded at startup: {env_key: {plugin, description, default, scope}}
         self.declarations: dict[str, dict] = {}
         # Resolved values: {env_key: str}
         self.values: dict[str, str] = {}
+
+    @property
+    def plugins_dir(self) -> str:
+        # Read live off app_state (#1608) so a SIGHUP settings reload picks
+        # up a changed KLANGK_PLUGINS_DIR / KLANGK_CUSTOMIZE_DIR.
+        return self.app_state.settings.plugins_dir
 
     def load(self) -> None:
         """Scan plugin package.json files and resolve config values."""

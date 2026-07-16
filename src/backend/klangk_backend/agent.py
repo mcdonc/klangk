@@ -92,7 +92,6 @@ class Agents:
 
     def __init__(self, app_state) -> None:
         self.app_state = app_state
-        self.settings = app_state.settings
         self._agents: dict[str, "AgentSession"] = {}
         self._agents_lock = asyncio.Lock()
 
@@ -103,7 +102,7 @@ class Agents:
         see ``AgentSession.ensure_started``, which consults this before
         creating the process.
         """
-        return self.settings.agent_disabled.strip().lower() in (
+        return self.app_state.settings.agent_disabled.strip().lower() in (
             "1",
             "true",
             "yes",

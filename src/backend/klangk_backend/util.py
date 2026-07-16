@@ -222,7 +222,6 @@ class Util:
 
     def __init__(self, app_state):
         self.app_state = app_state
-        self.settings = app_state.settings
         # Instance identity: resolved once at startup by resolve_instance_id()
         # and cached here — no module global (#1553).
         self._instance_id: str | None = None
@@ -249,7 +248,7 @@ class Util:
 
         Defaults to ``<state_dir>/custom`` (derived in ``_require_dirs``).
         """
-        return self.settings.customize_dir
+        return self.app_state.settings.customize_dir
 
     # --- Instance identity ------------------------------------------------
 
@@ -262,7 +261,9 @@ class Util:
         Resolves ``data_dir`` from ``self.settings``. Does **not** open the
         SQLite DB — only the path is computed.
         """
-        return Path(self.settings.data_dir) / self.INSTANCE_ID_FILENAME
+        return (
+            Path(self.app_state.settings.data_dir) / self.INSTANCE_ID_FILENAME
+        )
 
     def resolve_instance_id(self) -> str:
         """Read the instance ID from ``<data_dir>/instance-id``, creating it if absent.
@@ -327,7 +328,8 @@ class Util:
         user don't collide on one PID file.
         """
         return (
-            Path(self.settings.state_dir) / f"klangk-{self.instance_id()}.pid"
+            Path(self.app_state.settings.state_dir)
+            / f"klangk-{self.instance_id()}.pid"
         )
 
     def check_pid_file(self) -> int | None:
@@ -393,7 +395,7 @@ class Util:
 
     def reject_proxy_headers(self) -> bool:
         """True if KLANGK_REJECT_PROXY_HEADERS is set (hard trust-off)."""
-        raw = self.settings.reject_proxy_headers
+        raw = self.app_state.settings.reject_proxy_headers
         return bool(raw and raw.strip().lower() in ("1", "true", "yes"))
 
     def trusted_proxy_cidrs(self) -> set[ipaddress._BaseAddress]:
@@ -403,7 +405,7 @@ class Util:
         at construction (#1461). Invalid entries are logged and skipped; if
         none are valid, defaults to loopback.
         """
-        raw = self.settings.trusted_proxy_cidrs
+        raw = self.app_state.settings.trusted_proxy_cidrs
         trusted: set[ipaddress._BaseAddress] = set()
         for token in (raw or "").split(","):
             token = token.strip()
@@ -508,9 +510,9 @@ class Util:
         headers the request branches are skipped and the env vars are the
         sole source, falling back to bare ``localhost`` / ``http`` / ``""``.
         """
-        hostname = self.settings.hosting_hostname
-        proto = self.settings.hosting_proto
-        base_path = self.settings.hosting_base_path
+        hostname = self.app_state.settings.hosting_hostname
+        proto = self.app_state.settings.hosting_proto
+        base_path = self.app_state.settings.hosting_base_path
         trust = (
             (not self.reject_proxy_headers())
             and self.connection_peer_is_trusted(client_host)
@@ -549,7 +551,7 @@ class Util:
         wiring, not the browser origin). Origins carry no path, so
         KLANGK_HOSTING_BASE_PATH is ignored here.
         """
-        explicit = self.settings.cors_origins
+        explicit = self.app_state.settings.cors_origins
         if explicit:
             return [o.strip() for o in explicit.split(",") if o.strip()]
         hostname, proto, _ = self.derive_hosting_info(None, None)
@@ -562,7 +564,7 @@ class Util:
         long-but-progressing stream never times out. Override with
         KLANGK_BRIDGE_TIMEOUT_SECONDS (the settings field is parsed here).
         """
-        raw = self.settings.bridge_timeout_seconds
+        raw = self.app_state.settings.bridge_timeout_seconds
         try:
             return float(raw) if raw else 30.0
         except (TypeError, ValueError):

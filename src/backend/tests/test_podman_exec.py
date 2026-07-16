@@ -4,12 +4,13 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import types
 
 
 from klangk_backend.podman import ExecSession, Podman
 from _helpers import make_settings
 
-_podman = Podman(make_settings({}))
+_podman = Podman(types.SimpleNamespace(settings=make_settings({})))
 
 
 def _mock_proc(stdout_data=b"", returncode=None):

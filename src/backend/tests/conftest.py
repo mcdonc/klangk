@@ -6,6 +6,8 @@ import os
 # code executed inside SQLAlchemy's greenlet context is tracked.
 os.environ.setdefault("COVERAGE_CORE", "sysmon")
 
+import types
+
 import bcrypt
 
 import pytest
@@ -58,7 +60,7 @@ def temp_data_dir(tmp_path, monkeypatch):
     from klangk_backend.model.db import DB
     from _helpers import set_test_db, reset_test_db
 
-    set_test_db(DB(KlangkSettings(os.environ)))
+    set_test_db(DB(types.SimpleNamespace(settings=KlangkSettings(os.environ))))
     # Clear agent caches so each test starts fresh.
     from klangk_backend.model import clear_agent_cache
 

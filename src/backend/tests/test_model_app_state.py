@@ -381,7 +381,7 @@ class TestNoConfigDivergenceRegression:
             }
         )
         state = types.SimpleNamespace(settings=settings)
-        state.db = DB(settings)
+        state.db = DB(state)
         state.model = Model(state)
 
         # The owned DB resolves to the configured path, not the ambient one.
