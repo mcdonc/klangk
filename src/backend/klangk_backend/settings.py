@@ -506,6 +506,11 @@ class KlangkSettings(BaseSettings):
     brand_color: str = "#E65100"
     login_banner: str = ""
     login_banner_title: str = ""
+    # When true, the consent banner must be re-accepted on every fresh app
+    # load / login (acceptance is tracked in-memory for the session only).
+    # When false (default) acceptance is cached permanently against the
+    # banner text hash (#1544).
+    login_banner_every_visit: bool = False
     terminal_banner: str = ""
 
     # --- Agent ---

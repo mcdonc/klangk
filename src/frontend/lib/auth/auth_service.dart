@@ -21,6 +21,7 @@ class AuthService extends ChangeNotifier {
   String _bannerTitle = '';
   String _bannerText = '';
   bool _bannerAccepted = false;
+  bool _loginBannerEveryVisit = false;
   int _minPasswordLength = 8;
   String _instanceId = 'default';
   bool _allowAutostart = false;
@@ -34,6 +35,13 @@ class AuthService extends ChangeNotifier {
   String get bannerTitle => _bannerTitle;
   String get bannerText => _bannerText;
   bool get bannerAccepted => _bannerAccepted;
+
+  /// Whether the consent banner must be re-accepted on every fresh app load
+  /// (KLANGK_LOGIN_BANNER_EVERY_VISIT). When true, acceptance is held in
+  /// memory for the session only, so the banner re-appears on each app
+  /// restart / login. When false, acceptance is cached permanently against
+  /// the banner text hash (#1544).
+  bool get loginBannerEveryVisit => _loginBannerEveryVisit;
   bool get bannerRequired => _bannerText.isNotEmpty && !_bannerAccepted;
 
   /// Minimum password length enforced by the server (from /config). Defaults
@@ -102,6 +110,8 @@ class AuthService extends ChangeNotifier {
         final data = jsonDecode(resp.body);
         _bannerTitle = (data['login_banner_title'] as String?) ?? '';
         _bannerText = (data['login_banner'] as String?) ?? '';
+        _loginBannerEveryVisit =
+            (data['login_banner_every_visit'] as bool?) ?? false;
         _instanceId = (data['instance_id'] as String?) ?? 'default';
         _allowAutostart = (data['allow_autostart'] as bool?) ?? false;
         _minPasswordLength =
@@ -118,8 +128,15 @@ class AuthService extends ChangeNotifier {
     } // coverage:ignore-end
 
     if (_bannerText.isNotEmpty) {
-      final acceptedHash = prefs.getString('klangk_banner_accepted');
-      _bannerAccepted = acceptedHash == _bannerText.hashCode.toString();
+      if (_loginBannerEveryVisit) {
+        // Every-visit mode: acceptance never persists across app loads,
+        // so the banner shows on each fresh start / login regardless of any
+        // stored hash (#1544).
+        _bannerAccepted = false;
+      } else {
+        final acceptedHash = prefs.getString('klangk_banner_accepted');
+        _bannerAccepted = acceptedHash == _bannerText.hashCode.toString();
+      }
     }
 
     if (_token != null) {
@@ -170,9 +187,14 @@ class AuthService extends ChangeNotifier {
 
   Future<void> acceptBanner() async {
     if (_bannerText.isEmpty) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-        'klangk_banner_accepted', _bannerText.hashCode.toString());
+    // In every-visit mode the acceptance is session-only (in-memory),
+    // so we don't persist a hash — the banner re-prompts on the next app
+    // load (#1544).
+    if (!_loginBannerEveryVisit) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+          'klangk_banner_accepted', _bannerText.hashCode.toString());
+    }
     _bannerAccepted = true;
     notifyListeners();
   }

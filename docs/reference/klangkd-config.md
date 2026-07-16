@@ -132,6 +132,8 @@ smtp_use_tls: "true"
 product_name: "My Platform"
 brand_color: "#1565C0"
 logo_url: https://example.com/logo.png
+# Require consent banner acknowledgement on every fresh app load / login
+login_banner_every_visit: true
 ```
 
 ## All configuration keys
@@ -313,14 +315,15 @@ port: "8997"
 
 ### Branding / UI
 
-| Key                  | Default   | Env var                     |
-| -------------------- | --------- | --------------------------- |
-| `product_name`       | `Klangk`  | `KLANGK_PRODUCT_NAME`       |
-| `logo_url`           |           | `KLANGK_LOGO_URL`           |
-| `brand_color`        | `#E65100` | `KLANGK_BRAND_COLOR`        |
-| `login_banner`       |           | `KLANGK_LOGIN_BANNER`       |
-| `login_banner_title` |           | `KLANGK_LOGIN_BANNER_TITLE` |
-| `terminal_banner`    |           | `KLANGK_TERMINAL_BANNER`    |
+| Key                        | Default   | Env var                           |
+| -------------------------- | --------- | --------------------------------- |
+| `product_name`             | `Klangk`  | `KLANGK_PRODUCT_NAME`             |
+| `logo_url`                 |           | `KLANGK_LOGO_URL`                 |
+| `brand_color`              | `#E65100` | `KLANGK_BRAND_COLOR`              |
+| `login_banner`             |           | `KLANGK_LOGIN_BANNER`             |
+| `login_banner_title`       |           | `KLANGK_LOGIN_BANNER_TITLE`       |
+| `login_banner_every_visit` | `false`   | `KLANGK_LOGIN_BANNER_EVERY_VISIT` |
+| `terminal_banner`          |           | `KLANGK_TERMINAL_BANNER`          |
 
 ### Agent
 
