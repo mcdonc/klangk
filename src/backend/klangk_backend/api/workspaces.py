@@ -140,7 +140,7 @@ async def list_shared_workspaces(
     With pagination params returns an envelope (see ``list_workspaces``).
     """
     bare = limit is None and offset is None
-    result = await model.list_shared_workspaces(
+    result = await app_state.model.workspaces.list_shared_workspaces(
         user["id"],
         limit=BARE_LIST_LIMIT if bare else limit,
         offset=offset or 0,
@@ -270,10 +270,10 @@ async def update_workspace(
             raise HTTPException(status_code=400, detail=mount_err)
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
-    workspace = await model.get_workspace(workspace_id)
+    workspace = await app_state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
-    updated = await model.update_workspace(
+    updated = await app_state.model.workspaces.update_workspace(
         workspace_id, workspace["user_id"], **fields
     )
     if not updated:
@@ -308,7 +308,7 @@ async def duplicate_workspace(
     user: dict = Depends(acl.has_permission("create", workspace_resource)),
     app_state=Depends(get_app_state_dep),
 ):
-    source = await model.get_workspace(workspace_id)
+    source = await app_state.model.workspaces.get_workspace(workspace_id)
     if source is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
@@ -336,13 +336,15 @@ async def delete_workspace(
     user: dict = Depends(acl.has_permission("delete", workspace_resource)),
     app_state=Depends(get_app_state_dep),
 ):
-    workspace = await model.get_workspace(workspace_id)
+    workspace = await app_state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     # Capture shared members before we tear down ACL entries, so we can
     # notify them (and the owner/deleter) that the workspace is gone.
-    members = await model.get_workspace_members(workspace_id)
+    members = await app_state.model.workspaces.get_workspace_members(
+        workspace_id
+    )
 
     # Prefer the live container_id from the registry (tracks the currently
     # running container) over the DB value (may be stale if the container
@@ -392,7 +394,7 @@ async def restart_workspace(
     command re-fires at the create choke point, so a service workspace
     recovers to healthy.
     """
-    workspace = await model.get_workspace(workspace_id)
+    workspace = await app_state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
     live_state = app_state.container_registry.get_state(workspace_id)
@@ -421,7 +423,7 @@ async def workspace_status(
     Returns running state, container health, idle timeout info,
     and allocated ports.
     """
-    workspace = await model.get_workspace(workspace_id)
+    workspace = await app_state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
@@ -485,10 +487,14 @@ async def export_workspace(
     The archive contains workspace.json (metadata) and the home
     directory tree under home/.
     """
-    workspace = await model.get_workspace(workspace_id, admin["id"])
+    workspace = await app_state.model.workspaces.get_workspace(
+        workspace_id, admin["id"]
+    )
     if workspace is None:
         # Admin may not own the workspace — look it up without access check.
-        workspace = await model.get_workspace_by_id(workspace_id)
+        workspace = await app_state.model.workspaces.get_workspace_by_id(
+            workspace_id
+        )
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
@@ -771,8 +777,9 @@ async def _check_workspace_share(request: Request, user: dict) -> str:
 async def get_workspace_members(
     workspace_id: str,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    app_state=Depends(get_app_state_dep),
 ):
-    return await model.get_workspace_members(workspace_id)
+    return await app_state.model.workspaces.get_workspace_members(workspace_id)
 
 
 class AddMemberRequest(BaseModel):
@@ -1107,7 +1114,9 @@ async def transfer_workspace_ownership(
         raise HTTPException(status_code=404, detail="User not found")
 
     try:
-        ws = await model.transfer_workspace(workspace_id, target["id"])
+        ws = await app_state.model.workspaces.transfer_workspace(
+            workspace_id, target["id"]
+        )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

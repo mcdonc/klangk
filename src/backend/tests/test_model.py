@@ -1896,3 +1896,70 @@ class TestAclBackstopBranches:
         assert len(after) == 1
         # delete returns the count
         assert await model.delete_acl_entries_for_resource("/bs-res") == 1
+
+
+class TestWorkspacesBackstopBranches:
+    """Cover free-function branches not reached by app code (now on the
+    WorkspacesModel methods) — get_workspace_by_id, transfer_workspace,
+    the invalid-setup_state guard, the list q-filter, and the
+    role-group teardown in delete_workspace (#1575)."""
+
+    async def test_get_workspace_by_id_found_and_missing(self, user):
+        ws = await model.create_workspace(user["id"], "lookup")
+        found = await model.get_workspace_by_id(ws["id"])
+        assert found["name"] == "lookup"
+        assert await model.get_workspace_by_id("nope") is None
+
+    async def test_list_workspaces_with_query(self, user):
+        await model.create_workspace(user["id"], "alpha")
+        await model.create_workspace(user["id"], "beta")
+        result = await model.list_workspaces(user["id"], q="alp")
+        assert [w["name"] for w in result["items"]] == ["alpha"]
+
+    async def test_create_workspace_with_acl_invalid_setup_state(self, user):
+        with pytest.raises(ValueError):
+            await model.create_workspace_with_acl(
+                user["id"], "bad", setup_state="bogus"
+            )
+
+    async def test_delete_workspace_tears_down_role_groups(self, user):
+        ws = await model.create_workspace_with_acl(user["id"], "seeded")
+        # The four role groups exist before delete.
+        async with model.transaction() as db:
+            cur = await db.execute(
+                "SELECT name FROM groups WHERE name LIKE ?",
+                (f"%-{ws['id']}",),
+            )
+            assert len(await cur.fetchall()) == 4
+        assert await model.delete_workspace(ws["id"], user["id"]) is True
+        # Role groups + memberships + ACEs gone after delete.
+        async with model.transaction() as db:
+            cur = await db.execute(
+                "SELECT name FROM groups WHERE name LIKE ?",
+                (f"%-{ws['id']}",),
+            )
+            assert await cur.fetchall() == []
+
+    async def test_transfer_workspace_moves_ownership(self, user):
+        other = await model.create_user("newowner@x.com", "h")
+        ws = await model.create_workspace_with_acl(user["id"], "xfer")
+        transferred = await model.transfer_workspace(ws["id"], other["id"])
+        assert transferred["user_id"] == other["id"]
+        # Owner ACE (position 0) now points at the new owner.
+        entries = await model.get_acl_entries(f"/workspaces/{ws['id']}")
+        owner_ace = next(
+            e for e in entries if e["position"] == 0 and e["permission"] == "*"
+        )
+        assert owner_ace["user_id"] == other["id"]
+
+    async def test_transfer_workspace_guards(self, user):
+        other = await model.create_user("newowner2@x.com", "h")
+        ws = await model.create_workspace_with_acl(user["id"], "xfer-guard")
+        with pytest.raises(model.AgentPrincipalError):
+            await model.transfer_workspace(ws["id"], model.AGENT_USER_ID)
+        with pytest.raises(ValueError, match="already the owner"):
+            await model.transfer_workspace(ws["id"], user["id"])
+        await model.create_workspace_with_acl(other["id"], "xfer-guard")
+        with pytest.raises(ValueError, match="already owns"):
+            await model.transfer_workspace(ws["id"], other["id"])
+        assert await model.transfer_workspace("missing", other["id"]) is None

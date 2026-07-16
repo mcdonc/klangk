@@ -176,6 +176,23 @@ operators or integrators to act when upgrading.
   dead code. No behavior change — same DB, same queries; this is the
   second slice of #1563.
 
+- **`WorkspacesModel(app_state)` added as the workspaces domain
+  (#1575).** The workspaces data-access surface (workspace CRUD, ACL-
+  seeded creation, members, shared-workspace listings, ownership
+  transfer, container/port tracking) is now
+  `app_state.model.workspaces.<method>` (`create_workspace_with_acl`,
+  `create_workspace`, `list_workspaces`, `list_shared_workspaces`,
+  `get_workspace`, `get_workspace_by_id`, `get_workspace_members`,
+  `delete_workspace`, `update_workspace`, `transfer_workspace`, …),
+  reaching the DB through `self.app_state.db`. The ~28 request-path
+  call sites across `workspaces.py`, `agent.py`, `container.py`,
+  `api/workspaces.py`, `api/chat.py`, and `wshandler/controllers.py`
+  now go through it (`get_workspace_members` gained a
+  `Depends(get_app_state_dep)`). The module-level free-function
+  backstops stay for the test suite until #1578 dissolves them. No
+  behavior change — same DB, same queries; this is the fourth slice of
+  #1563.
+
 - **`Model(app_state)` composition root introduced (#1572).** A new
   `app.state.model = Model(app.state)` (wired in `build_app` after
   `app.state.db`) composes the per-domain data-access sub-objects.

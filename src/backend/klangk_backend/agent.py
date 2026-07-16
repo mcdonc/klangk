@@ -126,7 +126,9 @@ class Agents:
         process) and again from chat-start, which caches the result per
         ``AgentSession``.
         """
-        ws = await model.get_workspace_by_id(workspace_id)
+        ws = await self.app_state.model.workspaces.get_workspace_by_id(
+            workspace_id
+        )
         if not ws:
             raise AgentSetupError(
                 f"Workspace {workspace_id} not found in database"
@@ -246,7 +248,12 @@ class Agents:
         """
         if not workspace_id:
             return
-        if await model.get_workspace_by_id(workspace_id) is None:
+        if (
+            await self.app_state.model.workspaces.get_workspace_by_id(
+                workspace_id
+            )
+            is None
+        ):
             return
         agent_handle = await self.app_state.model.users.agent_handle()
         agent_email = await self.app_state.model.users.agent_email()
@@ -276,7 +283,12 @@ class Agents:
         """
         if not workspace_id:
             return
-        if await model.get_workspace_by_id(workspace_id) is None:
+        if (
+            await self.app_state.model.workspaces.get_workspace_by_id(
+                workspace_id
+            )
+            is None
+        ):
             return
         agent_handle = await self.app_state.model.users.agent_handle()
         agent_email = await self.app_state.model.users.agent_email()

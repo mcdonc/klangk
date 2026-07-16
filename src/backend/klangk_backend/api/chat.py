@@ -37,7 +37,9 @@ async def workspace_chat(
     The message is stored as MSG_AGENT and broadcast to all connected
     WebSocket subscribers in the workspace.
     """
-    workspace = await model.get_workspace_by_id(workspace_id)
+    workspace = await app_state.model.workspaces.get_workspace_by_id(
+        workspace_id
+    )
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 

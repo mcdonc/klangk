@@ -2030,13 +2030,14 @@ class TestWorkspaceRoutes:
             "/api/v1/workspaces", headers=headers, json={"name": "race-ws"}
         )
         ws_id = resp.json()["id"]
-        original_update = model.update_workspace
+        ws_model = app.state.model.workspaces
+        original_update = ws_model.update_workspace
 
         async def _delete_then_update(workspace_id, user_id, **fields):
-            await model.delete_workspace(workspace_id, user_id)
+            await ws_model.delete_workspace(workspace_id, user_id)
             return await original_update(workspace_id, user_id, **fields)
 
-        monkeypatch.setattr(model, "update_workspace", _delete_then_update)
+        monkeypatch.setattr(ws_model, "update_workspace", _delete_then_update)
         resp = await client.put(
             f"/api/v1/workspaces/{ws_id}",
             json={"service_command": "pi"},
