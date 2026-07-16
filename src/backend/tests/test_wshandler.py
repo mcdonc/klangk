@@ -256,7 +256,7 @@ async def _create_workspace_with_acl(app_state, user_id, name, **kwargs):
     """Create a workspace whose owner has full access.
 
     The service-layer ``create_workspace`` now seeds the owner ACE and role
-    groups atomically (see model.create_workspace_with_acl, #128), so this
+    groups atomically (see app_state.model.workspaces.create_workspace_with_acl, #128), so this
     is a thin alias kept for call-site readability.
     """
     return await app_state.workspaces.create_workspace(user_id, name, **kwargs)
@@ -7286,7 +7286,7 @@ class TestShareWindowHandlers:
             sockets.sessions.pop("ws-1", None)
 
     async def test_delete_shared_terminal_other_user_denied(
-        self, user, temp_data_dir
+        self, user, temp_data_dir, app_state
     ):
         """A collaborator may not delete another user's terminal
         (regression for #874)."""
@@ -7297,7 +7297,9 @@ class TestShareWindowHandlers:
         )
         # Workspace owned by `other`; caller is neither the terminal
         # owner nor the workspace owner.
-        workspace = await model.create_workspace(other["id"], "ws-other")
+        workspace = await app_state.model.workspaces.create_workspace(
+            other["id"], "ws-other"
+        )
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -7326,14 +7328,16 @@ class TestShareWindowHandlers:
             sockets.connections.pop(sock, None)
 
     async def test_delete_shared_terminal_workspace_owner_can_delete_others(
-        self, user, temp_data_dir
+        self, user, temp_data_dir, app_state
     ):
         """The workspace owner may delete another member's terminal."""
         other = await model.create_user(
             "other@example.com", "x", verified=True
         )
         # Workspace owned by the caller (`user`).
-        workspace = await model.create_workspace(user["id"], "ws-mine")
+        workspace = await app_state.model.workspaces.create_workspace(
+            user["id"], "ws-mine"
+        )
         async with _conn_in_workspace(user, workspace["id"]) as (
             sock,
             conn,
@@ -7920,7 +7924,7 @@ class TestSharedTerminalController:
         ]
         try:
             # owner_user_id != user["id"], so the delete handler calls
-            # model.get_workspace_by_id to authorize; return a workspace
+            # app_state.model.workspaces.get_workspace_by_id to authorize; return a workspace
             # owned by the current user so the delete is permitted.
             with (
                 patch.object(
@@ -10401,7 +10405,7 @@ class TestPresenceIncludesAgent:
 
 class TestAgentMentionOtherMsgsContext:
     async def test_other_user_messages_prepended_to_prompt(
-        self, user, agent_user
+        self, user, agent_user, app_state
     ):
         """When other users have spoken since the agent's last response,
         their messages are prepended to the prompt."""
@@ -10409,7 +10413,9 @@ class TestAgentMentionOtherMsgsContext:
         sockets = app_state.sockets
         from klangk_backend.wshandler import handle_agent_mention
 
-        workspace = await model.create_workspace(user["id"], "ctx-ws")
+        workspace = await app_state.model.workspaces.create_workspace(
+            user["id"], "ctx-ws"
+        )
         ws_id = workspace["id"]
 
         # Create a user2 whose message should appear in context
@@ -10492,13 +10498,17 @@ class TestAgentMentionAskerIdentity:
 
         assert asker_context_header(None, "alice", "/home/alice") is None
 
-    async def test_identity_prepended_to_prompt(self, user, agent_user):
+    async def test_identity_prepended_to_prompt(
+        self, user, agent_user, app_state
+    ):
         """An @mention from a user injects that user's identity header."""
         app_state = _make_app_state()
         sockets = app_state.sockets
         from klangk_backend.wshandler import handle_agent_mention
 
-        workspace = await model.create_workspace(user["id"], "id-ws")
+        workspace = await app_state.model.workspaces.create_workspace(
+            user["id"], "id-ws"
+        )
         ws_id = workspace["id"]
 
         captured_prompt = []

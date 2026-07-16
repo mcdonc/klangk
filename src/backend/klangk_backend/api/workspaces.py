@@ -28,7 +28,6 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 from .. import (
     acl,
     auth,
-    model,
     wshandler,
 )
 from ._common import get_app_state_dep

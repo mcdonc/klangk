@@ -100,6 +100,27 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **`WorkspacesModel` shim layer removed (#1597).** The workspace
+  data-access free functions in `model/workspaces.py`
+  (`create_workspace`, `create_workspace_with_acl`, `list_workspaces`,
+  `list_shared_workspaces`, `get_workspace`, `get_workspace_by_id`,
+  `get_workspace_members`, `delete_workspace`, `update_workspace`,
+  `update_workspace_container`, `transfer_workspace`,
+  `get_user_workspaces_with_containers`, `list_auto_start_workspaces`)
+  are **deleted** — they were the forwarding backstop the shim-layer
+  `WorkspacesModel(app_state)` landed in #1592 delegated to, so every
+  function existed twice. The class methods now own their bodies directly
+  (reaching the DB through `self.app_state.db`); the two atomicity-bound
+  helpers (`_insert_workspace_row` / `_seed_workspace_acl`) moved onto the
+  class as `db`-param methods (they still take the caller's connection so
+  the row insert + ACL/group seeding commit/roll back together). The pure
+  `sort_order_clause` helper and the module constants
+  (`DEFAULT_PORTS_PER_WORKSPACE`, `SORT_COLUMNS`, `SETUP_STATE_*`) stay
+  module-level. All production callers were already on
+  `app_state.model.workspaces.*` / the service layer (#1592); the ~130
+  test backstop sites and the `model/__init__.py` re-exports were updated.
+  No behavior change.
+
 - **`ChatModel(app_state)` (#1576).** The chat data-access functions in
   `model/chat.py` (`add_chat_message`, `delete_chat_message`,
   `get_chat_messages`, `get_chat_messages_before`, `parse_mentions`) are

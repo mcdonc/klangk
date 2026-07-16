@@ -317,17 +317,21 @@ class TestDataCarriesOver:
         assert none_me["email"] == pw_me["email"] == DEFAULT_EMAIL
 
     async def test_workspace_survives_mode_switch(
-        self, mode_server, monkeypatch
+        self, mode_server, monkeypatch, app_state
     ):
         """A workspace created in none mode is still owned by the default user
         after flipping to password mode — modes change auth, not data."""
         client, user = mode_server
         _none()
-        ws = await model.create_workspace(user["id"], "persists-across-switch")
+        ws = await app_state.model.workspaces.create_workspace(
+            user["id"], "persists-across-switch"
+        )
 
         _password()
         # Re-resolve the workspace straight from the DB the restart would see.
-        rows = (await model.list_workspaces(user["id"]))["items"]
+        rows = (await app_state.model.workspaces.list_workspaces(user["id"]))[
+            "items"
+        ]
         names = [r["name"] for r in rows]
         assert ws["name"] in names
 

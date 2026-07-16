@@ -215,9 +215,9 @@ def app_state(temp_data_dir):
 
 
 @pytest.fixture
-async def workspace(user):
+async def workspace(user, app_state):
     """Create a test workspace (without port allocation)."""
-    import klangk_backend.model as model
-
-    workspace = await model.create_workspace(user["id"], "test-workspace")
+    workspace = await app_state.model.workspaces.create_workspace(
+        user["id"], "test-workspace"
+    )
     return workspace
