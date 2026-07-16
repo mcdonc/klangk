@@ -1,7 +1,7 @@
 """Tests for runtime SSL/CA certificate trust (#1181).
 
-Covers the shared resolver (:func:`ssl_trust.ssl_cert_dir`), the
-backend-process trust path (:func:`ssl_trust.apply_backend_ssl_trust`),
+Covers the shared resolver (:meth:`ssl_trust.SSLTrust.ssl_cert_dir`), the
+backend-process trust path (:meth:`ssl_trust.SSLTrust.apply_backend_ssl_trust`),
 and the merged-bundle semantics (system + custom) that keep
 public-internet TLS working.
 """
@@ -23,6 +23,14 @@ def _settings(env: dict):
     return make_settings(env)
 
 
+def _trust(s) -> ssl_trust.SSLTrust:
+    """Build an SSLTrust owning the given settings (#1567).
+
+    SSLTrust only reads ``app_state.settings``, so a bare namespace is enough.
+    """
+    return ssl_trust.SSLTrust(types.SimpleNamespace(settings=s))
+
+
 @pytest.fixture(autouse=True)
 def _restore_trust_env(monkeypatch):
     """Snapshot/restore the trust env vars around each test.
@@ -42,22 +50,22 @@ def _restore_trust_env(monkeypatch):
 
 class TestSslCertDir:
     def test_unset_returns_none(self):
-        assert ssl_trust.ssl_cert_dir(_settings({})) is None
+        assert _trust(_settings({})).ssl_cert_dir() is None
 
     def test_missing_dir_returns_none(self, tmp_path):
         s = _settings({"KLANGK_SSL_CERT_DIR": str(tmp_path / "nope")})
-        assert ssl_trust.ssl_cert_dir(s) is None
+        assert _trust(s).ssl_cert_dir() is None
 
     def test_empty_dir_returns_none(self, tmp_path):
         (tmp_path / "readme.txt").write_text("no certs")
         s = _settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
-        assert ssl_trust.ssl_cert_dir(s) is None
+        assert _trust(s).ssl_cert_dir() is None
 
     def test_pem_and_crt_detected(self, tmp_path):
         (tmp_path / "a.pem").write_text("CERTA")
         (tmp_path / "b.CRT").write_text("CERTB")
         s = _settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
-        assert ssl_trust.ssl_cert_dir(s) == str(tmp_path.resolve())
+        assert _trust(s).ssl_cert_dir() == str(tmp_path.resolve())
 
     def test_falls_back_to_customize_dir_certs(self, tmp_path):
         # When KLANGK_SSL_CERT_DIR is unset but <customize_dir>/certs
@@ -67,7 +75,7 @@ class TestSslCertDir:
         certs.mkdir(parents=True)
         (certs / "ca.pem").write_text("CERT")
         s = _settings({"KLANGK_CUSTOMIZE_DIR": str(custom)})
-        assert ssl_trust.ssl_cert_dir(s) == str(certs.resolve())
+        assert _trust(s).ssl_cert_dir() == str(certs.resolve())
 
     def test_customize_dir_certs_ignored_when_empty(self, tmp_path):
         # An empty certs/ subdir is treated the same as missing.
@@ -75,7 +83,7 @@ class TestSslCertDir:
         certs = custom / "certs"
         certs.mkdir(parents=True)
         s = _settings({"KLANGK_CUSTOMIZE_DIR": str(custom)})
-        assert ssl_trust.ssl_cert_dir(s) is None
+        assert _trust(s).ssl_cert_dir() is None
 
 
 class TestSslEnvVars:
@@ -94,13 +102,13 @@ class TestSslEnvVars:
 
 class TestApplyBackendSslTrust:
     def test_noop_when_unset(self):
-        assert ssl_trust.apply_backend_ssl_trust(_settings({})) is None
+        assert _trust(_settings({})).apply_backend_ssl_trust() is None
         for k in ssl_trust.SSL_TRUST_VARS:
             assert k not in os.environ
 
     def test_noop_when_dir_has_no_certs(self, tmp_path):
         s = _settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
-        assert ssl_trust.apply_backend_ssl_trust(s) is None
+        assert _trust(s).apply_backend_ssl_trust() is None
         for k in ssl_trust.SSL_TRUST_VARS:
             assert k not in os.environ
 
@@ -122,7 +130,7 @@ class TestApplyBackendSslTrust:
             }
         )
 
-        bundle = ssl_trust.apply_backend_ssl_trust(s)
+        bundle = _trust(s).apply_backend_ssl_trust()
 
         assert bundle is not None
         assert os.path.isfile(bundle)
@@ -152,7 +160,7 @@ class TestApplyBackendSslTrust:
             }
         )
 
-        ssl_trust.apply_backend_ssl_trust(s)
+        _trust(s).apply_backend_ssl_trust()
 
         bundle = os.environ["SSL_CERT_FILE"]
         contents = Path(bundle).read_text()
@@ -182,12 +190,13 @@ class TestApplyBackendSslTrust:
             }
         )
 
-        ssl_trust.apply_backend_ssl_trust(s)
+        trust = _trust(s)
+        trust.apply_backend_ssl_trust()
         first = os.environ["SSL_CERT_FILE"]
         size_after_first = os.path.getsize(first)
         contents_after_first = Path(first).read_text()
 
-        ssl_trust.apply_backend_ssl_trust(s)
+        trust.apply_backend_ssl_trust()
         second = os.environ["SSL_CERT_FILE"]
         assert second == first
         assert os.path.getsize(second) == size_after_first
@@ -211,7 +220,7 @@ class TestApplyBackendSslTrust:
         )
 
         with caplog.at_level(logging.WARNING):
-            ssl_trust.apply_backend_ssl_trust(s)
+            _trust(s).apply_backend_ssl_trust()
         # Still applied (custom certs present), but warned about system loss.
         assert os.environ["SSL_CERT_FILE"]
         assert any("system bundle" in r.message for r in caplog.records)
@@ -334,14 +343,14 @@ class TestInternalsAndErrorBranches:
             lambda *a, **k: (_ for _ in ()).throw(OSError("nope")),
         )
         assert (
-            ssl_trust.apply_backend_ssl_trust(
+            _trust(
                 _settings(
                     {
                         "KLANGK_SSL_CERT_DIR": str(cert_dir),
                         "KLANGK_DATA_DIR": str(tmp_path / "data"),
                     }
                 )
-            )
+            ).apply_backend_ssl_trust()
             is None
         )
 
@@ -356,14 +365,14 @@ class TestInternalsAndErrorBranches:
         )
         with caplog.at_level(logging.WARNING):
             assert (
-                ssl_trust.apply_backend_ssl_trust(
+                _trust(
                     _settings(
                         {
                             "KLANGK_SSL_CERT_DIR": str(cert_dir),
                             "KLANGK_DATA_DIR": str(tmp_path / "data"),
                         }
                     )
-                )
+                ).apply_backend_ssl_trust()
                 is None
             )
         assert any("empty" in r.message for r in caplog.records)

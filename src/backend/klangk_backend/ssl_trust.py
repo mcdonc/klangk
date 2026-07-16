@@ -8,7 +8,7 @@ and both trust scopes consume them at runtime:
   at :data:`SSL_BUNDLE_DEST`, the in-container bundle the entrypoint builds
   from the mounted certs plus the container's system bundle.
 
-* **Backend process** — :func:`apply_backend_ssl_trust` builds a host-side
+* **Backend process** — :meth:`SSLTrust.apply_backend_ssl_trust` builds a host-side
   bundle and sets the trust vars in :data:`os.environ` so the backend's own
   outbound TLS (OIDC IdP, SMTP relay, LLM-proxy upstream) honors the private
   CAs.  Called once at startup (:func:`klangk_backend.main.lifespan`).
@@ -66,34 +66,11 @@ def iter_cert_files(ssl_dir: str):
             yield os.path.join(ssl_dir, name)
 
 
-def ssl_cert_dir(settings) -> str | None:
-    """Return the deployer SSL cert dir if it should be trusted, else ``None``.
-
-    Resolves ``KLANGK_SSL_CERT_DIR`` first (deprecated, backwards-compat);
-    falls back to ``<KLANGK_CUSTOMIZE_DIR>/certs`` (#1360).  Returns the
-    absolute path when the directory exists and contains at least one
-    ``.pem``/``.crt`` file; ``None`` otherwise (unset, missing, or empty
-    of certs).  Never raises — a misconfigured path simply disables
-    runtime trust.
-    """
-    raw = settings.ssl_cert_dir
-    if not raw:
-        customize = settings.customize_dir
-        candidate = os.path.join(customize, "certs")
-        if os.path.isdir(candidate):
-            raw = candidate
-    if not raw:
-        return None
-    path = os.path.realpath(raw)
-    if not os.path.isdir(path):
-        return None
-    return path if any(True for _ in iter_cert_files(path)) else None
-
-
 def ssl_env_vars(ssl_dir: str | None) -> list[str]:
     """Container env vars pointing toolchains at the in-container bundle.
 
-    Empty unless a trustable cert dir is configured (see :func:`ssl_cert_dir`).
+    Empty unless a trustable cert dir is configured
+    (see :meth:`SSLTrust.ssl_cert_dir`).
     The bundle itself is built by the container entrypoint at startup from the
     mounted certs plus the container's system bundle.
     """
@@ -160,48 +137,88 @@ def write_merged_bundle(bundle_path: str, ssl_dir: str) -> bool:
     return written > 0 and os.path.getsize(bundle_path) > 0
 
 
-def apply_backend_ssl_trust(settings) -> str | None:
-    """Make the backend process trust the deployer's custom CAs.
+class SSLTrust:
+    """Owns the settings-dependent SSL trust surface (#1567).
 
-    Builds a merged bundle (system + custom) under ``<data_dir>/ssl`` and sets
-    :data:`SSL_TRUST_VARS` in :data:`os.environ`, so the backend's outbound TLS
-    (OIDC discovery, SMTP relay, LLM-proxy upstream) honors the private CAs.
-    Idempotent and safe to call at startup; a no-op when no cert dir is
-    configured.  Refuses to apply trust when the system bundle can't be found
-    *and* no cert was written (would risk losing public-internet trust).
-
-    Returns the bundle path, or ``None`` if trust was not applied.
+    The 2 functions that read ``settings`` — the cert-dir resolver and the
+    backend-process trust applier — live here as methods (``ssl_cert_dir`` /
+    ``apply_backend_ssl_trust``), reaching the deployer config through
+    ``self.settings`` rather than threading it through every call. The 4 pure
+    path/bundle helpers and the module constants stay module-level: they take
+    explicit paths or none at all and read no settings.
     """
-    ssl_dir = ssl_cert_dir(settings)
-    if not ssl_dir:
-        return None
-    state_dir = settings.state_dir
-    bundle_dir = os.path.join(state_dir, "ssl")
-    try:
-        os.makedirs(bundle_dir, exist_ok=True)
-    except OSError as exc:
-        logger.error("Cannot create SSL bundle dir %s: %s", bundle_dir, exc)
-        return None
-    bundle_path = os.path.join(bundle_dir, "ca-bundle.crt")
-    if not write_merged_bundle(bundle_path, ssl_dir):
-        logger.warning(
-            "SSL bundle %s is empty (no system bundle and no custom certs); "
-            "not applying backend trust",
+
+    def __init__(self, app_state):
+        self.app_state = app_state
+        self.settings = app_state.settings
+
+    def ssl_cert_dir(self) -> str | None:
+        """Return the deployer SSL cert dir if it should be trusted, else ``None``.
+
+        Resolves ``KLANGK_SSL_CERT_DIR`` first (deprecated, backwards-compat);
+        falls back to ``<KLANGK_CUSTOMIZE_DIR>/certs`` (#1360).  Returns the
+        absolute path when the directory exists and contains at least one
+        ``.pem``/``.crt`` file; ``None`` otherwise (unset, missing, or empty
+        of certs).  Never raises — a misconfigured path simply disables
+        runtime trust.
+        """
+        raw = self.settings.ssl_cert_dir
+        if not raw:
+            customize = self.settings.customize_dir
+            candidate = os.path.join(customize, "certs")
+            if os.path.isdir(candidate):
+                raw = candidate
+        if not raw:
+            return None
+        path = os.path.realpath(raw)
+        if not os.path.isdir(path):
+            return None
+        return path if any(True for _ in iter_cert_files(path)) else None
+
+    def apply_backend_ssl_trust(self) -> str | None:
+        """Make the backend process trust the deployer's custom CAs.
+
+        Builds a merged bundle (system + custom) under ``<data_dir>/ssl`` and sets
+        :data:`SSL_TRUST_VARS` in :data:`os.environ`, so the backend's outbound TLS
+        (OIDC discovery, SMTP relay, LLM-proxy upstream) honors the private CAs.
+        Idempotent and safe to call at startup; a no-op when no cert dir is
+        configured.  Refuses to apply trust when the system bundle can't be found
+        *and* no cert was written (would risk losing public-internet trust).
+
+        Returns the bundle path, or ``None`` if trust was not applied.
+        """
+        ssl_dir = self.ssl_cert_dir()
+        if not ssl_dir:
+            return None
+        state_dir = self.settings.state_dir
+        bundle_dir = os.path.join(state_dir, "ssl")
+        try:
+            os.makedirs(bundle_dir, exist_ok=True)
+        except OSError as exc:
+            logger.error(
+                "Cannot create SSL bundle dir %s: %s", bundle_dir, exc
+            )
+            return None
+        bundle_path = os.path.join(bundle_dir, "ca-bundle.crt")
+        if not write_merged_bundle(bundle_path, ssl_dir):
+            logger.warning(
+                "SSL bundle %s is empty (no system bundle and no custom certs); "
+                "not applying backend trust",
+                bundle_path,
+            )
+            return None
+        if not system_ca_bundle(self_bundle=bundle_path):
+            logger.warning(
+                "Applying backend SSL trust without a system bundle: the trust "
+                "vars replace the default store, so public-internet TLS endpoints "
+                "may fail. Provide a system CA bundle or unset KLANGK_SSL_CERT_DIR."
+            )
+        for name in SSL_TRUST_VARS:
+            os.environ[name] = bundle_path
+        logger.info(
+            "Backend SSL trust applied: %s -> %d env var(s) (custom certs from %s)",
             bundle_path,
+            len(SSL_TRUST_VARS),
+            ssl_dir,
         )
-        return None
-    if not system_ca_bundle(self_bundle=bundle_path):
-        logger.warning(
-            "Applying backend SSL trust without a system bundle: the trust "
-            "vars replace the default store, so public-internet TLS endpoints "
-            "may fail. Provide a system CA bundle or unset KLANGK_SSL_CERT_DIR."
-        )
-    for name in SSL_TRUST_VARS:
-        os.environ[name] = bundle_path
-    logger.info(
-        "Backend SSL trust applied: %s -> %d env var(s) (custom certs from %s)",
-        bundle_path,
-        len(SSL_TRUST_VARS),
-        ssl_dir,
-    )
-    return bundle_path
+        return bundle_path

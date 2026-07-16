@@ -415,7 +415,7 @@ async def lifespan(app: FastAPI):
     # Make the backend process itself trust deployer-supplied CAs (#1181)
     # before any outbound TLS happens (OIDC discovery, SMTP relay, LLM-proxy
     # upstream). No-op when KLANGK_SSL_CERT_DIR is unset or empty of certs.
-    ssl_trust.apply_backend_ssl_trust(app.state.settings)
+    app.state.ssl_trust.apply_backend_ssl_trust()
 
     # Configure Logfire *after* SSL trust is applied. logfire.configure()
     # probes the Logfire API at configuration time, so it must run once the
@@ -572,6 +572,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # operation (previously module-level globals + import-time
     # resolve_env_value reads in auth.py). Reads self.settings at
     # construction/call time.
+    # #1567: SSLTrust(app_state) owns the settings-dependent trust surface
+    # (cert-dir resolver + backend-process trust applier). The 4 pure
+    # path/bundle helpers stay module-level in ssl_trust.py.
+    app.state.ssl_trust = ssl_trust.SSLTrust(app.state)
     app.state.auth = auth.Auth(app.state)
     # #1468: Podman(settings) owns the resolved binary path + the ~20 CLI
     # wrappers. Constructed before the registry/terminal so they reach it

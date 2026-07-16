@@ -100,6 +100,20 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **`SSLTrust(app_state)` class (#1567).** The two settings-dependent
+  functions in `ssl_trust.py` — the cert-dir resolver and the
+  backend-process trust applier — are now methods on an
+  `app.state.ssl_trust = SSLTrust(app.state)` instance
+  (`ssl_cert_dir()` / `apply_backend_ssl_trust()`), reading the deployer
+  config through `self.settings` instead of threading `settings` through
+  every call. The four pure path/bundle helpers (`iter_cert_files`,
+  `ssl_env_vars`, `system_ca_bundle`, `write_merged_bundle`) and the
+  module constants (`SSL_MOUNT_DEST`, `SSL_BUNDLE_DEST`, `SSL_CERT_EXTS`,
+  `SSL_TRUST_VARS`) stay module-level. `main.py` (lifespan) and
+  `container.py` (`ContainerRegistry`) now reach the resolver via
+  `self.app_state.ssl_trust`. No trust-merge logic or bundle-format
+  change — purely how callers reach the functions.
+
 - **`Lifecycle(app_state)` class** — the app-level lifecycle functions in
   `klangk_backend/main.py` (DB seeding of the default user / agent user /
   default ACLs, plus `startup` / `runtime_shutdown` / `process_shutdown` /

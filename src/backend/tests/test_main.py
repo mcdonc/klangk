@@ -19,6 +19,7 @@ from klangk_backend import (
     emailsvc as emailsvc_mod,
     files as files_mod,
     nginx as nginx_mod,
+    ssl_trust as ssl_trust_mod,
     util as util_mod,
     main,
     model,
@@ -64,6 +65,8 @@ def _make_app_state(settings=None):
     app_state.agents = agent_mod.Agents(app_state)
     app_state.email = emailsvc_mod.EmailService(app_state)
     app_state.util = util_mod.Util(app_state)
+    # #1567: the lifespan calls app.state.ssl_trust.apply_backend_ssl_trust().
+    app_state.ssl_trust = ssl_trust_mod.SSLTrust(app_state)
 
     app_state.auth = auth_mod.Auth(app_state)
     # #1571: Lifecycle(app_state) owns startup/shutdown/restart + seeding.
@@ -428,6 +431,7 @@ class TestLifespan:
         app.state.container_registry = app_state.container_registry
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
+        app.state.ssl_trust = app_state.ssl_trust
         app.state.db = app_state.db
         app.state.model = app_state.model
         app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
@@ -475,6 +479,7 @@ class TestLifespan:
         app.state.container_registry = app_state.container_registry
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
+        app.state.ssl_trust = app_state.ssl_trust
         app.state.db = app_state.db
         app.state.model = app_state.model
         app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
@@ -517,6 +522,7 @@ class TestLifespan:
         app = FastAPI()
         app_state = _make_app_state()
         app.state.settings = app_state.settings
+        app.state.ssl_trust = app_state.ssl_trust
         app.state.util = util_mod.Util(app.state)
         # The lifespan binds app.state.db into the ContextVar before the
         # pid-file refuse check (#1520); point it at the conftest-bound DB.
@@ -685,6 +691,7 @@ class TestStartupShutdownRestart:
         app.state.container_registry = app_state.container_registry
         app.state.sockets = app_state.sockets
         app.state.settings = app_state.settings
+        app.state.ssl_trust = app_state.ssl_trust
         app.state.db = app_state.db
         app.state.model = app_state.model
         app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app.state)
