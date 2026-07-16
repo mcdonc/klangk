@@ -172,6 +172,11 @@ if resolve_env_value("KLANGK_TEST_MODE"):  # pragma: no cover
 
 LOGIN_BANNER_TITLE = resolve_env_value("KLANGK_LOGIN_BANNER_TITLE", "")
 LOGIN_BANNER = resolve_env_value("KLANGK_LOGIN_BANNER", "")
+# When true, the consent banner must be re-accepted on every fresh app
+# load / login (acceptance is tracked in-memory for the session only).
+# When false (default) acceptance is cached permanently against the banner
+# text hash (#1544).
+LOGIN_BANNER_EVERY_VISIT = resolve_env_bool("KLANGK_LOGIN_BANNER_EVERY_VISIT")
 PRODUCT_NAME = resolve_env_value("KLANGK_PRODUCT_NAME", "Klangk") or "Klangk"
 
 # Configurable legal & support links (#1177). These are PUBLIC URLs shown
@@ -199,6 +204,7 @@ async def get_config():
         "product_name": PRODUCT_NAME,
         "login_banner_title": LOGIN_BANNER_TITLE,
         "login_banner": LOGIN_BANNER,
+        "login_banner_every_visit": LOGIN_BANNER_EVERY_VISIT,
         "oidc_providers": oidc.list_providers(),
         "auth_modes": oidc.auth_modes(),
         "instance_id": model.get_instance_id(),
