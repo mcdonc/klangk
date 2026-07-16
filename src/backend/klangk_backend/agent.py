@@ -62,7 +62,7 @@ def ephemeral_system_message(
 ) -> dict:
     """Build a transient agent presence system message for live broadcast.
 
-    Mirrors the shape returned by [model.add_chat_message] so the frontend
+    Mirrors the shape returned by model.chat.add_chat_message so the frontend
     renders it the same as a persisted system message, but is never written
     to chat history — agent presence transitions (disconnect/reconnect) are
     driven by container lifecycle (idle-stop, restart, crash) and would

@@ -378,7 +378,9 @@ class Connection:
 
     async def _send_chat_history(self, workspace_id: str) -> None:
         """Send chat history to the connecting user."""
-        chat_history = await model.get_chat_messages(workspace_id)
+        chat_history = await self.app_state.model.chat.get_chat_messages(
+            workspace_id
+        )
         if chat_history:
             self.sock.send_json(
                 {"type": "chat_history", "messages": chat_history}
@@ -404,7 +406,7 @@ class Connection:
                 if sock is not self.sock:
                     sock.send_json(join_msg)
 
-            sys_msg = await model.add_chat_message(
+            sys_msg = await self.app_state.model.chat.add_chat_message(
                 workspace_id,
                 self.user["id"],
                 self.user["email"],
@@ -724,7 +726,7 @@ class Connection:
         text = msg.get("message", "").strip()
         if not text:
             return
-        chat_msg = await model.add_chat_message(
+        chat_msg = await self.app_state.model.chat.add_chat_message(
             workspace_id, self.user["id"], self.user["email"], text
         )
         session = self.app_state.sockets.get_session(workspace_id)
@@ -794,7 +796,9 @@ class Connection:
         message_id = msg.get("message_id", "")
         if not message_id:
             return
-        deleted = await model.delete_chat_message(message_id, self.user["id"])
+        deleted = await self.app_state.model.chat.delete_chat_message(
+            message_id, self.user["id"]
+        )
         if deleted:
             session = self.app_state.sockets.get_session(workspace_id)
             if session:
@@ -814,7 +818,7 @@ class Connection:
         if not before_id:
             return
         limit = min(msg.get("limit", 50), 100)
-        messages = await model.get_chat_messages_before(
+        messages = await self.app_state.model.chat.get_chat_messages_before(
             workspace_id, before_id, limit
         )
         self.sock.send_json(

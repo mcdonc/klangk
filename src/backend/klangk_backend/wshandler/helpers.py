@@ -137,7 +137,7 @@ async def refresh_user_handle(
         if session:
             presence = await get_presence_list(ws_id, sockets)
             session.broadcast({"type": "presence_list", "users": presence})
-            sys_msg = await model.add_chat_message(
+            sys_msg = await sockets.app_state.model.chat.add_chat_message(
                 ws_id,
                 user_id,
                 user_email,

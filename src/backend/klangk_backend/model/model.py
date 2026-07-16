@@ -19,6 +19,7 @@ they're still reached via the module-level free functions + the
 from contextlib import asynccontextmanager
 
 from .acl import ACLModel
+from .chat import ChatModel
 from .ports import PortsModel
 from .tokens import TokensModel
 from .login_attempts import LoginAttemptsModel
@@ -46,6 +47,7 @@ class Model:
         self.users = UsersModel(app_state)
         self.acl = ACLModel(app_state)
         self.workspaces = WorkspacesModel(app_state)
+        self.chat = ChatModel(app_state)
 
     @asynccontextmanager
     async def transaction(self):

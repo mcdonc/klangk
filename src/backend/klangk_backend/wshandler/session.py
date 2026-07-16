@@ -551,7 +551,7 @@ class WebSocketState:
                 if still_connected:  # pragma: no cover
                     return
 
-                sys_msg = await model.add_chat_message(
+                sys_msg = await self.app_state.model.chat.add_chat_message(
                     workspace_id,
                     user_id,
                     user["email"],
