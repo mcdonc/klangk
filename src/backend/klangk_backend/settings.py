@@ -42,7 +42,7 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
-from pydantic import field_validator, model_validator
+from pydantic import PrivateAttr, field_validator, model_validator
 from pydantic_settings.sources.providers.env import parse_env_vars
 
 logger = logging.getLogger(__name__)
@@ -269,6 +269,16 @@ class KlangkSettings(BaseSettings):
     _env_for_sources: ClassVar[Mapping[str, str] | None] = None
     _config_file_for_sources: ClassVar[str | None] = None
 
+    # The sources this instance was built from, retained so :meth:`reload`
+    # can re-resolve identically (env-only or env + the same YAML config
+    # file).  Private attrs (NOT model fields) — they carry no config data
+    # and must not be validated.  ``_reload_env`` is a reference to the
+    # mapping passed to ``__init__``: ``os.environ`` in production (a live
+    # mapping, so reload picks up operator edits), a dict in tests (so
+    # reload re-reads that dict, never ``os.environ`` — #1457 isolation).
+    _reload_env: Mapping[str, str] | None = PrivateAttr(default=None)
+    _reload_config_file: str | None = PrivateAttr(default=None)
+
     model_config = SettingsConfigDict(
         env_prefix="KLANGK_",
         extra="ignore",
@@ -301,6 +311,31 @@ class KlangkSettings(BaseSettings):
             # the class if ``super().__init__()`` raises.
             type(self)._env_for_sources = None
             type(self)._config_file_for_sources = None
+        # Retain the real sources for reload() (see the PrivateAttr decl).
+        self._reload_env = env
+        self._reload_config_file = config_file
+
+    def reload(self) -> "KlangkSettings":
+        """Re-resolve settings from the same sources used to build this instance.
+
+        Returns a fresh ``KlangkSettings`` built from the env mapping + config
+        file captured at construction (see ``_reload_env`` /
+        ``_reload_config_file``).  In production the env mapping is the live
+        ``os.environ``, so a reload after an operator edits ``KLANGK_*``
+        picks up the new values; in tests it is the dict passed to the
+        constructor, so reload re-reads that dict and never touches
+        ``os.environ``.
+
+        Raises whatever construction raises — pydantic ``ValidationError``
+        for a bogus/invalid value (a dangling ``file:``/``cmd:`` ref, a
+        failed field/model validator, a duplicate port, ...) or ``OSError``
+        if the config file can no longer be read.  Callers that want a
+        deny-on-invalid gate (e.g. the SIGHUP restart path, #1587) wrap this
+        in a try/except and refuse to act on failure.
+        """
+        return type(self)(
+            self._reload_env, config_file=self._reload_config_file
+        )
 
     @classmethod
     def settings_customise_sources(

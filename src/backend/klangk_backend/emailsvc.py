@@ -49,6 +49,10 @@ class EmailService:
         # flip KLANGK_EMAIL_TEMPLATES_DIR between cases).
         self._env: Environment | None = None
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+        self._env = None
+
     # --- config ---
 
     def resolve_password(self) -> str | None:

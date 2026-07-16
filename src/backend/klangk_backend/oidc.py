@@ -159,6 +159,13 @@ class OIDC:
         self.login_hook: Callable | None = None
         self.login_hook_is_async: bool = False
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+        self.discovery_cache.clear()
+        self.jwks_cache.clear()
+        self.init_providers()
+        self.load_login_hook()
+
     async def sync_oidc_groups(
         self,
         user_id: str,

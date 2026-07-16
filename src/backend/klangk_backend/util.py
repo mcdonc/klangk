@@ -236,6 +236,9 @@ class Util:
         # unit/e2e tests that launch uvicorn over TCP are unaffected.
         self.uds_mode = False
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+
     def set_uds_mode(self, enabled: bool) -> None:
         """Mark whether the server is bound to a UDS. Called from the lifespan
         when the bind is a socket; never set by tests that use TCP or the ASGI

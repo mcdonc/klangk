@@ -419,6 +419,9 @@ class WebSocketState:
         # broadcast; if they reconnect before it fires we cancel it.
         self._pending_leaves: dict[tuple[str, str], asyncio.Task] = {}
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+
     def get_session(self, workspace_id: str) -> WorkspaceSession | None:
         return self.sessions.get(workspace_id)
 

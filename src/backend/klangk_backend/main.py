@@ -60,6 +60,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# Settings that a SIGHUP reload re-resolves and validates but CANNOT apply
+# without a full process restart: the HTTP listener is bound for the life of
+# the process, and the DB engine + on-disk state dir are already open/written.
+# A change here is logged at warning level (so the operator knows it didn't
+# take effect) rather than silently ignored (#1587).
+_NON_RELOADABLE_SETTINGS: tuple[tuple[str, str], ...] = (
+    ("port", "the HTTP listener is already bound"),
+    ("listen", "the HTTP listener is already bound"),
+    ("data_dir", "the DB engine is already open"),
+    ("state_dir", "instance state is already on disk"),
+)
+
+
 class Lifecycle:
     """App-level bringup/shutdown and DB seeding (#1571).
 
@@ -87,6 +100,9 @@ class Lifecycle:
         # running event loop (the constructor runs in build_app, outside a
         # loop).
         self._restart_lock: asyncio.Lock | None = None
+
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
 
     async def seed_default_acls(self, admin_group_id: str) -> None:
         """Seed default ACL entries if none exist yet."""
@@ -295,19 +311,120 @@ class Lifecycle:
     async def restart_runtime(self) -> None:
         """Graceful runtime restart: stop containers, keep the listener.
 
-        Triggered by SIGHUP.  Closes all WebSocket clients (code 1012),
-        stops containers and background loops, then re-runs container-side
-        startup (prewarm, adopt, loops, auto-start).  The HTTP listener
-        and DB engine stay up throughout -- clients reconnect
-        automatically, and in-flight HTTP requests are never dropped.
+        Triggered by SIGHUP.  Before touching the runtime, configuration is
+        re-resolved (``settings.reload()``, #1587); if it is invalid the
+        restart is **denied** -- the running runtime is left untouched on
+        its last-known-good config rather than torn down against a broken
+        one.  On a valid reload the settings are **swapped** onto
+        ``app_state.settings`` and the OIDC/plugins/SSL-trust/agent-user
+        steps are re-run, then the runtime recycles.  All subsystems read
+        settings live via ``self.app_state.settings`` (#1608), so the swap
+        propagates automatically with no per-subsystem ``reconfigure()``.
         """
         if self._restart_lock is None:
             self._restart_lock = asyncio.Lock()
         async with self._restart_lock:
+            new_settings, error = self._reload_settings()
+            if error is not None:
+                logger.error(
+                    "SIGHUP: denying restart — invalid configuration: %s",
+                    error,
+                )
+                logger.info(
+                    "SIGHUP: restart denied; runtime left running on "
+                    "existing configuration"
+                )
+                return
+            logger.info("SIGHUP: applying reloaded configuration")
+            await self._apply_reloaded_settings(new_settings)
             logger.info("SIGHUP: restarting runtime (keeping HTTP listener)")
             await self.runtime_shutdown()
             await self.startup()
             logger.info("SIGHUP: runtime restarted")
+
+    def _reload_settings(
+        self,
+    ) -> tuple[KlangkSettings | None, str | None]:
+        """Re-resolve settings for a SIGHUP reload.
+
+        Returns ``(new, error)``: on success ``new`` is the freshly-resolved
+        :class:`KlangkSettings` and ``error`` is ``None``; on failure ``new``
+        is ``None`` and ``error`` is the deny reason.
+        """
+        try:
+            new = self.app_state.settings.reload()
+        except Exception as exc:  # noqa: BLE001 — surface any failure
+            return None, str(exc)
+        return new, None
+
+    async def _apply_reloaded_settings(self, new: KlangkSettings) -> None:
+        """Swap settings and call ``reconfigure(app_state)`` on every subsystem.
+
+        All subsystems read ``self.app_state.settings`` live (#1608), so
+        swapping the instance propagates automatically.  Each subsystem's
+        ``reconfigure(app_state)`` handles any cached runtime state that
+        needs refreshing (OIDC caches, plugin declarations, SSL trust,
+        nginx renderer, email templates).  Most are no-ops.  Each call is
+        best-effort: a failure is logged at warning level and skipped so
+        one bad step can't leave the runtime half-reconfigured.
+        """
+        app_state = self.app_state
+        self._warn_non_reloadable(app_state.settings, new)
+        app_state.settings = new
+
+        # Every app_state subsystem that implements reconfigure().
+        subsystems: list[tuple[str, str]] = [
+            ("ssl_trust", "ssl_trust"),
+            ("auth", "auth"),
+            ("podman", "podman"),
+            ("sockets", "sockets"),
+            ("container_registry", "container_registry"),
+            ("nginx_watchdog", "nginx_watchdog"),
+            ("terminal", "terminal"),
+            ("oidc", "oidc"),
+            ("plugins", "plugins"),
+            ("workspaces", "workspaces"),
+            ("files", "files"),
+            ("db", "db"),
+            ("model", "model"),
+            ("agents", "agents"),
+            ("acl", "acl"),
+            ("email", "email"),
+            ("util", "util"),
+            ("lifecycle", "lifecycle"),
+        ]
+        for name, attr in subsystems:
+            try:
+                getattr(app_state, attr).reconfigure(app_state)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "SIGHUP: %s reconfigure failed (skipped): %s", name, exc
+                )
+        # The agent email/handle live in the users table; re-seed so a
+        # changed KLANGK_AGENT_EMAIL/_HANDLE takes effect in the DB.
+        try:
+            await self.seed_agent_user()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "SIGHUP: agent user re-seed failed (skipped): %s", exc
+            )
+
+    def _warn_non_reloadable(
+        self, old: KlangkSettings, new: KlangkSettings
+    ) -> None:
+        """Log settings that changed but need a full process restart."""
+        changed = [
+            f"{field} ({reason})"
+            for field, reason in _NON_RELOADABLE_SETTINGS
+            if getattr(old, field) != getattr(new, field)
+        ]
+        if changed:
+            logger.warning(
+                "SIGHUP: settings changed but require a full process restart "
+                "to take effect: %s. Restart the klangkd process to apply "
+                "them.",
+                "; ".join(changed),
+            )
 
     def on_sighup(self) -> None:
         """Schedule a runtime restart on the running event loop.

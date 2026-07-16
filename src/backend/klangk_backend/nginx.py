@@ -755,6 +755,10 @@ class NginxWatchdog:
         self._task: asyncio.Task | None = None
         self._stopping = False
 
+    def reconfigure(self, app_state) -> None:
+        self._app_state = app_state
+        self._renderer = NginxRenderer(self._app_state)
+
     async def _watch(
         self, bin_path: str, conf_path: str
     ) -> None:  # pragma: no cover

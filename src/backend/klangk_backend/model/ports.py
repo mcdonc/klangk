@@ -47,6 +47,9 @@ class PortsModel:
     def __init__(self, app_state):
         self.app_state = app_state
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+
     async def add_port_allocations(
         self, workspace_id: str, ports: list[int]
     ) -> None:

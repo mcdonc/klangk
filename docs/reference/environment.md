@@ -1,6 +1,8 @@
 # Environment Variables
 
 > **Config file alternative:** All `KLANGK_*` settings below can also be set in a YAML config file via `klangkd --config`. The config file is the recommended substrate for production deployments; env vars override file values. See [Configuration File](klangkd-config.md).
+>
+> **Applying configuration changes:** After editing `KLANGK_*` env vars or the YAML config file, send `SIGHUP` to the `klangkd` process to reload and apply the new values without a full process restart. The HTTP listener and DB stay up; WebSocket clients reconnect automatically. A small set of settings (`KLANGK_PORT`, `KLANGK_LISTEN`, `KLANGK_DATA_DIR`, `KLANGK_STATE_DIR`) are bound for the life of the process and require a full restart — SIGHUP logs a warning if one of these changed. An invalid configuration denies the reload (runtime left on last-known-good config, reason logged at `ERROR`). See [Process Signals](../deployment/signals.md#sighup--reload-configuration--graceful-runtime-restart-1212-1587).
 
 `$DEVENV_STATE` refers to `<project root>/.devenv/state` — this is where devenv stores runtime data.
 

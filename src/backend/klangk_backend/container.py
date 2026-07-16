@@ -122,6 +122,9 @@ class PortAllocator:
         self.port_lock: asyncio.Lock = asyncio.Lock()
         self.app_state = app_state
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+
     async def allocate_ports(self, workspace_id: str, count: int) -> list[int]:
         # Clamp to the server-wide cap (KLANGK_HOSTED_PORTS_PER_WORKSPACE)
         # so creation never allocates ports the deployer has disabled —
@@ -206,6 +209,9 @@ class IdleMonitor:
         self.app_state = app_state
         self.cleanup_task: asyncio.Task | None = None
         self._cleanup_wake: asyncio.Event | None = None
+
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
 
     def get_cleanup_wake(self) -> asyncio.Event:
         if self._cleanup_wake is None:
@@ -330,6 +336,9 @@ class HealthMonitor:
     def __init__(self, app_state) -> None:
         self.app_state = app_state
         self.health_task: asyncio.Task | None = None
+
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
 
     @property
     def connections(self):
@@ -607,6 +616,12 @@ class ContainerRegistry:
 
         # The Podman instance is reached via self.app_state.podman (owned
         # instance, #1426) — no post-construction wiring needed.
+
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+        self.ports.reconfigure(app_state)
+        self.idle.reconfigure(app_state)
+        self.health.reconfigure(app_state)
 
     # --- settings-derived config (read live off app_state, #1608) ---
 

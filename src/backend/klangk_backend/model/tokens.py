@@ -19,6 +19,9 @@ class TokensModel:
     def __init__(self, app_state):
         self.app_state = app_state
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+
     async def blocklist_token(
         self, jti: str, expires_at: str, new_token: str | None = None
     ) -> None:

@@ -621,3 +621,33 @@ class TestRequireDirsValidator:
             }
         )
         assert s.customize_dir == "/explicit/custom"
+
+
+class TestReload:
+    """KlangkSettings.reload() re-resolves from the same sources (#1587)."""
+
+    def test_reload_returns_fresh_instance(self):
+        s = make_settings({"KLANGK_AGENT_HANDLE": "bot1"})
+        s2 = s.reload()
+        assert s2 is not s
+        assert s2.agent_handle == "bot1"
+
+    def test_reload_picks_up_changed_env(self):
+        env = {
+            "KLANGK_DATA_DIR": "/d",
+            "KLANGK_STATE_DIR": "/s",
+            "KLANGK_AGENT_HANDLE": "old",
+        }
+        s = KlangkSettings(env)
+        env["KLANGK_AGENT_HANDLE"] = "new"
+        s2 = s.reload()
+        assert s2.agent_handle == "new"
+        assert s.agent_handle == "old"
+
+    def test_reload_raises_on_invalid_config(self):
+        s = make_settings({})
+        with pytest.raises(Exception):
+            # auth_modes must be a valid value; "bogus" will fail validation.
+            env = dict(s._reload_env)
+            env["KLANGK_AUTH_MODES"] = "bogus"
+            KlangkSettings(env)

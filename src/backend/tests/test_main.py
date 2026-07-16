@@ -67,8 +67,13 @@ def _make_app_state(settings=None):
     app_state.util = util_mod.Util(app_state)
     # #1567: the lifespan calls app.state.ssl_trust.apply_backend_ssl_trust().
     app_state.ssl_trust = ssl_trust_mod.SSLTrust(app_state)
-
     app_state.auth = auth_mod.Auth(app_state)
+    app_state.nginx_watchdog = nginx_mod.NginxWatchdog(app_state)
+    from klangk_backend.terminal import Terminal
+    from klangk_backend.acl import ACL
+
+    app_state.terminal = Terminal(app_state)
+    app_state.acl = ACL(app_state)
     # #1571: Lifecycle(app_state) owns startup/shutdown/restart + seeding.
     app_state.lifecycle = main.Lifecycle(app_state)
     return app_state
@@ -686,6 +691,213 @@ class TestStartupShutdownRestart:
             "down-end",
             "up",
         ]
+
+    async def test_restart_denies_on_invalid_config(self, app_state):
+        """Invalid config denies the restart; no teardown, no startup."""
+        app_state = _make_app_state()
+        lc = app_state.lifecycle
+        lc._restart_lock = None
+        with (
+            patch.object(
+                lc,
+                "_reload_settings",
+                return_value=(None, "bad config"),
+            ) as mock_reload,
+            patch.object(
+                lc, "runtime_shutdown", new_callable=AsyncMock
+            ) as mock_down,
+            patch.object(lc, "startup", new_callable=AsyncMock) as mock_up,
+        ):
+            await lc.restart_runtime()
+        mock_reload.assert_called_once()
+        mock_down.assert_not_awaited()
+        mock_up.assert_not_awaited()
+
+    async def test_restart_reloads_then_applies_then_restarts(self, app_state):
+        """Valid config: reload → apply → shutdown → startup."""
+        app_state = _make_app_state()
+        lc = app_state.lifecycle
+        lc._restart_lock = None
+        new_settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
+        order = []
+        with (
+            patch.object(
+                lc,
+                "_reload_settings",
+                return_value=(new_settings, None),
+            ),
+            patch.object(
+                lc,
+                "_apply_reloaded_settings",
+                new_callable=AsyncMock,
+                side_effect=lambda s: order.append("apply"),
+            ),
+            patch.object(
+                lc,
+                "runtime_shutdown",
+                new_callable=AsyncMock,
+                side_effect=lambda: order.append("shutdown"),
+            ),
+            patch.object(
+                lc,
+                "startup",
+                new_callable=AsyncMock,
+                side_effect=lambda: order.append("startup"),
+            ),
+        ):
+            await lc.restart_runtime()
+        assert order == ["apply", "shutdown", "startup"]
+
+    def test_reload_settings_returns_new_when_valid(self, app_state):
+        app_state = _make_app_state()
+        lc = app_state.lifecycle
+        new, error = lc._reload_settings()
+        assert new is not None
+        assert error is None
+        assert new is not app_state.settings
+
+    def test_reload_settings_returns_error_when_invalid(self, app_state):
+        app_state = _make_app_state()
+        lc = app_state.lifecycle
+        # Pydantic models can't be patched with patch.object; patch the
+        # class method instead.
+        with patch.object(
+            type(app_state.settings),
+            "reload",
+            side_effect=ValueError("bad"),
+        ):
+            new, error = lc._reload_settings()
+        assert new is None
+        assert "bad" in error
+
+    async def test_apply_reloaded_settings_calls_reconfigure(self, app_state):
+        """Swap + reconfigure called on every subsystem."""
+        app_state = _make_app_state()
+        lc = app_state.lifecycle
+        new_settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
+        old_settings = app_state.settings
+        called = []
+        for attr in (
+            "ssl_trust",
+            "auth",
+            "podman",
+            "sockets",
+            "container_registry",
+            "nginx_watchdog",
+            "terminal",
+            "oidc",
+            "plugins",
+            "workspaces",
+            "files",
+            "db",
+            "model",
+            "agents",
+            "acl",
+            "email",
+            "util",
+            "lifecycle",
+        ):
+            obj = getattr(app_state, attr)
+            orig = obj.reconfigure
+
+            def make_tracker(name, orig_fn):
+                def tracked(app_state):
+                    called.append(name)
+                    return orig_fn(app_state)
+
+                return tracked
+
+            obj.reconfigure = make_tracker(attr, orig)
+        with patch.object(
+            lc, "seed_agent_user", new_callable=AsyncMock
+        ) as mock_seed:
+            await lc._apply_reloaded_settings(new_settings)
+        assert app_state.settings is new_settings
+        assert app_state.settings is not old_settings
+        assert "ssl_trust" in called
+        assert "oidc" in called
+        assert "plugins" in called
+        assert len(called) == 18
+        mock_seed.assert_awaited_once()
+
+    async def test_apply_logs_warning_when_reconfigure_fails(
+        self, app_state, caplog
+    ):
+        """A failing reconfigure is skipped + warned, the rest still run."""
+        app_state = _make_app_state()
+        lc = app_state.lifecycle
+        new_settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
+        with (
+            patch.object(
+                app_state.ssl_trust,
+                "reconfigure",
+                side_effect=RuntimeError("ssl boom"),
+            ),
+            patch.object(app_state.oidc, "reconfigure") as mock_oidc_reconf,
+            patch.object(
+                lc, "seed_agent_user", new_callable=AsyncMock
+            ) as mock_seed,
+            caplog.at_level("WARNING"),
+        ):
+            await lc._apply_reloaded_settings(new_settings)
+        assert "ssl_trust reconfigure failed" in caplog.text
+        mock_oidc_reconf.assert_called_once()
+        mock_seed.assert_awaited_once()
+
+    def test_warn_non_reloadable_logs_changed_settings(
+        self, app_state, caplog
+    ):
+        app_state = _make_app_state()
+        lc = app_state.lifecycle
+        old = app_state.settings
+        new = make_settings(
+            {"KLANGK_DEFAULT_PASSWORD": "test", "KLANGK_PORT": "9999"}
+        )
+        with caplog.at_level("WARNING"):
+            lc._warn_non_reloadable(old, new)
+        assert "port" in caplog.text
+        assert "full process restart" in caplog.text
+
+    def test_warn_non_reloadable_silent_on_reloadable_only(
+        self, app_state, caplog
+    ):
+        app_state = _make_app_state()
+        lc = app_state.lifecycle
+        old = app_state.settings
+        # Build new settings from the same env as old so only
+        # reloadable fields differ.
+        env = dict(old._reload_env)
+        env["KLANGK_AGENT_HANDLE"] = "newbot"
+        new = make_settings(env)
+        with caplog.at_level("WARNING"):
+            lc._warn_non_reloadable(old, new)
+        assert "full process restart" not in caplog.text
+
+    async def test_agent_handle_change_takes_effect_after_restart(
+        self, db, app_state
+    ):
+        """Acceptance test: editing KLANGK_AGENT_HANDLE + SIGHUP makes the
+        new handle the live agent handle without a process restart."""
+        app_state = _make_app_state()
+        lc = app_state.lifecycle
+
+        # Seed the initial agent user using the test DB.
+        from _helpers import get_test_db
+
+        app_state.db = get_test_db()
+        app_state.model = model.Model(app_state)
+        await lc.seed_agent_user()
+        old_handle = await app_state.model.users.agent_handle()
+        assert old_handle == "clanker"
+
+        # Simulate a config change: new settings with a different handle.
+        env = dict(app_state.settings._reload_env)
+        env["KLANGK_AGENT_HANDLE"] = "newbot"
+        env["KLANGK_AGENT_EMAIL"] = "newbot@example.com"
+        new_settings = make_settings(env)
+        await lc._apply_reloaded_settings(new_settings)
+        new_handle = await app_state.model.users.agent_handle()
+        assert new_handle == "newbot"
 
     async def test_on_sighup_schedules_restart(self, app_state):
         """on_sighup creates a task that runs restart_runtime."""

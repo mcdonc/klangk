@@ -118,6 +118,9 @@ class DB:
         self.app_state = app_state
         self.engine = None
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+
     @property
     def data_dir(self) -> Path:
         return Path(self.app_state.settings.data_dir)

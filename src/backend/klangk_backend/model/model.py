@@ -49,6 +49,20 @@ class Model:
         self.workspaces = WorkspacesModel(app_state)
         self.chat = ChatModel(app_state)
 
+    def reconfigure(self, app_state) -> None:
+        self.app_state = app_state
+        for sub in (
+            self.tokens,
+            self.login_attempts,
+            self.invitations,
+            self.ports,
+            self.users,
+            self.acl,
+            self.workspaces,
+            self.chat,
+        ):
+            sub.reconfigure(app_state)
+
     @asynccontextmanager
     async def transaction(self):
         """Auto-commit-on-clean-exit transaction on this model's DB."""
