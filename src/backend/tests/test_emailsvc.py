@@ -16,8 +16,10 @@ def _email_service(env: dict) -> EmailService:
     from klangk_backend.auth import Auth
 
     settings = make_settings(env)
-    app_state = types.SimpleNamespace(settings=settings)
-    app_state.auth = Auth(app_state)
+    app_state = types.SimpleNamespace(
+        state=types.SimpleNamespace(settings=settings)
+    )
+    app_state.state.auth = Auth(app_state)
     return EmailService(app_state)
 
 

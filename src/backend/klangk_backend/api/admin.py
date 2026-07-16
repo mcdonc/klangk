@@ -17,7 +17,7 @@ from .. import (
     auth,
     wshandler,
 )
-from ._common import get_app_state_dep
+from ._common import get_app_dep
 from ..model import (
     ACTION_ALLOW,
     PRINCIPAL_GROUP,
@@ -45,22 +45,22 @@ async def send_invitation(
     req: SendInviteRequest,
     request: Request,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Send an invitation email (admin only)."""
-    if not app_state.auth.invitations_enabled():
+    if not app.state.auth.invitations_enabled():
         raise HTTPException(status_code=403, detail="Invitations are disabled")
 
     auth.validate_email(req.email)
 
-    existing = await app_state.model.users.get_user_by_email(req.email)
+    existing = await app.state.model.users.get_user_by_email(req.email)
     if existing is not None:
         raise HTTPException(
             status_code=400, detail="A user with this email already exists"
         )
 
     pending = (
-        await app_state.model.invitations.get_pending_invitation_by_email(
+        await app.state.model.invitations.get_pending_invitation_by_email(
             req.email
         )
     )
@@ -70,10 +70,10 @@ async def send_invitation(
             detail="A pending invitation already exists for this email",
         )
 
-    invitation = await app_state.model.invitations.create_invitation(
+    invitation = await app.state.model.invitations.create_invitation(
         req.email, admin["id"]
     )
-    token = app_state.auth.create_invitation_token(invitation["id"], req.email)
+    token = app.state.auth.create_invitation_token(invitation["id"], req.email)
 
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
@@ -83,7 +83,7 @@ async def send_invitation(
     )
 
     await send_email(
-        app_state.email.send_invitation_email(
+        app.state.email.send_invitation_email(
             req.email, invite_url, admin["email"]
         ),
         req.email,
@@ -105,7 +105,7 @@ async def list_invitations(
     order: str = "desc",
     q: str | None = None,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """List invitations (admin only), server-side paginated/sorted/filtered.
 
@@ -114,7 +114,7 @@ async def list_invitations(
     of ``email`` | ``invited_by`` | ``created``, ``order`` is ``asc`` |
     ``desc``, and ``q`` is a substring filter on the invitee email.
     """
-    return await app_state.model.invitations.list_invitations(
+    return await app.state.model.invitations.list_invitations(
         page=page, page_size=page_size, sort=sort, order=order, q=q
     )
 
@@ -123,10 +123,10 @@ async def list_invitations(
 async def revoke_invitation(
     invitation_id: str,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Revoke a pending invitation (admin only)."""
-    revoked = await app_state.model.invitations.revoke_invitation(
+    revoked = await app.state.model.invitations.revoke_invitation(
         invitation_id
     )
     if not revoked:
@@ -142,10 +142,10 @@ async def resend_invitation(
     invitation_id: str,
     request: Request,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Resend an invitation email (admin only)."""
-    invitation = await app_state.model.invitations.get_invitation(
+    invitation = await app.state.model.invitations.get_invitation(
         invitation_id
     )
     if invitation is None or invitation["status"] != "pending":
@@ -154,7 +154,7 @@ async def resend_invitation(
             detail="Invitation not found or not pending",
         )
 
-    token = app_state.auth.create_invitation_token(
+    token = app.state.auth.create_invitation_token(
         invitation["id"], invitation["email"]
     )
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
@@ -165,7 +165,7 @@ async def resend_invitation(
     )
 
     await send_email(
-        app_state.email.send_invitation_email(
+        app.state.email.send_invitation_email(
             invitation["email"], invite_url, admin["email"]
         ),
         invitation["email"],
@@ -183,9 +183,9 @@ async def list_users(
     order: str = "desc",
     q: str | None = None,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    return await app_state.model.users.list_users(
+    return await app.state.model.users.list_users(
         page=page, page_size=page_size, sort=sort, order=order, q=q
     )
 
@@ -201,7 +201,7 @@ async def admin_create_user(
     req: AdminCreateUserRequest,
     request: Request,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Create a user (admin only).
 
@@ -211,7 +211,7 @@ async def admin_create_user(
     password.
     """
     auth.validate_email(req.email)
-    existing = await app_state.model.users.get_user_by_email(req.email)
+    existing = await app.state.model.users.get_user_by_email(req.email)
     if existing is not None:
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -227,18 +227,18 @@ async def admin_create_user(
                 request.client.host if request.client else None,
             )
         )
-        verification_token = app_state.auth.create_verification_token(user_id)
+        verification_token = app.state.auth.create_verification_token(user_id)
         verification_url = (
             f"{proto}://{hostname}{base_path}"
             f"/#/verify?token={verification_token}"
         )
 
-        async with app_state.model.transaction() as db:
-            await app_state.model.users.insert_unverified_user(
+        async with app.state.model.transaction() as db:
+            await app.state.model.users.insert_unverified_user(
                 db, user_id, req.email, password_hash
             )
             await send_email(
-                app_state.email.send_verification_email(
+                app.state.email.send_verification_email(
                     req.email, verification_url
                 ),
                 req.email,
@@ -256,9 +256,9 @@ async def admin_create_user(
             status_code=400,
             detail="Password is required when not sending verification email",
         )
-    app_state.auth.validate_password_length(req.password)
+    app.state.auth.validate_password_length(req.password)
     password_hash = auth.hash_password(req.password)
-    user = await app_state.model.users.create_user(
+    user = await app.state.model.users.create_user(
         req.email, password_hash, verified=True
     )
     return {"id": user["id"], "email": user["email"], "status": "created"}
@@ -270,7 +270,7 @@ async def list_user_workspaces(
     limit: int | None = Query(None, ge=1, le=200),
     offset: int | None = Query(None, ge=0),
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """List workspaces owned by a user (admin only).
 
@@ -278,10 +278,10 @@ async def list_user_workspaces(
     Returns the standard pagination envelope
     ``{"items": [...], "has_more": bool, "next_offset": int | None}``.
     """
-    user = await app_state.model.users.get_user_by_id(user_id)
+    user = await app.state.model.users.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    return await app_state.workspaces.list_workspaces(
+    return await app.state.workspaces.list_workspaces(
         user_id, limit=limit or 100, offset=offset or 0
     )
 
@@ -290,18 +290,18 @@ async def list_user_workspaces(
 async def delete_user(
     user_id: str,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
-    user = await app_state.model.users.get_user_by_id(user_id)
+    user = await app.state.model.users.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     # Stop all containers for this user before deleting
-    await app_state.container_registry.stop_user_containers(user_id)
+    await app.state.container_registry.stop_user_containers(user_id)
     # Archive workspace data before deletion
-    await app_state.workspaces.archive_user_data(user_id, user["email"])
-    deleted = await app_state.model.users.delete_user(user_id)
+    await app.state.workspaces.archive_user_data(user_id, user["email"])
+    deleted = await app.state.model.users.delete_user(user_id)
     if not deleted:  # pragma: no cover — race between get and delete
         raise HTTPException(status_code=404, detail="User not found")
     return {"status": "deleted"}
@@ -318,24 +318,24 @@ async def update_user(
     user_id: str,
     req: UpdateUserRequest,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    user = await app_state.model.users.get_user_by_id(user_id)
+    user = await app.state.model.users.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     if req.email is not None:
-        await app_state.model.users.update_email(user_id, req.email)
+        await app.state.model.users.update_email(user_id, req.email)
     if req.password is not None:
-        app_state.auth.validate_password_length(req.password)
+        app.state.auth.validate_password_length(req.password)
         password_hash = auth.hash_password(req.password)
-        await app_state.model.users.update_password(user_id, password_hash)
+        await app.state.model.users.update_password(user_id, password_hash)
     if req.handle is not None:
         try:
-            await app_state.model.users.set_user_handle(user_id, req.handle)
+            await app.state.model.users.set_user_handle(user_id, req.handle)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         await wshandler.refresh_user_handle(
-            app_state.sockets, user_id, req.handle
+            app.state.sockets, user_id, req.handle
         )
     return {"status": "updated"}
 
@@ -344,13 +344,13 @@ async def update_user(
 async def unlock_user(
     user_id: str,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Reset a user's login lockout so they can log in immediately."""
-    user = await app_state.model.users.get_user_by_id(user_id)
+    user = await app.state.model.users.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    await app_state.model.login_attempts.clear_login_attempts(user["email"])
+    await app.state.model.login_attempts.clear_login_attempts(user["email"])
     return {"status": "unlocked"}
 
 
@@ -385,14 +385,14 @@ async def _group_resource(request: Request, user: dict) -> str:  # noqa: ARG001
 @router.get("/groups")
 async def user_list_groups(
     user: dict = Depends(auth.get_current_user),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """List all groups (any authenticated user can see groups).
 
     Returns a bare list for backward compatibility; the admin endpoint
     exposes the paged envelope.
     """
-    result = await app_state.model.users.list_groups(page_size=200)
+    result = await app.state.model.users.list_groups(page_size=200)
     return result["groups"]
 
 
@@ -400,17 +400,17 @@ async def user_list_groups(
 async def user_create_group(
     req: CreateGroupRequest,
     user: dict = Depends(acl.has_permission("create", _group_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Create a group. The creator gets full ACL access."""
-    existing = await app_state.model.users.get_group_by_name(req.name)
+    existing = await app.state.model.users.get_group_by_name(req.name)
     if existing is not None:
         raise HTTPException(
             status_code=409, detail="A group with this name already exists"
         )
-    group = await app_state.model.users.create_group(req.name, req.description)
+    group = await app.state.model.users.create_group(req.name, req.description)
     # Grant creator full access via ACL
-    await app_state.model.acl.add_acl_entry(
+    await app.state.model.acl.add_acl_entry(
         f"/groups/{group['id']}",
         0,
         ACTION_ALLOW,
@@ -426,13 +426,13 @@ async def user_update_group(
     group_id: str,
     req: UpdateGroupRequest,
     user: dict = Depends(acl.has_permission("edit", _group_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Update a group (requires edit permission on the group)."""
-    group = await app_state.model.users.get_group_by_id(group_id)
+    group = await app.state.model.users.get_group_by_id(group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
-    updated = await app_state.model.users.update_group(
+    updated = await app.state.model.users.update_group(
         group_id, name=req.name, description=req.description
     )
     if not updated:
@@ -444,14 +444,14 @@ async def user_update_group(
 async def user_delete_group(
     group_id: str,
     user: dict = Depends(acl.has_permission("delete", _group_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Delete a group (requires delete permission on the group)."""
-    group = await app_state.model.users.get_group_by_id(group_id)
+    group = await app.state.model.users.get_group_by_id(group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
-    await app_state.model.users.delete_group(group_id)
-    await app_state.model.acl.delete_acl_entries_for_resource(
+    await app.state.model.users.delete_group(group_id)
+    await app.state.model.acl.delete_acl_entries_for_resource(
         f"/groups/{group_id}"
     )
     return {"status": "deleted"}
@@ -461,13 +461,13 @@ async def user_delete_group(
 async def user_list_group_members(
     group_id: str,
     user: dict = Depends(acl.has_permission("view", _group_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """List group members (requires view permission on the group)."""
-    group = await app_state.model.users.get_group_by_id(group_id)
+    group = await app.state.model.users.get_group_by_id(group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
-    return await app_state.model.users.get_group_members(group_id)
+    return await app.state.model.users.get_group_members(group_id)
 
 
 @router.post("/groups/{group_id}/members")
@@ -477,16 +477,16 @@ async def user_add_group_member(
     user: dict = Depends(
         acl.has_permission("manage_members", _group_resource)
     ),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Add a member (requires manage_members permission on the group)."""
-    group = await app_state.model.users.get_group_by_id(group_id)
+    group = await app.state.model.users.get_group_by_id(group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
-    target = await app_state.model.users.get_user_by_id(req.user_id)
+    target = await app.state.model.users.get_user_by_id(req.user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
-    await app_state.model.users.add_user_to_group(req.user_id, group_id)
+    await app.state.model.users.add_user_to_group(req.user_id, group_id)
     return {"status": "added"}
 
 
@@ -497,10 +497,10 @@ async def user_remove_group_member(
     user: dict = Depends(
         acl.has_permission("manage_members", _group_resource)
     ),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Remove a member (requires manage_members on the group)."""
-    removed = await app_state.model.users.remove_user_from_group(
+    removed = await app.state.model.users.remove_user_from_group(
         user_id, group_id
     )
     if not removed:
@@ -521,9 +521,9 @@ async def list_groups(
     order: str = "asc",
     q: str | None = None,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    return await app_state.model.users.list_groups(
+    return await app.state.model.users.list_groups(
         page=page, page_size=page_size, sort=sort, order=order, q=q
     )
 
@@ -532,14 +532,14 @@ async def list_groups(
 async def create_group(
     req: CreateGroupRequest,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    existing = await app_state.model.users.get_group_by_name(req.name)
+    existing = await app.state.model.users.get_group_by_name(req.name)
     if existing is not None:
         raise HTTPException(
             status_code=409, detail="A group with this name already exists"
         )
-    group = await app_state.model.users.create_group(req.name, req.description)
+    group = await app.state.model.users.create_group(req.name, req.description)
     return group
 
 
@@ -548,12 +548,12 @@ async def update_group(
     group_id: str,
     req: UpdateGroupRequest,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    group = await app_state.model.users.get_group_by_id(group_id)
+    group = await app.state.model.users.get_group_by_id(group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
-    updated = await app_state.model.users.update_group(
+    updated = await app.state.model.users.update_group(
         group_id, name=req.name, description=req.description
     )
     if not updated:
@@ -565,12 +565,12 @@ async def update_group(
 async def delete_group(
     group_id: str,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    group = await app_state.model.users.get_group_by_id(group_id)
+    group = await app.state.model.users.get_group_by_id(group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
-    await app_state.model.users.delete_group(group_id)
+    await app.state.model.users.delete_group(group_id)
     return {"status": "deleted"}
 
 
@@ -578,12 +578,12 @@ async def delete_group(
 async def list_group_members(
     group_id: str,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    group = await app_state.model.users.get_group_by_id(group_id)
+    group = await app.state.model.users.get_group_by_id(group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
-    return await app_state.model.users.get_group_members(group_id)
+    return await app.state.model.users.get_group_members(group_id)
 
 
 @router.post("/admin/groups/{group_id}/members")
@@ -591,15 +591,15 @@ async def add_group_member(
     group_id: str,
     req: AddGroupMemberRequest,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    group = await app_state.model.users.get_group_by_id(group_id)
+    group = await app.state.model.users.get_group_by_id(group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
-    user = await app_state.model.users.get_user_by_id(req.user_id)
+    user = await app.state.model.users.get_user_by_id(req.user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    await app_state.model.users.add_user_to_group(req.user_id, group_id)
+    await app.state.model.users.add_user_to_group(req.user_id, group_id)
     return {"status": "added"}
 
 
@@ -608,9 +608,9 @@ async def remove_group_member(
     group_id: str,
     user_id: str,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    removed = await app_state.model.users.remove_user_from_group(
+    removed = await app.state.model.users.remove_user_from_group(
         user_id, group_id
     )
     if not removed:
@@ -626,27 +626,27 @@ async def remove_group_member(
 @router.get("/admin/acl/tree")
 async def get_acl_tree(
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    return await app_state.model.acl.get_acl_tree_summary()
+    return await app.state.model.acl.get_acl_tree_summary()
 
 
 @router.get("/admin/acl/by-principal/user/{user_id}")
 async def get_acl_by_user(
     user_id: str,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    return await app_state.model.acl.get_acl_entries_by_principal_user(user_id)
+    return await app.state.model.acl.get_acl_entries_by_principal_user(user_id)
 
 
 @router.get("/admin/acl/by-principal/group/{group_id}")
 async def get_acl_by_group(
     group_id: str,
     admin: dict = Depends(acl.has_permission("admin")),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    return await app_state.model.acl.get_acl_entries_by_principal_group(
+    return await app.state.model.acl.get_acl_entries_by_principal_group(
         group_id
     )
 
@@ -655,10 +655,10 @@ async def get_acl_by_group(
 async def get_resource_acl(
     resource: str,
     admin: dict = Depends(acl.has_permission("admin", admin_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Get resolved ACL entries for any resource (admin only)."""
-    return await app_state.model.acl.get_acl_entries_resolved(resource)
+    return await app.state.model.acl.get_acl_entries_resolved(resource)
 
 
 @router.put("/admin/acl/resource")
@@ -666,7 +666,7 @@ async def replace_resource_acl(
     resource: str,
     entries: list[WorkspaceAclEntry],
     admin: dict = Depends(acl.has_permission("admin", admin_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Replace ACL entries for any resource (admin only)."""
     # Validate: root ACL must keep Authenticated view access
@@ -712,8 +712,8 @@ async def replace_resource_acl(
         }
         for i, e in enumerate(entries)
     ]
-    await app_state.model.acl.replace_acl_entries(resource, acl_entries)
-    return await app_state.model.acl.get_acl_entries_resolved(resource)
+    await app.state.model.acl.replace_acl_entries(resource, acl_entries)
+    return await app.state.model.acl.get_acl_entries_resolved(resource)
 
 
 STATIC_RESOURCES = [

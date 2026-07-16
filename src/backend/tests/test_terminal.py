@@ -45,16 +45,18 @@ _mock_registry.mark_service_started = MagicMock()
 _mock_settings = MagicMock()
 _mock_settings.disable_tmux = ""
 _app_state = types.SimpleNamespace(
-    podman=_mock_pod,
-    container_registry=_mock_registry,
-    settings=_mock_settings,
+    state=types.SimpleNamespace(
+        podman=_mock_pod,
+        container_registry=_mock_registry,
+        settings=_mock_settings,
+    )
 )
 _terminal = Terminal(_app_state)
 
 
 @pytest.fixture(autouse=True)
 def _fresh_terminal():
-    """Recreate settings (and the app_state/Terminal carrying it) per test.
+    """Recreate settings (and the app/Terminal carrying it) per test.
 
     Terminal.tmux_enabled() reads disable_tmux off settings instead of the
     env (so monkeypatch.setenv no longer isolates it). Tests mutate that
@@ -65,9 +67,11 @@ def _fresh_terminal():
     _mock_settings = MagicMock()
     _mock_settings.disable_tmux = ""
     _app_state = types.SimpleNamespace(
-        podman=_mock_pod,
-        container_registry=_mock_registry,
-        settings=_mock_settings,
+        state=types.SimpleNamespace(
+            podman=_mock_pod,
+            container_registry=_mock_registry,
+            settings=_mock_settings,
+        )
     )
     _terminal = Terminal(_app_state)
     yield

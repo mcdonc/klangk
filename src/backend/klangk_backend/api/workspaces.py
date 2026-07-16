@@ -30,7 +30,7 @@ from .. import (
     auth,
     wshandler,
 )
-from ._common import get_app_state_dep
+from ._common import get_app_dep
 from ..model import (
     ACTION_ALLOW,
     PRINCIPAL_GROUP,
@@ -93,7 +93,7 @@ def _annotate_running(items: list[dict], container_registry) -> list[dict]:
 @router.get("/workspaces")
 async def list_workspaces(
     user: dict = Depends(auth.get_current_user),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
     limit: int | None = Query(None, ge=1, le=100),
     offset: int | None = Query(None, ge=0),
     sort: Literal["name", "created"] = Query("created"),
@@ -109,7 +109,7 @@ async def list_workspaces(
     (name substring) apply in both shapes.
     """
     bare = limit is None and offset is None
-    result = await app_state.workspaces.list_workspaces(
+    result = await app.state.workspaces.list_workspaces(
         user["id"],
         limit=BARE_LIST_LIMIT if bare else limit,
         offset=offset or 0,
@@ -117,7 +117,7 @@ async def list_workspaces(
         order=order,
         q=q,
     )
-    _annotate_running(result["items"], app_state.container_registry)
+    _annotate_running(result["items"], app.state.container_registry)
     if bare:
         return result["items"]
     return result
@@ -126,7 +126,7 @@ async def list_workspaces(
 @router.get("/workspaces/shared")
 async def list_shared_workspaces(
     user: dict = Depends(auth.get_current_user),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
     limit: int | None = Query(None, ge=1, le=100),
     offset: int | None = Query(None, ge=0),
     sort: Literal["name", "created"] = Query("created"),
@@ -139,7 +139,7 @@ async def list_shared_workspaces(
     With pagination params returns an envelope (see ``list_workspaces``).
     """
     bare = limit is None and offset is None
-    result = await app_state.model.workspaces.list_shared_workspaces(
+    result = await app.state.model.workspaces.list_shared_workspaces(
         user["id"],
         limit=BARE_LIST_LIMIT if bare else limit,
         offset=offset or 0,
@@ -147,7 +147,7 @@ async def list_shared_workspaces(
         order=order,
         q=q,
     )
-    _annotate_running(result["items"], app_state.container_registry)
+    _annotate_running(result["items"], app.state.container_registry)
     if bare:
         return result["items"]
     return result
@@ -168,9 +168,9 @@ class CreateWorkspaceRequest(BaseModel):
 async def create_workspace(
     body: CreateWorkspaceRequest,
     user: dict = Depends(auth.get_current_user),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    if body.auto_start and not autostart_allowed(app_state):
+    if body.auto_start and not autostart_allowed(app):
         raise HTTPException(
             status_code=400,
             detail="Auto-start is not enabled on this server"
@@ -178,19 +178,19 @@ async def create_workspace(
         )
     if (
         body.image
-        and body.image not in app_state.container_registry.allowed_images
+        and body.image not in app.state.container_registry.allowed_images
     ):
         raise HTTPException(
             status_code=400,
             detail=f"Image {body.image!r} is not allowed. "
-            f"Allowed: {sorted(app_state.container_registry.allowed_images)}",
+            f"Allowed: {sorted(app.state.container_registry.allowed_images)}",
         )
     if body.mounts:
-        mount_err = app_state.container_registry.validate_mounts(body.mounts)
+        mount_err = app.state.container_registry.validate_mounts(body.mounts)
         if mount_err:
             raise HTTPException(status_code=400, detail=mount_err)
     try:
-        ws = await app_state.workspaces.create_workspace(
+        ws = await app.state.workspaces.create_workspace(
             user["id"],
             body.name,
             image=body.image,
@@ -217,7 +217,7 @@ async def create_workspace(
     # complete.
     if body.auto_start:
         try:
-            await app_state.workspaces.start_workspace(ws)
+            await app.state.workspaces.start_workspace(ws)
         except Exception:
             logger.warning(
                 "Eager start failed for workspace %s",
@@ -225,7 +225,7 @@ async def create_workspace(
                 exc_info=True,
             )
 
-    app_state.sockets.notify_user_workspaces_changed(user["id"])
+    app.state.sockets.notify_user_workspaces_changed(user["id"])
     return ws
 
 
@@ -245,34 +245,34 @@ async def update_workspace(
     workspace_id: str,
     body: UpdateWorkspaceRequest,
     user: dict = Depends(acl.has_permission("edit", workspace_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     fields = body.model_dump(exclude_unset=True)
-    if fields.get("auto_start") and not autostart_allowed(app_state):
+    if fields.get("auto_start") and not autostart_allowed(app):
         raise HTTPException(
             status_code=400,
             detail="Auto-start is not enabled on this server"
             " (set KLANGK_ALLOW_AUTOSTART=1)",
         )
     if "image" in fields and fields["image"] is not None:
-        if fields["image"] not in app_state.container_registry.allowed_images:
+        if fields["image"] not in app.state.container_registry.allowed_images:
             raise HTTPException(
                 status_code=400,
                 detail=f"Image {fields['image']!r} is not allowed. "
-                f"Allowed: {sorted(app_state.container_registry.allowed_images)}",
+                f"Allowed: {sorted(app.state.container_registry.allowed_images)}",
             )
     if "mounts" in fields and fields["mounts"]:
-        mount_err = app_state.container_registry.validate_mounts(
+        mount_err = app.state.container_registry.validate_mounts(
             fields["mounts"]
         )
         if mount_err:
             raise HTTPException(status_code=400, detail=mount_err)
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
-    workspace = await app_state.model.workspaces.get_workspace(workspace_id)
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
-    updated = await app_state.model.workspaces.update_workspace(
+    updated = await app.state.model.workspaces.update_workspace(
         workspace_id, workspace["user_id"], **fields
     )
     if not updated:
@@ -282,7 +282,7 @@ async def update_workspace(
     # state (#1015) so HealthMonitor picks them up without a container
     # restart: setup_state may flip to "complete" after setup finishes,
     # and health_check may be edited at any time.
-    live_state = app_state.container_registry.get_state(workspace_id)
+    live_state = app.state.container_registry.get_state(workspace_id)
     if live_state is not None:
         if "setup_state" in fields:
             live_state.setup_state = fields["setup_state"]
@@ -305,13 +305,13 @@ async def duplicate_workspace(
     workspace_id: str,
     body: DuplicateWorkspaceRequest,
     user: dict = Depends(acl.has_permission("create", workspace_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    source = await app_state.model.workspaces.get_workspace(workspace_id)
+    source = await app.state.model.workspaces.get_workspace(workspace_id)
     if source is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
     try:
-        ws = await app_state.workspaces.create_workspace(
+        ws = await app.state.workspaces.create_workspace(
             user["id"],
             body.name,
             image=source.get("image"),
@@ -333,22 +333,22 @@ async def duplicate_workspace(
 async def delete_workspace(
     workspace_id: str,
     user: dict = Depends(acl.has_permission("delete", workspace_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    workspace = await app_state.model.workspaces.get_workspace(workspace_id)
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     # Capture shared members before we tear down ACL entries, so we can
     # notify them (and the owner/deleter) that the workspace is gone.
-    members = await app_state.model.workspaces.get_workspace_members(
+    members = await app.state.model.workspaces.get_workspace_members(
         workspace_id
     )
 
     # Prefer the live container_id from the registry (tracks the currently
     # running container) over the DB value (may be stale if the container
     # was already stopped by idle timeout).
-    live_state = app_state.container_registry.get_state(workspace_id)
+    live_state = app.state.container_registry.get_state(workspace_id)
     cid = (
         live_state.container_id
         if live_state
@@ -358,16 +358,16 @@ async def delete_workspace(
     # shared state; the agent subprocess runs inside the container, so
     # stopping the container kills it either way.
     if cid:
-        await app_state.container_registry.stop_and_remove_container(cid)
-    await wshandler.reset_workspace_state(app_state.sockets, workspace_id)
+        await app.state.container_registry.stop_and_remove_container(cid)
+    await wshandler.reset_workspace_state(app.state.sockets, workspace_id)
 
-    deleted = await app_state.workspaces.delete_workspace(
+    deleted = await app.state.workspaces.delete_workspace(
         workspace_id, workspace["user_id"]
     )
     if not deleted:  # pragma: no cover — race between get and delete
         raise HTTPException(status_code=404, detail="Workspace not found")
     # Clean up ACL entries for this workspace
-    await app_state.model.acl.delete_acl_entries_for_resource(
+    await app.state.model.acl.delete_acl_entries_for_resource(
         f"/workspaces/{workspace_id}"
     )
     # Notify the deleter, the owner, and any shared members so their
@@ -376,7 +376,7 @@ async def delete_workspace(
     member_ids = {m["id"] for m in members}
     member_ids.update({user["id"], workspace["user_id"]})
     for uid in member_ids:
-        app_state.sockets.notify_user_workspaces_changed(uid)
+        app.state.sockets.notify_user_workspaces_changed(uid)
     return {"status": "deleted"}
 
 
@@ -384,7 +384,7 @@ async def delete_workspace(
 async def restart_workspace(
     workspace_id: str,
     user: dict = Depends(acl.has_permission("terminal", workspace_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Restart a workspace container.
 
@@ -393,21 +393,21 @@ async def restart_workspace(
     command re-fires at the create choke point, so a service workspace
     recovers to healthy.
     """
-    workspace = await app_state.model.workspaces.get_workspace(workspace_id)
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
-    live_state = app_state.container_registry.get_state(workspace_id)
+    live_state = app.state.container_registry.get_state(workspace_id)
     cid = (
         live_state.container_id
         if live_state
         else workspace.get("container_id")
     )
     if cid:
-        await app_state.container_registry.stop_and_remove_container(cid)
-    await wshandler.reset_workspace_state(app_state.sockets, workspace_id)
+        await app.state.container_registry.stop_and_remove_container(cid)
+    await wshandler.reset_workspace_state(app.state.sockets, workspace_id)
     # Start a fresh container; the service command fires via the
     # create choke point in start_container.
-    await app_state.workspaces.start_workspace(workspace)
+    await app.state.workspaces.start_workspace(workspace)
     return {"status": "restarted"}
 
 
@@ -415,18 +415,18 @@ async def restart_workspace(
 async def workspace_status(
     workspace_id: str,
     user: dict = Depends(acl.has_permission("terminal", workspace_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Return container status for a workspace.
 
     Returns running state, container health, idle timeout info,
     and allocated ports.
     """
-    workspace = await app_state.model.workspaces.get_workspace(workspace_id)
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    live_state = app_state.container_registry.get_state(workspace_id)
+    live_state = app.state.container_registry.get_state(workspace_id)
     if live_state is None:
         return {
             "running": False,
@@ -441,7 +441,7 @@ async def workspace_status(
 
     idle_secs = time.time() - live_state.last_activity
     idle_timeout = live_state.get_idle_timeout()
-    ports = await app_state.container_registry.get_workspace_ports(
+    ports = await app.state.container_registry.get_workspace_ports(
         workspace_id
     )
 
@@ -479,28 +479,28 @@ async def workspace_status(
 async def export_workspace(
     workspace_id: str,
     admin: dict = Depends(acl.has_permission("admin", admin_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Export a workspace as a .tar.gz archive (admin only).
 
     The archive contains workspace.json (metadata) and the home
     directory tree under home/.
     """
-    workspace = await app_state.model.workspaces.get_workspace(
+    workspace = await app.state.model.workspaces.get_workspace(
         workspace_id, admin["id"]
     )
     if workspace is None:
         # Admin may not own the workspace — look it up without access check.
-        workspace = await app_state.model.workspaces.get_workspace_by_id(
+        workspace = await app.state.model.workspaces.get_workspace_by_id(
             workspace_id
         )
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    home_dir = app_state.workspaces.home_path(workspace_id)
+    home_dir = app.state.workspaces.home_path(workspace_id)
     ws_name = workspace["name"]
 
-    metadata = app_state.workspaces.workspace_metadata(workspace)
+    metadata = app.state.workspaces.workspace_metadata(workspace)
 
     # Estimate uncompressed size for client progress display.
     estimated_size = 0
@@ -531,7 +531,7 @@ async def export_workspace(
             with open(meta_file, "w") as f:
                 json.dump(metadata, f, indent=2)
 
-            tar_args = app_state.workspaces.build_export_tar_args(
+            tar_args = app.state.workspaces.build_export_tar_args(
                 "-", tmpdir, home_dir
             )
 
@@ -593,7 +593,7 @@ async def _stream_upload_to_tempfile(file: UploadFile, max_upload: int) -> str:
 
 
 async def _extract_archive_metadata(
-    archive_path: str, name: str | None, app_state
+    archive_path: str, name: str | None, app
 ) -> dict:
     """Read workspace.json from the archive and return sanitized metadata."""
     result = await asyncio.to_thread(
@@ -623,11 +623,11 @@ async def _extract_archive_metadata(
         )
 
     image = metadata.get("image")
-    if image and image not in app_state.container_registry.allowed_images:
+    if image and image not in app.state.container_registry.allowed_images:
         image = None
 
     mounts = metadata.get("mounts")
-    if mounts and app_state.container_registry.validate_mounts(mounts):
+    if mounts and app.state.container_registry.validate_mounts(mounts):
         mounts = None
 
     # Validate provenance: reject archives without instance_id or from a
@@ -638,7 +638,7 @@ async def _extract_archive_metadata(
             status_code=400,
             detail="Archive is missing instance_id",
         )
-    local_instance_id = app_state.util.instance_id()
+    local_instance_id = app.state.util.instance_id()
     if archive_instance_id != local_instance_id:
         raise HTTPException(
             status_code=400,
@@ -668,10 +668,10 @@ async def _extract_archive_metadata(
 
 
 async def _extract_home_directory(
-    archive_path: str, user_id: int, ws_id: int, app_state
+    archive_path: str, user_id: int, ws_id: int, app
 ) -> None:
     """Extract the ``home/`` tree from *archive_path* into the workspace home."""
-    home_dir = app_state.workspaces.home_path(ws_id)
+    home_dir = app.state.workspaces.home_path(ws_id)
     home_dir.mkdir(parents=True, exist_ok=True)
     check = await asyncio.to_thread(
         subprocess.run,
@@ -709,7 +709,7 @@ async def import_workspace(
     file: UploadFile,
     name: str | None = None,
     user: dict = Depends(auth.get_current_user),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Import a workspace from a .tar.gz archive.
 
@@ -717,14 +717,14 @@ async def import_workspace(
     extracts the home directory from the archive.
     """
     archive_path = await _stream_upload_to_tempfile(
-        file, int(app_state.settings.file_upload_size_max)
+        file, int(app.state.settings.file_upload_size_max)
     )
     ws = None
     try:
-        meta = await _extract_archive_metadata(archive_path, name, app_state)
+        meta = await _extract_archive_metadata(archive_path, name, app)
 
         try:
-            ws = await app_state.workspaces.create_workspace(
+            ws = await app.state.workspaces.create_workspace(
                 user["id"],
                 meta["name"],
                 image=meta["image"],
@@ -742,24 +742,24 @@ async def import_workspace(
 
         try:
             await _extract_home_directory(
-                archive_path, user["id"], ws["id"], app_state
+                archive_path, user["id"], ws["id"], app
             )
         except HTTPException:
-            await app_state.workspaces.delete_workspace(ws["id"], user["id"])
+            await app.state.workspaces.delete_workspace(ws["id"], user["id"])
             raise
 
     except HTTPException:
         raise
     except (json.JSONDecodeError, subprocess.TimeoutExpired):
         if ws:
-            await app_state.workspaces.delete_workspace(ws["id"], user["id"])
+            await app.state.workspaces.delete_workspace(ws["id"], user["id"])
         raise HTTPException(
             status_code=400, detail="Invalid or corrupt archive"
         )
     finally:
         os.unlink(archive_path)
 
-    app_state.sockets.notify_user_workspaces_changed(user["id"])
+    app.state.sockets.notify_user_workspaces_changed(user["id"])
     return ws
 
 
@@ -776,9 +776,9 @@ async def _check_workspace_share(request: Request, user: dict) -> str:
 async def get_workspace_members(
     workspace_id: str,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    return await app_state.model.workspaces.get_workspace_members(workspace_id)
+    return await app.state.model.workspaces.get_workspace_members(workspace_id)
 
 
 class AddMemberRequest(BaseModel):
@@ -790,9 +790,9 @@ async def add_workspace_member(
     workspace_id: str,
     body: AddMemberRequest,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
-    target = await app_state.model.users.get_user_by_email(body.email)
+    target = await app.state.model.users.get_user_by_email(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
     if target["id"] == user["id"]:
@@ -802,10 +802,10 @@ async def add_workspace_member(
     # Add ACL entries granting the target user view+terminal+files+chat
     # on this workspace, packed at the next available positions.
     resource = f"/workspaces/{workspace_id}"
-    existing = await app_state.model.acl.get_acl_entries(resource)
+    existing = await app.state.model.acl.get_acl_entries(resource)
     next_pos = max((e["position"] for e in existing), default=-1) + 1
     for perm in ("view", "terminal", "files", "chat"):
-        await app_state.model.acl.add_acl_entry(
+        await app.state.model.acl.add_acl_entry(
             resource,
             next_pos,
             ACTION_ALLOW,
@@ -814,8 +814,8 @@ async def add_workspace_member(
             user_id=target["id"],
         )
         next_pos += 1
-    app_state.sockets.notify_user_workspaces_changed(user["id"])
-    app_state.sockets.notify_user_workspaces_changed(target["id"])
+    app.state.sockets.notify_user_workspaces_changed(user["id"])
+    app.state.sockets.notify_user_workspaces_changed(target["id"])
     return {
         "status": "shared",
         "user_id": target["id"],
@@ -828,11 +828,11 @@ async def remove_workspace_member(
     workspace_id: str,
     member_id: str,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     # Remove all ACL entries for this user on this workspace
     resource = f"/workspaces/{workspace_id}"
-    entries = await app_state.model.acl.get_acl_entries(resource)
+    entries = await app.state.model.acl.get_acl_entries(resource)
     remaining = [
         e
         for e in entries
@@ -843,9 +843,9 @@ async def remove_workspace_member(
     # Rewrite entries with new positions
     for i, entry in enumerate(remaining):
         entry["position"] = i
-    await app_state.model.acl.replace_acl_entries(resource, remaining)
-    app_state.sockets.notify_user_workspaces_changed(user["id"])
-    app_state.sockets.notify_user_workspaces_changed(member_id)
+    await app.state.model.acl.replace_acl_entries(resource, remaining)
+    app.state.sockets.notify_user_workspaces_changed(user["id"])
+    app.state.sockets.notify_user_workspaces_changed(member_id)
     return {"status": "removed"}
 
 
@@ -856,16 +856,16 @@ ROLE_GROUP_SUFFIXES = ["owners", "coders", "collaborators", "spectators"]
 async def get_workspace_roles(
     workspace_id: str,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Return the workspace's role groups with their members."""
     roles = []
     for suffix in ROLE_GROUP_SUFFIXES:
         group_name = f"{suffix}-{workspace_id}"
-        group = await app_state.model.users.get_group_by_name(group_name)
+        group = await app.state.model.users.get_group_by_name(group_name)
         if group is None:
             continue
-        members = await app_state.model.users.get_group_members(group["id"])
+        members = await app.state.model.users.get_group_members(group["id"])
         roles.append(
             {
                 "role": suffix,
@@ -889,21 +889,21 @@ async def add_to_workspace_role(
     role: str,
     body: AddToRoleRequest,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Add a user to a workspace role group."""
     if role not in ROLE_GROUP_SUFFIXES:
         raise HTTPException(status_code=400, detail=f"Invalid role: {role}")
     group_name = f"{role}-{workspace_id}"
-    group = await app_state.model.users.get_group_by_name(group_name)
+    group = await app.state.model.users.get_group_by_name(group_name)
     if group is None:
         raise HTTPException(status_code=404, detail="Role group not found")
-    target = await app_state.model.users.get_user_by_email(body.email)
+    target = await app.state.model.users.get_user_by_email(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
-    await app_state.model.users.add_user_to_group(target["id"], group["id"])
-    app_state.sockets.notify_user_workspaces_changed(user["id"])
-    app_state.sockets.notify_user_workspaces_changed(target["id"])
+    await app.state.model.users.add_user_to_group(target["id"], group["id"])
+    app.state.sockets.notify_user_workspaces_changed(user["id"])
+    app.state.sockets.notify_user_workspaces_changed(target["id"])
     return {"ok": True}
 
 
@@ -913,18 +913,18 @@ async def remove_from_workspace_role(
     role: str,
     member_id: str,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Remove a user from a workspace role group."""
     if role not in ROLE_GROUP_SUFFIXES:
         raise HTTPException(status_code=400, detail=f"Invalid role: {role}")
     group_name = f"{role}-{workspace_id}"
-    group = await app_state.model.users.get_group_by_name(group_name)
+    group = await app.state.model.users.get_group_by_name(group_name)
     if group is None:
         raise HTTPException(status_code=404, detail="Role group not found")
-    await app_state.model.users.remove_user_from_group(member_id, group["id"])
-    app_state.sockets.notify_user_workspaces_changed(user["id"])
-    app_state.sockets.notify_user_workspaces_changed(member_id)
+    await app.state.model.users.remove_user_from_group(member_id, group["id"])
+    app.state.sockets.notify_user_workspaces_changed(user["id"])
+    app.state.sockets.notify_user_workspaces_changed(member_id)
     return {"ok": True}
 
 
@@ -938,7 +938,7 @@ async def change_workspace_role(
     workspace_id: str,
     body: ChangeRoleRequest,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Atomically change a user's workspace role.
 
@@ -946,7 +946,7 @@ async def change_workspace_role(
     them to the target role.  If ``role`` is null, removes the user
     from all roles.
     """
-    target = await app_state.model.users.get_user_by_email(body.email)
+    target = await app.state.model.users.get_user_by_email(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -958,25 +958,25 @@ async def change_workspace_role(
     # Remove from all current roles
     for suffix in ROLE_GROUP_SUFFIXES:
         group_name = f"{suffix}-{workspace_id}"
-        group = await app_state.model.users.get_group_by_name(group_name)
+        group = await app.state.model.users.get_group_by_name(group_name)
         if group is None:
             continue
-        await app_state.model.users.remove_user_from_group(
+        await app.state.model.users.remove_user_from_group(
             target["id"], group["id"]
         )
 
     # Add to target role if specified
     if body.role is not None:
         group_name = f"{body.role}-{workspace_id}"
-        group = await app_state.model.users.get_group_by_name(group_name)
+        group = await app.state.model.users.get_group_by_name(group_name)
         if group is None:
             raise HTTPException(status_code=404, detail="Role group not found")
-        await app_state.model.users.add_user_to_group(
+        await app.state.model.users.add_user_to_group(
             target["id"], group["id"]
         )
 
-    app_state.sockets.notify_user_workspaces_changed(user["id"])
-    app_state.sockets.notify_user_workspaces_changed(target["id"])
+    app.state.sockets.notify_user_workspaces_changed(user["id"])
+    app.state.sockets.notify_user_workspaces_changed(target["id"])
     return {"ok": True, "email": body.email, "role": body.role}
 
 
@@ -984,11 +984,11 @@ async def change_workspace_role(
 async def get_workspace_groups(
     workspace_id: str,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Get groups with access to this workspace via ACL."""
     resource = f"/workspaces/{workspace_id}"
-    entries = await app_state.model.acl.get_acl_entries_resolved(resource)
+    entries = await app.state.model.acl.get_acl_entries_resolved(resource)
     seen = set()
     groups = []
     for e in entries:
@@ -1009,17 +1009,17 @@ async def add_workspace_group(
     workspace_id: str,
     body: AddGroupShareRequest,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Share a workspace with a group (view/terminal/files/chat)."""
-    group = await app_state.model.users.get_group_by_id(body.group_id)
+    group = await app.state.model.users.get_group_by_id(body.group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
     resource = f"/workspaces/{workspace_id}"
-    existing = await app_state.model.acl.get_acl_entries(resource)
+    existing = await app.state.model.acl.get_acl_entries(resource)
     max_pos = max((e["position"] for e in existing), default=-1)
     for i, perm in enumerate(["view", "terminal", "files", "chat"]):
-        await app_state.model.acl.add_acl_entry(
+        await app.state.model.acl.add_acl_entry(
             resource,
             max_pos + 1 + i,
             ACTION_ALLOW,
@@ -1035,11 +1035,11 @@ async def remove_workspace_group(
     workspace_id: str,
     group_id: str,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Remove all ACL entries for a group on this workspace."""
     resource = f"/workspaces/{workspace_id}"
-    entries = await app_state.model.acl.get_acl_entries(resource)
+    entries = await app.state.model.acl.get_acl_entries(resource)
     remaining = [
         e
         for e in entries
@@ -1050,7 +1050,7 @@ async def remove_workspace_group(
     ]
     for i, entry in enumerate(remaining):
         entry["position"] = i
-    await app_state.model.acl.replace_acl_entries(resource, remaining)
+    await app.state.model.acl.replace_acl_entries(resource, remaining)
     return {"status": "removed"}
 
 
@@ -1061,11 +1061,11 @@ async def remove_workspace_group(
 async def get_workspace_acl(
     workspace_id: str,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Get resolved ACL entries for a workspace."""
     resource = f"/workspaces/{workspace_id}"
-    return await app_state.model.acl.get_acl_entries_resolved(resource)
+    return await app.state.model.acl.get_acl_entries_resolved(resource)
 
 
 @router.put("/workspaces/{workspace_id}/acl")
@@ -1073,7 +1073,7 @@ async def replace_workspace_acl(
     workspace_id: str,
     entries: list[WorkspaceAclEntry],
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Replace all ACL entries for a workspace."""
     resource = f"/workspaces/{workspace_id}"
@@ -1089,8 +1089,8 @@ async def replace_workspace_acl(
         }
         for i, e in enumerate(entries)
     ]
-    await app_state.model.acl.replace_acl_entries(resource, acl_entries)
-    return await app_state.model.acl.get_acl_entries_resolved(resource)
+    await app.state.model.acl.replace_acl_entries(resource, acl_entries)
+    return await app.state.model.acl.get_acl_entries_resolved(resource)
 
 
 # --- Ownership transfer ---
@@ -1105,15 +1105,15 @@ async def transfer_workspace_ownership(
     workspace_id: str,
     body: TransferOwnershipRequest,
     user: dict = Depends(acl.has_permission("admin", workspace_resource)),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     """Transfer workspace ownership to another user."""
-    target = await app_state.model.users.get_user_by_email(body.email)
+    target = await app.state.model.users.get_user_by_email(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
 
     try:
-        ws = await app_state.model.workspaces.transfer_workspace(
+        ws = await app.state.model.workspaces.transfer_workspace(
             workspace_id, target["id"]
         )
     except ValueError as exc:
@@ -1122,8 +1122,8 @@ async def transfer_workspace_ownership(
     if ws is None:  # pragma: no cover — ACL check rejects first
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    app_state.sockets.notify_user_workspaces_changed(user["id"])
-    app_state.sockets.notify_user_workspaces_changed(target["id"])
+    app.state.sockets.notify_user_workspaces_changed(user["id"])
+    app.state.sockets.notify_user_workspaces_changed(target["id"])
     return ws
 
 
@@ -1134,11 +1134,11 @@ async def transfer_workspace_ownership(
 async def search_users(
     q: str,
     _user: dict = Depends(auth.get_current_user),
-    app_state=Depends(get_app_state_dep),
+    app=Depends(get_app_dep),
 ):
     if len(q) < 1:
         raise HTTPException(status_code=400, detail="Query too short")
-    return await app_state.model.users.search_users(q)
+    return await app.state.model.users.search_users(q)
 
 
 # --- File endpoints ---

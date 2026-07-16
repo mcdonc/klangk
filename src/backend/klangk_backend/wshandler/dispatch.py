@@ -67,7 +67,7 @@ _WS_STATE_COMMANDS: dict[str, str] = {
 }
 
 
-async def handle_websocket(websocket: WebSocket, app_state) -> None:
+async def handle_websocket(websocket: WebSocket, app) -> None:
     """Main WebSocket handler."""
     # Authenticate via query param
     token = websocket.query_params.get("token")
@@ -75,7 +75,7 @@ async def handle_websocket(websocket: WebSocket, app_state) -> None:
         await websocket.close(code=4001, reason="Missing token")
         return
 
-    result = await app_state.auth.get_user_from_token(token)
+    result = await app.state.auth.get_user_from_token(token)
     if result is auth.Auth.TOKEN_EXPIRED:
         await websocket.close(code=4002, reason="Token expired")
         return
@@ -87,13 +87,13 @@ async def handle_websocket(websocket: WebSocket, app_state) -> None:
     await websocket.accept()
     safe_ws = SafeWebSocket(websocket)
     safe_ws.start_sender()
-    conn = Connection(safe_ws, user, app_state)
-    app_state.sockets.connections[safe_ws] = conn
+    conn = Connection(safe_ws, user, app)
+    app.state.sockets.connections[safe_ws] = conn
     # Replay current health of every health-checked workspace so a
     # pure-WS consumer (e.g. ``klangkc monitor``) sees steady-state
     # status immediately instead of being blind until the next
     # transition (#1175 item 1).
-    app_state.sockets.send_service_health_snapshot(safe_ws)
+    app.state.sockets.send_service_health_snapshot(safe_ws)
 
     try:
         while True:
@@ -118,7 +118,7 @@ async def handle_websocket(websocket: WebSocket, app_state) -> None:
             else:
                 state_method = _WS_STATE_COMMANDS.get(cmd)
                 if state_method is not None:
-                    getattr(app_state.sockets, state_method)(msg, safe_ws)
+                    getattr(app.state.sockets, state_method)(msg, safe_ws)
                 else:
                     send_error(safe_ws, f"Unknown command: {cmd}")
 
@@ -137,4 +137,4 @@ async def handle_websocket(websocket: WebSocket, app_state) -> None:
         await conn.cleanup()
         # Container is intentionally left running — idle timeout will clean it up.
         # This allows instant reconnection when navigating back to the workspace.
-        app_state.sockets.connections.pop(safe_ws, None)
+        app.state.sockets.connections.pop(safe_ws, None)

@@ -165,13 +165,13 @@ async def _exchange_and_validate_token(oidc_inst, provider, code, cookie_data):
     return claims, tokens
 
 
-async def _find_or_create_user(app_state, provider_id, sub, email):
+async def _find_or_create_user(app, provider_id, sub, email):
     """Locate an existing user by OIDC identity or create one via JIT provisioning.
 
     Raises ``HTTPException(403)`` if the resolved user is the system agent —
     OIDC must never mint a session as the agent (#1225).
     """
-    users = app_state.model.users
+    users = app.state.model.users
     user = await users.get_user_by_external_id(provider_id, sub)
     if user is not None:
         if user["id"] == model.AGENT_USER_ID:
@@ -277,7 +277,7 @@ async def oidc_callback(
         ) from None
 
     user = await _find_or_create_user(
-        request.app.state, provider_id, claims["sub"], email
+        request.app, provider_id, claims["sub"], email
     )
 
     if hook_groups is not None:

@@ -1,6 +1,6 @@
 """Direct coverage for ``ChatModel(app_state)`` (#1576).
 
-Exercises the chat methods on ``app_state.model.chat`` — the app_state-owned
+Exercises the chat methods on ``app_state.state.model.chat`` — the app_state-owned
 form app code now reaches — covering the branches the backstop-only tests
 in ``test_model.py`` don't touch (the method bodies run only when callers
 go through the owned instance, not the module-level free functions). Mirrors
@@ -14,8 +14,8 @@ from klangk_backend.model.chat import MSG_AGENT, MSG_USER
 
 @pytest.fixture
 async def chat(app_state, db):
-    """``app_state.model.chat`` with the schema initialized."""
-    return app_state.model.chat
+    """``app_state.state.model.chat`` with the schema initialized."""
+    return app_state.state.model.chat
 
 
 async def test_get_chat_messages_before_anchor_missing_returns_empty(
@@ -86,7 +86,7 @@ async def test_add_and_delete_via_instance(chat, workspace, user):
 async def test_parse_mentions_no_candidates(chat, workspace, user):
     """A message with no @handles short-circuits to an empty list."""
     # Open a connection to pass to the mid-transaction helper.
-    db = await chat.app_state.db.get_db()
+    db = await chat.app.state.db.get_db()
     try:
         assert (
             await chat.parse_mentions(db, "plain text", workspace["id"]) == []

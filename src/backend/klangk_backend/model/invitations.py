@@ -25,21 +25,21 @@ class InvitationsModel:
     """Invitation lifecycle, resolved through ``app_state.db``.
 
     Reached via ``app_state.model.invitations``. Reaches the DB through
-    ``self.app_state.db`` (the single DB instance for the whole app). The
+    ``self.app.state.db`` (the single DB instance for the whole app). The
     method bodies mirror the module-level free functions below (backstop);
     the duplication is temporary and removed in #1578 when the free
     functions are deleted.
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     async def create_invitation(self, email: str, invited_by: str) -> dict:
         """Create a new invitation. Returns the invitation dict."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             invitation_id = str(uuid.uuid4())
             await db.execute(
                 "INSERT INTO invitations (id, email, invited_by) VALUES (?, ?, ?)",
@@ -60,7 +60,7 @@ class InvitationsModel:
 
     async def get_invitation(self, invitation_id: str) -> dict | None:
         """Get an invitation by ID."""
-        row = await self.app_state.db.fetchone(
+        row = await self.app.state.db.fetchone(
             "SELECT id, email, invited_by, status, created_at, accepted_at"
             " FROM invitations WHERE id = ?",
             (invitation_id,),
@@ -78,7 +78,7 @@ class InvitationsModel:
 
     async def get_pending_invitation_by_email(self, email: str) -> dict | None:
         """Get a pending invitation for the given email."""
-        row = await self.app_state.db.fetchone(
+        row = await self.app.state.db.fetchone(
             "SELECT id, email, invited_by, status, created_at, accepted_at"
             " FROM invitations WHERE email = ? AND status = 'pending'",
             (email,),
@@ -109,7 +109,7 @@ class InvitationsModel:
         page_size = max(1, min(page_size, 200))
         offset = (page - 1) * page_size
 
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             where_clause = ""
             params: list = []
             if q:
@@ -159,7 +159,7 @@ class InvitationsModel:
 
     async def mark_invitation_accepted(self, invitation_id: str) -> bool:
         """Mark an invitation as accepted. Returns True if updated."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             cursor = await db.execute(
                 "UPDATE invitations SET status = 'accepted', accepted_at = ?"
@@ -170,7 +170,7 @@ class InvitationsModel:
 
     async def revoke_invitation(self, invitation_id: str) -> bool:
         """Revoke a pending invitation. Returns True if updated."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "UPDATE invitations SET status = 'revoked'"
                 " WHERE id = ? AND status = 'pending'",

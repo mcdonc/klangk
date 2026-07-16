@@ -58,7 +58,9 @@ from klangk_backend.wshandler import (
 def _util(env=None):
     """Build a Util instance from explicit env."""
     settings = make_settings(env)
-    return util_mod.Util(types.SimpleNamespace(settings=settings))
+    return util_mod.Util(
+        types.SimpleNamespace(state=types.SimpleNamespace(settings=settings))
+    )
 
 
 _mock_pod = MagicMock()
@@ -90,26 +92,28 @@ def _make_app_state(registry=None, sockets=None):
     settings = make_settings({})
     # Two-phase: shell first so owned instances (sockets, registry, etc.)
     # can take app_state at construction (#1426).
-    app_state = types.SimpleNamespace(settings=settings)
+    app_state = types.SimpleNamespace(
+        state=types.SimpleNamespace(settings=settings)
+    )
     if sockets is None:
         sockets = WebSocketState(app_state)
-    app_state.sockets = sockets
+    app_state.state.sockets = sockets
     if registry is None:
         registry = ContainerRegistry(app_state)
-    app_state.container_registry = registry
-    app_state.podman = _mock_pod
+    app_state.state.container_registry = registry
+    app_state.state.podman = _mock_pod
     # #1480: shared mock Terminal wired onto app_state. Tests patch
     # its methods via patch.object(_mock_term, ...).
-    app_state.terminal = _mock_term
-    app_state.workspaces = ws_mod.Workspaces(app_state)
-    app_state.files = files_mod.Files(app_state)
-    app_state.agents = agent_mod.Agents(app_state)
-    app_state.email = emailsvc_mod.EmailService(app_state)
-    app_state.util = util_mod.Util(app_state)
+    app_state.state.terminal = _mock_term
+    app_state.state.workspaces = ws_mod.Workspaces(app_state)
+    app_state.state.files = files_mod.Files(app_state)
+    app_state.state.agents = agent_mod.Agents(app_state)
+    app_state.state.email = emailsvc_mod.EmailService(app_state)
+    app_state.state.util = util_mod.Util(app_state)
 
-    app_state.auth = auth_mod.Auth(app_state)
-    # #1572: ContainerRegistry reaches app_state.model.ports; Auth reaches
-    # app_state.model.{tokens,login_attempts}.
+    app_state.state.auth = auth_mod.Auth(app_state)
+    # #1572: ContainerRegistry reaches app_state.state.model.ports; Auth reaches
+    # app_state.state.model.{tokens,login_attempts}.
     from _helpers import wire_db_and_model
 
     wire_db_and_model(app_state)
@@ -121,7 +125,9 @@ def _auth():
     app fixture, so tokens round-trip through app.state.auth.decode_*)."""
     from _helpers import wire_db_and_model
 
-    state = types.SimpleNamespace(settings=make_settings({}))
+    state = types.SimpleNamespace(
+        state=types.SimpleNamespace(settings=make_settings({}))
+    )
     wire_db_and_model(state)
     return auth_mod.Auth(state)
 
@@ -236,7 +242,7 @@ async def _conn_in_workspace(
     """
     if app_state is None:
         app_state = _make_app_state()
-    sockets = app_state.sockets
+    sockets = app_state.state.sockets
     sock = _mock_sock()
     conn = _base_conn(user=user, ws=sock, app_state=app_state)
     conn.workspace_id = workspace_id
@@ -257,10 +263,12 @@ async def _create_workspace_with_acl(app_state, user_id, name, **kwargs):
     """Create a workspace whose owner has full access.
 
     The service-layer ``create_workspace`` now seeds the owner ACE and role
-    groups atomically (see app_state.model.workspaces.create_workspace_with_acl, #128), so this
+    groups atomically (see app_state.state.model.workspaces.create_workspace_with_acl, #128), so this
     is a thin alias kept for call-site readability.
     """
-    return await app_state.workspaces.create_workspace(user_id, name, **kwargs)
+    return await app_state.state.workspaces.create_workspace(
+        user_id, name, **kwargs
+    )
 
 
 # --- SafeWebSocket ---
@@ -391,7 +399,7 @@ class TestSafeWebSocket:
 class TestDisconnectAll:
     async def test_clears_connections_sessions_and_sockets(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         sockets.connections[sock] = conn
@@ -422,7 +430,7 @@ class TestDisconnectAll:
 
     async def test_swallows_close_errors(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         bad_sock = _mock_sock()
         bad_sock.close = AsyncMock(side_effect=RuntimeError("boom"))
         sockets.connections[bad_sock] = _base_conn(
@@ -436,7 +444,7 @@ class TestDisconnectAll:
 
     async def test_empty_is_noop(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         await sockets.disconnect_all()
         assert sockets.connections == {}
         assert sockets.sessions == {}
@@ -444,7 +452,7 @@ class TestDisconnectAll:
     async def test_disconnect_all_websockets_wrapper(self, app_state):
         """The package-level wrapper delegates to state.disconnect_all."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         sockets.connections[sock] = _base_conn(ws=sock, app_state=app_state)
         await disconnect_all_websockets(sockets)
@@ -492,7 +500,7 @@ class TestSendError:
 class TestHandleTerminalInput:
     async def test_writes_data(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         t = _mock_terminal()
         conn = _base_conn(app_state=app_state)
         conn.terminal_session = t
@@ -518,7 +526,7 @@ class TestHandleTerminalInput:
 
     async def test_read_only_blocks_typing(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         t = _mock_terminal()
         t.read_only = True
         conn = _base_conn(app_state=app_state)
@@ -532,7 +540,7 @@ class TestHandleTerminalInput:
 
     async def test_read_only_allows_escape_sequences(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         t = _mock_terminal()
         t.read_only = True
         conn = _base_conn(app_state=app_state)
@@ -547,7 +555,7 @@ class TestHandleTerminalInput:
 
     async def test_oversized_input_dropped(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         t = _mock_terminal()
         conn = _base_conn(app_state=app_state)
         conn.terminal_session = t
@@ -617,8 +625,8 @@ class TestHandleTerminalStop:
 class TestHandleTerminalStart:
     async def test_starts_session(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -724,8 +732,8 @@ class TestHandleTerminalStart:
         session. The on_service_command_started callback is gone; the
         service command is fired via _fire_service_command."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -753,12 +761,12 @@ class TestHandleTerminalStart:
             ),
             patch.object(_mock_term, "attach_browser", new_callable=AsyncMock),
             patch.object(
-                app_state.model.workspaces,
+                app_state.state.model.workspaces,
                 "get_workspace",
                 new=AsyncMock(return_value={"setup_state": "complete"}),
             ),
             patch.object(
-                app_state.model.users,
+                app_state.state.model.users,
                 "agent_handle",
                 new=AsyncMock(return_value="clanker"),
             ),
@@ -839,7 +847,7 @@ class TestHandleTerminalStart:
 
     async def test_rapid_terminal_start_debounced(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -863,7 +871,7 @@ class TestHandleTerminalStart:
     async def test_start_rename_failure_non_fatal(self, app_state):
         """If renaming the initial bash window fails, tabs still work."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -923,7 +931,7 @@ class TestHandleTerminalStart:
     async def test_start_window_list_failure_non_fatal(self, app_state):
         """If list_windows fails after terminal start, terminal still works."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -972,7 +980,7 @@ class TestHandleTerminalStart:
     async def test_start_shared_list_failure_non_fatal(self, app_state):
         """If list_shared_terminals fails after start, terminal still works."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -1023,7 +1031,7 @@ class TestHandleTerminalStart:
     async def test_restart_revokes_old_browser_registration(self, app_state):
         """Starting a second terminal revokes the previous browser registration."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -1082,7 +1090,7 @@ class TestHandleTerminalStart:
     async def test_browser_reattach_updates_registration(self, app_state):
         """browser_reattach re-registers the browser ID and calls attach_browser."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -1136,7 +1144,7 @@ class TestHandleTerminalStart:
 
     async def test_passes_service_command(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -1160,12 +1168,12 @@ class TestHandleTerminalStart:
             ),
             patch.object(_mock_term, "attach_browser", new_callable=AsyncMock),
             patch.object(
-                app_state.model.workspaces,
+                app_state.state.model.workspaces,
                 "get_workspace",
                 new=AsyncMock(return_value={"setup_state": "complete"}),
             ),
             patch.object(
-                app_state.model.users,
+                app_state.state.model.users,
                 "agent_handle",
                 new=AsyncMock(return_value="clanker"),
             ),
@@ -1212,7 +1220,7 @@ class TestHandleTerminalStart:
 
     async def test_start_failure_sends_error(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -1248,7 +1256,7 @@ class TestHandleTerminalStart:
     async def test_start_slow_client_cleans_up(self, app_state):
         """SlowClientError during start cleans up without sending error."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
 
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
@@ -1282,7 +1290,7 @@ class TestHandleTerminalStart:
     async def test_start_failure_send_error_ws_dead(self, app_state):
         """If send_error itself fails with a WS error, it's swallowed."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -1314,7 +1322,7 @@ class TestHandleTerminalStart:
 
     async def test_cancellation_during_start_cleans_up(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -1349,7 +1357,7 @@ class TestHandleTerminalStart:
         the startup task stops the orphaned session and does not send
         terminal_started."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -1398,7 +1406,7 @@ class TestHandleTerminalStart:
 class TestHandleSetHandle:
     async def test_set_handle_success(self, user, temp_data_dir, app_state):
 
-        ws = await app_state.workspaces.create_workspace(
+        ws = await app_state.state.workspaces.create_workspace(
             user["id"], "handle-test"
         )
         sock = _mock_sock()
@@ -1415,7 +1423,7 @@ class TestHandleSetHandle:
         ) as mock_skel:
             await conn.handle_set_handle({"handle": "alice"})
         mock_skel.assert_awaited_once_with(
-            "cid", user["id"], conn.app_state.podman
+            "cid", user["id"], conn.app.state.podman
         )
         sent = sock.send_json.call_args_list
         assert any(
@@ -1427,7 +1435,7 @@ class TestHandleSetHandle:
 
     async def test_set_handle_conflict(self, user, temp_data_dir, app_state):
         # Create another user that already has handle "alice"
-        other = await app_state.model.users.create_user(
+        other = await app_state.state.model.users.create_user(
             "alice@example.com", "hash", verified=True
         )
         assert other["handle"] == "alice"
@@ -1451,11 +1459,11 @@ class TestHandleSetHandle:
 
     async def test_handle_auto_created_on_connect(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        workspace = await app_state.workspaces.create_workspace(
+        workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "auto-handle"
         )
 
@@ -1484,7 +1492,7 @@ class TestHandleSetHandle:
         self, user, temp_data_dir, app_state
     ):
 
-        ws = await app_state.workspaces.create_workspace(
+        ws = await app_state.state.workspaces.create_workspace(
             user["id"], "handle-test4"
         )
         sock = _mock_sock()
@@ -1494,7 +1502,7 @@ class TestHandleSetHandle:
         conn.workspace_id = ws["id"]
 
         # Handle is already in the DB from create_user
-        handle = await app_state.model.users.get_user_handle(user["id"])
+        handle = await app_state.state.model.users.get_user_handle(user["id"])
         assert handle is not None
         assert handle == user["handle"]
 
@@ -1505,7 +1513,7 @@ class TestHandleSetHandle:
 class TestForwardTerminalOutput:
     async def test_forwards_output(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         t = _mock_terminal()
         conn = _base_conn(ws=sock, app_state=app_state)
@@ -1585,8 +1593,8 @@ class TestForwardTerminalOutput:
 class TestCleanupConnection:
     async def test_cleanup_last_subscriber_removes_session(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         t = _mock_terminal()
         conn = _base_conn(ws=sock, app_state=app_state)
@@ -1615,8 +1623,8 @@ class TestCleanupConnection:
     async def test_cleanup_other_subscribers_remain(self, app_state):
         """When other subscribers remain, session stays alive."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         other_sock = _mock_sock()
         t = _mock_terminal()
@@ -1678,7 +1686,7 @@ class TestHandleWorkspaceConnect:
 
     async def test_connect_success(self, user, agent_user, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "test-ws"
@@ -1717,7 +1725,7 @@ class TestHandleWorkspaceConnect:
         self, user, agent_user, app_state
     ):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "cmd-ws", service_command="pi"
@@ -1750,7 +1758,7 @@ class TestHandleWorkspaceConnect:
     async def test_connect_denied_no_acl(self, user, app_state):
         """User without ACL entry gets 'Permission denied'."""
         sock = _mock_sock()
-        workspace = await app_state.workspaces.create_workspace(
+        workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "no-acl-ws"
         )
         conn = _base_conn(user={"id": "other-user", "email": "x"}, ws=sock)
@@ -1764,7 +1772,7 @@ class TestHandleWorkspaceConnect:
 
         sock = _mock_sock()
         fake_id = "deleted-ws-id"
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             f"/workspaces/{fake_id}",
             0,
             model.ACTION_ALLOW,
@@ -1805,7 +1813,7 @@ class TestHandleWorkspaceConnect:
 class TestHandleWorkspaceDisconnect:
     async def test_disconnect(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -1828,11 +1836,11 @@ class TestHandleWorkspaceDisconnect:
 class TestStartWorkspaceContainer:
     async def test_new_session(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        workspace = await app_state.workspaces.create_workspace(
+        workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "start-ws"
         )
 
@@ -1863,15 +1871,15 @@ class TestStartWorkspaceContainer:
 
     async def test_resolves_existing_handle(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        workspace = await app_state.workspaces.create_workspace(
+        workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "handle-ws"
         )
         # Set a custom handle in the DB
-        await app_state.model.users.set_user_handle(user["id"], "chris")
+        await app_state.state.model.users.set_user_handle(user["id"], "chris")
 
         async def fake_start(*a, **kw):
             registry.track_activity("cid-h", workspace["id"])
@@ -1894,11 +1902,11 @@ class TestStartWorkspaceContainer:
 
     async def test_idle_callback_ws_error(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        workspace = await app_state.workspaces.create_workspace(
+        workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "idle-ws"
         )
 
@@ -1927,12 +1935,12 @@ class TestStartWorkspaceContainer:
 
     async def test_clears_pending_status_msg(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.pending_status_msg = "stale message from prior connect"
-        workspace = await app_state.workspaces.create_workspace(
+        workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "pending-ws"
         )
 
@@ -2040,12 +2048,12 @@ class TestHandleWebsocketDispatch:
     async def test_container_survives_disconnect(self, user, app_state):
         """Container should NOT be killed on disconnect — idle timeout handles it."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
 
         token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
 
-        workspace = await app_state.workspaces.create_workspace(
+        workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "stop-ws"
         )
         websocket.receive_text = AsyncMock(
@@ -2201,8 +2209,8 @@ class TestHandleWebsocket:
 
     async def test_ui_ready_with_pending(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
 
         token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
@@ -2285,7 +2293,7 @@ class TestHandleWebsocket:
 
     async def test_general_exception_logged(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
 
         token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
@@ -2331,7 +2339,7 @@ class TestExecHandlers:
 
     async def test_exec_start_success(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -2364,7 +2372,7 @@ class TestExecHandlers:
 
     async def test_exec_start_passes_ssh_agent_socket(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -2401,7 +2409,7 @@ class TestExecHandlers:
 
     async def test_exec_input_sends_data(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         import base64
 
         session = AsyncMock()
@@ -2460,7 +2468,7 @@ class TestExecHandlers:
 
     async def test_forward_exec_output(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         import base64
 
         sock = _mock_sock()
@@ -2492,7 +2500,7 @@ class TestExecHandlers:
 
     async def test_forward_exec_output_ws_error(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         session = AsyncMock()
 
@@ -2550,7 +2558,7 @@ class TestExecController:
             _user_home=user_home,
             _ssh_agent_socket=ssh_agent_socket,
             _has_perm=AsyncMock(return_value=has_perm),
-            app_state=app_state,
+            app=app_state,
         )
         return ExecController(conn), sock, conn
 
@@ -2579,7 +2587,7 @@ class TestExecController:
     async def test_start_stops_existing_session_first(self, app_state):
         """start() tears down any in-flight exec before starting a new one."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(app_state=app_state)
         old = AsyncMock()
         ctrl.session = old
@@ -2606,7 +2614,7 @@ class TestExecController:
         self, app_state
     ):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(
             user_home="/home/admin",
             ssh_agent_socket="/tmp/agent.sock",
@@ -2632,7 +2640,7 @@ class TestExecController:
 
     async def test_start_defaults_work_dir_when_no_user_home(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(user_home=None, app_state=app_state)
         with (
             patch(
@@ -2656,7 +2664,7 @@ class TestExecController:
         """#1041: a message with no ``login`` key runs raw argv (no
         shell) -- the safe default for any caller, and what rsync needs."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(app_state=app_state)
         with (
             patch(
@@ -2679,7 +2687,7 @@ class TestExecController:
         so the command runs as a bash login shell (sources ~/.profile).
         This is the klangkc exec default."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(app_state=app_state)
         with (
             patch(
@@ -2711,7 +2719,7 @@ class TestExecController:
 
     async def test_input_oversized_dropped(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(app_state=app_state)
         session = AsyncMock()
         session.is_alive = True
@@ -2725,7 +2733,7 @@ class TestExecController:
 
     async def test_input_writes_and_records_activity(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(app_state=app_state)
         session = AsyncMock()
         session.is_alive = True
@@ -2784,7 +2792,7 @@ class TestExecController:
 
     async def test_forward_output_relays_chunks_and_exit_code(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, sock, _ = self._controller(app_state=app_state)
         session = AsyncMock()
         session.returncode = 7
@@ -2809,7 +2817,7 @@ class TestExecController:
 
     async def test_forward_output_exit_code_defaults_to_1(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, sock, _ = self._controller(app_state=app_state)
         session = AsyncMock()
         session.returncode = None
@@ -2833,7 +2841,7 @@ class TestExecController:
         self, app_state
     ):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(container_id="cid", app_state=app_state)
         session = AsyncMock()
         session.returncode = 0
@@ -2849,7 +2857,7 @@ class TestExecController:
 
     async def test_forward_output_swallows_ws_error(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, sock, _ = self._controller(app_state=app_state)
         session = AsyncMock()
         ctrl.session = session
@@ -3058,7 +3066,7 @@ class TestSSHAgentHandlers:
     async def test_ssh_agent_start_with_terminal(self, app_state):
         """SSH_AUTH_SOCK is passed to TerminalSession when agent is active."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -3137,7 +3145,9 @@ class TestSshAgentForwarder:
             sock=sock,
             user=user,
             container_id=container_id,
-            app_state=SimpleNamespace(podman=_mock_pod, terminal=_mock_term),
+            app=SimpleNamespace(
+                state=SimpleNamespace(podman=_mock_pod, terminal=_mock_term)
+            ),
         )
         return SshAgentForwarder(conn), sock
 
@@ -3619,7 +3629,7 @@ class TestChatLoadMoreDispatch:
 class TestHandleHeartbeat:
     async def test_records_activity(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         conn = _base_conn(app_state=app_state)
         conn.container_id = "cid-hb"
         registry.track_activity("cid-hb", "ws-hb")
@@ -3640,7 +3650,7 @@ class TestHandleHeartbeat:
 class TestBrowserBridge:
     async def test_dispatch_browser_response(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
 
         token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
@@ -3660,7 +3670,7 @@ class TestBrowserBridge:
 
     async def test_handle_browser_response_resolves_future(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         loop = asyncio.get_event_loop()
         future = loop.create_future()
         mock_sock = _mock_sock()
@@ -3681,7 +3691,7 @@ class TestBrowserBridge:
         self, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         loop = asyncio.get_event_loop()
         future = loop.create_future()
         expected = _mock_sock()
@@ -3703,19 +3713,19 @@ class TestBrowserBridge:
 
     async def test_handle_browser_response_missing_id(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         # Should not raise
         sockets.handle_browser_response({})
 
     async def test_handle_browser_response_unknown_id(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         # Should not raise
         sockets.handle_browser_response({"id": "unknown"})
 
     async def test_dispatch_browser_request_no_subscribers(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-empty", app_state)
         try:
             result = await session.dispatch_browser_request(
@@ -3729,7 +3739,7 @@ class TestBrowserBridge:
     async def test_dispatch_browser_request_cli_only(self, app_state):
         """CLI-only connections get immediate error, not 30s timeout."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-cli-only", app_state)
         mock_sock = _mock_sock()
         session.subscribers.add(mock_sock)
@@ -3745,7 +3755,7 @@ class TestBrowserBridge:
 
     async def test_dispatch_browser_request_success(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-bridge", app_state)
         mock_sock = _mock_sock()
         session.subscribers.add(mock_sock)
@@ -3781,7 +3791,7 @@ class TestBrowserBridge:
 
     async def test_dispatch_browser_request_timeout(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-timeout", app_state)
         mock_sock = _mock_sock()
         session.subscribers.add(mock_sock)
@@ -3800,7 +3810,7 @@ class TestBrowserBridge:
 class TestDispatchBrowserRequestTo:
     async def test_success(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-to", app_state)
         mock_sock = _mock_sock()
         session.subscribers.add(mock_sock)
@@ -3840,7 +3850,7 @@ class TestDispatchBrowserRequestTo:
 
     async def test_dead_socket(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-to-dead", app_state)
         mock_sock = _mock_sock()
         mock_sock.send_json = MagicMock(side_effect=RuntimeError("ws closed"))
@@ -3858,7 +3868,7 @@ class TestDispatchBrowserRequestTo:
 
     async def test_timeout(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-to-timeout", app_state)
         mock_sock = _mock_sock()
         session.subscribers.add(mock_sock)
@@ -3876,7 +3886,7 @@ class TestDispatchBrowserRequestTo:
 
     async def test_cancelled_cleans_up(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-to-cancel", app_state)
         mock_sock = _mock_sock()
         session.subscribers.add(mock_sock)
@@ -3904,8 +3914,8 @@ class TestDispatchBrowserRequestTo:
 class TestCleanupRevokesBrowser:
     async def test_cleanup_revokes_browser_registration(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.workspace_id = "ws-revoke"
@@ -3933,19 +3943,19 @@ class TestCleanupRevokesBrowser:
 class TestResetWorkspaceState:
     async def test_noop_for_unknown_workspace(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         await reset_workspace_state(sockets, "ws-unknown")  # should not raise
 
     async def test_remove_session_noop_for_unknown(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         await sockets.remove_session("nonexistent")  # should not raise
 
     async def test_removes_session_with_no_subscribers(self, app_state):
         """remove_session acquires lock and removes empty session."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sockets.get_or_create_session("ws-reset-empty", app_state)
         assert "ws-reset-empty" in sockets.sessions
         registry.track_activity("cid-reset", "ws-reset-empty")
@@ -3961,7 +3971,7 @@ class TestResetWorkspaceState:
     ):
         """remove_session re-checks subscribers under lock and aborts if non-empty."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-reappear", app_state)
         mock_sock = _mock_sock()
         # Add subscriber so the re-check inside the lock finds a non-empty set
@@ -3977,7 +3987,7 @@ class TestResetWorkspaceState:
     async def test_reset_cleans_agent_state(self, app_state):
         """reset_workspace removes agent conversations and cancels agent tasks."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ws_id = "ws-agent-cleanup"
         wshandler.agent_conversations[ws_id] = {"user_id": "u1"}
 
@@ -4005,10 +4015,10 @@ class TestResetWorkspaceState:
     async def test_reset_stops_agent_session(self, app_state):
         """reset_workspace stops the Pi RPC subprocess via agent.stop_session."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ws_id = "ws-agent-stop"
         with patch.object(
-            app_state.agents, "stop_session", new_callable=AsyncMock
+            app_state.state.agents, "stop_session", new_callable=AsyncMock
         ) as mock_stop:
             await reset_workspace_state(sockets, ws_id)
             mock_stop.assert_awaited_once_with(ws_id)
@@ -4019,12 +4029,12 @@ class TestNotifyUserWorkspacesChanged:
 
     def _register(self, sock, user, app_state):
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        app_state.sockets.connections[sock] = conn
+        app_state.state.sockets.connections[sock] = conn
         return conn
 
     def test_sends_to_matching_user_only(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock_a = _mock_sock()
         sock_b = _mock_sock()
         sock_other = _mock_sock()
@@ -4051,13 +4061,13 @@ class TestNotifyUserWorkspacesChanged:
 
     def test_no_connections_is_noop(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         # Should not raise when the user has no active connections.
         sockets.notify_user_workspaces_changed("nobody")
 
     def test_dead_socket_is_pruned(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         from klangk_backend.wshandler import WS_ERRORS
 
         sock = _mock_sock()
@@ -4075,12 +4085,12 @@ class TestNotifyContainerStatus:
 
     def _register(self, sock, user, app_state):
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        app_state.sockets.connections[sock] = conn
+        app_state.state.sockets.connections[sock] = conn
         return conn
 
     def test_sends_to_all_authenticated(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock_a = _mock_sock()
         sock_b = _mock_sock()
         try:
@@ -4100,7 +4110,7 @@ class TestNotifyContainerStatus:
 
     def test_sends_stopped(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         try:
             self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
@@ -4113,7 +4123,7 @@ class TestNotifyContainerStatus:
 
     def test_skips_unauthenticated(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         try:
             self._register(sock, {"id": None, "email": ""}, app_state)
@@ -4124,7 +4134,7 @@ class TestNotifyContainerStatus:
 
     def test_dead_socket_is_pruned(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         from klangk_backend.wshandler import WS_ERRORS
 
         sock = _mock_sock()
@@ -4142,12 +4152,12 @@ class TestNotifyServiceHealth:
 
     def _register(self, sock, user, app_state):
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        app_state.sockets.connections[sock] = conn
+        app_state.state.sockets.connections[sock] = conn
         return conn
 
     def test_sends_healthy_to_all_authenticated(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock_a = _mock_sock()
         sock_b = _mock_sock()
         try:
@@ -4171,7 +4181,7 @@ class TestNotifyServiceHealth:
 
     def test_sends_unhealthy_with_reason(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         # The failure reason rides along on the broadcast so operators
         # can see *why* it's unhealthy (#1088).
         sock = _mock_sock()
@@ -4189,7 +4199,7 @@ class TestNotifyServiceHealth:
 
     def test_skips_unauthenticated(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         try:
             self._register(sock, {"id": None, "email": ""}, app_state)
@@ -4200,7 +4210,7 @@ class TestNotifyServiceHealth:
 
     def test_dead_socket_is_pruned(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         from klangk_backend.wshandler import WS_ERRORS
 
         sock = _mock_sock()
@@ -4229,8 +4239,8 @@ class TestServiceHealthSnapshot:
     def test_replays_only_checked_workspaces(self, app_state):
         """Healthy + unhealthy are sent; unchecked and no-check skipped."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         saved = dict(registry.states)
         sock = _mock_sock()
         try:
@@ -4281,8 +4291,8 @@ class TestServiceHealthSnapshot:
 
     def test_targets_only_the_given_socket(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         saved = dict(registry.states)
         sock = _mock_sock()
         other = _mock_sock()
@@ -4303,8 +4313,8 @@ class TestServiceHealthSnapshot:
 
     def test_dead_socket_breaks_cleanly(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         from klangk_backend.wshandler import WS_ERRORS
 
         saved = dict(registry.states)
@@ -4332,8 +4342,8 @@ class TestServiceHealthSnapshot:
 
     def test_empty_registry_sends_nothing(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         saved = dict(registry.states)
         sock = _mock_sock()
         try:
@@ -4397,12 +4407,12 @@ class TestNotifyServiceHealthForwarding:
 
     def _register(self, sock, user, app_state):
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        app_state.sockets.connections[sock] = conn
+        app_state.state.sockets.connections[sock] = conn
         return conn
 
     def test_forwards_death_frame_fields(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         # A container-death call passes running=False + a seq; the frame
         # a subscriber receives carries them (#1175 items 2, 4).
         sock = _mock_sock()
@@ -4438,8 +4448,8 @@ class TestServiceHealthSnapshotFields:
 
     def test_snapshot_frame_carries_live_fields(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         saved = dict(registry.states)
         sock = _mock_sock()
         try:
@@ -4464,7 +4474,7 @@ class TestHealthHeartbeat:
     def _register(self, sock, user, app_state, *, wants=False):
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.wants_health_heartbeat = wants
-        app_state.sockets.connections[sock] = conn
+        app_state.state.sockets.connections[sock] = conn
         return conn
 
     def _frame(self, sock):
@@ -4472,7 +4482,7 @@ class TestHealthHeartbeat:
 
     def test_only_opted_in_connections_receive_it(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         opted = _mock_sock()
         quiet = _mock_sock()
         try:
@@ -4495,7 +4505,7 @@ class TestHealthHeartbeat:
 
     def test_skips_unauthenticated(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         try:
             self._register(
@@ -4508,7 +4518,7 @@ class TestHealthHeartbeat:
 
     def test_dead_opted_in_socket_is_pruned(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         from klangk_backend.wshandler import WS_ERRORS
 
         sock = _mock_sock()
@@ -4524,7 +4534,7 @@ class TestHealthHeartbeat:
 
     def test_subscribe_command_toggles_flag(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         # The subscribe_health_heartbeat command flips the per-connection
         # flag; enabled defaults to True when omitted.
         sock = _mock_sock()
@@ -4542,7 +4552,7 @@ class TestHealthHeartbeat:
 
     def test_subscribe_unknown_socket_is_noop(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         # Not registered -- must not raise.
         sockets.handle_subscribe_health_heartbeat({}, sock)
@@ -4551,7 +4561,7 @@ class TestHealthHeartbeat:
 class TestRemoveSessionLocked:
     async def test_removes_session(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-locked-rm", app_state)
         try:
             async with session.lock:
@@ -4565,7 +4575,7 @@ class TestGetOrCreateSessionAtomicity:
     async def test_returns_same_session_for_same_workspace(self, app_state):
         """Concurrent calls return the same WorkspaceSession, not duplicates."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sockets.sessions.pop("ws-atomic", None)
         try:
             s1 = sockets.get_or_create_session("ws-atomic", app_state)
@@ -4578,7 +4588,7 @@ class TestGetOrCreateSessionAtomicity:
         """Two coroutines that both call get_or_create_session end up
         with the identical session object (no orphaned duplicates)."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sockets.sessions.pop("ws-gather", None)
         sessions = []
 
@@ -4599,7 +4609,7 @@ class TestCleanupSubscriberRace:
     async def test_new_subscriber_not_lost_during_cleanup(self, app_state):
         """A subscriber added under the lock while cleanup runs is not lost."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock1 = _mock_sock()
         sock2 = _mock_sock()
         session = WorkspaceSession("ws-race", app_state)
@@ -4633,7 +4643,7 @@ class TestCleanupSubscriberRace:
     async def test_concurrent_cleanup_and_add(self, app_state):
         """When cleanup holds the lock, a concurrent add waits and is not lost."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock1 = _mock_sock()
         sock2 = _mock_sock()
         session = WorkspaceSession("ws-conc", app_state)
@@ -4686,7 +4696,7 @@ class TestWsDebugLogging:
 
     async def test_broadcast_sends_to_subscribers(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-bcast", app_state)
         mock_sock = _mock_sock()
         session.subscribers.add(mock_sock)
@@ -4700,7 +4710,7 @@ class TestWsDebugLogging:
         self, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-browser-bcast", app_state)
         mock_sock = _mock_sock()
         session.browser_subscribers.add(mock_sock)
@@ -4747,7 +4757,7 @@ class TestLogWsMsg:
 class TestBroadcastDeadSubscribers:
     async def test_dead_subscriber_removed(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-dead-sub", app_state)
         live_sock = _mock_sock()
         dead_sock = _mock_sock()
@@ -4804,7 +4814,7 @@ class TestHandleRestartContainer:
         """A spectator's denied restart must not change other users'
         container_id or otherwise disrupt their session (issue #873)."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock1 = _mock_sock(headers={"host": "localhost:8997"})
         sock2 = _mock_sock()
         ws = await _create_workspace_with_acl(
@@ -4842,7 +4852,7 @@ class TestHandleRestartContainer:
 
     async def test_restart_success(self, user, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "restart-ws"
@@ -4896,7 +4906,7 @@ class TestHandleRestartContainer:
 
     async def test_restart_workspace_gone(self, user, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = "ws-gone"
@@ -4908,7 +4918,7 @@ class TestHandleRestartContainer:
 
         with (
             patch.object(
-                app_state.workspaces,
+                app_state.state.workspaces,
                 "get_workspace",
                 return_value=None,
             ),
@@ -4927,9 +4937,9 @@ class TestHandleRestartContainer:
         self, user, monkeypatch, app_state
     ):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         monkeypatch.setattr(
-            app_state.container_registry, "idle_timeout_seconds", 90
+            app_state.state.container_registry, "idle_timeout_seconds", 90
         )
         sock = _mock_sock(headers={"host": "localhost:8997"})
         workspace = await _create_workspace_with_acl(
@@ -4977,7 +4987,7 @@ class TestHandleRestartContainer:
 
     async def test_restart_cleanup_error(self, user, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "restart-err"
@@ -5026,7 +5036,7 @@ class TestHandleRestartContainer:
 
     async def test_restart_cleanup_ws_disconnect(self, user, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "restart-disc"
@@ -5077,8 +5087,8 @@ class TestHandleRestartContainer:
         self, user, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock1 = _mock_sock(headers={"host": "localhost:8997"})
         sock2 = _mock_sock()
         workspace = await _create_workspace_with_acl(
@@ -5138,7 +5148,7 @@ class TestHandleShutdownContainer:
         """A spectator (no admin perm) must not shut down the container,
         must not stop it, and must not broadcast container_stopped."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.workspace_id = "ws-noadmin"
@@ -5172,8 +5182,8 @@ class TestHandleShutdownContainer:
         """A spectator's denied shutdown must not clear other users'
         container_id (which would disrupt their session) — issue #873."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock1 = _mock_sock()
         sock2 = _mock_sock()
         ws = await _create_workspace_with_acl(
@@ -5222,8 +5232,8 @@ class TestHandleShutdownContainer:
 
     async def test_shutdown_broadcasts_stopped(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock1 = _mock_sock()
         sock2 = _mock_sock()
         conn = _base_conn(user=user, ws=sock1, app_state=app_state)
@@ -5261,8 +5271,8 @@ class TestHandleShutdownContainer:
     async def test_shutdown_stops_agent_session(self, user, app_state):
         """handle_shutdown_container stops the agent RPC subprocess."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         ws = await _create_workspace_with_acl(
@@ -5286,7 +5296,7 @@ class TestHandleShutdownContainer:
                     new_callable=AsyncMock,
                 ),
                 patch.object(
-                    app_state.agents,
+                    app_state.state.agents,
                     "stop_session",
                     new_callable=AsyncMock,
                 ) as mock_stop,
@@ -5301,8 +5311,8 @@ class TestHandleShutdownContainer:
         self, user, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock1 = _mock_sock()
         sock2 = _mock_sock()
         conn1 = _base_conn(user=user, ws=sock1, app_state=app_state)
@@ -5336,8 +5346,8 @@ class TestHandleShutdownContainer:
 
     async def test_shutdown_handles_stop_error(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         ws = await _create_workspace_with_acl(
@@ -5662,7 +5672,7 @@ class TestTerminalController:
             workspace=None,
             _has_perm=AsyncMock(return_value=has_perm),
             broadcast_shared_terminals=MagicMock(),
-            app_state=app_state,
+            app=app_state,
         )
         return TerminalController(conn), sock, conn
 
@@ -5695,7 +5705,7 @@ class TestTerminalController:
         """If the setup_state lookup raises, default to 'complete'."""
         ctrl, _, conn = self._controller()
         with patch.object(
-            conn.app_state.model.workspaces,
+            conn.app.state.model.workspaces,
             "get_workspace",
             new_callable=AsyncMock,
             side_effect=RuntimeError("db down"),
@@ -5709,7 +5719,7 @@ class TestTerminalController:
         """If get_workspace returns None, default to 'complete'."""
         ctrl, _, conn = self._controller()
         with patch.object(
-            conn.app_state.model.workspaces,
+            conn.app.state.model.workspaces,
             "get_workspace",
             new_callable=AsyncMock,
             return_value=None,
@@ -5721,7 +5731,7 @@ class TestTerminalController:
         """Returns the workspace's actual setup_state when present (#1033)."""
         ctrl, _, conn = self._controller()
         with patch.object(
-            conn.app_state.model.workspaces,
+            conn.app.state.model.workspaces,
             "get_workspace",
             new_callable=AsyncMock,
             return_value={"setup_state": "pending"},
@@ -5738,7 +5748,7 @@ class TestTerminalController:
 
     async def test_start_stops_existing_terminal_first(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, _, conn = self._controller(app_state=app_state)
 
         def _swallow(coro, **kw):
@@ -5790,7 +5800,7 @@ class TestTerminalController:
 
     async def test_input_read_only_allows_escape_sequences(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(app_state=app_state)
         session = AsyncMock()
         session.is_alive = True
@@ -5811,7 +5821,7 @@ class TestTerminalController:
 
     async def test_input_writes_and_records_activity(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(app_state=app_state)
         session = AsyncMock()
         session.is_alive = True
@@ -5885,7 +5895,7 @@ class TestTerminalController:
 
     async def test_stop_broadcasts_when_was_viewing(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, _, conn = self._controller(app_state=app_state)
         session = AsyncMock()
         ctrl.session = session
@@ -5908,7 +5918,7 @@ class TestTerminalController:
 
     async def test_activate_session_wires_forward_task(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(app_state=app_state)
         session = _mock_terminal()
         ctrl.session = session
@@ -5928,7 +5938,7 @@ class TestTerminalController:
 
     async def test_forward_output_relays_and_cleans_up(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, sock, _ = self._controller(app_state=app_state)
         session = AsyncMock()
         ctrl.session = session
@@ -5952,7 +5962,7 @@ class TestTerminalController:
         self, app_state
     ):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(container_id="cid", app_state=app_state)
         session = AsyncMock()
         ctrl.session = session
@@ -6089,7 +6099,7 @@ class TestTerminalController:
     ):
         """When a ws_session exists, only this user's sockets receive it."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, sock, conn = self._controller(user=user, app_state=app_state)
         ws_session = sockets.get_or_create_session("ws-1", app_state)
         other_sock = _mock_sock()
@@ -6123,7 +6133,7 @@ class TestTerminalController:
         """The service-cmd window is shared by definition, so syncing the
         owner's own windows marks it shared even with no prior entry (#1114)."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, _, _ = self._controller(app_state=app_state)
         ws_session = sockets.get_or_create_session("ws-1", app_state)
         try:
@@ -6153,7 +6163,7 @@ class TestTerminalController:
         into the session map (keyed by AGENT_USER_ID, marked shared, handle
         cached) even though the agent has no WS connection (#1133)."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         from klangk_backend import model
 
         ctrl, _, conn = self._controller(app_state=app_state)
@@ -6175,7 +6185,7 @@ class TestTerminalController:
                     ),
                 ),
                 patch.object(
-                    app_state.model.users,
+                    app_state.state.model.users,
                     "agent_handle",
                     new=AsyncMock(return_value="clanker"),
                 ),
@@ -6194,7 +6204,7 @@ class TestTerminalController:
         self, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, _, _ = self._controller(container_id=None, app_state=app_state)
         ws_session = sockets.get_or_create_session("ws-1", app_state)
         try:
@@ -6206,7 +6216,7 @@ class TestTerminalController:
         self, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, _, _ = self._controller(app_state=app_state)
         ws_session = sockets.get_or_create_session("ws-1", app_state)
         try:
@@ -6221,7 +6231,7 @@ class TestTerminalController:
 
     async def test_sync_service_windows_empty_returns_false(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, _, _ = self._controller(app_state=app_state)
         ws_session = sockets.get_or_create_session("ws-1", app_state)
         try:
@@ -6240,7 +6250,7 @@ class TestTerminalController:
         """If the agent handle can't be resolved, discovery is skipped
         (best-effort) rather than breaking the caller (#1133)."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, _, _ = self._controller(app_state=app_state)
         ws_session = sockets.get_or_create_session("ws-1", app_state)
         try:
@@ -6255,7 +6265,7 @@ class TestTerminalController:
                     ),
                 ),
                 patch.object(
-                    app_state.model.users,
+                    app_state.state.model.users,
                     "agent_handle",
                     new=AsyncMock(side_effect=RuntimeError("db down")),
                 ),
@@ -6272,7 +6282,7 @@ class TestTerminalController:
         agent) via the cached agent_handle, though the agent has no WS
         connection (#1133)."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         from klangk_backend import model
         from klangk_backend.wshandler.helpers import get_shared_terminals
 
@@ -6302,12 +6312,12 @@ class TestTerminalController:
         conn._service_command = "./run.sh"
         with (
             patch.object(
-                conn.app_state.model.workspaces,
+                conn.app.state.model.workspaces,
                 "get_workspace",
                 new=AsyncMock(return_value={"setup_state": "complete"}),
             ),
             patch.object(
-                conn.app_state.model.users,
+                conn.app.state.model.users,
                 "agent_handle",
                 new=AsyncMock(return_value="clanker"),
             ),
@@ -6361,7 +6371,7 @@ class TestTerminalController:
 
     async def test_browser_reattach_registers_and_attaches(self, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ctrl, _, conn = self._controller(app_state=app_state)
         with (
             patch.object(registry, "revoke_browser") as rev,
@@ -6480,7 +6490,7 @@ class TestShareWindowHandlers:
         self, user, temp_data_dir, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = "ws-1"
@@ -6525,7 +6535,7 @@ class TestShareWindowHandlers:
         self, user, temp_data_dir, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = "ws-1"
@@ -6584,7 +6594,7 @@ class TestShareWindowHandlers:
     ):
         """shared_terminals response includes viewer list."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         owner_sock = _mock_sock()
         owner_conn = _base_conn(user=user, ws=owner_sock, app_state=app_state)
         owner_conn.workspace_id = "ws-v"
@@ -6706,7 +6716,7 @@ class TestShareWindowHandlers:
 
     async def test_share_window_not_found(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -6773,7 +6783,7 @@ class TestShareWindowHandlers:
 
     async def test_unshare_window_not_found(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -6810,7 +6820,7 @@ class TestShareWindowHandlers:
 
     async def test_unshare_kill_error_handled(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = "ws-1"
@@ -6841,9 +6851,9 @@ class TestShareWindowHandlers:
 
     async def test_join_shared_terminal(self, user, temp_data_dir, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
-        owner = await app_state.model.users.create_user(
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        owner = await app_state.state.model.users.create_user(
             "owner@test.com", "hash", verified=True
         )
         sock = _mock_sock()
@@ -6901,8 +6911,8 @@ class TestShareWindowHandlers:
         ``service`` tmux session, not a session named after the agent's
         user_id (which doesn't exist) -- #1158/#1159."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = "ws-1"
@@ -6993,9 +7003,9 @@ class TestShareWindowHandlers:
     ):
         """If session is superseded during start, activate_session returns False."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
-        owner = await app_state.model.users.create_user(
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        owner = await app_state.state.model.users.create_user(
             "owner-sup@test.com", "hash", verified=True
         )
         sock = _mock_sock()
@@ -7047,9 +7057,9 @@ class TestShareWindowHandlers:
     ):
         """Falls back to bare @N when joiner session select fails."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
-        owner = await app_state.model.users.create_user(
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        owner = await app_state.state.model.users.create_user(
             "owner-fb@test.com", "hash", verified=True
         )
         sock = _mock_sock()
@@ -7112,9 +7122,9 @@ class TestShareWindowHandlers:
     ):
         """Falls back to bare @N when joiner session name is None."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
-        owner = await app_state.model.users.create_user(
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        owner = await app_state.state.model.users.create_user(
             "owner-nj@test.com", "hash", verified=True
         )
         sock = _mock_sock()
@@ -7171,8 +7181,8 @@ class TestShareWindowHandlers:
     ):
         """If session.start() fails, error is sent and session stopped."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        owner = await app_state.model.users.create_user(
+        sockets = app_state.state.sockets
+        owner = await app_state.state.model.users.create_user(
             "owner-err@test.com", "hash", verified=True
         )
         sock = _mock_sock()
@@ -7226,7 +7236,7 @@ class TestShareWindowHandlers:
 
     async def test_join_shared_terminal_not_found(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -7308,7 +7318,7 @@ class TestShareWindowHandlers:
 
     async def test_delete_shared_terminal_not_found(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.container_id = "cid"
@@ -7336,13 +7346,13 @@ class TestShareWindowHandlers:
         """A collaborator may not delete another user's terminal
         (regression for #874)."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        other = await app_state.model.users.create_user(
+        sockets = app_state.state.sockets
+        other = await app_state.state.model.users.create_user(
             "other@example.com", "x", verified=True
         )
         # Workspace owned by `other`; caller is neither the terminal
         # owner nor the workspace owner.
-        workspace = await app_state.model.workspaces.create_workspace(
+        workspace = await app_state.state.model.workspaces.create_workspace(
             other["id"], "ws-other"
         )
         sock = _mock_sock()
@@ -7376,11 +7386,11 @@ class TestShareWindowHandlers:
         self, user, temp_data_dir, app_state
     ):
         """The workspace owner may delete another member's terminal."""
-        other = await app_state.model.users.create_user(
+        other = await app_state.state.model.users.create_user(
             "other@example.com", "x", verified=True
         )
         # Workspace owned by the caller (`user`).
-        workspace = await app_state.model.workspaces.create_workspace(
+        workspace = await app_state.state.model.workspaces.create_workspace(
             user["id"], "ws-mine"
         )
         async with _conn_in_workspace(user, workspace["id"]) as (
@@ -7408,7 +7418,7 @@ class TestShareWindowHandlers:
 
     async def test_delete_shared_terminal_error(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = "ws-1"
@@ -7604,7 +7614,7 @@ class TestSharedTerminalController:
                 self.workspace_id = workspace_id
                 self._user_home = user_home
                 self.user = user
-                self.app_state = app_state
+                self.app = app_state
                 self._has_perm = AsyncMock(return_value=has_perm)
                 self.stop_terminal = AsyncMock()
                 self.activate_session = AsyncMock(return_value=True)
@@ -7641,13 +7651,13 @@ class TestSharedTerminalController:
     def _ws_session(self, ws_id="ws-1", app_state=None):
         if app_state is None:
             app_state = _make_app_state()
-        return app_state.sockets.get_or_create_session(ws_id, app_state)
+        return app_state.state.sockets.get_or_create_session(ws_id, app_state)
 
     # --- find_window ---
 
     async def test_find_window_returns_match(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, _, conn = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         ws.terminal_windows[user["id"]] = [
@@ -7662,7 +7672,7 @@ class TestSharedTerminalController:
 
     async def test_find_window_not_found_sends_error(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, sock, conn = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         try:
@@ -7676,7 +7686,7 @@ class TestSharedTerminalController:
         self, user, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, sock, conn = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         ws.terminal_windows[user["id"]] = [
@@ -7697,7 +7707,7 @@ class TestSharedTerminalController:
 
     async def test_share_window_marks_and_broadcasts(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, _, conn = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         ws.terminal_windows[user["id"]] = [
@@ -7725,7 +7735,7 @@ class TestSharedTerminalController:
 
     async def test_share_window_not_found(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, sock, _ = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         ws.terminal_windows[user["id"]] = []
@@ -7754,7 +7764,7 @@ class TestSharedTerminalController:
         self, user, temp_data_dir, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, _, conn = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         ws.terminal_windows[user["id"]] = [
@@ -7772,7 +7782,7 @@ class TestSharedTerminalController:
         self, user, temp_data_dir, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, sock, _ = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         await ws.add_subscriber(sock, "cid")
@@ -7815,7 +7825,7 @@ class TestSharedTerminalController:
 
     async def test_list_shared_terminals_sends_list(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, sock, _ = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         ws.terminal_windows[user["id"]] = [
@@ -7835,7 +7845,7 @@ class TestSharedTerminalController:
         self, user, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, sock, conn = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         await ws.add_subscriber(sock, "cid")
@@ -7867,7 +7877,7 @@ class TestSharedTerminalController:
         self, user, temp_data_dir, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, sock, _ = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         await ws.add_subscriber(sock, "cid")
@@ -7933,7 +7943,7 @@ class TestSharedTerminalController:
     ):
         ctrl, sock, conn = self._controller(user=user)
         with patch.object(
-            conn.app_state.model.workspaces,
+            conn.app.state.model.workspaces,
             "get_workspace_by_id",
             new=AsyncMock(),
         ) as gw:
@@ -7945,7 +7955,7 @@ class TestSharedTerminalController:
 
     async def test_delete_shared_terminal_not_found(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, sock, _ = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         ws.terminal_windows["owner-1"] = []
@@ -7965,7 +7975,7 @@ class TestSharedTerminalController:
         self, user, temp_data_dir, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, sock, _ = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         await ws.add_subscriber(sock, "cid")
@@ -7975,11 +7985,11 @@ class TestSharedTerminalController:
         ]
         try:
             # owner_user_id != user["id"], so the delete handler calls
-            # app_state.model.workspaces.get_workspace_by_id to authorize; return a workspace
+            # app_state.state.model.workspaces.get_workspace_by_id to authorize; return a workspace
             # owned by the current user so the delete is permitted.
             with (
                 patch.object(
-                    app_state.model.workspaces,
+                    app_state.state.model.workspaces,
                     "get_workspace_by_id",
                     new=AsyncMock(return_value={"user_id": user["id"]}),
                 ),
@@ -8005,7 +8015,7 @@ class TestSharedTerminalController:
         self, user, temp_data_dir, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, sock, _ = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         ws.terminal_windows["owner-1"] = [
@@ -8042,7 +8052,7 @@ class TestSharedTerminalController:
 
     async def test_join_shared_terminal_not_found(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, sock, _ = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         ws.terminal_windows["owner-1"] = []
@@ -8062,7 +8072,7 @@ class TestSharedTerminalController:
         self, user, temp_data_dir, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, sock, conn = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         ws.terminal_windows["owner-1"] = [
@@ -8095,7 +8105,7 @@ class TestSharedTerminalController:
         self, user, temp_data_dir, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         ctrl, sock, conn = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         ws.terminal_windows["owner-1"] = [
@@ -8199,7 +8209,7 @@ class TestSharedTerminalController:
         self, user, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         conn = _base_conn(user=user, app_state=app_state)
         ws = sockets.get_or_create_session("ws-1", app_state)
         try:
@@ -8211,7 +8221,7 @@ class TestSharedTerminalController:
 
     async def test_connection_find_window_delegate(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         conn = _base_conn(user=user, app_state=app_state)
         ws = sockets.get_or_create_session("ws-1", app_state)
         ws.terminal_windows[user["id"]] = [
@@ -8255,7 +8265,9 @@ class TestFindWindow:
             app_state = _make_app_state()
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        session = app_state.sockets.get_or_create_session("ws-find", app_state)
+        session = app_state.state.sockets.get_or_create_session(
+            "ws-find", app_state
+        )
         if windows is not None:
             session.terminal_windows[user["id"]] = windows
         return sock, conn, session
@@ -8265,7 +8277,7 @@ class TestFindWindow:
 
     async def test_found_returns_window(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock, conn, session = self._setup(
             user,
             [{"id": "@0", "name": "a", "shared": False}],
@@ -8284,7 +8296,7 @@ class TestFindWindow:
         self, user, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock, conn, session = self._setup(user, [], app_state=app_state)
         try:
             assert conn._find_window(session, user["id"], "@99") is None
@@ -8296,7 +8308,7 @@ class TestFindWindow:
 
     async def test_shared_true_finds_shared_window(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock, conn, session = self._setup(
             user,
             [{"id": "@0", "name": "a", "shared": True}],
@@ -8312,7 +8324,7 @@ class TestFindWindow:
     async def test_shared_true_rejects_unshared_window(self, user, app_state):
         """A present-but-unshared window is treated as not found."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock, conn, session = self._setup(
             user,
             [{"id": "@0", "name": "a", "shared": False}],
@@ -8331,7 +8343,7 @@ class TestFindWindow:
 
     async def test_custom_error_message(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock, conn, session = self._setup(user, [], app_state=app_state)
         try:
             assert (
@@ -8355,9 +8367,9 @@ class TestFractionalTimeout:
         self, user, monkeypatch, agent_user, app_state
     ):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         monkeypatch.setattr(
-            app_state.container_registry, "idle_timeout_seconds", 90
+            app_state.state.container_registry, "idle_timeout_seconds", 90
         )
         sock = _mock_sock()
         workspace = await _create_workspace_with_acl(
@@ -8391,7 +8403,7 @@ class TestFractionalTimeout:
 class TestDispatchBrowserRequestCancelled:
     async def test_cancelled_cleans_up(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-cancel", app_state)
         mock_sock = _mock_sock()
         session.subscribers.add(mock_sock)
@@ -8421,7 +8433,7 @@ class TestDispatchBrowserRequestCancelled:
 class TestDispatchBrowserRequestDeadSubscribers:
     async def test_all_subscribers_dead(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-all-dead", app_state)
         dead_sock = _mock_sock()
         dead_sock.send_json = MagicMock(side_effect=RuntimeError("ws closed"))
@@ -8482,7 +8494,7 @@ class TestSendQueueBehavior:
     async def test_slow_client_in_broadcast(self, app_state):
         """Broadcast drops slow subscribers instead of blocking."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-slow-bcast", app_state)
         live_sock = _mock_sock()
         slow_sock = _mock_sock()
@@ -8515,7 +8527,7 @@ class TestSendQueueBehavior:
     async def test_slow_client_in_exec_forwarding(self, app_state):
         """Exec forwarder handles SlowClientError gracefully."""
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         sock = _mock_sock()
         sock.send_json = MagicMock(side_effect=SlowClientError("full"))
         session = AsyncMock()
@@ -8560,12 +8572,12 @@ class TestMentionsAgent:
         assert await mentions_agent("@clanker hello", app_state)
 
         # Rename the agent handle in the DB and drop the cached user.
-        async with app_state.db.transaction() as db:
+        async with app_state.state.db.transaction() as db:
             await db.execute(
                 "UPDATE users SET handle = ? WHERE id = ?",
                 ("RenamedBot", model.AGENT_USER_ID),
             )
-        app_state.model.users.clear_agent_cache()
+        app_state.state.model.users.clear_agent_cache()
 
         # New handle is now detected ...
         assert await mentions_agent("@RenamedBot hello", app_state)
@@ -8615,7 +8627,7 @@ class TestChatFollowUp:
     ):
         """Same user's follow-up routes without timer."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         from klangk_backend.wshandler import agent_conversations
 
         mock_session = AsyncMock()
@@ -8635,7 +8647,7 @@ class TestChatFollowUp:
                 "interjected": False,
             }
             with patch.object(
-                app_state.agents,
+                app_state.state.agents,
                 "get_session",
                 return_value=mock_session,
             ):
@@ -8657,7 +8669,7 @@ class TestChatFollowUp:
     ):
         """After interjection, follow-up within 30s still routes."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         from klangk_backend.wshandler import agent_conversations
 
         mock_session = AsyncMock()
@@ -8677,7 +8689,7 @@ class TestChatFollowUp:
                 "interjected": True,
             }
             with patch.object(
-                app_state.agents,
+                app_state.state.agents,
                 "get_session",
                 return_value=mock_session,
             ):
@@ -8699,7 +8711,7 @@ class TestChatFollowUp:
     ):
         """After interjection + 30s, follow-up does NOT route."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         from klangk_backend.wshandler import agent_conversations
 
         sock = _mock_sock()
@@ -8732,7 +8744,7 @@ class TestChatFollowUp:
     ):
         """A different user's message marks interjection."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         from klangk_backend.wshandler import agent_conversations
 
         sock = _mock_sock()
@@ -8760,7 +8772,7 @@ class TestChatFollowUp:
     ):
         """Message starting with @someone else breaks conversation."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         from klangk_backend.wshandler import agent_conversations
 
         sock = _mock_sock()
@@ -8805,7 +8817,7 @@ class TestChatSend:
         self, workspace, user, agent_user, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock1 = _mock_sock()
         sock2 = _mock_sock()
         conn = _base_conn(user=user, ws=sock1, app_state=app_state)
@@ -8834,7 +8846,7 @@ class TestChatSend:
     ):
         """Broadcast includes mention user IDs when @email is used."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = workspace["id"]
@@ -8896,11 +8908,11 @@ class TestChatSend:
     ):
         """@clanker sends thinking event + agent response."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
 
         # Seed a prior agent message so context filtering is exercised
-        agent_email = await app_state.model.users.agent_email()
-        await app_state.model.chat.add_chat_message(
+        agent_email = await app_state.state.model.users.agent_email()
+        await app_state.state.model.chat.add_chat_message(
             workspace["id"],
             model.AGENT_USER_ID,
             agent_email,
@@ -8908,7 +8920,7 @@ class TestChatSend:
             message_type=model.MSG_AGENT,
         )
         # Add a message from another user (interjection context)
-        await app_state.model.chat.add_chat_message(
+        await app_state.state.model.chat.add_chat_message(
             workspace["id"],
             "other-uid",
             "bob@test.com",
@@ -8927,7 +8939,7 @@ class TestChatSend:
         await session.add_subscriber(sock, "cid")
         try:
             with patch.object(
-                app_state.agents,
+                app_state.state.agents,
                 "get_session",
                 return_value=mock_session,
             ):
@@ -8967,7 +8979,7 @@ class TestChatSend:
     ):
         """@clanker with no prompt uses default greeting."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
 
         mock_session = AsyncMock()
         mock_session.output = _empty_async_generator
@@ -8981,7 +8993,7 @@ class TestChatSend:
         await session.add_subscriber(sock, "cid")
         try:
             with patch.object(
-                app_state.agents,
+                app_state.state.agents,
                 "get_session",
                 return_value=mock_session,
             ):
@@ -9004,7 +9016,7 @@ class TestChatSend:
     ):
         """Agent error posts error message."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
 
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
@@ -9014,7 +9026,7 @@ class TestChatSend:
         await session.add_subscriber(sock, "cid")
         try:
             with patch.object(
-                app_state.agents,
+                app_state.state.agents,
                 "get_session",
                 side_effect=RuntimeError("boom"),
             ):
@@ -9037,7 +9049,7 @@ class TestChatSend:
     ):
         """Agent process death posts system message."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         from klangk_backend.agent import AgentProcessDied
 
         mock_session = AsyncMock()
@@ -9054,7 +9066,7 @@ class TestChatSend:
         await session.add_subscriber(sock, "cid")
         try:
             with patch.object(
-                app_state.agents,
+                app_state.state.agents,
                 "get_session",
                 return_value=mock_session,
             ):
@@ -9077,7 +9089,7 @@ class TestChatSend:
     ):
         """Messages without @clanker don't trigger agent response."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
 
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
@@ -9104,7 +9116,7 @@ class TestChatSend:
         """A second rapid @mention cancels the prior in-flight run, and abort
         then reaches the latest run instead of an orphaned task."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
 
         sock1 = _mock_sock()
         sock2 = _mock_sock()
@@ -9159,12 +9171,12 @@ class TestChatSend:
 
     async def test_chat_history_on_connect(self, user, agent_user, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
 
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "chat-ws"
         )
-        await app_state.model.chat.add_chat_message(
+        await app_state.state.model.chat.add_chat_message(
             workspace["id"], "uid-other", "someone@test.com", "old message"
         )
 
@@ -9201,7 +9213,7 @@ class TestChatSend:
         msgs = []
         for i in range(5):
             msgs.append(
-                await app_state.model.chat.add_chat_message(
+                await app_state.state.model.chat.add_chat_message(
                     workspace["id"], "uid", "u@test.com", f"msg{i}"
                 )
             )
@@ -9237,8 +9249,8 @@ class TestPresence:
     async def test_presence_list_on_connect(self, user, agent_user, app_state):
         """Joining user receives presence_list with current users."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "pres-ws"
         )
@@ -9280,8 +9292,8 @@ class TestPresence:
     async def test_presence_join_broadcast(self, user, agent_user, app_state):
         """Existing subscribers receive presence_join when someone connects."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         from klangk_backend import model
 
         workspace = await _create_workspace_with_acl(
@@ -9298,10 +9310,10 @@ class TestPresence:
         conn1.workspace_id = workspace["id"]
 
         # Second user connects
-        other = await app_state.model.users.create_user(
+        other = await app_state.state.model.users.create_user(
             "other@test.com", "hash", verified=True
         )
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             f"/workspaces/{workspace['id']}",
             100,
             model.ACTION_ALLOW,
@@ -9358,7 +9370,7 @@ class TestPresence:
     async def test_presence_leave_broadcast(self, user, app_state):
         """Remaining subscribers receive presence_leave after debounce."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
 
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "pres-lv-ws"
@@ -9367,7 +9379,7 @@ class TestPresence:
         sock1 = _mock_sock()
         sock2 = _mock_sock()
         conn1 = _base_conn(user=user, ws=sock1, app_state=app_state)
-        other = await app_state.model.users.create_user(
+        other = await app_state.state.model.users.create_user(
             "lv@test.com", "hash", verified=True
         )
         conn2 = _base_conn(
@@ -9415,8 +9427,8 @@ class TestPresence:
     ):
         """Reconnecting within debounce window suppresses leave and join."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
-        registry = app_state.container_registry
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
         from klangk_backend import model
 
         workspace = await _create_workspace_with_acl(
@@ -9424,10 +9436,10 @@ class TestPresence:
         )
 
         sock1 = _mock_sock()  # observer
-        other = await app_state.model.users.create_user(
+        other = await app_state.state.model.users.create_user(
             "flap@test.com", "hash", verified=True
         )
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             f"/workspaces/{workspace['id']}",
             100,
             model.ACTION_ALLOW,
@@ -9518,7 +9530,7 @@ class TestPresence:
     async def test_presence_leave_multi_tab(self, user, app_state):
         """No presence_leave if user has another connection in workspace."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
 
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "pres-mt-ws"
@@ -9530,7 +9542,7 @@ class TestPresence:
         # sock1 and sock2 are same user, sock3 is another user
         conn1 = _base_conn(user=user, ws=sock1, app_state=app_state)
         conn2 = _base_conn(user=user, ws=sock2, app_state=app_state)
-        other = await app_state.model.users.create_user(
+        other = await app_state.state.model.users.create_user(
             "mt@test.com", "hash", verified=True
         )
         conn3 = _base_conn(
@@ -9570,7 +9582,7 @@ class TestRefreshUserHandle:
         self, user, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "handle-refresh-ws"
         )
@@ -9603,16 +9615,16 @@ class TestRefreshUserHandle:
 
     async def test_refresh_no_connections(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         await wshandler.refresh_user_handle(sockets, "nonexistent", "whatever")
 
 
 class TestChatDelete:
     async def test_chat_delete_broadcasts_update(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
 
-        workspace = await app_state.workspaces.create_workspace(
+        workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "chat-del-ws"
         )
         sock = _mock_sock()
@@ -9620,7 +9632,7 @@ class TestChatDelete:
         conn.workspace_id = workspace["id"]
         conn.container_id = "cid"
 
-        msg = await app_state.model.chat.add_chat_message(
+        msg = await app_state.state.model.chat.add_chat_message(
             workspace["id"], user["id"], "u@test.com", "delete me"
         )
 
@@ -9640,14 +9652,14 @@ class TestChatDelete:
 
     async def test_chat_delete_wrong_user_ignored(self, user, app_state):
 
-        workspace = await app_state.workspaces.create_workspace(
+        workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "chat-del-ws2"
         )
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.workspace_id = workspace["id"]
 
-        msg = await app_state.model.chat.add_chat_message(
+        msg = await app_state.state.model.chat.add_chat_message(
             workspace["id"], "other-uid", "other@test.com", "not yours"
         )
 
@@ -9692,17 +9704,17 @@ class TestBridgeIdleTimeout:
 class TestHandleBrowserChunk:
     def test_missing_id(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sockets.handle_browser_chunk({})  # no raise
 
     def test_unknown_id(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sockets.handle_browser_chunk({"id": "nope", "delta": "x"})
 
     def test_wrong_sender_ignored(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         q: asyncio.Queue = asyncio.Queue()
         expected = _mock_sock()
         imposter = _mock_sock()
@@ -9717,7 +9729,7 @@ class TestHandleBrowserChunk:
 
     def test_success(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         q: asyncio.Queue = asyncio.Queue()
         sock = _mock_sock()
         sockets.streaming_browser_requests["c-2"] = (q, sock)
@@ -9733,7 +9745,7 @@ class TestHandleBrowserChunk:
 class TestHandleBrowserResponseStreaming:
     def test_done_enqueued(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         q: asyncio.Queue = asyncio.Queue()
         sock = _mock_sock()
         sockets.streaming_browser_requests["d-1"] = (q, sock)
@@ -9751,7 +9763,7 @@ class TestHandleBrowserResponseStreaming:
 
     def test_wrong_sender_ignored(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         q: asyncio.Queue = asyncio.Queue()
         expected = _mock_sock()
         imposter = _mock_sock()
@@ -9768,7 +9780,7 @@ class TestHandleBrowserResponseStreaming:
 class TestDispatchBrowserRequestStreamTo:
     async def test_streams_chunks_then_done(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-stream", app_state)
         sock = _mock_sock()
         session.subscribers.add(sock)
@@ -9810,7 +9822,7 @@ class TestDispatchBrowserRequestStreamTo:
 
     async def test_send_failure_yields_error(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-stream-dead", app_state)
         sock = _mock_sock()
         sock.send_json = MagicMock(side_effect=RuntimeError("dead"))
@@ -9830,7 +9842,7 @@ class TestDispatchBrowserRequestStreamTo:
 
     async def test_idle_timeout_yields_error(self, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-stream-to", app_state)
         sock = _mock_sock()
         try:
@@ -9849,7 +9861,7 @@ class TestDispatchBrowserRequestStreamTo:
 
     async def test_loop_dispatches_browser_chunk(self, user, app_state):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
 
         token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
@@ -9873,7 +9885,7 @@ class TestUiReadySharedTerminals:
         self, user, temp_data_dir, app_state
     ):
 
-        ws = await app_state.workspaces.create_workspace(
+        ws = await app_state.state.workspaces.create_workspace(
             user["id"], "ui-shared"
         )
         async with _conn_in_workspace(
@@ -9899,9 +9911,9 @@ class TestUiReadySharedTerminals:
         self, user, temp_data_dir, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
 
-        ws = await app_state.workspaces.create_workspace(
+        ws = await app_state.state.workspaces.create_workspace(
             user["id"], "ui-ready-cr"
         )
         sock = _mock_sock()
@@ -9935,7 +9947,7 @@ class TestTokenRenewal:
     async def test_renewal_creates_new_token(self, user, app_state):
         """Token renewal loop creates a new token and pushes it."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "renew-ws"
         )
@@ -9958,7 +9970,7 @@ class TestTokenRenewal:
 
             with (
                 patch.object(
-                    app_state.settings, "workspace_token_hours", "1.0"
+                    app_state.state.settings, "workspace_token_hours", "1.0"
                 ),
                 patch.object(
                     _mock_term,
@@ -9987,7 +9999,7 @@ class TestTokenRenewal:
     async def test_renewal_retries_on_failure(self, user, app_state):
         """Token renewal retries after failure."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "retry-ws"
         )
@@ -10011,7 +10023,7 @@ class TestTokenRenewal:
 
             with (
                 patch.object(
-                    app_state.settings, "workspace_token_hours", "0.0001"
+                    app_state.state.settings, "workspace_token_hours", "0.0001"
                 ),
                 patch.object(
                     _mock_term,
@@ -10042,7 +10054,7 @@ class TestTokenRenewal:
         that renews tokens for a dead container forever.
         """
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "leak-ws"
         )
@@ -10052,7 +10064,7 @@ class TestTokenRenewal:
         try:
             with (
                 patch.object(
-                    app_state.settings, "workspace_token_hours", "0.0001"
+                    app_state.state.settings, "workspace_token_hours", "0.0001"
                 ),
                 patch.object(
                     _mock_term,
@@ -10084,7 +10096,7 @@ class TestTokenRenewal:
         """Two concurrent add_subscriber calls must not create duplicate
         renewal tasks (#1299)."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "race-ws"
         )
@@ -10306,10 +10318,10 @@ class TestStartAgentIfNeeded:
         self, user, db, app_state
     ):
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
-        workspace = await app_state.workspaces.create_workspace(
+        workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "agent-ws"
         )
         conn.workspace_id = workspace["id"]
@@ -10322,7 +10334,7 @@ class TestStartAgentIfNeeded:
 
         try:
             with patch.object(
-                app_state.agents,
+                app_state.state.agents,
                 "get_session",
                 return_value=mock_agent_session,
             ):
@@ -10338,7 +10350,7 @@ class TestStartAgentIfNeeded:
         conn.workspace_id = "ws-fail"
 
         with patch.object(
-            conn.app_state.agents,
+            conn.app.state.agents,
             "get_session",
             side_effect=RuntimeError("nope"),
         ):
@@ -10350,7 +10362,7 @@ class TestHandleChatAgentAbort:
     async def test_cancels_running_task(self, user, db, app_state):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
-        workspace = await app_state.workspaces.create_workspace(
+        workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "abort-ws"
         )
         conn.workspace_id = workspace["id"]
@@ -10384,7 +10396,7 @@ class TestHandleChatAgentAbort:
     async def test_abort_no_task(self, user, db, app_state):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
-        workspace = await app_state.workspaces.create_workspace(
+        workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "abort-none"
         )
         conn.workspace_id = workspace["id"]
@@ -10427,7 +10439,7 @@ class TestPresenceIncludesAgent:
     async def test_agent_in_presence_when_running(
         self, user, agent_user, app_state
     ):
-        workspace = await app_state.workspaces.create_workspace(
+        workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "pres-ws"
         )
         async with _conn_in_workspace(user, workspace["id"]) as (
@@ -10437,12 +10449,12 @@ class TestPresenceIncludesAgent:
             app_state,
         ):
             with patch.object(
-                app_state.agents,
+                app_state.state.agents,
                 "is_running",
                 side_effect=lambda ws_id: ws_id == workspace["id"],
             ):
                 users = await get_presence_list(
-                    workspace["id"], app_state.sockets
+                    workspace["id"], app_state.state.sockets
                 )
             ids = [u["user_id"] for u in users]
             assert model.AGENT_USER_ID in ids
@@ -10452,7 +10464,7 @@ class TestPresenceIncludesAgent:
     ):
         """Agent running in a different workspace must not appear in this
         workspace's presence list (regression for #870)."""
-        workspace = await app_state.workspaces.create_workspace(
+        workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "pres-ws"
         )
         async with _conn_in_workspace(user, workspace["id"]) as (
@@ -10462,12 +10474,12 @@ class TestPresenceIncludesAgent:
             app_state,
         ):
             with patch.object(
-                app_state.agents,
+                app_state.state.agents,
                 "is_running",
                 side_effect=lambda ws_id: ws_id == "other-workspace",
             ):
                 users = await get_presence_list(
-                    workspace["id"], app_state.sockets
+                    workspace["id"], app_state.state.sockets
                 )
             ids = [u["user_id"] for u in users]
             assert model.AGENT_USER_ID not in ids
@@ -10480,30 +10492,32 @@ class TestAgentMentionOtherMsgsContext:
         """When other users have spoken since the agent's last response,
         their messages are prepended to the prompt."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         from klangk_backend.wshandler import handle_agent_mention
 
-        workspace = await app_state.model.workspaces.create_workspace(
+        workspace = await app_state.state.model.workspaces.create_workspace(
             user["id"], "ctx-ws"
         )
         ws_id = workspace["id"]
 
         # Create a user2 whose message should appear in context
-        user2 = await app_state.model.users.create_user(
+        user2 = await app_state.state.model.users.create_user(
             "user2@example.com", "hash", verified=True
         )
-        agent_email = (await app_state.model.users.get_agent_user())["email"]
+        agent_email = (await app_state.state.model.users.get_agent_user())[
+            "email"
+        ]
 
         # Simulate conversation: agent response, then user2 message,
         # then user1 mentions agent
-        await app_state.model.chat.add_chat_message(
+        await app_state.state.model.chat.add_chat_message(
             ws_id,
             model.AGENT_USER_ID,
             agent_email,
             "I'm here",
             message_type=model.MSG_AGENT,
         )
-        await app_state.model.chat.add_chat_message(
+        await app_state.state.model.chat.add_chat_message(
             ws_id,
             user2["id"],
             user2["email"],
@@ -10527,7 +10541,7 @@ class TestAgentMentionOtherMsgsContext:
 
         try:
             with patch.object(
-                app_state.agents,
+                app_state.state.agents,
                 "get_session",
                 return_value=mock_session,
             ):
@@ -10573,10 +10587,10 @@ class TestAgentMentionAskerIdentity:
     ):
         """An @mention from a user injects that user's identity header."""
         app_state = _make_app_state()
-        sockets = app_state.sockets
+        sockets = app_state.state.sockets
         from klangk_backend.wshandler import handle_agent_mention
 
-        workspace = await app_state.model.workspaces.create_workspace(
+        workspace = await app_state.state.model.workspaces.create_workspace(
             user["id"], "id-ws"
         )
         ws_id = workspace["id"]
@@ -10597,7 +10611,7 @@ class TestAgentMentionAskerIdentity:
 
         try:
             with patch.object(
-                app_state.agents,
+                app_state.state.agents,
                 "get_session",
                 return_value=mock_session,
             ):
@@ -10635,7 +10649,7 @@ class TestTokenRenewalFailureLogged:
         ) + timedelta(seconds=0.05)
         with (
             patch.object(
-                app_state.settings, "workspace_token_hours", "0.0001"
+                app_state.state.settings, "workspace_token_hours", "0.0001"
             ),
             patch.object(
                 _mock_term,

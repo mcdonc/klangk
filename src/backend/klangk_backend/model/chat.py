@@ -27,16 +27,16 @@ class ChatModel:
     """Chat data access, through ``app_state.db``.
 
     Reached via ``app_state.model.chat``. Reaches the DB through
-    ``self.app_state.db`` (the single DB instance for the whole app). The
+    ``self.app.state.db`` (the single DB instance for the whole app). The
     method bodies mirror the module-level free functions below (backstop);
     the message-type constants and ``MENTION_RE`` stay module-level.
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     async def parse_mentions(
         self, db: Connection, message: str, workspace_id: str
@@ -92,7 +92,7 @@ class ChatModel:
         message_type: int = MSG_USER,
     ) -> dict:
         """Store a chat message and return it."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             msg_id = str(uuid.uuid4())
             await db.execute(
                 "INSERT INTO chat_messages"
@@ -144,7 +144,7 @@ class ChatModel:
         Only the author can delete their own messages.  The row is
         preserved so the history shows a placeholder.
         """
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "UPDATE chat_messages SET message = '<message deleted by author>'"
                 " WHERE id = ? AND user_id = ?",
@@ -156,7 +156,7 @@ class ChatModel:
         self, workspace_id: str, before_id: str, limit: int = 50
     ) -> list[dict]:
         """Get older chat messages before a given message ID."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             # Get the created_at and rowid of the anchor message
             cursor = await db.execute(
                 "SELECT created_at, rowid FROM chat_messages WHERE id = ?",
@@ -218,7 +218,7 @@ class ChatModel:
         self, workspace_id: str, limit: int = 50
     ) -> list[dict]:
         """Get the most recent chat messages for a workspace."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT c.id, c.workspace_id, c.user_id, c.user_email,"
                 " c.message, c.message_type, c.created_at,"

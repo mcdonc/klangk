@@ -19,7 +19,9 @@ def _make_plugin(tmp_path, name, config):
 def _plugins(plugins_dir):
     """Build a fresh Plugins instance pointing at *plugins_dir* (#1451)."""
     app_state = types.SimpleNamespace(
-        settings=make_settings({"KLANGK_PLUGINS_DIR": str(plugins_dir)})
+        state=types.SimpleNamespace(
+            settings=make_settings({"KLANGK_PLUGINS_DIR": str(plugins_dir)})
+        )
     )
     return plugins.Plugins(app_state)
 

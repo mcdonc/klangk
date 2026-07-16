@@ -1,7 +1,7 @@
 """Shared core: async engine, connection wrappers, and the :class:`DB`.
 
 All DB access in the per-domain modules goes through ``app_state.db`` —
-a single owned :class:`DB` instance reached via ``self.app_state.db``
+a single owned :class:`DB` instance reached via ``self.app.state.db``
 inside each ``XModel(app_state)`` (and the request path's
 ``request.app.state.db``).  The engine state lives on :class:`DB` so a
 test fixture that rebinds it targets a single, obvious location.
@@ -114,16 +114,16 @@ class DB:
     frozen-at-import hazard (#1452).
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
         self.engine = None
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     @property
     def data_dir(self) -> Path:
-        return Path(self.app_state.settings.data_dir)
+        return Path(self.app.state.settings.data_dir)
 
     @property
     def db_path(self) -> Path:

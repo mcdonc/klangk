@@ -14,14 +14,14 @@ class LoginAttemptsModel:
     """Login-attempt storage, resolved through ``app_state.db``.
 
     Reached via ``app_state.model.login_attempts``. Reaches the DB through
-    ``self.app_state.db`` (the single DB instance for the whole app).
+    ``self.app.state.db`` (the single DB instance for the whole app).
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     async def record_failed_login(
         self, email: str, *, reset: bool = False
@@ -30,7 +30,7 @@ class LoginAttemptsModel:
 
         Storage only; the sliding-window *decision* lives in ``auth.py``.
         """
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             now_iso = datetime.now(timezone.utc).isoformat()
             if reset:
                 await db.execute(
@@ -55,7 +55,7 @@ class LoginAttemptsModel:
         self, email: str
     ) -> dict[str, int | str | None] | None:
         """Return login attempt info for an email, or None if no attempts tracked."""
-        row = await self.app_state.db.fetchone(
+        row = await self.app.state.db.fetchone(
             "SELECT attempt_count, first_attempt_at, locked_until"
             " FROM login_attempts WHERE email = ?",
             (email,),
@@ -70,7 +70,7 @@ class LoginAttemptsModel:
 
     async def set_login_lockout(self, email: str, locked_until: str) -> None:
         """Set the lockout time for an email after too many failed attempts."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             await db.execute(
                 "UPDATE login_attempts SET locked_until = ? WHERE email = ?",
                 (locked_until, email),
@@ -78,7 +78,7 @@ class LoginAttemptsModel:
 
     async def clear_login_attempts(self, email: str) -> None:
         """Clear all login attempts for an email (on successful login)."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             await db.execute(
                 "DELETE FROM login_attempts WHERE email = ?", (email,)
             )

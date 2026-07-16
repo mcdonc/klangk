@@ -60,7 +60,15 @@ def temp_data_dir(tmp_path, monkeypatch):
     from klangk_backend.model.db import DB
     from _helpers import set_test_db, reset_test_db
 
-    set_test_db(DB(types.SimpleNamespace(settings=KlangkSettings(os.environ))))
+    set_test_db(
+        DB(
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(
+                    settings=KlangkSettings(os.environ)
+                )
+            )
+        )
+    )
     # Clear agent caches so each test starts fresh.
     from klangk_backend.model import clear_agent_cache
 
@@ -72,8 +80,8 @@ def temp_data_dir(tmp_path, monkeypatch):
 @pytest.fixture
 async def db(app_state):
     """Initialize the schema and return the per-test DB."""
-    await app_state.model.init_db()
-    return app_state.db
+    await app_state.state.model.init_db()
+    return app_state.state.db
 
 
 @pytest.fixture
@@ -81,22 +89,22 @@ async def agent_user(app_state):
     """Seed the chat agent user into the DB."""
     from klangk_backend.model import AGENT_USER_ID
 
-    await app_state.model.init_db()
-    async with app_state.db.transaction() as agent_db:
+    await app_state.state.model.init_db()
+    async with app_state.state.db.transaction() as agent_db:
         await agent_db.execute(
             "INSERT OR REPLACE INTO users"
             " (id, email, password_hash, verified, provider, handle)"
             " VALUES (?, ?, NULL, 1, 'system', ?)",
             (AGENT_USER_ID, "clanker@example.com", "clanker"),
         )
-    app_state.model.users.clear_agent_cache()
+    app_state.state.model.users.clear_agent_cache()
 
 
 @pytest.fixture
 async def user(app_state):
     """Create a test user and return it."""
-    await app_state.model.init_db()
-    return await app_state.model.users.create_user(
+    await app_state.state.model.init_db()
+    return await app_state.state.model.users.create_user(
         "testuser@example.com", _TEST_PASSWORD_HASH, verified=True
     )
 
@@ -113,11 +121,11 @@ async def admin_group(app_state):
         SYSTEM_EVERYONE,
     )
 
-    await app_state.model.init_db()
-    group = await app_state.model.users.create_group(
+    await app_state.state.model.init_db()
+    group = await app_state.state.model.users.create_group(
         "admin", description="Administrators"
     )
-    acl = app_state.model.acl
+    acl = app_state.state.model.acl
     # Seed default ACLs
     await acl.add_acl_entry(
         "/",
@@ -165,10 +173,10 @@ async def admin_group(app_state):
 @pytest.fixture
 async def admin_user(admin_group, app_state):
     """Create a test user in the admin group and return it."""
-    user = await app_state.model.users.create_user(
+    user = await app_state.state.model.users.create_user(
         "testadmin@example.com", _TEST_PASSWORD_HASH, verified=True
     )
-    await app_state.model.users.add_user_to_group(
+    await app_state.state.model.users.add_user_to_group(
         user["id"], admin_group["id"]
     )
     return user
@@ -176,14 +184,17 @@ async def admin_user(admin_group, app_state):
 
 @pytest.fixture
 async def app_state(temp_data_dir):
-    """Build a minimal app_state with owned instances wired (#1484).
+    """Build a minimal mock app with owned instances wired (#1484).
 
-    Shared across all test files — each test file that needs app_state
-    requests it rather than defining its own. Built fresh per test from
-    the temp_data_dir's settings so every owned instance points at the
-    per-test tmp dir. Also initializes the schema on ``app_state.db`` so
-    every test that requests ``app_state`` (or ``db``) starts with a
-    schema'd DB (#1578).
+    Returns a mock ``app`` object whose ``.state`` holds the subsystem
+    instances, matching the real ``build_app()`` shape.  Shared across all
+    test files — each test file that needs app_state requests it rather
+    than defining its own.  Built fresh per test from the temp_data_dir's
+    settings so every owned instance points at the per-test tmp dir.
+
+    Despite the fixture name (kept for backwards compatibility with the
+    ~3000 existing call sites), this returns an object with a ``.state``
+    attribute — the same shape subsystem constructors receive as ``app``.
     """
     import types
 
@@ -202,35 +213,35 @@ async def app_state(temp_data_dir):
         }
     )
     state = types.SimpleNamespace(settings=settings)
-    state.auth = Auth(state)
-    registry = ContainerRegistry(state)
+    app = types.SimpleNamespace(state=state)
+    state.auth = Auth(app)
+    registry = ContainerRegistry(app)
     state.container_registry = registry
-    registry.app_state = state
-    state.workspaces = Workspaces(state)
-    state.email = EmailService(state)
-    state.util = Util(state)
-    # Wire DB + Model(app_state) so every domain reached via
-    # app_state.model.* resolves the per-test DB (#1578). With the
-    # _current_db ContextVar gone, app_state.db is the single owner.
+    state.workspaces = Workspaces(app)
+    state.email = EmailService(app)
+    state.util = Util(app)
+    # Wire DB + Model so every domain reached via
+    # app.state.model.* resolves the per-test DB (#1578). With the
+    # _current_db ContextVar gone, app.state.db is the single owner.
     from _helpers import wire_db_and_model
 
-    wire_db_and_model(state)
+    wire_db_and_model(app)
     # NOTE: schema is NOT initialized here. ``db`` and the seed fixtures
     # (``user``/``agent_user``/``admin_group``) call ``init_db`` themselves
     # so that migration tests can request ``app_state``, plant a legacy
-    # schema via aiosqlite, and only then run ``app_state.model.init_db()``
+    # schema via aiosqlite, and only then run ``app.state.model.init_db()``
     # (#1578).
     # Resolve the instance ID into the per-test util (writes
-    # <data_dir>/instance-id), so consumers of app_state.util.instance_id()
+    # <data_dir>/instance-id), so consumers of app.state.util.instance_id()
     # get a real value without each test calling resolve explicitly.
     state.util.resolve_instance_id()
-    return state
+    return app
 
 
 @pytest.fixture
 async def workspace(user, app_state):
     """Create a test workspace (without port allocation)."""
-    workspace = await app_state.model.workspaces.create_workspace(
+    workspace = await app_state.state.model.workspaces.create_workspace(
         user["id"], "test-workspace"
     )
     return workspace

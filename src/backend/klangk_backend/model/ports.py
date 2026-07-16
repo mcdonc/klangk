@@ -39,22 +39,22 @@ class PortsModel:
     """DB-backed port-allocation tracking, through ``app_state.db``.
 
     Reached via ``app_state.model.ports``. Reaches the DB through
-    ``self.app_state.db`` (the single DB instance for the whole app). The
+    ``self.app.state.db`` (the single DB instance for the whole app). The
     OS-level socket probes (``port_in_use`` etc.) stay in ``util`` — only
     the DB-backed allocation tracking lives here.
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     async def add_port_allocations(
         self, workspace_id: str, ports: list[int]
     ) -> None:
         """Allocate ports to a workspace. Raises IntegrityError on conflict."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             for port in ports:
                 await db.execute(
                     "INSERT INTO port_allocations (port, workspace_id) VALUES (?, ?)",
@@ -65,7 +65,7 @@ class PortsModel:
         self, workspace_id: str, count: int, start: int
     ) -> list[int]:
         """Atomically find free ports and allocate them in a single transaction."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute("SELECT port FROM port_allocations")
             rows = await cursor.fetchall()
             used = {row["port"] for row in rows}
@@ -88,7 +88,7 @@ class PortsModel:
         self, workspace_id: str, ports: list[int]
     ) -> None:
         """Remove specific port allocations from a workspace."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             for port in ports:
                 await db.execute(
                     "DELETE FROM port_allocations WHERE port = ? AND workspace_id = ?",
@@ -97,7 +97,7 @@ class PortsModel:
 
     async def get_workspace_ports(self, workspace_id: str) -> list[int]:
         """Return all allocated ports for a workspace, sorted."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT port FROM port_allocations WHERE workspace_id = ? ORDER BY port",
                 (workspace_id,),
@@ -107,7 +107,7 @@ class PortsModel:
 
     async def get_all_allocated_ports(self) -> set[int]:
         """Return all allocated port numbers across all workspaces."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute("SELECT port FROM port_allocations")
             rows = await cursor.fetchall()
             return {row["port"] for row in rows}

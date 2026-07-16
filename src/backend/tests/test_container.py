@@ -30,34 +30,36 @@ def _make_app_state(registry=None, sockets=None):
     # Two-phase: build the namespace shell first so the owned instances
     # (sockets, registry, terminal, plugins) can take app_state at
     # construction and reach collaborators via self.app_state (#1426).
-    app_state = types.SimpleNamespace(settings=settings)
+    app_state = types.SimpleNamespace(
+        state=types.SimpleNamespace(settings=settings)
+    )
     podman_inst = Podman(app_state)
-    app_state.podman = podman_inst
+    app_state.state.podman = podman_inst
     if sockets is None:
         sockets = WebSocketState(app_state)
-    app_state.sockets = sockets
+    app_state.state.sockets = sockets
     if registry is None:
         registry = container.ContainerRegistry(app_state)
-    app_state.container_registry = registry
-    # #1480: container.py reaches set_workspace_token via app_state.terminal.
+    app_state.state.container_registry = registry
+    # #1480: container.py reaches set_workspace_token via app_state.state.terminal.
     from klangk_backend.terminal import Terminal
     from klangk_backend import plugins as plugins_mod
 
-    app_state.terminal = Terminal(app_state)
-    app_state.plugins = plugins_mod.Plugins(app_state)
+    app_state.state.terminal = Terminal(app_state)
+    app_state.state.plugins = plugins_mod.Plugins(app_state)
     from klangk_backend.workspaces import Workspaces
 
-    app_state.workspaces = Workspaces(app_state)
-    app_state.files = files_mod.Files(app_state)
-    # #1503: container.py reaches derive_hosting_info via app_state.util.
-    app_state.util = util_mod.Util(app_state)
+    app_state.state.workspaces = Workspaces(app_state)
+    app_state.state.files = files_mod.Files(app_state)
+    # #1503: container.py reaches derive_hosting_info via app_state.state.util.
+    app_state.state.util = util_mod.Util(app_state)
     # #1567: ContainerRegistry reaches the cert-dir resolver via
-    # app_state.ssl_trust (the settings-dependent SSL trust surface).
-    app_state.ssl_trust = ssl_trust.SSLTrust(app_state)
+    # app_state.state.ssl_trust (the settings-dependent SSL trust surface).
+    app_state.state.ssl_trust = ssl_trust.SSLTrust(app_state)
 
-    app_state.auth = auth_mod.Auth(app_state)
-    # #1572: ContainerRegistry reaches app_state.model.ports; Auth reaches
-    # app_state.model.{tokens,login_attempts}. Wire db + model onto the
+    app_state.state.auth = auth_mod.Auth(app_state)
+    # #1572: ContainerRegistry reaches app_state.state.model.ports; Auth reaches
+    # app_state.state.model.{tokens,login_attempts}. Wire db + model onto the
     # namespace (the ContextVar backstop binds the same DB for the rest).
     from _helpers import wire_db_and_model
 
@@ -84,7 +86,9 @@ class TestParseIdleTimeout:
         import types as types_mod
 
         settings = make_settings(env)
-        app_state = types_mod.SimpleNamespace(settings=settings)
+        app_state = types_mod.SimpleNamespace(
+            state=types_mod.SimpleNamespace(settings=settings)
+        )
         return container.ContainerRegistry(app_state)
 
     def test_default_values(self):
@@ -159,13 +163,15 @@ class TestSslCertDir:
     @staticmethod
     def _trust(s) -> ssl_trust.SSLTrust:
         """SSLTrust owning the given settings (#1567)."""
-        return ssl_trust.SSLTrust(types.SimpleNamespace(settings=s))
+        return ssl_trust.SSLTrust(
+            types.SimpleNamespace(state=types.SimpleNamespace(settings=s))
+        )
 
 
 class TestImagePullPolicy:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     def test_default_is_never(self):
         assert self.registry.image_pull_policy() == "never"
@@ -175,7 +181,9 @@ class TestImagePullPolicy:
         import types as types_mod
 
         settings = make_settings({"KLANGK_IMAGE_PULL_POLICY": "missing"})
-        app_state = types_mod.SimpleNamespace(settings=settings)
+        app_state = types_mod.SimpleNamespace(
+            state=types_mod.SimpleNamespace(settings=settings)
+        )
         reg = container.ContainerRegistry(app_state)
         assert reg.image_pull_policy() == "missing"
 
@@ -183,7 +191,9 @@ class TestImagePullPolicy:
         import types as types_mod
 
         settings = make_settings({"KLANGK_IMAGE_PULL_POLICY": "sometimes"})
-        app_state = types_mod.SimpleNamespace(settings=settings)
+        app_state = types_mod.SimpleNamespace(
+            state=types_mod.SimpleNamespace(settings=settings)
+        )
         reg = container.ContainerRegistry(app_state)
         with caplog.at_level("WARNING"):
             assert reg.image_pull_policy() == "never"
@@ -193,7 +203,7 @@ class TestImagePullPolicy:
 class TestActivityTracking:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     def testtrack_activity(self):
         self.registry.track_activity("cid-1", "ws-1")
@@ -289,7 +299,7 @@ def _noop_callback(ws):
 class TestIdleCallbacks:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     def test_on_idle_stop_registers(self):
         self.registry.track_activity("cid-1", "ws-1")
@@ -342,10 +352,10 @@ class TestIdleCallbacks:
 class TestPortAllocation:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     async def test_allocate_ports(self, workspace, app_state):
-        ports = await app_state.model.ports.find_and_allocate_ports(
+        ports = await app_state.state.model.ports.find_and_allocate_ports(
             workspace["id"], 3, self.registry.port_range_start
         )
         assert len(ports) == 3
@@ -355,14 +365,14 @@ class TestPortAllocation:
         self, workspace, user, app_state
     ):
         # Allocate some ports for workspace 1
-        ports1 = await app_state.model.ports.find_and_allocate_ports(
+        ports1 = await app_state.state.model.ports.find_and_allocate_ports(
             workspace["id"], 3, self.registry.port_range_start
         )
         # Create second workspace and allocate
-        ws2 = await app_state.model.workspaces.create_workspace(
+        ws2 = await app_state.state.model.workspaces.create_workspace(
             user["id"], "ws2"
         )
-        ports2 = await app_state.model.ports.find_and_allocate_ports(
+        ports2 = await app_state.state.model.ports.find_and_allocate_ports(
             ws2["id"], 3, self.registry.port_range_start
         )
         # No overlap
@@ -370,8 +380,8 @@ class TestPortAllocation:
 
     async def test_get_workspace_ports(self, workspace, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
-        allocated = await app_state.model.ports.find_and_allocate_ports(
+        registry = app_state.state.container_registry
+        allocated = await app_state.state.model.ports.find_and_allocate_ports(
             workspace["id"], 2, self.registry.port_range_start
         )
         retrieved = await registry.get_workspace_ports(workspace["id"])
@@ -379,7 +389,7 @@ class TestPortAllocation:
 
     async def test_get_workspace_ports_empty(self, workspace, app_state):
         app_state = _make_app_state()
-        registry = app_state.container_registry
+        registry = app_state.state.container_registry
         ports = await registry.get_workspace_ports(workspace["id"])
         assert ports == []
 
@@ -389,7 +399,9 @@ class TestDnsConfig:
         import types as types_mod
 
         settings = make_settings(env)
-        app_state = types_mod.SimpleNamespace(settings=settings)
+        app_state = types_mod.SimpleNamespace(
+            state=types_mod.SimpleNamespace(settings=settings)
+        )
         return container.ContainerRegistry(app_state)
 
     def test_no_env_returns_empty(self):
@@ -416,7 +428,7 @@ class TestDnsConfig:
 class TestConstants:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     def test_port_range_start(self):
         assert self.registry.port_range_start == 9000
@@ -433,13 +445,15 @@ class TestPortsPerWorkspaceCap:
 
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     def _registry(self, env):
         import types as types_mod
 
         settings = make_settings(env)
-        app_state = types_mod.SimpleNamespace(settings=settings)
+        app_state = types_mod.SimpleNamespace(
+            state=types_mod.SimpleNamespace(settings=settings)
+        )
         return container.ContainerRegistry(app_state)
 
     def test_default_when_unset(self):
@@ -463,7 +477,7 @@ class TestPortsPerWorkspaceCap:
 
     def test_garbage_falls_back_to_default(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings,
+            self.registry.app.state.settings,
             "hosted_ports_per_workspace",
             "abc",
         )
@@ -471,7 +485,7 @@ class TestPortsPerWorkspaceCap:
 
     def test_negative_clamped_to_zero(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings,
+            self.registry.app.state.settings,
             "hosted_ports_per_workspace",
             "-2",
         )
@@ -485,7 +499,7 @@ class TestPortsPerWorkspaceCap:
 def patch_podman(registry=None, **overrides):
     """Patch the podman.* calls container.py makes.
 
-    container.py reaches the CLI wrappers via ``self.registry.app_state.podman.X``
+    container.py reaches the CLI wrappers via ``self.registry.app.state.podman.X``
     (#1468); this patches the methods on that instance. Yields a namespace
     of the AsyncMocks so tests can assert on them. Override any default by
     passing ``name=AsyncMock(...)``.
@@ -504,7 +518,7 @@ def patch_podman(registry=None, **overrides):
         ),
     }
     mocks = {**defaults, **overrides}
-    target = registry.app_state.podman if registry is not None else podman
+    target = registry.app.state.podman if registry is not None else podman
     with ExitStack() as stack:
         for name, mock in mocks.items():
             stack.enter_context(patch.object(target, name, mock))
@@ -537,7 +551,7 @@ def _sudo_call(p):
 class TestStartContainer:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     async def test_create_new_container(self, workspace):
         with patch_podman(self.registry) as p:
@@ -562,7 +576,7 @@ class TestStartContainer:
 
     async def test_sudo_enabled(self, workspace, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings, "allow_sudo", "true"
+            self.registry.app.state.settings, "allow_sudo", "true"
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -574,7 +588,7 @@ class TestStartContainer:
 
     async def test_sudo_disabled(self, workspace, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings, "allow_sudo", "0"
+            self.registry.app.state.settings, "allow_sudo", "0"
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -584,7 +598,7 @@ class TestStartContainer:
 
     async def test_sudo_disabled_false(self, workspace, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings, "allow_sudo", "false"
+            self.registry.app.state.settings, "allow_sudo", "false"
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -597,7 +611,7 @@ class TestStartContainer:
     ):
         """Start with sudo disabled, restart with sudo enabled."""
         monkeypatch.setattr(
-            self.registry.app_state.settings, "allow_sudo", "false"
+            self.registry.app.state.settings, "allow_sudo", "false"
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -607,11 +621,11 @@ class TestStartContainer:
 
         # "Restart" — remove container state so start_container creates a new one
         self.registry.states.clear()
-        await app_state.model.workspaces.update_workspace_container(
+        await app_state.state.model.workspaces.update_workspace_container(
             workspace["id"], None
         )
         monkeypatch.setattr(
-            self.registry.app_state.settings, "allow_sudo", "true"
+            self.registry.app.state.settings, "allow_sudo", "true"
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -624,7 +638,7 @@ class TestStartContainer:
     ):
         """Start with sudo enabled, restart with sudo disabled."""
         monkeypatch.setattr(
-            self.registry.app_state.settings, "allow_sudo", "true"
+            self.registry.app.state.settings, "allow_sudo", "true"
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -633,11 +647,11 @@ class TestStartContainer:
         assert "NOPASSWD:ALL" in str(_sudo_call(p).args[1])
 
         self.registry.states.clear()
-        await app_state.model.workspaces.update_workspace_container(
+        await app_state.state.model.workspaces.update_workspace_container(
             workspace["id"], None
         )
         monkeypatch.setattr(
-            self.registry.app_state.settings, "allow_sudo", "false"
+            self.registry.app.state.settings, "allow_sudo", "false"
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -659,7 +673,7 @@ class TestStartContainer:
                 await self.registry.start_container(
                     workspace["id"], "/tmp/ws", "/tmp/home"
                 )
-        ws = await app_state.model.workspaces.get_workspace(
+        ws = await app_state.state.model.workspaces.get_workspace(
             workspace["id"], user["id"]
         )
         assert ws["container_id"] == "new-cid"
@@ -693,7 +707,7 @@ class TestStartContainer:
                 await task
 
         # Despite the cancel, the container was started and recorded.
-        ws = await app_state.model.workspaces.get_workspace(
+        ws = await app_state.state.model.workspaces.get_workspace(
             workspace["id"], user["id"]
         )
         assert ws["container_id"] == "new-cid"
@@ -751,10 +765,10 @@ class TestStartContainer:
     async def test_llm_proxy_env_vars(self, workspace, monkeypatch):
         """Container gets proxy URL, not real API keys."""
         monkeypatch.setattr(
-            self.registry.app_state.settings, "llm_model", "gemma4:31b"
+            self.registry.app.state.settings, "llm_model", "gemma4:31b"
         )
         monkeypatch.setattr(
-            self.registry.app_state.settings, "egress_port", "8995"
+            self.registry.app.state.settings, "egress_port", "8995"
         )
 
         with patch_podman(self.registry) as p:
@@ -790,7 +804,7 @@ class TestStartContainer:
         with (
             patch_podman(self.registry),
             patch.object(
-                self.registry.app_state.terminal,
+                self.registry.app.state.terminal,
                 "set_workspace_token",
                 new_callable=AsyncMock,
             ) as mock_set,
@@ -802,7 +816,7 @@ class TestStartContainer:
         cid, token = mock_set.call_args.args
         assert cid == "new-cid"
         assert cid == "new-cid"
-        decoded_ws = self.registry.app_state.auth.decode_workspace_token(token)
+        decoded_ws = self.registry.app.state.auth.decode_workspace_token(token)
         assert decoded_ws == workspace["id"]
 
     async def test_pull_policy_default_never(self, workspace):
@@ -814,7 +828,7 @@ class TestStartContainer:
 
     async def test_pull_policy_from_env(self, workspace, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings, "image_pull_policy", "missing"
+            self.registry.app.state.settings, "image_pull_policy", "missing"
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -907,7 +921,7 @@ class TestStartContainer:
     async def test_terminal_banner_custom(self, workspace, monkeypatch):
         """Deployer can set a terminal banner via env var."""
         monkeypatch.setattr(
-            self.registry.app_state.settings,
+            self.registry.app.state.settings,
             "terminal_banner",
             "Custom warning",
         )
@@ -928,7 +942,7 @@ class TestStartContainer:
         ssl_dir.mkdir()
         (ssl_dir / "corp-ca.pem").write_text("-----BEGIN CERTIFICATE-----")
         monkeypatch.setattr(
-            self.registry.app_state.settings, "ssl_cert_dir", str(ssl_dir)
+            self.registry.app.state.settings, "ssl_cert_dir", str(ssl_dir)
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -965,11 +979,11 @@ class TestStartContainer:
         ssl_dir.mkdir()
         (ssl_dir / "notes.txt").write_text("not a cert")
         # Point the registry's SSLTrust at the empty cert dir so ssl_cert_dir()
-        # actually evaluates it (previously this reassigned registry.app_state.settings,
-        # which the resolver now reaches only via app_state.ssl_trust; patch the
+        # actually evaluates it (previously this reassigned registry.app.state.settings,
+        # which the resolver now reaches only via app_state.state.ssl_trust; patch the
         # settings field the SSLTrust instance reads instead).
         monkeypatch.setattr(
-            self.registry.app_state.settings, "ssl_cert_dir", str(ssl_dir)
+            self.registry.app.state.settings, "ssl_cert_dir", str(ssl_dir)
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -996,7 +1010,7 @@ class TestStartContainer:
 
     async def test_excess_ports_trimmed(self, workspace, app_state):
         # Pre-allocate more ports than needed
-        await app_state.model.ports.find_and_allocate_ports(
+        await app_state.state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
         )
         with patch_podman(self.registry):
@@ -1012,7 +1026,7 @@ class TestStartContainer:
     async def test_cap_clamps_allocation_down(self, workspace, monkeypatch):
         """KLANGK_HOSTED_PORTS_PER_WORKSPACE clamps num_ports down (#1237)."""
         monkeypatch.setattr(
-            self.registry.app_state.settings, "hosted_ports_per_workspace", "3"
+            self.registry.app.state.settings, "hosted_ports_per_workspace", "3"
         )
         with patch_podman(self.registry):
             await self.registry.start_container(
@@ -1029,9 +1043,9 @@ class TestStartContainer:
     ):
         """cap=0 trims an existing workspace's allocations on next start."""
         monkeypatch.setattr(
-            self.registry.app_state.settings, "hosted_ports_per_workspace", "0"
+            self.registry.app.state.settings, "hosted_ports_per_workspace", "0"
         )
-        await app_state.model.ports.find_and_allocate_ports(
+        await app_state.state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
         )
         with patch_podman(self.registry):
@@ -1047,7 +1061,7 @@ class TestStartContainer:
     async def test_cap_zero_omits_hosting_env(self, workspace, monkeypatch):
         """cap=0 suppresses KLANGK_PORT_MAPPINGS / KLANGK_HOSTING_* (#1237)."""
         monkeypatch.setattr(
-            self.registry.app_state.settings, "hosted_ports_per_workspace", "0"
+            self.registry.app.state.settings, "hosted_ports_per_workspace", "0"
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -1074,7 +1088,7 @@ class TestStartContainer:
         not just trim on the container's first start.
         """
         monkeypatch.setattr(
-            self.registry.app_state.settings, "hosted_ports_per_workspace", "0"
+            self.registry.app.state.settings, "hosted_ports_per_workspace", "0"
         )
         await self.registry.allocate_ports(workspace["id"], 5)
         assert await self.registry.get_workspace_ports(workspace["id"]) == []
@@ -1126,7 +1140,7 @@ class TestStartContainer:
         self, workspace, monkeypatch, app_state
     ):
         monkeypatch.setattr(
-            self.registry.app_state.plugins,
+            self.registry.app.state.plugins,
             "declarations",
             {
                 "PLUGIN_VAR": {
@@ -1138,7 +1152,7 @@ class TestStartContainer:
             },
         )
         monkeypatch.setattr(
-            self.registry.app_state.plugins,
+            self.registry.app.state.plugins,
             "values",
             {"PLUGIN_VAR": "plugin-val"},
         )
@@ -1156,13 +1170,13 @@ class TestStartContainerPortConflict:
 
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     async def test_port_conflict_removes_stale_and_retries(
         self, workspace, app_state
     ):
         # Pre-allocate ports so we know exactly which ones the workspace gets.
-        allocated = await app_state.model.ports.find_and_allocate_ports(
+        allocated = await app_state.state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
         )
         conflict_port = allocated[0]
@@ -1205,7 +1219,7 @@ class TestStartContainerPortConflict:
     async def test_port_conflict_skips_own_container(
         self, workspace, app_state
     ):
-        allocated = await app_state.model.ports.find_and_allocate_ports(
+        allocated = await app_state.state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
         )
         conflict_port = allocated[0]
@@ -1269,7 +1283,7 @@ class TestStartContainerPortConflict:
 
     async def test_port_conflict_stale_vanished(self, workspace, app_state):
         """Stale container gone by the time we inspect it."""
-        await app_state.model.ports.find_and_allocate_ports(
+        await app_state.state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
         )
         start_calls = []
@@ -1297,7 +1311,7 @@ class TestStartContainerPortConflict:
 
     async def test_port_conflict_bad_port_bindings(self, workspace, app_state):
         """Malformed HostPort values don't crash the retry."""
-        await app_state.model.ports.find_and_allocate_ports(
+        await app_state.state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
         )
         start_calls = []
@@ -1333,7 +1347,7 @@ class TestStartContainerPortConflict:
         self, workspace, app_state
     ):
         """Error removing stale container is logged, not raised."""
-        allocated = await app_state.model.ports.find_and_allocate_ports(
+        allocated = await app_state.state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
         )
         conflict_port = allocated[0]
@@ -1385,7 +1399,7 @@ class TestStartContainerPortConflict:
 class TestValidateMountSpec:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     def test_valid_bind_mount(self):
         assert self.registry.validate_mount_spec("/host:/container") is None
@@ -1437,11 +1451,11 @@ class TestValidateMountSpec:
 class TestAllowedMountRoots:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     def test_bind_mount_allowed(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings,
+            self.registry.app.state.settings,
             "allowed_mount_roots",
             "/home,/data",
         )
@@ -1451,13 +1465,13 @@ class TestAllowedMountRoots:
 
     def test_bind_mount_exact_root(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings, "allowed_mount_roots", "/home"
+            self.registry.app.state.settings, "allowed_mount_roots", "/home"
         )
         assert self.registry.validate_mount_spec("/home:/work") is None
 
     def test_bind_mount_denied(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings,
+            self.registry.app.state.settings,
             "allowed_mount_roots",
             "/home,/data",
         )
@@ -1467,7 +1481,7 @@ class TestAllowedMountRoots:
 
     def test_bind_mount_traversal_denied(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings, "allowed_mount_roots", "/home"
+            self.registry.app.state.settings, "allowed_mount_roots", "/home"
         )
         err = self.registry.validate_mount_spec("/home/../etc:/work")
         assert err is not None
@@ -1475,13 +1489,13 @@ class TestAllowedMountRoots:
 
     def test_named_volume_always_allowed(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings, "allowed_mount_roots", "/home"
+            self.registry.app.state.settings, "allowed_mount_roots", "/home"
         )
         assert self.registry.validate_mount_spec("my-volume:/data") is None
 
     def test_no_restriction_when_empty(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings, "allowed_mount_roots", ""
+            self.registry.app.state.settings, "allowed_mount_roots", ""
         )
         assert (
             self.registry.validate_mount_spec("/etc/shadow:/secrets") is None
@@ -1489,7 +1503,7 @@ class TestAllowedMountRoots:
 
     def test_multiple_roots(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings,
+            self.registry.app.state.settings,
             "allowed_mount_roots",
             "/home,/data,/opt",
         )
@@ -1502,11 +1516,11 @@ class TestAllowedMountRoots:
 class TestProtectedPaths:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     def test_docker_socket_blocked(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings, "allowed_mount_roots", "/"
+            self.registry.app.state.settings, "allowed_mount_roots", "/"
         )
         err = self.registry.validate_mount_spec(
             "/var/run/docker.sock:/var/run/docker.sock"
@@ -1516,7 +1530,7 @@ class TestProtectedPaths:
 
     def test_podman_socket_blocked(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings, "allowed_mount_roots", "/"
+            self.registry.app.state.settings, "allowed_mount_roots", "/"
         )
         err = self.registry.validate_mount_spec(
             "/run/podman/podman.sock:/run/podman/podman.sock"
@@ -1526,10 +1540,10 @@ class TestProtectedPaths:
 
     def test_data_dir_blocked(self, monkeypatch):
         monkeypatch.setattr(
-            self.registry.app_state.settings, "allowed_mount_roots", "/"
+            self.registry.app.state.settings, "allowed_mount_roots", "/"
         )
         monkeypatch.setattr(
-            self.registry.app_state.settings, "data_dir", "/srv/klangk/data"
+            self.registry.app.state.settings, "data_dir", "/srv/klangk/data"
         )
         err = self.registry.validate_mount_spec(
             "/srv/klangk/data/workspaces:/loot"
@@ -1568,7 +1582,7 @@ class TestProtectedPaths:
             link.symlink_to(str(target))
 
             monkeypatch.setattr(
-                self.registry.app_state.settings,
+                self.registry.app.state.settings,
                 "allowed_mount_roots",
                 str(allowed),
             )
@@ -1589,7 +1603,7 @@ class TestProtectedPaths:
             link.symlink_to(str(outside))
 
             monkeypatch.setattr(
-                self.registry.app_state.settings,
+                self.registry.app.state.settings,
                 "allowed_mount_roots",
                 str(allowed),
             )
@@ -1601,7 +1615,7 @@ class TestProtectedPaths:
 class TestExtraMountsVolumeCreation:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     async def test_auto_creates_named_volume(self, workspace, app_state):
         """Named volumes (no leading /) are auto-created with klangk labels."""
@@ -1620,7 +1634,7 @@ class TestExtraMountsVolumeCreation:
         assert labels["klangk.managed"] == "true"
         assert (
             labels["klangk.instance"]
-            == self.registry.app_state.util.instance_id()
+            == self.registry.app.state.util.instance_id()
         )
         assert labels["klangk.user-id"] == "user-123"
 
@@ -1632,7 +1646,7 @@ class TestExtraMountsVolumeCreation:
                 return_value={
                     "Name": "existing",
                     "Labels": {
-                        "klangk.instance": self.registry.app_state.util.instance_id(),
+                        "klangk.instance": self.registry.app.state.util.instance_id(),
                         "klangk.user-id": "user-123",
                     },
                 }
@@ -1688,7 +1702,7 @@ class TestExtraMountsVolumeCreation:
                 return_value={
                     "Name": "private",
                     "Labels": {
-                        "klangk.instance": self.registry.app_state.util.instance_id(),
+                        "klangk.instance": self.registry.app.state.util.instance_id(),
                         "klangk.user-id": "user-other",
                     },
                 }
@@ -1713,7 +1727,7 @@ class TestExtraMountsVolumeCreation:
                 return_value={
                     "Name": "legacy",
                     "Labels": {
-                        "klangk.instance": self.registry.app_state.util.instance_id(),
+                        "klangk.instance": self.registry.app.state.util.instance_id(),
                     },
                 }
             ),
@@ -1846,7 +1860,7 @@ class TestExtraMountsVolumeCreation:
 class TestStopContainer:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     async def test_stop_running(self):
         self.registry.track_activity("cid", "ws")
@@ -1986,7 +2000,7 @@ class TestStopContainer:
 class TestRemoveContainer:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     async def test_remove(self):
         self.registry.track_activity("cid", "ws")
@@ -2021,11 +2035,11 @@ class TestRemoveContainer:
 class TestStopUserContainers:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     async def test_stop_user_containers(self, user, workspace, app_state):
         # Set container_id on the workspace
-        await app_state.model.workspaces.update_workspace_container(
+        await app_state.state.model.workspaces.update_workspace_container(
             workspace["id"], "cid"
         )
         self.registry.track_activity("cid", workspace["id"])
@@ -2038,7 +2052,7 @@ class TestStopUserContainers:
     async def test_stop_user_calls_workspace_killed(
         self, user, workspace, app_state
     ):
-        await app_state.model.workspaces.update_workspace_container(
+        await app_state.state.model.workspaces.update_workspace_container(
             workspace["id"], "cid"
         )
         self.registry.track_activity("cid", workspace["id"])
@@ -2062,7 +2076,7 @@ class TestStopUserContainers:
 class TestShutdown:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     async def test_shutdown_stops_tracked(self):
         # list_containers returns the tracked cid; it should be skipped in
@@ -2144,7 +2158,7 @@ class TestShutdown:
 class TestCleanupIdleContainers:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     async def test_idle_container_stopped(self):
         # Set activity far in the past
@@ -2348,7 +2362,7 @@ class TestCleanupIdleContainers:
 class TestStartCleanupLoop:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     def teardown_method(self):
         if self.registry.cleanup_task:
@@ -2371,7 +2385,7 @@ class TestStartCleanupLoop:
 class TestPrewarmPodman:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     async def test_prewarm_creates_and_removes(self):
         with patch_podman(self.registry) as p:
@@ -2393,7 +2407,7 @@ class TestPrewarmPodman:
 class TestReapInstanceContainers:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     async def test_removes_orphaned_containers(self):
         with patch_podman(
@@ -2485,7 +2499,7 @@ class TestReapInstanceContainers:
 class TestBrowserRegistry:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     def test_register_and_resolve(self):
         sock = object()
@@ -2539,7 +2553,7 @@ class TestBrowserRegistry:
 class TestWorkspaceIdFor:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     def test_returns_workspace_id(self):
         self.registry.track_activity("cid-lookup", "ws-lookup")
@@ -2556,7 +2570,7 @@ class TestWorkspaceIdFor:
 class TestTrackActivityContainerChanged:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     def test_updates_reverse_mapping_on_container_change(self):
         self.registry.track_activity("old-cid", "ws-chg")
@@ -2582,10 +2596,10 @@ def _health_registry(ws_state=None):
 
     Constructs a fresh registry via ``_make_app_state`` and wires its
     ``sockets`` to the given WebSocketState (or a fresh one by default).
-    HealthMonitor reaches sockets via ``self.app_state.sockets``.
+    HealthMonitor reaches sockets via ``self.app_state.state.sockets``.
     """
     app_state = _make_app_state(sockets=ws_state)
-    return app_state.container_registry
+    return app_state.state.container_registry
 
 
 def _health_state(
@@ -2605,7 +2619,7 @@ def _health_state(
     tests exercise post-grace behavior; the startup-grace tests opt in.
     """
     if app_state is None:
-        app_state = _health_registry().app_state
+        app_state = _health_registry().app
     st = container.ContainerState(workspace_id, container_id, app_state)
     st.health_check = health_check
     st.owner_id = owner_id
@@ -2619,7 +2633,7 @@ def _health_state(
 class TestHealthMonitorRunOne:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     """_run_one: rc 0 → healthy, non-zero/error → unhealthy (with reason)."""
 
@@ -2629,20 +2643,20 @@ class TestHealthMonitorRunOne:
         exec_mock = AsyncMock(return_value=(0, "", ""))
         with (
             patch.object(
-                monitor.app_state.podman, "exec_container", exec_mock
+                monitor.app.state.podman, "exec_container", exec_mock
             ),
             patch.object(
-                monitor.app_state.model.users,
+                monitor.app.state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.app_state.workspaces,
+                monitor.app.state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.app_state.workspaces,
+                monitor.app.state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2674,22 +2688,22 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.app_state.podman,
+                monitor.app.state.podman,
                 "exec_container",
                 AsyncMock(return_value=(1, "", "curl: connection refused")),
             ),
             patch.object(
-                monitor.app_state.model.users,
+                monitor.app.state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.app_state.workspaces,
+                monitor.app.state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.app_state.workspaces,
+                monitor.app.state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2706,22 +2720,22 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.app_state.podman,
+                monitor.app.state.podman,
                 "exec_container",
                 AsyncMock(return_value=(2, "all good on stdout", "")),
             ),
             patch.object(
-                monitor.app_state.model.users,
+                monitor.app.state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.app_state.workspaces,
+                monitor.app.state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.app_state.workspaces,
+                monitor.app.state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2738,22 +2752,22 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.app_state.podman,
+                monitor.app.state.podman,
                 "exec_container",
                 AsyncMock(return_value=(127, "", "")),
             ),
             patch.object(
-                monitor.app_state.model.users,
+                monitor.app.state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.app_state.workspaces,
+                monitor.app.state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.app_state.workspaces,
+                monitor.app.state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2780,22 +2794,22 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.app_state.podman,
+                monitor.app.state.podman,
                 "exec_container",
                 AsyncMock(side_effect=podman.PodmanError(500, "boom")),
             ),
             patch.object(
-                monitor.app_state.model.users,
+                monitor.app.state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.app_state.workspaces,
+                monitor.app.state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.app_state.workspaces,
+                monitor.app.state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2810,7 +2824,7 @@ class TestHealthMonitorRunOne:
         monitor = _health_registry().health
         st = _health_state(owner_id=None)
         with patch.object(
-            monitor.app_state.podman, "exec_container"
+            monitor.app.state.podman, "exec_container"
         ) as exec_mock:
             status, message = await monitor._run_one(st)
         assert status == "unhealthy"
@@ -2823,12 +2837,12 @@ class TestHealthMonitorRunOne:
         st = _health_state(owner_id="uid-owner")
         with (
             patch.object(
-                monitor.app_state.model.users,
+                monitor.app.state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value=None),
             ),
             patch.object(
-                monitor.app_state.podman, "exec_container"
+                monitor.app.state.podman, "exec_container"
             ) as exec_mock,
         ):
             status, message = await monitor._run_one(st)
@@ -2943,7 +2957,7 @@ class TestHealthMonitorStartupGrace:
 
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     async def test_unhealthy_during_grace_is_suppressed(self):
         monitor = _health_registry().health
@@ -3041,14 +3055,14 @@ class TestHealthMonitorStartupGrace:
         sock = _mock_sock_for_health()
         st = _health_state(health_status="unhealthy")
         try:
-            reg.app_state.sockets.connections[sock] = SimpleNamespace(
+            reg.app.state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             # No WorkspaceSession registered for this workspace — yet
             # the event must still reach the connection.
             monitor._broadcast(st, "unhealthy", "connection refused")
         finally:
-            reg.app_state.sockets.connections.pop(sock, None)
+            reg.app.state.sockets.connections.pop(sock, None)
         sock.send_json.assert_called_once_with(
             {
                 "type": "service_health",
@@ -3066,7 +3080,7 @@ class TestHealthMonitorStartupGrace:
 class TestHealthMonitorLoopSkips:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     """run_health_loop skips setup-incomplete and checkless workspaces."""
 
@@ -3081,7 +3095,7 @@ class TestHealthMonitorLoopSkips:
                     monitor, "_check_workspace", AsyncMock()
                 ) as check,
                 patch.object(
-                    reg.app_state.settings, "health_check_interval", "0.01"
+                    reg.app.state.settings, "health_check_interval", "0.01"
                 ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
@@ -3106,7 +3120,7 @@ class TestHealthMonitorLoopSkips:
                     monitor, "_check_workspace", AsyncMock()
                 ) as check,
                 patch.object(
-                    reg.app_state.settings, "health_check_interval", "0.01"
+                    reg.app.state.settings, "health_check_interval", "0.01"
                 ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
@@ -3131,7 +3145,7 @@ class TestHealthMonitorLoopSkips:
                     monitor, "_check_workspace", AsyncMock()
                 ) as check,
                 patch.object(
-                    reg.app_state.settings, "health_check_interval", "0.01"
+                    reg.app.state.settings, "health_check_interval", "0.01"
                 ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
@@ -3156,13 +3170,13 @@ class TestHealthMonitorBroadcastSeq:
         st = _health_state(health_status="unhealthy")
         st.health_checked_at = 1_700_000_000.0
         try:
-            reg.app_state.sockets.connections[sock] = SimpleNamespace(
+            reg.app.state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             monitor._broadcast(st, "unhealthy", "connection refused")
             monitor._broadcast(st, "unhealthy", "connection refused")
         finally:
-            reg.app_state.sockets.connections.pop(sock, None)
+            reg.app.state.sockets.connections.pop(sock, None)
         frames = [c[0][0] for c in sock.send_json.call_args_list]
         assert len(frames) == 2
         # Monotonic seq across emits; live frames are running=True.
@@ -3182,7 +3196,7 @@ class TestHealthMonitorDeath:
 
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     def test_broadcast_death_emits_terminal_frame(self, app_state):
         reg = _health_registry()
@@ -3192,12 +3206,12 @@ class TestHealthMonitorDeath:
         st.health_checked_at = 1_700_000_000.0
         st.health_seq = 4
         try:
-            reg.app_state.sockets.connections[sock] = SimpleNamespace(
+            reg.app.state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             monitor.broadcast_death(st)
         finally:
-            reg.app_state.sockets.connections.pop(sock, None)
+            reg.app.state.sockets.connections.pop(sock, None)
         frame = sock.send_json.call_args[0][0]
         assert frame["type"] == "service_health"
         assert frame["healthy"] is False
@@ -3224,13 +3238,13 @@ class TestHealthMonitorDeath:
             seen_state_present.append(wid in reg.states)
 
         try:
-            reg.app_state.sockets.connections[sock] = SimpleNamespace(
+            reg.app.state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             reg.set_on_workspace_killed(on_killed)
             await reg.notify_workspace_killed(st.workspace_id)
         finally:
-            reg.app_state.sockets.connections.pop(sock, None)
+            reg.app.state.sockets.connections.pop(sock, None)
             reg.states.pop(st.workspace_id, None)
             reg.set_on_workspace_killed(None)
         frame = sock.send_json.call_args[0][0]
@@ -3247,12 +3261,12 @@ class TestHealthMonitorDeath:
         st = _health_state(health_check=None)
         self.registry.states[st.workspace_id] = st
         try:
-            self.registry.app_state.sockets.connections[sock] = (
+            self.registry.app.state.sockets.connections[sock] = (
                 SimpleNamespace(user={"id": "u1", "email": "a@x"})
             )
             await self.registry.notify_workspace_killed(st.workspace_id)
         finally:
-            self.registry.app_state.sockets.connections.pop(sock, None)
+            self.registry.app.state.sockets.connections.pop(sock, None)
             self.registry.states.pop(st.workspace_id, None)
         sock.send_json.assert_not_called()
 
@@ -3260,12 +3274,12 @@ class TestHealthMonitorDeath:
         # If the state is already gone (double-kill), nothing to emit.
         sock = _mock_sock_for_health()
         try:
-            self.registry.app_state.sockets.connections[sock] = (
+            self.registry.app.state.sockets.connections[sock] = (
                 SimpleNamespace(user={"id": "u1", "email": "a@x"})
             )
             await self.registry.notify_workspace_killed("no-such-ws")
         finally:
-            self.registry.app_state.sockets.connections.pop(sock, None)
+            self.registry.app.state.sockets.connections.pop(sock, None)
         sock.send_json.assert_not_called()
 
     async def test_idle_cleanup_emits_death_frame(self, app_state):
@@ -3288,7 +3302,7 @@ class TestHealthMonitorDeath:
         st.last_activity = time.time() - reg.idle_timeout_seconds - 100
 
         try:
-            reg.app_state.sockets.connections[sock] = SimpleNamespace(
+            reg.app.state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
             # Patch the registry that actually runs the cleanup loop
@@ -3306,7 +3320,7 @@ class TestHealthMonitorDeath:
                 except asyncio.CancelledError:
                     pass
         finally:
-            reg.app_state.sockets.connections.pop(sock, None)
+            reg.app.state.sockets.connections.pop(sock, None)
             reg.states.pop(st.workspace_id, None)
             reg._cid_to_wsid.pop(st.container_id, None)
 
@@ -3321,7 +3335,7 @@ class TestHealthMonitorDeath:
 class TestHealthLoopHeartbeat:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     """run_health_loop ticks a heartbeat each sweep (#1175 item 3b).
 
@@ -3333,14 +3347,14 @@ class TestHealthLoopHeartbeat:
         monitor = reg.health
         sock = _mock_sock_for_health()
         try:
-            reg.app_state.sockets.connections[sock] = SimpleNamespace(
+            reg.app.state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"},
                 wants_health_heartbeat=True,
             )
             with (
                 patch.object(monitor, "_check_workspace", AsyncMock()),
                 patch.object(
-                    reg.app_state.settings, "health_check_interval", "0.01"
+                    reg.app.state.settings, "health_check_interval", "0.01"
                 ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
@@ -3351,7 +3365,7 @@ class TestHealthLoopHeartbeat:
                 except asyncio.CancelledError:
                     pass
         finally:
-            reg.app_state.sockets.connections.pop(sock, None)
+            reg.app.state.sockets.connections.pop(sock, None)
         frames = [c[0][0] for c in sock.send_json.call_args_list]
         assert frames  # at least one heartbeat over ~5 ticks
         assert all(f["type"] == "service_health_heartbeat" for f in frames)
@@ -3365,7 +3379,7 @@ class TestRegistryServiceSessionLocks:
 
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
         self.registry._service_session_locks.clear()
 
     def teardown_method(self):
@@ -3429,26 +3443,28 @@ class TestRegistryServiceSessionLocks:
         import types as types_mod
 
         settings = make_settings({})
-        app_state = types_mod.SimpleNamespace(settings=settings)
+        app_state = types_mod.SimpleNamespace(
+            state=types_mod.SimpleNamespace(settings=settings)
+        )
         reg = container.ContainerRegistry(app_state)
-        assert reg.app_state.settings is not None
-        assert reg.app_state is app_state
+        assert reg.app.state.settings is not None
+        assert reg.app is app_state
 
 
 class TestRegistryConnections:
     def setup_method(self):
         app_state = _make_app_state()
-        self.registry = app_state.container_registry
+        self.registry = app_state.state.container_registry
 
     """HealthMonitor reaches WebSocketState via the registry, not a module global (#1464)."""
 
     def test_connections_property_reads_from_registry(self, app_state):
-        """The connections property returns self.registry.app_state.sockets."""
+        """The connections property returns self.registry.app.state.sockets."""
         from klangk_backend.wshandler.session import WebSocketState
 
         ws_state = WebSocketState()
         app_state = _make_app_state(sockets=ws_state)
-        reg = app_state.container_registry
+        reg = app_state.state.container_registry
         assert reg.health.connections is ws_state
 
 
@@ -3459,7 +3475,9 @@ class TestRegistrySettingsDerived:
         import types as types_mod
 
         settings = make_settings(env)
-        app_state = types_mod.SimpleNamespace(settings=settings)
+        app_state = types_mod.SimpleNamespace(
+            state=types_mod.SimpleNamespace(settings=settings)
+        )
         return container.ContainerRegistry(app_state)
 
     def test_allowed_images_from_settings(self):

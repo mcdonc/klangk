@@ -58,23 +58,23 @@ async def require_workspace_token(request: Request) -> str:
     return result
 
 
-def get_app_state_dep(request: Request):
-    """Per-request bridge to ``app.state`` (no global read).
+def get_app_dep(request: Request):
+    """Per-request bridge to the FastAPI ``app`` (no global read).
 
-    Request handlers obtain app state via
-    ``app_state = Depends(get_app_state_dep)`` instead of
+    Request handlers obtain the app via
+    ``app = Depends(get_app_dep)`` instead of
     reaching for module-level globals (#1426, #1475).
     """
-    return request.app.state
+    return request.app
 
 
-def autostart_allowed(app_state) -> bool:
+def autostart_allowed(app) -> bool:
     """Whether per-workspace auto-start is permitted (KLANGK_ALLOW_AUTOSTART).
 
-    Read off the frozen ``app_state.settings`` rather than re-resolving the
+    Read off the frozen ``app.state.settings`` rather than re-resolving the
     env at call time (#1516).
     """
-    return app_state.settings.allow_autostart.strip().lower() in (
+    return app.state.settings.allow_autostart.strip().lower() in (
         "1",
         "true",
         "yes",

@@ -76,9 +76,11 @@ class TestAceMatchesPrincipals:
 
 class TestCheckPermission:
     async def test_allow_on_exact_resource(self, user, app_state):
-        group = await app_state.model.users.create_group("testers")
-        await app_state.model.users.add_user_to_group(user["id"], group["id"])
-        await app_state.model.acl.add_acl_entry(
+        group = await app_state.state.model.users.create_group("testers")
+        await app_state.state.model.users.add_user_to_group(
+            user["id"], group["id"]
+        )
+        await app_state.state.model.acl.add_acl_entry(
             "/test",
             0,
             ACTION_ALLOW,
@@ -86,14 +88,16 @@ class TestCheckPermission:
             PRINCIPAL_GROUP,
             group_id=group["id"],
         )
-        principals = await app_state.acl.get_principals(user["id"])
+        principals = await app_state.state.acl.get_principals(user["id"])
         assert (
-            await app_state.acl.check_permission("/test", principals, "view")
+            await app_state.state.acl.check_permission(
+                "/test", principals, "view"
+            )
             is True
         )
 
     async def test_deny_on_exact_resource(self, user, app_state):
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/test",
             0,
             ACTION_DENY,
@@ -101,14 +105,16 @@ class TestCheckPermission:
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_AUTHENTICATED,
         )
-        principals = await app_state.acl.get_principals(user["id"])
+        principals = await app_state.state.acl.get_principals(user["id"])
         assert (
-            await app_state.acl.check_permission("/test", principals, "view")
+            await app_state.state.acl.check_permission(
+                "/test", principals, "view"
+            )
             is False
         )
 
     async def test_walk_to_parent(self, user, app_state):
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/",
             0,
             ACTION_ALLOW,
@@ -116,16 +122,16 @@ class TestCheckPermission:
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_AUTHENTICATED,
         )
-        principals = await app_state.acl.get_principals(user["id"])
+        principals = await app_state.state.acl.get_principals(user["id"])
         assert (
-            await app_state.acl.check_permission(
+            await app_state.state.acl.check_permission(
                 "/workspaces/123", principals, "view"
             )
             is True
         )
 
     async def test_wildcard_permission(self, user, app_state):
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/admin",
             0,
             ACTION_ALLOW,
@@ -133,24 +139,26 @@ class TestCheckPermission:
             PRINCIPAL_USER,
             user_id=user["id"],
         )
-        principals = await app_state.acl.get_principals(user["id"])
+        principals = await app_state.state.acl.get_principals(user["id"])
         assert (
-            await app_state.acl.check_permission(
+            await app_state.state.acl.check_permission(
                 "/admin", principals, "anything"
             )
             is True
         )
 
     async def test_default_deny(self, user, app_state):
-        principals = await app_state.acl.get_principals(user["id"])
+        principals = await app_state.state.acl.get_principals(user["id"])
         assert (
-            await app_state.acl.check_permission("/secret", principals, "view")
+            await app_state.state.acl.check_permission(
+                "/secret", principals, "view"
+            )
             is False
         )
 
     async def test_first_match_wins(self, user, app_state):
         # Deny first, then allow — deny should win
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/test",
             0,
             ACTION_DENY,
@@ -158,7 +166,7 @@ class TestCheckPermission:
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_AUTHENTICATED,
         )
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/test",
             1,
             ACTION_ALLOW,
@@ -166,9 +174,11 @@ class TestCheckPermission:
             PRINCIPAL_USER,
             user_id=user["id"],
         )
-        principals = await app_state.acl.get_principals(user["id"])
+        principals = await app_state.state.acl.get_principals(user["id"])
         assert (
-            await app_state.acl.check_permission("/test", principals, "edit")
+            await app_state.state.acl.check_permission(
+                "/test", principals, "edit"
+            )
             is False
         )
 
@@ -185,7 +195,7 @@ class TestCheckPermissionInMemory:
         # Seed a mix: allow on root (everyone), allow on /admin (user),
         # deny on /admin/users (authenticated) to exercise parent walk +
         # first-match-wins + wildcard in both code paths.
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/",
             0,
             ACTION_ALLOW,
@@ -193,7 +203,7 @@ class TestCheckPermissionInMemory:
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_EVERYONE,
         )
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/admin",
             0,
             ACTION_ALLOW,
@@ -201,7 +211,7 @@ class TestCheckPermissionInMemory:
             PRINCIPAL_USER,
             user_id=user["id"],
         )
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/admin/users",
             0,
             ACTION_DENY,
@@ -209,16 +219,18 @@ class TestCheckPermissionInMemory:
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_AUTHENTICATED,
         )
-        principals = await app_state.acl.get_principals(user["id"])
+        principals = await app_state.state.acl.get_principals(user["id"])
 
         ancestor_paths: list[str] = []
         for res in self._RESOURCES:
             ancestor_paths.extend(acl.resource_ancestors(res))
-        entries = await app_state.model.acl.get_acl_entries_map(ancestor_paths)
+        entries = await app_state.state.model.acl.get_acl_entries_map(
+            ancestor_paths
+        )
 
         for res in self._RESOURCES:
             for perm in self._PERMISSIONS:
-                async_result = await app_state.acl.check_permission(
+                async_result = await app_state.state.acl.check_permission(
                     res, principals, perm
                 )
                 inmemory_result = acl.check_permission_inmemory(
@@ -232,7 +244,7 @@ class TestCheckPermissionInMemory:
     async def test_permissions_for_resources_matches_pairwise(
         self, user, app_state
     ):
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/workspaces",
             0,
             ACTION_ALLOW,
@@ -240,7 +252,7 @@ class TestCheckPermissionInMemory:
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_AUTHENTICATED,
         )
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/admin",
             0,
             ACTION_ALLOW,
@@ -248,9 +260,9 @@ class TestCheckPermissionInMemory:
             PRINCIPAL_USER,
             user_id=user["id"],
         )
-        principals = await app_state.acl.get_principals(user["id"])
+        principals = await app_state.state.acl.get_principals(user["id"])
 
-        batched = await app_state.acl.permissions_for_resources(
+        batched = await app_state.state.acl.permissions_for_resources(
             self._RESOURCES, principals, self._PERMISSIONS
         )
 
@@ -260,7 +272,9 @@ class TestCheckPermissionInMemory:
             perms = [
                 p
                 for p in self._PERMISSIONS
-                if await app_state.acl.check_permission(res, principals, p)
+                if await app_state.state.acl.check_permission(
+                    res, principals, p
+                )
             ]
             if perms:
                 pairwise[res] = perms
@@ -269,7 +283,7 @@ class TestCheckPermissionInMemory:
 
 class TestGetAclEntriesMap:
     async def test_single_query_for_many_resources(self, user, app_state):
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/workspaces",
             0,
             ACTION_ALLOW,
@@ -277,7 +291,7 @@ class TestGetAclEntriesMap:
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_AUTHENTICATED,
         )
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/admin",
             0,
             ACTION_ALLOW,
@@ -285,7 +299,7 @@ class TestGetAclEntriesMap:
             PRINCIPAL_USER,
             user_id=user["id"],
         )
-        result = await app_state.model.acl.get_acl_entries_map(
+        result = await app_state.state.model.acl.get_acl_entries_map(
             ["/workspaces", "/admin", "/nonexistent"]
         )
         # Every requested resource is a key; missing ones are empty lists.
@@ -300,10 +314,10 @@ class TestGetAclEntriesMap:
         assert result["/nonexistent"] == []
 
     async def test_empty_resource_list(self, app_state):
-        assert await app_state.model.acl.get_acl_entries_map([]) == {}
+        assert await app_state.state.model.acl.get_acl_entries_map([]) == {}
 
     async def test_de_duplicates_resources(self, user, app_state):
-        await app_state.model.acl.add_acl_entry(
+        await app_state.state.model.acl.add_acl_entry(
             "/workspaces",
             0,
             ACTION_ALLOW,
@@ -311,7 +325,7 @@ class TestGetAclEntriesMap:
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_AUTHENTICATED,
         )
-        result = await app_state.model.acl.get_acl_entries_map(
+        result = await app_state.state.model.acl.get_acl_entries_map(
             ["/workspaces", "/workspaces"]
         )
         assert list(result.keys()) == ["/workspaces"]
@@ -372,11 +386,15 @@ class TestRequestToResource:
 
 class TestGetPrincipals:
     async def test_returns_user_and_groups(self, user, app_state):
-        g1 = await app_state.model.users.create_group("g1")
-        g2 = await app_state.model.users.create_group("g2")
-        await app_state.model.users.add_user_to_group(user["id"], g1["id"])
-        await app_state.model.users.add_user_to_group(user["id"], g2["id"])
-        principals = await app_state.acl.get_principals(user["id"])
+        g1 = await app_state.state.model.users.create_group("g1")
+        g2 = await app_state.state.model.users.create_group("g2")
+        await app_state.state.model.users.add_user_to_group(
+            user["id"], g1["id"]
+        )
+        await app_state.state.model.users.add_user_to_group(
+            user["id"], g2["id"]
+        )
+        principals = await app_state.state.acl.get_principals(user["id"])
         assert principals["user_id"] == user["id"]
         assert set(principals["group_ids"]) == {g1["id"], g2["id"]}
         assert principals["authenticated"] is True

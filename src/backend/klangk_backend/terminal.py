@@ -223,19 +223,19 @@ class Terminal:
     single ``app_state`` reference rather than three separate ctor args.
     """
 
-    def __init__(self, app_state):
-        self._app_state = app_state
+    def __init__(self, app):
+        self._app = app
 
-    def reconfigure(self, app_state) -> None:
-        self._app_state = app_state
+    def reconfigure(self, app) -> None:
+        self._app = app
 
     @property
     def podman(self) -> Podman:
-        return self._app_state.podman
+        return self._app.state.podman
 
     @property
     def registry(self):
-        return self._app_state.container_registry
+        return self._app.state.container_registry
 
     def tmux_enabled(self) -> bool:
         """Whether new terminal sessions are wrapped in tmux.
@@ -246,7 +246,7 @@ class Terminal:
         affects the default per-user terminal; shared/joined terminals are
         built on tmux session groups and always use tmux regardless.
         """
-        val = self._app_state.settings.disable_tmux.lower()
+        val = self._app.state.settings.disable_tmux.lower()
         return val not in ("1", "true", "yes")
 
     # --- tmux session / window queries ---

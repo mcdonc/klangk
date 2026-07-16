@@ -31,22 +31,22 @@ class Plugins:
     load time (honoring ``file:``/``cmd:`` prefixes for plugin secrets).
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
         # Loaded at startup: {env_key: {plugin, description, default, scope}}
         self.declarations: dict[str, dict] = {}
         # Resolved values: {env_key: str}
         self.values: dict[str, str] = {}
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
         self.load()
 
     @property
     def plugins_dir(self) -> str:
         # Read live off app_state (#1608) so a SIGHUP settings reload picks
         # up a changed KLANGK_PLUGINS_DIR / KLANGK_CUSTOMIZE_DIR.
-        return self.app_state.settings.plugins_dir
+        return self.app.state.settings.plugins_dir
 
     def load(self) -> None:
         """Scan plugin package.json files and resolve config values."""

@@ -21,7 +21,9 @@ def files_inst():
     Per-test ``patch.object(_mock_pod, ...)`` patches apply because the
     instance holds the same object reference (``self.podman = _mock_pod``).
     """
-    return files.Files(types.SimpleNamespace(podman=_mock_pod))
+    return files.Files(
+        types.SimpleNamespace(state=types.SimpleNamespace(podman=_mock_pod))
+    )
 
 
 class TestValidatePath:

@@ -90,13 +90,13 @@ class Agents:
     and ``get_workspace_session`` callback (#1486).
     """
 
-    def __init__(self, app_state) -> None:
-        self.app_state = app_state
+    def __init__(self, app) -> None:
+        self.app = app
         self._agents: dict[str, "AgentSession"] = {}
         self._agents_lock = asyncio.Lock()
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     def is_disabled(self) -> bool:
         """True if the chat agent has been disabled by an admin.
@@ -105,7 +105,7 @@ class Agents:
         see ``AgentSession.ensure_started``, which consults this before
         creating the process.
         """
-        return self.app_state.settings.agent_disabled.strip().lower() in (
+        return self.app.state.settings.agent_disabled.strip().lower() in (
             "1",
             "true",
             "yes",
@@ -128,24 +128,24 @@ class Agents:
         process) and again from chat-start, which caches the result per
         ``AgentSession``.
         """
-        ws = await self.app_state.model.workspaces.get_workspace_by_id(
+        ws = await self.app.state.model.workspaces.get_workspace_by_id(
             workspace_id
         )
         if not ws:
             raise AgentSetupError(
                 f"Workspace {workspace_id} not found in database"
             )
-        workspace_home = self.app_state.workspaces.home_path(workspace_id)
+        workspace_home = self.app.state.workspaces.home_path(workspace_id)
 
-        agent_handle = await self.app_state.model.users.agent_handle()
+        agent_handle = await self.app.state.model.users.agent_handle()
         (
             container_home,
             created,
-        ) = await self.app_state.workspaces.ensure_home_symlink(
+        ) = await self.app.state.workspaces.ensure_home_symlink(
             workspace_home, agent_handle, model.AGENT_USER_ID
         )
         if created:
-            await self.app_state.workspaces.populate_home_skel(
+            await self.app.state.workspaces.populate_home_skel(
                 container_id, model.AGENT_USER_ID
             )
 
@@ -154,7 +154,7 @@ class Agents:
         # personal preferences — --force deletes settings.json first so
         # it picks up the current KLANGK_LLM_MODEL env var.
         proc = await asyncio.create_subprocess_exec(
-            self.app_state.podman.bin,
+            self.app.state.podman.bin,
             "exec",
             "-u",
             "klangk",
@@ -251,21 +251,21 @@ class Agents:
         if not workspace_id:
             return
         if (
-            await self.app_state.model.workspaces.get_workspace_by_id(
+            await self.app.state.model.workspaces.get_workspace_by_id(
                 workspace_id
             )
             is None
         ):
             return
-        agent_handle = await self.app_state.model.users.agent_handle()
-        agent_email = await self.app_state.model.users.agent_email()
+        agent_handle = await self.app.state.model.users.agent_handle()
+        agent_email = await self.app.state.model.users.agent_email()
         sys_msg = ephemeral_system_message(
             workspace_id,
             agent_email,
             agent_handle,
             f"{agent_handle} has disconnected",
         )
-        session = self.app_state.sockets.get_session(workspace_id)
+        session = self.app.state.sockets.get_session(workspace_id)
         if session:
             session.broadcast({"type": "agent_thinking", "thinking": False})
             session.broadcast({"type": "chat_message", **sys_msg})
@@ -286,21 +286,21 @@ class Agents:
         if not workspace_id:
             return
         if (
-            await self.app_state.model.workspaces.get_workspace_by_id(
+            await self.app.state.model.workspaces.get_workspace_by_id(
                 workspace_id
             )
             is None
         ):
             return
-        agent_handle = await self.app_state.model.users.agent_handle()
-        agent_email = await self.app_state.model.users.agent_email()
+        agent_handle = await self.app.state.model.users.agent_handle()
+        agent_email = await self.app.state.model.users.agent_email()
         sys_msg = ephemeral_system_message(
             workspace_id,
             agent_email,
             agent_handle,
             f"{agent_handle} has reconnected",
         )
-        session = self.app_state.sockets.get_session(workspace_id)
+        session = self.app.state.sockets.get_session(workspace_id)
         if session:
             session.broadcast({"type": "chat_message", **sys_msg})
             session.broadcast(
@@ -319,7 +319,7 @@ class AgentSession:
     def __init__(self, workspace_id: str, agents: Agents) -> None:
         self.workspace_id = workspace_id
         self.agents = agents
-        self.app_state = agents.app_state
+        self.app = agents.app
         self._proc: asyncio.subprocess.Process | None = None
         # Serializes prompt round-trips so two concurrent prompts can't
         # interleave their stdin writes / stdout reads on one subprocess.
@@ -339,7 +339,7 @@ class AgentSession:
 
     def _resolve_container_id(self) -> str:
         """Look up the current container ID for this workspace."""
-        state = self.app_state.container_registry.get_state(self.workspace_id)
+        state = self.app.state.container_registry.get_state(self.workspace_id)
         if state is None:
             raise AgentError(
                 f"No container running for workspace {self.workspace_id}"
@@ -361,7 +361,7 @@ class AgentSession:
         there.  Returns the container path, e.g. ``/home/clanker``.
         """
         if self._home_ready:
-            handle = await self.app_state.model.users.agent_handle()
+            handle = await self.app.state.model.users.agent_handle()
             return f"/home/{handle}"
         container_home = await self.agents.ensure_agent_home(
             self.workspace_id, container_id
@@ -402,7 +402,7 @@ class AgentSession:
                 return self._proc
             container_id = self._resolve_container_id()
             container_home = await self._ensure_home(container_id)
-            agent_handle = await self.app_state.model.users.agent_handle()
+            agent_handle = await self.app.state.model.users.agent_handle()
             system_prompt = _CHAT_SYSTEM_PROMPT.format(name=agent_handle)
             argv = [
                 "exec",
@@ -426,7 +426,7 @@ class AgentSession:
                 container_id,
             )
             self._proc = await asyncio.create_subprocess_exec(
-                self.app_state.podman.bin,
+                self.app.state.podman.bin,
                 *argv,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
@@ -479,7 +479,7 @@ class AgentSession:
             return  # something else already restarted it
         # If the container is gone (workspace deleted), don't restart.
         if (
-            self.app_state.container_registry.get_state(self.workspace_id)
+            self.app.state.container_registry.get_state(self.workspace_id)
             is None
         ):
             logger.info(

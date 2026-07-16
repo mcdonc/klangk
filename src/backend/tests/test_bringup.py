@@ -15,9 +15,11 @@ from klangk_backend.agent import Agents
 from klangk_backend.container import ContainerRegistry
 
 _app_state = MagicMock()
-_app_state.terminal.ensure_service_session = AsyncMock()
-_app_state.agents = MagicMock(spec=Agents)
-_app_state.agents.ensure_agent_home = AsyncMock(return_value="/home/clanker")
+_app_state.state.terminal.ensure_service_session = AsyncMock()
+_app_state.state.agents = MagicMock(spec=Agents)
+_app_state.state.agents.ensure_agent_home = AsyncMock(
+    return_value="/home/clanker"
+)
 
 
 def _registry():
@@ -29,15 +31,17 @@ def _registry():
     exercise) and attach the mock app_state directly.
     """
     reg = object.__new__(ContainerRegistry)
-    reg.app_state = _app_state
+    reg.app = _app_state
     return reg
 
 
 class TestBringup:
     def setup_method(self):
-        _app_state.terminal.ensure_service_session.reset_mock()
-        _app_state.agents.ensure_agent_home.reset_mock()
-        _app_state.agents.ensure_agent_home.return_value = "/home/clanker"
+        _app_state.state.terminal.ensure_service_session.reset_mock()
+        _app_state.state.agents.ensure_agent_home.reset_mock()
+        _app_state.state.agents.ensure_agent_home.return_value = (
+            "/home/clanker"
+        )
 
     async def test_provisions_home_and_fires_service_command(self):
         """A configured service command fires after the home is ready."""
@@ -47,10 +51,10 @@ class TestBringup:
             "openclaw gateway",
             setup_state="complete",
         )
-        _app_state.agents.ensure_agent_home.assert_awaited_once_with(
+        _app_state.state.agents.ensure_agent_home.assert_awaited_once_with(
             "ws-id", "cid"
         )
-        _app_state.terminal.ensure_service_session.assert_awaited_once_with(
+        _app_state.state.terminal.ensure_service_session.assert_awaited_once_with(
             "cid",
             "/home/clanker",
             "openclaw gateway",
@@ -60,15 +64,15 @@ class TestBringup:
     async def test_skips_service_command_when_none(self):
         """No service_command -> only the agent home is provisioned."""
         await _registry()._bringup("ws-id", "cid", None, "complete")
-        _app_state.agents.ensure_agent_home.assert_awaited_once_with(
+        _app_state.state.agents.ensure_agent_home.assert_awaited_once_with(
             "ws-id", "cid"
         )
-        _app_state.terminal.ensure_service_session.assert_not_awaited()
+        _app_state.state.terminal.ensure_service_session.assert_not_awaited()
 
     async def test_skips_service_command_when_empty(self):
         """An empty service_command string is treated as 'none'."""
         await _registry()._bringup("ws-id", "cid", "", "complete")
-        _app_state.terminal.ensure_service_session.assert_not_awaited()
+        _app_state.state.terminal.ensure_service_session.assert_not_awaited()
 
     async def test_threads_setup_state_through_predicate(self):
         """setup_state flows to ensure_service_session, which gates on it.
@@ -83,7 +87,7 @@ class TestBringup:
             "openclaw gateway",
             setup_state="pending",
         )
-        _app_state.terminal.ensure_service_session.assert_awaited_once_with(
+        _app_state.state.terminal.ensure_service_session.assert_awaited_once_with(
             "cid",
             "/home/clanker",
             "openclaw gateway",
@@ -98,7 +102,7 @@ class TestBringup:
             "openclaw gateway",
             None,
         )
-        _app_state.terminal.ensure_service_session.assert_awaited_once_with(
+        _app_state.state.terminal.ensure_service_session.assert_awaited_once_with(
             "cid",
             "/home/clanker",
             "openclaw gateway",

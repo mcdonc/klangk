@@ -220,8 +220,8 @@ class Util:
     ``app_state.util`` or ``request.app.state.util``.
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
         # Instance identity: resolved once at startup by resolve_instance_id()
         # and cached here — no module global (#1553).
         self._instance_id: str | None = None
@@ -236,8 +236,8 @@ class Util:
         # unit/e2e tests that launch uvicorn over TCP are unaffected.
         self.uds_mode = False
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     def set_uds_mode(self, enabled: bool) -> None:
         """Mark whether the server is bound to a UDS. Called from the lifespan
@@ -251,7 +251,7 @@ class Util:
 
         Defaults to ``<state_dir>/custom`` (derived in ``_require_dirs``).
         """
-        return self.app_state.settings.customize_dir
+        return self.app.state.settings.customize_dir
 
     # --- Instance identity ------------------------------------------------
 
@@ -265,7 +265,7 @@ class Util:
         SQLite DB — only the path is computed.
         """
         return (
-            Path(self.app_state.settings.data_dir) / self.INSTANCE_ID_FILENAME
+            Path(self.app.state.settings.data_dir) / self.INSTANCE_ID_FILENAME
         )
 
     def resolve_instance_id(self) -> str:
@@ -331,7 +331,7 @@ class Util:
         user don't collide on one PID file.
         """
         return (
-            Path(self.app_state.settings.state_dir)
+            Path(self.app.state.settings.state_dir)
             / f"klangk-{self.instance_id()}.pid"
         )
 
@@ -398,7 +398,7 @@ class Util:
 
     def reject_proxy_headers(self) -> bool:
         """True if KLANGK_REJECT_PROXY_HEADERS is set (hard trust-off)."""
-        raw = self.app_state.settings.reject_proxy_headers
+        raw = self.app.state.settings.reject_proxy_headers
         return bool(raw and raw.strip().lower() in ("1", "true", "yes"))
 
     def trusted_proxy_cidrs(self) -> set[ipaddress._BaseAddress]:
@@ -408,7 +408,7 @@ class Util:
         at construction (#1461). Invalid entries are logged and skipped; if
         none are valid, defaults to loopback.
         """
-        raw = self.app_state.settings.trusted_proxy_cidrs
+        raw = self.app.state.settings.trusted_proxy_cidrs
         trusted: set[ipaddress._BaseAddress] = set()
         for token in (raw or "").split(","):
             token = token.strip()
@@ -513,9 +513,9 @@ class Util:
         headers the request branches are skipped and the env vars are the
         sole source, falling back to bare ``localhost`` / ``http`` / ``""``.
         """
-        hostname = self.app_state.settings.hosting_hostname
-        proto = self.app_state.settings.hosting_proto
-        base_path = self.app_state.settings.hosting_base_path
+        hostname = self.app.state.settings.hosting_hostname
+        proto = self.app.state.settings.hosting_proto
+        base_path = self.app.state.settings.hosting_base_path
         trust = (
             (not self.reject_proxy_headers())
             and self.connection_peer_is_trusted(client_host)
@@ -554,7 +554,7 @@ class Util:
         wiring, not the browser origin). Origins carry no path, so
         KLANGK_HOSTING_BASE_PATH is ignored here.
         """
-        explicit = self.app_state.settings.cors_origins
+        explicit = self.app.state.settings.cors_origins
         if explicit:
             return [o.strip() for o in explicit.split(",") if o.strip()]
         hostname, proto, _ = self.derive_hosting_info(None, None)
@@ -567,7 +567,7 @@ class Util:
         long-but-progressing stream never times out. Override with
         KLANGK_BRIDGE_TIMEOUT_SECONDS (the settings field is parsed here).
         """
-        raw = self.app_state.settings.bridge_timeout_seconds
+        raw = self.app.state.settings.bridge_timeout_seconds
         try:
             return float(raw) if raw else 30.0
         except (TypeError, ValueError):

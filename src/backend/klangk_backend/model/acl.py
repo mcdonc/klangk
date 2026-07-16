@@ -40,17 +40,17 @@ class ACLModel:
     """ACL data access, through ``app_state.db``.
 
     Reached via ``app_state.model.acl``. Reaches the DB through
-    ``self.app_state.db`` (the single DB instance for the whole app).
+    ``self.app.state.db`` (the single DB instance for the whole app).
     The method bodies mirror the module-level free functions below
     (backstop); the constants and the pure ``row_to_acl_entry`` helper
     stay module-level.
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     async def add_acl_entry(
         self,
@@ -74,7 +74,7 @@ class ACLModel:
                 " (global fixed UUID — granting it cross-workspace"
                 " blast radius)."
             )
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "INSERT INTO acl_entries"
                 " (resource, position, action, principal_type,"
@@ -95,7 +95,7 @@ class ACLModel:
 
     async def get_acl_entries(self, resource: str) -> list[dict]:
         """Get ACL entries for a resource, ordered by position."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT id, resource, position, action, principal_type,"
                 " user_id, group_id, system_principal, permission"
@@ -122,7 +122,7 @@ class ACLModel:
         if not resources:
             return result
         placeholders = ",".join("?" for _ in resources)
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT id, resource, position, action, principal_type,"
                 " user_id, group_id, system_principal, permission"
@@ -138,7 +138,7 @@ class ACLModel:
 
     async def get_acl_entries_resolved(self, resource: str) -> list[dict]:
         """Get ACL entries with resolved principal names."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT ae.id, ae.resource, ae.position, ae.action,"
                 " ae.principal_type, ae.user_id, ae.group_id,"
@@ -201,7 +201,7 @@ class ACLModel:
                     " (global fixed UUID — granting it cross-workspace"
                     " blast radius)."
                 )
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             await db.execute(
                 "DELETE FROM acl_entries WHERE resource = ?", (resource,)
             )
@@ -225,7 +225,7 @@ class ACLModel:
 
     async def delete_acl_entries_for_resource(self, resource: str) -> int:
         """Delete all ACL entries for a resource. Returns count deleted."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "DELETE FROM acl_entries WHERE resource = ?", (resource,)
             )
@@ -235,7 +235,7 @@ class ACLModel:
         self, user_id: str
     ) -> list[dict]:
         """Get all ACL entries referencing a specific user."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT id, resource, position, action, principal_type,"
                 " user_id, group_id, system_principal, permission"
@@ -249,7 +249,7 @@ class ACLModel:
         self, group_id: str
     ) -> list[dict]:
         """Get all ACL entries referencing a specific group."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT id, resource, position, action, principal_type,"
                 " user_id, group_id, system_principal, permission"
@@ -261,7 +261,7 @@ class ACLModel:
 
     async def get_acl_tree_summary(self) -> list[dict]:
         """Get all distinct resources with their ACE counts."""
-        async with self.app_state.db.transaction() as db:
+        async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT resource, COUNT(*) as ace_count"
                 " FROM acl_entries GROUP BY resource"

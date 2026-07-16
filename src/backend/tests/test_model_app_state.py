@@ -2,7 +2,7 @@
 
 The per-domain ``*Model`` classes (tokens, login_attempts, invitations, ports)
 and the ``Model`` transaction/init helpers are exercised here through
-``app_state_with_schema.model`` — the same surface app code is migrating to. The
+``app_state_with_schema.state.model`` — the same surface app code is migrating to. The
 module-level free-function backstops that lost their app-code callers (they
 moved to the class methods) are covered here too.
 """
@@ -23,8 +23,8 @@ class TestModelRoot:
 
     async def test_init_db_creates_schema(self, app_state, temp_data_dir):
         # init_db via the Model method against the app_state DB.
-        await app_state.model.init_db()
-        async with app_state.model.transaction() as db:
+        await app_state.state.model.init_db()
+        async with app_state.state.model.transaction() as db:
             cursor = await db.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )
@@ -35,7 +35,7 @@ class TestModelRoot:
     async def test_transaction_commits_and_rolls_back(
         self, app_state_with_schema
     ):
-        m = app_state_with_schema.model
+        m = app_state_with_schema.state.model
         async with m.transaction() as db:
             await db.execute(
                 "INSERT INTO token_blocklist (jti, expires_at) VALUES (?, ?)",
@@ -62,7 +62,7 @@ class TestModelRoot:
         assert row is None
 
     async def test_get_db_returns_raw_connection(self, app_state_with_schema):
-        db = await app_state_with_schema.model.get_db()
+        db = await app_state_with_schema.state.model.get_db()
         try:
             await db.execute(
                 "INSERT INTO token_blocklist (jti, expires_at) VALUES (?, ?)",
@@ -77,7 +77,7 @@ class TestTokensModel:
     async def test_blocklist_and_check_and_refresh(
         self, app_state_with_schema
     ):
-        t = app_state_with_schema.model.tokens
+        t = app_state_with_schema.state.model.tokens
         assert await t.is_token_blocklisted("nope") is False
         await t.blocklist_token("jti-1", "2099-01-01", new_token="new-jwt")
         assert await t.is_token_blocklisted("jti-1") is True
@@ -86,17 +86,17 @@ class TestTokensModel:
 
     async def test_free_function_backstop(self, app_state_with_schema):
         # The ContextVar-backed free function still works (backstop, #1578).
-        await app_state_with_schema.model.tokens.blocklist_token(
+        await app_state_with_schema.state.model.tokens.blocklist_token(
             "ff-jti", "2099-01-01", new_token="ff-new"
         )
         assert (
-            await app_state_with_schema.model.tokens.get_refreshed_token(
+            await app_state_with_schema.state.model.tokens.get_refreshed_token(
                 "ff-jti"
             )
             == "ff-new"
         )
         assert (
-            await app_state_with_schema.model.tokens.is_token_blocklisted(
+            await app_state_with_schema.state.model.tokens.is_token_blocklisted(
                 "ff-jti"
             )
             is True
@@ -105,7 +105,7 @@ class TestTokensModel:
 
 class TestLoginAttemptsModel:
     async def test_record_and_lock_and_clear(self, app_state_with_schema):
-        la = app_state_with_schema.model.login_attempts
+        la = app_state_with_schema.state.model.login_attempts
         await la.record_failed_login("a@b.com")
         info = await la.get_login_attempt_info("a@b.com")
         assert info["attempt_count"] == 1
@@ -121,7 +121,7 @@ class TestLoginAttemptsModel:
         assert await la.get_login_attempt_info("a@b.com") is None
 
     async def test_record_reset_clears_lockout(self, app_state_with_schema):
-        la = app_state_with_schema.model.login_attempts
+        la = app_state_with_schema.state.model.login_attempts
         await la.set_login_lockout("r@b.com", "2099-01-01")
         await la.record_failed_login("r@b.com", reset=True)
         info = await la.get_login_attempt_info("r@b.com")
@@ -131,7 +131,7 @@ class TestLoginAttemptsModel:
 
 class TestInvitationsModel:
     async def test_create_get_list_revoke(self, app_state_with_schema, user):
-        inv = app_state_with_schema.model.invitations
+        inv = app_state_with_schema.state.model.invitations
         created = await inv.create_invitation("x@y.com", user["id"])
         got = await inv.get_invitation(created["id"])
         assert got["email"] == "x@y.com"
@@ -144,7 +144,7 @@ class TestInvitationsModel:
         assert await inv.revoke_invitation(created["id"]) is False
 
     async def test_mark_accepted(self, app_state_with_schema, user):
-        inv = app_state_with_schema.model.invitations
+        inv = app_state_with_schema.state.model.invitations
         created = await inv.create_invitation("z@y.com", user["id"])
         assert await inv.mark_invitation_accepted(created["id"]) is True
         assert await inv.mark_invitation_accepted(created["id"]) is False
@@ -152,20 +152,18 @@ class TestInvitationsModel:
     async def test_free_function_backstop_list_with_q(
         self, app_state_with_schema, user
     ):
-        await app_state_with_schema.model.invitations.create_invitation(
+        await app_state_with_schema.state.model.invitations.create_invitation(
             "q@y.com", user["id"]
         )
-        listed = (
-            await app_state_with_schema.model.invitations.list_invitations(
-                q="q@y"
-            )
+        listed = await app_state_with_schema.state.model.invitations.list_invitations(
+            q="q@y"
         )
         assert listed["total"] == 1
 
 
 class TestPortsModel:
     async def test_add_find_remove_get(self, app_state_with_schema, workspace):
-        p = app_state_with_schema.model.ports
+        p = app_state_with_schema.state.model.ports
         ws_id = workspace["id"]
         await p.add_port_allocations(ws_id, [9000, 9001])
         assert await p.get_workspace_ports(ws_id) == [9000, 9001]
@@ -185,14 +183,14 @@ class TestACLModel:
     both copies are kept until #1578, so both need coverage. The backstop
     is covered indirectly by ``klangk_backend/acl.py`` (still on the
     ContextVar path) and directly in ``test_model.py``; this class covers
-    the class methods through ``app_state_with_schema.model.acl`` — the surface the
+    the class methods through ``app_state_with_schema.state.model.acl`` — the surface the
     API routes and the seed now use.
     """
 
     async def test_add_get_replace_delete_resolved(
         self, app_state_with_schema, user
     ):
-        a = app_state_with_schema.model.acl
+        a = app_state_with_schema.state.model.acl
         resource = "/workspaces/acl-cls"
         eid = await a.add_acl_entry(
             resource,
@@ -244,8 +242,8 @@ class TestACLModel:
     async def test_by_principal_user_and_group(
         self, app_state_with_schema, user
     ):
-        a = app_state_with_schema.model.acl
-        group = await app_state_with_schema.model.users.create_group(
+        a = app_state_with_schema.state.model.acl
+        group = await app_state_with_schema.state.model.users.create_group(
             "acl-group"
         )
         await a.add_acl_entry(
@@ -270,7 +268,7 @@ class TestACLModel:
         assert len(by_group) == 1
 
     async def test_tree_summary(self, app_state_with_schema, user):
-        a = app_state_with_schema.model.acl
+        a = app_state_with_schema.state.model.acl
         await a.add_acl_entry(
             "/tree/one",
             0,
@@ -286,7 +284,7 @@ class TestACLModel:
     async def test_add_rejects_agent_principal(self, app_state_with_schema):
         from klangk_backend.model import AgentPrincipalError
 
-        a = app_state_with_schema.model.acl
+        a = app_state_with_schema.state.model.acl
         with pytest.raises(AgentPrincipalError):
             await a.add_acl_entry(
                 "/agent-guard",
@@ -302,7 +300,7 @@ class TestACLModel:
     ):
         from klangk_backend.model import AgentPrincipalError
 
-        a = app_state_with_schema.model.acl
+        a = app_state_with_schema.state.model.acl
         with pytest.raises(AgentPrincipalError):
             await a.replace_acl_entries(
                 "/agent-guard",
@@ -322,14 +320,14 @@ class TestACLModel:
 
 class TestNoConfigDivergenceRegression:
     """#1551 / #1578: the DB a request/seed path uses is the one the app was
-    built with (``app_state.db``), never an env-only lazy fallback.
+    built with (``app_state.state.db``), never an env-only lazy fallback.
 
     Pre-#1578, ``model.db.get_current_db()`` lazily built
     ``DB(KlangkSettings(os.environ))`` when nothing was bound — so a process
     started from a config file whose ``data_dir`` differed from ambient
     ``KLANGK_DATA_DIR`` would read/write a *different* SQLite file than the
     one ``init_db`` had populated. With the ContextVar + delegates gone, every
-    path reaches ``app_state.db``; this test asserts the divergence is
+    path reaches ``app_state.state.db``; this test asserts the divergence is
     structurally impossible.
     """
 
@@ -380,16 +378,18 @@ class TestNoConfigDivergenceRegression:
                 "KLANGK_STATE_DIR": str(tmp_path / "cs"),
             }
         )
-        state = types.SimpleNamespace(settings=settings)
-        state.db = DB(state)
-        state.model = Model(state)
+        state = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=settings)
+        )
+        state.state.db = DB(state)
+        state.state.model = Model(state)
 
         # The owned DB resolves to the configured path, not the ambient one.
-        assert state.db.db_path.parent == config_data
-        assert str(state.db.db_path).startswith(str(config_data))
+        assert state.state.db.db_path.parent == config_data
+        assert str(state.state.db.db_path).startswith(str(config_data))
 
-        await state.model.init_db()
-        await state.model.users.create_user(
+        await state.state.model.init_db()
+        await state.state.model.users.create_user(
             "divergence@example.com", "hash", verified=True
         )
 

@@ -55,10 +55,10 @@ def _is_named_volume(source: str) -> bool:
 class ContainerState:
     """Per-workspace container lifecycle state."""
 
-    def __init__(self, workspace_id: str, container_id: str, app_state):
+    def __init__(self, workspace_id: str, container_id: str, app):
         self.workspace_id = workspace_id
         self.container_id = container_id
-        self.app_state = app_state
+        self.app = app
         self.last_activity = time.time()
         self.idle_timeout: int | None = None
         self.idle_callbacks: list = []
@@ -108,7 +108,7 @@ class ContainerState:
     def get_idle_timeout(self) -> int:
         if self.idle_timeout is not None:
             return self.idle_timeout
-        return self.app_state.container_registry.idle_timeout_seconds
+        return self.app.state.container_registry.idle_timeout_seconds
 
 
 class PortAllocator:
@@ -118,12 +118,12 @@ class PortAllocator:
     port tracking.  Extracted from ``ContainerRegistry`` (issue #972).
     """
 
-    def __init__(self, app_state) -> None:
+    def __init__(self, app) -> None:
         self.port_lock: asyncio.Lock = asyncio.Lock()
-        self.app_state = app_state
+        self.app = app
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     async def allocate_ports(self, workspace_id: str, count: int) -> list[int]:
         # Clamp to the server-wide cap (KLANGK_HOSTED_PORTS_PER_WORKSPACE)
@@ -131,17 +131,17 @@ class PortAllocator:
         # otherwise a cap of 0 would still leave orphan allocations
         # until the container's first start reconcile (#1237).
         count = min(
-            count, self.app_state.container_registry.ports_per_workspace_cap()
+            count, self.app.state.container_registry.ports_per_workspace_cap()
         )
         async with self.port_lock:
-            return await self.app_state.model.ports.find_and_allocate_ports(
+            return await self.app.state.model.ports.find_and_allocate_ports(
                 workspace_id,
                 count,
-                self.app_state.container_registry.port_range_start,
+                self.app.state.container_registry.port_range_start,
             )
 
     async def get_workspace_ports(self, workspace_id: str) -> list[int]:
-        return await self.app_state.model.ports.get_workspace_ports(
+        return await self.app.state.model.ports.get_workspace_ports(
             workspace_id
         )
 
@@ -205,13 +205,13 @@ class IdleMonitor:
     Extracted from ``ContainerRegistry`` (issue #972).
     """
 
-    def __init__(self, app_state) -> None:
-        self.app_state = app_state
+    def __init__(self, app) -> None:
+        self.app = app
         self.cleanup_task: asyncio.Task | None = None
         self._cleanup_wake: asyncio.Event | None = None
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     def get_cleanup_wake(self) -> asyncio.Event:
         if self._cleanup_wake is None:
@@ -219,31 +219,31 @@ class IdleMonitor:
         return self._cleanup_wake
 
     def on_idle_stop(self, workspace_id: str, callback) -> None:
-        state = self.app_state.container_registry.states.get(workspace_id)
+        state = self.app.state.container_registry.states.get(workspace_id)
         if state:
             state.idle_callbacks.append(callback)
 
     def remove_idle_callback(self, workspace_id: str, callback) -> None:
-        state = self.app_state.container_registry.states.get(workspace_id)
+        state = self.app.state.container_registry.states.get(workspace_id)
         if state and callback in state.idle_callbacks:
             state.idle_callbacks.remove(callback)
 
     def set_workspace_idle_timeout(
         self, workspace_id: str, seconds: int
     ) -> None:
-        state = self.app_state.container_registry.states.get(workspace_id)
+        state = self.app.state.container_registry.states.get(workspace_id)
         if state:
             state.idle_timeout = seconds
             self.get_cleanup_wake().set()
 
     def get_workspace_idle_timeout(self, workspace_id: str) -> int:
-        state = self.app_state.container_registry.states.get(workspace_id)
+        state = self.app.state.container_registry.states.get(workspace_id)
         if state:
             return state.get_idle_timeout()
-        return self.app_state.container_registry.idle_timeout_seconds
+        return self.app.state.container_registry.idle_timeout_seconds
 
     async def cleanup_idle_containers(self) -> None:
-        registry = self.app_state.container_registry
+        registry = self.app.state.container_registry
         while True:
             timeouts = [
                 s.idle_timeout
@@ -291,10 +291,10 @@ class IdleMonitor:
                 await registry.stop_and_remove_container(cid)
 
     def start_cleanup_loop(self) -> None:
-        registry = self.app_state.container_registry
+        registry = self.app.state.container_registry
         logger.info(
             "Instance: %s, idle timeout: %ds, check interval: %ds",
-            self.app_state.util.instance_id(),
+            self.app.state.util.instance_id(),
             registry.idle_timeout_seconds,
             registry.check_interval_seconds,
         )
@@ -333,12 +333,12 @@ class HealthMonitor:
     container-side WS agent here).
     """
 
-    def __init__(self, app_state) -> None:
-        self.app_state = app_state
+    def __init__(self, app) -> None:
+        self.app = app
         self.health_task: asyncio.Task | None = None
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     @property
     def connections(self):
@@ -347,7 +347,7 @@ class HealthMonitor:
         Reached via ``app_state.sockets`` (owned instance, #1426) — no
         post-construction wiring needed.
         """
-        return self.app_state.sockets
+        return self.app.state.sockets
 
     def _setup_complete(self, state: ContainerState) -> bool:
         """True if health checks may run for this workspace.
@@ -372,7 +372,7 @@ class HealthMonitor:
         """
         return (
             time.time() - state.service_started_at
-            < self.app_state.container_registry.health_check_startup_grace
+            < self.app.state.container_registry.health_check_startup_grace
         )
 
     async def _run_one(self, state: ContainerState) -> tuple[str, str]:
@@ -411,13 +411,13 @@ class HealthMonitor:
         owner_id = state.owner_id
         if owner_id is None:
             return "unhealthy", "no owner recorded for workspace"
-        handle = await self.app_state.model.users.get_user_handle(owner_id)
+        handle = await self.app.state.model.users.get_user_handle(owner_id)
         if not handle:
             return "unhealthy", f"owner {owner_id} has no handle"
         # Resolve the owner's container home the same way
         # start_workspace does, so the check runs in the right
         # HOME rather than as root in /.
-        ws = self.app_state.workspaces
+        ws = self.app.state.workspaces
         ws_home = ws.home_path(state.workspace_id)
         user_home, _created = await ws.ensure_home_symlink(
             ws_home, handle, owner_id
@@ -430,7 +430,7 @@ class HealthMonitor:
             state.health_check,
         )
         try:
-            rc, out, err = await self.app_state.podman.exec_container(
+            rc, out, err = await self.app.state.podman.exec_container(
                 state.container_id,
                 # bash -c (NON-login): sources nothing, so the probe is
                 # deterministic and insulated from the user's interactive
@@ -441,7 +441,7 @@ class HealthMonitor:
                 ["bash", "-c", state.health_check],
                 user="klangk",
                 extra_env={"HOME": user_home},
-                timeout=self.app_state.container_registry.health_check_timeout,
+                timeout=self.app.state.container_registry.health_check_timeout,
             )
         except (podman.PodmanError, asyncio.TimeoutError, OSError) as e:
             return "unhealthy", f"{type(e).__name__}: {e}"
@@ -552,7 +552,7 @@ class HealthMonitor:
         loop being alive -- if the loop stalls, the heartbeats stop.
         """
         while True:
-            registry = self.app_state.container_registry
+            registry = self.app.state.container_registry
             await asyncio.sleep(registry.health_check_interval)
             for state in list(registry.states.values()):
                 if not state.health_check:
@@ -592,8 +592,8 @@ class ContainerRegistry:
     threading.
     """
 
-    def __init__(self, app_state):
-        self.app_state = app_state
+    def __init__(self, app):
+        self.app = app
 
         # Runtime-mutable state (initialized from settings but overridable
         # at runtime via set_idle_timeout — NOT a live settings read).
@@ -609,34 +609,34 @@ class ContainerRegistry:
         self.on_container_status_changed = None
 
         # Collaborators
-        self.ports = PortAllocator(app_state)
+        self.ports = PortAllocator(app)
         self.browsers = BrowserRouter()
-        self.idle = IdleMonitor(app_state)
-        self.health = HealthMonitor(app_state)
+        self.idle = IdleMonitor(app)
+        self.health = HealthMonitor(app)
 
-        # The Podman instance is reached via self.app_state.podman (owned
+        # The Podman instance is reached via self.app.state.podman (owned
         # instance, #1426) — no post-construction wiring needed.
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
-        self.ports.reconfigure(app_state)
-        self.idle.reconfigure(app_state)
-        self.health.reconfigure(app_state)
+    def reconfigure(self, app) -> None:
+        self.app = app
+        self.ports.reconfigure(app)
+        self.idle.reconfigure(app)
+        self.health.reconfigure(app)
 
     # --- settings-derived config (read live off app_state, #1608) ---
 
     @property
     def image_name(self) -> str:
-        return self.app_state.settings.image_name or "klangk-workspace"
+        return self.app.state.settings.image_name or "klangk-workspace"
 
     @property
     def terminal_banner(self) -> str:
-        return self.app_state.settings.terminal_banner or ""
+        return self.app.state.settings.terminal_banner or ""
 
     @property
     def allowed_images(self) -> set[str]:
         imgs: set[str] = set()
-        raw = self.app_state.settings.allowed_images
+        raw = self.app.state.settings.allowed_images
         if raw:
             imgs = {i.strip() for i in raw.split(",") if i.strip()}
         imgs.add(self.image_name)
@@ -644,7 +644,7 @@ class ContainerRegistry:
 
     @property
     def allowed_mount_roots(self) -> list[str]:
-        raw = self.app_state.settings.allowed_mount_roots
+        raw = self.app.state.settings.allowed_mount_roots
         if not raw:
             return []
         return [
@@ -653,32 +653,32 @@ class ContainerRegistry:
 
     @property
     def port_range_start(self) -> int:
-        return int(self.app_state.settings.port_range_start or "9000")
+        return int(self.app.state.settings.port_range_start or "9000")
 
     @property
     def health_check_interval(self) -> float:
-        return float(self.app_state.settings.health_check_interval or "30")
+        return float(self.app.state.settings.health_check_interval or "30")
 
     @property
     def health_check_timeout(self) -> float:
-        return float(self.app_state.settings.health_check_timeout or "10")
+        return float(self.app.state.settings.health_check_timeout or "10")
 
     @property
     def health_check_startup_grace(self) -> float:
         return float(
-            self.app_state.settings.health_check_startup_grace or "30"
+            self.app.state.settings.health_check_startup_grace or "30"
         )
 
     # --- settings-derived methods (were module functions, #1487) ---
 
     def container_dns_config(self) -> list[str]:
         """Return DNS server list from settings.dns_servers."""
-        raw = self.app_state.settings.dns_servers
+        raw = self.app.state.settings.dns_servers
         return [d.strip() for d in raw.split(",") if d.strip()]
 
     def image_pull_policy(self) -> str:
         """Resolve the workspace-image pull policy from settings."""
-        policy = self.app_state.settings.image_pull_policy
+        policy = self.app.state.settings.image_pull_policy
         if policy not in _VALID_PULL_POLICIES:
             logger.warning(
                 "Invalid KLANGK_IMAGE_PULL_POLICY=%r (valid: %s); using 'never'.",
@@ -691,7 +691,7 @@ class ContainerRegistry:
     def _is_protected(self, source: str) -> bool:
         """True if source is a protected host path that must never be mounted."""
         resolved = os.path.realpath(source)
-        data_dir = os.path.realpath(self.app_state.settings.data_dir)
+        data_dir = os.path.realpath(self.app.state.settings.data_dir)
         for blocked in [*_PROTECTED_PATHS, data_dir]:
             blocked = os.path.realpath(blocked)
             if resolved == blocked or resolved.startswith(blocked + "/"):
@@ -741,7 +741,7 @@ class ContainerRegistry:
 
     def _parse_idle_timeout(self) -> tuple[int, int]:
         default = 30 * 60
-        env_val = self.app_state.settings.idle_timeout_seconds
+        env_val = self.app.state.settings.idle_timeout_seconds
         if env_val is not None:
             try:
                 timeout = int(env_val)
@@ -760,7 +760,7 @@ class ContainerRegistry:
 
     def ports_per_workspace_cap(self) -> int:
         """Server-wide ceiling on hosted-app ports per workspace."""
-        raw = self.app_state.settings.hosted_ports_per_workspace
+        raw = self.app.state.settings.hosted_ports_per_workspace
         try:
             return max(0, int(raw))
         except ValueError:
@@ -849,7 +849,7 @@ class ContainerRegistry:
         state = self.states.get(workspace_id)
         was_new = state is None
         if was_new:
-            state = ContainerState(workspace_id, container_id, self.app_state)
+            state = ContainerState(workspace_id, container_id, self.app)
             self.states[workspace_id] = state
         else:
             # Remove old reverse mapping if container changed
@@ -1026,12 +1026,12 @@ class ContainerRegistry:
         ``"pending"`` at create, and the fire lands later once setup
         completes and the WS connect path runs.
         """
-        agent_home = await self.app_state.agents.ensure_agent_home(
+        agent_home = await self.app.state.agents.ensure_agent_home(
             workspace_id, container_id
         )
         if not service_command:
             return
-        await self.app_state.terminal.ensure_service_session(
+        await self.app.state.terminal.ensure_service_session(
             container_id,
             agent_home,
             service_command,
@@ -1101,7 +1101,7 @@ class ContainerRegistry:
         still running, or ``None`` if it was removed (or not found)
         and a new one should be created.
         """
-        info = await self.app_state.podman.inspect_container(
+        info = await self.app.state.podman.inspect_container(
             existing_container_id
         )
         t_inspect = time.monotonic()
@@ -1130,7 +1130,7 @@ class ContainerRegistry:
                 time.monotonic() - t_start,
             )
             return existing_container_id, "connected"
-        await self.app_state.podman.remove_container(existing_container_id)
+        await self.app.state.podman.remove_container(existing_container_id)
         logger.info(
             "workspace-open: delete old stopped container (podman rm): %.3fs",
             time.monotonic() - t_inspect,
@@ -1154,12 +1154,12 @@ class ContainerRegistry:
         """
         num_ports = min(num_ports, self.ports_per_workspace_cap())
         async with self.port_lock:
-            host_ports = await self.app_state.model.ports.get_workspace_ports(
+            host_ports = await self.app.state.model.ports.get_workspace_ports(
                 workspace_id
             )
             if len(host_ports) < num_ports:
                 new_ports = (
-                    await self.app_state.model.ports.find_and_allocate_ports(
+                    await self.app.state.model.ports.find_and_allocate_ports(
                         workspace_id,
                         num_ports - len(host_ports),
                         self.port_range_start,
@@ -1168,7 +1168,7 @@ class ContainerRegistry:
                 host_ports.extend(new_ports)
             elif len(host_ports) > num_ports:
                 excess = host_ports[num_ports:]
-                await self.app_state.model.ports.remove_port_allocations(
+                await self.app.state.model.ports.remove_port_allocations(
                     workspace_id, excess
                 )
                 host_ports = host_ports[:num_ports]
@@ -1202,7 +1202,7 @@ class ContainerRegistry:
             or hosting_proto is None
             or hosting_base_path is None
         ):
-            h, p, b = self.app_state.util.derive_hosting_info(None, None)
+            h, p, b = self.app.state.util.derive_hosting_info(None, None)
             # Use ``is None`` (not ``or``): an explicit empty base_path
             # (root deployment) is a legitimate value that must survive,
             # not be clobbered by the resolved floor.
@@ -1213,9 +1213,9 @@ class ContainerRegistry:
             if hosting_base_path is None:
                 hosting_base_path = b
         env_vars: list[str] = []
-        egress_port = self.app_state.settings.egress_port
+        egress_port = self.app.state.settings.egress_port
         proxy_url = f"http://host.containers.internal:{egress_port}/llm-proxy"
-        llm_model = self.app_state.settings.llm_model
+        llm_model = self.app.state.settings.llm_model
         env_vars.append(f"KLANGK_LLM_PROXY_URL={proxy_url}")
         if llm_model:
             env_vars.append(f"KLANGK_LLM_MODEL={llm_model}")
@@ -1254,7 +1254,7 @@ class ContainerRegistry:
         # ever needed. Emitted only when a trustable cert dir is present.
         env_vars.extend(ssl_env_vars(ssl_dir))
 
-        for k, v in self.app_state.plugins.container_env().items():
+        for k, v in self.app.state.plugins.container_env().items():
             env_vars.append(f"{k}={v}")
 
         if extra_env:
@@ -1279,7 +1279,7 @@ class ContainerRegistry:
                 if info is None:
                     labels = {
                         "klangk.managed": "true",
-                        "klangk.instance": self.app_state.util.instance_id(),
+                        "klangk.instance": self.app.state.util.instance_id(),
                     }
                     if user_id:
                         labels["klangk.user-id"] = user_id
@@ -1288,7 +1288,7 @@ class ContainerRegistry:
                     vol_labels = info.get("Labels") or {}
                     if (
                         vol_labels.get("klangk.instance")
-                        != self.app_state.util.instance_id()
+                        != self.app.state.util.instance_id()
                     ):
                         raise ValueError(
                             f"Volume {source!r} is not managed "
@@ -1338,14 +1338,14 @@ class ContainerRegistry:
         that hold conflicting ports.
         """
         t_create = time.monotonic()
-        cid = await self.app_state.podman.create_container(
+        cid = await self.app.state.podman.create_container(
             container_name, resolved_image, **create_kwargs
         )
         logger.info(
             "workspace-open: create container image (podman create): %.3fs",
             time.monotonic() - t_create,
         )
-        await self.app_state.model.workspaces.update_workspace_container(
+        await self.app.state.model.workspaces.update_workspace_container(
             workspace_id, cid
         )
         self.track_activity(
@@ -1357,14 +1357,14 @@ class ContainerRegistry:
         )
         t_podman_start = time.monotonic()
         try:
-            await self.app_state.podman.start_container(cid)
+            await self.app.state.podman.start_container(cid)
         except podman.PodmanError as exc:
             if "port is already allocated" not in exc.message:
                 raise
             await self._resolve_port_conflict(
-                cid, container_name, publish, self.app_state.podman
+                cid, container_name, publish, self.app.state.podman
             )
-            await self.app_state.podman.start_container(cid)
+            await self.app.state.podman.start_container(cid)
         logger.info(
             "workspace-open: boot container (podman start): %.3fs",
             time.monotonic() - t_podman_start,
@@ -1375,7 +1375,7 @@ class ContainerRegistry:
             sudoers_rule = "klangk ALL=(ALL) NOPASSWD:ALL"
         else:
             sudoers_rule = "klangk ALL=(ALL) !ALL"
-        await self.app_state.podman.exec_container(
+        await self.app.state.podman.exec_container(
             cid,
             ["klangk-configure-sudo", sudoers_rule],
             user="root",
@@ -1383,10 +1383,10 @@ class ContainerRegistry:
 
         # Write the workspace token so container processes can
         # authenticate without an env-var restart.
-        workspace_token = self.app_state.auth.create_workspace_token(
+        workspace_token = self.app.state.auth.create_workspace_token(
             workspace_id
         )
-        await self.app_state.terminal.set_workspace_token(cid, workspace_token)
+        await self.app.state.terminal.set_workspace_token(cid, workspace_token)
 
         # Block until the entrypoint's one-time setup is done. ``podman
         # start`` returns when the entrypoint has *begun*, not finished;
@@ -1395,7 +1395,7 @@ class ContainerRegistry:
         # terminals, exec, agent, health check — gets a genuine readiness
         # guarantee regardless of shell, closing the race that previously
         # only the in-bashrc gate covered (and only for bash).
-        await self.app_state.podman.wait_for_container_ready(cid)
+        await self.app.state.podman.wait_for_container_ready(cid)
 
         return cid
 
@@ -1413,7 +1413,7 @@ class ContainerRegistry:
         )
         wanted_ports = {hp for hp, _cp in publish}
         stale = await podman.list_containers(
-            f"klangk.instance={self.app_state.util.instance_id()}"
+            f"klangk.instance={self.app.state.util.instance_id()}"
         )
         for c in stale:
             stale_id = c.get("Id") or c.get("ID", "")
@@ -1498,8 +1498,8 @@ class ContainerRegistry:
         t_env = time.monotonic()
         # Resolve the agent home at this async seam (``_build_env`` is
         # sync) so every exec process inherits KLANGK_AGENT_HOME (#1157).
-        agent_home = f"/home/{await self.app_state.model.users.agent_handle()}"
-        ssl_dir = self.app_state.ssl_trust.ssl_cert_dir()
+        agent_home = f"/home/{await self.app.state.model.users.agent_handle()}"
+        ssl_dir = self.app.state.ssl_trust.ssl_cert_dir()
         if ssl_dir:
             logger.info(
                 "Runtime SSL trust enabled: mounting %s at %s",
@@ -1517,7 +1517,7 @@ class ContainerRegistry:
             ssl_dir,
         )
         await self._ensure_volumes(
-            extra_mounts, user_id, self.app_state.podman
+            extra_mounts, user_id, self.app.state.podman
         )
         binds = self._build_mounts(
             home_path, config_path, extra_mounts, ssl_dir
@@ -1527,9 +1527,9 @@ class ContainerRegistry:
             (host_port, CONTAINER_PORT_START + i)
             for i, host_port in enumerate(host_ports)
         ]
-        iid = self.app_state.util.instance_id()
+        iid = self.app.state.util.instance_id()
         container_name = f"klangk-{iid}-{workspace_id[:12]}"
-        allow_sudo = self.app_state.settings.allow_sudo.strip().lower() in (
+        allow_sudo = self.app.state.settings.allow_sudo.strip().lower() in (
             "1",
             "true",
             "yes",
@@ -1553,7 +1553,7 @@ class ContainerRegistry:
             env=env_vars,
             init=True,
             interactive=True,
-            userns=self.app_state.settings.userns,
+            userns=self.app.state.settings.userns,
             pull=self.image_pull_policy(),
         )
 
@@ -1604,7 +1604,7 @@ class ContainerRegistry:
     async def stop_and_remove_container(self, container_id: str) -> None:
         """Stop and remove a container.
 
-        The slow ``self.app_state.podman.remove_container`` call runs *outside* the
+        The slow ``self.app.state.podman.remove_container`` call runs *outside* the
         workspace lock; only the registry-state teardown is serialized --
         under the same per-workspace lock :meth:`start_container` uses -- so
         a concurrent start for the same workspace cannot observe a
@@ -1623,7 +1623,7 @@ class ContainerRegistry:
         ever seen and is cleared on process restart.
         """
         try:
-            await self.app_state.podman.remove_container(container_id)
+            await self.app.state.podman.remove_container(container_id)
             logger.info("Stopped container %s", container_id)
         except podman.PodmanError as e:
             logger.warning(
@@ -1674,7 +1674,7 @@ class ContainerRegistry:
 
     async def stop_user_containers(self, user_id: str) -> None:
         """Stop all containers for a user (called on logout)."""
-        workspaces = await self.app_state.model.workspaces.get_user_workspaces_with_containers(
+        workspaces = await self.app.state.model.workspaces.get_user_workspaces_with_containers(
             user_id
         )
         for ws in workspaces:
@@ -1695,13 +1695,13 @@ class ContainerRegistry:
         """
         t0 = time.monotonic()
         try:
-            cid = await self.app_state.podman.create_container(
+            cid = await self.app.state.podman.create_container(
                 "klangk-prewarm",
                 self.image_name,
                 pull="never",
-                userns=self.app_state.settings.userns,
+                userns=self.app.state.settings.userns,
             )
-            await self.app_state.podman.remove_container(cid)
+            await self.app.state.podman.remove_container(cid)
             logger.info("Podman pre-warmed in %.3fs", time.monotonic() - t0)
         except podman.PodmanError as e:
             logger.warning(
@@ -1726,8 +1726,8 @@ class ContainerRegistry:
         ID) is never touched (#1556).
         """
         try:
-            containers = await self.app_state.podman.list_containers(
-                f"klangk.instance={self.app_state.util.instance_id()}"
+            containers = await self.app.state.podman.list_containers(
+                f"klangk.instance={self.app.state.util.instance_id()}"
             )
         except (podman.PodmanError, OSError) as e:
             logger.warning("Error scanning for leftover containers: %s", e)
@@ -1738,7 +1738,7 @@ class ContainerRegistry:
                 continue
             logger.info("Reaping leftover container %s on startup", cid[:12])
             try:
-                await self.app_state.podman.remove_container(cid)
+                await self.app.state.podman.remove_container(cid)
             except podman.PodmanError as e:
                 logger.warning(
                     "Failed to reap leftover container %s: %s", cid[:12], e
@@ -1764,8 +1764,8 @@ class ContainerRegistry:
         tracked_ids = set(self._cid_to_wsid.keys())
         tasks = [self.stop_and_remove_container(cid) for cid in tracked_ids]
         try:
-            containers = await self.app_state.podman.list_containers(
-                f"klangk.instance={self.app_state.util.instance_id()}"
+            containers = await self.app.state.podman.list_containers(
+                f"klangk.instance={self.app.state.util.instance_id()}"
             )
             for c in containers:
                 cid = c.get("Id") or c.get("ID", "")

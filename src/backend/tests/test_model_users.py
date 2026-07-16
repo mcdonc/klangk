@@ -1,6 +1,6 @@
 """Direct coverage for ``UsersModel(app_state)`` (#1573).
 
-Exercises every method on ``app_state.model.users`` — the app_state-owned
+Exercises every method on ``app_state.state.model.users`` — the app_state-owned
 form app code is migrating to — plus the db-param helpers and the
 agent-user cache. Mirrors the #1572 ``test_model_app_state.py`` pattern:
 ``app_state`` (db + model wired via the ContextVar DB) with the schema
@@ -17,8 +17,8 @@ from klangk_backend.model.users import (
 
 @pytest.fixture
 async def users(app_state, db):
-    """``app_state.model.users`` with the schema initialized."""
-    return app_state.model.users
+    """``app_state.state.model.users`` with the schema initialized."""
+    return app_state.state.model.users
 
 
 async def test_create_and_get_user(users):
@@ -62,7 +62,7 @@ async def test_link_oidc_and_external_id_and_verify(users):
 
 
 async def test_insert_unverified_user(users):
-    async with users.app_state.db.transaction() as db:
+    async with users.app.state.db.transaction() as db:
         handle = await users.insert_unverified_user(
             db, "uid-uv", "uv@x.com", "hash"
         )
@@ -185,7 +185,7 @@ async def test_assert_handle_not_agent(users, agent_user):
 async def test_db_param_handle_helpers(users):
     u = await users.create_user("h@x.com", "hash")
     base = (await users.get_user_handle(u["id"])) or "handle"
-    async with users.app_state.db.transaction() as db:
+    async with users.app.state.db.transaction() as db:
         uniq = await users.unique_handle(db, base)
         gen = await users.generate_handle(db, "new@email.com")
     assert uniq  # base taken by the user -> suffixed or hashed
@@ -193,7 +193,7 @@ async def test_db_param_handle_helpers(users):
 
 
 async def test_backfill_handles_method(users):
-    async with users.app_state.db.transaction() as db:
+    async with users.app.state.db.transaction() as db:
         await db.execute(
             "INSERT INTO users (id, email, password_hash, verified, handle)"
             " VALUES (?, ?, ?, 0, NULL)",
@@ -209,7 +209,7 @@ async def test_unique_handle_truncates_long_suffix(users):
     from klangk_backend.model import MAX_HANDLE_LEN
 
     long = "a" * MAX_HANDLE_LEN
-    async with users.app_state.db.transaction() as db:
+    async with users.app.state.db.transaction() as db:
         await db.execute(
             "INSERT INTO users (id, email, password_hash, verified, handle)"
             " VALUES (?, ?, ?, 0, ?)",

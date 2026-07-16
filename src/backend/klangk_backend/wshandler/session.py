@@ -83,9 +83,9 @@ class WorkspaceSession:
     Created by the first WebSocket connection, cleaned up by the last.
     """
 
-    def __init__(self, workspace_id: str, app_state=None):
+    def __init__(self, workspace_id: str, app=None):
         self.workspace_id = workspace_id
-        self.app_state = app_state
+        self.app = app
         self.container_id: str | None = None
         self.subscribers: set[SafeWebSocket] = set()
         self.browser_subscribers: set[SafeWebSocket] = set()
@@ -178,7 +178,7 @@ class WorkspaceSession:
                 return  # pragma: no cover
 
             # Renew at 80% of the token lifetime.
-            lifetime = self.app_state.auth.workspace_token_expire_hours * 3600
+            lifetime = self.app.state.auth.workspace_token_expire_hours * 3600
             delay = lifetime * 0.8
             try:
                 await asyncio.sleep(delay)
@@ -190,16 +190,16 @@ class WorkspaceSession:
                 return  # pragma: no cover
 
             try:
-                new_token = self.app_state.auth.create_workspace_token(
+                new_token = self.app.state.auth.create_workspace_token(
                     self.workspace_id
                 )
-                await self.app_state.terminal.set_workspace_token(
+                await self.app.state.terminal.set_workspace_token(
                     container_id, new_token
                 )
                 self.workspace_token_expiry = datetime.now(
                     timezone.utc
                 ) + timedelta(
-                    hours=self.app_state.auth.workspace_token_expire_hours
+                    hours=self.app.state.auth.workspace_token_expire_hours
                 )
                 logger.info(
                     "Renewed workspace token for %s",
@@ -231,13 +231,13 @@ class WorkspaceSession:
         request_id = str(uuid.uuid4())
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
-        self.app_state.sockets.pending_browser_requests[request_id] = (
+        self.app.state.sockets.pending_browser_requests[request_id] = (
             future,
             None,
         )
 
         if not self.browser_subscribers:
-            self.app_state.sockets.pending_browser_requests.pop(
+            self.app.state.sockets.pending_browser_requests.pop(
                 request_id, None
             )
             return {"error": "No browser client connected to this workspace"}
@@ -246,7 +246,7 @@ class WorkspaceSession:
         log_ws_msg("BCAST", message)
         delivered = self.broadcast_to_browsers(message)
         if delivered == 0:
-            self.app_state.sockets.pending_browser_requests.pop(
+            self.app.state.sockets.pending_browser_requests.pop(
                 request_id, None
             )
             return {"error": "No browser client connected to this workspace"}
@@ -255,12 +255,12 @@ class WorkspaceSession:
             result = await asyncio.wait_for(future, timeout=timeout)
             return result
         except asyncio.TimeoutError:
-            self.app_state.sockets.pending_browser_requests.pop(
+            self.app.state.sockets.pending_browser_requests.pop(
                 request_id, None
             )
             return {"error": "Browser client did not respond within timeout"}
         except asyncio.CancelledError:
-            self.app_state.sockets.pending_browser_requests.pop(
+            self.app.state.sockets.pending_browser_requests.pop(
                 request_id, None
             )
             raise
@@ -277,7 +277,7 @@ class WorkspaceSession:
         request_id = str(uuid.uuid4())
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
-        self.app_state.sockets.pending_browser_requests[request_id] = (
+        self.app.state.sockets.pending_browser_requests[request_id] = (
             future,
             target_sock,
         )
@@ -287,7 +287,7 @@ class WorkspaceSession:
         try:
             target_sock.send_json(message)
         except WS_ERRORS:
-            self.app_state.sockets.pending_browser_requests.pop(
+            self.app.state.sockets.pending_browser_requests.pop(
                 request_id, None
             )
             return {"error": "Browser connection not available"}
@@ -296,12 +296,12 @@ class WorkspaceSession:
             result = await asyncio.wait_for(future, timeout=timeout)
             return result
         except asyncio.TimeoutError:
-            self.app_state.sockets.pending_browser_requests.pop(
+            self.app.state.sockets.pending_browser_requests.pop(
                 request_id, None
             )
             return {"error": "Browser client did not respond within timeout"}
         except asyncio.CancelledError:
-            self.app_state.sockets.pending_browser_requests.pop(
+            self.app.state.sockets.pending_browser_requests.pop(
                 request_id, None
             )
             raise
@@ -322,7 +322,7 @@ class WorkspaceSession:
         """
         request_id = str(uuid.uuid4())
         queue: asyncio.Queue = asyncio.Queue()
-        self.app_state.sockets.streaming_browser_requests[request_id] = (
+        self.app.state.sockets.streaming_browser_requests[request_id] = (
             queue,
             target_sock,
         )
@@ -336,7 +336,7 @@ class WorkspaceSession:
         try:
             target_sock.send_json(message)
         except WS_ERRORS:
-            self.app_state.sockets.streaming_browser_requests.pop(
+            self.app.state.sockets.streaming_browser_requests.pop(
                 request_id, None
             )
             yield (
@@ -372,7 +372,7 @@ class WorkspaceSession:
                 if item["type"] != "chunk":
                     return
         finally:
-            self.app_state.sockets.streaming_browser_requests.pop(
+            self.app.state.sockets.streaming_browser_requests.pop(
                 request_id, None
             )
 
@@ -382,8 +382,8 @@ class WorkspaceSession:
         Called when a container is killed externally (idle timeout,
         manual stop) so the next workspace_connect starts fresh.
         """
-        await self.app_state.sockets.remove_session(self.workspace_id)
-        await self.app_state.container_registry.remove_state(self.workspace_id)
+        await self.app.state.sockets.remove_session(self.workspace_id)
+        await self.app.state.container_registry.remove_state(self.workspace_id)
         logger.info("Reset workspace state for %s", self.workspace_id)
 
 
@@ -396,8 +396,8 @@ class WebSocketState:
     # WebSocket reconnection with backoff.
     PRESENCE_LEAVE_DELAY = 10.0  # seconds
 
-    def __init__(self, app_state=None) -> None:
-        self.app_state = app_state
+    def __init__(self, app=None) -> None:
+        self.app = app
         # Active connections: SafeWebSocket -> Connection
         self.connections: dict[SafeWebSocket, "Connection"] = {}
         # Active sessions keyed by workspace_id.
@@ -419,19 +419,19 @@ class WebSocketState:
         # broadcast; if they reconnect before it fires we cancel it.
         self._pending_leaves: dict[tuple[str, str], asyncio.Task] = {}
 
-    def reconfigure(self, app_state) -> None:
-        self.app_state = app_state
+    def reconfigure(self, app) -> None:
+        self.app = app
 
     def get_session(self, workspace_id: str) -> WorkspaceSession | None:
         return self.sessions.get(workspace_id)
 
     def get_or_create_session(
-        self, workspace_id: str, app_state=None
+        self, workspace_id: str, app=None
     ) -> WorkspaceSession:
         try:
             return self.sessions[workspace_id]
         except KeyError:
-            session = WorkspaceSession(workspace_id, app_state=app_state)
+            session = WorkspaceSession(workspace_id, app=app)
             return self.sessions.setdefault(workspace_id, session)
 
     async def remove_session(self, workspace_id: str) -> None:
@@ -554,7 +554,7 @@ class WebSocketState:
                 if still_connected:  # pragma: no cover
                     return
 
-                sys_msg = await self.app_state.model.chat.add_chat_message(
+                sys_msg = await self.app.state.model.chat.add_chat_message(
                     workspace_id,
                     user_id,
                     user["email"],
@@ -583,14 +583,14 @@ class WebSocketState:
         if session:
             await session.full_reset()
         else:
-            await self.app_state.container_registry.remove_state(workspace_id)
+            await self.app.state.container_registry.remove_state(workspace_id)
             logger.info("Reset workspace state for %s", workspace_id)
 
         # Clean up module-level agent state for this workspace.
         agent_conversations.pop(workspace_id, None)
         cancel_agent_task(workspace_id)
         # Stop the Pi RPC subprocess so it doesn't outlive the container.
-        await self.app_state.agents.stop_session(workspace_id)
+        await self.app.state.agents.stop_session(workspace_id)
 
     def notify_container_status(
         self, workspace_id: str, running: bool
@@ -683,7 +683,7 @@ class WebSocketState:
         from ``registry.states`` and thus skipped (the container-death
         hole is #1175 item 2).
         """
-        for cs in list(self.app_state.container_registry.states.values()):
+        for cs in list(self.app.state.container_registry.states.values()):
             if cs.health_check is None or cs.health_status is None:
                 continue
             try:

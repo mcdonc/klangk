@@ -59,20 +59,18 @@ def make_settings(
     return KlangkSettings(env=env, config_file=config_file)
 
 
-def wire_db_and_model(state) -> None:
-    """Attach ``db`` + ``model`` + ``acl`` to a test ``app_state`` namespace.
+def wire_db_and_model(app) -> None:
+    """Attach ``db`` + ``model`` + ``acl`` to a test ``app.state`` namespace.
 
     App code reaches the converted domains (tokens, login_attempts,
-    invitations, ports) via ``app_state.model.<domain>.<method>``, which
-    resolves ``self.app_state.db``. The FastAPI permission layer
-    (``ACL(app_state)``, #1577) reaches ``app_state.model.{users,acl}``, so
-    any test that builds an ``app_state`` namespace and exercises a request
-    / WebSocket path must wire ``acl`` too. Every test that builds an
-    ``app_state`` namespace and constructs an owned instance that touches
-    those domains (``Auth``, ``ContainerRegistry``, …) must wire all three.
+    invitations, ports) via ``app.state.model.<domain>.<method>``, which
+    resolves ``self.app.state.db``. The FastAPI permission layer
+    (``ACL(app)``, #1577) reaches ``app.state.model.{users,acl}``, so
+    any test that builds a mock app and exercises a request / WebSocket
+    path must wire ``acl`` too.
 
     Reuses the per-test DB (the autouse ``temp_data_dir`` fixture builds
-    one and runs ``init_db`` against it) so ``app_state.db`` is the *same*
+    one and runs ``init_db`` against it) so ``app.state.db`` is the *same*
     schema-bearing instance the rest of the test reaches — not a fresh DB
     on a different temp path (which would hit "no such table"). Idempotent:
     skips re-wiring when already present.
@@ -81,12 +79,13 @@ def wire_db_and_model(state) -> None:
     from klangk_backend.model.db import DB
     from klangk_backend.acl import ACL
 
+    state = app.state
     if getattr(state, "db", None) is None:
         try:
             state.db = get_test_db()
         except LookupError:
-            state.db = DB(state)
+            state.db = DB(app)
     if getattr(state, "model", None) is None:
-        state.model = Model(state)
+        state.model = Model(app)
     if getattr(state, "acl", None) is None:
-        state.acl = ACL(state)
+        state.acl = ACL(app)
