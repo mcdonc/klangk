@@ -195,6 +195,7 @@ async def get_config(app_state=Depends(get_app_state_dep)):
         "product_name": s.product_name,
         "login_banner_title": s.login_banner_title,
         "login_banner": s.login_banner,
+        "login_banner_every_visit": s.login_banner_every_visit,
         "oidc_providers": app_state.oidc.list_providers(),
         "auth_modes": app_state.oidc.auth_modes(),
         "instance_id": app_state.util.instance_id(),

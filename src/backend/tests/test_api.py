@@ -416,11 +416,15 @@ class TestConfig:
         monkeypatch.setattr(
             app.state.settings, "login_banner", "You must accept terms."
         )
+        monkeypatch.setattr(
+            app.state.settings, "login_banner_every_visit", True
+        )
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
         assert data["login_banner_title"] == "Notice"
         assert data["login_banner"] == "You must accept terms."
+        assert data["login_banner_every_visit"] is True
 
     async def test_get_config_advertises_min_password_length(self, client):
         # Surfaced so the UI can validate password length inline; matches the

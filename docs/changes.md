@@ -27,6 +27,14 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Option to require consent banner acceptance on every visit (#1544).**
+  New setting `login_banner_every_visit` / `KLANGK_LOGIN_BANNER_EVERY_VISIT`
+  (default `false`, surfaced on `GET /api/v1/config`). When `true`, the
+  login/consent banner must be re-accepted on every fresh app load / login
+  — acceptance is held for the session only (in-memory), never persisted.
+  When `false` (default), behavior is unchanged: acceptance is cached
+  permanently against the banner text hash.
+
 - **`KLANGK_EGRESS_LISTEN`** — the interface nginx binds for the container-
   egress listener, rendered as `listen {egress_listen}:{egress_port};`.
   Defaults to `0.0.0.0` (all interfaces), the only value portable across

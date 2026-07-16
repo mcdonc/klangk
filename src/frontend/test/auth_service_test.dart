@@ -86,6 +86,7 @@ void main() {
       String bannerText = '',
       String instanceId = 'default',
       bool allowAutostart = false,
+      bool loginBannerEveryVisit = false,
       int? minPasswordLength,
       String? productName,
     }) {
@@ -97,6 +98,7 @@ void main() {
               'login_banner': bannerText,
               'instance_id': instanceId,
               'allow_autostart': allowAutostart,
+              'login_banner_every_visit': loginBannerEveryVisit,
               if (minPasswordLength != null)
                 'min_password_length': minPasswordLength,
               if (productName != null) 'product_name': productName,
@@ -253,6 +255,51 @@ void main() {
 
       await service.acceptBanner();
       expect(service.bannerAccepted, isFalse);
+    });
+
+    test('every-visit banner ignores stored hash and re-prompts', () async {
+      // A stored hash from a prior session must NOT count when
+      // login_banner_every_visit is on — the banner shows on every fresh
+      // app load (#1544).
+      const bannerText = 'Accept this every time.';
+      SharedPreferences.setMockInitialValues({
+        'klangk_banner_accepted': bannerText.hashCode.toString(),
+      });
+      testAuthHttpClientOverride = _bannerClient(
+        bannerText: bannerText,
+        loginBannerEveryVisit: true,
+      );
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      expect(service.loginBannerEveryVisit, isTrue);
+      expect(service.bannerAccepted, isFalse);
+      expect(service.bannerRequired, isTrue);
+    });
+
+    test('every-visit accept does not persist hash', () async {
+      // Acceptance is session-only — acceptBanner must NOT write the hash
+      // when login_banner_every_visit is on (#1544).
+      testAuthHttpClientOverride = _bannerClient(
+        bannerText: 'Accept me.',
+        loginBannerEveryVisit: true,
+      );
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      expect(service.bannerRequired, isTrue);
+      await service.acceptBanner();
+      expect(service.bannerAccepted, isTrue);
+      expect(service.bannerRequired, isFalse);
+
+      // Nothing persisted — the banner will re-prompt on the next app load.
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        prefs.getString('klangk_banner_accepted'),
+        isNull,
+      );
     });
 
     test('config fetch failure is silent', () async {
