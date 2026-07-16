@@ -89,11 +89,11 @@ class Lifecycle:
 
     async def seed_default_acls(self, admin_group_id: str) -> None:
         """Seed default ACL entries if none exist yet."""
-        existing = await model.get_acl_tree_summary()
+        existing = await self.app_state.model.acl.get_acl_tree_summary()
         if existing:
             return
         # /: Authenticated users can view, deny everyone else
-        await model.add_acl_entry(
+        await self.app_state.model.acl.add_acl_entry(
             "/",
             0,
             ACTION_ALLOW,
@@ -101,7 +101,7 @@ class Lifecycle:
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_AUTHENTICATED,
         )
-        await model.add_acl_entry(
+        await self.app_state.model.acl.add_acl_entry(
             "/",
             1,
             ACTION_DENY,
@@ -110,7 +110,7 @@ class Lifecycle:
             system_principal=SYSTEM_EVERYONE,
         )
         # /workspaces: Authenticated users can create
-        await model.add_acl_entry(
+        await self.app_state.model.acl.add_acl_entry(
             "/workspaces",
             0,
             ACTION_ALLOW,
@@ -119,7 +119,7 @@ class Lifecycle:
             system_principal=SYSTEM_AUTHENTICATED,
         )
         # /groups: Authenticated users can create groups
-        await model.add_acl_entry(
+        await self.app_state.model.acl.add_acl_entry(
             "/groups",
             0,
             ACTION_ALLOW,
@@ -128,7 +128,7 @@ class Lifecycle:
             system_principal=SYSTEM_AUTHENTICATED,
         )
         # /admin: admin group gets full access, deny everyone else
-        await model.add_acl_entry(
+        await self.app_state.model.acl.add_acl_entry(
             "/admin",
             0,
             ACTION_ALLOW,
@@ -136,7 +136,7 @@ class Lifecycle:
             PRINCIPAL_GROUP,
             group_id=admin_group_id,
         )
-        await model.add_acl_entry(
+        await self.app_state.model.acl.add_acl_entry(
             "/admin",
             1,
             ACTION_DENY,

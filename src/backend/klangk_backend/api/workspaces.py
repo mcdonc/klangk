@@ -366,7 +366,9 @@ async def delete_workspace(
     if not deleted:  # pragma: no cover — race between get and delete
         raise HTTPException(status_code=404, detail="Workspace not found")
     # Clean up ACL entries for this workspace
-    await model.delete_acl_entries_for_resource(f"/workspaces/{workspace_id}")
+    await app_state.model.acl.delete_acl_entries_for_resource(
+        f"/workspaces/{workspace_id}"
+    )
     # Notify the deleter, the owner, and any shared members so their
     # workspace list refreshes (members were fetched above, before the
     # resource's ACL entries were removed).
@@ -794,10 +796,10 @@ async def add_workspace_member(
     # Add ACL entries granting the target user view+terminal+files+chat
     # on this workspace, packed at the next available positions.
     resource = f"/workspaces/{workspace_id}"
-    existing = await model.get_acl_entries(resource)
+    existing = await app_state.model.acl.get_acl_entries(resource)
     next_pos = max((e["position"] for e in existing), default=-1) + 1
     for perm in ("view", "terminal", "files", "chat"):
-        await model.add_acl_entry(
+        await app_state.model.acl.add_acl_entry(
             resource,
             next_pos,
             ACTION_ALLOW,
@@ -824,7 +826,7 @@ async def remove_workspace_member(
 ):
     # Remove all ACL entries for this user on this workspace
     resource = f"/workspaces/{workspace_id}"
-    entries = await model.get_acl_entries(resource)
+    entries = await app_state.model.acl.get_acl_entries(resource)
     remaining = [
         e
         for e in entries
@@ -835,7 +837,7 @@ async def remove_workspace_member(
     # Rewrite entries with new positions
     for i, entry in enumerate(remaining):
         entry["position"] = i
-    await model.replace_acl_entries(resource, remaining)
+    await app_state.model.acl.replace_acl_entries(resource, remaining)
     app_state.sockets.notify_user_workspaces_changed(user["id"])
     app_state.sockets.notify_user_workspaces_changed(member_id)
     return {"status": "removed"}
@@ -976,10 +978,11 @@ async def change_workspace_role(
 async def get_workspace_groups(
     workspace_id: str,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    app_state=Depends(get_app_state_dep),
 ):
     """Get groups with access to this workspace via ACL."""
     resource = f"/workspaces/{workspace_id}"
-    entries = await model.get_acl_entries_resolved(resource)
+    entries = await app_state.model.acl.get_acl_entries_resolved(resource)
     seen = set()
     groups = []
     for e in entries:
@@ -1007,10 +1010,10 @@ async def add_workspace_group(
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
     resource = f"/workspaces/{workspace_id}"
-    existing = await model.get_acl_entries(resource)
+    existing = await app_state.model.acl.get_acl_entries(resource)
     max_pos = max((e["position"] for e in existing), default=-1)
     for i, perm in enumerate(["view", "terminal", "files", "chat"]):
-        await model.add_acl_entry(
+        await app_state.model.acl.add_acl_entry(
             resource,
             max_pos + 1 + i,
             ACTION_ALLOW,
@@ -1026,10 +1029,11 @@ async def remove_workspace_group(
     workspace_id: str,
     group_id: str,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    app_state=Depends(get_app_state_dep),
 ):
     """Remove all ACL entries for a group on this workspace."""
     resource = f"/workspaces/{workspace_id}"
-    entries = await model.get_acl_entries(resource)
+    entries = await app_state.model.acl.get_acl_entries(resource)
     remaining = [
         e
         for e in entries
@@ -1040,7 +1044,7 @@ async def remove_workspace_group(
     ]
     for i, entry in enumerate(remaining):
         entry["position"] = i
-    await model.replace_acl_entries(resource, remaining)
+    await app_state.model.acl.replace_acl_entries(resource, remaining)
     return {"status": "removed"}
 
 
@@ -1051,10 +1055,11 @@ async def remove_workspace_group(
 async def get_workspace_acl(
     workspace_id: str,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    app_state=Depends(get_app_state_dep),
 ):
     """Get resolved ACL entries for a workspace."""
     resource = f"/workspaces/{workspace_id}"
-    return await model.get_acl_entries_resolved(resource)
+    return await app_state.model.acl.get_acl_entries_resolved(resource)
 
 
 @router.put("/workspaces/{workspace_id}/acl")
@@ -1062,6 +1067,7 @@ async def replace_workspace_acl(
     workspace_id: str,
     entries: list[WorkspaceAclEntry],
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    app_state=Depends(get_app_state_dep),
 ):
     """Replace all ACL entries for a workspace."""
     resource = f"/workspaces/{workspace_id}"
@@ -1077,8 +1083,8 @@ async def replace_workspace_acl(
         }
         for i, e in enumerate(entries)
     ]
-    await model.replace_acl_entries(resource, acl_entries)
-    return await model.get_acl_entries_resolved(resource)
+    await app_state.model.acl.replace_acl_entries(resource, acl_entries)
+    return await app_state.model.acl.get_acl_entries_resolved(resource)
 
 
 # --- Ownership transfer ---

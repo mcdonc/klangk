@@ -75,13 +75,19 @@ def _make_app_state(settings=None):
 
 
 def _lifecycle(settings):
-    """A ``Lifecycle`` whose app_state carries just ``settings``.
+    """A ``Lifecycle`` whose app_state can reach ``model.acl``.
 
-    The seed methods read only ``self.app_state.settings`` (DB access goes
-    through the model/ ContextVar backstop bound by the ``db`` fixture),
-    so a bare namespace is enough for the seed-focused tests below.
+    The seed methods read ``self.app_state.settings`` and reach the DB via
+    ``self.app_state.model.acl.*`` (ACL seeding) and the model/ ContextVar
+    backstop (everything else), so the namespace needs ``db`` + ``model``
+    wired (#1574). ``wire_db_and_model`` reuses the ContextVar-bound DB the
+    ``db`` fixture set up.
     """
-    return main.Lifecycle(types.SimpleNamespace(settings=settings))
+    from _helpers import wire_db_and_model
+
+    state = types.SimpleNamespace(settings=settings)
+    wire_db_and_model(state)
+    return main.Lifecycle(state)
 
 
 # --- Seed default user ---

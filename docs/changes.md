@@ -100,6 +100,20 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **`ACLModel(app_state)`** — the ACL data-access functions in
+  `model/acl.py` (`add_acl_entry`, `get_acl_entries`, `get_acl_entries_map`,
+  `get_acl_entries_resolved`, `replace_acl_entries`,
+  `delete_acl_entries_for_resource`, `get_acl_entries_by_principal_user`,
+  `get_acl_entries_by_principal_group`, `get_acl_tree_summary`) are now
+  methods on an `ACLModel(app_state)` class reached via
+  `app_state.model.acl`, instead of module-level free functions. The API
+  routes (`api/admin.py`, `api/workspaces.py`) and `main.py`'s ACL seed now
+  call `app_state.model.acl.*`. The principal/action constants
+  (`ACTION_ALLOW`, `PRINCIPAL_*`, `SYSTEM_*`) and the pure `row_to_acl_entry`
+  helper stay module-level; the free-function backstops stay until #1578
+  (the separate `klangk_backend/acl.py` FastAPI permission layer still
+  reaches `model.get_acl_entries_map` through them). No behavior change (#1574).
+
 - **`SSLTrust(app_state)` class (#1567).** The two settings-dependent
   functions in `ssl_trust.py` — the cert-dir resolver and the
   backend-process trust applier — are now methods on an
