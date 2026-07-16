@@ -256,6 +256,11 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Breaking
 
+- **One `klangk` distribution ships the renamed server package `klangkd` and the folded-in client `klangkc` (#1606).** The backend package is renamed `klangk_backend` → `klangkd` and the standalone `klangkc` distribution is retired — the client is promoted to a sibling top-level package under the same source root. One `pip install klangk` yields both `klangkd` (server) and `klangkc` (client); the entrypoint command names are unchanged. The distribution name (`klangk`) is distinct from the import packages (`klangkd` / `klangkc`), like `python-dateutil` → `dateutil`.
+  - **Integrators** who `import klangk_backend` (e.g. OIDC login hooks) must update to `import klangkd`.
+  - **The `klangkc` PyPI distribution is retired** in favor of `klangk`; the `cli-v*` tag line and `cli-publish.yml` workflow are removed. Both binaries release together off the single `v*` tag line.
+  - **Test layout**: tests are split into per-package suites — `src/klangk/klangkd-tests/{tests,e2e-tests}` (server) and `src/klangk/klangkc-tests/{tests,e2e-tests}` (client) — as hyphenated siblings of the package dirs so they don't ship in the wheel. Both unit suites share one `--cov=klangkd --cov=klangkc` 100% gate (run together via `test-backend`).
+
 - **The listen/port settings model is restructured** (#1542):
   - `KLANGK_NGINX_PORT` → rename to `KLANGK_EGRESS_PORT` (deprecated alias
     accepted this release with a warning).

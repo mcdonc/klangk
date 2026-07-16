@@ -1,7 +1,7 @@
 /**
  * Hermetic env helper for E2E test suites (#1526).
  *
- * Mirrors `src/backend/e2e-tests/_e2e_env.py`. Strips every config-affecting
+ * Mirrors `src/klangk/klangkd-tests/e2e-tests/_e2e_env.py`. Strips every config-affecting
  * prefix (KLANGK, _KLANGK, KLANGKC, LOGFIRE) from the ambient env so stray
  * vars can't leak into a test subprocess, then applies E2E baseline defaults
  * and the caller's overrides.

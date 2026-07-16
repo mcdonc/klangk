@@ -166,7 +166,7 @@ def on_login(provider, claims, email, tokens):
     return groups or None
 ```
 
-Async hooks are also supported (`async def`). The hook script can import from `klangk_backend` (e.g. `from klangk_backend.model import get_db`) since the backend packages are on `sys.path` at runtime.
+Async hooks are also supported (`async def`). The hook script can import from `klangkd` (e.g. `from klangkd.model import get_db`) since the backend packages are on `sys.path` at runtime.
 
 **Behavior:**
 

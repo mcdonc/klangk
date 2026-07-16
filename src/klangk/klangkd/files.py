@@ -6,7 +6,7 @@ so OS-level permissions apply.  The container boundary is the primary
 sandbox; ``validate_path`` provides defense-in-depth.
 
 The stateful operations live on the :class:`Files` class, constructed
-once in :func:`klangk_backend.main.build_app` and stored on
+once in :func:`klangkd.main.build_app` and stored on
 ``app.state.files`` (#1566) — the same ``X(app_state)`` pattern every
 other owned subsystem uses (``Workspaces``, ``Terminal``, ...). The
 class owns the ``podman`` reference instead of threading it through
@@ -52,7 +52,7 @@ def validate_path(path: str) -> str:
 class Files:
     """File operations inside workspace containers via ``podman exec``.
 
-    Constructed once in :func:`klangk_backend.main.build_app` and stored
+    Constructed once in :func:`klangkd.main.build_app` and stored
     on ``app.state.files`` (#1566). The class owns the ``podman``
     reference (previously threaded through every call as a trailing
     argument), the same way ``Workspaces`` / ``Terminal`` own theirs.

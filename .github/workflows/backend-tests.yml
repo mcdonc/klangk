@@ -1,4 +1,4 @@
-name: Backend Tests
+name: Python Tests
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-backend:
+  test-python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -21,25 +21,28 @@ jobs:
         id: filter
         with:
           filters: |
-            backend:
-              - 'src/backend/**'
+            python:
+              - 'src/klangk/**'
               - '.github/workflows/backend-tests.yml'
 
       - uses: actions/setup-python@v6
-        if: steps.filter.outputs.backend == 'true'
+        if: steps.filter.outputs.python == 'true'
         with:
           python-version: "3.13"
           cache: pip
 
       - name: Install dependencies
-        if: steps.filter.outputs.backend == 'true'
-        run: pip install -e src/backend/
+        if: steps.filter.outputs.python == 'true'
+        # One unified distribution (src/klangk) ships both the klangkd
+        # server and the klangkc client; the two unit suites share one
+        # --cov gate over both packages (#1606).
+        run: pip install -e src/klangk/
 
       - name: Run tests
-        if: steps.filter.outputs.backend == 'true'
+        if: steps.filter.outputs.python == 'true'
         # -n auto: run tests in parallel across CPUs (pytest-xdist)
-        run: python -m pytest src/backend/tests -v -n auto
+        run: python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests -v -n auto
 
       - name: Skip notice
-        if: steps.filter.outputs.backend != 'true'
-        run: echo "No backend changes — skipping tests"
+        if: steps.filter.outputs.python != 'true'
+        run: echo "No Python package changes — skipping tests"

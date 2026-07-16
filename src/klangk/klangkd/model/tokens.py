@@ -11,7 +11,7 @@ and tests keep working unchanged.
 class TokensModel:
     """Token-blocklist operations, resolved through ``app_state.db``.
 
-    Constructed by :class:`~klangk_backend.model.model.Model` and reached
+    Constructed by :class:`~klangkd.model.model.Model` and reached
     via ``app_state.model.tokens``. Reaches the DB through
     ``self.app.state.db`` (the single DB instance for the whole app).
     """

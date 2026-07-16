@@ -23,8 +23,8 @@ jobs:
           filters: |
             relevant:
               - 'scripts/fuzz-api.py'
-              - 'src/backend/klangk_backend/api/**'
-              - 'src/backend/klangk_backend/main.py'
+              - 'src/klangk/klangkd/api/**'
+              - 'src/klangk/klangkd/main.py'
               - '.github/workflows/fuzz-check.yml'
 
       - uses: ./.github/actions/devenv-setup

@@ -43,7 +43,7 @@ jobs:
         with:
           filters: |
             e2e:
-              - 'src/backend/**'
+              - 'src/klangk/**'
               - 'src/frontend/**'
               - 'src/containers/workspace/**'
               - 'plugins/**'

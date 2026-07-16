@@ -1,4 +1,4 @@
-"""OIDC login/callback routes.  (Submodule is named ``oidc_auth`` rather than ``oidc`` so ``api.oidc`` keeps resolving to the ``klangk_backend.oidc`` logic module that tests patch.)"""
+"""OIDC login/callback routes.  (Submodule is named ``oidc_auth`` rather than ``oidc`` so ``api.oidc`` keeps resolving to the ``klangkd.oidc`` logic module that tests patch.)"""
 
 import json
 import logging

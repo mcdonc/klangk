@@ -35,8 +35,8 @@ Inside `devenv shell`, these commands are available:
 
 | Command                  | Description                                 |
 | ------------------------ | ------------------------------------------- |
-| `test-backend`           | Run backend unit tests                      |
-| `test-cli`               | Run CLI unit tests                          |
+| `test-backend`           | Run Python unit tests (server + client)     |
+| `test-cli`               | Run CLI unit tests only (subset)            |
 | `test-frontend`          | Run frontend unit tests with coverage       |
 | `test-backend-e2e`       | Run backend E2E tests                       |
 | `test-cli-e2e`           | Run CLI E2E tests                           |

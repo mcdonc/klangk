@@ -11,7 +11,7 @@ and both trust scopes consume them at runtime:
 * **Backend process** — :meth:`SSLTrust.apply_backend_ssl_trust` builds a host-side
   bundle and sets the trust vars in :data:`os.environ` so the backend's own
   outbound TLS (OIDC IdP, SMTP relay, LLM-proxy upstream) honors the private
-  CAs.  Called once at startup (:func:`klangk_backend.main.lifespan`).
+  CAs.  Called once at startup (:func:`klangkd.main.lifespan`).
 
 **Both bundles are *merged* (system CAs + custom certs).** The
 ``SSL_CERT_FILE`` / ``REQUESTS_CA_BUNDLE`` / ``CURL_CA_BUNDLE`` vars *replace*

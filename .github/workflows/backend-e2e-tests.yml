@@ -29,7 +29,7 @@ jobs:
         with:
           filters: |
             e2e:
-              - 'src/backend/**'
+              - 'src/klangk/**'
               - 'src/containers/workspace/**'
               - 'devenv.nix'
               - 'devenv.yaml'

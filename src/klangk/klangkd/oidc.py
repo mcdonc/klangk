@@ -204,7 +204,7 @@ class OIDC:
           (``self.app.state.settings.oidc_providers``).
 
         Returns an empty list if neither is configured.  Raises
-        :class:`~klangk_backend.exceptions.ConfigurationError` if the external
+        :class:`~klangkd.exceptions.ConfigurationError` if the external
         file path is set but doesn't exist.
         """
         # 1. External file via KLANGK_OIDC_CONFIG (env override wins)

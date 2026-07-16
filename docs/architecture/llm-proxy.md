@@ -8,7 +8,7 @@ Pi containers access the LLM via the **LLM proxy**, an nginx location that proxi
 2. **API key security**: The API key is sent in a request header by the nginx proxy rather than being baked into the container image or passed as an env var. The container's `models.json` contains only the proxy URL (no real API key).
 3. **No per-container LLM config**: The backend injects `KLANGK_LLM_PROXY_URL=http://host.containers.internal:<egress_port>/llm-proxy` into each container. `klangk-setup-pi` writes Pi's `models.json` with the proxy URL and `!klangk-workspace-token` as the API key (Pi resolves this command at request time; nginx validates the workspace JWT via `auth_request` before replacing it with the real API key). `KLANGK_LLM_BASE_URL` is only used by nginx itself.
 
-The nginx config is rendered by the Python `klangk_backend.nginx` module (#1396) and includes:
+The nginx config is rendered by the Python `klangkd.nginx` module (#1396) and includes:
 
 ```nginx
 location /llm-proxy/ {

@@ -8,18 +8,18 @@ triggering.
 
 | Workflow                | File                             | Trigger                                     |
 | ----------------------- | -------------------------------- | ------------------------------------------- |
-| **Backend Tests**       | `backend-tests.yml`              | Changes to `src/backend/`                   |
-| **CLI Tests**           | `cli-tests.yml`                  | Changes to `src/cli/`                       |
+| **Python Tests**        | `backend-tests.yml`              | Changes to `src/klangk/`                    |
 | **Frontend Tests**      | `frontend-tests.yml`             | Changes to `src/frontend/lib/`, `test/`     |
-| **E2E: Backend Tests**  | `backend-e2e-tests.yml`          | Changes to `src/backend/`, containers       |
-| **E2E: CLI Tests**      | `cli-e2e-tests.yml`              | Changes to `src/cli/`, `src/backend/`       |
-| **E2E: Frontend Tests** | `frontend-e2e-tests.yml`         | Changes to `src/backend/`, `src/frontend/`  |
+| **E2E: Backend Tests**  | `backend-e2e-tests.yml`          | Changes to `src/klangk/`, containers        |
+| **E2E: CLI Tests**      | `cli-e2e-tests.yml`              | Changes to `src/klangk/`, containers        |
+| **E2E: Frontend Tests** | `frontend-e2e-tests.yml`         | Changes to `src/klangk/`, `src/frontend/`   |
 | **E2E: Cross-Browser**  | `frontend-e2e-cross-browser.yml` | Scheduled (every 6 hours), release branches |
 
-Unit tests (backend, CLI, frontend) run with `pip install` or
-`flutter test` and do not require devenv. E2E tests use
-`devenv shell` with the full environment (podman, workspace image,
-nginx).
+Unit tests (Python, frontend) run with `pip install` or `flutter test`
+and do not require devenv. The Python suite covers both the `klangkd`
+(server) and `klangkc` (client) packages from one `pip install -e src/klangk`;
+E2E tests use `devenv shell` with the full environment (podman, workspace
+image, nginx).
 
 ## Security
 

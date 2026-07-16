@@ -22,7 +22,7 @@ not belong to a single domain (version, config, my-permissions, and the
 KLANGK_TEST_MODE-only endpoints) stay here.
 
 It also re-exports the names external callers and tests depend on so
-``from klangk_backend import api`` keeps working exactly as before:
+``from klangkd import api`` keeps working exactly as before:
 ``router`` and ``root_router`` (used by ``main.py`` and the test fixture),
 the shared logic modules referenced as ``api.emailsvc`` / ``api.oidc`` /
 ``api.container`` / ``api.wshandler`` (patched by tests), and the auth
@@ -50,11 +50,11 @@ from ._common import autostart_allowed, get_app_dep
 # the submodule into this package's __dict__ under the name ``auth`` — which
 # is the same dict as this module's globals.  We rebind the bare ``auth``
 # name to the logic module after the submodule imports (see below) so the
-# instance endpoints reference klangk_backend.auth, not the route module.
+# instance endpoints reference klangkd.auth, not the route module.
 from .. import auth as _auth_logic
 
 # Route submodules, aliased because their names collide with the logic
-# modules imported above (api/auth.py vs klangk_backend.auth, etc.) and we
+# modules imported above (api/auth.py vs klangkd.auth, etc.) and we
 # want the bare names to keep resolving to the logic modules.
 from . import (
     admin as _admin_routes,
@@ -74,9 +74,9 @@ from .auth import (
     resend_timestamps,
 )
 
-# ``klangk_backend.api.auth`` (the attribute) now points at the route
+# ``klangkd.api.auth`` (the attribute) now points at the route
 # submodule because of the import above; point the bare ``auth`` name back
-# at the klangk_backend.auth logic module the instance endpoints use.
+# at the klangkd.auth logic module the instance endpoints use.
 auth = _auth_logic
 
 logger = logging.getLogger(__name__)

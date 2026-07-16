@@ -214,7 +214,7 @@ def _build_exec_argv(
 
 class Terminal:
     """Groups the ~25 tmux-session management functions that share a
-    :class:`~klangk_backend.podman.Podman` dependency.
+    :class:`~klangkd.podman.Podman` dependency.
 
     Constructed once in :func:`build_app` and stored on
     ``app.state.terminal`` (#1480). Reaches its dependencies — podman
