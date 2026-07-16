@@ -100,6 +100,18 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **`ChatModel(app_state)` (#1576).** The chat data-access functions in
+  `model/chat.py` (`add_chat_message`, `delete_chat_message`,
+  `get_chat_messages`, `get_chat_messages_before`, `parse_mentions`) are
+  now methods on `app_state.model.chat`, reaching the DB through
+  `self.app_state.db`. The message-type constants (`MSG_USER`,
+  `MSG_AGENT`, `MSG_SYSTEM`) and the `MENTION_RE` pattern stay
+  module-level. Request-path call sites in `api/chat.py`, `agent.py`,
+  and the `wshandler/*` modules (connection, session, helpers,
+  agent_mention) now go through `app_state.model.chat.<method>`. No
+  behavior change — same DB, same queries; this is the fifth slice of
+  #1563 (the module-level free-function backstops stay until #1578).
+
 - **`ACLModel(app_state)`** — the ACL data-access functions in
   `model/acl.py` (`add_acl_entry`, `get_acl_entries`, `get_acl_entries_map`,
   `get_acl_entries_resolved`, `replace_acl_entries`,

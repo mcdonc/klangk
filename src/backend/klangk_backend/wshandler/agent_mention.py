@@ -122,7 +122,9 @@ async def handle_agent_mention(
     # we only need to show interjections from other participants that
     # Pi hasn't seen (since Pi's multi-turn history only has the
     # conversation between the mentioning user and itself).
-    recent = await model.get_chat_messages(workspace_id, limit=50)
+    recent = await sockets.app_state.model.chat.get_chat_messages(
+        workspace_id, limit=50
+    )
     chronological = recent
     last_agent_idx = -1
     for i, m in enumerate(chronological):
@@ -184,7 +186,7 @@ async def handle_agent_mention(
             "Sorry, I encountered an error processing your request."
         )
 
-    agent_msg = await model.add_chat_message(
+    agent_msg = await sockets.app_state.model.chat.add_chat_message(
         workspace_id,
         model.AGENT_USER_ID,
         agent_email,

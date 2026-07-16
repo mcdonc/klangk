@@ -47,7 +47,7 @@ async def workspace_chat(
     if not text:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    chat_msg = await model.add_chat_message(
+    chat_msg = await app_state.model.chat.add_chat_message(
         workspace_id,
         "agent",
         "agent",
