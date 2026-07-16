@@ -205,6 +205,25 @@ operators or integrators to act when upgrading.
   behavior change — same DB, same queries; this is the fourth slice of
   #1563.
 
+- **`ACL(app_state)` class for the FastAPI permission layer (#1577).**
+  The top-level `klangk_backend/acl.py` (the resource-tree walk +
+  `Depends` permission dependency, **not** `model/acl.py`) is now an
+  `app.state.acl = ACL(app.state)` instance. The three DB-touching
+  functions (`get_principals`, `check_permission`,
+  `permissions_for_resources`) become methods reaching
+  `self.app_state.model.{users,acl}`. The `has_permission(perm,
+resource_fn)` dependency factory stays module-level (it's built at
+  route-definition time and can't close over an instance); its closure
+  resolves `request.app.state.acl` per request, exactly like
+  `auth.get_current_user` resolving `request.app.state.auth` — so all
+  ~50 `Depends(acl.has_permission(...))` call sites are unchanged. The
+  two direct callers (`api/__init__.py` `/my-permissions`, the WebSocket
+  connection layer) now go through `app_state.acl.*`. The pure helpers
+  (`ace_matches_principals`, `resource_ancestors`,
+  `check_permission_inmemory`, `request_to_resource`) and the
+  module-level free-function backstops stay until #1578. No behavior
+  change — this is the sixth slice of #1563.
+
 - **`Model(app_state)` composition root introduced (#1572).** A new
   `app.state.model = Model(app.state)` (wired in `build_app` after
   `app.state.db`) composes the per-domain data-access sub-objects.

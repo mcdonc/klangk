@@ -184,18 +184,128 @@ def has_permission(permission: str, resource_fn=None):
 
     resource_fn: optional async callable(request, user) -> resource_path.
     If not provided, the resource is derived from the request URL path.
+
+    The permission check runs on the request's ``ACL(app_state)`` instance
+    (``request.app.state.acl``) — the same shape as ``auth.get_current_user``
+    resolving ``request.app.state.auth``. The dependency is built at route
+    definition time, so the instance is resolved per-request rather than
+    closed over (#1577).
     """
 
     async def check(
         request: Request, user: dict = Depends(auth.get_current_user)
     ) -> dict:
+        acl = request.app.state.acl
         if resource_fn:
             resource = await resource_fn(request, user)
         else:
             resource = request_to_resource(request)
-        principals = await get_principals(user["id"])
-        if not await check_permission(resource, principals, permission):
+        principals = await acl.get_principals(user["id"])
+        if not await acl.check_permission(resource, principals, permission):
             raise HTTPException(status_code=403, detail="Permission denied")
         return user
 
     return check
+
+
+# ---------------------------------------------------------------------------
+# ACL(app_state): the app_state-owned permission layer.
+#
+# This is the one genuinely new class the #1563 hoist forces (#1577): the
+# FastAPI permission layer in this module reaches the model layer's DB
+# delegates (``model.get_user_group_ids``, ``model.get_acl_entries_map``),
+# so once those become ``Model(app_state)`` methods the layer needs
+# ``app_state`` too. ``ACL(app_state)`` is wired in ``build_app`` as
+# ``app.state.acl = ACL(app_state)`` alongside the other owned instances.
+#
+# The DB-touching entry points (``get_principals``, ``check_permission``,
+# ``permissions_for_resources``) become methods reaching
+# ``self.app_state.model.{users,acl}``. The FastAPI dependency factory
+# ``has_permission`` stays module-level (it's built at route-definition
+# time and can't close over an instance); its closure resolves
+# ``request.app.state.acl`` per request, exactly like
+# ``auth.get_current_user`` resolving ``request.app.state.auth``.
+#
+# The module-level free-function backstops above stay until #1578
+# dissolves the ``_current_db`` ContextVar; they're still used by the test
+# suite (``test_acl.py`` calls ``get_principals`` / ``check_permission``
+# directly). The pure helpers (``ace_matches_principals``, ``resource_ancestors``,
+# ``check_permission_inmemory``, ``request_to_resource``) are stateless and
+# stay module-level — the methods below reuse them.
+# ---------------------------------------------------------------------------
+
+
+class ACL:
+    """FastAPI permission layer, resolved through ``app_state.model.*``.
+
+    Constructed once at startup (``app.state.acl = ACL(app_state)``) and
+    reached per-request via ``request.app.state.acl`` (by the
+    ``has_permission`` dependency factory) or directly as ``app_state.acl``
+    (by handlers / the WebSocket connection layer). Reaches the DB through
+    ``self.app_state.model`` — the single owned ``Model`` instance.
+    """
+
+    def __init__(self, app_state):
+        self.app_state = app_state
+
+    async def get_principals(self, user_id: str) -> dict:
+        """Build principal info for the given user."""
+        group_ids = await self.app_state.model.users.get_user_group_ids(
+            user_id
+        )
+        return {
+            "user_id": user_id,
+            "group_ids": group_ids,
+            "authenticated": True,
+        }
+
+    async def check_permission(
+        self,
+        resource_path: str,
+        principals: dict,
+        permission: str,
+    ) -> bool:
+        """Walk from resource_path up to root, checking ACEs.
+
+        Returns True if an Allow ACE matches, False if a Deny ACE matches
+        or no match is found (default deny). Fetches the ACEs for every
+        ancestor of ``resource_path`` in a single query and evaluates them
+        in memory via :func:`check_permission_inmemory`. Nothing is
+        retained across requests.
+        """
+        entries = await self.app_state.model.acl.get_acl_entries_map(
+            resource_ancestors(resource_path)
+        )
+        return check_permission_inmemory(
+            resource_path, principals, permission, entries
+        )
+
+    async def permissions_for_resources(
+        self,
+        resources: list[str],
+        principals: dict,
+        permissions: list[str],
+    ) -> dict[str, list[str]]:
+        """Effective permissions for each resource, preload-then-evaluate.
+
+        Fetches ACL entries for the union of every resource's ancestor
+        paths in a single query, then checks each (resource, permission)
+        pair in memory. Only resources with at least one granted
+        permission appear in the result.
+        """
+        ancestor_paths: list[str] = []
+        for res in resources:
+            ancestor_paths.extend(resource_ancestors(res))
+        entries = await self.app_state.model.acl.get_acl_entries_map(
+            ancestor_paths
+        )
+        result: dict[str, list[str]] = {}
+        for res in resources:
+            perms = [
+                p
+                for p in permissions
+                if check_permission_inmemory(res, principals, p, entries)
+            ]
+            if perms:
+                result[res] = perms
+        return result

@@ -32,13 +32,16 @@ def make_settings(
 
 
 def wire_db_and_model(state) -> None:
-    """Attach ``db`` + ``model`` to a test ``app_state`` namespace (#1572).
+    """Attach ``db`` + ``model`` + ``acl`` to a test ``app_state`` namespace.
 
     App code reaches the converted domains (tokens, login_attempts,
     invitations, ports) via ``app_state.model.<domain>.<method>``, which
-    resolves ``self.app_state.db``. Every test that builds an ``app_state``
-    namespace and constructs an owned instance that touches those domains
-    (``Auth``, ``ContainerRegistry``, …) must wire both.
+    resolves ``self.app_state.db``. The FastAPI permission layer
+    (``ACL(app_state)``, #1577) reaches ``app_state.model.{users,acl}``, so
+    any test that builds an ``app_state`` namespace and exercises a request
+    / WebSocket path must wire ``acl`` too. Every test that builds an
+    ``app_state`` namespace and constructs an owned instance that touches
+    those domains (``Auth``, ``ContainerRegistry``, …) must wire all three.
 
     Reuses the ContextVar-bound DB when one exists (the autouse
     ``temp_data_dir`` fixture binds it and runs ``init_db`` against it), so
@@ -49,6 +52,7 @@ def wire_db_and_model(state) -> None:
     """
     from klangk_backend.model import Model
     from klangk_backend.model.db import DB, get_current_db
+    from klangk_backend.acl import ACL
 
     if getattr(state, "db", None) is None:
         try:
@@ -57,3 +61,5 @@ def wire_db_and_model(state) -> None:
             state.db = DB(state.settings)
     if getattr(state, "model", None) is None:
         state.model = Model(state)
+    if getattr(state, "acl", None) is None:
+        state.acl = ACL(state)
