@@ -149,9 +149,9 @@ class Lifecycle:
 
     async def ensure_admin_group(self) -> str:
         """Ensure the 'admin' group exists. Returns the group ID."""
-        group = await model.get_group_by_name("admin")
+        group = await self.app_state.model.users.get_group_by_name("admin")
         if group is None:
-            group = await model.create_group(
+            group = await self.app_state.model.users.create_group(
                 "admin", description="Administrators"
             )
             logger.info("Created admin group: %s", group["id"])
@@ -170,7 +170,7 @@ class Lifecycle:
 
         email = settings.default_user
         password = settings.default_password
-        existing = await model.get_user_by_email(email)
+        existing = await self.app_state.model.users.get_user_by_email(email)
         if existing is None:
             generated = password is None
             if generated:
@@ -178,8 +178,12 @@ class Lifecycle:
             password_hash = bcrypt.hashpw(
                 password.encode(), bcrypt.gensalt()
             ).decode()
-            user = await model.create_user(email, password_hash, verified=True)
-            await model.add_user_to_group(user["id"], admin_group_id)
+            user = await self.app_state.model.users.create_user(
+                email, password_hash, verified=True
+            )
+            await self.app_state.model.users.add_user_to_group(
+                user["id"], admin_group_id
+            )
             if generated:
                 logger.info(
                     "Created default admin user '%s'"
@@ -197,7 +201,9 @@ class Lifecycle:
                 logger.info("Created default user '%s' in admin group", email)
         else:
             # Ensure existing default user is in admin group
-            await model.add_user_to_group(existing["id"], admin_group_id)
+            await self.app_state.model.users.add_user_to_group(
+                existing["id"], admin_group_id
+            )
 
     async def seed_agent_user(self) -> None:
         """Ensure the chat agent user exists in the DB.

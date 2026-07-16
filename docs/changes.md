@@ -100,6 +100,20 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **Production callers of the users data-access layer now reach it via
+  `app_state.model.users.*` (#1596).** The seeding path (`Lifecycle`:
+  `ensure_admin_group` / `seed_default_user`), the OIDC JIT-provisioning
+  path (`api/oidc_auth._find_or_create_user`), and the in-place handle
+  helpers on `UsersModel` no longer go through the module-level
+  `model.<fn>(...)` free functions — they call `self.app_state.model.users`
+  / `request.app.state.model.users` directly. The three `db`-threaded
+  methods (`unique_handle`, `generate_handle`, `backfill_handles`) are
+  inlined over their free-function shims (real bodies on the methods,
+  keeping the explicit `db` connection for atomicity/migration). No
+  behavior change. The module-level free functions + re-exports remain
+  as the test/ContextVar backstop and are removed when `#1578` dissolves
+  the `_current_db` ContextVar; `schema.py`'s migration path still imports
+  them, so deletion is sequenced there.
 - **`WorkspacesModel` shim layer removed (#1597).** The workspace
   data-access free functions in `model/workspaces.py`
   (`create_workspace`, `create_workspace_with_acl`, `list_workspaces`,
