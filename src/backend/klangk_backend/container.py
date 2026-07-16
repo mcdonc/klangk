@@ -580,39 +580,11 @@ class ContainerRegistry:
 
     def __init__(self, app_state):
         self.app_state = app_state
-        self.settings = app_state.settings
 
-        # --- settings-derived attrs (computed once, #1487) ---
-        s = self.settings
-        self.image_name: str = s.image_name or "klangk-workspace"
-        self.terminal_banner: str = s.terminal_banner or ""
-        self.allowed_images: set[str] = set()
-        if s.allowed_images:
-            self.allowed_images = {
-                img.strip()
-                for img in s.allowed_images.split(",")
-                if img.strip()
-            }
-        self.allowed_images.add(self.image_name)
-        self.allowed_mount_roots: list[str] = []
-        if s.allowed_mount_roots:
-            self.allowed_mount_roots = [
-                os.path.realpath(p.strip())
-                for p in s.allowed_mount_roots.split(",")
-                if p.strip()
-            ]
-        self.port_range_start: int = int(s.port_range_start or "9000")
+        # Runtime-mutable state (initialized from settings but overridable
+        # at runtime via set_idle_timeout — NOT a live settings read).
         self.idle_timeout_seconds, self.check_interval_seconds = (
             self._parse_idle_timeout()
-        )
-        self.health_check_interval: float = float(
-            s.health_check_interval or "30"
-        )
-        self.health_check_timeout: float = float(
-            s.health_check_timeout or "10"
-        )
-        self.health_check_startup_grace: float = float(
-            s.health_check_startup_grace or "30"
         )
 
         self.states: dict[str, ContainerState] = {}
@@ -631,16 +603,62 @@ class ContainerRegistry:
         # The Podman instance is reached via self.app_state.podman (owned
         # instance, #1426) — no post-construction wiring needed.
 
+    # --- settings-derived config (read live off app_state, #1608) ---
+
+    @property
+    def image_name(self) -> str:
+        return self.app_state.settings.image_name or "klangk-workspace"
+
+    @property
+    def terminal_banner(self) -> str:
+        return self.app_state.settings.terminal_banner or ""
+
+    @property
+    def allowed_images(self) -> set[str]:
+        imgs: set[str] = set()
+        raw = self.app_state.settings.allowed_images
+        if raw:
+            imgs = {i.strip() for i in raw.split(",") if i.strip()}
+        imgs.add(self.image_name)
+        return imgs
+
+    @property
+    def allowed_mount_roots(self) -> list[str]:
+        raw = self.app_state.settings.allowed_mount_roots
+        if not raw:
+            return []
+        return [
+            os.path.realpath(p.strip()) for p in raw.split(",") if p.strip()
+        ]
+
+    @property
+    def port_range_start(self) -> int:
+        return int(self.app_state.settings.port_range_start or "9000")
+
+    @property
+    def health_check_interval(self) -> float:
+        return float(self.app_state.settings.health_check_interval or "30")
+
+    @property
+    def health_check_timeout(self) -> float:
+        return float(self.app_state.settings.health_check_timeout or "10")
+
+    @property
+    def health_check_startup_grace(self) -> float:
+        return float(
+            self.app_state.settings.health_check_startup_grace or "30"
+        )
+
     # --- settings-derived methods (were module functions, #1487) ---
 
     def container_dns_config(self) -> list[str]:
         """Return DNS server list from settings.dns_servers."""
-        raw = self.settings.dns_servers
+        raw = self.app_state.settings.dns_servers
         return [d.strip() for d in raw.split(",") if d.strip()]
 
     def image_pull_policy(self) -> str:
         """Resolve the workspace-image pull policy from settings."""
-        policy = self.settings.image_pull_policy
+        policy = self.app_state.settings.image_pull_policy
         if policy not in _VALID_PULL_POLICIES:
             logger.warning(
                 "Invalid KLANGK_IMAGE_PULL_POLICY=%r (valid: %s); using 'never'.",
@@ -653,7 +671,7 @@ class ContainerRegistry:
     def _is_protected(self, source: str) -> bool:
         """True if source is a protected host path that must never be mounted."""
         resolved = os.path.realpath(source)
-        data_dir = os.path.realpath(self.settings.data_dir)
+        data_dir = os.path.realpath(self.app_state.settings.data_dir)
         for blocked in [*_PROTECTED_PATHS, data_dir]:
             blocked = os.path.realpath(blocked)
             if resolved == blocked or resolved.startswith(blocked + "/"):
@@ -703,7 +721,7 @@ class ContainerRegistry:
 
     def _parse_idle_timeout(self) -> tuple[int, int]:
         default = 30 * 60
-        env_val = self.settings.idle_timeout_seconds
+        env_val = self.app_state.settings.idle_timeout_seconds
         if env_val is not None:
             try:
                 timeout = int(env_val)
@@ -722,7 +740,7 @@ class ContainerRegistry:
 
     def ports_per_workspace_cap(self) -> int:
         """Server-wide ceiling on hosted-app ports per workspace."""
-        raw = self.settings.hosted_ports_per_workspace
+        raw = self.app_state.settings.hosted_ports_per_workspace
         try:
             return max(0, int(raw))
         except ValueError:
@@ -1175,9 +1193,9 @@ class ContainerRegistry:
             if hosting_base_path is None:
                 hosting_base_path = b
         env_vars: list[str] = []
-        egress_port = self.settings.egress_port
+        egress_port = self.app_state.settings.egress_port
         proxy_url = f"http://host.containers.internal:{egress_port}/llm-proxy"
-        llm_model = self.settings.llm_model
+        llm_model = self.app_state.settings.llm_model
         env_vars.append(f"KLANGK_LLM_PROXY_URL={proxy_url}")
         if llm_model:
             env_vars.append(f"KLANGK_LLM_MODEL={llm_model}")
@@ -1491,7 +1509,7 @@ class ContainerRegistry:
         ]
         iid = self.app_state.util.instance_id()
         container_name = f"klangk-{iid}-{workspace_id[:12]}"
-        allow_sudo = self.settings.allow_sudo.strip().lower() in (
+        allow_sudo = self.app_state.settings.allow_sudo.strip().lower() in (
             "1",
             "true",
             "yes",
@@ -1515,7 +1533,7 @@ class ContainerRegistry:
             env=env_vars,
             init=True,
             interactive=True,
-            userns=self.settings.userns,
+            userns=self.app_state.settings.userns,
             pull=self.image_pull_policy(),
         )
 
@@ -1661,7 +1679,7 @@ class ContainerRegistry:
                 "klangk-prewarm",
                 self.image_name,
                 pull="never",
-                userns=self.settings.userns,
+                userns=self.app_state.settings.userns,
             )
             await self.app_state.podman.remove_container(cid)
             logger.info("Podman pre-warmed in %.3fs", time.monotonic() - t0)

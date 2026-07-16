@@ -133,10 +133,16 @@ class Workspaces:
 
     def __init__(self, app_state):
         self.app_state = app_state
-        self.settings = app_state.settings
-        raw = self.settings.data_dir
-        self.data_dir = Path(raw)
-        self.root = self.data_dir / "workspaces"
+
+    # --- settings-derived paths (read live off app_state, #1608) ---
+
+    @property
+    def data_dir(self) -> Path:
+        return Path(self.app_state.settings.data_dir)
+
+    @property
+    def root(self) -> Path:
+        return self.data_dir / "workspaces"
 
     # --- export/import helpers ---
 
@@ -510,7 +516,7 @@ class Workspaces:
         Skipped entirely if ``KLANGK_ALLOW_AUTOSTART`` is not set.
         Returns the number of containers started.
         """
-        if not self.settings.allow_autostart:
+        if not self.app_state.settings.allow_autostart:
             return 0
 
         ws_list = (

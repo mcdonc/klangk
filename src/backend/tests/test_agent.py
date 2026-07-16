@@ -140,25 +140,25 @@ class TestAgentDisabled:
 
     async def test_is_disabled_true_when_set(self):
         agents = _make_agents()
-        agents.settings.agent_disabled = "1"
+        agents.app_state.settings.agent_disabled = "1"
         assert agents.is_disabled() is True
 
     async def test_is_disabled_truthy_variants(self):
         agents = _make_agents()
         for val in ("1", "true", "YES", "True"):
-            agents.settings.agent_disabled = val
+            agents.app_state.settings.agent_disabled = val
             assert agents.is_disabled() is True, val
 
     async def test_is_disabled_falsy_variants(self):
         agents = _make_agents()
         for val in ("0", "false", "no", ""):
-            agents.settings.agent_disabled = val
+            agents.app_state.settings.agent_disabled = val
             assert agents.is_disabled() is False, val
 
     async def test_ensure_started_refuses_when_disabled(self):
         """The subprocess is never spawned when disabled."""
         session = _make_session("ws-disabled")
-        session.agents.settings.agent_disabled = "1"
+        session.agents.app_state.settings.agent_disabled = "1"
         with patch("asyncio.create_subprocess_exec") as mock_spawn:
             with pytest.raises(AgentError, match="disabled"):
                 await session.ensure_started()
@@ -167,7 +167,7 @@ class TestAgentDisabled:
     async def test_send_prompt_raises_when_disabled(self):
         """send_prompt surfaces the disabled state, never spawns."""
         session = _make_session("ws-disabled")
-        session.agents.settings.agent_disabled = "1"
+        session.agents.app_state.settings.agent_disabled = "1"
         with patch("asyncio.create_subprocess_exec") as mock_spawn:
             with pytest.raises(AgentError, match="disabled"):
                 await session.send_prompt("hello")
