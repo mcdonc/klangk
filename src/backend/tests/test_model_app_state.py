@@ -158,3 +158,143 @@ class TestPortsModel:
         assert 9000 not in await p.get_workspace_ports(ws_id)
         all_ports = await p.get_all_allocated_ports()
         assert 9001 in all_ports
+
+
+class TestACLModel:
+    """Direct coverage for the ``ACLModel`` class methods (#1574).
+
+    The method bodies mirror the module-level free functions (backstop);
+    both copies are kept until #1578, so both need coverage. The backstop
+    is covered indirectly by ``klangk_backend/acl.py`` (still on the
+    ContextVar path) and directly in ``test_model.py``; this class covers
+    the class methods through ``app_state.model.acl`` — the surface the
+    API routes and the seed now use.
+    """
+
+    async def test_add_get_replace_delete_resolved(
+        self, app_state_with_schema, user
+    ):
+        a = app_state_with_schema.model.acl
+        resource = "/workspaces/acl-cls"
+        eid = await a.add_acl_entry(
+            resource,
+            0,
+            model.ACTION_ALLOW,
+            "view",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        assert isinstance(eid, int)
+        entries = await a.get_acl_entries(resource)
+        assert len(entries) == 1 and entries[0]["id"] == eid
+
+        # get_acl_entries_map (class method — no production caller yet;
+        # ``acl.py`` still uses the backstop).
+        amap = await a.get_acl_entries_map([resource, "/none/here"])
+        assert len(amap[resource]) == 1
+        assert amap["/none/here"] == []
+        assert await a.get_acl_entries_map([]) == {}
+
+        # resolved view carries the user email as the principal name
+        resolved = await a.get_acl_entries_resolved(resource)
+        assert resolved[0]["principal"] == user["email"]
+
+        # replace (with a system-everyone deny) then read back
+        await a.replace_acl_entries(
+            resource,
+            [
+                {
+                    "position": 0,
+                    "action": model.ACTION_DENY,
+                    "principal_type": model.PRINCIPAL_SYSTEM,
+                    "system_principal": model.SYSTEM_EVERYONE,
+                    "permission": "*",
+                    "user_id": None,
+                    "group_id": None,
+                }
+            ],
+        )
+        after = await a.get_acl_entries(resource)
+        assert len(after) == 1
+        assert after[0]["action"] == model.ACTION_DENY
+
+        # delete returns the count, then the resource is empty
+        deleted = await a.delete_acl_entries_for_resource(resource)
+        assert deleted == 1
+        assert await a.get_acl_entries(resource) == []
+
+    async def test_by_principal_user_and_group(
+        self, app_state_with_schema, user
+    ):
+        a = app_state_with_schema.model.acl
+        group = await model.create_group("acl-group")
+        await a.add_acl_entry(
+            "/by-princ",
+            0,
+            model.ACTION_ALLOW,
+            "view",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        await a.add_acl_entry(
+            "/by-princ",
+            1,
+            model.ACTION_ALLOW,
+            "view",
+            model.PRINCIPAL_GROUP,
+            group_id=group["id"],
+        )
+        by_user = await a.get_acl_entries_by_principal_user(user["id"])
+        assert len(by_user) == 1
+        by_group = await a.get_acl_entries_by_principal_group(group["id"])
+        assert len(by_group) == 1
+
+    async def test_tree_summary(self, app_state_with_schema, user):
+        a = app_state_with_schema.model.acl
+        await a.add_acl_entry(
+            "/tree/one",
+            0,
+            model.ACTION_ALLOW,
+            "view",
+            model.PRINCIPAL_SYSTEM,
+            system_principal=model.SYSTEM_EVERYONE,
+        )
+        tree = await a.get_acl_tree_summary()
+        resources = {row["resource"] for row in tree}
+        assert "/tree/one" in resources
+
+    async def test_add_rejects_agent_principal(self, app_state_with_schema):
+        from klangk_backend.model import AgentPrincipalError
+
+        a = app_state_with_schema.model.acl
+        with pytest.raises(AgentPrincipalError):
+            await a.add_acl_entry(
+                "/agent-guard",
+                0,
+                model.ACTION_ALLOW,
+                "view",
+                model.PRINCIPAL_USER,
+                user_id=model.AGENT_USER_ID,
+            )
+
+    async def test_replace_rejects_agent_principal(
+        self, app_state_with_schema
+    ):
+        from klangk_backend.model import AgentPrincipalError
+
+        a = app_state_with_schema.model.acl
+        with pytest.raises(AgentPrincipalError):
+            await a.replace_acl_entries(
+                "/agent-guard",
+                [
+                    {
+                        "position": 0,
+                        "action": model.ACTION_ALLOW,
+                        "principal_type": model.PRINCIPAL_USER,
+                        "user_id": model.AGENT_USER_ID,
+                        "group_id": None,
+                        "system_principal": None,
+                        "permission": "view",
+                    }
+                ],
+            )

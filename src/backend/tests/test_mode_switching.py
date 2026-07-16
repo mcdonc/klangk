@@ -41,6 +41,15 @@ def _auth():
     return auth_mod.Auth(state)
 
 
+def _lifecycle(env):
+    """A ``Lifecycle`` whose app_state can reach ``model.acl`` (#1574)."""
+    from _helpers import wire_db_and_model
+
+    state = types.SimpleNamespace(settings=make_settings(env))
+    wire_db_and_model(state)
+    return main.Lifecycle(state)
+
+
 DEFAULT_EMAIL = "admin@example.com"
 SEEDED_PASSWORD = "seeded-pw"
 NEW_PASSWORD = "rotated-by-admin"
@@ -61,15 +70,11 @@ async def mode_server(db, monkeypatch):
     """
     global _current_app
     # Seed exactly as the lifespan does at startup.
-    await main.Lifecycle(
-        types.SimpleNamespace(
-            settings=make_settings(
-                {
-                    "KLANGK_DEFAULT_USER": DEFAULT_EMAIL,
-                    "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
-                }
-            )
-        )
+    await _lifecycle(
+        {
+            "KLANGK_DEFAULT_USER": DEFAULT_EMAIL,
+            "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
+        }
     ).seed_default_user()
     default_user = await model.get_user_by_email(DEFAULT_EMAIL)
     assert default_user is not None, "seed_default_user must create the user"
@@ -399,29 +404,21 @@ class TestRestartIdempotency:
         must not duplicate the user or drop its admin membership."""
         client, user = mode_server
         _none()
-        await main.Lifecycle(
-            types.SimpleNamespace(
-                settings=make_settings(
-                    {
-                        "KLANGK_AUTH_MODES": "none",
-                        "KLANGK_DEFAULT_USER": DEFAULT_EMAIL,
-                        "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
-                    }
-                )
-            )
+        await _lifecycle(
+            {
+                "KLANGK_AUTH_MODES": "none",
+                "KLANGK_DEFAULT_USER": DEFAULT_EMAIL,
+                "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
+            }
         ).seed_default_user()  # simulate restart in none mode
 
         _password()
-        await main.Lifecycle(
-            types.SimpleNamespace(
-                settings=make_settings(
-                    {
-                        "KLANGK_AUTH_MODES": "password",
-                        "KLANGK_DEFAULT_USER": DEFAULT_EMAIL,
-                        "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
-                    }
-                )
-            )
+        await _lifecycle(
+            {
+                "KLANGK_AUTH_MODES": "password",
+                "KLANGK_DEFAULT_USER": DEFAULT_EMAIL,
+                "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
+            }
         ).seed_default_user()  # simulate restart in password mode
 
         again = await model.get_user_by_email(DEFAULT_EMAIL)

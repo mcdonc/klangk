@@ -15,7 +15,6 @@ from pydantic import BaseModel
 from .. import (
     acl,
     auth,
-    model,
     wshandler,
 )
 from ._common import get_app_state_dep
@@ -411,7 +410,7 @@ async def user_create_group(
         )
     group = await app_state.model.users.create_group(req.name, req.description)
     # Grant creator full access via ACL
-    await model.add_acl_entry(
+    await app_state.model.acl.add_acl_entry(
         f"/groups/{group['id']}",
         0,
         ACTION_ALLOW,
@@ -452,7 +451,9 @@ async def user_delete_group(
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
     await app_state.model.users.delete_group(group_id)
-    await model.delete_acl_entries_for_resource(f"/groups/{group_id}")
+    await app_state.model.acl.delete_acl_entries_for_resource(
+        f"/groups/{group_id}"
+    )
     return {"status": "deleted"}
 
 
@@ -625,33 +626,39 @@ async def remove_group_member(
 @router.get("/admin/acl/tree")
 async def get_acl_tree(
     admin: dict = Depends(acl.has_permission("admin")),
+    app_state=Depends(get_app_state_dep),
 ):
-    return await model.get_acl_tree_summary()
+    return await app_state.model.acl.get_acl_tree_summary()
 
 
 @router.get("/admin/acl/by-principal/user/{user_id}")
 async def get_acl_by_user(
     user_id: str,
     admin: dict = Depends(acl.has_permission("admin")),
+    app_state=Depends(get_app_state_dep),
 ):
-    return await model.get_acl_entries_by_principal_user(user_id)
+    return await app_state.model.acl.get_acl_entries_by_principal_user(user_id)
 
 
 @router.get("/admin/acl/by-principal/group/{group_id}")
 async def get_acl_by_group(
     group_id: str,
     admin: dict = Depends(acl.has_permission("admin")),
+    app_state=Depends(get_app_state_dep),
 ):
-    return await model.get_acl_entries_by_principal_group(group_id)
+    return await app_state.model.acl.get_acl_entries_by_principal_group(
+        group_id
+    )
 
 
 @router.get("/admin/acl/resource")
 async def get_resource_acl(
     resource: str,
     admin: dict = Depends(acl.has_permission("admin", admin_resource)),
+    app_state=Depends(get_app_state_dep),
 ):
     """Get resolved ACL entries for any resource (admin only)."""
-    return await model.get_acl_entries_resolved(resource)
+    return await app_state.model.acl.get_acl_entries_resolved(resource)
 
 
 @router.put("/admin/acl/resource")
@@ -659,6 +666,7 @@ async def replace_resource_acl(
     resource: str,
     entries: list[WorkspaceAclEntry],
     admin: dict = Depends(acl.has_permission("admin", admin_resource)),
+    app_state=Depends(get_app_state_dep),
 ):
     """Replace ACL entries for any resource (admin only)."""
     # Validate: root ACL must keep Authenticated view access
@@ -704,8 +712,8 @@ async def replace_resource_acl(
         }
         for i, e in enumerate(entries)
     ]
-    await model.replace_acl_entries(resource, acl_entries)
-    return await model.get_acl_entries_resolved(resource)
+    await app_state.model.acl.replace_acl_entries(resource, acl_entries)
+    return await app_state.model.acl.get_acl_entries_resolved(resource)
 
 
 STATIC_RESOURCES = [

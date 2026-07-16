@@ -77,6 +77,7 @@ from .users import (
     verify_user,
 )
 from .acl import (
+    ACLModel,
     ACTION_ALLOW,
     ACTION_DENY,
     PRINCIPAL_GROUP,
@@ -220,6 +221,7 @@ __all__ = (
     "validate_handle",
     "verify_user",
     # acl
+    "ACLModel",
     "ACTION_ALLOW",
     "ACTION_DENY",
     "PRINCIPAL_GROUP",

@@ -1824,3 +1824,75 @@ class TestUsersBackstopBranches:
         await model.update_password(user["id"], "newhash")
         fetched = await model.get_user_by_email(user["email"])
         assert fetched["password_hash"] == "newhash"
+
+
+class TestAclBackstopBranches:
+    """Cover backstop branches not reached by app code (#1574).
+
+    The API routes and the seed now reach ACL via ``app_state.model.acl.*``
+    (the class methods, covered in ``test_model_app_state.py``); these
+    free-function backstops are kept until #1578 (``klangk_backend/acl.py``
+    still uses ``get_acl_entries_map``), so the ones that lost their app-code
+    callers are exercised directly here.
+    """
+
+    async def test_resolved_delete_by_principal_and_tree(self, db, user):
+        group = await model.create_group("bs-group")
+        await model.add_acl_entry(
+            "/bs-res",
+            0,
+            model.ACTION_ALLOW,
+            "view",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        await model.add_acl_entry(
+            "/bs-res",
+            1,
+            model.ACTION_ALLOW,
+            "view",
+            model.PRINCIPAL_GROUP,
+            group_id=group["id"],
+        )
+        await model.add_acl_entry(
+            "/bs-res",
+            2,
+            model.ACTION_ALLOW,
+            "view",
+            model.PRINCIPAL_SYSTEM,
+            system_principal=model.SYSTEM_EVERYONE,
+        )
+        # resolved view names the principal (user / group / system paths)
+        resolved = await model.get_acl_entries_resolved("/bs-res")
+        assert len(resolved) == 3
+        assert any(r.get("principal") == "Everyone" for r in resolved)
+        # by-principal lookups
+        assert (
+            len(await model.get_acl_entries_by_principal_user(user["id"])) == 1
+        )
+        assert (
+            len(await model.get_acl_entries_by_principal_group(group["id"]))
+            == 1
+        )
+        # tree summary lists the resource
+        tree = await model.get_acl_tree_summary()
+        assert any(row["resource"] == "/bs-res" for row in tree)
+        # replace with a fresh non-empty entry set (covers the INSERT loop)
+        await model.replace_acl_entries(
+            "/bs-res",
+            [
+                {
+                    "position": 0,
+                    "action": model.ACTION_DENY,
+                    "principal_type": model.PRINCIPAL_SYSTEM,
+                    "system_principal": model.SYSTEM_AUTHENTICATED,
+                    "permission": "*",
+                    "user_id": None,
+                    "group_id": None,
+                }
+            ],
+        )
+        after = await model.get_acl_entries("/bs-res")
+        assert len(after) == 1
+        # delete returns the count
+        assert await model.delete_acl_entries_for_resource("/bs-res") == 1
