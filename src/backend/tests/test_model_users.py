@@ -202,3 +202,34 @@ async def test_backfill_handles_method(users):
         await users.backfill_handles(db)
     fetched = await users.get_user_by_id("bf-id")
     assert fetched["handle"] is not None
+
+
+async def test_unique_handle_truncates_long_suffix(users):
+    """A base near MAX_HANDLE_LEN gets its numeric suffix truncated."""
+    from klangk_backend.model import MAX_HANDLE_LEN
+
+    long = "a" * MAX_HANDLE_LEN
+    async with users.app_state.db.transaction() as db:
+        await db.execute(
+            "INSERT INTO users (id, email, password_hash, verified, handle)"
+            " VALUES (?, ?, ?, 0, ?)",
+            ("long-id", "long@x.com", "h", long),
+        )
+        result = await users.unique_handle(db, long)
+    assert len(result) <= MAX_HANDLE_LEN
+    assert result.endswith("-2")
+
+
+async def test_unique_handle_falls_back_to_hash(users):
+    """When every numeric suffix collides, fall back to a hashed handle."""
+    from unittest.mock import AsyncMock
+
+    mock_cursor = AsyncMock()
+    mock_cursor.fetchone = AsyncMock(return_value=(1,))
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=mock_cursor)
+
+    result = await users.unique_handle(mock_db, "taken")
+    # hash_fallback_handle: "<base>-<sha256[:8]>"
+    assert "-" in result
+    assert len(result.rsplit("-", 1)[1]) == 8

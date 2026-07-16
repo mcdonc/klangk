@@ -685,16 +685,64 @@ class UsersModel:
             raise ValueError(f"'{handle}' is reserved for the workspace agent")
 
     async def unique_handle(self, db, base: str) -> str:
-        """Return *base* if available, else append -2, -3, … until unique."""
-        return await unique_handle(db, base)
+        """Return *base* if available, else append -2, -3, … until unique.
+
+        The live agent handle is always treated as taken (#1160) — even if
+        the agent row hasn't been seeded yet — so a derived handle never
+        collides with ``/home/<agent_handle>``.
+
+        Resolves the agent handle on the *passed* connection (not via the
+        cached :meth:`agent_handle`, which opens a fresh connection): this
+        runs during DB migration where the ``handle`` column's schema change
+        is uncommitted on *db* but invisible to a new connection.
+        """
+        cursor = await db.execute(
+            "SELECT handle FROM users WHERE id = ?", (AGENT_USER_ID,)
+        )
+        row = await cursor.fetchone()
+        agent = row[0] if row and row[0] else _DEFAULT_AGENT_HANDLE
+        # Try base, then base-2, base-3, …; skip the agent handle each time.
+        candidate = base
+        i = 1
+        while i < 10000:
+            if candidate != agent:
+                cursor = await db.execute(
+                    "SELECT 1 FROM users WHERE handle = ?", (candidate,)
+                )
+                if await cursor.fetchone() is None:
+                    return candidate
+            i += 1
+            candidate = f"{base}-{i}"
+            if len(candidate) > MAX_HANDLE_LEN:
+                candidate = f"{base[: MAX_HANDLE_LEN - len(str(i)) - 1]}-{i}"
+        return hash_fallback_handle(base)
 
     async def generate_handle(self, db, email: str) -> str:
-        """Return a unique handle derived from *email* on connection *db*."""
-        return await generate_handle(db, email)
+        """Return a unique handle derived from *email* on connection *db*.
+
+        This is the single shared handle generator. Every codepath that
+        creates a user — :meth:`create_user`, the email-verification
+        register route, the admin invite route, and :meth:`backfill_handles`
+        — must go through here so handle derivation and uniqueness stay in
+        sync (regression: #1256, where the email-verification routes did a
+        raw ``INSERT`` with no handle and got ``NULL``).
+        """
+        return await self.unique_handle(db, derive_handle(email))
 
     async def backfill_handles(self, db) -> None:
         """Assign handles to any users that don't have one yet."""
-        await backfill_handles(db)
+        cursor = await db.execute(
+            "SELECT id, email FROM users WHERE handle IS NULL"
+        )
+        rows = await cursor.fetchall()
+        for row in rows:
+            handle = await self.generate_handle(db, row["email"])
+            await db.execute(
+                "UPDATE users SET handle = ? WHERE id = ?",
+                (handle, row["id"]),
+            )
+        if rows:
+            await db.commit()
 
     async def create_user(
         self,

@@ -8667,7 +8667,7 @@ class TestOIDCCallbackAgentGuard:
         # mock get_user_by_external_id to simulate a pre-linked agent.
         agent = await model.get_user_by_id(model.AGENT_USER_ID)
         monkeypatch.setattr(
-            model,
+            app.state.model.users,
             "get_user_by_external_id",
             AsyncMock(return_value=agent),
         )

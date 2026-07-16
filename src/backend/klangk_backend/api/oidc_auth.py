@@ -165,13 +165,14 @@ async def _exchange_and_validate_token(oidc_inst, provider, code, cookie_data):
     return claims, tokens
 
 
-async def _find_or_create_user(provider_id, sub, email):
+async def _find_or_create_user(app_state, provider_id, sub, email):
     """Locate an existing user by OIDC identity or create one via JIT provisioning.
 
     Raises ``HTTPException(403)`` if the resolved user is the system agent —
     OIDC must never mint a session as the agent (#1225).
     """
-    user = await model.get_user_by_external_id(provider_id, sub)
+    users = app_state.model.users
+    user = await users.get_user_by_external_id(provider_id, sub)
     if user is not None:
         if user["id"] == model.AGENT_USER_ID:
             raise HTTPException(
@@ -180,17 +181,17 @@ async def _find_or_create_user(provider_id, sub, email):
             )
         return user
 
-    existing = await model.get_user_by_email(email)
+    existing = await users.get_user_by_email(email)
     if existing is not None:
         if existing["id"] == model.AGENT_USER_ID:
             raise HTTPException(
                 status_code=403,
                 detail="Cannot log in as the system agent",
             )
-        await model.link_oidc_identity(existing["id"], provider_id, sub)
+        await users.link_oidc_identity(existing["id"], provider_id, sub)
         return existing
 
-    return await model.create_user(
+    return await users.create_user(
         email=email,
         password_hash=None,
         verified=True,
@@ -275,7 +276,9 @@ async def oidc_callback(
             detail="Login denied by server policy",
         ) from None
 
-    user = await _find_or_create_user(provider_id, claims["sub"], email)
+    user = await _find_or_create_user(
+        request.app.state, provider_id, claims["sub"], email
+    )
 
     if hook_groups is not None:
         await oidc.sync_oidc_groups(user["id"], hook_groups)
