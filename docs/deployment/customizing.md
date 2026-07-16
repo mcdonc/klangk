@@ -104,6 +104,44 @@ docker run -d \
 
 > **Deprecated:** `KLANGK_EMAIL_TEMPLATES_DIR` still works as an override but prefer using `<KLANGK_CUSTOMIZE_DIR>/email-templates/` instead.
 
+### Consent Banner
+
+A login/consent banner lets you require acknowledgement of an acceptable-use
+notice (or any policy text) before a user can access the app.
+
+Set the banner text (and an optional title) via env vars:
+
+```bash
+docker run -d \
+  -e KLANGK_LOGIN_BANNER_TITLE="Notice" \
+  -e KLANGK_LOGIN_BANNER="You must accept the terms to continue." \
+  ...
+```
+
+When set, the banner blocks all access until the user clicks **I Accept**.
+
+By default the acceptance is **cached permanently** against the banner text
+hash — once accepted, the same banner text won't re-prompt the user (even on
+later visits). To change the wording, operators edit the banner text so the
+hash flips.
+
+**Require acceptance on every visit.** For regulated deployments that need a
+per-session acknowledgement (e.g. a legal notice that must be re-accepted on
+each fresh app load / login), set:
+
+```bash
+docker run -d \
+  -e KLANGK_LOGIN_BANNER_EVERY_VISIT=true \
+  -e KLANGK_LOGIN_BANNER="..." \
+  ...
+```
+
+When `true`, acceptance is held **for the session only** (in-memory) — the
+banner re-appears on every app restart / re-login until **I Accept** is
+clicked that session. It does **not** re-appear on in-app route changes within
+the same session. When `false` (default), behavior is unchanged (permanent
+hash-based acceptance). (#1544)
+
 ### Custom CA Certificates
 
 Place your `.pem`/`.crt` CA certificate files in `<KLANGK_CUSTOMIZE_DIR>/certs/` and **restart** workspaces (or the backend). Klangk makes those CAs trusted at startup without rebuilding any image:

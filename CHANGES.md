@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- **Option to require consent banner acceptance on every visit (#1544).**
+  New setting `KLANGK_LOGIN_BANNER_EVERY_VISIT` (default `false`). When
+  `true`, the login/consent banner must be re-accepted on every fresh app
+  load / login — acceptance is held for the session only (in-memory), never
+  persisted. When `false` (default), behavior is unchanged: acceptance is
+  cached permanently against the banner text hash. Surfaced on
+  `GET /api/v1/config` as `login_banner_every_visit`.
+
 ## v1.0.5
 
 ### Fixed
