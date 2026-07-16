@@ -48,7 +48,7 @@ def _make_app_state(settings=None):
     # #1468: container.py / agent.py reach the CLI wrappers via self.podman.
     from klangk_backend.podman import Podman
 
-    app_state.podman = Podman(settings)
+    app_state.podman = Podman(app_state)
     app_state.oidc = oidc.OIDC(app_state)
     app_state.plugins = plugins.Plugins(app_state)
     app_state.workspaces = workspaces.Workspaces(app_state)
@@ -57,7 +57,7 @@ def _make_app_state(settings=None):
     # mirror build_app so lifespan-driven tests have it.
     from klangk_backend.model import db as db_mod
 
-    app_state.db = db_mod.DB(settings)
+    app_state.db = db_mod.DB(app_state)
     # #1572: Model(app_state) composing the converted domains.
     from klangk_backend.model import Model
 

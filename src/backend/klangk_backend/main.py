@@ -585,7 +585,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # #1468: Podman(settings) owns the resolved binary path + the ~20 CLI
     # wrappers. Constructed before the registry/terminal so they reach it
     # via self.app_state.podman (#1426).
-    app.state.podman = podman.Podman(settings)
+    app.state.podman = podman.Podman(app.state)
     # Slice 2c (#1475): the WebSocketState is an owned instance wired onto
     # app.state.sockets. Constructed before the registry so it reaches it
     # via self.app_state.sockets — no module-level singleton.
@@ -621,7 +621,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # settings, not frozen at import). Bound as the active DB for the
     # lifespan's context in the lifespan itself (#1520: no module-global
     # backstop — the model/ free functions reach it via a ContextVar).
-    app.state.db = model.db.DB(settings)
+    app.state.db = model.db.DB(app.state)
     # #1563 / #1572: Model(app_state) composes the per-domain data-access
     # sub-objects (tokens, login_attempts, invitations, ports here; users,
     # acl, workspaces, chat arrive in follow-up issues). Each reaches the

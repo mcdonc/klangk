@@ -24,7 +24,6 @@ import tempfile
 import time
 from collections.abc import AsyncGenerator
 
-from .settings import KlangkSettings
 from .util import BoundedOutputQueue
 
 logger = logging.getLogger(__name__)
@@ -71,9 +70,12 @@ class Podman:
     per-call ``get_settings()`` reacharound.
     """
 
-    def __init__(self, settings: KlangkSettings):
-        self._settings = settings
-        self._bin = settings.podman_bin
+    def __init__(self, app_state):
+        self.app_state = app_state
+
+    @property
+    def _bin(self) -> str:
+        return self.app_state.settings.podman_bin
 
     @property
     def bin(self) -> str:

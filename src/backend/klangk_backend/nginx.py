@@ -15,8 +15,9 @@ parameter so it serves both the production UDS bind
 See #1392 (design record) and #1396 (this chunk).
 
 The settings-driven rendering logic lives on :class:`NginxRenderer`, an
-owned instance constructed with ``app_state`` (``self._settings =
-app_state.settings``) per the composition-root refactor (#1426, #1469).
+owned instance constructed with ``app_state`` per the composition-root
+refactor (#1426, #1469).  Settings are read live via
+``self.app_state.settings`` (#1608).
 Pure helpers (upstream constructors, host-IP auto-detection, the minimal-
 template auth-location formatter) stay module-level — they don't read
 settings.
@@ -158,8 +159,8 @@ def _egress_auth_locations(upstream: str) -> str:
 class NginxRenderer:
     """Settings-driven ``nginx.conf`` renderer (#1396, #1469).
 
-    Constructed with ``app_state`` (``self._settings = app_state.settings``)
-    per the composition-root pattern. The renderer is a pure function of the
+    Constructed with ``app_state`` per the composition-root pattern; settings
+    are read live via ``self.app_state.settings`` (#1608). The renderer is a pure function of the
     merged config (settings + env probes); it does not touch podman.
     ``NginxWatchdog`` owns an instance and calls :meth:`render_config` /
     :meth:`find_nginx_bin` / :meth:`write_config` from its ``_prepare`` step.
@@ -740,8 +741,9 @@ def _nginx_preexec() -> None:  # pragma: no cover  – runs in forked child
 class NginxWatchdog:
     """Owns the nginx child process and its supervision task (#1463).
 
-    Constructed with ``app_state`` (``self._settings = app_state.settings``)
-    and owns a :class:`NginxRenderer` instance for config rendering (#1469).
+    Constructed with ``app_state`` and owns a :class:`NginxRenderer` instance
+    for config rendering (#1469). Settings are read live via
+    ``self.app_state.settings`` (#1608).
     Stored on ``app.state.nginx_watchdog``; the lifespan calls
     ``.start()`` / ``.stop()``.
     """

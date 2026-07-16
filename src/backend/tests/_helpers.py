@@ -85,7 +85,7 @@ def wire_db_and_model(state) -> None:
         try:
             state.db = get_test_db()
         except LookupError:
-            state.db = DB(state.settings)
+            state.db = DB(state)
     if getattr(state, "model", None) is None:
         state.model = Model(state)
     if getattr(state, "acl", None) is None:

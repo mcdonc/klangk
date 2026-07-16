@@ -27,11 +27,11 @@ def _make_app_state(registry=None, sockets=None):
     from klangk_backend.wshandler.session import WebSocketState
 
     settings = make_settings({})
-    podman_inst = Podman(settings)
     # Two-phase: build the namespace shell first so the owned instances
     # (sockets, registry, terminal, plugins) can take app_state at
     # construction and reach collaborators via self.app_state (#1426).
     app_state = types.SimpleNamespace(settings=settings)
+    podman_inst = Podman(app_state)
     app_state.podman = podman_inst
     if sockets is None:
         sockets = WebSocketState(app_state)
@@ -2582,7 +2582,7 @@ def _health_registry(ws_state=None):
 
     Constructs a fresh registry via ``_make_app_state`` and wires its
     ``sockets`` to the given WebSocketState (or a fresh one by default).
-    HealthMonitor reaches sockets via ``self.registry.app_state.sockets``.
+    HealthMonitor reaches sockets via ``self.app_state.sockets``.
     """
     app_state = _make_app_state(sockets=ws_state)
     return app_state.container_registry
@@ -2597,16 +2597,16 @@ def _health_state(
     setup_state="complete",
     health_status=None,
     in_startup_grace=False,
-    registry=None,
+    app_state=None,
 ):
     """Build a ContainerState wired up for health checks.
 
     *in_startup_grace* defaults to False so the core healthy/unhealthy
     tests exercise post-grace behavior; the startup-grace tests opt in.
     """
-    if registry is None:
-        registry = _health_registry()
-    st = container.ContainerState(workspace_id, container_id, registry)
+    if app_state is None:
+        app_state = _health_registry().app_state
+    st = container.ContainerState(workspace_id, container_id, app_state)
     st.health_check = health_check
     st.owner_id = owner_id
     st.setup_state = setup_state
@@ -2629,20 +2629,20 @@ class TestHealthMonitorRunOne:
         exec_mock = AsyncMock(return_value=(0, "", ""))
         with (
             patch.object(
-                monitor.registry.app_state.podman, "exec_container", exec_mock
+                monitor.app_state.podman, "exec_container", exec_mock
             ),
             patch.object(
-                monitor.registry.app_state.model.users,
+                monitor.app_state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2674,22 +2674,22 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.registry.app_state.podman,
+                monitor.app_state.podman,
                 "exec_container",
                 AsyncMock(return_value=(1, "", "curl: connection refused")),
             ),
             patch.object(
-                monitor.registry.app_state.model.users,
+                monitor.app_state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2706,22 +2706,22 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.registry.app_state.podman,
+                monitor.app_state.podman,
                 "exec_container",
                 AsyncMock(return_value=(2, "all good on stdout", "")),
             ),
             patch.object(
-                monitor.registry.app_state.model.users,
+                monitor.app_state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2738,22 +2738,22 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.registry.app_state.podman,
+                monitor.app_state.podman,
                 "exec_container",
                 AsyncMock(return_value=(127, "", "")),
             ),
             patch.object(
-                monitor.registry.app_state.model.users,
+                monitor.app_state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2780,22 +2780,22 @@ class TestHealthMonitorRunOne:
         st = _health_state()
         with (
             patch.object(
-                monitor.registry.app_state.podman,
+                monitor.app_state.podman,
                 "exec_container",
                 AsyncMock(side_effect=podman.PodmanError(500, "boom")),
             ),
             patch.object(
-                monitor.registry.app_state.model.users,
+                monitor.app_state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value="owner"),
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "home_path",
                 return_value="/h/p",
             ),
             patch.object(
-                monitor.registry.app_state.workspaces,
+                monitor.app_state.workspaces,
                 "ensure_home_symlink",
                 new_callable=AsyncMock,
                 return_value=("/home/klangk", False),
@@ -2810,7 +2810,7 @@ class TestHealthMonitorRunOne:
         monitor = _health_registry().health
         st = _health_state(owner_id=None)
         with patch.object(
-            monitor.registry.app_state.podman, "exec_container"
+            monitor.app_state.podman, "exec_container"
         ) as exec_mock:
             status, message = await monitor._run_one(st)
         assert status == "unhealthy"
@@ -2823,12 +2823,12 @@ class TestHealthMonitorRunOne:
         st = _health_state(owner_id="uid-owner")
         with (
             patch.object(
-                monitor.registry.app_state.model.users,
+                monitor.app_state.model.users,
                 "get_user_handle",
                 AsyncMock(return_value=None),
             ),
             patch.object(
-                monitor.registry.app_state.podman, "exec_container"
+                monitor.app_state.podman, "exec_container"
             ) as exec_mock,
         ):
             status, message = await monitor._run_one(st)

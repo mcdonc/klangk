@@ -28,7 +28,6 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from ..settings import KlangkSettings
 
 logger = logging.getLogger(__name__)
 
@@ -115,12 +114,17 @@ class DB:
     frozen-at-import hazard (#1452).
     """
 
-    def __init__(self, settings: KlangkSettings):
-        self.settings = settings
-        raw = settings.data_dir
-        self.data_dir = Path(raw)
-        self.db_path = self.data_dir / "klangk.db"
+    def __init__(self, app_state):
+        self.app_state = app_state
         self.engine = None
+
+    @property
+    def data_dir(self) -> Path:
+        return Path(self.app_state.settings.data_dir)
+
+    @property
+    def db_path(self) -> Path:
+        return self.data_dir / "klangk.db"
 
     def make_engine(self):
         """Create a new async engine with PRAGMA listeners.
