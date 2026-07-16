@@ -68,6 +68,12 @@ def _make_app_state(cid="cid"):
     app_state.workspaces = MagicMock()
     app_state.files = files_mod.Files(app_state)
     app_state.sockets = MagicMock()
+    # #1573: agent.py reaches app_state.model.users.agent_{handle,email}.
+    app_state.model = MagicMock()
+    app_state.model.users.agent_handle = AsyncMock(return_value="clanker")
+    app_state.model.users.agent_email = AsyncMock(
+        return_value="clanker@example.com"
+    )
     return app_state
 
 

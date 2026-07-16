@@ -133,7 +133,7 @@ class Agents:
             )
         workspace_home = self.app_state.workspaces.home_path(workspace_id)
 
-        agent_handle = await model.agent_handle()
+        agent_handle = await self.app_state.model.users.agent_handle()
         (
             container_home,
             created,
@@ -248,8 +248,8 @@ class Agents:
             return
         if await model.get_workspace_by_id(workspace_id) is None:
             return
-        agent_handle = await model.agent_handle()
-        agent_email = await model.agent_email()
+        agent_handle = await self.app_state.model.users.agent_handle()
+        agent_email = await self.app_state.model.users.agent_email()
         sys_msg = ephemeral_system_message(
             workspace_id,
             agent_email,
@@ -278,8 +278,8 @@ class Agents:
             return
         if await model.get_workspace_by_id(workspace_id) is None:
             return
-        agent_handle = await model.agent_handle()
-        agent_email = await model.agent_email()
+        agent_handle = await self.app_state.model.users.agent_handle()
+        agent_email = await self.app_state.model.users.agent_email()
         sys_msg = ephemeral_system_message(
             workspace_id,
             agent_email,
@@ -347,7 +347,7 @@ class AgentSession:
         there.  Returns the container path, e.g. ``/home/clanker``.
         """
         if self._home_ready:
-            handle = await model.agent_handle()
+            handle = await self.app_state.model.users.agent_handle()
             return f"/home/{handle}"
         container_home = await self.agents.ensure_agent_home(
             self.workspace_id, container_id
@@ -388,7 +388,7 @@ class AgentSession:
                 return self._proc
             container_id = self._resolve_container_id()
             container_home = await self._ensure_home(container_id)
-            agent_handle = await model.agent_handle()
+            agent_handle = await self.app_state.model.users.agent_handle()
             system_prompt = _CHAT_SYSTEM_PROMPT.format(name=agent_handle)
             argv = [
                 "exec",

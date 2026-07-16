@@ -784,7 +784,7 @@ async def add_workspace_member(
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
     app_state=Depends(get_app_state_dep),
 ):
-    target = await model.get_user_by_email(body.email)
+    target = await app_state.model.users.get_user_by_email(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
     if target["id"] == user["id"]:
@@ -848,15 +848,16 @@ ROLE_GROUP_SUFFIXES = ["owners", "coders", "collaborators", "spectators"]
 async def get_workspace_roles(
     workspace_id: str,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    app_state=Depends(get_app_state_dep),
 ):
     """Return the workspace's role groups with their members."""
     roles = []
     for suffix in ROLE_GROUP_SUFFIXES:
         group_name = f"{suffix}-{workspace_id}"
-        group = await model.get_group_by_name(group_name)
+        group = await app_state.model.users.get_group_by_name(group_name)
         if group is None:
             continue
-        members = await model.get_group_members(group["id"])
+        members = await app_state.model.users.get_group_members(group["id"])
         roles.append(
             {
                 "role": suffix,
@@ -886,13 +887,13 @@ async def add_to_workspace_role(
     if role not in ROLE_GROUP_SUFFIXES:
         raise HTTPException(status_code=400, detail=f"Invalid role: {role}")
     group_name = f"{role}-{workspace_id}"
-    group = await model.get_group_by_name(group_name)
+    group = await app_state.model.users.get_group_by_name(group_name)
     if group is None:
         raise HTTPException(status_code=404, detail="Role group not found")
-    target = await model.get_user_by_email(body.email)
+    target = await app_state.model.users.get_user_by_email(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
-    await model.add_user_to_group(target["id"], group["id"])
+    await app_state.model.users.add_user_to_group(target["id"], group["id"])
     app_state.sockets.notify_user_workspaces_changed(user["id"])
     app_state.sockets.notify_user_workspaces_changed(target["id"])
     return {"ok": True}
@@ -910,10 +911,10 @@ async def remove_from_workspace_role(
     if role not in ROLE_GROUP_SUFFIXES:
         raise HTTPException(status_code=400, detail=f"Invalid role: {role}")
     group_name = f"{role}-{workspace_id}"
-    group = await model.get_group_by_name(group_name)
+    group = await app_state.model.users.get_group_by_name(group_name)
     if group is None:
         raise HTTPException(status_code=404, detail="Role group not found")
-    await model.remove_user_from_group(member_id, group["id"])
+    await app_state.model.users.remove_user_from_group(member_id, group["id"])
     app_state.sockets.notify_user_workspaces_changed(user["id"])
     app_state.sockets.notify_user_workspaces_changed(member_id)
     return {"ok": True}
@@ -937,7 +938,7 @@ async def change_workspace_role(
     them to the target role.  If ``role`` is null, removes the user
     from all roles.
     """
-    target = await model.get_user_by_email(body.email)
+    target = await app_state.model.users.get_user_by_email(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -949,18 +950,22 @@ async def change_workspace_role(
     # Remove from all current roles
     for suffix in ROLE_GROUP_SUFFIXES:
         group_name = f"{suffix}-{workspace_id}"
-        group = await model.get_group_by_name(group_name)
+        group = await app_state.model.users.get_group_by_name(group_name)
         if group is None:
             continue
-        await model.remove_user_from_group(target["id"], group["id"])
+        await app_state.model.users.remove_user_from_group(
+            target["id"], group["id"]
+        )
 
     # Add to target role if specified
     if body.role is not None:
         group_name = f"{body.role}-{workspace_id}"
-        group = await model.get_group_by_name(group_name)
+        group = await app_state.model.users.get_group_by_name(group_name)
         if group is None:
             raise HTTPException(status_code=404, detail="Role group not found")
-        await model.add_user_to_group(target["id"], group["id"])
+        await app_state.model.users.add_user_to_group(
+            target["id"], group["id"]
+        )
 
     app_state.sockets.notify_user_workspaces_changed(user["id"])
     app_state.sockets.notify_user_workspaces_changed(target["id"])
@@ -995,9 +1000,10 @@ async def add_workspace_group(
     workspace_id: str,
     body: AddGroupShareRequest,
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    app_state=Depends(get_app_state_dep),
 ):
     """Share a workspace with a group (view/terminal/files/chat)."""
-    group = await model.get_group_by_id(body.group_id)
+    group = await app_state.model.users.get_group_by_id(body.group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
     resource = f"/workspaces/{workspace_id}"
@@ -1090,7 +1096,7 @@ async def transfer_workspace_ownership(
     app_state=Depends(get_app_state_dep),
 ):
     """Transfer workspace ownership to another user."""
-    target = await model.get_user_by_email(body.email)
+    target = await app_state.model.users.get_user_by_email(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -1114,10 +1120,11 @@ async def transfer_workspace_ownership(
 async def search_users(
     q: str,
     _user: dict = Depends(auth.get_current_user),
+    app_state=Depends(get_app_state_dep),
 ):
     if len(q) < 1:
         raise HTTPException(status_code=400, detail="Query too short")
-    return await model.search_users(q)
+    return await app_state.model.users.search_users(q)
 
 
 # --- File endpoints ---

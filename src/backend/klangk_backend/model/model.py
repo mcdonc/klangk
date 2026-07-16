@@ -9,10 +9,11 @@ seed) uses the same resolved value — the one ``app.state.db`` the app was
 built with (#1563, #1551).
 
 Foundation (#1572): only the four standalone domains are composed here
-(``tokens``, ``login_attempts``, ``invitations``, ``ports``). The larger
-domains (``users``, ``acl``, ``workspaces``, ``chat``) are added in their
-own issues; until then they're still reached via the module-level free
-functions + the ``_current_db`` ContextVar backstop in ``model/db.py``.
+(``tokens``, ``login_attempts``, ``invitations``, ``ports``). ``users`` is
+added in #1573; the remaining domains (``acl``, ``workspaces``, ``chat``)
+are added in their own issues; until then they're still reached via the
+module-level free functions + the ``_current_db`` ContextVar backstop in
+``model/db.py``.
 """
 
 from contextlib import asynccontextmanager
@@ -21,6 +22,7 @@ from .ports import PortsModel
 from .tokens import TokensModel
 from .login_attempts import LoginAttemptsModel
 from .invitations import InvitationsModel
+from .users import UsersModel
 from .schema import init_db
 
 
@@ -39,6 +41,7 @@ class Model:
         self.login_attempts = LoginAttemptsModel(app_state)
         self.invitations = InvitationsModel(app_state)
         self.ports = PortsModel(app_state)
+        self.users = UsersModel(app_state)
 
     @asynccontextmanager
     async def transaction(self):

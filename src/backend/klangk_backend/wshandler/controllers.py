@@ -448,7 +448,9 @@ class TerminalController:
         # The agent home is eagerly provisioned at container create
         # (#1157) and persists in the bind-mount volume, so resolving the
         # path here is cheap and correct -- no provisioning needed.
-        agent_home = f"/home/{await model.agent_handle()}"
+        agent_home = (
+            f"/home/{await self._conn.app_state.model.users.agent_handle()}"
+        )
         await self._conn.app_state.terminal.ensure_service_session(
             self._conn.container_id,
             agent_home,
@@ -487,7 +489,9 @@ class TerminalController:
         # retries on the next connect / list_shared_terminals. Never let
         # discovery break the terminal-start flow.
         try:
-            ws_session.agent_handle = await model.agent_handle()
+            ws_session.agent_handle = (
+                await self._conn.app_state.model.users.agent_handle()
+            )
         except Exception:
             return False
         self._merge_service_windows(ws_session, windows)

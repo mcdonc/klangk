@@ -118,6 +118,23 @@ operators or integrators to act when upgrading.
   last "free function that takes `app_state`" pattern outside `model/`
   is gone (#1568).
 
+- **`UsersModel(app_state)` added as the users domain (#1573).** The
+  users data-access surface (user/group/handle/OIDC-identity CRUD,
+  agent-user lookup) is now `app_state.model.users.<method>`
+  (`create_user`, `get_user_by_*`, `set_user_handle`, `create_group`,
+  `add_user_to_group`, `agent_handle`, …), reaching the DB through
+  `self.app_state.db`. Request-path call sites across `auth.py`,
+  `agent.py`, `container.py`, the `api/*` routers, and `wshandler/*`
+  now go through it (handlers lacking `app_state` gained a
+  `Depends(get_app_state_dep)`). The module-level free-function
+  backstops stay for the test suite, the ACL permission layer
+  (`get_principals` → #1577), the schema migration (`backfill_handles`
+  → #1578), the OIDC login helpers, and `main.py` seed functions
+  (→ #1571); three backstops whose callers fully migrated
+  (`list_users`, `get_group_by_id`, `update_group`) were removed as
+  dead code. No behavior change — same DB, same queries; this is the
+  second slice of #1563.
+
 - **`Model(app_state)` composition root introduced (#1572).** A new
   `app.state.model = Model(app.state)` (wired in `build_app` after
   `app.state.db`) composes the per-domain data-access sub-objects.

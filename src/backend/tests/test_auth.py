@@ -169,14 +169,16 @@ class TestRegister:
         """If a concurrent registration wins the UNIQUE constraint,
         the loser must get a clean 400 rather than an unhandled 500
         (regression for #877)."""
-        with patch(
-            "klangk_backend.model.create_user",
+        a = _auth()
+        with patch.object(
+            a.app_state.model.users,
+            "create_user",
             side_effect=SAIntegrityError(
                 "statement", {}, Exception("UNIQUE constraint failed")
             ),
         ):
             with pytest.raises(HTTPException) as exc_info:
-                await _auth().register(
+                await a.register(
                     auth.RegisterRequest(
                         email="race@example.com", password="pass1234"
                     )

@@ -20,7 +20,6 @@ from jose import ExpiredSignatureError, JWTError, jwt
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
-from . import model
 from .exceptions import ConfigurationError
 from .settings import INSECURE_DEFAULT_SECRET
 
@@ -369,7 +368,9 @@ class Auth:
             raise HTTPException(
                 status_code=403, detail="Registration is disabled"
             )
-        existing = await model.get_user_by_email(req.email)
+        existing = await self.app_state.model.users.get_user_by_email(
+            req.email
+        )
         if existing is not None:
             raise HTTPException(status_code=400, detail="Registration failed")
         validate_email(req.email)
@@ -382,7 +383,7 @@ class Auth:
         # opaque error as the pre-check (avoids user enumeration and an
         # unhandled HTTP 500).
         try:
-            user = await model.create_user(
+            user = await self.app_state.model.users.create_user(
                 req.email, password_hash, verified=verified
             )
         except SAIntegrityError:
@@ -404,7 +405,7 @@ class Auth:
             if is_locked:
                 raise HTTPException(status_code=429, detail=msg)
 
-        user = await model.get_user_by_email(req.email)
+        user = await self.app_state.model.users.get_user_by_email(req.email)
         # OIDC-only users have no password hash; treat that as invalid
         # credentials rather than letting verify_password crash on None.
         if (
@@ -480,7 +481,7 @@ class Auth:
                     status_code=401, detail="Token has been revoked"
                 )
 
-            user = await model.get_user_by_id(user_id)
+            user = await self.app_state.model.users.get_user_by_id(user_id)
             if user is None:
                 raise HTTPException(status_code=401, detail="User not found")
 
@@ -523,7 +524,7 @@ class Auth:
                 return None
             if await self.app_state.model.tokens.is_token_blocklisted(jti):
                 return None
-            return await model.get_user_by_id(user_id)
+            return await self.app_state.model.users.get_user_by_id(user_id)
         except ExpiredSignatureError:
             return self.TOKEN_EXPIRED
         except JWTError:
@@ -571,7 +572,7 @@ async def get_current_user(
                 status_code=401, detail="Token has been revoked"
             )
 
-        user = await model.get_user_by_id(user_id)
+        user = await request.app.state.model.users.get_user_by_id(user_id)
         if user is None:
             raise HTTPException(status_code=401, detail="User not found")
         return user
@@ -595,6 +596,6 @@ async def get_current_user_optional(
             return None
         if await request.app.state.model.tokens.is_token_blocklisted(jti):
             return None
-        return await model.get_user_by_id(user_id)
+        return await request.app.state.model.users.get_user_by_id(user_id)
     except JWTError:
         return None

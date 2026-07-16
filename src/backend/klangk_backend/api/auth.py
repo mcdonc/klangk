@@ -76,7 +76,7 @@ async def register(
 
     logger.info("Registering user: %s", req.email)
     auth.validate_email(req.email)
-    existing = await model.get_user_by_email(req.email)
+    existing = await app_state.model.users.get_user_by_email(req.email)
     if existing is not None:
         raise HTTPException(status_code=400, detail="Registration failed")
     request.app.state.auth.validate_password_length(req.password)
@@ -109,7 +109,7 @@ async def register(
     # Insert user and send email in a transaction — if the email fails,
     # the user insert is rolled back so they can try again.
     async with app_state.model.transaction() as db:
-        await model.insert_unverified_user(
+        await app_state.model.users.insert_unverified_user(
             db, user_id, req.email, password_hash
         )
         logger.info("User inserted (uncommitted): %s", req.email)
@@ -133,10 +133,10 @@ async def verify_email(token: str, request: Request):
         raise HTTPException(
             status_code=400, detail="Invalid or expired verification token"
         )
-    updated = await model.verify_user(user_id)
+    updated = await request.app.state.model.users.verify_user(user_id)
     if not updated:
         raise HTTPException(status_code=404, detail="User not found")
-    user = await model.get_user_by_id(user_id)
+    user = await request.app.state.model.users.get_user_by_id(user_id)
     access_token = request.app.state.auth.create_token(user_id, user["email"])
     return {"status": "verified", "access_token": access_token}
 
@@ -169,7 +169,7 @@ async def resend_verification(
     app_state=Depends(get_app_state_dep),
 ):
     """Resend verification email. Requires email+password to prevent abuse."""
-    user = await model.get_user_by_email(req.email)
+    user = await app_state.model.users.get_user_by_email(req.email)
     # OIDC-only users have no password hash; treat that as invalid
     # credentials rather than letting verify_password crash on None.
     if (
@@ -224,7 +224,7 @@ async def forgot_password(
     app_state=Depends(get_app_state_dep),
 ):
     """Send a password reset email if the account exists."""
-    user = await model.get_user_by_email(req.email)
+    user = await app_state.model.users.get_user_by_email(req.email)
     if user is None:
         # Don't reveal whether the email exists
         return {"status": "sent"}
@@ -277,9 +277,9 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
             detail="Cannot set a password on the system agent user",
         )
     password_hash = auth.hash_password(req.password)
-    await model.update_password(user_id, password_hash)
+    await request.app.state.model.users.update_password(user_id, password_hash)
     # Auto-login after reset
-    user = await model.get_user_by_id(user_id)
+    user = await request.app.state.model.users.get_user_by_id(user_id)
     if user is None:  # pragma: no cover
         raise HTTPException(status_code=404, detail="User not found")
     token = request.app.state.auth.create_token(user_id, user["email"])
@@ -336,7 +336,7 @@ async def local_login(request: Request):
             detail="Local login requires a loopback client",
         )
     email = request.app.state.settings.default_user
-    user = await model.get_user_by_email(email)
+    user = await request.app.state.model.users.get_user_by_email(email)
     if user is None:
         # seed_default_user() runs in the lifespan before the app serves
         # traffic, so this only triggers if seeding was bypassed.
@@ -370,7 +370,9 @@ async def change_password(
     user: dict = Depends(auth.get_current_user),
 ):
     """Change password. Requires current password."""
-    stored = await model.get_user_by_email(user["email"])
+    stored = await request.app.state.model.users.get_user_by_email(
+        user["email"]
+    )
     # OIDC-only users have no password; their credentials are managed
     # by their identity provider and must not crash on a NULL hash.
     if stored is not None and not stored.get("password_hash"):
@@ -386,7 +388,9 @@ async def change_password(
         )
     request.app.state.auth.validate_password_length(req.new_password)
     password_hash = auth.hash_password(req.new_password)
-    await model.update_password(user["id"], password_hash)
+    await request.app.state.model.users.update_password(
+        user["id"], password_hash
+    )
     return {"status": "updated"}
 
 
@@ -403,7 +407,7 @@ async def change_email(
     app_state=Depends(get_app_state_dep),
 ):
     """Change email. Requires password. Marks account as unverified."""
-    stored = await model.get_user_by_email(user["email"])
+    stored = await app_state.model.users.get_user_by_email(user["email"])
     # OIDC-only users have no password; their credentials are managed
     # by their identity provider and must not crash on a NULL hash.
     if stored is not None and not stored.get("password_hash"):
@@ -416,10 +420,10 @@ async def change_email(
     ):
         raise HTTPException(status_code=401, detail="Password is incorrect")
     auth.validate_email(req.email)
-    existing = await model.get_user_by_email(req.email)
+    existing = await app_state.model.users.get_user_by_email(req.email)
     if existing is not None and existing["id"] != user["id"]:
         raise HTTPException(status_code=400, detail="Email already in use")
-    await model.update_email(user["id"], req.email)
+    await app_state.model.users.update_email(user["id"], req.email)
     # Mark as unverified and send verification email
     async with app_state.model.transaction() as db:
         await db.execute(
@@ -452,7 +456,7 @@ async def change_handle(
     app_state=Depends(get_app_state_dep),
 ):
     """Change the current user's handle. Requires password confirmation."""
-    stored = await model.get_user_by_email(user["email"])
+    stored = await app_state.model.users.get_user_by_email(user["email"])
     # OIDC-only users have no password; their credentials are managed
     # by their identity provider and must not crash on a NULL hash.
     if stored is not None and not stored.get("password_hash"):
@@ -465,7 +469,7 @@ async def change_handle(
     ):
         raise HTTPException(status_code=401, detail="Password is incorrect")
     try:
-        await model.set_user_handle(user["id"], req.handle)
+        await app_state.model.users.set_user_handle(user["id"], req.handle)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     await wshandler.refresh_user_handle(
@@ -475,9 +479,12 @@ async def change_handle(
 
 
 @router.get("/auth/me")
-async def get_me(user: dict = Depends(auth.get_current_user)):
+async def get_me(
+    user: dict = Depends(auth.get_current_user),
+    app_state=Depends(get_app_state_dep),
+):
     """Return the current user's profile."""
-    full = await model.get_user_by_id(user["id"])
+    full = await app_state.model.users.get_user_by_id(user["id"])
     if full is None:  # pragma: no cover — race between auth and lookup
         raise HTTPException(status_code=404, detail="User not found")
     return {"id": full["id"], "email": full["email"], "handle": full["handle"]}
@@ -502,7 +509,9 @@ async def logout(
     # If the user logged in via OIDC and the provider has logout_redirect
     # enabled, return the IdP logout URL so the frontend can redirect.
     result: dict = {"status": "ok"}
-    db_user = await model.get_user_by_email(user["email"])
+    db_user = await request.app.state.model.users.get_user_by_email(
+        user["email"]
+    )
     if db_user and db_user.get("provider", "local") != "local":
         provider = request.app.state.oidc.get_provider(db_user["provider"])
         if provider:
@@ -549,14 +558,16 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
 
     request.app.state.auth.validate_password_length(req.password)
 
-    existing = await model.get_user_by_email(email)
+    existing = await request.app.state.model.users.get_user_by_email(email)
     if existing is not None:
         raise HTTPException(
             status_code=400, detail="An account with this email already exists"
         )
 
     password_hash = auth.hash_password(req.password)
-    user = await model.create_user(email, password_hash, verified=True)
+    user = await request.app.state.model.users.create_user(
+        email, password_hash, verified=True
+    )
     await request.app.state.model.invitations.mark_invitation_accepted(
         invitation_id
     )

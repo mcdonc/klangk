@@ -105,7 +105,7 @@ async def handle_agent_mention(
     then not injected and "my" is left for the agent to disambiguate.
     """
 
-    agent_handle = await model.agent_handle()
+    agent_handle = await sockets.app_state.model.users.agent_handle()
     agent_re = get_agent_mention_re(agent_handle)
     prompt = agent_re.sub("", user_text).strip()
     if not prompt:
@@ -143,7 +143,7 @@ async def handle_agent_mention(
         context = "\n".join(context_lines)
         prompt = f"[Other participants said:\n{context}]\n\n{prompt}"
 
-    agent_email = await model.agent_email()
+    agent_email = await sockets.app_state.model.users.agent_email()
 
     # Notify clients the agent is thinking
     session = sockets.get_session(workspace_id)
