@@ -16,7 +16,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from klangkd import (
+from klangk import (
     api,
     auth as auth_mod,
     emailsvc as emailsvc_mod,
@@ -26,8 +26,8 @@ from klangkd import (
     plugins as plugins_mod,
 )
 from _helpers import make_settings
-from klangkd.main import register_exception_handlers
-from klangkd.util import API_PREFIX
+from klangk.main import register_exception_handlers
+from klangk.util import API_PREFIX
 import types
 
 

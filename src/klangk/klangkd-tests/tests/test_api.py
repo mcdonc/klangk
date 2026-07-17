@@ -12,7 +12,7 @@ from fastapi import FastAPI
 import httpx
 from httpx import AsyncClient, ASGITransport
 
-from klangkd import (
+from klangk import (
     agent,
     api,
     auth as auth_mod,
@@ -21,13 +21,13 @@ from klangkd import (
     podman,
     workspaces as ws_mod,
 )
-from klangkd.container import ContainerRegistry
-from klangkd import emailsvc as emailsvc_mod
-from klangkd import util as util_mod
-from klangkd import oidc as oidc_mod
-from klangkd import plugins as plugins_mod
+from klangk.container import ContainerRegistry
+from klangk import emailsvc as emailsvc_mod
+from klangk import util as util_mod
+from klangk import oidc as oidc_mod
+from klangk import plugins as plugins_mod
 from _helpers import make_settings
-from klangkd.wshandler.session import WebSocketState
+from klangk.wshandler.session import WebSocketState
 import types
 
 
@@ -56,8 +56,8 @@ _mock_pod = MagicMock()
 async def app(db, temp_data_dir):
     """Create a minimal FastAPI app with just the API router."""
     app = FastAPI()
-    from klangkd.util import API_PREFIX
-    from klangkd.main import register_exception_handlers
+    from klangk.util import API_PREFIX
+    from klangk.main import register_exception_handlers
 
     settings = make_settings(
         env={
@@ -2567,7 +2567,7 @@ class TestWorkspaceSharingRoutes:
     ):
         # role=None is removal-from-all-roles — harmless cleanup, so the
         # guard (which only fires on a grant) must let it through.
-        from klangkd.main import Lifecycle
+        from klangk.main import Lifecycle
 
         from _helpers import wire_db_and_model
 
@@ -2629,7 +2629,7 @@ class TestWorkspaceSharingRoutes:
         # handler translates AgentPrincipalError to HTTP 400. This is the
         # one HTTP-level grant test kept to prove the wiring; the choke
         # points themselves are unit-tested in test_model.py.
-        from klangkd.main import Lifecycle
+        from klangk.main import Lifecycle
 
         from _helpers import wire_db_and_model
 
@@ -3336,7 +3336,7 @@ class TestTransferOwnership:
         assert resp.status_code == 403
 
     async def test_transfer_to_agent_rejected(self, client, user, app_state):
-        from klangkd.main import Lifecycle
+        from klangk.main import Lifecycle
 
         from _helpers import wire_db_and_model
 
@@ -4005,7 +4005,7 @@ def _instance_id():
     by the temp_data_dir fixture) so it agrees with the ``app`` fixture's util.
     Not a cached global — a fresh read each call.
     """
-    from klangkd.settings import KlangkSettings
+    from klangk.settings import KlangkSettings
 
     ns = types.SimpleNamespace(
         state=types.SimpleNamespace(settings=KlangkSettings(os.environ))
@@ -4456,7 +4456,7 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
         try:
             with patch(
-                "klangkd.files.Files.delete_path",
+                "klangk.files.Files.delete_path",
                 new_callable=AsyncMock,
                 side_effect=OSError("Permission denied"),
             ):
@@ -4543,7 +4543,7 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
         try:
             with patch(
-                "klangkd.files.Files.rename_path",
+                "klangk.files.Files.rename_path",
                 new_callable=AsyncMock,
                 side_effect=OSError("Permission denied"),
             ):
@@ -5284,7 +5284,7 @@ class TestAdminEndpoints:
         assert resp.status_code == 404
 
     async def test_delete_agent_user_rejected(self, client, admin_user, db):
-        from klangkd.main import Lifecycle
+        from klangk.main import Lifecycle
 
         from _helpers import wire_db_and_model
 
@@ -5414,7 +5414,7 @@ class TestAdminEndpoints:
         self, client, app, admin_user, db
     ):
         # Seed the agent user so it exists in the DB
-        from klangkd.main import Lifecycle
+        from klangk.main import Lifecycle
 
         from _helpers import wire_db_and_model
 
@@ -6415,7 +6415,7 @@ class TestWorkspaceExportImport:
         the server's app.state.util reads), so this matches whatever the
         import endpoint validates against.
         """
-        from klangkd.settings import KlangkSettings
+        from klangk.settings import KlangkSettings
 
         ns = types.SimpleNamespace(
             state=types.SimpleNamespace(settings=KlangkSettings(os.environ))
@@ -6589,7 +6589,7 @@ class TestWorkspaceExportImport:
         import json
         import tarfile
 
-        from klangkd.settings import KlangkSettings
+        from klangk.settings import KlangkSettings
 
         ns = types.SimpleNamespace(
             state=types.SimpleNamespace(settings=KlangkSettings(os.environ))
@@ -7066,7 +7066,7 @@ class TestWorkspaceExportImport:
         self, client, app, user, monkeypatch
     ):
         """If the upload write fails, the temp file is cleaned up."""
-        import klangkd.api.workspaces as api_mod
+        import klangk.api.workspaces as api_mod
 
         headers = await self._user_headers(client)
 

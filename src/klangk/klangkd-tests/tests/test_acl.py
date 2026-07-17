@@ -3,8 +3,8 @@
 from unittest.mock import MagicMock
 
 
-from klangkd import acl
-from klangkd.model import (
+from klangk import acl
+from klangk.model import (
     ACTION_ALLOW,
     ACTION_DENY,
     PRINCIPAL_GROUP,

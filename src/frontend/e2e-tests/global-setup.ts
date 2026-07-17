@@ -102,8 +102,8 @@ async function globalSetup() {
       KLANGK_PORT: backendPort,
     });
     execSync(
-      `python -c "from klangkd.nginx import NginxRenderer, tcp_upstream; ` +
-        `from klangkd.settings import KlangkSettings; import types, os; ` +
+      `python -c "from klangk.nginx import NginxRenderer, tcp_upstream; ` +
+        `from klangk.settings import KlangkSettings; import types, os; ` +
         `NginxRenderer(types.SimpleNamespace(settings=KlangkSettings(os.environ)))` +
         `.write_config(tcp_upstream('127.0.0.1', '${backendPort}'), '${confPath}')"`,
       {

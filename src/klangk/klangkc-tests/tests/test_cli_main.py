@@ -9,13 +9,13 @@ import pytest
 import typer
 import websockets
 
-from klangkc.client import WorkspaceNotFoundError
-from klangkc.config import (
+from klangk.cli.client import WorkspaceNotFoundError
+from klangk.cli.config import (
     CLIConfig,
     CLIState,
     ServerEntry,
 )
-from klangkc.client import Workspace
+from klangk.cli.client import Workspace
 
 
 @pytest.fixture
@@ -23,8 +23,8 @@ def logged_in_cfg(tmp_path, monkeypatch):
     """Config + state with a valid token and email pre-loaded."""
     config_path = tmp_path / "cli.yaml"
     state_path = tmp_path / "state.yaml"
-    monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-    monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+    monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+    monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
     # Write a minimal cli.yaml (no servers needed for most tests)
     config_path.write_text("")
     # Write state.yaml with active server and credentials
@@ -40,7 +40,7 @@ def logged_in_cfg(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def reset_main_state():
     """Reset module-level CLI state before and after each test."""
-    import klangkc.main as _main
+    import klangk.cli.main as _main
 
     orig_cfg = _main._cfg_cache
     orig_state = _main._state_cache
@@ -66,22 +66,24 @@ def reset_env():
 class TestMainCLI:
     @pytest.fixture(autouse=True)
     def no_oidc(self, monkeypatch):
-        monkeypatch.setattr("klangkc.auth.fetch_config", lambda _: {})
+        monkeypatch.setattr("klangk.cli.auth.fetch_config", lambda _: {})
 
     def test_login_cmd_stores_token(self, tmp_path, monkeypatch):
-        from klangkc.main import login_cmd
+        from klangk.cli.main import login_cmd
 
         config_path = tmp_path / "cli.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "new-token"}
-        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
+        with patch(
+            "klangk.cli.transport.httpx.request", return_value=mock_resp
+        ):
             with patch(
-                "klangkc.auth.Prompt.ask",
+                "klangk.cli.auth.Prompt.ask",
                 side_effect=["u@test.com", "pw"],
             ):
                 login_cmd(
@@ -94,19 +96,21 @@ class TestMainCLI:
         assert state.get_email("http://localhost:8995") == "u@test.com"
 
     def test_login_cmd_with_password_file(self, tmp_path, monkeypatch):
-        from klangkc.main import login_cmd
+        from klangk.cli.main import login_cmd
 
         config_path = tmp_path / "cli.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
         pw_file = tmp_path / "pw.txt"
         pw_file.write_text("file-pw\n")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "file-token"}
-        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
+        with patch(
+            "klangk.cli.transport.httpx.request", return_value=mock_resp
+        ):
             login_cmd(
                 server="http://localhost:8995",
                 user="file@test.com",
@@ -116,17 +120,19 @@ class TestMainCLI:
         assert state.get_token("http://localhost:8995") == "file-token"
 
     def test_login_cmd_with_password_stdin(self, tmp_path, monkeypatch):
-        from klangkc.main import login_cmd
+        from klangk.cli.main import login_cmd
 
         config_path = tmp_path / "cli.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "stdin-token"}
-        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
+        with patch(
+            "klangk.cli.transport.httpx.request", return_value=mock_resp
+        ):
             with patch("sys.stdin") as mock_stdin:
                 mock_stdin.readline.return_value = "stdin-pw\n"
                 login_cmd(
@@ -138,21 +144,23 @@ class TestMainCLI:
         assert state.get_token("http://localhost:8995") == "stdin-token"
 
     def test_login_cmd_resolves_alias(self, tmp_path, monkeypatch):
-        from klangkc.main import login_cmd
+        from klangk.cli.main import login_cmd
 
         config_path = tmp_path / "cli.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text(
             "servers:\n  prod:\n    url: http://prod:8995\n"
         )
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "tok"}
-        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
+        with patch(
+            "klangk.cli.transport.httpx.request", return_value=mock_resp
+        ):
             with patch(
-                "klangkc.auth.Prompt.ask",
+                "klangk.cli.auth.Prompt.ask",
                 side_effect=["u@test.com", "pw"],
             ):
                 login_cmd(
@@ -165,12 +173,12 @@ class TestMainCLI:
         assert state.active_server == "http://prod:8995"
 
     def test_login_cmd_uses_config_default_user(self, tmp_path, monkeypatch):
-        from klangkc.main import login_cmd
+        from klangk.cli.main import login_cmd
 
         config_path = tmp_path / "cli.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text(
             "servers:\n"
             "  prod:\n"
@@ -180,9 +188,11 @@ class TestMainCLI:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "tok"}
-        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
+        with patch(
+            "klangk.cli.transport.httpx.request", return_value=mock_resp
+        ):
             with patch(
-                "klangkc.auth.Prompt.ask",
+                "klangk.cli.auth.Prompt.ask",
                 return_value="pw",
             ):
                 login_cmd(
@@ -197,12 +207,12 @@ class TestMainCLI:
         self, tmp_path, monkeypatch
     ):
         import typer
-        from klangkc import main
+        from klangk.cli import main
 
         config_path = tmp_path / "cli.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
         # State with active server but no token
         state = CLIState(active_server="http://localhost:8995")
@@ -211,7 +221,7 @@ class TestMainCLI:
         # regardless of whether a real klangkd is running on localhost:8995
         # in none mode (which would auto-login and skip the Exit).
         monkeypatch.setattr(
-            "klangkc.main.fetch_config",
+            "klangk.cli.main.fetch_config",
             lambda url: {"auth_modes": "password"},
         )
 
@@ -219,18 +229,18 @@ class TestMainCLI:
             main.require_auth()
 
     def test_require_auth_passes_when_logged_in(self, logged_in_cfg):
-        from klangkc import main
+        from klangk.cli import main
 
         main.require_auth()  # Should not raise
 
     def test_server_url_no_server_exits(self, tmp_path, monkeypatch):
         """server_url() exits when no active server and no --server."""
-        from klangkc import main
+        from klangk.cli import main
 
         config_path = tmp_path / "cli.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
         CLIState().save()
 
@@ -238,23 +248,23 @@ class TestMainCLI:
             main.server_url()
 
     def test_server_url_uses_active_server(self, logged_in_cfg):
-        from klangkc import main
+        from klangk.cli import main
 
         assert main.server_url() == "http://localhost:8995"
 
     def test_server_url_override_wins(self, logged_in_cfg):
-        from klangkc import main
+        from klangk.cli import main
 
         main._server_override = "http://override:9999"
         assert main.server_url() == "http://override:9999"
 
     def test_app_callback_resolves_server_alias(self, tmp_path, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         config_path = tmp_path / "cli.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text(
             "servers:\n  prod:\n    url: http://prod:8995\n"
         )
@@ -264,7 +274,7 @@ class TestMainCLI:
         assert main._server_override == "http://prod:8995"
 
     def test_list_workspaces_empty(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.list_workspaces.return_value = []
@@ -276,7 +286,7 @@ class TestMainCLI:
         assert any("No workspaces" in str(c) for c in mock_echo.call_args_list)
 
     def test_list_shared_workspaces_plain(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         shared_ws = Workspace(
             id="sw1" + "0" * 52,
@@ -300,7 +310,7 @@ class TestMainCLI:
 
         from rich.console import Console
 
-        from klangkc import main
+        from klangk.cli import main
 
         shared_ws = Workspace(
             id="sw1" + "0" * 52,
@@ -325,7 +335,7 @@ class TestMainCLI:
         assert "owner@example.com" in output
 
     def test_list_workspaces_plain(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -345,7 +355,7 @@ class TestMainCLI:
 
         from rich.console import Console
 
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -370,7 +380,7 @@ class TestMainCLI:
     def test_list_workspaces_plain_shows_status_and_short_id(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="abc" + "0" * 40 + "xyz",
@@ -400,7 +410,7 @@ class TestMainCLI:
 
         from rich.console import Console
 
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="abc" + "0" * 40 + "xyz",
@@ -429,7 +439,7 @@ class TestMainCLI:
     def test_list_shared_workspaces_plain_shows_status(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         shared_ws = Workspace(
             id="abc" + "0" * 40 + "xyz",
@@ -456,7 +466,7 @@ class TestMainCLI:
     def test_list_workspaces_all_passes_pagination_flag(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.list_workspaces.return_value = []
@@ -480,7 +490,7 @@ class TestMainCLI:
         )
 
     def test_list_workspaces_limit_forwarded(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.list_workspaces.return_value = []
@@ -506,7 +516,7 @@ class TestMainCLI:
     def test_list_workspaces_sort_filter_forwarded(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.list_workspaces.return_value = []
@@ -542,7 +552,7 @@ class TestMainCLI:
 
         from rich.console import Console
 
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="new-id", name="new-ws", created_at="2025-01-01T00:00:00Z"
@@ -563,7 +573,7 @@ class TestMainCLI:
     def test_create_workspace_error(self, logged_in_cfg, monkeypatch):
         import typer
 
-        from klangkc import main
+        from klangk.cli import main
 
         mock_response = MagicMock()
         mock_response.status_code = 400
@@ -579,7 +589,7 @@ class TestMainCLI:
             main.create("dup")
 
     def test_delete_workspace(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         monkeypatch.setattr(main, "_client", lambda: client)
@@ -591,8 +601,8 @@ class TestMainCLI:
     def test_delete_workspace_not_found(self, logged_in_cfg, monkeypatch):
         import typer
 
-        from klangkc.client import WorkspaceNotFoundError
-        from klangkc import main
+        from klangk.cli.client import WorkspaceNotFoundError
+        from klangk.cli import main
 
         client = MagicMock()
         client.delete_workspace.side_effect = WorkspaceNotFoundError("nope")
@@ -602,8 +612,8 @@ class TestMainCLI:
             main.rm("nope")
 
     def test_members_command(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
-        from klangkc.client import Workspace
+        from klangk.cli import main
+        from klangk.cli.client import Workspace
 
         client = MagicMock()
         client.resolve_workspace.return_value = Workspace(
@@ -628,8 +638,8 @@ class TestMainCLI:
         assert any("coder" in c for c in calls)
 
     def test_members_empty(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
-        from klangkc.client import Workspace
+        from klangk.cli import main
+        from klangk.cli.client import Workspace
 
         client = MagicMock()
         client.resolve_workspace.return_value = Workspace(
@@ -649,7 +659,7 @@ class TestMainCLI:
         assert any("No shared" in c for c in calls)
 
     def test_members_not_found(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
@@ -659,7 +669,7 @@ class TestMainCLI:
             main.members("nope")
 
     def test_share_workspace_command(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.add_workspace_member.return_value = {
@@ -678,7 +688,7 @@ class TestMainCLI:
         )
 
     def test_share_workspace_with_role(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.add_workspace_member.return_value = {
@@ -695,7 +705,7 @@ class TestMainCLI:
         )
 
     def test_share_workspace_invalid_role(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         monkeypatch.setattr(main, "_client", lambda: MagicMock())
 
@@ -703,7 +713,7 @@ class TestMainCLI:
             main.share_workspace("my-ws", "a@b.com", role="admin")
 
     def test_share_workspace_not_found(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.add_workspace_member.side_effect = WorkspaceNotFoundError(
@@ -715,7 +725,7 @@ class TestMainCLI:
             main.share_workspace("nope", "alice@test.com", role="coder")
 
     def test_unshare_workspace_command(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         monkeypatch.setattr(main, "_client", lambda: client)
@@ -726,7 +736,7 @@ class TestMainCLI:
         assert any("alice@test.com" in c for c in calls)
 
     def test_unshare_workspace_not_found(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.remove_workspace_member.side_effect = WorkspaceNotFoundError(
@@ -738,7 +748,7 @@ class TestMainCLI:
             main.unshare_workspace("my-ws", "nobody@test.com")
 
     def test_restart_workspace(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         monkeypatch.setattr(main, "_client", lambda: client)
@@ -750,8 +760,8 @@ class TestMainCLI:
     def test_restart_workspace_not_found(self, logged_in_cfg, monkeypatch):
         import typer
 
-        from klangkc.client import WorkspaceNotFoundError
-        from klangkc import main
+        from klangk.cli.client import WorkspaceNotFoundError
+        from klangk.cli import main
 
         client = MagicMock()
         client.restart_workspace.side_effect = WorkspaceNotFoundError("nope")
@@ -762,12 +772,12 @@ class TestMainCLI:
 
     def test_shell_requires_auth(self, tmp_path, monkeypatch):
         import typer
-        from klangkc import main
+        from klangk.cli import main
 
         config_path = tmp_path / "cli.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
         # State with active server but no token
         state = CLIState(active_server="http://localhost:8995")
@@ -777,12 +787,12 @@ class TestMainCLI:
             main.shell(None)
 
     def test_status_not_logged_in(self, tmp_path, monkeypatch, capsys):
-        from klangkc import main
+        from klangk.cli import main
 
         config_path = tmp_path / "cli.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
         state = CLIState(active_server="http://custom:1234")
         state.save()
@@ -793,7 +803,7 @@ class TestMainCLI:
         assert "not_logged_in" in output
 
     def test_status_logged_in(self, logged_in_cfg, capsys):
-        from klangkc import main
+        from klangk.cli import main
 
         main.status(plain=True)
         output = capsys.readouterr().out
@@ -805,7 +815,7 @@ class TestMainCLI:
 
         from rich.console import Console
 
-        from klangkc import main
+        from klangk.cli import main
 
         buf = StringIO()
         with patch.object(
@@ -823,12 +833,12 @@ class TestMainCLI:
 
         from rich.console import Console
 
-        from klangkc import main
+        from klangk.cli import main
 
         config_path = tmp_path / "cli.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
         state = CLIState(active_server="http://localhost:8995")
         state.save()
@@ -844,7 +854,7 @@ class TestMainCLI:
         assert "not logged in" in output
 
     def test_status_plain_logged_in(self, logged_in_cfg, capsys):
-        from klangkc import main
+        from klangk.cli import main
 
         main.status(plain=True)
         output = capsys.readouterr().out
@@ -853,12 +863,12 @@ class TestMainCLI:
         assert "status=logged_in" in output
 
     def test_status_plain_not_logged_in(self, tmp_path, monkeypatch, capsys):
-        from klangkc import main
+        from klangk.cli import main
 
         config_path = tmp_path / "cli.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
         state = CLIState(active_server="http://custom:1234")
         state.save()
@@ -870,10 +880,10 @@ class TestMainCLI:
         assert "user=" not in output
 
     def test_logout_command(self, logged_in_cfg):
-        from klangkc import main
+        from klangk.cli import main
 
         with patch(
-            "klangkc.transport.httpx.request",
+            "klangk.cli.transport.httpx.request",
             return_value=MagicMock(status_code=200),
         ):
             main.logout(server=None)
@@ -881,10 +891,10 @@ class TestMainCLI:
         assert state.get_token("http://localhost:8995") is None
 
     def test_logout_with_server_arg(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         with patch(
-            "klangkc.transport.httpx.request",
+            "klangk.cli.transport.httpx.request",
             return_value=MagicMock(status_code=200),
         ):
             main.logout(server="http://localhost:8995")
@@ -892,12 +902,12 @@ class TestMainCLI:
         assert state.get_token("http://localhost:8995") is None
 
     def test_logout_no_active_server_exits(self, tmp_path, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         config_path = tmp_path / "cli.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangkc.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
         CLIState().save()
 
@@ -905,10 +915,10 @@ class TestMainCLI:
             main.logout(server=None)
 
     def test_logout_network_error_does_not_propagate(self, logged_in_cfg):
-        from klangkc import main
+        from klangk.cli import main
 
         with patch(
-            "klangkc.transport.httpx.request",
+            "klangk.cli.transport.httpx.request",
             side_effect=httpx.ConnectError("no route"),
         ):
             main.logout(server=None)  # must not raise
@@ -916,7 +926,7 @@ class TestMainCLI:
     def test_shell_with_single_workspace_auto_selects(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -940,7 +950,7 @@ class TestMainCLI:
 
     def test_shell_no_workspaces_exits(self, logged_in_cfg, monkeypatch):
         import typer
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.list_workspaces.return_value = []
@@ -952,7 +962,7 @@ class TestMainCLI:
     def test_shell_multiple_workspaces_prompts(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws1 = Workspace(
             id="id1" + "0" * 52, name="ws-a", created_at="2025-01-01T00:00:00Z"
@@ -973,7 +983,7 @@ class TestMainCLI:
                         main.shell(None)
 
     def test_shell_by_name(self, logged_in_cfg, monkeypatch, reset_env):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="target" + "0" * 52,
@@ -997,7 +1007,7 @@ class TestMainCLI:
     def test_shell_with_terminal_arg(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="target" + "0" * 52,
@@ -1024,7 +1034,7 @@ class TestMainCLI:
         self, logged_in_cfg, monkeypatch, reset_env
     ):
         """forward_agent in config enables forwarding when no CLI flag."""
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="target" + "0" * 52,
@@ -1057,7 +1067,7 @@ class TestMainCLI:
         self, logged_in_cfg, monkeypatch, reset_env
     ):
         """--no-forward-agent (False) overrides config forward_agent=True."""
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="target" + "0" * 52,
@@ -1089,7 +1099,7 @@ class TestMainCLI:
         self, logged_in_cfg, monkeypatch, reset_env
     ):
         """Per-server forward-agent in config is used."""
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="target" + "0" * 52,
@@ -1125,7 +1135,7 @@ class TestMainCLI:
         assert captured_kwargs["forward_agent"] is True
 
     def test_ws_max_size_per_server(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         cfg = CLIConfig(
             servers={
@@ -1138,7 +1148,7 @@ class TestMainCLI:
             assert main.ws_max_size() == 999
 
     def test_terminals_command(self, logged_in_cfg, monkeypatch, reset_env):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1191,14 +1201,14 @@ class TestMainCLI:
         with (
             patch.object(main, "_client", return_value=client),
             patch(
-                "klangkc.transport.websockets.connect", return_value=mock_ws
+                "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
             main.terminals("my-ws")
 
     def test_share_command(self, logged_in_cfg, monkeypatch, reset_env):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1251,7 +1261,7 @@ class TestMainCLI:
         with (
             patch.object(main, "_client", return_value=client),
             patch(
-                "klangkc.transport.websockets.connect", return_value=mock_ws
+                "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
@@ -1266,7 +1276,7 @@ class TestMainCLI:
         assert any(s.get("cmd") == "share_window" for s in sent)
 
     def test_unshare_command(self, logged_in_cfg, monkeypatch, reset_env):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1308,7 +1318,7 @@ class TestMainCLI:
         with (
             patch.object(main, "_client", return_value=client),
             patch(
-                "klangkc.transport.websockets.connect", return_value=mock_ws
+                "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
@@ -1324,7 +1334,7 @@ class TestMainCLI:
     def test_share_terminal_not_found(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1359,7 +1369,7 @@ class TestMainCLI:
         with (
             patch.object(main, "_client", return_value=client),
             patch(
-                "klangkc.transport.websockets.connect", return_value=mock_ws
+                "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
@@ -1367,7 +1377,7 @@ class TestMainCLI:
                 main.share_terminal("my-ws", "nonexistent")
 
     def test_terminals_workspace_not_found(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
@@ -1379,7 +1389,7 @@ class TestMainCLI:
     def test_terminals_connection_failure(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1402,7 +1412,7 @@ class TestMainCLI:
         with (
             patch.object(main, "_client", return_value=client),
             patch(
-                "klangkc.transport.websockets.connect", return_value=mock_ws
+                "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
@@ -1412,7 +1422,7 @@ class TestMainCLI:
     def test_share_connection_failure(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1435,7 +1445,7 @@ class TestMainCLI:
         with (
             patch.object(main, "_client", return_value=client),
             patch(
-                "klangkc.transport.websockets.connect", return_value=mock_ws
+                "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
@@ -1445,7 +1455,7 @@ class TestMainCLI:
     def test_unshare_connection_failure(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1468,7 +1478,7 @@ class TestMainCLI:
         with (
             patch.object(main, "_client", return_value=client),
             patch(
-                "klangkc.transport.websockets.connect", return_value=mock_ws
+                "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
@@ -1478,7 +1488,7 @@ class TestMainCLI:
     def test_unshare_terminal_not_found(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1513,7 +1523,7 @@ class TestMainCLI:
         with (
             patch.object(main, "_client", return_value=client),
             patch(
-                "klangkc.transport.websockets.connect", return_value=mock_ws
+                "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
@@ -1521,7 +1531,7 @@ class TestMainCLI:
                 main.unshare_terminal("my-ws", "nonexistent")
 
     def test_edit_with_flags(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1551,7 +1561,7 @@ class TestMainCLI:
         assert "image" not in body  # not provided, not sent
 
     def test_edit_with_health_check_flag(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1578,7 +1588,7 @@ class TestMainCLI:
         assert body["health_check"] == "curl -sf http://x/h"
 
     def test_edit_clear_command(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1603,7 +1613,7 @@ class TestMainCLI:
         assert call_args[1]["json"]["service_command"] is None
 
     def test_edit_interactive(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1634,7 +1644,7 @@ class TestMainCLI:
         assert body["service_command"] == "pi"
 
     def test_edit_interactive_health_check(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1664,7 +1674,7 @@ class TestMainCLI:
         assert "service_command" not in body  # kept current
 
     def test_edit_interactive_change_all(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1695,7 +1705,7 @@ class TestMainCLI:
         assert body["service_command"] == "pi"
 
     def test_edit_interactive_add_mount(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1723,7 +1733,7 @@ class TestMainCLI:
         assert body["mounts"] == ["/host:/container"]
 
     def test_edit_interactive_remove_mount(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1753,7 +1763,7 @@ class TestMainCLI:
     def test_edit_interactive_add_and_remove_mount(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1784,7 +1794,7 @@ class TestMainCLI:
     def test_edit_interactive_invalid_remove_number(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1815,7 +1825,7 @@ class TestMainCLI:
     def test_edit_interactive_remove_all_mounts(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1845,7 +1855,7 @@ class TestMainCLI:
     def test_edit_interactive_invalid_mount_rejected(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1874,7 +1884,7 @@ class TestMainCLI:
         assert body["mounts"] == ["/a:/b"]
 
     def test_create_invalid_mount_flag(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         monkeypatch.setattr(main, "_client", lambda: MagicMock())
 
@@ -1887,7 +1897,7 @@ class TestMainCLI:
         assert result.exit_code == 1
 
     def test_edit_invalid_mount_flag(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1905,7 +1915,7 @@ class TestMainCLI:
         assert result.exit_code == 1
 
     def test_edit_with_image_flag(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1929,7 +1939,7 @@ class TestMainCLI:
         assert body["image"] == "klangk-custom"
 
     def test_edit_with_mount_flag(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1964,7 +1974,7 @@ class TestMainCLI:
         ]
 
     def test_edit_interactive_no_changes(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -1987,7 +1997,7 @@ class TestMainCLI:
         client.put.assert_not_called()
 
     def test_edit_interactive_add_env(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -2016,7 +2026,7 @@ class TestMainCLI:
     def test_edit_interactive_invalid_env_rejected(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -2044,7 +2054,7 @@ class TestMainCLI:
         assert body["env"] == {"A": "1"}
 
     def test_create_with_env_flag(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="new-id", name="ws", created_at="2025-01-01T00:00:00Z"
@@ -2071,7 +2081,7 @@ class TestMainCLI:
         )
 
     def test_create_with_command_flag(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="new-id", name="ws", created_at="2025-01-01T00:00:00Z"
@@ -2096,7 +2106,7 @@ class TestMainCLI:
         )
 
     def test_create_with_invalid_env_flag(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         monkeypatch.setattr(main, "_client", lambda: MagicMock())
 
@@ -2109,7 +2119,7 @@ class TestMainCLI:
         assert result.exit_code == 1
 
     def test_edit_interactive_remove_env(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -2139,7 +2149,7 @@ class TestMainCLI:
     def test_edit_interactive_invalid_env_remove_number(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -2166,7 +2176,7 @@ class TestMainCLI:
         client.put.assert_not_called()
 
     def test_edit_with_env_flag(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -2188,7 +2198,7 @@ class TestMainCLI:
         assert body["env"] == {"A": "1"}
 
     def test_edit_with_auto_start_flag(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -2210,7 +2220,7 @@ class TestMainCLI:
         assert body["auto_start"] is True
 
     def test_dup_workspace(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -2233,7 +2243,7 @@ class TestMainCLI:
             assert "copy" in result.stdout
 
     def test_dup_workspace_not_found(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
@@ -2246,7 +2256,7 @@ class TestMainCLI:
             assert result.exit_code == 1
 
     def test_dup_workspace_conflict(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -2265,7 +2275,7 @@ class TestMainCLI:
             assert result.exit_code == 1
 
     def test_dup_workspace_404(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -2284,7 +2294,7 @@ class TestMainCLI:
             assert result.exit_code == 1
 
     def test_edit_workspace_not_found(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
@@ -2299,7 +2309,7 @@ class TestMainCLI:
             assert result.exit_code == 1
 
     def test_edit_404_from_server(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws1" + "0" * 52,
@@ -2320,8 +2330,8 @@ class TestMainCLI:
             assert result.exit_code == 1
 
     def test_exec_runs_command(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
-        from klangkc.client import Workspace
+        from klangk.cli import main
+        from klangk.cli.client import Workspace
         from typer.testing import CliRunner
 
         ws = Workspace(
@@ -2349,8 +2359,8 @@ class TestMainCLI:
     def test_exec_raw_flag_passes_login_false(self, logged_in_cfg):
         """#1041: ``--raw`` opts out of the login shell so the command
         runs as raw argv -- used by programmatic transports (rsync)."""
-        from klangkc import main
-        from klangkc.client import Workspace
+        from klangk.cli import main
+        from klangk.cli.client import Workspace
         from typer.testing import CliRunner
 
         ws = Workspace(
@@ -2379,8 +2389,8 @@ class TestMainCLI:
         the conventional ``klangkc exec ws -- echo hi`` works instead of
         trying to run ``--`` as a command.
         """
-        from klangkc import main
-        from klangkc.client import Workspace
+        from klangk.cli import main
+        from klangk.cli.client import Workspace
         from typer.testing import CliRunner
 
         ws = Workspace(
@@ -2404,7 +2414,7 @@ class TestMainCLI:
         assert mock_exec.call_args.args[3] == ["echo", "hi"]
 
     def test_exec_no_command(self, logged_in_cfg):
-        from klangkc import main
+        from klangk.cli import main
 
         ctx = MagicMock()
         ctx.args = []
@@ -2413,8 +2423,8 @@ class TestMainCLI:
         assert exc_info.value.exit_code == 1
 
     def test_exec_workspace_not_found(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
-        from klangkc.client import WorkspaceNotFoundError
+        from klangk.cli import main
+        from klangk.cli.client import WorkspaceNotFoundError
 
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
@@ -2427,7 +2437,7 @@ class TestMainCLI:
         assert exc_info.value.exit_code == 1
 
     def test_sync_runs_rsync(self, logged_in_cfg):
-        from klangkc import main
+        from klangk.cli import main
 
         ctx = MagicMock()
         ctx.args = []
@@ -2449,7 +2459,7 @@ class TestMainCLI:
         assert "klangkc exec --raw" in " ".join(cmd)
 
     def test_sync_no_rsync(self, logged_in_cfg):
-        from klangkc import main
+        from klangk.cli import main
 
         def which_no_rsync(name):
             return "/usr/bin/klangkc" if name == "klangkc" else None
@@ -2462,7 +2472,7 @@ class TestMainCLI:
         assert exc_info.value.exit_code == 1
 
     def test_sync_passes_extra_args(self, logged_in_cfg):
-        from klangkc import main
+        from klangk.cli import main
 
         ctx = MagicMock()
         ctx.args = ["--delete", "--exclude=.git"]
@@ -2477,7 +2487,7 @@ class TestMainCLI:
         assert "--exclude=.git" in cmd
 
     def test_sync_rsync_failure(self, logged_in_cfg):
-        from klangkc import main
+        from klangk.cli import main
 
         ctx = MagicMock()
         ctx.args = []
@@ -2492,7 +2502,7 @@ class TestMainCLI:
 
 class TestVolumes:
     def test_volumes_ls(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.get.return_value = MagicMock(
@@ -2513,7 +2523,7 @@ class TestVolumes:
         assert "vol-1" in result.stdout
 
     def test_volumes_ls_empty(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.get.return_value = MagicMock(
@@ -2530,7 +2540,7 @@ class TestVolumes:
         assert "No volumes" in result.stdout
 
     def test_volumes_ls_plain(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.get.return_value = MagicMock(
@@ -2549,7 +2559,7 @@ class TestVolumes:
         assert "vol-1" in result.stdout
 
     def test_volumes_create(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.post.return_value = MagicMock(status_code=200)
@@ -2563,7 +2573,7 @@ class TestVolumes:
         assert "Created" in result.stdout
 
     def test_volumes_create_duplicate(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.post.return_value = MagicMock(status_code=409)
@@ -2576,7 +2586,7 @@ class TestVolumes:
         assert result.exit_code == 1
 
     def test_volumes_rm(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.delete.return_value = MagicMock(status_code=200)
@@ -2590,7 +2600,7 @@ class TestVolumes:
         assert "Deleted" in result.stdout
 
     def test_volumes_rm_not_found(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.delete.return_value = MagicMock(status_code=404)
@@ -2603,7 +2613,7 @@ class TestVolumes:
         assert result.exit_code == 1
 
     def test_volumes_rm_in_use(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.delete.return_value = MagicMock(status_code=409)
@@ -2616,7 +2626,7 @@ class TestVolumes:
         assert result.exit_code == 1
 
     def test_volumes_rm_permission_denied(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.delete.return_value = MagicMock(status_code=403)
@@ -2631,7 +2641,7 @@ class TestVolumes:
 
 class TestExportImportCLI:
     def test_export_success(self, logged_in_cfg, monkeypatch, tmp_path):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws-export-id", name="my-ws", created_at="2025-01-01"
@@ -2656,7 +2666,7 @@ class TestExportImportCLI:
 
     def test_export_default_filename(self, logged_in_cfg, monkeypatch):
         from pathlib import Path
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(id="ws-exp-id", name="test-ws", created_at="2025-01-01")
 
@@ -2679,7 +2689,7 @@ class TestExportImportCLI:
         self, logged_in_cfg, monkeypatch, tmp_path, monkeypatch_cwd=None
     ):
         from pathlib import Path
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(id="ws-ow-id", name="ow-ws", created_at="2025-01-01")
 
@@ -2701,7 +2711,7 @@ class TestExportImportCLI:
         assert args[0][1] == Path("ow-ws-2.tar.gz")
 
     def test_export_workspace_not_found(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
@@ -2711,7 +2721,7 @@ class TestExportImportCLI:
             main.export_workspace(name="nope", output=None)
 
     def test_export_http_error(self, logged_in_cfg, monkeypatch, tmp_path):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(id="ws-err-id", name="err-ws", created_at="2025-01-01")
         client = MagicMock()
@@ -2728,7 +2738,7 @@ class TestExportImportCLI:
             main.export_workspace(name="err-ws", output=tmp_path / "o.tar.gz")
 
     def test_import_success(self, logged_in_cfg, monkeypatch, tmp_path):
-        from klangkc import main
+        from klangk.cli import main
 
         ws = Workspace(
             id="ws-imp-id", name="imported", created_at="2025-01-01"
@@ -2753,7 +2763,7 @@ class TestExportImportCLI:
         assert args[1]["name"] == "imported"
 
     def test_import_file_not_found(self, logged_in_cfg, monkeypatch, tmp_path):
-        from klangkc import main
+        from klangk.cli import main
 
         with pytest.raises(typer.Exit):
             main.import_workspace(
@@ -2761,7 +2771,7 @@ class TestExportImportCLI:
             )
 
     def test_import_http_error(self, logged_in_cfg, monkeypatch, tmp_path):
-        from klangkc import main
+        from klangk.cli import main
 
         resp = MagicMock()
         resp.text = "conflict"
@@ -2780,7 +2790,7 @@ class TestExportImportCLI:
 
 class TestInviteCLI:
     def test_invite_success(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.post.return_value = MagicMock(
@@ -2803,7 +2813,7 @@ class TestInviteCLI:
         assert "a@b.com" in result.stdout
 
     def test_invite_error(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.post.return_value = MagicMock(
@@ -2822,7 +2832,7 @@ class TestInviteCLI:
         assert result.exit_code == 1
 
     def test_invite_forbidden(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.post.return_value = MagicMock(
@@ -2841,7 +2851,7 @@ class TestInviteCLI:
         assert result.exit_code == 1
 
     def test_invitations_list(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.get.return_value = MagicMock(
@@ -2871,7 +2881,7 @@ class TestInviteCLI:
         assert "a@b.com" in result.stdout
 
     def test_invitations_empty(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.get.return_value = MagicMock(
@@ -2894,7 +2904,7 @@ class TestInviteCLI:
         assert "No invitations" in result.stdout
 
     def test_invitations_list_error(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         resp = MagicMock(status_code=403)
@@ -2913,7 +2923,7 @@ class TestInviteCLI:
 
 class TestWorkspaceStatus:
     def test_stopped_when_not_running(self):
-        from klangkc.main import workspace_status
+        from klangk.cli.main import workspace_status
 
         ws = Workspace(id="x", name="n", created_at="2025-01-01T00:00:00Z")
         label, markup = workspace_status(ws)
@@ -2921,7 +2931,7 @@ class TestWorkspaceStatus:
         assert "dim" in markup
 
     def test_running_when_no_health_check_configured(self):
-        from klangkc.main import workspace_status
+        from klangk.cli.main import workspace_status
 
         ws = Workspace(
             id="x", name="n", created_at="2025-01-01T00:00:00Z", running=True
@@ -2933,7 +2943,7 @@ class TestWorkspaceStatus:
         assert "green" in markup
 
     def test_healthy(self):
-        from klangkc.main import workspace_status
+        from klangk.cli.main import workspace_status
 
         ws = Workspace(
             id="x",
@@ -2948,7 +2958,7 @@ class TestWorkspaceStatus:
         assert "green" in markup
 
     def test_unhealthy(self):
-        from klangkc.main import workspace_status
+        from klangk.cli.main import workspace_status
 
         ws = Workspace(
             id="x",
@@ -2963,7 +2973,7 @@ class TestWorkspaceStatus:
         assert "red" in markup
 
     def test_starting_when_running_but_no_health(self):
-        from klangkc.main import workspace_status
+        from klangk.cli.main import workspace_status
 
         ws = Workspace(
             id="x",
@@ -2979,51 +2989,51 @@ class TestWorkspaceStatus:
 
 class TestShortId:
     def test_long_id_is_truncated(self):
-        from klangkc.main import short_id
+        from klangk.cli.main import short_id
 
         assert short_id("abcdefgh") == "abc…fgh"
 
     def test_seven_char_id_returned_unchanged(self):
-        from klangkc.main import short_id
+        from klangk.cli.main import short_id
 
         assert short_id("abcdefg") == "abcdefg"
 
     def test_short_id_returned_unchanged(self):
-        from klangkc.main import short_id
+        from klangk.cli.main import short_id
 
         assert short_id("abc") == "abc"
 
 
 class TestResolveForwardAgent:
     def test_flag_true(self, monkeypatch):
-        from klangkc.main import resolve_forward_agent
+        from klangk.cli.main import resolve_forward_agent
 
         monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
         assert resolve_forward_agent(True) is True
 
     def test_flag_false_overrides_config(self):
-        from klangkc.main import resolve_forward_agent
+        from klangk.cli.main import resolve_forward_agent
 
         assert resolve_forward_agent(False, config_default=True) is False
 
     def test_none_uses_config_default_true(self, monkeypatch):
-        from klangkc.main import resolve_forward_agent
+        from klangk.cli.main import resolve_forward_agent
 
         monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
         assert resolve_forward_agent(None, config_default=True) is True
 
     def test_none_uses_config_default_false(self):
-        from klangkc.main import resolve_forward_agent
+        from klangk.cli.main import resolve_forward_agent
 
         assert resolve_forward_agent(None, config_default=False) is False
 
     def test_none_defaults_to_false(self):
-        from klangkc.main import resolve_forward_agent
+        from klangk.cli.main import resolve_forward_agent
 
         assert resolve_forward_agent(None) is False
 
     def test_warns_when_no_ssh_auth_sock(self, monkeypatch):
-        from klangkc.main import resolve_forward_agent
+        from klangk.cli.main import resolve_forward_agent
 
         monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
         result = resolve_forward_agent(True)
@@ -3032,7 +3042,7 @@ class TestResolveForwardAgent:
 
 class TestSandboxCommand:
     def test_missing_config_exits(self, logged_in_cfg, tmp_path):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.get_handle.return_value = "admin"
@@ -3048,7 +3058,7 @@ class TestSandboxCommand:
         assert "No sandbox config" in result.output
 
     def test_invalid_config_exits(self, logged_in_cfg, tmp_path):
-        from klangkc import main
+        from klangk.cli import main
 
         (tmp_path / ".klangk-sandbox.yaml").write_text("not a mapping")
 
@@ -3066,7 +3076,7 @@ class TestSandboxCommand:
         assert "Invalid sandbox config" in result.output
 
     def test_creates_workspace(self, logged_in_cfg, tmp_path):
-        from klangkc import main
+        from klangk.cli import main
 
         (tmp_path / ".klangk-sandbox.yaml").write_text(
             "sandbox:\n  mount-at: ~/test\n"
@@ -3105,7 +3115,7 @@ class TestSandboxCommand:
     def test_existing_workspace_errors_without_force(
         self, logged_in_cfg, tmp_path
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         (tmp_path / ".klangk-sandbox.yaml").write_text(
             "sandbox:\n  mount-at: ~/test\n"
@@ -3133,7 +3143,7 @@ class TestSandboxCommand:
         assert "--force" in result.output
 
     def test_force_reruns_setup(self, logged_in_cfg, tmp_path):
-        from klangkc import main
+        from klangk.cli import main
 
         (tmp_path / ".klangk-sandbox.yaml").write_text(
             "sandbox:\n  mount-at: ~/test\n"
@@ -3170,7 +3180,7 @@ class TestSandboxCommand:
         assert "re-applying config" in result.output
 
     def test_setup_connection_error(self, logged_in_cfg, tmp_path):
-        from klangkc import main
+        from klangk.cli import main
 
         (tmp_path / ".klangk-sandbox.yaml").write_text(
             "sandbox:\n  mount-at: ~/test\n"
@@ -3208,8 +3218,8 @@ class TestSandboxSetupOnly:
     async def test_connects_and_runs_setup(self):
         from pathlib import Path
 
-        from klangkc.main import sandbox_setup_only
-        from klangkc.sandbox import SandboxConfig
+        from klangk.cli.main import sandbox_setup_only
+        from klangk.cli.sandbox import SandboxConfig
 
         config = SandboxConfig(setup="setup.sh")
 
@@ -3219,8 +3229,8 @@ class TestSandboxSetupOnly:
         )
 
         with (
-            patch("klangkc.transport.websockets.connect") as mock_connect,
-            patch("klangkc.main.sandbox_setup") as mock_setup,
+            patch("klangk.cli.transport.websockets.connect") as mock_connect,
+            patch("klangk.cli.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
@@ -3243,8 +3253,8 @@ class TestSandboxSetupOnly:
     async def test_starts_terminal_after_setup_when_service_command(self):
         from pathlib import Path
 
-        from klangkc.main import sandbox_setup_only
-        from klangkc.sandbox import SandboxConfig
+        from klangk.cli.main import sandbox_setup_only
+        from klangk.cli.sandbox import SandboxConfig
 
         config = SandboxConfig(
             setup="setup.sh", service_command="openclaw gateway"
@@ -3259,8 +3269,8 @@ class TestSandboxSetupOnly:
         )
 
         with (
-            patch("klangkc.transport.websockets.connect") as mock_connect,
-            patch("klangkc.main.sandbox_setup") as mock_setup,
+            patch("klangk.cli.transport.websockets.connect") as mock_connect,
+            patch("klangk.cli.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
@@ -3289,8 +3299,8 @@ class TestSandboxSetupOnly:
 
         import websockets
 
-        from klangkc.main import sandbox_setup_only
-        from klangkc.sandbox import SandboxConfig
+        from klangk.cli.main import sandbox_setup_only
+        from klangk.cli.sandbox import SandboxConfig
 
         config = SandboxConfig(
             setup="setup.sh", service_command="openclaw gateway"
@@ -3305,8 +3315,8 @@ class TestSandboxSetupOnly:
         )
 
         with (
-            patch("klangkc.transport.websockets.connect") as mock_connect,
-            patch("klangkc.main.sandbox_setup") as mock_setup,
+            patch("klangk.cli.transport.websockets.connect") as mock_connect,
+            patch("klangk.cli.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
@@ -3327,8 +3337,8 @@ class TestSandboxSetupOnly:
         """With a client, sandbox_setup_only marks pending then complete (#1033)."""
         from pathlib import Path
 
-        from klangkc.main import sandbox_setup_only
-        from klangkc.sandbox import SandboxConfig
+        from klangk.cli.main import sandbox_setup_only
+        from klangk.cli.sandbox import SandboxConfig
 
         config = SandboxConfig(
             setup="setup.sh", service_command="openclaw gateway"
@@ -3345,8 +3355,8 @@ class TestSandboxSetupOnly:
         mock_client.set_setup_state = MagicMock()
 
         with (
-            patch("klangkc.transport.websockets.connect") as mock_connect,
-            patch("klangkc.main.sandbox_setup") as mock_setup,
+            patch("klangk.cli.transport.websockets.connect") as mock_connect,
+            patch("klangk.cli.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
@@ -3373,8 +3383,8 @@ class TestSandboxSetupOnly:
         """A non-zero setup exit marks setup_state as 'failed' (#1033)."""
         from pathlib import Path
 
-        from klangkc.main import sandbox_setup_only
-        from klangkc.sandbox import SandboxConfig
+        from klangk.cli.main import sandbox_setup_only
+        from klangk.cli.sandbox import SandboxConfig
 
         config = SandboxConfig(
             setup="setup.sh", service_command="openclaw gateway"
@@ -3388,8 +3398,8 @@ class TestSandboxSetupOnly:
         mock_client.set_setup_state = MagicMock()
 
         with (
-            patch("klangkc.transport.websockets.connect") as mock_connect,
-            patch("klangkc.main.sandbox_setup") as mock_setup,
+            patch("klangk.cli.transport.websockets.connect") as mock_connect,
+            patch("klangk.cli.main.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
@@ -3413,8 +3423,8 @@ class TestSandboxSetupOnly:
         assert not any(m.get("cmd") == "terminal_start" for m in sent)
 
     async def test_copies_files(self, tmp_path):
-        from klangkc.main import sandbox_setup
-        from klangkc.sandbox import SandboxConfig
+        from klangk.cli.main import sandbox_setup
+        from klangk.cli.sandbox import SandboxConfig
 
         src_file = tmp_path / "myconf"
         src_file.write_text("hello")
@@ -3432,15 +3442,15 @@ class TestSandboxSetupOnly:
             )
             return 0
 
-        with patch("klangkc.main.exec_on_ws", fake_exec):
+        with patch("klangk.cli.main.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
         assert len(exec_calls) == 1
         assert b"hello" in exec_calls[0]["stdin"]
 
     async def test_copy_failure_warns(self, tmp_path):
-        from klangkc.main import sandbox_setup
-        from klangkc.sandbox import SandboxConfig
+        from klangk.cli.main import sandbox_setup
+        from klangk.cli.sandbox import SandboxConfig
 
         src_file = tmp_path / "myconf"
         src_file.write_text("hello")
@@ -3454,12 +3464,12 @@ class TestSandboxSetupOnly:
         async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
             return 1  # failure
 
-        with patch("klangkc.main.exec_on_ws", fake_exec):
+        with patch("klangk.cli.main.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
     async def test_copy_missing_file_warns(self, tmp_path, capsys):
-        from klangkc.main import sandbox_setup
-        from klangkc.sandbox import SandboxConfig
+        from klangk.cli.main import sandbox_setup
+        from klangk.cli.sandbox import SandboxConfig
 
         config = SandboxConfig(
             copy=["/nonexistent/file:/home/admin/.conf"],
@@ -3467,14 +3477,14 @@ class TestSandboxSetupOnly:
 
         ws = AsyncMock()
 
-        with patch("klangkc.main.exec_on_ws", AsyncMock(return_value=0)):
+        with patch("klangk.cli.main.exec_on_ws", AsyncMock(return_value=0)):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
         # exec_on_ws should not have been called (file doesn't exist)
 
     async def test_runs_setup_script(self, tmp_path):
-        from klangkc.main import sandbox_setup
-        from klangkc.sandbox import SandboxConfig
+        from klangk.cli.main import sandbox_setup
+        from klangk.cli.sandbox import SandboxConfig
 
         config = SandboxConfig(
             mount_at="~/project",
@@ -3488,15 +3498,15 @@ class TestSandboxSetupOnly:
             exec_calls.append(cmd)
             return 0
 
-        with patch("klangkc.main.exec_on_ws", fake_exec):
+        with patch("klangk.cli.main.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
         assert len(exec_calls) == 1
         assert "/home/admin/project/setup.sh" in exec_calls[0][2]
 
     async def test_setup_sets_git_ssh_command(self, tmp_path):
-        from klangkc.main import sandbox_setup
-        from klangkc.sandbox import SandboxConfig
+        from klangk.cli.main import sandbox_setup
+        from klangk.cli.sandbox import SandboxConfig
 
         config = SandboxConfig(
             mount_at="~/project",
@@ -3510,7 +3520,7 @@ class TestSandboxSetupOnly:
             exec_calls.append(cmd)
             return 0
 
-        with patch("klangkc.main.exec_on_ws", fake_exec):
+        with patch("klangk.cli.main.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
         shell_cmd = exec_calls[0][2]
@@ -3518,8 +3528,8 @@ class TestSandboxSetupOnly:
         assert "StrictHostKeyChecking=accept-new" in shell_cmd
 
     async def test_setup_passes_timeout(self, tmp_path):
-        from klangkc.main import sandbox_setup
-        from klangkc.sandbox import SandboxConfig
+        from klangk.cli.main import sandbox_setup
+        from klangk.cli.sandbox import SandboxConfig
 
         config = SandboxConfig(
             mount_at="~/project",
@@ -3534,14 +3544,14 @@ class TestSandboxSetupOnly:
             captured_timeout.append(timeout)
             return 0
 
-        with patch("klangkc.main.exec_on_ws", fake_exec):
+        with patch("klangk.cli.main.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
         assert captured_timeout == [60]
 
     async def test_setup_timeout_warns(self, tmp_path, capsys):
-        from klangkc.main import sandbox_setup
-        from klangkc.sandbox import SandboxConfig
+        from klangk.cli.main import sandbox_setup
+        from klangk.cli.sandbox import SandboxConfig
 
         config = SandboxConfig(
             mount_at="~/project",
@@ -3554,15 +3564,15 @@ class TestSandboxSetupOnly:
         async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
             return 124
 
-        with patch("klangkc.main.exec_on_ws", fake_exec):
+        with patch("klangk.cli.main.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
         err = capsys.readouterr().err
         assert "timed out after 10s" in err
 
     async def test_setup_failure_warns(self, tmp_path):
-        from klangkc.main import sandbox_setup
-        from klangkc.sandbox import SandboxConfig
+        from klangk.cli.main import sandbox_setup
+        from klangk.cli.sandbox import SandboxConfig
 
         config = SandboxConfig(
             mount_at="~/project",
@@ -3574,11 +3584,11 @@ class TestSandboxSetupOnly:
         async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
             return 1
 
-        with patch("klangkc.main.exec_on_ws", fake_exec):
+        with patch("klangk.cli.main.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
     def test_connection_error_exits_cleanly(self, logged_in_cfg, tmp_path):
-        from klangkc import main
+        from klangk.cli import main
 
         (tmp_path / ".klangk-sandbox.yaml").write_text(
             "sandbox:\n  mount-at: ~/test\n"
@@ -3622,7 +3632,7 @@ class TestSandboxSetupOnly:
 
 class TestMonitorCommand:
     def test_monitor_invokes_run_when_logged_in(self, logged_in_cfg):
-        from klangkc import main
+        from klangk.cli import main
 
         mock_run = AsyncMock(return_value=None)
         with patch.object(main, "monitor_run", new=mock_run):
@@ -3639,7 +3649,7 @@ class TestMonitorCommand:
         assert kwargs["max_reconnects"] != 0  # reconnects by default
 
     def test_monitor_no_reconnect_passes_zero(self, logged_in_cfg):
-        from klangkc import main
+        from klangk.cli import main
 
         mock_run = AsyncMock(return_value=None)
         with patch.object(main, "monitor_run", new=mock_run):
@@ -3651,7 +3661,7 @@ class TestMonitorCommand:
         assert mock_run.call_args.kwargs["max_reconnects"] == 0
 
     def test_monitor_invalid_status_exits(self, logged_in_cfg):
-        from klangkc import main
+        from klangk.cli import main
 
         async def _raise(*a, **kw):
             raise websockets.InvalidStatus(MagicMock(status_code=4001))
@@ -3665,7 +3675,7 @@ class TestMonitorCommand:
             assert "Connection rejected" in result.output
 
     def test_monitor_keyboard_interrupt_stops_cleanly(self, logged_in_cfg):
-        from klangkc import main
+        from klangk.cli import main
 
         async def _kb(*a, **kw):
             raise KeyboardInterrupt
@@ -3683,7 +3693,7 @@ class TestStatusAdminFlag:
     """`status` derives admin from /my-permissions and degrades gracefully."""
 
     def _perms_client(self, perms, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         resp = MagicMock(
@@ -3696,7 +3706,7 @@ class TestStatusAdminFlag:
         return client
 
     def test_plain_shows_admin_yes(self, logged_in_cfg, capsys, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         self._perms_client({"/admin": ["*"]}, monkeypatch)
         main.status(plain=True)
@@ -3704,7 +3714,7 @@ class TestStatusAdminFlag:
         assert "admin=yes" in out
 
     def test_plain_shows_admin_no(self, logged_in_cfg, capsys, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
 
         self._perms_client({"/admin": []}, monkeypatch)
         main.status(plain=True)
@@ -3716,7 +3726,7 @@ class TestStatusAdminFlag:
 
         from rich.console import Console
 
-        from klangkc import main
+        from klangk.cli import main
 
         self._perms_client({"/admin": ["*"]}, monkeypatch)
         buf = StringIO()
@@ -3733,7 +3743,7 @@ class TestStatusAdminFlag:
 
         from rich.console import Console
 
-        from klangkc import main
+        from klangk.cli import main
 
         self._perms_client({"/admin": []}, monkeypatch)
         buf = StringIO()
@@ -3748,7 +3758,7 @@ class TestStatusAdminFlag:
     def test_degrades_when_permissions_unreachable(
         self, logged_in_cfg, capsys, monkeypatch
     ):
-        from klangkc import main
+        from klangk.cli import main
 
         client = MagicMock()
         client.get.side_effect = Exception("offline")
@@ -3764,7 +3774,7 @@ class TestAdminUsersCLI:
     """`admin users list` and `admin users set-password` (#1374)."""
 
     def test_users_list(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
         from typer.testing import CliRunner
 
         client = MagicMock()
@@ -3792,7 +3802,7 @@ class TestAdminUsersCLI:
         assert "admin@example.com" in result.stdout
 
     def test_users_list_empty(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
         from typer.testing import CliRunner
 
         client = MagicMock()
@@ -3806,7 +3816,7 @@ class TestAdminUsersCLI:
         assert "No users" in result.stdout
 
     def test_users_list_error(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
         from typer.testing import CliRunner
 
         client = MagicMock()
@@ -3820,7 +3830,7 @@ class TestAdminUsersCLI:
         assert result.exit_code == 1
 
     def test_users_list_pagination_note(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
         from typer.testing import CliRunner
 
         client = MagicMock()
@@ -3846,7 +3856,7 @@ class TestAdminUsersCLI:
         assert "Showing 1 of 5" in result.stdout
 
     def test_set_password_search_error(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
         from typer.testing import CliRunner
 
         client = MagicMock()
@@ -3871,7 +3881,7 @@ class TestAdminUsersCLI:
         client.patch.assert_not_called()
 
     def test_set_password_with_option(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
         from typer.testing import CliRunner
 
         client = MagicMock()
@@ -3905,7 +3915,7 @@ class TestAdminUsersCLI:
         assert called_path == "/api/v1/admin/users/u-1"
 
     def test_set_password_prompt_match(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
         from typer.testing import CliRunner
 
         client = MagicMock()
@@ -3921,7 +3931,7 @@ class TestAdminUsersCLI:
         monkeypatch.setattr(main, "_client", lambda: client)
         # Two identical prompts.
         monkeypatch.setattr(
-            "klangkc.main.Prompt.ask",
+            "klangk.cli.main.Prompt.ask",
             lambda *a, **k: "newpw123",
         )
         result = CliRunner().invoke(
@@ -3930,7 +3940,7 @@ class TestAdminUsersCLI:
         assert result.exit_code == 0
 
     def test_set_password_prompt_mismatch(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
         from typer.testing import CliRunner
 
         client = MagicMock()
@@ -3945,7 +3955,7 @@ class TestAdminUsersCLI:
         def _ask(*a, **k):
             return next(answers)
 
-        monkeypatch.setattr("klangkc.main.Prompt.ask", _ask)
+        monkeypatch.setattr("klangk.cli.main.Prompt.ask", _ask)
         result = CliRunner().invoke(
             main.app, ["admin", "users", "set-password", "hero@example.com"]
         )
@@ -3953,7 +3963,7 @@ class TestAdminUsersCLI:
         client.patch.assert_not_called()
 
     def test_set_password_user_not_found(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
         from typer.testing import CliRunner
 
         client = MagicMock()
@@ -3978,7 +3988,7 @@ class TestAdminUsersCLI:
         client.patch.assert_not_called()
 
     def test_set_password_backend_error(self, logged_in_cfg, monkeypatch):
-        from klangkc import main
+        from klangk.cli import main
         from typer.testing import CliRunner
 
         client = MagicMock()

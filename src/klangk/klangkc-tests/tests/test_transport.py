@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from klangkc.transport import (
+from klangk.cli.transport import (
     ServerTransport,
     http_request,
     http_stream,
@@ -56,7 +56,9 @@ class TestResolveTransport:
 class TestHttpRequest:
     def test_tcp_delegates_to_httpx_request(self):
         mock_resp = MagicMock()
-        with patch("klangkc.transport.httpx.request", return_value=mock_resp):
+        with patch(
+            "klangk.cli.transport.httpx.request", return_value=mock_resp
+        ):
             resp = http_request(
                 "http://localhost:8995", "GET", "/api/v1/config", timeout=5.0
             )
@@ -70,8 +72,12 @@ class TestHttpRequest:
         mock_client.request.return_value = mock_resp
 
         with (
-            patch("klangkc.transport.httpx.HTTPTransport") as mock_transport,
-            patch("klangkc.transport.httpx.Client", return_value=mock_client),
+            patch(
+                "klangk.cli.transport.httpx.HTTPTransport"
+            ) as mock_transport,
+            patch(
+                "klangk.cli.transport.httpx.Client", return_value=mock_client
+            ),
         ):
             resp = http_request(
                 "/tmp/klangk.sock",
@@ -90,7 +96,7 @@ class TestHttpRequest:
 class TestHttpStream:
     def test_tcp_delegates_to_httpx_stream(self):
         mock_cm = MagicMock()
-        with patch("klangkc.transport.httpx.stream", return_value=mock_cm):
+        with patch("klangk.cli.transport.httpx.stream", return_value=mock_cm):
             result = http_stream(
                 "http://localhost:8995",
                 "GET",
@@ -110,8 +116,10 @@ class TestHttpStream:
         mock_client.stream.return_value = mock_stream_cm
 
         with (
-            patch("klangkc.transport.httpx.HTTPTransport"),
-            patch("klangkc.transport.httpx.Client", return_value=mock_client),
+            patch("klangk.cli.transport.httpx.HTTPTransport"),
+            patch(
+                "klangk.cli.transport.httpx.Client", return_value=mock_client
+            ),
         ):
             with http_stream(
                 "/tmp/klangk.sock",
@@ -134,7 +142,7 @@ class TestWsConnect:
         mock_cm.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "klangkc.transport.websockets.connect", return_value=mock_cm
+            "klangk.cli.transport.websockets.connect", return_value=mock_cm
         ) as mock_connect:
             async with ws_connect(
                 "http://localhost:8995", token="tok", max_size=1024
@@ -154,9 +162,11 @@ class TestWsConnect:
 
         with (
             patch(
-                "klangkc.transport.websockets.connect", return_value=mock_cm
+                "klangk.cli.transport.websockets.connect", return_value=mock_cm
             ) as mock_connect,
-            patch("klangkc.transport._socket.socket", return_value=mock_sock),
+            patch(
+                "klangk.cli.transport._socket.socket", return_value=mock_sock
+            ),
         ):
             async with ws_connect(
                 "/tmp/klangk.sock", token="tok", max_size=2048
@@ -174,7 +184,9 @@ class TestWsConnect:
         mock_sock.connect.side_effect = OSError("connection refused")
 
         with (
-            patch("klangkc.transport._socket.socket", return_value=mock_sock),
+            patch(
+                "klangk.cli.transport._socket.socket", return_value=mock_sock
+            ),
             pytest.raises(OSError, match="connection refused"),
         ):
             async with ws_connect("/tmp/klangk.sock", token="tok"):

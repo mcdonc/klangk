@@ -197,7 +197,7 @@ class EmailService:
                 if path.is_dir():
                     logger.info("Email templates loaded from %s", path)
                     loaders.append(FileSystemLoader(str(path)))
-            loaders.append(PackageLoader("klangkd", "email_templates"))
+            loaders.append(PackageLoader("klangk", "email_templates"))
             self._env = Environment(
                 loader=ChoiceLoader(loaders),
                 # autoescape by extension: .html/.xml are escaped (closes the

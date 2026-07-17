@@ -13,14 +13,14 @@ import pytest
 
 import types
 
-from klangkd.nginx import (
+from klangk.nginx import (
     NginxRenderer,
     detect_host_ipv4s,
     tcp_upstream,
     uds_upstream,
 )
 from _helpers import make_settings
-from klangkd.settings import KlangkSettings
+from klangk.settings import KlangkSettings
 
 
 def _renderer(settings):
@@ -32,7 +32,7 @@ def _renderer(settings):
 
 def _wd(settings):
     """Build a NginxWatchdog from settings (wrapped in a minimal mock app)."""
-    from klangkd.nginx import NginxWatchdog
+    from klangk.nginx import NginxWatchdog
 
     return NginxWatchdog(
         types.SimpleNamespace(state=types.SimpleNamespace(settings=settings))
@@ -515,7 +515,7 @@ class TestFindNginxBin:
 
     def test_fallback_to_usr_sbin(self, monkeypatch):
         """When shutil.which returns None, fall back to /usr/sbin/nginx."""
-        import klangkd.nginx as nginx_mod
+        import klangk.nginx as nginx_mod
 
         s = make_settings({})
         monkeypatch.setattr(nginx_mod.shutil, "which", lambda _: None)
@@ -525,7 +525,7 @@ class TestFindNginxBin:
 class TestDetectHostIPv4s:
     def test_subprocess_failure_returns_empty(self, monkeypatch):
         """When the ip command fails, returns [] (caller uses fallback)."""
-        import klangkd.nginx as nginx_mod
+        import klangk.nginx as nginx_mod
 
         def _raise(*a, **kw):
             raise FileNotFoundError("no ip")
@@ -537,7 +537,7 @@ class TestDetectHostIPv4s:
 class TestDnsResolversFromResolvConf:
     def test_parses_resolv_conf(self, monkeypatch):
         """When KLANGK_DNS_SERVERS is unset, nameservers come from resolv.conf."""
-        import klangkd.nginx as nginx_mod
+        import klangk.nginx as nginx_mod
 
         s = make_settings({})
         content = "nameserver 1.1.1.1\nnameserver ::1\n"
@@ -552,7 +552,7 @@ class TestDnsResolversFromResolvConf:
 
     def test_resolv_conf_read_error(self, monkeypatch):
         """OSError reading resolv.conf -> fall back to 8.8.8.8."""
-        import klangkd.nginx as nginx_mod
+        import klangk.nginx as nginx_mod
 
         s = make_settings({})
 
@@ -566,7 +566,7 @@ class TestDnsResolversFromResolvConf:
 class TestContainerAclFallback:
     def test_fallback_when_no_host_ips(self, monkeypatch):
         """When auto-detect yields nothing, fallback RFC1918 ranges are used."""
-        import klangkd.nginx as nginx_mod
+        import klangk.nginx as nginx_mod
 
         s = make_settings({})
         monkeypatch.setattr(nginx_mod, "detect_host_ipv4s", lambda: [])
@@ -646,7 +646,7 @@ class TestWatchdogGate:
         watchdog. The real nginx spawn is e2e-covered; here _watch is stubbed
         so the orchestration (prepare, set _stopping=False, create_task) is
         unit-tested."""
-        from klangkd.nginx import NginxWatchdog
+        from klangk.nginx import NginxWatchdog
 
         sock = str(tmp_path / "klangk.sock")
         s = make_settings(
@@ -658,7 +658,7 @@ class TestWatchdogGate:
         )
         monkeypatch.delenv("_KLANGK_DISABLE_NGINX", raising=False)
         monkeypatch.setattr(
-            "klangkd.nginx.NginxRenderer.find_nginx_bin",
+            "klangk.nginx.NginxRenderer.find_nginx_bin",
             lambda self: "/fake/nginx",
         )
 
@@ -697,7 +697,7 @@ class TestPrepareNginx:
             }
         )
         monkeypatch.setattr(
-            "klangkd.nginx.NginxRenderer.find_nginx_bin",
+            "klangk.nginx.NginxRenderer.find_nginx_bin",
             lambda self: "/fake/nginx",
         )
         wd = _wd(s)
@@ -798,7 +798,7 @@ class TestStopWatchdog:
         """If the proc doesn't exit within the timeout, SIGKILL via killpg."""
         import signal
 
-        import klangkd.nginx as nginx_mod
+        import klangk.nginx as nginx_mod
 
         actions = []
 
@@ -840,7 +840,7 @@ class TestStopWatchdog:
         """Falls back to proc.kill() when killpg SIGKILL raises."""
         import signal
 
-        import klangkd.nginx as nginx_mod
+        import klangk.nginx as nginx_mod
 
         actions = []
         call_count = [0]

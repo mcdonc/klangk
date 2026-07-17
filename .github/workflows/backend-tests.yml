@@ -33,9 +33,8 @@ jobs:
 
       - name: Install dependencies
         if: steps.filter.outputs.python == 'true'
-        # One unified distribution (src/klangk) ships both the klangkd
-        # server and the klangkc client; the two unit suites share one
-        # --cov gate over both packages (#1606).
+        # One unified distribution (src/klangk) ships the klangk package
+        # (server + CLI). The two unit suites share one --cov gate (#1606).
         run: pip install -e src/klangk/
 
       - name: Run tests

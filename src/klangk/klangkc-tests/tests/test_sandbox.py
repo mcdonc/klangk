@@ -3,7 +3,7 @@
 import pytest
 import yaml
 
-from klangkc.sandbox import (
+from klangk.cli.sandbox import (
     SandboxConfig,
     build_all_mounts,
     build_copy_pairs,

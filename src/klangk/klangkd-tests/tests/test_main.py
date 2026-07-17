@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
-from klangkd import (
+from klangk import (
     agent as agent_mod,
     auth as auth_mod,
     emailsvc as emailsvc_mod,
@@ -27,9 +27,9 @@ from klangkd import (
     plugins,
     workspaces,
 )
-from klangkd.container import ContainerRegistry
+from klangk.container import ContainerRegistry
 from _helpers import make_settings
-from klangkd.wshandler.session import WebSocketState
+from klangk.wshandler.session import WebSocketState
 
 
 def _make_app_state(settings=None):
@@ -48,7 +48,7 @@ def _make_app_state(settings=None):
     registry = ContainerRegistry(app_state)
     app_state.state.container_registry = registry
     # #1468: container.py / agent.py reach the CLI wrappers via self.podman.
-    from klangkd.podman import Podman
+    from klangk.podman import Podman
 
     app_state.state.podman = Podman(app_state)
     app_state.state.oidc = oidc.OIDC(app_state)
@@ -57,11 +57,11 @@ def _make_app_state(settings=None):
     app_state.state.files = files_mod.Files(app_state)
     # #1520: the lifespan binds app.state.db as the active DB for its context;
     # mirror build_app so lifespan-driven tests have it.
-    from klangkd.model import db as db_mod
+    from klangk.model import db as db_mod
 
     app_state.state.db = db_mod.DB(app_state)
     # #1572: Model(app_state) composing the converted domains.
-    from klangkd.model import Model
+    from klangk.model import Model
 
     app_state.state.model = Model(app_state)
     app_state.state.agents = agent_mod.Agents(app_state)
@@ -71,8 +71,8 @@ def _make_app_state(settings=None):
     app_state.state.ssl_trust = ssl_trust_mod.SSLTrust(app_state)
     app_state.state.auth = auth_mod.Auth(app_state)
     app_state.state.nginx_watchdog = nginx_mod.NginxWatchdog(app_state)
-    from klangkd.terminal import Terminal
-    from klangkd.acl import ACL
+    from klangk.terminal import Terminal
+    from klangk.acl import ACL
 
     app_state.state.terminal = Terminal(app_state)
     app_state.state.acl = ACL(app_state)
@@ -546,7 +546,7 @@ class TestLifespan:
             patch.object(util_mod.Util, "write_pid_file"),
             patch.object(util_mod.Util, "remove_pid_file"),
             patch(
-                "klangkd.main.wshandler.reset_workspace_state",
+                "klangk.main.wshandler.reset_workspace_state",
                 new_callable=AsyncMock,
             ) as mock_reset,
         ):
@@ -616,7 +616,7 @@ class TestStartupShutdownRestart:
         registry = app_state.state.container_registry
         with (
             patch(
-                "klangkd.main.wshandler.disconnect_all_websockets",
+                "klangk.main.wshandler.disconnect_all_websockets",
                 new_callable=AsyncMock,
             ) as mock_disc,
             patch.object(
@@ -625,7 +625,7 @@ class TestStartupShutdownRestart:
                 new_callable=AsyncMock,
             ) as mock_stop_agents,
             patch(
-                "klangkd.main.wshandler.clear_agent_mention_state"
+                "klangk.main.wshandler.clear_agent_mention_state"
             ) as mock_clear,
             patch.object(
                 registry, "shutdown", new_callable=AsyncMock

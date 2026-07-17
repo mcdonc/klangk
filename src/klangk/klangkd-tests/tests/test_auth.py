@@ -7,13 +7,13 @@ from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from jose import jwt
 
-from klangkd import auth
-from klangkd.exceptions import ConfigurationError
+from klangk import auth
+from klangk.exceptions import ConfigurationError
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 import types as _types
 
 from _helpers import make_settings
-from klangkd.auth import Auth
+from klangk.auth import Auth
 
 
 def _auth(env=None):
@@ -928,7 +928,7 @@ class TestRequireSecureJwtSecret:
         a = _auth()
         import logging
 
-        with caplog.at_level(logging.WARNING, logger="klangkd.auth"):
+        with caplog.at_level(logging.WARNING, logger="klangk.auth"):
             a.require_secure_jwt_secret()  # warns but does not raise
 
     def test_default_secret_blocks_with_prevent(self):

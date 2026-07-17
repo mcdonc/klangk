@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from _helpers import make_settings
-from klangkd.emailsvc import EmailService
-from klangkd.exceptions import SendmailError
+from klangk.emailsvc import EmailService
+from klangk.exceptions import SendmailError
 
 
 def _email_service(env: dict) -> EmailService:
     """Build an EmailService from explicit env (never touches the process env)."""
-    from klangkd.auth import Auth
+    from klangk.auth import Auth
 
     settings = make_settings(env)
     app_state = types.SimpleNamespace(
@@ -89,7 +89,7 @@ class TestSendViaSmtp:
                 "KLANGK_SMTP_USE_TLS": "true",
             }
         )
-        import klangkd.emailsvc as emailsvc_mod
+        import klangk.emailsvc as emailsvc_mod
 
         mock_send = AsyncMock()
         with patch.object(emailsvc_mod.aiosmtplib, "send", mock_send):
@@ -112,7 +112,7 @@ class TestSendViaSmtp:
             }
         )
         mock_send = AsyncMock()
-        import klangkd.emailsvc as emailsvc_mod
+        import klangk.emailsvc as emailsvc_mod
 
         with patch.object(emailsvc_mod.aiosmtplib, "send", mock_send):
             await svc.send_via_smtp(_plain_msg())

@@ -11,7 +11,7 @@ import os
 import pytest
 
 from _helpers import make_settings
-from klangkd.settings import (
+from klangk.settings import (
     KlangkSettings,
     _resolve_indirection,
     resolve_dynamic_config,
@@ -173,7 +173,7 @@ class TestDualFormKeys:
     and consistency with the wider config-file style (e.g. cli.yaml, OIDC
     provider dicts). Top-level keys are normalized by
     ``_KebabYamlConfigSettingsSource``; nested OIDC provider dicts are
-    handled separately by :func:`klangkd.oidc.get`."""
+    handled separately by :func:`klangk.oidc.get`."""
 
     def test_kebab_case_key_loads(self, tmp_path):
         """A hyphenated top-level key maps to its snake_case field."""
@@ -385,20 +385,20 @@ class TestKlangkdLauncher:
     """Tests for the klangkd launcher's --config resolution."""
 
     def test_resolve_config_path_existing(self, tmp_path):
-        from klangkd.launcher import _resolve_config_path
+        from klangk.launcher import _resolve_config_path
 
         cfg = tmp_path / "config.yaml"
         cfg.write_text("product_name: test\n")
         assert _resolve_config_path(str(cfg)) == str(cfg)
 
     def test_resolve_config_path_none(self):
-        from klangkd.launcher import _resolve_config_path
+        from klangk.launcher import _resolve_config_path
 
         assert _resolve_config_path("none") == "none"
 
     def test_resolve_config_path_missing(self):
         import pytest as _pytest
-        from klangkd.launcher import _resolve_config_path
+        from klangk.launcher import _resolve_config_path
         import typer
 
         with _pytest.raises(typer.BadParameter):

@@ -21,7 +21,7 @@ Always run the test suites **the way CI runs them**. The exact invocations
 are:
 
 ```bash
-# Python (server klangkd + client klangkc, single --cov gate over both)
+# Python (single klangk package, server + CLI)
 devenv --quiet -O dotenv.enable:bool false shell -- python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests -v -n auto
 
 # Frontend
@@ -38,8 +38,8 @@ under-counts and you'll see a false ~93% total with heavy files like
 (100%, every module). Don't try to "reproduce" a coverage drop from a
 single-process run — re-run with `-n auto` first.
 
-The 100% coverage gate is enforced on the merged `klangkd` + `klangkc`
-packages; a new code path with no test will fail the build. When iterating
+The 100% coverage gate is enforced on the `klangk` package; a new code
+path with no test will fail the build. When iterating
 fast on one file you can scope with `-k` / a path and add `--no-cov`, but
 re-run the full suite **with** coverage (and `-n auto`) before committing.
 

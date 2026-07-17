@@ -10,7 +10,7 @@ let
   # single entry. Dev config lives in klangkd.yaml (gitignored);
   # copy from klangkd.yaml.example if missing.
   backendCmd = ''
-    python3 -m klangkd.launcher --config="$DEVENV_ROOT/klangkd.yaml"
+    python3 -m klangk.launcher --config="$DEVENV_ROOT/klangkd.yaml"
   '';
   pluginsDir = config.devenv.root + "/.devenv/state/klangk/plugins";
   dataDir = config.devenv.root + "/.devenv/state/klangk/data";
@@ -241,7 +241,7 @@ in
 
   # -n auto: run tests in parallel across CPUs (pytest-xdist)
   # Runs both unit suites (server + client) in one invocation. The single
-  # --cov gate covers both klangkd and klangkc packages (#1606). The two
+  # --cov gate covers the klangk package (#1606). The two
   # dirs share rootdir = src/klangk (the pyproject there carries addopts).
   scripts.test-backend.exec = ''
     cd $DEVENV_ROOT

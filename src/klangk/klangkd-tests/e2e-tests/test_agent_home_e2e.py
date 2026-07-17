@@ -39,7 +39,7 @@ import httpx
 import pytest
 import websockets
 
-from klangkd.model import free_port
+from klangk.model import free_port
 from _e2e_env import clean_env, close_popen_pipes
 
 # Default agent handle (see model/users.py: _DEFAULT_AGENT_HANDLE).  Not

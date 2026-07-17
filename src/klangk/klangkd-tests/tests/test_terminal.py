@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from klangkd.exceptions import TerminalError
-from klangkd.terminal import (
+from klangk.exceptions import TerminalError
+from klangk.terminal import (
     CONTAINER_USER,
     SERVICE_SESSION,
     Terminal,
@@ -24,7 +24,7 @@ from klangkd.terminal import (
     validate_window_name,
 )
 
-SHELL_FACTORY = "klangkd.terminal.make_shell_process"
+SHELL_FACTORY = "klangk.terminal.make_shell_process"
 
 # Mock Podman instance whose methods the tmux-function tests patch via
 # patch.object, then pass to the function under test as its ``podman``
@@ -1411,7 +1411,7 @@ class TestEnsureServiceSession:
                 "exec_container",
                 new=AsyncMock(side_effect=RuntimeError("tmux broke")),
             ),
-            patch("klangkd.terminal.logger") as mock_logger,
+            patch("klangk.terminal.logger") as mock_logger,
         ):
             await _terminal.ensure_service_session(
                 "cid", "/home/clanker", "cmd"
@@ -1443,7 +1443,7 @@ class TestEnsureServiceSession:
                     ]
                 ),
             ),
-            patch("klangkd.terminal.logger") as mock_logger,
+            patch("klangk.terminal.logger") as mock_logger,
         ):
             await _terminal.ensure_service_session(
                 "cid", "/home/clanker", "cmd"
@@ -1560,7 +1560,7 @@ class TestEnsureServiceSession:
         send-keys ambiguous. The lock makes window-exists -> new-window ->
         send-keys atomic per container.
         """
-        from klangkd import terminal
+        from klangk import terminal
 
         # Shared tmux "state": both the existence check and new-window
         # read/write this, so once the lock forces the second caller to
@@ -1605,7 +1605,7 @@ class TestEnsureServiceSession:
                 "exec_container",
                 side_effect=fake_exec,
             ),
-            patch("klangkd.terminal.asyncio.sleep", new=AsyncMock()),
+            patch("klangk.terminal.asyncio.sleep", new=AsyncMock()),
         ):
             await asyncio.gather(
                 _terminal.ensure_service_session(
@@ -1628,7 +1628,7 @@ class TestEnsureServiceSession:
         """#1188: the firing lock is keyed by container, so concurrent fires
         for DIFFERENT containers are not serialized -- each fires exactly
         once, in parallel. Unrelated workspaces must not block each other."""
-        from klangkd import terminal
+        from klangk import terminal
 
         # Per-container tmux state so the two containers don't share a view.
         windows: dict[str, set[str]] = {"cid-a": set(), "cid-b": set()}
@@ -1662,7 +1662,7 @@ class TestEnsureServiceSession:
                 "exec_container",
                 side_effect=fake_exec,
             ),
-            patch("klangkd.terminal.asyncio.sleep", new=AsyncMock()),
+            patch("klangk.terminal.asyncio.sleep", new=AsyncMock()),
         ):
             await asyncio.gather(
                 _terminal.ensure_service_session(
@@ -1709,7 +1709,7 @@ class TestEnsureServiceSession:
                     ]
                 ),
             ) as mock_exec,
-            patch("klangkd.terminal.logger"),
+            patch("klangk.terminal.logger"),
         ):
             await _terminal.ensure_service_session(
                 "cid", "/home/clanker", "cmd"
@@ -1749,7 +1749,7 @@ class TestEnsureServiceSession:
                     ]
                 ),
             ),
-            patch("klangkd.terminal.logger") as mock_logger,
+            patch("klangk.terminal.logger") as mock_logger,
         ):
             await _terminal.ensure_service_session(
                 "cid", "/home/clanker", "cmd"
@@ -1789,7 +1789,7 @@ class TestServiceSessionHelpers:
             )
 
     def test_should_fire_returns_false_without_service_command(self):
-        from klangkd.terminal import should_fire_service_command
+        from klangk.terminal import should_fire_service_command
 
         assert should_fire_service_command(None, "complete") is False
         assert should_fire_service_command("", "complete") is False

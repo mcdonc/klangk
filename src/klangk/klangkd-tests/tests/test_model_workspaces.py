@@ -10,11 +10,11 @@ ContextVar DB) with the schema initialized.
 
 import pytest
 
-from klangkd.model.workspaces import (
+from klangk.model.workspaces import (
     SETUP_STATE_COMPLETE,
     SETUP_STATE_PENDING,
 )
-from klangkd.model.users import AGENT_USER_ID, AgentPrincipalError
+from klangk.model.users import AGENT_USER_ID, AgentPrincipalError
 
 
 @pytest.fixture
@@ -69,7 +69,7 @@ async def test_list_shared_workspaces(ws, app_state, user):
     other = await app_state.state.model.users.create_user("other@x.com", "h")
     ws_row = await ws.create_workspace_with_acl(other["id"], "shared-ws")
     # Grant ``user`` a direct user-level Allow ACE on the workspace.
-    from klangkd.model import ACTION_ALLOW, PRINCIPAL_USER
+    from klangk.model import ACTION_ALLOW, PRINCIPAL_USER
 
     await app_state.state.model.acl.add_acl_entry(
         f"/workspaces/{ws_row['id']}",
@@ -102,7 +102,7 @@ async def test_get_workspace_access_control(ws, user):
 async def test_get_workspace_members(ws, app_state, user):
     other = await app_state.state.model.users.create_user("member@x.com", "h")
     ws_row = await ws.create_workspace_with_acl(user["id"], "members-ws")
-    from klangkd.model import ACTION_ALLOW, PRINCIPAL_USER
+    from klangk.model import ACTION_ALLOW, PRINCIPAL_USER
 
     await app_state.state.model.acl.add_acl_entry(
         f"/workspaces/{ws_row['id']}",

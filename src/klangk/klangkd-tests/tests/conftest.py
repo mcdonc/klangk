@@ -12,7 +12,7 @@ import bcrypt
 
 import pytest
 
-from klangkd.settings import KlangkSettings
+from klangk.settings import KlangkSettings
 
 from _helpers import make_settings
 
@@ -57,7 +57,7 @@ def temp_data_dir(tmp_path, monkeypatch):
     # not a fresh DB on a different temp path (which would hit "no such
     # table"). This replaces the pre-#1578 ``_current_db`` ContextVar bind
     # (#1578); its env-only lazy fallback was the #1551 divergence path.
-    from klangkd.model.db import DB
+    from klangk.model.db import DB
     from _helpers import set_test_db, reset_test_db
 
     set_test_db(
@@ -70,7 +70,7 @@ def temp_data_dir(tmp_path, monkeypatch):
         )
     )
     # Clear agent caches so each test starts fresh.
-    from klangkd.model import clear_agent_cache
+    from klangk.model import clear_agent_cache
 
     clear_agent_cache()
     yield tmp_path
@@ -87,7 +87,7 @@ async def db(app_state):
 @pytest.fixture
 async def agent_user(app_state):
     """Seed the chat agent user into the DB."""
-    from klangkd.model import AGENT_USER_ID
+    from klangk.model import AGENT_USER_ID
 
     await app_state.state.model.init_db()
     async with app_state.state.db.transaction() as agent_db:
@@ -112,7 +112,7 @@ async def user(app_state):
 @pytest.fixture
 async def admin_group(app_state):
     """Create the admin group and seed default ACLs."""
-    from klangkd.model import (
+    from klangk.model import (
         ACTION_ALLOW,
         ACTION_DENY,
         PRINCIPAL_GROUP,
@@ -198,11 +198,11 @@ async def app_state(temp_data_dir):
     """
     import types
 
-    from klangkd.auth import Auth
-    from klangkd.container import ContainerRegistry
-    from klangkd.emailsvc import EmailService
-    from klangkd.util import Util
-    from klangkd.workspaces import Workspaces
+    from klangk.auth import Auth
+    from klangk.container import ContainerRegistry
+    from klangk.emailsvc import EmailService
+    from klangk.util import Util
+    from klangk.workspaces import Workspaces
 
     settings = make_settings(
         {

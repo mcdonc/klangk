@@ -36,7 +36,7 @@ import httpx
 import pytest
 import websockets
 
-from klangkd.model import free_port
+from klangk.model import free_port
 import sys
 
 sys.path.insert(

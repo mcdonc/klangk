@@ -10,13 +10,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import websockets
 
-from klangkc.config import CLIConfig, CLIState
+from klangk.cli.config import CLIConfig, CLIState
 
 
 class TestWsShell:
     @pytest.mark.asyncio
     async def test_ws_shell_connection_failure_raises(self):
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -36,7 +36,7 @@ class TestWsShell:
         ws_mock.send = AsyncMock()
 
         with patch(
-            "klangkc.transport.websockets.connect", return_value=ws_mock
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
         ):
             with pytest.raises(ConnectionError):
                 await ws_shell("http://localhost", "token", "ws1")
@@ -44,7 +44,7 @@ class TestWsShell:
     @pytest.mark.asyncio
     async def test_wait_container_ready_timeout(self):
         """Times out if container_ready never arrives."""
-        from klangkc.client import wait_container_ready
+        from klangk.cli.client import wait_container_ready
 
         ws_mock = AsyncMock()
         # Always return a non-ready message
@@ -59,7 +59,7 @@ class TestWsShell:
     @pytest.mark.asyncio
     async def test_wait_container_ready_skips_broadcasts(self):
         """Broadcast messages before container_ready are skipped."""
-        from klangkc.client import wait_container_ready
+        from klangk.cli.client import wait_container_ready
 
         ws_mock = AsyncMock()
         ws_mock.recv = AsyncMock(
@@ -77,7 +77,7 @@ class TestWsShell:
 
     @pytest.mark.asyncio
     async def test_ws_shell_success_sends_connect_and_start(self):
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -114,7 +114,7 @@ class TestWsShell:
         )
 
         with patch(
-            "klangkc.transport.websockets.connect", return_value=ws_mock
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
         ):
             with patch("termios.tcgetattr", return_value=None):
                 with patch("termios.tcsetattr"):
@@ -131,7 +131,7 @@ class TestWsShell:
     @pytest.mark.asyncio
     async def test_ws_shell_collects_windows_and_shared(self):
         """Drain loop collects terminal_windows and shared_terminals."""
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -179,7 +179,7 @@ class TestWsShell:
         )
 
         with patch(
-            "klangkc.transport.websockets.connect", return_value=ws_mock
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
         ):
             with patch("termios.tcgetattr", return_value=None):
                 with patch("termios.tcsetattr"):
@@ -192,7 +192,7 @@ class TestWsShell:
     @pytest.mark.asyncio
     async def test_ws_shell_select_own_window(self):
         """window= selects an own window by name."""
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -233,7 +233,7 @@ class TestWsShell:
         )
 
         with patch(
-            "klangkc.transport.websockets.connect", return_value=ws_mock
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
         ):
             with patch("termios.tcgetattr", return_value=None):
                 with patch("termios.tcsetattr"):
@@ -258,7 +258,7 @@ class TestWsShell:
     @pytest.mark.asyncio
     async def test_ws_shell_creates_missing_own_window(self):
         """Missing window is auto-created via terminal_new_window."""
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -313,7 +313,7 @@ class TestWsShell:
 
         with (
             patch(
-                "klangkc.transport.websockets.connect", return_value=ws_mock
+                "klangk.cli.transport.websockets.connect", return_value=ws_mock
             ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
@@ -341,7 +341,7 @@ class TestWsShell:
     @pytest.mark.asyncio
     async def test_ws_shell_join_shared_terminal(self):
         """window=handle:name joins a shared terminal."""
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -394,7 +394,7 @@ class TestWsShell:
         )
 
         with patch(
-            "klangkc.transport.websockets.connect", return_value=ws_mock
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
         ):
             with patch("termios.tcgetattr", return_value=None):
                 with patch("termios.tcsetattr"):
@@ -417,7 +417,7 @@ class TestWsShell:
 
     @pytest.mark.asyncio
     async def test_ws_shell_join_shared_not_found(self):
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -452,7 +452,7 @@ class TestWsShell:
         )
 
         with patch(
-            "klangkc.transport.websockets.connect", return_value=ws_mock
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
         ):
             with pytest.raises(ConnectionError, match="not found"):
                 await ws_shell(
@@ -464,7 +464,7 @@ class TestWsShell:
 
     @pytest.mark.asyncio
     async def test_ws_shell_join_shared_error(self):
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -512,7 +512,7 @@ class TestWsShell:
         )
 
         with patch(
-            "klangkc.transport.websockets.connect", return_value=ws_mock
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
         ):
             with pytest.raises(ConnectionError, match="Permission denied"):
                 await ws_shell(
@@ -526,7 +526,7 @@ class TestWsShell:
 class TestRunShell:
     @pytest.mark.asyncio
     async def test_stdout_loop_bytes_message(self):
-        from klangkc.client import run_shell
+        from klangk.cli.client import run_shell
 
         ws = AsyncMock()
         ws.recv = AsyncMock(
@@ -567,7 +567,7 @@ class TestRunShell:
 
     @pytest.mark.asyncio
     async def test_stdout_loop_ignores_unknown_event(self):
-        from klangkc.client import run_shell
+        from klangk.cli.client import run_shell
 
         ws = AsyncMock()
         ws.recv = AsyncMock(
@@ -600,7 +600,7 @@ class TestRunShell:
 
     @pytest.mark.asyncio
     async def test_stdout_loop_connection_closed(self):
-        from klangkc.client import run_shell
+        from klangk.cli.client import run_shell
 
         ws = AsyncMock()
         ws.recv = AsyncMock(
@@ -617,7 +617,7 @@ class TestRunShell:
 
     @pytest.mark.asyncio
     async def test_stdin_loop_broken_pipe(self):
-        from klangkc.client import run_shell
+        from klangk.cli.client import run_shell
 
         ws = AsyncMock()
         ws.send = AsyncMock()
@@ -643,11 +643,11 @@ class TestRunShell:
         # blocking on the real stdin fd.
         with (
             patch(
-                "klangkc.client.select.select",
+                "klangk.cli.client.select.select",
                 return_value=([99], [], []),
             ),
             patch(
-                "klangkc.client.os.read",
+                "klangk.cli.client.os.read",
                 side_effect=BrokenPipeError,
             ),
         ):
@@ -662,7 +662,7 @@ class TestRunShell:
     @pytest.mark.asyncio
     async def test_resize_loop_sends_on_size_change(self, monkeypatch):
         """resize_loop detects size change and sends terminal_resize via _send_resize."""
-        from klangkc import client as cli_client
+        from klangk.cli import client as cli_client
         from io import BytesIO
 
         fake_buf = BytesIO(b"")
@@ -697,7 +697,7 @@ class TestRunShell:
 
         # select returns empty so stdin_loop keeps looping without reading EOF
         with patch(
-            "klangkc.client.select.select",
+            "klangk.cli.client.select.select",
             return_value=([], [], []),
         ):
             task = asyncio.create_task(
@@ -723,46 +723,46 @@ class TestRunShell:
 
 class TestIsTerminalResponse:
     def test_short_data_returns_false(self):
-        from klangkc.client import is_terminal_response
+        from klangk.cli.client import is_terminal_response
 
         assert is_terminal_response(b"") is False
         assert is_terminal_response(b"\x1b") is False
         assert is_terminal_response(b"\x1b[") is False
 
     def test_osc_response(self):
-        from klangkc.client import is_terminal_response
+        from klangk.cli.client import is_terminal_response
 
         assert is_terminal_response(b"\x1b]11;rgb:0000/0000/0000\x07") is True
 
     def test_dcs_response(self):
-        from klangkc.client import is_terminal_response
+        from klangk.cli.client import is_terminal_response
 
         assert is_terminal_response(b"\x1bP>|xterm\x1b\\") is True
 
     def test_da2_response(self):
-        from klangkc.client import is_terminal_response
+        from klangk.cli.client import is_terminal_response
 
         assert is_terminal_response(b"\x1b[>61;1;21c") is True
 
     def test_da1_response(self):
-        from klangkc.client import is_terminal_response
+        from klangk.cli.client import is_terminal_response
 
         assert is_terminal_response(b"\x1b[?61;1c") is True
 
     def test_user_arrow_key_returns_false(self):
-        from klangkc.client import is_terminal_response
+        from klangk.cli.client import is_terminal_response
 
         assert is_terminal_response(b"\x1b[A") is False  # up arrow
 
     def test_non_escape_returns_false(self):
-        from klangkc.client import is_terminal_response
+        from klangk.cli.client import is_terminal_response
 
         assert is_terminal_response(b"hello") is False
 
 
 class TestDrainStdin:
     def test_drain_with_pending_data(self):
-        from klangkc.client import drain_stdin
+        from klangk.cli.client import drain_stdin
 
         call_count = [0]
 
@@ -773,15 +773,15 @@ class TestDrainStdin:
             return ([], [], [])
 
         with (
-            patch("klangkc.client.sys.stdin") as mock_stdin,
+            patch("klangk.cli.client.sys.stdin") as mock_stdin,
             patch(
-                "klangkc.client.select.select",
+                "klangk.cli.client.select.select",
                 side_effect=fake_select,
             ),
-            patch("klangkc.client.os.read", return_value=b"\x1b[>1;2c"),
-            patch("klangkc.client.termios.tcgetattr", return_value=[]),
-            patch("klangkc.client.termios.tcsetattr"),
-            patch("klangkc.client.tty.setraw"),
+            patch("klangk.cli.client.os.read", return_value=b"\x1b[>1;2c"),
+            patch("klangk.cli.client.termios.tcgetattr", return_value=[]),
+            patch("klangk.cli.client.termios.tcsetattr"),
+            patch("klangk.cli.client.tty.setraw"),
         ):
             mock_stdin.fileno.return_value = 0
             drain_stdin()
@@ -789,16 +789,16 @@ class TestDrainStdin:
     def test_drain_termios_error_skips_raw_mode(self):
         import termios
 
-        from klangkc.client import drain_stdin
+        from klangk.cli.client import drain_stdin
 
         with (
-            patch("klangkc.client.sys.stdin") as mock_stdin,
+            patch("klangk.cli.client.sys.stdin") as mock_stdin,
             patch(
-                "klangkc.client.select.select",
+                "klangk.cli.client.select.select",
                 return_value=([], [], []),
             ),
             patch(
-                "klangkc.client.termios.tcgetattr",
+                "klangk.cli.client.termios.tcgetattr",
                 side_effect=termios.error("nope"),
             ),
         ):
@@ -806,15 +806,15 @@ class TestDrainStdin:
             drain_stdin()  # should not raise
 
     def test_drain_os_error(self):
-        from klangkc.client import drain_stdin
+        from klangk.cli.client import drain_stdin
 
-        with patch("klangkc.client.sys.stdin") as mock_stdin:
+        with patch("klangk.cli.client.sys.stdin") as mock_stdin:
             mock_stdin.fileno.side_effect = OSError("bad fd")
             drain_stdin()  # should not raise
 
     def test_drain_second_select_finds_data(self):
         """Cover the 'wait one more round' branch."""
-        from klangkc.client import drain_stdin
+        from klangk.cli.client import drain_stdin
 
         call_count = [0]
 
@@ -830,15 +830,15 @@ class TestDrainStdin:
             return ([], [], [])
 
         with (
-            patch("klangkc.client.sys.stdin") as mock_stdin,
+            patch("klangk.cli.client.sys.stdin") as mock_stdin,
             patch(
-                "klangkc.client.select.select",
+                "klangk.cli.client.select.select",
                 side_effect=fake_select,
             ),
-            patch("klangkc.client.os.read", return_value=b"\x1b[?1c"),
-            patch("klangkc.client.termios.tcgetattr", return_value=[]),
-            patch("klangkc.client.termios.tcsetattr"),
-            patch("klangkc.client.tty.setraw"),
+            patch("klangk.cli.client.os.read", return_value=b"\x1b[?1c"),
+            patch("klangk.cli.client.termios.tcgetattr", return_value=[]),
+            patch("klangk.cli.client.termios.tcsetattr"),
+            patch("klangk.cli.client.tty.setraw"),
         ):
             mock_stdin.fileno.return_value = 0
             drain_stdin()
@@ -847,7 +847,7 @@ class TestDrainStdin:
 class TestStdoutLoopExited:
     @pytest.mark.asyncio
     async def test_exited_shows_disconnect_hint(self):
-        from klangkc.client import run_shell
+        from klangk.cli.client import run_shell
 
         ws = AsyncMock()
         ws.recv = AsyncMock(
@@ -899,7 +899,7 @@ class TestStdoutLoopAuthClose:
         import websockets
         from websockets.frames import Close
 
-        from klangkc.client import run_shell
+        from klangk.cli.client import run_shell
 
         ws = AsyncMock()
         exc = websockets.ConnectionClosed(Close(4002, "Token expired"), None)
@@ -933,7 +933,7 @@ class TestStdinTerminalResponseFilter:
     @pytest.mark.asyncio
     async def test_terminal_response_filtered_from_stdin(self):
         """Terminal query responses on stdin are dropped, not forwarded."""
-        from klangkc.client import run_shell
+        from klangk.cli.client import run_shell
 
         ws = AsyncMock()
         ws.send = AsyncMock()
@@ -975,10 +975,10 @@ class TestStdinTerminalResponseFilter:
 
         with (
             patch(
-                "klangkc.client.select.select",
+                "klangk.cli.client.select.select",
                 side_effect=fake_select,
             ),
-            patch("klangkc.client.os.read", side_effect=fake_read),
+            patch("klangk.cli.client.os.read", side_effect=fake_read),
         ):
             task = asyncio.create_task(run_shell(ws, 80, 24, stdin=fake_stdin))
             await asyncio.sleep(0.5)
@@ -999,16 +999,17 @@ class TestStdinTerminalResponseFilter:
 
 class TestAuthLines:
     def test_logout_network_error_propagates(self, tmp_path, monkeypatch):
-        from klangkc import auth
+        from klangk.cli import auth
 
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangkc.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials("http://localhost:8995", "x@y.com", "tok")
         state.save()
 
         with patch(
-            "klangkc.transport.httpx.request", side_effect=OSError("no route")
+            "klangk.cli.transport.httpx.request",
+            side_effect=OSError("no route"),
         ):
             with pytest.raises(OSError):
                 auth.logout("http://localhost:8995")
@@ -1022,7 +1023,7 @@ class TestClientLines:
     def test_delete_workspace_500_raises(self):
         import httpx
 
-        from klangkc.client import KlangkClient
+        from klangk.cli.client import KlangkClient
 
         client = KlangkClient("http://test:8995", "tok")
 
@@ -1052,7 +1053,7 @@ class TestClientLines:
 
     def test_restart_workspace_calls_post(self):
 
-        from klangkc.client import KlangkClient
+        from klangk.cli.client import KlangkClient
 
         client = KlangkClient("http://test:8995", "tok")
 
@@ -1081,7 +1082,7 @@ class TestClientLines:
         mock_post.assert_called_once_with("/api/v1/workspaces/ws1/restart")
 
     def test_list_workspaces_all_pages_traverses_pagination(self):
-        from klangkc.client import KlangkClient
+        from klangk.cli.client import KlangkClient
 
         client = KlangkClient("http://test:8995", "tok")
 
@@ -1123,7 +1124,7 @@ class TestClientLines:
         assert mock_get.call_args_list[1].kwargs["params"]["offset"] == 10
 
     def test_list_workspaces_sort_order_q_forwarded(self):
-        from klangkc.client import KlangkClient
+        from klangk.cli.client import KlangkClient
 
         client = KlangkClient("http://test:8995", "tok")
         resp = MagicMock()
@@ -1143,7 +1144,7 @@ class TestClientLines:
 
 class TestImagesCommand:
     def test_images_lists_allowed(self, monkeypatch):
-        from klangkc import main as cli_main
+        from klangk.cli import main as cli_main
 
         mock_client = MagicMock()
         mock_client.list_images.return_value = {
@@ -1192,9 +1193,9 @@ class TestWsExec:
         )
 
         with patch(
-            "klangkc.transport.websockets.connect", return_value=ws_mock
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
         ):
-            from klangkc.client import ws_exec_piped
+            from klangk.cli.client import ws_exec_piped
 
             code, output = await ws_exec_piped(
                 "http://localhost",
@@ -1208,7 +1209,7 @@ class TestWsExec:
 
     @pytest.mark.asyncio
     async def test_ws_exec_connection_failure(self):
-        from klangkc.client import ws_exec
+        from klangk.cli.client import ws_exec
 
         ws_mock = MagicMock()
 
@@ -1226,7 +1227,7 @@ class TestWsExec:
         ws_mock.send = AsyncMock()
 
         with patch(
-            "klangkc.transport.websockets.connect", return_value=ws_mock
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
         ):
             with pytest.raises(ConnectionError):
                 await ws_exec("http://localhost", "token", "ws1", ["ls"])
@@ -1237,31 +1238,31 @@ class TestShellConnectionError:
         """Set up common mocks for shell tests."""
         state = CLIState()
         state.set_credentials("http://localhost:8995", "test@test.com", "fake")
-        monkeypatch.setattr("klangkc.main._state", lambda: state)
-        monkeypatch.setattr("klangkc.main._server_override", None)
-        monkeypatch.setattr("klangkc.main._cfg", lambda: CLIConfig())
+        monkeypatch.setattr("klangk.cli.main._state", lambda: state)
+        monkeypatch.setattr("klangk.cli.main._server_override", None)
+        monkeypatch.setattr("klangk.cli.main._cfg", lambda: CLIConfig())
 
     def test_shell_catches_connection_error(self, monkeypatch):
         """shell() catches ConnectionError from ws_shell and exits cleanly."""
-        from klangkc.main import shell
-        from klangkc.client import Workspace
+        from klangk.cli.main import shell
+        from klangk.cli.client import Workspace
 
         self._setup_shell_mocks(monkeypatch)
 
         fake_ws = Workspace(id="ws1", name="ws", created_at="2026-01-01")
         monkeypatch.setattr(
-            "klangkc.main._client",
+            "klangk.cli.main._client",
             lambda: MagicMock(
                 resolve_workspace=MagicMock(return_value=fake_ws)
             ),
         )
 
         monkeypatch.setattr(
-            "klangkc.main.asyncio.run",
+            "klangk.cli.main.asyncio.run",
             MagicMock(side_effect=ConnectionError("Server error")),
         )
-        monkeypatch.setattr("klangkc.client.drain_stdin", lambda: None)
-        monkeypatch.setattr("klangkc.client.reset_terminal", lambda: None)
+        monkeypatch.setattr("klangk.cli.client.drain_stdin", lambda: None)
+        monkeypatch.setattr("klangk.cli.client.reset_terminal", lambda: None)
 
         import typer
 
@@ -1271,30 +1272,30 @@ class TestShellConnectionError:
 
     def _shell_with_side_effect(self, monkeypatch, side_effect):
         """Helper: run shell() with a mocked asyncio.run side_effect."""
-        from klangkc.client import Workspace
+        from klangk.cli.client import Workspace
 
         self._setup_shell_mocks(monkeypatch)
 
         fake_ws = Workspace(id="ws1", name="ws", created_at="2026-01-01")
         monkeypatch.setattr(
-            "klangkc.main._client",
+            "klangk.cli.main._client",
             lambda: MagicMock(
                 resolve_workspace=MagicMock(return_value=fake_ws)
             ),
         )
 
         monkeypatch.setattr(
-            "klangkc.main.asyncio.run",
+            "klangk.cli.main.asyncio.run",
             MagicMock(side_effect=side_effect),
         )
-        monkeypatch.setattr("klangkc.client.drain_stdin", lambda: None)
-        monkeypatch.setattr("klangkc.client.reset_terminal", lambda: None)
+        monkeypatch.setattr("klangk.cli.client.drain_stdin", lambda: None)
+        monkeypatch.setattr("klangk.cli.client.reset_terminal", lambda: None)
 
     def test_shell_catches_expired_token(self, monkeypatch):
         """shell() catches InvalidStatus with 4001/4002 and shows auth error."""
         from websockets import InvalidStatus, Response
 
-        from klangkc.main import shell
+        from klangk.cli.main import shell
 
         self._shell_with_side_effect(
             monkeypatch,
@@ -1311,7 +1312,7 @@ class TestShellConnectionError:
         """shell() catches InvalidStatus with non-auth code (e.g. 500)."""
         from websockets import InvalidStatus, Response
 
-        from klangkc.main import shell
+        from klangk.cli.main import shell
 
         self._shell_with_side_effect(
             monkeypatch,
@@ -1330,7 +1331,7 @@ class TestSSHAgentForwarding:
     async def test_ws_shell_sends_agent_start_when_flag_set(self, tmp_path):
         """With forward_agent=True and a valid SSH_AUTH_SOCK, ssh_agent_start
         is sent before terminal_start."""
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         fake_sock = tmp_path / "agent.sock"
         fake_sock.touch()
@@ -1374,7 +1375,7 @@ class TestSSHAgentForwarding:
 
         with (
             patch(
-                "klangkc.transport.websockets.connect", return_value=ws_mock
+                "klangk.cli.transport.websockets.connect", return_value=ws_mock
             ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
@@ -1402,7 +1403,7 @@ class TestSSHAgentForwarding:
 
     async def test_ws_shell_no_agent_without_flag(self):
         """Without forward_agent=True, no ssh_agent_start is sent."""
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -1437,7 +1438,7 @@ class TestSSHAgentForwarding:
 
         with (
             patch(
-                "klangkc.transport.websockets.connect", return_value=ws_mock
+                "klangk.cli.transport.websockets.connect", return_value=ws_mock
             ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
@@ -1459,7 +1460,7 @@ class TestSSHAgentForwarding:
     async def test_ws_shell_agent_start_timeout(self, tmp_path):
         """If the backend never sends ssh_agent_started, the timeout
         fires and we proceed without agent forwarding."""
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         fake_sock = tmp_path / "agent.sock"
         fake_sock.touch()
@@ -1519,7 +1520,7 @@ class TestSSHAgentForwarding:
 
         with (
             patch(
-                "klangkc.transport.websockets.connect", return_value=ws_mock
+                "klangk.cli.transport.websockets.connect", return_value=ws_mock
             ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
@@ -1547,7 +1548,7 @@ class TestSSHAgentForwarding:
     async def test_ws_shell_agent_start_error_response(self, tmp_path):
         """If backend sends an error in response to ssh_agent_start,
         we proceed without agent forwarding."""
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         fake_sock = tmp_path / "agent.sock"
         fake_sock.touch()
@@ -1586,7 +1587,7 @@ class TestSSHAgentForwarding:
 
         with (
             patch(
-                "klangkc.transport.websockets.connect", return_value=ws_mock
+                "klangk.cli.transport.websockets.connect", return_value=ws_mock
             ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
@@ -1613,7 +1614,7 @@ class TestSSHAgentForwarding:
     @pytest.mark.filterwarnings("ignore::RuntimeWarning")
     async def test_ws_shell_sends_agent_stop_on_exit(self, tmp_path):
         """When agent was active, ssh_agent_stop is sent on shell exit."""
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         fake_sock = tmp_path / "agent.sock"
         fake_sock.touch()
@@ -1658,7 +1659,7 @@ class TestSSHAgentForwarding:
 
         with (
             patch(
-                "klangkc.transport.websockets.connect", return_value=ws_mock
+                "klangk.cli.transport.websockets.connect", return_value=ws_mock
             ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
@@ -1689,7 +1690,7 @@ class TestSSHAgentRelayLoop:
         """ssh_agent_response messages in stdout_loop are put on the queue."""
         import base64
 
-        from klangkc.client import run_shell
+        from klangk.cli.client import run_shell
 
         ws = AsyncMock()
         stdout = MagicMock()
@@ -1747,7 +1748,7 @@ class TestSSHAgentRelayLoop:
         import base64
         import struct
 
-        from klangkc.client import run_shell
+        from klangk.cli.client import run_shell
 
         # Create a real Unix socket server acting as the SSH agent
         agent_path = str(tmp_path / "agent.sock")
@@ -1849,7 +1850,7 @@ class TestSSHAgentRelayLoop:
         import base64
         import struct
 
-        from klangkc.client import run_shell
+        from klangk.cli.client import run_shell
 
         # Point to a path that doesn't have a listener
         bad_sock = str(tmp_path / "nonexistent.sock")
@@ -1912,7 +1913,7 @@ class TestWsExecPipedWithInput:
     async def test_piped_sends_stdin_data(self):
         import base64
 
-        from klangkc.client import ws_exec_piped
+        from klangk.cli.client import ws_exec_piped
 
         ws_mock = MagicMock()
 
@@ -1936,7 +1937,7 @@ class TestWsExecPipedWithInput:
         )
 
         with patch(
-            "klangkc.transport.websockets.connect", return_value=ws_mock
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
         ):
             code, output = await ws_exec_piped(
                 "http://localhost",
@@ -1958,7 +1959,7 @@ class TestWsExecPipedWithInput:
 
 class TestGetHandle:
     def test_returns_handle(self):
-        from klangkc.client import KlangkClient
+        from klangk.cli.client import KlangkClient
 
         client = KlangkClient("http://localhost:8995", "test-token")
 
@@ -1979,7 +1980,7 @@ class TestExecOnWsRealFd:
     async def test_stdin_fd_sends_data(self):
         import base64
 
-        from klangkc.client import exec_on_ws
+        from klangk.cli.client import exec_on_ws
 
         ws = AsyncMock()
         sent = []
@@ -2023,7 +2024,7 @@ class TestExecOnWsRealFd:
         """Test output written to a real fd via os.write."""
         import base64
 
-        from klangkc.client import exec_on_ws
+        from klangk.cli.client import exec_on_ws
 
         ws = AsyncMock()
         ws.send = AsyncMock()
@@ -2057,7 +2058,7 @@ class TestExecOnWsRealFd:
         """ssh_agent_response messages are queued for the relay."""
         import base64
 
-        from klangkc.client import exec_on_ws
+        from klangk.cli.client import exec_on_ws
 
         ws = AsyncMock()
         sent = []
@@ -2085,7 +2086,7 @@ class TestExecOnWsRealFd:
         import tempfile
         import threading
 
-        from klangkc.client import exec_on_ws
+        from klangk.cli.client import exec_on_ws
 
         # Create a fake agent socket that echoes a fixed response.
         agent_response = struct.pack(">I", 1) + b"\x0b"  # 1-byte body
@@ -2160,7 +2161,7 @@ class TestExecOnWsRealFd:
 
     async def test_ssh_agent_relay_no_socket(self):
         """Relay exits early when SSH_AUTH_SOCK is unset."""
-        from klangkc.client import exec_on_ws
+        from klangk.cli.client import exec_on_ws
 
         ws = AsyncMock()
         ws.send = AsyncMock()
@@ -2177,7 +2178,7 @@ class TestExecOnWsRealFd:
         """Relay loops with no data then exits when stop is set."""
         import tempfile
 
-        from klangkc.client import exec_on_ws
+        from klangk.cli.client import exec_on_ws
 
         # Create a real socket file so the relay enters the while loop,
         # but never send ssh_agent_response — it should hit the
@@ -2212,7 +2213,7 @@ class TestExecOnWsRealFd:
         import base64
         import tempfile
 
-        from klangkc.client import exec_on_ws
+        from klangk.cli.client import exec_on_ws
 
         # Create a regular file (not a socket) so os.path.exists()
         # passes but socket.connect() raises OSError.
@@ -2258,7 +2259,7 @@ class TestExecOnWsRealFd:
 
     async def test_timeout_returns_124(self):
         """When timeout expires, exit code 124 is returned."""
-        from klangkc.client import exec_on_ws
+        from klangk.cli.client import exec_on_ws
 
         ws = AsyncMock()
         ws.send = AsyncMock()
@@ -2277,7 +2278,7 @@ class TestWsExecWrapper:
 
     async def test_ws_exec_delegates(self):
 
-        from klangkc.client import ws_exec
+        from klangk.cli.client import ws_exec
 
         ws_mock = MagicMock()
 
@@ -2304,7 +2305,7 @@ class TestWsExecWrapper:
 
         with (
             patch(
-                "klangkc.transport.websockets.connect", return_value=ws_mock
+                "klangk.cli.transport.websockets.connect", return_value=ws_mock
             ),
             patch(
                 "sys.stdin",
@@ -2327,7 +2328,7 @@ class TestSandboxSetupHook:
     """Test that ws_shell calls sandbox_setup before terminal_start."""
 
     async def test_sandbox_setup_called(self, tmp_path):
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -2368,7 +2369,7 @@ class TestSandboxSetupHook:
 
         with (
             patch(
-                "klangkc.transport.websockets.connect", return_value=ws_mock
+                "klangk.cli.transport.websockets.connect", return_value=ws_mock
             ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
@@ -2396,7 +2397,7 @@ class TestWindowAutoCreate:
     """Test that ws_shell creates a window when it doesn't exist."""
 
     async def test_creates_missing_window(self):
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -2455,7 +2456,7 @@ class TestWindowAutoCreate:
 
         with (
             patch(
-                "klangkc.transport.websockets.connect", return_value=ws_mock
+                "klangk.cli.transport.websockets.connect", return_value=ws_mock
             ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
@@ -2485,7 +2486,7 @@ class TestWindowAutoCreate:
         assert select_msg["window_id"] == "@1"
 
     async def test_selects_existing_window(self):
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -2527,7 +2528,7 @@ class TestWindowAutoCreate:
 
         with (
             patch(
-                "klangkc.transport.websockets.connect", return_value=ws_mock
+                "klangk.cli.transport.websockets.connect", return_value=ws_mock
             ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
@@ -2551,7 +2552,7 @@ class TestWindowAutoCreate:
 
     async def test_create_window_buffers_output(self):
         """terminal_output during window creation is buffered."""
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -2608,7 +2609,7 @@ class TestWindowAutoCreate:
 
         with (
             patch(
-                "klangkc.transport.websockets.connect", return_value=ws_mock
+                "klangk.cli.transport.websockets.connect", return_value=ws_mock
             ),
             patch("termios.tcgetattr", return_value=None),
             patch("termios.tcsetattr"),
@@ -2630,7 +2631,7 @@ class TestWindowAutoCreate:
 
     async def test_create_window_error_response(self):
         """Error from server during window creation raises ConnectionError."""
-        from klangkc.client import ws_shell
+        from klangk.cli.client import ws_shell
 
         ws_mock = MagicMock()
 
@@ -2670,7 +2671,7 @@ class TestWindowAutoCreate:
         )
 
         with patch(
-            "klangkc.transport.websockets.connect", return_value=ws_mock
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
         ):
             with pytest.raises(ConnectionError, match="Failed to create"):
                 await ws_shell(

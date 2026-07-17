@@ -9,7 +9,7 @@ the ``test_model_users.py`` pattern.
 
 import pytest
 
-from klangkd.model.chat import MSG_AGENT, MSG_USER
+from klangk.model.chat import MSG_AGENT, MSG_USER
 
 
 @pytest.fixture

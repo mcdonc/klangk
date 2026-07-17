@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 from fastapi import WebSocketDisconnect
 
-from klangkd import (
+from klangk import (
     agent as agent_mod,
     acl as acl_mod,
     auth as auth_mod,
@@ -27,14 +27,14 @@ from klangkd import (
     container,
     workspaces as ws_mod,
 )
-from klangkd.exceptions import TerminalError
-from klangkd.model.chat import ChatModel
+from klangk.exceptions import TerminalError
+from klangk.model.chat import ChatModel
 from _helpers import make_settings
-from klangkd.wshandler import (
+from klangk.wshandler import (
     constants as _ws_constants,
     controllers as _ws_controllers,
 )
-from klangkd.wshandler import (
+from klangk.wshandler import (
     Connection,
     ExecController,
     SafeWebSocket,
@@ -87,7 +87,7 @@ _mock_term.service_cmd_window_exists = AsyncMock(return_value=False)
 
 def _make_app_state(registry=None, sockets=None):
     """Build a minimal app_state for tests."""
-    from klangkd.container import ContainerRegistry
+    from klangk.container import ContainerRegistry
 
     settings = make_settings({})
     # Two-phase: shell first so owned instances (sockets, registry, etc.)
@@ -1163,7 +1163,7 @@ class TestHandleTerminalStart:
         mock_session.is_alive = True
         MockTS = MagicMock(return_value=mock_session)
         with (
-            patch("klangkd.wshandler.controllers.TerminalSession", MockTS),
+            patch("klangk.wshandler.controllers.TerminalSession", MockTS),
             patch.object(_mock_term, "attach_browser", new_callable=AsyncMock),
             patch.object(
                 app_state.state.model.workspaces,
@@ -1237,7 +1237,7 @@ class TestHandleTerminalStart:
             side_effect=RuntimeError("podman broke")
         )
         MockTS = MagicMock(return_value=mock_session)
-        with patch("klangkd.wshandler.controllers.TerminalSession", MockTS):
+        with patch("klangk.wshandler.controllers.TerminalSession", MockTS):
             await conn.handle_terminal_start({"cols": 80, "rows": 24})
             await asyncio.sleep(0)
 
@@ -1270,7 +1270,7 @@ class TestHandleTerminalStart:
         mock_session.output = _empty_async_generator
         mock_session.start = AsyncMock(side_effect=SlowClientError())
         MockTS = MagicMock(return_value=mock_session)
-        with patch("klangkd.wshandler.controllers.TerminalSession", MockTS):
+        with patch("klangk.wshandler.controllers.TerminalSession", MockTS):
             await conn.handle_terminal_start({"cols": 80, "rows": 24})
             await asyncio.sleep(0)
 
@@ -1304,7 +1304,7 @@ class TestHandleTerminalStart:
         # trying to send the error message
         sock.send_json = MagicMock(side_effect=RuntimeError("ws gone"))
         MockTS = MagicMock(return_value=mock_session)
-        with patch("klangkd.wshandler.controllers.TerminalSession", MockTS):
+        with patch("klangk.wshandler.controllers.TerminalSession", MockTS):
             await conn.handle_terminal_start({"cols": 80, "rows": 24})
             await asyncio.sleep(0)
 
@@ -1331,7 +1331,7 @@ class TestHandleTerminalStart:
         mock_session.output = _empty_async_generator
         mock_session.start = AsyncMock(side_effect=asyncio.CancelledError)
         MockTS = MagicMock(return_value=mock_session)
-        with patch("klangkd.wshandler.controllers.TerminalSession", MockTS):
+        with patch("klangk.wshandler.controllers.TerminalSession", MockTS):
             await conn.handle_terminal_start({"cols": 80, "rows": 24})
             task = conn.terminal_task
             with pytest.raises(asyncio.CancelledError):
@@ -1369,7 +1369,7 @@ class TestHandleTerminalStart:
 
         mock_session.start = AsyncMock(side_effect=start_and_replace)
         MockTS = MagicMock(return_value=mock_session)
-        with patch("klangkd.wshandler.controllers.TerminalSession", MockTS):
+        with patch("klangk.wshandler.controllers.TerminalSession", MockTS):
             await conn.handle_terminal_start({"cols": 80, "rows": 24})
             await asyncio.sleep(0)
 
@@ -1406,7 +1406,7 @@ class TestHandleSetHandle:
         conn.container_id = "cid"
 
         with patch(
-            "klangkd.workspaces.populate_home_skel",
+            "klangk.workspaces.populate_home_skel",
             new_callable=AsyncMock,
         ) as mock_skel:
             await conn.handle_set_handle({"handle": "alice"})
@@ -1756,7 +1756,7 @@ class TestHandleWorkspaceConnect:
 
     async def test_connect_race_deleted(self, user, app_state):
         """ACL passes but workspace deleted before lookup."""
-        from klangkd import model
+        from klangk import model
 
         sock = _mock_sock()
         fake_id = "deleted-ws-id"
@@ -2342,7 +2342,7 @@ class TestExecHandlers:
         mock_session.output = empty_output
         mock_session.returncode = 0
         with patch(
-            "klangkd.wshandler.controllers.ExecSession",
+            "klangk.wshandler.controllers.ExecSession",
             return_value=mock_session,
         ):
             with patch.object(registry, "record_activity"):
@@ -2377,7 +2377,7 @@ class TestExecHandlers:
         mock_session.output = empty_output
         mock_session.returncode = 0
         with patch(
-            "klangkd.wshandler.controllers.ExecSession",
+            "klangk.wshandler.controllers.ExecSession",
             return_value=mock_session,
         ) as mock_cls:
             with patch.object(registry, "record_activity"):
@@ -2580,7 +2580,7 @@ class TestExecController:
         old = AsyncMock()
         ctrl.session = old
         with (
-            patch("klangkd.wshandler.controllers.ExecSession") as MockExec,
+            patch("klangk.wshandler.controllers.ExecSession") as MockExec,
             patch.object(registry, "record_activity"),
         ):
             mock_session = MockExec.return_value
@@ -2606,7 +2606,7 @@ class TestExecController:
             ssh_agent_socket="/tmp/agent.sock",
         )
         with (
-            patch("klangkd.wshandler.controllers.ExecSession") as MockExec,
+            patch("klangk.wshandler.controllers.ExecSession") as MockExec,
             patch.object(registry, "record_activity"),
         ):
             mock_session = MockExec.return_value
@@ -2627,7 +2627,7 @@ class TestExecController:
         registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(user_home=None, app_state=app_state)
         with (
-            patch("klangkd.wshandler.controllers.ExecSession") as MockExec,
+            patch("klangk.wshandler.controllers.ExecSession") as MockExec,
             patch.object(registry, "record_activity"),
         ):
             mock_session = MockExec.return_value
@@ -2649,7 +2649,7 @@ class TestExecController:
         registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(app_state=app_state)
         with (
-            patch("klangkd.wshandler.controllers.ExecSession") as MockExec,
+            patch("klangk.wshandler.controllers.ExecSession") as MockExec,
             patch.object(registry, "record_activity"),
         ):
             mock_session = MockExec.return_value
@@ -2670,7 +2670,7 @@ class TestExecController:
         registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(app_state=app_state)
         with (
-            patch("klangkd.wshandler.controllers.ExecSession") as MockExec,
+            patch("klangk.wshandler.controllers.ExecSession") as MockExec,
             patch.object(registry, "record_activity"),
         ):
             mock_session = MockExec.return_value
@@ -3063,7 +3063,7 @@ class TestSSHAgentHandlers:
         mock_session.output = empty_output
         with (
             patch(
-                "klangkd.wshandler.controllers.TerminalSession",
+                "klangk.wshandler.controllers.TerminalSession",
                 return_value=mock_session,
             ) as MockTS,
             patch.object(registry, "record_activity"),
@@ -3140,7 +3140,7 @@ class TestSshAgentForwarder:
             created.append(t)
             return t
 
-        with patch("klangkd.wshandler.controllers.asyncio.create_task", _wrap):
+        with patch("klangk.wshandler.controllers.asyncio.create_task", _wrap):
             yield created
         for t in created:
             if not t.done():
@@ -3247,7 +3247,7 @@ class TestSshAgentForwarder:
             side_effect=[b"line one\n", b"line two\n", b""]
         )
         fwd.proc = mock_proc
-        with patch("klangkd.wshandler.controllers.logger") as lg:
+        with patch("klangk.wshandler.controllers.logger") as lg:
             await fwd.log_stderr()
         info_msgs = [c.args for c in lg.info.call_args_list]
         assert (
@@ -3324,7 +3324,7 @@ class TestSshAgentForwarder:
         fwd.proc = mock_proc
         with (
             patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
-            patch("klangkd.wshandler.controllers.logger") as lg,
+            patch("klangk.wshandler.controllers.logger") as lg,
         ):
             await fwd.forward_output()
         info_args = [str(c) for c in lg.info.call_args_list]
@@ -3337,7 +3337,7 @@ class TestSshAgentForwarder:
         mock_proc.stdout = AsyncMock()
         mock_proc.stdout.read = AsyncMock(side_effect=OSError("boom"))
         fwd.proc = mock_proc
-        with patch("klangkd.wshandler.controllers.logger") as lg:
+        with patch("klangk.wshandler.controllers.logger") as lg:
             await fwd.forward_output()
         lg.warning.assert_called_once()
         assert "SSH agent output relay error" in str(lg.warning.call_args)
@@ -3365,7 +3365,7 @@ class TestSshAgentForwarder:
         fwd.proc = None
         with (
             patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
-            patch("klangkd.wshandler.controllers.logger") as lg,
+            patch("klangk.wshandler.controllers.logger") as lg,
         ):
             await fwd.data({"data": base64.b64encode(b"x").decode()})
         assert any(
@@ -3383,7 +3383,7 @@ class TestSshAgentForwarder:
         fwd.proc = mock_proc
         with (
             patch.dict(os.environ, {"KLANGKC_DEBUG_SSH_AGENT": "1"}),
-            patch("klangkd.wshandler.controllers.logger") as lg,
+            patch("klangk.wshandler.controllers.logger") as lg,
         ):
             await fwd.data({"data": data})
         mock_proc.stdin.write.assert_called_once_with(b"agent-request")
@@ -3427,7 +3427,7 @@ class TestSshAgentForwarder:
             "exec_container",
             new=AsyncMock(side_effect=OSError("boom")),
         ) as exec_mock:
-            with patch("klangkd.wshandler.controllers.logger") as lg:
+            with patch("klangk.wshandler.controllers.logger") as lg:
                 await fwd.stop()
         exec_mock.assert_awaited_once()
         lg.warning.assert_called_once()
@@ -4044,7 +4044,7 @@ class TestNotifyUserWorkspacesChanged:
     def test_dead_socket_is_pruned(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
-        from klangkd.wshandler import WS_ERRORS
+        from klangk.wshandler import WS_ERRORS
 
         sock = _mock_sock()
         sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
@@ -4111,7 +4111,7 @@ class TestNotifyContainerStatus:
     def test_dead_socket_is_pruned(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
-        from klangkd.wshandler import WS_ERRORS
+        from klangk.wshandler import WS_ERRORS
 
         sock = _mock_sock()
         sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
@@ -4187,7 +4187,7 @@ class TestNotifyServiceHealth:
     def test_dead_socket_is_pruned(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
-        from klangkd.wshandler import WS_ERRORS
+        from klangk.wshandler import WS_ERRORS
 
         sock = _mock_sock()
         sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
@@ -4291,7 +4291,7 @@ class TestServiceHealthSnapshot:
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         registry = app_state.state.container_registry
-        from klangkd.wshandler import WS_ERRORS
+        from klangk.wshandler import WS_ERRORS
 
         saved = dict(registry.states)
         sock = _mock_sock()
@@ -4338,7 +4338,7 @@ class TestServiceHealthFrame:
         # Only the required healthy/message need to be supplied; the new
         # fields default so an old-style caller produces a superset of
         # the legacy frame (additive, non-breaking).
-        from klangkd.wshandler.session import _service_health_frame
+        from klangk.wshandler.session import _service_health_frame
 
         out = _service_health_frame("ws-1", healthy=True, message=None)
         assert out["type"] == "service_health"
@@ -4350,7 +4350,7 @@ class TestServiceHealthFrame:
         assert out["seq"] == 0
 
     def test_health_checked_at_serialized_as_iso(self):
-        from klangkd.wshandler.session import (
+        from klangk.wshandler.session import (
             _service_health_frame,
             _iso_utc,
         )
@@ -4365,7 +4365,7 @@ class TestServiceHealthFrame:
         assert out["health_checked_at"] == "2023-11-14T22:13:20+00:00"
 
     def test_running_false_and_seq_forwarded(self):
-        from klangkd.wshandler.session import _service_health_frame
+        from klangk.wshandler.session import _service_health_frame
 
         out = _service_health_frame(
             "ws-1",
@@ -4495,7 +4495,7 @@ class TestHealthHeartbeat:
     def test_dead_opted_in_socket_is_pruned(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
-        from klangkd.wshandler import WS_ERRORS
+        from klangk.wshandler import WS_ERRORS
 
         sock = _mock_sock()
         sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
@@ -5735,9 +5735,9 @@ class TestTerminalController:
 
         with (
             patch.object(ctrl, "stop", new=AsyncMock()) as stop,
-            patch("klangkd.wshandler.controllers.TerminalSession") as MockTS,
+            patch("klangk.wshandler.controllers.TerminalSession") as MockTS,
             patch(
-                "klangkd.wshandler.controllers.asyncio.create_task",
+                "klangk.wshandler.controllers.asyncio.create_task",
                 _swallow,
             ),
             patch.object(registry, "record_activity"),
@@ -5950,7 +5950,7 @@ class TestTerminalController:
         rec.assert_called_once_with("cid")
 
     async def test_forward_output_swallows_ws_error(self):
-        from klangkd.wshandler import WS_ERRORS
+        from klangk.wshandler import WS_ERRORS
 
         ctrl, sock, _ = self._controller()
         session = AsyncMock()
@@ -5961,7 +5961,7 @@ class TestTerminalController:
 
         session.output = fake_output
         sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("ws dead"))
-        with patch("klangkd.wshandler.controllers.send_event"):
+        with patch("klangk.wshandler.controllers.send_event"):
             await ctrl.forward_output(session)
         session.stop.assert_awaited_once()
 
@@ -6138,7 +6138,7 @@ class TestTerminalController:
         cached) even though the agent has no WS connection (#1133)."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
-        from klangkd import model
+        from klangk import model
 
         ctrl, _, conn = self._controller(app_state=app_state)
         ws_session = sockets.get_or_create_session("ws-1", app_state)
@@ -6257,8 +6257,8 @@ class TestTerminalController:
         connection (#1133)."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
-        from klangkd import model
-        from klangkd.wshandler.helpers import get_shared_terminals
+        from klangk import model
+        from klangk.wshandler.helpers import get_shared_terminals
 
         ws_session = sockets.get_or_create_session("ws-offline", app_state)
         try:
@@ -8519,14 +8519,14 @@ class TestSendQueueBehavior:
 
 class TestMentionsAgent:
     async def test_detects_mention(self, agent_user, app_state):
-        from klangkd.wshandler import mentions_agent
+        from klangk.wshandler import mentions_agent
 
         assert await mentions_agent("@clanker hello", app_state)
         assert await mentions_agent("hey @clanker what's up", app_state)
         assert await mentions_agent("@CLANKER help", app_state)
 
     async def test_no_false_positives(self, agent_user, app_state):
-        from klangkd.wshandler import mentions_agent
+        from klangk.wshandler import mentions_agent
 
         assert not await mentions_agent("hello everyone", app_state)
         assert not await mentions_agent("@someone else", app_state)
@@ -8540,7 +8540,7 @@ class TestMentionsAgent:
         permanently and ignored handle changes, so @mentions kept using
         the old handle forever.
         """
-        from klangkd.wshandler import mentions_agent
+        from klangk.wshandler import mentions_agent
 
         # Sanity: original handle is detected before the rename.
         assert await mentions_agent("@clanker hello", app_state)
@@ -8561,7 +8561,7 @@ class TestMentionsAgent:
 
 class TestAddressesOtherUser:
     async def test_starts_with_other_mention(self, agent_user, app_state):
-        from klangkd.wshandler import addresses_other_user
+        from klangk.wshandler import addresses_other_user
 
         assert await addresses_other_user("@bob hello", app_state)
         assert await addresses_other_user(
@@ -8569,18 +8569,18 @@ class TestAddressesOtherUser:
         )
 
     async def test_starts_with_agent_mention(self, agent_user, app_state):
-        from klangkd.wshandler import addresses_other_user
+        from klangk.wshandler import addresses_other_user
 
         assert not await addresses_other_user("@clanker hello", app_state)
         assert not await addresses_other_user("@CLANKER help", app_state)
 
     async def test_no_mention(self, agent_user, app_state):
-        from klangkd.wshandler import addresses_other_user
+        from klangk.wshandler import addresses_other_user
 
         assert not await addresses_other_user("hello everyone", app_state)
 
     async def test_mention_in_middle(self, agent_user, app_state):
-        from klangkd.wshandler import addresses_other_user
+        from klangk.wshandler import addresses_other_user
 
         assert not await addresses_other_user(
             "I think @bob is right", app_state
@@ -8602,7 +8602,7 @@ class TestChatFollowUp:
         """Same user's follow-up routes without timer."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
-        from klangkd.wshandler import agent_conversations
+        from klangk.wshandler import agent_conversations
 
         mock_session = AsyncMock()
         mock_session.output = _empty_async_generator
@@ -8644,7 +8644,7 @@ class TestChatFollowUp:
         """After interjection, follow-up within 30s still routes."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
-        from klangkd.wshandler import agent_conversations
+        from klangk.wshandler import agent_conversations
 
         mock_session = AsyncMock()
         mock_session.output = _empty_async_generator
@@ -8686,7 +8686,7 @@ class TestChatFollowUp:
         """After interjection + 30s, follow-up does NOT route."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
-        from klangkd.wshandler import agent_conversations
+        from klangk.wshandler import agent_conversations
 
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
@@ -8719,7 +8719,7 @@ class TestChatFollowUp:
         """A different user's message marks interjection."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
-        from klangkd.wshandler import agent_conversations
+        from klangk.wshandler import agent_conversations
 
         sock = _mock_sock()
         other_user = {"id": "other-uid", "email": "other@test.com"}
@@ -8747,7 +8747,7 @@ class TestChatFollowUp:
         """Message starting with @someone else breaks conversation."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
-        from klangkd.wshandler import agent_conversations
+        from klangk.wshandler import agent_conversations
 
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
@@ -9024,7 +9024,7 @@ class TestChatSend:
         """Agent process death posts system message."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
-        from klangkd.agent import AgentProcessDied
+        from klangk.agent import AgentProcessDied
 
         mock_session = AsyncMock()
         mock_session.output = _empty_async_generator
@@ -9117,7 +9117,7 @@ class TestChatSend:
 
         try:
             with patch(
-                "klangkd.wshandler.connection.handle_agent_mention",
+                "klangk.wshandler.connection.handle_agent_mention",
                 new=slow_mention,
             ):
                 await conn1.handle_chat_send({"message": "@clanker first"})
@@ -9268,7 +9268,7 @@ class TestPresence:
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         registry = app_state.state.container_registry
-        from klangkd import model
+        from klangk import model
 
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "pres-join-ws"
@@ -9403,7 +9403,7 @@ class TestPresence:
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         registry = app_state.state.container_registry
-        from klangkd import model
+        from klangk import model
 
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "pres-debounce-ws"
@@ -10467,7 +10467,7 @@ class TestAgentMentionOtherMsgsContext:
         their messages are prepended to the prompt."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
-        from klangkd.wshandler import handle_agent_mention
+        from klangk.wshandler import handle_agent_mention
 
         workspace = await app_state.state.model.workspaces.create_workspace(
             user["id"], "ctx-ws"
@@ -10536,7 +10536,7 @@ class TestAgentMentionAskerIdentity:
     """The asking user's identity is injected so the agent can resolve "my"."""
 
     def test_header_includes_id_handle_home(self):
-        from klangkd.wshandler.agent_mention import (
+        from klangk.wshandler.agent_mention import (
             asker_context_header,
         )
 
@@ -10550,7 +10550,7 @@ class TestAgentMentionAskerIdentity:
         assert '"my"/"my history"' in header
 
     def test_header_none_without_user_id(self):
-        from klangkd.wshandler.agent_mention import (
+        from klangk.wshandler.agent_mention import (
             asker_context_header,
         )
 
@@ -10562,7 +10562,7 @@ class TestAgentMentionAskerIdentity:
         """An @mention from a user injects that user's identity header."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
-        from klangkd.wshandler import handle_agent_mention
+        from klangk.wshandler import handle_agent_mention
 
         workspace = await app_state.state.model.workspaces.create_workspace(
             user["id"], "id-ws"

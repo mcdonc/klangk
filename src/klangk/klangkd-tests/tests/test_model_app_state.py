@@ -9,7 +9,7 @@ moved to the class methods) are covered here too.
 
 import pytest
 
-from klangkd import model
+from klangk import model
 
 
 @pytest.fixture
@@ -282,7 +282,7 @@ class TestACLModel:
         assert "/tree/one" in resources
 
     async def test_add_rejects_agent_principal(self, app_state_with_schema):
-        from klangkd.model import AgentPrincipalError
+        from klangk.model import AgentPrincipalError
 
         a = app_state_with_schema.state.model.acl
         with pytest.raises(AgentPrincipalError):
@@ -298,7 +298,7 @@ class TestACLModel:
     async def test_replace_rejects_agent_principal(
         self, app_state_with_schema
     ):
-        from klangkd.model import AgentPrincipalError
+        from klangk.model import AgentPrincipalError
 
         a = app_state_with_schema.state.model.acl
         with pytest.raises(AgentPrincipalError):
@@ -334,7 +334,7 @@ class TestNoConfigDivergenceRegression:
     def test_no_env_only_db_construction_path_exists(self):
         """The ContextVar, its binders, and the module-level DB delegates that
         hid the env-only fallback are gone from model.db."""
-        import klangkd.model.db as db_mod
+        import klangk.model.db as db_mod
 
         for gone in (
             "set_current_db",
@@ -369,8 +369,8 @@ class TestNoConfigDivergenceRegression:
         # (mirrors a config-file-launched process). Build the owned DB + Model
         # directly from those settings — NOT via wire_db_and_model, which
         # reuses the shared per-test DB and would mask the divergence.
-        from klangkd.model import Model
-        from klangkd.model.db import DB
+        from klangk.model import Model
+        from klangk.model.db import DB
 
         settings = make_settings(
             {

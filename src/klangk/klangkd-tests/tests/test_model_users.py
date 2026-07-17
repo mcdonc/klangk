@@ -9,7 +9,7 @@ initialized.
 
 import pytest
 
-from klangkd.model.users import (
+from klangk.model.users import (
     AGENT_USER_ID,
     AgentPrincipalError,
 )
@@ -206,7 +206,7 @@ async def test_backfill_handles_method(users):
 
 async def test_unique_handle_truncates_long_suffix(users):
     """A base near MAX_HANDLE_LEN gets its numeric suffix truncated."""
-    from klangkd.model import MAX_HANDLE_LEN
+    from klangk.model import MAX_HANDLE_LEN
 
     long = "a" * MAX_HANDLE_LEN
     async with users.app.state.db.transaction() as db:

@@ -8,7 +8,7 @@ import aiosqlite
 import pytest
 import sqlalchemy.exc
 
-from klangkd import model, util
+from klangk import model, util
 from _helpers import get_test_db
 
 
@@ -2119,14 +2119,14 @@ class TestSchemaAgentBackstops:
 
 class TestHashFallbackHandle:
     def test_returns_hash_based_handle(self):
-        from klangkd.model import hash_fallback_handle
+        from klangk.model import hash_fallback_handle
 
         result = hash_fallback_handle("testbase")
         assert result.startswith("testbase-")
         assert len(result) <= model.MAX_HANDLE_LEN
 
     def test_truncates_long_base(self):
-        from klangkd.model import hash_fallback_handle
+        from klangk.model import hash_fallback_handle
 
         long_base = "a" * 100
         result = hash_fallback_handle(long_base)
@@ -2139,7 +2139,7 @@ class TestUniqueHandleFallback:
     async def test_falls_back_to_hash_after_exhausting_suffixes(self, db):
         from unittest.mock import AsyncMock
 
-        from klangkd.model import unique_handle
+        from klangk.model import unique_handle
 
         # Mock a DB cursor that always finds a collision
         mock_cursor = AsyncMock()
@@ -2157,7 +2157,7 @@ class TestUniqueHandleFallback:
 
     async def test_truncates_long_suffix(self, db):
         """A base near MAX_HANDLE_LEN gets its numeric suffix truncated."""
-        from klangkd.model import MAX_HANDLE_LEN, unique_handle
+        from klangk.model import MAX_HANDLE_LEN, unique_handle
 
         long = "a" * MAX_HANDLE_LEN
         # First collision on the base, then the -2 suffix fits within the limit
@@ -2267,8 +2267,8 @@ class TestDB:
 
     def test_db_derives_path_from_settings(self, temp_data_dir):
         """DB computes db_path from settings.data_dir, not import-time globals."""
-        from klangkd.model.db import DB
-        from klangkd.settings import KlangkSettings
+        from klangk.model.db import DB
+        from klangk.settings import KlangkSettings
         import os
 
         db = DB(

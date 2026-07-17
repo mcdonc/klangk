@@ -1,7 +1,7 @@
 """``klangkd`` — the klangk server launcher (#1395, #1396).
 
 Loads config (from a YAML file + env vars + built-in defaults, per the
-precedence rules in :mod:`klangkd.settings`), binds uvicorn (to a
+precedence rules in :mod:`klangk.settings`), binds uvicorn (to a
 UNIX domain socket when ``KLANGK_LISTEN`` is a path, or a TCP host
 otherwise), and owns the nginx child that fronts it.
 
@@ -29,7 +29,7 @@ from pathlib import Path
 import typer
 import uvicorn
 
-from klangkd.settings import KlangkSettings
+from klangk.settings import KlangkSettings
 
 # The default config-file location — a deployed klangkd finds its config here
 # with no args.  See #1395.
@@ -108,7 +108,7 @@ def main(  # pragma: no cover
     # ``module:app`` string import). This avoids the module-level
     # ``app = build_app()`` global — there's one ``build_app(settings)`` call,
     # one registry, wired correctly (#1464, #1454).
-    from klangkd.main import build_app  # noqa: allow-deferred-import
+    from klangk.main import build_app  # noqa: allow-deferred-import
 
     asgi_app = build_app(settings)
     # Arm the UDS trust flag on the Util instance: over a UDS,

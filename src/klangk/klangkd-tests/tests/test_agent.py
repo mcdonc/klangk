@@ -7,9 +7,9 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from _helpers import make_settings
-from klangkd import files as files_mod
-from klangkd.model.chat import ChatModel
-from klangkd.agent import (
+from klangk import files as files_mod
+from klangk.model.chat import ChatModel
+from klangk.agent import (
     AgentError,
     AgentProcessDied,
     AgentSession,
@@ -42,7 +42,7 @@ def _mock_container_registry():
 @pytest.fixture(autouse=True)
 async def _seed_agent_db(app_state):
     """Seed the agent user so agent_handle()/agent_email() work."""
-    from klangkd.model import AGENT_USER_ID
+    from klangk.model import AGENT_USER_ID
 
     await app_state.state.model.init_db()
     async with app_state.state.db.transaction() as agent_db:
@@ -472,7 +472,7 @@ class TestAgentSession:
 
         with (
             patch("asyncio.create_subprocess_exec", return_value=proc),
-            caplog.at_level(logging.DEBUG, logger="klangkd.agent"),
+            caplog.at_level(logging.DEBUG, logger="klangk.agent"),
         ):
             session = _make_session()
             await session.send_prompt("test")
@@ -669,7 +669,7 @@ class TestAgentSession:
                 "ensure_started",
                 new_callable=AsyncMock,
             ) as mock_start,
-            patch("klangkd.agent.asyncio.sleep", new_callable=AsyncMock),
+            patch("klangk.agent.asyncio.sleep", new_callable=AsyncMock),
         ):
             await session._monitor_process(mock_proc)
 
@@ -770,7 +770,7 @@ class TestAgentSession:
         with (
             patch("asyncio.create_subprocess_exec", return_value=proc),
             patch(
-                "klangkd.agent.AgentSession._wait_for_ack",
+                "klangk.agent.AgentSession._wait_for_ack",
                 side_effect=asyncio.TimeoutError,
             ),
         ):
@@ -1034,7 +1034,7 @@ class TestEnsureHome:
         assert result == "/home/clanker"
 
     async def test_ensure_home_workspace_not_in_db(self, app_state):
-        from klangkd.agent import AgentSetupError
+        from klangk.agent import AgentSetupError
 
         agents = _make_agents()
         session = AgentSession("ws-gone", agents=agents)
@@ -1189,7 +1189,7 @@ class TestSpawnSerialization:
 
 class TestMonitorProcess:
     async def test_monitor_broadcasts_on_death(self, app_state):
-        from klangkd import model
+        from klangk import model
 
         agents = _make_agents()
         mock_session = MagicMock()
@@ -1279,7 +1279,7 @@ class TestMonitorProcess:
                 "ensure_started",
                 new_callable=AsyncMock,
             ) as mock_start,
-            patch("klangkd.agent.asyncio.sleep", new_callable=AsyncMock),
+            patch("klangk.agent.asyncio.sleep", new_callable=AsyncMock),
         ):
             await session._monitor_process(mock_proc)
 
@@ -1374,7 +1374,7 @@ class TestMonitorProcess:
                 new_callable=AsyncMock,
                 return_value={"id": "m1", "message": "msg"},
             ),
-            caplog.at_level(logging.WARNING, logger="klangkd.agent"),
+            caplog.at_level(logging.WARNING, logger="klangk.agent"),
         ):
             await session._monitor_process(mock_proc)
 
@@ -1446,13 +1446,13 @@ class TestMonitorProcess:
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("startup failed"),
             ),
-            patch("klangkd.agent.asyncio.sleep", new_callable=AsyncMock),
+            patch("klangk.agent.asyncio.sleep", new_callable=AsyncMock),
         ):
             await session._monitor_process(mock_proc)
             # Should not raise, just log
 
     async def test_broadcast_reconnect(self, app_state):
-        from klangkd import model
+        from klangk import model
 
         agents = _make_agents()
         mock_session = MagicMock()
@@ -1527,13 +1527,13 @@ class TestMonitorProcess:
                 "get_state",
                 return_value=None,
             ),
-            patch("klangkd.agent.asyncio.sleep", new_callable=AsyncMock),
+            patch("klangk.agent.asyncio.sleep", new_callable=AsyncMock),
             patch.object(
                 session,
                 "ensure_started",
                 new_callable=AsyncMock,
             ) as mock_start,
-            caplog.at_level(logging.INFO, logger="klangkd.agent"),
+            caplog.at_level(logging.INFO, logger="klangk.agent"),
         ):
             await session._monitor_process(mock_proc)
             mock_start.assert_not_awaited()
@@ -1571,7 +1571,7 @@ class TestMonitorProcess:
                 return_value={"id": "m1", "message": "msg"},
             ),
             patch(
-                "klangkd.agent.asyncio.sleep",
+                "klangk.agent.asyncio.sleep",
                 side_effect=fake_sleep,
             ),
             patch.object(

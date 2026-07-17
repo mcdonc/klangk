@@ -6,7 +6,7 @@ login attempts, and the schema — lived in a single ~2000-line
 (``db``, ``schema``, ``users``, ``acl``, ``workspaces``, ``ports``,
 ``chat``, ``login_attempts``, ``tokens``, ``invitations``), and each
 domain is exposed as an ``XModel(app_state)`` method-bearing class
-composed under :class:`~klangkd.model.model.Model`.
+composed under :class:`~klangk.model.model.Model`.
 
 Call sites reach data access through the owned instance —
 ``app_state.model.users.create_user(...)`` — so there is one ``DB`` for

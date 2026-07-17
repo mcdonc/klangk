@@ -8,10 +8,10 @@ import yaml
 
 import pytest
 
-from klangkd import oidc
-from klangkd.exceptions import ConfigurationError
+from klangk import oidc
+from klangk.exceptions import ConfigurationError
 from _helpers import make_settings
-from klangkd.settings import KlangkSettings
+from klangk.settings import KlangkSettings
 
 
 def _oidc(settings: KlangkSettings | None = None) -> oidc.OIDC:

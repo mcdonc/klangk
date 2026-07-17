@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import types
 
-from klangkd import podman
+from klangk import podman
 from _helpers import make_settings
 
 # Instance whose methods the tests exercise (#1468: the ~20 free
@@ -18,7 +18,7 @@ _p = podman.Podman(
     )
 )
 
-EXEC = "klangkd.podman.asyncio.create_subprocess_exec"
+EXEC = "klangk.podman.asyncio.create_subprocess_exec"
 
 
 def _procs(*results):

@@ -160,7 +160,7 @@ ADMIN_USER_SORT_COLUMNS = {
 class UsersModel:
     """User/group/handle operations, resolved through ``app_state.db``.
 
-    Constructed by :class:`~klangkd.model.model.Model` and reached
+    Constructed by :class:`~klangk.model.model.Model` and reached
     via ``app_state.model.users``. Reaches the DB through
     ``self.app.state.db`` (the single DB instance for the whole app).
     """

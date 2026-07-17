@@ -16,7 +16,7 @@ import uuid
 import httpx
 import pytest
 
-from klangkd.model import free_port
+from klangk.model import free_port
 from _e2e_env import clean_env, close_popen_pipes
 from pathlib import Path
 

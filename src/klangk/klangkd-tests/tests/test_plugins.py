@@ -3,7 +3,7 @@
 import json
 import types
 
-from klangkd import plugins
+from klangk import plugins
 from _helpers import make_settings
 
 

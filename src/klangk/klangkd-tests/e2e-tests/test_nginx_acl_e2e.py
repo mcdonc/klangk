@@ -18,7 +18,7 @@ import time
 import httpx
 import pytest
 
-from klangkd.model import free_port
+from klangk.model import free_port
 from _e2e_env import clean_env, close_popen_pipes
 
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
@@ -28,7 +28,7 @@ def _render_conf(env_overrides, tmpdir=None):
     """Render nginx.conf via the Python renderer (#1396) with controlled env.
 
     Replaces the old ``_run_nginx_sh`` (which ran ``scripts/nginx.sh`` and
-    killed it after config generation). Renders via :func:`klangkd.nginx.render_config`
+    killed it after config generation). Renders via :func:`klangk.nginx.render_config`
     from an explicit settings dict built from ``env_overrides`` — no
     ``os.environ`` mutation. Returns the conf text.
 
@@ -45,8 +45,8 @@ def _render_conf(env_overrides, tmpdir=None):
         "KLANGK_STATE_DIR": str(tmpdir or "/tmp/klangk-e2e-state"),
         **env_overrides,
     }
-    from klangkd.nginx import NginxRenderer, tcp_upstream
-    from klangkd.settings import KlangkSettings
+    from klangk.nginx import NginxRenderer, tcp_upstream
+    from klangk.settings import KlangkSettings
     import types
 
     return NginxRenderer(
@@ -410,8 +410,8 @@ class TestNginxAclEnforcement:
 
         # Start nginx via the Python renderer (#1396): render the conf
         # from an explicit settings dict, then launch nginx directly with -c.
-        from klangkd.nginx import NginxRenderer, tcp_upstream
-        from klangkd.settings import KlangkSettings
+        from klangk.nginx import NginxRenderer, tcp_upstream
+        from klangk.settings import KlangkSettings
         import types
 
         nginx_env = {
@@ -597,8 +597,8 @@ class TestNginxDenyByDefault:
         # guard (geo on $realip_remote_addr) then denies a *direct* request
         # from exactly that IP — while a trusted-proxy request whose XFF is
         # that IP still passes (the peer is the proxy, not a container source).
-        from klangkd.nginx import NginxRenderer, tcp_upstream
-        from klangkd.settings import KlangkSettings
+        from klangk.nginx import NginxRenderer, tcp_upstream
+        from klangk.settings import KlangkSettings
         import types
 
         nginx_env = {
@@ -792,8 +792,8 @@ class TestNginxAuthLocalAcl:
         # nginx via the Python renderer (#1396) with no container subnets —
         # the /auth/local block is always generated with its fixed loopback
         # allowlist.
-        from klangkd.nginx import NginxRenderer, tcp_upstream
-        from klangkd.settings import KlangkSettings
+        from klangk.nginx import NginxRenderer, tcp_upstream
+        from klangk.settings import KlangkSettings
         import types
 
         nginx_env = {

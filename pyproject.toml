@@ -6,19 +6,18 @@ members = ["src/klangk"]
 # run whose common ancestor is the repo root). Normal runs target the
 # two unit dirs under src/klangk/ (klangkd-tests/tests,
 # klangkc-tests/tests); their common ancestor src/klangk/ has the
-# pyproject whose ``addopts`` (coverage + 100% gate over both klangkd
-# and klangkc) applies, so this block is not consulted. This block
-# mirrors the essentials (asyncio mode, capture) so a root-level
-# invocation doesn't regress. See #1393 for the original
-# config-discovery note.
+# pyproject whose ``addopts`` (coverage + 100% gate over klangk)
+# applies, so this block is not consulted. This block mirrors the
+# essentials (asyncio mode, capture) so a root-level invocation doesn't
+# regress. See #1393 for the original config-discovery note.
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-# ``--capture=no``: the CLI ``run_shell`` integration tests (in
-# klangkc-tests/tests) spawn a ``stdin_loop`` that calls
-# ``stdin.fileno()``, which blows up on pytest's captured stdin
-# (``DontReadFromInput``). Mirrored from src/klangk/pyproject.toml. No
-# coverage here — the 100% gate lives in src/klangk/pyproject.toml.
+# ``--capture=no``: the CLI ``run_shell`` integration tests spawn a
+# ``stdin_loop`` that calls ``stdin.fileno()``, which blows up on
+# pytest's captured stdin (``DontReadFromInput``). Mirrored from
+# src/klangk/pyproject.toml. No coverage here — the 100% gate lives
+# in src/klangk/pyproject.toml.
 addopts = "--capture=no"
 # Suppress unawaited-coroutine warnings that surface when MagicMock stubs
 # create coroutine objects (e.g. ws_shell, sandbox_setup_only) that are

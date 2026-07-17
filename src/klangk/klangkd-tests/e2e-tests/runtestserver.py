@@ -3,7 +3,7 @@
 Builds the app explicitly (``build_app(KlangkSettings(os.environ))``) and passes
 the object to uvicorn — no ``module:app`` string import. The composition root
 is sealed (#1454); this is the test-only TCP entry point the E2E suites use
-instead of bare ``uvicorn klangkd.main:app``.
+instead of bare ``uvicorn klangk.main:app``.
 
 Reads config from env vars (the E2E harness sets them before spawning this
 process). Accepts the uvicorn bind options the suites need as CLI args.
@@ -16,8 +16,8 @@ import os
 
 import uvicorn
 
-from klangkd.main import build_app
-from klangkd.settings import KlangkSettings
+from klangk.main import build_app
+from klangk.settings import KlangkSettings
 
 
 def main() -> None:

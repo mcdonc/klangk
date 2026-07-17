@@ -18,7 +18,7 @@ import time
 import httpx
 import pytest
 
-from klangkd.model import free_port
+from klangk.model import free_port
 from _e2e_env import clean_env, close_popen_pipes
 
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
@@ -73,7 +73,7 @@ def _start_klangkd():
     )
 
     proc = subprocess.Popen(
-        ["python3", "-m", "klangkd.launcher", "--config=none"],
+        ["python3", "-m", "klangk.launcher", "--config=none"],
         cwd=BACKEND_DIR,
         env=env,
         stdout=subprocess.PIPE,

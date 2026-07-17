@@ -226,7 +226,7 @@ class _KebabYamlConfigSettingsSource(YamlConfigSettingsSource):
 
     Only **top-level** keys are normalized.  Nested mappings (the dicts inside
     ``oidc_providers``) are left as-is — their dual-form lookup is already
-    handled by :func:`klangkd.oidc.get`, which checks kebab then snake.
+    handled by :func:`klangk.oidc.get`, which checks kebab then snake.
     """
 
     def _read_file(self, file_path: Path) -> dict[str, Any]:

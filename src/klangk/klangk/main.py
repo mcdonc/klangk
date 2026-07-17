@@ -857,7 +857,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
 
 
 # Re-export from _common so existing callers (e.g. tests) that do
-# ``from klangkd.main import get_app_state_dep`` keep working.
+# ``from klangk.main import get_app_state_dep`` keep working.
 # The canonical home is ``api._common`` (avoids main <-> api circular import).
 from .api._common import get_app_dep  # noqa: F401, E402
 

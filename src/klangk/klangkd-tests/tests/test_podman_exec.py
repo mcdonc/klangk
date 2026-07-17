@@ -7,7 +7,7 @@ import pytest
 import types
 
 
-from klangkd.podman import ExecSession, Podman
+from klangk.podman import ExecSession, Podman
 from _helpers import make_settings
 
 _podman = Podman(

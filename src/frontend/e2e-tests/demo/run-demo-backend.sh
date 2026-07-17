@@ -294,7 +294,7 @@ start)
   # is all the demo needs.
   nohup devenv --quiet shell -- bash -c '
     set -a; . ./.demo-env; set +a
-    exec python3 -m klangkd.launcher --config=none
+    exec python3 -m klangk.launcher --config=none
   ' >/tmp/klangk-video-processes.log 2>&1 &
 
   # Wait for nginx to bind (uvicorn binds a UDS, not TCP, so :$DEMO_PORT is

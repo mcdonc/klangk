@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from klangkd import (
+from klangk import (
     auth as auth_mod,
     container,
     files as files_mod,
@@ -23,8 +23,8 @@ from _helpers import make_settings
 
 def _make_app_state(registry=None, sockets=None):
     """Build a minimal app_state for tests."""
-    from klangkd.podman import Podman
-    from klangkd.wshandler.session import WebSocketState
+    from klangk.podman import Podman
+    from klangk.wshandler.session import WebSocketState
 
     settings = make_settings({})
     # Two-phase: build the namespace shell first so the owned instances
@@ -42,12 +42,12 @@ def _make_app_state(registry=None, sockets=None):
         registry = container.ContainerRegistry(app_state)
     app_state.state.container_registry = registry
     # #1480: container.py reaches set_workspace_token via app_state.state.terminal.
-    from klangkd.terminal import Terminal
-    from klangkd import plugins as plugins_mod
+    from klangk.terminal import Terminal
+    from klangk import plugins as plugins_mod
 
     app_state.state.terminal = Terminal(app_state)
     app_state.state.plugins = plugins_mod.Plugins(app_state)
-    from klangkd.workspaces import Workspaces
+    from klangk.workspaces import Workspaces
 
     app_state.state.workspaces = Workspaces(app_state)
     app_state.state.files = files_mod.Files(app_state)
@@ -2911,7 +2911,7 @@ class TestHealthMonitorCheckWorkspace:
             "_run_one",
             AsyncMock(return_value=("unhealthy", "curl: connection refused")),
         ):
-            with caplog.at_level(logging.INFO, logger="klangkd.container"):
+            with caplog.at_level(logging.INFO, logger="klangk.container"):
                 await monitor._check_workspace(st)
         assert any(
             "connection refused" in r.message and r.levelno == logging.INFO
@@ -2930,7 +2930,7 @@ class TestHealthMonitorCheckWorkspace:
             "_run_one",
             AsyncMock(return_value=("unhealthy", "still down")),
         ):
-            with caplog.at_level(logging.DEBUG, logger="klangkd.container"):
+            with caplog.at_level(logging.DEBUG, logger="klangk.container"):
                 await monitor._check_workspace(st)
         info_records = [r for r in caplog.records if r.levelno == logging.INFO]
         assert not any("still down" in r.message for r in info_records)
@@ -3456,7 +3456,7 @@ class TestRegistryConnections:
 
     def test_connections_property_reads_from_registry(self, app_state):
         """The connections property returns self.registry.app.state.sockets."""
-        from klangkd.wshandler.session import WebSocketState
+        from klangk.wshandler.session import WebSocketState
 
         ws_state = WebSocketState()
         app_state = _make_app_state(sockets=ws_state)

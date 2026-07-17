@@ -3,10 +3,9 @@ name = "klangk"
 dynamic = ["version"]
 description = "Klangk: multi-user Pi coding agent — server (klangkd) and client (klangkc)"
 requires-python = ">=3.12"
-# One unified wheel ships two top-level packages: the server (klangkd) and
-# the folded-in CLI (klangkc). One ``pip install klangk`` yields both
-# binaries; the distribution name (klangk) is distinct from the import
-# packages (klangkd / klangkc), like python-dateutil→dateutil (#1606).
+# One unified wheel ships a single top-level package (klangk) with the CLI
+# folded in as klangk.cli.  One ``pip install klangk`` yields both the
+# ``klangkd`` server and ``klangkc`` client binaries (#1606).
 dependencies = [
     "fastapi>=0.115.0",
     "pydantic-settings>=2.5.0",
@@ -35,13 +34,13 @@ dependencies = [
 [project.scripts]
 # User-facing command names are unchanged — they're entrypoint names,
 # distinct from the package names. One ``pip install klangk`` yields both.
-klangkd = "klangkd.launcher:app"
-klangkc = "klangkc.main:main"
+klangkd = "klangk.launcher:app"
+klangkc = "klangk.cli.main:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = "--capture=no --cov=klangkd --cov=klangkc --cov-report=term-missing --no-cov-on-fail --cov-fail-under=100 --timeout=60"
+addopts = "--capture=no --cov=klangk --cov-report=term-missing --no-cov-on-fail --cov-fail-under=100 --timeout=60"
 # Treat new warnings as errors so they can't re-accumulate (#1493). The
 # two ignores are pre-existing mock-induced GC artifacts (MagicMock stubs
 # whose coroutine objects are collected in a later test) -- not real bugs
@@ -63,7 +62,7 @@ raw-options.tag_regex = "^v(?P<version>[vV]?\\d+(?:\\.\\d+){0,2}[^\\+]*)(?:\\+.*
 raw-options.git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "v*"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["klangkd", "klangkc"]
+packages = ["klangk"]
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]

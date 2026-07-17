@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import tempfile
 
-from klangkd.settings import KlangkSettings
+from klangk.settings import KlangkSettings
 
 # Per-test DB holder (#1578). The autouse ``temp_data_dir`` fixture builds a
 # DB from the per-test settings and stashes it here (``set_test_db``); the
@@ -75,9 +75,9 @@ def wire_db_and_model(app) -> None:
     on a different temp path (which would hit "no such table"). Idempotent:
     skips re-wiring when already present.
     """
-    from klangkd.model import Model
-    from klangkd.model.db import DB
-    from klangkd.acl import ACL
+    from klangk.model import Model
+    from klangk.model.db import DB
+    from klangk.acl import ACL
 
     state = app.state
     if getattr(state, "db", None) is None:

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from klangkd import ssl_trust
+from klangk import ssl_trust
 from _helpers import make_settings
 
 

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from klangkd import workspaces as ws_mod
+from klangk import workspaces as ws_mod
 
 
 class TestCreateWorkspace:
@@ -123,7 +123,7 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
     user, app_state
 ):
     """create_workspace_with_acl seeds the owner ACE + 4 role groups (#128)."""
-    from klangkd import model
+    from klangk import model
 
     ws = await app_state.state.model.workspaces.create_workspace_with_acl(
         user["id"], "seeded"
@@ -167,7 +167,7 @@ async def test_create_workspace_with_acl_rollback_on_seeding_failure(
 ):
     """If ACL seeding fails, the row and any partial ACEs/groups are rolled
     back — nothing is orphaned (#128)."""
-    from klangkd.model import workspaces as model_ws
+    from klangk.model import workspaces as model_ws
 
     captured: dict = {}
 
@@ -463,7 +463,7 @@ class TestAutoStartWorkspaces:
         )
 
         # Pre-populate states so idle_timeout can be set.
-        from klangkd.container import ContainerState
+        from klangk.container import ContainerState
 
         registry.states[ws1["id"]] = ContainerState(
             ws1["id"], "cid-1", registry
@@ -482,7 +482,7 @@ class TestAutoStartWorkspaces:
                     return_value=("cid-abc", "started"),
                 ) as mock_start:
                     with patch(
-                        "klangkd.workspaces.asyncio.sleep",
+                        "klangk.workspaces.asyncio.sleep",
                         new_callable=AsyncMock,
                     ) as mock_sleep:
                         result = await app_state.state.workspaces.auto_start_workspaces()
@@ -560,7 +560,7 @@ class TestStartWorkspace:
             "start-ws-no-idle",
             auto_start=True,
         )
-        from klangkd.container import ContainerState
+        from klangk.container import ContainerState
 
         # Registry default idle timeout is non-zero; start_workspace
         # must not clobber it.

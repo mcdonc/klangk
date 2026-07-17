@@ -36,7 +36,7 @@ FROM base
 COPY --from=venv --chown=klangk:klangk /home/klangk/venv /home/klangk/venv
 
 # Backend source
-COPY --chown=klangk:klangk src/klangk/klangkd /home/klangk/src/klangk/klangkd
+COPY --chown=klangk:klangk src/klangk/klangk /home/klangk/src/klangk/klangk
 COPY --chown=klangk:klangk src/klangk/pyproject.toml /home/klangk/src/klangk/pyproject.toml
 
 # Flutter web build output

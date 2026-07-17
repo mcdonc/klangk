@@ -14,7 +14,7 @@ those submodules so existing call sites keep working unchanged, e.g.::
 """
 
 # Re-export sibling modules so that existing patch targets like
-# ``klangkd.wshandler.auth`` and ``wshandler.model`` keep
+# ``klangk.wshandler.auth`` and ``wshandler.model`` keep
 # working — the old monolith imported them at module level.
 from .. import auth as auth  # noqa: F401
 from .. import container as container  # noqa: F401

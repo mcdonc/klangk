@@ -1,4 +1,4 @@
-"""Tests for the ``klangkd.api`` package split (issue #964).
+"""Tests for the ``klangk.api`` package split (issue #964).
 
 The former monolithic ``api.py`` (~2800 lines, 84 routes) was split into a
 per-domain package.  These tests lock in the refactor's invariants so a
@@ -22,16 +22,16 @@ import sys
 import pytest
 from fastapi import FastAPI
 
-import klangkd
-import klangkd.api as api
-from klangkd.util import API_PREFIX
+import klangk
+import klangk.api as api
+from klangk.util import API_PREFIX
 
-# The api/auth.py *submodule*.  Note: ``import klangkd.api.auth as
+# The api/auth.py *submodule*.  Note: ``import klangk.api.auth as
 # api_auth`` would bind ``api_auth`` to ``api.auth`` (an attribute), which
-# __init__ deliberately re-points at the klangkd.auth *logic* module
+# __init__ deliberately re-points at the klangk.auth *logic* module
 # so the instance endpoints see the logic module.  The route submodule
 # itself is therefore fetched from sys.modules.
-api_auth = sys.modules["klangkd.api.auth"]
+api_auth = sys.modules["klangk.api.auth"]
 
 # Total HTTP route operations the monolith exposed (per the issue).  The
 # split must preserve this exactly — no dropped or duplicated handlers.
@@ -140,23 +140,23 @@ class TestPackagePublicSurface:
     def test_logic_module_reexport_is_the_real_module(self, name):
         """``api.<name>`` must be the logic module tests patch, not a route
         submodule.  e.g. ``patch.object(api.oidc, "get_provider", ...)``
-        only affects handlers if ``api.oidc`` is ``klangkd.oidc``."""
-        assert getattr(api, name) is getattr(klangkd, name)
+        only affects handlers if ``api.oidc`` is ``klangk.oidc``."""
+        assert getattr(api, name) is getattr(klangk, name)
 
     def test_auth_attribute_is_the_logic_module(self):
         """The bare ``api.auth`` name is rebound to the logic module (the
         ``api/auth.py`` submodule import otherwise shadows it via the
         package __dict__)."""
-        assert api.auth is klangkd.auth
+        assert api.auth is klangk.auth
 
     def test_auth_route_submodule_distinct_from_logic_module(self):
         """``api.auth`` is the logic module, but the route submodule still
-        exists as ``klangkd.api.auth`` in sys.modules and is what
+        exists as ``klangk.api.auth`` in sys.modules and is what
         the sub-router is mounted from."""
         from fastapi import APIRouter
 
-        submod = sys.modules["klangkd.api.auth"]
-        assert submod is not klangkd.auth
+        submod = sys.modules["klangk.api.auth"]
+        assert submod is not klangk.auth
         assert submod is api._auth_routes
         assert isinstance(submod.router, APIRouter)
 
@@ -236,7 +236,7 @@ class TestSubmoduleStructure:
 
         from fastapi import APIRouter
 
-        mod = import_module(f"klangkd.api.{submod}")
+        mod = import_module(f"klangk.api.{submod}")
         assert isinstance(mod.router, APIRouter)
         assert len(mod.router.routes) == expected, (
             f"{submod}: expected {expected} routes, "
@@ -249,7 +249,7 @@ class TestSubmoduleStructure:
 
         total = 0
         for submod in SUBMODULE_ROUTES:
-            total += len(import_module(f"klangkd.api.{submod}").router.routes)
+            total += len(import_module(f"klangk.api.{submod}").router.routes)
         # 83 sub-routes + 3 direct (version/config/my-permissions) + 2
         # root (health/empty) == 88.
         assert total == EXPECTED_ROUTE_COUNT - 3 - 2
@@ -262,7 +262,7 @@ class TestSubmoduleStructure:
     def test_shared_helpers_live_in_common(self):
         """Cross-domain helpers are centralized so both consumers import the
         same object."""
-        from klangkd.api import _common
+        from klangk.api import _common
 
         for name in (
             "send_email",
@@ -276,7 +276,7 @@ class TestSubmoduleStructure:
 
     def test_no_duplicate_module_globals(self):
         """No module-level config reads survive in the api package (#1516)."""
-        from klangkd.api import _common, __init__ as api_init
+        from klangk.api import _common, __init__ as api_init
 
         assert not hasattr(_common, "FILE_UPLOAD_SIZE_MAX")
         for name in (

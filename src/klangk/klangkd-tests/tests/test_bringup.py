@@ -11,8 +11,8 @@ no command is configured.
 
 from unittest.mock import AsyncMock, MagicMock
 
-from klangkd.agent import Agents
-from klangkd.container import ContainerRegistry
+from klangk.agent import Agents
+from klangk.container import ContainerRegistry
 
 _app_state = MagicMock()
 _app_state.state.terminal.ensure_service_session = AsyncMock()

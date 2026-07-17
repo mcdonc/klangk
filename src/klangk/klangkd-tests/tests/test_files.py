@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from klangkd import files
+from klangk import files
 
 _mock_pod = MagicMock()
 

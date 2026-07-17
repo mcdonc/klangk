@@ -70,7 +70,7 @@ Outgoing auth emails (registration verification, password reset, invitation) are
 
 Two approaches:
 
-- **Copy the whole tree, then edit.** The built-in templates live at `src/klangk/klangkd/email_templates/` in the source. Copy, delete `__init__.py`, edit, and mount.
+- **Copy the whole tree, then edit.** The built-in templates live at `src/klangk/klangk/email_templates/` in the source. Copy, delete `__init__.py`, edit, and mount.
 - **Drop only the files you change.** Absent files fall through to the built-ins.
 
 Overrides resolve per-file: a deployer file shadows the built-in at the same path, and `{% extends %}`/`{% include %}` resolve your overrides first. Override just `base.html` to re-brand all emails at once.

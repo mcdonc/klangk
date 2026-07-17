@@ -619,7 +619,7 @@ def start_server(data_dir: str) -> tuple[subprocess.Popen, TeeReader, str]:
     # Resolve the socket path from the same settings the server will use
     # (honors KLANGK_SOCKET; defaults to <state_dir>/klangk.sock). Imported
     # lazily so ``--check`` (which never starts a server) needs no backend.
-    from klangkd.settings import KlangkSettings
+    from klangk.settings import KlangkSettings
 
     settings = KlangkSettings(
         {k: v for k, v in env.items() if k.startswith("KLANGK_")},
@@ -1021,8 +1021,8 @@ def _backend_routes() -> set[tuple[str, str]]:
         "KLANGK_STATE_DIR": tempfile.mkdtemp(prefix="klangk-check-"),
         "KLANGK_JWT_SECRET": "check-secret",
     }
-    from klangkd.main import build_app
-    from klangkd.settings import KlangkSettings
+    from klangk.main import build_app
+    from klangk.settings import KlangkSettings
 
     app = build_app(KlangkSettings(env))
     routes: set[tuple[str, str]] = set()

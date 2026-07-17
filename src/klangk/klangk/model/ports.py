@@ -1,7 +1,7 @@
 """TCP port allocation tracking.
 
 OS-level socket probes (``port_in_use``, ``free_port``, ``scan_free_ports``)
-live in :mod:`klangkd.util` now (#1547); they are re-imported below so
+live in :mod:`klangk.util` now (#1547); they are re-imported below so
 the historical ``model.ports.*`` / ``model.*`` import paths keep working.
 
 :class:`PortsModel` is the ``app_state``-owned form (DB-backed allocation)
@@ -21,7 +21,7 @@ from ..util import (  # moved to util (#1547); re-exported via __all__
 
 
 __all__ = [
-    # OS-level socket probes — moved to klangkd.util (#1547);
+    # OS-level socket probes — moved to klangk.util (#1547);
     # re-exported here so the historical model.ports.* / model.* import
     # paths keep working.
     "MAX_PORT",

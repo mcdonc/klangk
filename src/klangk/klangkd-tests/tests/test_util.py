@@ -3,8 +3,8 @@
 import uuid
 
 
-from klangkd.settings import resolve_dynamic_config
-from klangkd.util import (
+from klangk.settings import resolve_dynamic_config
+from klangk.util import (
     MAX_PORT,
     Util,
     free_port,
@@ -71,7 +71,7 @@ class TestRunCmdValue:
         assert err is None
 
     def test_timeout_returns_error(self, monkeypatch):
-        import klangkd.util as util
+        import klangk.util as util
 
         monkeypatch.setattr(util, "_CMD_TIMEOUT_SECONDS", 0.1)
         contents, err = run_cmd_value("cmd:sleep 1")
@@ -80,7 +80,7 @@ class TestRunCmdValue:
         assert "timed out" in err
 
     def test_execution_failure_returns_error(self, monkeypatch):
-        import klangkd.util as util
+        import klangk.util as util
 
         def _boom(*a, **k):
             raise OSError("no shell")
@@ -299,7 +299,7 @@ class TestTrustedProxyCidrs:
         import ipaddress
         import logging
 
-        with caplog.at_level(logging.WARNING, logger="klangkd.util"):
+        with caplog.at_level(logging.WARNING, logger="klangk.util"):
             trusted = _util(
                 {"KLANGK_TRUSTED_PROXY_CIDRS": "not-an-ip, 127.0.0.1"}
             ).trusted_proxy_cidrs()
