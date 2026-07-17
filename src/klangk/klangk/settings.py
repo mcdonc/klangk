@@ -393,6 +393,16 @@ class KlangkSettings(BaseSettings):
     reject_proxy_headers: str | None = None
     trusted_proxy_cidrs: str | None = "127.0.0.1,::1"
 
+    # --- Logging ---
+    # log_level: root logger level for the klangkd backend. A level name
+    # (DEBUG/INFO/WARNING/ERROR/CRITICAL, any case) or a numeric string.
+    # Defaults to INFO. Read live by ``Logger(app)`` at construction and on
+    # every SIGHUP reload (reconfigure), so ``KLANGK_LOG_LEVEL`` can be
+    # changed without a process restart (#1467). The field validator below
+    # rejects garbage at construction (fail-fast) so a typo'd level aborts
+    # boot rather than silently leaving logging at the wrong verbosity.
+    log_level: str = "INFO"
+
     # --- Server / network ---
     # listen: the nginx **browser** interface/address (e.g. ``127.0.0.1``,
     # ``0.0.0.0``). Rendered as ``listen {listen}:{port};`` only when
@@ -688,6 +698,30 @@ class KlangkSettings(BaseSettings):
                 "See #1531."
             )
         return self
+
+    @field_validator("log_level")
+    @classmethod
+    def _validate_log_level(cls, v: str) -> str:
+        """Reject typo'd/invalid log levels at construction (fail-fast, #1467).
+
+        Accepts a level name (case-insensitive: ``debug``, ``INFO``, ...) or
+        a numeric string (``"20"``). ``None``/empty defaults to ``INFO``. A
+        bogus value aborts boot rather than silently leaving logging at the
+        wrong verbosity — the same fail-fast posture as ``auth_modes``.
+        """
+        if v is None or v == "":
+            return "INFO"
+        upper = v.strip().upper()
+        named = getattr(logging, upper, None)
+        if isinstance(named, int) and not upper.isdigit():
+            return upper
+        if upper.isdigit():
+            return upper
+        raise ValueError(
+            f"KLANGK_LOG_LEVEL={v!r} is invalid. "
+            "Must be a level name (DEBUG/INFO/WARNING/ERROR/CRITICAL) "
+            "or a numeric value."
+        )
 
     @field_validator("auth_modes")
     @classmethod

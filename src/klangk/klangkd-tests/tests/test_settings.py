@@ -504,6 +504,50 @@ class TestAuthModesValidator:
         assert "password" in msg  # valid modes listed in the message
 
 
+class TestLogLevelValidator:
+    """KLANGK_LOG_LEVEL must be a recognized level or fail fast at boot
+    (#1467), mirroring the fail-fast posture of the auth_modes validator."""
+
+    def test_defaults_to_info(self):
+        s = make_settings({})
+        assert s.log_level == "INFO"
+
+    @pytest.mark.parametrize(
+        "name", ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    )
+    def test_valid_names_accepted_any_case(self, name):
+        # lower, upper, mixed all normalize to upper
+        s = make_settings({"KLANGK_LOG_LEVEL": name.lower()})
+        assert s.log_level == name
+
+    @pytest.mark.parametrize("num", ["0", "10", "20", "30", "40", "50"])
+    def test_numeric_string_accepted(self, num):
+        s = make_settings({"KLANGK_LOG_LEVEL": num})
+        assert s.log_level == num
+
+    def test_empty_string_defaults_to_info(self):
+        s = make_settings({"KLANGK_LOG_LEVEL": ""})
+        assert s.log_level == "INFO"
+
+    @pytest.mark.parametrize(
+        "bad", ["verbose", "TRACE", "info!", "debug-level"]
+    )
+    def test_garbage_rejected_at_construction(self, bad):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            make_settings({"KLANGK_LOG_LEVEL": bad})
+
+    def test_error_message_names_valid_levels(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            make_settings({"KLANGK_LOG_LEVEL": "verbose"})
+        msg = str(exc_info.value)
+        assert "verbose" in msg
+        assert "DEBUG" in msg  # valid levels listed in the message
+
+
 class TestResolveIndirectionsValidator:
     """The ``_resolve_indirections`` model validator runs once at construction
     (#1461): every string field with a ``file:``/``cmd:`` prefix is resolved

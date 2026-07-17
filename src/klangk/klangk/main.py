@@ -35,6 +35,7 @@ from . import (
     wshandler,
 )
 from .settings import KlangkSettings
+from .logger import Logger
 from .api import root_router, router
 from .util import API_PREFIX
 from .model import (
@@ -48,15 +49,9 @@ from .model import (
 from .model import AGENT_USER_ID
 from .wshandler import handle_websocket
 
-_LIGHT_BLUE = "\033[94m"
 _GREEN = "\033[32m"
 _RESET = "\033[0m"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format=f"{_LIGHT_BLUE}%(asctime)s %(levelname)s:%(name)s:%(message)s{_RESET}",
-    datefmt="%H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -383,6 +378,7 @@ class Lifecycle:
 
         # Every app.state subsystem that implements reconfigure().
         subsystems = [
+            "logger",
             "ssl_trust",
             "auth",
             "podman",
@@ -758,6 +754,13 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     """
     app = FastAPI(title="Klangk", lifespan=lifespan)
     app.state.settings = settings
+    # #1467: Logger(app_state) owns centralized logging configuration (root
+    # handler, colored format, level from KLANGK_LOG_LEVEL, and third-party
+    # logger silencing). Configured first so every subsystem constructed
+    # below logs through the configured root. Replaces the import-time
+    # logging.basicConfig that previously ran in this module's body —
+    # importing klangk no longer configures logging as a side-effect.
+    app.state.logger = Logger(app)
     # #1501: Auth(app_state) owns every auth config value and JWT
     # operation (previously module-level globals + import-time
     # resolve_env_value reads in auth.py). Reads self.settings at
