@@ -24,109 +24,35 @@ This reproduces the whole model against a real server + container:
 
 import asyncio
 import json
-import os
-import shutil
-import subprocess
-import sys
-import tempfile
-import time
 
-import httpx
 import pytest
 import websockets
 
-from klangk.model import free_port
-from _e2e_env import clean_env, close_popen_pipes
+from _e2e_server import start_server, stop_server, ws_connect as _ws_dial
 
 
 @pytest.fixture(scope="module")
 def server():
     """Start a real Klangk server for the test module."""
-    data_dir = tempfile.mkdtemp(prefix="klangk-dcmd-shared-e2e-")
-    state_dir = tempfile.mkdtemp(prefix="klangk-dcmd-shared-e2e-state-")
-    port = str(free_port())
-
-    env = clean_env(
-        KLANGK_PORT=port,
-        KLANGK_DATA_DIR=data_dir,
-        KLANGK_STATE_DIR=state_dir,
+    server = start_server(
         KLANGK_JWT_SECRET="dcmd-shared-e2e-secret",
         KLANGK_PREVENT_INSECURE_JWT_SECRET="",
         KLANGK_DEFAULT_USER="test@example.com",
         KLANGK_DEFAULT_PASSWORD="testpass",
         KLANGK_TEST_MODE="1",
         KLANGK_IDLE_TIMEOUT_SECONDS="0",
-        KLANGK_PORT_RANGE_START=str(free_port()),
         LOGFIRE_TOKEN="",
         KLANGK_LLM_BASE_URL="",
         KLANGK_LLM_API_KEY="",
         KLANGK_LLM_MODEL="",
     )
-    proc = subprocess.Popen(
-        [
-            "python3",
-            os.path.join(os.path.dirname(__file__), "runtestserver.py"),
-            "--host",
-            "0.0.0.0",
-            "--port",
-            port,
-        ],
-        cwd=os.path.join(os.path.dirname(__file__), ".."),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    base_url = f"http://localhost:{port}"
-    for _ in range(60):
-        try:
-            if httpx.get(f"{base_url}/health", timeout=2).status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-    else:
-        proc.kill()
-        stdout = proc.stdout.read().decode() if proc.stdout else ""
-        raise RuntimeError(f"Server failed to start:\n{stdout}")
-
-    yield {"url": base_url, "port": port, "data_dir": data_dir, "proc": proc}
-
-    try:
-        proc.kill()
-        proc.wait(timeout=5)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        pass
-    if proc.stdout:
-        server_log = proc.stdout.read().decode("utf-8", errors="replace")
-        if server_log.strip():
-            sys.stderr.write(
-                f"\n=== dcmd-shared server log ===\n{server_log}\n===\n"
-            )
-    close_popen_pipes(proc)
-    result = subprocess.run(
-        [
-            "podman",
-            "ps",
-            "-a",
-            "--filter",
-            "label=klangk.instance=dcmd-shared-e2e",
-            "-q",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.stdout.strip():
-        subprocess.run(
-            ["podman", "rm", "-f", *result.stdout.strip().split()],
-            capture_output=True,
-        )
-    shutil.rmtree(data_dir, ignore_errors=True)
+    yield server
+    stop_server(server)
 
 
 def _login(server, email, password):
-    url = server["url"]
-    resp = httpx.post(
-        f"{url}/api/v1/auth/login",
+    resp = server["client"].post(
+        "/api/v1/auth/login",
         json={"identifier": email, "password": password},
         timeout=10,
     )
@@ -136,9 +62,8 @@ def _login(server, email, password):
 
 
 def _register(server, email, password):
-    url = server["url"]
-    resp = httpx.post(
-        f"{url}/api/v1/auth/register",
+    resp = server["client"].post(
+        "/api/v1/auth/register",
         json={"email": email, "password": password},
         timeout=10,
     )
@@ -158,10 +83,7 @@ async def _connect(server, auth, workspace_id):
     list a background reader appends every message to -- the async
     ``shared_terminals`` broadcast can land at any moment.
     """
-    ws_url = server["url"].replace("http://", "ws://")
-    ws = await websockets.connect(
-        f"{ws_url}/ws?token={auth['token']}", max_size=2**20
-    )
+    ws = await _ws_dial(server, f"/ws?token={auth['token']}", max_size=2**20)
     await ws.send(
         json.dumps({"cmd": "workspace_connect", "workspaceId": workspace_id})
     )
@@ -229,11 +151,11 @@ class TestServiceCommandSharedSingleton:
         (#1133): neither the owner nor a visitor has ``service-cmd`` as
         their own tab, but both see it as a shared (agent-attributed)
         terminal, and it is a singleton (not re-run per user)."""
-        url = server["url"]
+        client = server["client"]
         visitor = _register(server, "visitor@example.com", "visitorpass")
 
-        resp = httpx.post(
-            f"{url}/api/v1/workspaces",
+        resp = client.post(
+            "/api/v1/workspaces",
             headers=owner["headers"],
             json={
                 "name": "dcmd-shared",
@@ -245,8 +167,8 @@ class TestServiceCommandSharedSingleton:
         assert resp.status_code == 200, resp.text
         workspace_id = resp.json()["id"]
 
-        resp = httpx.post(
-            f"{url}/api/v1/workspaces/{workspace_id}/roles/coders",
+        resp = client.post(
+            f"/api/v1/workspaces/{workspace_id}/roles/coders",
             headers=owner["headers"],
             json={"email": "visitor@example.com"},
             timeout=10,
@@ -338,8 +260,8 @@ class TestServiceCommandSharedSingleton:
         finally:
             owner_reader.cancel()
             await owner_ws.close()
-            httpx.delete(
-                f"{url}/api/v1/workspaces/{workspace_id}",
+            client.delete(
+                f"/api/v1/workspaces/{workspace_id}",
                 headers=owner["headers"],
                 timeout=30,
             )

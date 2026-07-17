@@ -10,117 +10,37 @@ Run with: devenv shell -- test-backend-e2e
 
 import asyncio
 import json
-import os
-import shutil
-import subprocess
-import sys
-import tempfile
-import time
 
 import httpx
 import pytest
-import websockets
 
-from klangk.model import free_port
-from _e2e_env import clean_env, close_popen_pipes
+from _e2e_server import start_server, stop_server, ws_connect as _ws_dial
 
 
 @pytest.fixture(scope="module")
 def server():
     """Start a real Klangk server for the test module."""
-    data_dir = tempfile.mkdtemp(prefix="klangk-home-e2e-")
-    state_dir = tempfile.mkdtemp(prefix="klangk-home-e2e-state-")
-    port = str(free_port())
-
-    env = clean_env(
-        KLANGK_PORT=port,
-        KLANGK_DATA_DIR=data_dir,
-        KLANGK_STATE_DIR=state_dir,
+    server = start_server(
         KLANGK_JWT_SECRET="home-e2e-secret",
         KLANGK_PREVENT_INSECURE_JWT_SECRET="",
         KLANGK_DEFAULT_USER="test@example.com",
         KLANGK_DEFAULT_PASSWORD="testpass",
         KLANGK_TEST_MODE="1",
         KLANGK_IDLE_TIMEOUT_SECONDS="300",
-        KLANGK_PORT_RANGE_START=str(free_port()),
         LOGFIRE_TOKEN="",
         KLANGK_LLM_BASE_URL="",
         KLANGK_LLM_API_KEY="",
         KLANGK_LLM_MODEL="",
     )
-    proc = subprocess.Popen(
-        [
-            "python3",
-            os.path.join(os.path.dirname(__file__), "runtestserver.py"),
-            "--host",
-            "0.0.0.0",
-            "--port",
-            port,
-        ],
-        cwd=os.path.join(os.path.dirname(__file__), ".."),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    base_url = f"http://localhost:{port}"
-    for _ in range(120):
-        try:
-            resp = httpx.get(f"{base_url}/health", timeout=2)
-            if resp.status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-    else:  # pragma: no cover
-        proc.kill()
-        stdout = proc.stdout.read().decode() if proc.stdout else ""
-        raise RuntimeError(f"Server failed to start:\n{stdout}")
-
-    yield {
-        "url": base_url,
-        "port": port,
-        "data_dir": data_dir,
-        "proc": proc,
-    }
-
-    try:
-        proc.kill()
-        proc.wait(timeout=5)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        pass
-    if proc.stdout:
-        server_log = proc.stdout.read().decode("utf-8", errors="replace")
-        if server_log.strip():
-            sys.stderr.write(
-                f"\n=== Home E2E server log ===\n{server_log}\n===\n"
-            )
-    close_popen_pipes(proc)
-    result = subprocess.run(
-        [
-            "podman",
-            "ps",
-            "-a",
-            "--filter",
-            "label=klangk.instance=home-e2e",
-            "-q",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.stdout.strip():
-        subprocess.run(
-            ["podman", "rm", "-f", *result.stdout.strip().split()],
-            capture_output=True,
-        )
-    shutil.rmtree(data_dir, ignore_errors=True)
+    yield server
+    stop_server(server)
 
 
 @pytest.fixture(scope="module")
 def auth(server):
     """Login and return token + headers."""
-    url = server["url"]
-    resp = httpx.post(
-        f"{url}/api/v1/auth/login",
+    resp = server["client"].post(
+        "/api/v1/auth/login",
         json={"identifier": "test@example.com", "password": "testpass"},
         timeout=10,
     )
@@ -137,9 +57,9 @@ def create_workspace(server, auth):
     global _ws_counter  # noqa: PLW0603
     _ws_counter += 1
     name = f"home-e2e-{_ws_counter}"
-    url = server["url"]
-    resp = httpx.post(
-        f"{url}/api/v1/workspaces",
+    client = server["client"]
+    resp = client.post(
+        "/api/v1/workspaces",
         headers=auth["headers"],
         json={"name": name},
         timeout=10,
@@ -149,8 +69,8 @@ def create_workspace(server, auth):
 
     def cleanup():
         try:
-            httpx.delete(
-                f"{url}/api/v1/workspaces/{workspace_id}",
+            client.delete(
+                f"/api/v1/workspaces/{workspace_id}",
                 headers=auth["headers"],
                 timeout=30,
             )
@@ -162,10 +82,7 @@ def create_workspace(server, auth):
 
 async def ws_connect(server, auth, workspace_id):
     """Open a WebSocket, connect to workspace, wait for container ready."""
-    ws_url = server["url"].replace("http://", "ws://")
-    ws = await websockets.connect(
-        f"{ws_url}/ws?token={auth['token']}", max_size=2**20
-    )
+    ws = await _ws_dial(server, f"/ws?token={auth['token']}", max_size=2**20)
     await ws.send(
         json.dumps({"cmd": "workspace_connect", "workspaceId": workspace_id})
     )
@@ -393,9 +310,9 @@ class TestFileApiNavigation:
                 handle = output.strip()
 
                 # List /home via the file API
-                url = server["url"]
-                resp = httpx.get(
-                    f"{url}/api/v1/workspaces/{workspace_id}/files",
+                client = server["client"]
+                resp = client.get(
+                    f"/api/v1/workspaces/{workspace_id}/files",
                     params={"path": "/home"},
                     headers=auth["headers"],
                     timeout=10,
@@ -424,9 +341,9 @@ class TestFileApiNavigation:
         try:
             ws = await ws_connect(server, auth, workspace_id)
             try:
-                url = server["url"]
-                resp = httpx.get(
-                    f"{url}/api/v1/workspaces/{workspace_id}/files",
+                client = server["client"]
+                resp = client.get(
+                    f"/api/v1/workspaces/{workspace_id}/files",
                     params={"path": "/"},
                     headers=auth["headers"],
                     timeout=10,
@@ -462,10 +379,10 @@ class TestFileApiNavigation:
                 )
                 handle = output.strip()
 
-                url = server["url"]
+                client = server["client"]
                 # Verify the path exists and is a directory
-                list_resp = httpx.get(
-                    f"{url}/api/v1/workspaces/{workspace_id}/files",
+                list_resp = client.get(
+                    f"/api/v1/workspaces/{workspace_id}/files",
                     params={"path": f"/home/{handle}"},
                     headers=auth["headers"],
                     timeout=10,
@@ -480,8 +397,8 @@ class TestFileApiNavigation:
                 await exec_command(
                     ws, ["bash", "-c", "echo tmptest > /tmp/check.txt"]
                 )
-                tmp_resp = httpx.get(
-                    f"{url}/api/v1/workspaces/{workspace_id}/files/download",
+                tmp_resp = client.get(
+                    f"/api/v1/workspaces/{workspace_id}/files/download",
                     params={"path": "/tmp"},
                     headers=auth["headers"],
                     timeout=30,
@@ -492,8 +409,8 @@ class TestFileApiNavigation:
                 )
 
                 # Now test the symlinked homedir
-                resp = httpx.get(
-                    f"{url}/api/v1/workspaces/{workspace_id}/files/download",
+                resp = client.get(
+                    f"/api/v1/workspaces/{workspace_id}/files/download",
                     params={"path": f"/home/{handle}"},
                     headers=auth["headers"],
                     timeout=30,

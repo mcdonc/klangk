@@ -28,19 +28,13 @@ Run with: devenv shell -- test-backend-e2e
 import asyncio
 import base64
 import json
-import os
-import shutil
 import subprocess
-import sys
-import tempfile
 import time
 
 import httpx
 import pytest
-import websockets
 
-from klangk.model import free_port
-from _e2e_env import clean_env, close_popen_pipes
+from _e2e_server import start_server, stop_server, ws_connect as _ws_dial
 
 # Default agent handle (see model/users.py: _DEFAULT_AGENT_HANDLE).  Not
 # imported from the backend to keep the e2e test decoupled from the
@@ -58,84 +52,32 @@ def server():
     can create a workspace with auto_start=True (which routes through
     start_workspace -> ensure_agent_home).
     """
-    data_dir = tempfile.mkdtemp(prefix="klangk-agent-home-e2e-")
-    state_dir = tempfile.mkdtemp(prefix="klangk-agent-home-e2e-state-")
-    port = str(free_port())
-
-    env = clean_env(
-        KLANGK_PORT=port,
-        KLANGK_DATA_DIR=data_dir,
-        KLANGK_STATE_DIR=state_dir,
+    server = start_server(
         KLANGK_JWT_SECRET="agent-home-e2e-secret",
         KLANGK_PREVENT_INSECURE_JWT_SECRET="",
         KLANGK_DEFAULT_USER="test@example.com",
         KLANGK_DEFAULT_PASSWORD="testpass",
         KLANGK_TEST_MODE="1",
         KLANGK_IDLE_TIMEOUT_SECONDS="300",
-        KLANGK_PORT_RANGE_START=str(free_port()),
         KLANGK_ALLOW_AUTOSTART="1",
         LOGFIRE_TOKEN="",
         KLANGK_LLM_BASE_URL="",
         KLANGK_LLM_API_KEY="",
         KLANGK_LLM_MODEL="",
     )
-    proc = subprocess.Popen(
-        [
-            "python3",
-            os.path.join(os.path.dirname(__file__), "runtestserver.py"),
-            "--host",
-            "0.0.0.0",
-            "--port",
-            port,
-        ],
-        cwd=os.path.join(os.path.dirname(__file__), ".."),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    base_url = f"http://localhost:{port}"
-    for _ in range(120):
-        try:
-            if httpx.get(f"{base_url}/health", timeout=2).status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-    else:  # pragma: no cover
-        proc.kill()
-        stdout = proc.stdout.read().decode() if proc.stdout else ""
-        raise RuntimeError(f"Server failed to start:\n{stdout}")
 
-    # Fetch auto-generated instance ID from the running server.
-    config_resp = httpx.get(f"{base_url}/api/v1/config", timeout=10)
-    instance_id = (
+    # Fetch auto-generated instance ID from the running server (used by
+    # _container_id_for_workspace for deterministic container-name lookups).
+    config_resp = server["client"].get("/api/v1/config", timeout=10)
+    server["instance_id"] = (
         config_resp.json().get("instance_id", "")
         if config_resp.status_code == 200
         else ""
     )
 
-    yield {
-        "url": base_url,
-        "port": port,
-        "data_dir": data_dir,
-        "proc": proc,
-        "instance_id": instance_id,
-    }
+    yield server
 
-    try:
-        proc.kill()
-        proc.wait(timeout=5)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        pass
-    if proc.stdout:
-        server_log = proc.stdout.read().decode("utf-8", errors="replace")
-        if server_log.strip():
-            sys.stderr.write(
-                f"\n=== agent-home-e2e server log ===\n{server_log}\n===\n"
-            )
-    close_popen_pipes(proc)
-    _rm_containers(instance_id)
-    shutil.rmtree(data_dir, ignore_errors=True)
+    stop_server(server)
 
 
 def _rm_containers(instance_id):
@@ -185,9 +127,8 @@ def _container_id_for_workspace(workspace_id, instance_id):
 
 @pytest.fixture(scope="module")
 def auth(server):
-    url = server["url"]
-    resp = httpx.post(
-        f"{url}/api/v1/auth/login",
+    resp = server["client"].post(
+        "/api/v1/auth/login",
         json={"identifier": "test@example.com", "password": "testpass"},
         timeout=10,
     )
@@ -204,9 +145,9 @@ def create_workspace(server, auth, **fields):
     global _ws_counter  # noqa: PLW0603
     _ws_counter += 1
     name = fields.pop("name", f"agent-home-e2e-{_ws_counter}")
-    url = server["url"]
-    resp = httpx.post(
-        f"{url}/api/v1/workspaces",
+    client = server["client"]
+    resp = client.post(
+        "/api/v1/workspaces",
         headers=auth["headers"],
         json={"name": name, **fields},
         timeout=30,
@@ -216,8 +157,8 @@ def create_workspace(server, auth, **fields):
 
     def cleanup():
         try:
-            httpx.delete(
-                f"{url}/api/v1/workspaces/{workspace_id}",
+            client.delete(
+                f"/api/v1/workspaces/{workspace_id}",
                 headers=auth["headers"],
                 timeout=30,
             )
@@ -263,10 +204,7 @@ async def recv_until(ws, predicate, timeout=30):
 
 async def ws_connect(server, auth, workspace_id):
     """Open a WS, connect, wait for container_ready."""
-    ws_url = server["url"].replace("http://", "ws://")
-    ws = await websockets.connect(
-        f"{ws_url}/ws?token={auth['token']}", max_size=2**20
-    )
+    ws = await _ws_dial(server, f"/ws?token={auth['token']}", max_size=2**20)
     await ws.send(
         json.dumps({"cmd": "workspace_connect", "workspaceId": workspace_id})
     )

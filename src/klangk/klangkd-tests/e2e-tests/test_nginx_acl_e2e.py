@@ -19,7 +19,7 @@ import httpx
 import pytest
 
 from klangk.model import free_port
-from _e2e_env import clean_env, close_popen_pipes
+from _e2e_server import start_server, stop_server
 
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
 
@@ -357,60 +357,27 @@ class TestNginxAclEnforcement:
         os.makedirs(data_dir)
         os.makedirs(state_dir)
 
-        backend_port = _find_free_port()
         browser_port = _find_free_port()
         egress_port = _find_free_port()
 
-        # Start uvicorn.
-        backend_env = clean_env(
-            KLANGK_PORT=backend_port,
-            KLANGK_DATA_DIR=data_dir,
-            KLANGK_STATE_DIR=state_dir,
+        # Start the real backend (klangkd on its UDS); nginx (started
+        # below) proxies to this socket, as in production (#1525).
+        server = start_server(
+            data_dir=data_dir,
+            state_dir=state_dir,
             KLANGK_JWT_SECRET="nginx-acl-test-secret",
             KLANGK_PREVENT_INSECURE_JWT_SECRET="",
             KLANGK_DEFAULT_USER="test@example.com",
             KLANGK_DEFAULT_PASSWORD="testpass",
             KLANGK_TEST_MODE="1",
             KLANGK_IDLE_TIMEOUT_SECONDS="300",
-            KLANGK_PORT_RANGE_START=str(free_port()),
             LOGFIRE_TOKEN="",
         )
-        backend_proc = subprocess.Popen(
-            [
-                "python3",
-                os.path.join(os.path.dirname(__file__), "runtestserver.py"),
-                "--host",
-                "0.0.0.0",
-                "--port",
-                backend_port,
-                "--ws-max-size",
-                "16777216",
-            ],
-            cwd=BACKEND_DIR,
-            env=backend_env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-
-        # Wait for backend.
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            try:
-                r = httpx.get(
-                    f"http://localhost:{backend_port}/health", timeout=2
-                )
-                if r.status_code == 200:
-                    break
-            except httpx.ConnectError:
-                pass
-            time.sleep(0.3)
-        else:
-            backend_proc.kill()
-            raise RuntimeError("Backend did not start")
+        uds_path = server["uds_path"]
 
         # Start nginx via the Python renderer (#1396): render the conf
         # from an explicit settings dict, then launch nginx directly with -c.
-        from klangk.nginx import NginxRenderer, tcp_upstream
+        from klangk.nginx import NginxRenderer, uds_upstream
         from klangk.settings import KlangkSettings
         import types
 
@@ -419,7 +386,7 @@ class TestNginxAclEnforcement:
             "KLANGK_LISTEN": "0.0.0.0",
             "KLANGK_EGRESS_PORT": egress_port,
             "KLANGK_CONTAINER_SUBNETS": "192.0.2.0/24",
-            "KLANGK_LLM_BASE_URL": f"http://127.0.0.1:{backend_port}",
+            "KLANGK_LLM_BASE_URL": "http://127.0.0.1:1",
             "KLANGK_LLM_API_KEY": "fake-key",
             "KLANGK_DATA_DIR": data_dir,
             "KLANGK_STATE_DIR": state_dir,
@@ -431,7 +398,7 @@ class TestNginxAclEnforcement:
             types.SimpleNamespace(
                 state=types.SimpleNamespace(settings=KlangkSettings(nginx_env))
             )
-        ).write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
+        ).write_config(uds_upstream(uds_path), conf_path)
         nginx_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],
             stdout=subprocess.PIPE,
@@ -452,21 +419,17 @@ class TestNginxAclEnforcement:
             time.sleep(0.3)
         else:
             nginx_proc.kill()
-            backend_proc.kill()
+            stop_server(server)
             raise RuntimeError("Nginx did not start")
 
         yield {
             "browser_port": browser_port,
             "egress_port": egress_port,
-            "backend_port": backend_port,
         }
 
         nginx_proc.kill()
         nginx_proc.wait(timeout=5)
-        backend_proc.kill()
-        backend_proc.wait(timeout=5)
-        close_popen_pipes(nginx_proc)
-        close_popen_pipes(backend_proc)
+        stop_server(server)
 
     def test_regular_endpoint_allowed(self, nginx_stack):
         """Regular browser endpoints (/health) are not ACL-gated and should work."""
@@ -541,63 +504,30 @@ class TestNginxDenyByDefault:
         state_dir = os.path.join(tmpdir, "state")
         os.makedirs(data_dir)
         os.makedirs(state_dir)
-        backend_port = _find_free_port()
         browser_port = _find_free_port()
         egress_port = _find_free_port()
 
-        # Start uvicorn (loopback only; nginx reaches it via 127.0.0.1).
-        backend_env = clean_env(
-            KLANGK_PORT=backend_port,
-            KLANGK_DATA_DIR=data_dir,
-            KLANGK_STATE_DIR=state_dir,
+        # Start the real backend (klangkd on its UDS); nginx (started
+        # below) proxies to this socket (#1525).
+        server = start_server(
+            data_dir=data_dir,
+            state_dir=state_dir,
             KLANGK_JWT_SECRET="nginx-deny-test-secret",
             KLANGK_PREVENT_INSECURE_JWT_SECRET="",
             KLANGK_DEFAULT_USER="test@example.com",
             KLANGK_DEFAULT_PASSWORD="testpass",
             KLANGK_TEST_MODE="1",
             KLANGK_IDLE_TIMEOUT_SECONDS="300",
-            KLANGK_PORT_RANGE_START=str(free_port()),
             LOGFIRE_TOKEN="",
         )
-        backend_proc = subprocess.Popen(
-            [
-                "python3",
-                os.path.join(os.path.dirname(__file__), "runtestserver.py"),
-                "--host",
-                "127.0.0.1",
-                "--port",
-                backend_port,
-                "--ws-max-size",
-                "16777216",
-            ],
-            cwd=BACKEND_DIR,
-            env=backend_env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-
-        # Wait for backend.
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            try:
-                r = httpx.get(
-                    f"http://localhost:{backend_port}/health", timeout=2
-                )
-                if r.status_code == 200:
-                    break
-            except httpx.ConnectError:
-                pass
-            time.sleep(0.3)
-        else:
-            backend_proc.kill()
-            raise RuntimeError("Backend did not start")
+        uds_path = server["uds_path"]
 
         # Start nginx via the Python renderer (#1396) with the host IP as
         # the (sole) container source IP. The browser catch-all's container
         # guard (geo on $realip_remote_addr) then denies a *direct* request
         # from exactly that IP — while a trusted-proxy request whose XFF is
         # that IP still passes (the peer is the proxy, not a container source).
-        from klangk.nginx import NginxRenderer, tcp_upstream
+        from klangk.nginx import NginxRenderer, uds_upstream
         from klangk.settings import KlangkSettings
         import types
 
@@ -616,7 +546,7 @@ class TestNginxDenyByDefault:
             types.SimpleNamespace(
                 state=types.SimpleNamespace(settings=KlangkSettings(nginx_env))
             )
-        ).write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
+        ).write_config(uds_upstream(uds_path), conf_path)
         nginx_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],
             stdout=subprocess.PIPE,
@@ -637,7 +567,7 @@ class TestNginxDenyByDefault:
             time.sleep(0.3)
         else:
             nginx_proc.kill()
-            backend_proc.kill()
+            stop_server(server)
             raise RuntimeError("Nginx did not start")
 
         yield {
@@ -648,10 +578,7 @@ class TestNginxDenyByDefault:
 
         nginx_proc.kill()
         nginx_proc.wait(timeout=5)
-        backend_proc.kill()
-        backend_proc.wait(timeout=5)
-        close_popen_pipes(nginx_proc)
-        close_popen_pipes(backend_proc)
+        stop_server(server)
 
     def test_api_denied_from_container_ip(self, stack):
         """From the container source IP, a non-container /api/v1 path is
@@ -737,16 +664,15 @@ class TestNginxAuthLocalAcl:
         state_dir = os.path.join(tmpdir, "state")
         os.makedirs(data_dir)
         os.makedirs(state_dir)
-        backend_port = _find_free_port()
         browser_port = _find_free_port()
         egress_port = _find_free_port()
 
-        # Start uvicorn (loopback; nginx reaches it via 127.0.0.1).
+        # Start the real backend (klangkd on its UDS); nginx (started
+        # below) proxies to this socket (#1525).
         # KLANGK_AUTH_MODES=none so /auth/local actually mints a token.
-        backend_env = clean_env(
-            KLANGK_PORT=backend_port,
-            KLANGK_DATA_DIR=data_dir,
-            KLANGK_STATE_DIR=state_dir,
+        server = start_server(
+            data_dir=data_dir,
+            state_dir=state_dir,
             KLANGK_JWT_SECRET="nginx-auth-local-test-secret",
             KLANGK_PREVENT_INSECURE_JWT_SECRET="",
             KLANGK_DEFAULT_USER="test@example.com",
@@ -754,45 +680,14 @@ class TestNginxAuthLocalAcl:
             KLANGK_AUTH_MODES="none",
             KLANGK_TEST_MODE="1",
             KLANGK_IDLE_TIMEOUT_SECONDS="300",
-            KLANGK_PORT_RANGE_START=str(free_port()),
             LOGFIRE_TOKEN="",
         )
-        backend_proc = subprocess.Popen(
-            [
-                "python3",
-                os.path.join(os.path.dirname(__file__), "runtestserver.py"),
-                "--host",
-                "127.0.0.1",
-                "--port",
-                backend_port,
-                "--ws-max-size",
-                "16777216",
-            ],
-            cwd=BACKEND_DIR,
-            env=backend_env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            try:
-                r = httpx.get(
-                    f"http://localhost:{backend_port}/health", timeout=2
-                )
-                if r.status_code == 200:
-                    break
-            except httpx.ConnectError:
-                pass
-            time.sleep(0.3)
-        else:
-            backend_proc.kill()
-            raise RuntimeError("Backend did not start")
+        uds_path = server["uds_path"]
 
         # nginx via the Python renderer (#1396) with no container subnets —
         # the /auth/local block is always generated with its fixed loopback
         # allowlist.
-        from klangk.nginx import NginxRenderer, tcp_upstream
+        from klangk.nginx import NginxRenderer, uds_upstream
         from klangk.settings import KlangkSettings
         import types
 
@@ -810,7 +705,7 @@ class TestNginxAuthLocalAcl:
             types.SimpleNamespace(
                 state=types.SimpleNamespace(settings=KlangkSettings(nginx_env))
             )
-        ).write_config(tcp_upstream("127.0.0.1", backend_port), conf_path)
+        ).write_config(uds_upstream(uds_path), conf_path)
         nginx_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],
             stdout=subprocess.PIPE,
@@ -830,7 +725,7 @@ class TestNginxAuthLocalAcl:
             time.sleep(0.3)
         else:
             nginx_proc.kill()
-            backend_proc.kill()
+            stop_server(server)
             raise RuntimeError("Nginx did not start")
 
         yield {
@@ -840,8 +735,7 @@ class TestNginxAuthLocalAcl:
 
         nginx_proc.kill()
         nginx_proc.wait(timeout=5)
-        backend_proc.kill()
-        backend_proc.wait(timeout=5)
+        stop_server(server)
 
     def test_auth_local_denied_from_non_loopback(self, stack):
         """From the host's non-loopback IP (the address pasta NAT traffic

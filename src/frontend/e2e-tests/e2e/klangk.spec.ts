@@ -555,7 +555,7 @@ test.describe("Klangk E2E", () => {
         if (!pid) throw new Error("KLANGK_E2E_PID not set");
         const { execSync, spawn: spawnProc } = await import("child_process");
         const { join } = await import("path");
-        const { createWriteStream } = await import("fs");
+        const { openSync } = await import("fs");
 
         // SIGKILL the uvicorn process — simulates a hard crash
         process.kill(Number(pid), "SIGKILL");
@@ -579,19 +579,18 @@ test.describe("Klangk E2E", () => {
         const dataDir = process.env.KLANGK_E2E_DATA_DIR || "/tmp/klangk-e2e";
         const stateDir =
           process.env.KLANGK_E2E_STATE_DIR || "/tmp/klangk-e2e-state";
+        // klangkd's nginx reopens /dev/stdout (its access_log), which fails
+        // with ENXIO when stdout is a pipe — append to the same log file via
+        // an fd so nginx can reopen it cleanly (#1525).
+        const logPath = process.env.KLANGK_E2E_LOG;
+        const logFd = logPath ? openSync(logPath, "a") : "pipe";
         const backendProcess = spawnProc(
           "python3",
-          [
-            "e2e-tests/runtestserver.py",
-            "--host",
-            "0.0.0.0",
-            "--port",
-            backendPort,
-          ],
+          ["-m", "klangk.launcher", "--config=none"],
           {
             cwd: join(projectRoot, "src", "klangk", "klangkd-tests"),
             detached: true,
-            stdio: ["ignore", "pipe", "pipe"],
+            stdio: ["ignore", logFd, logFd],
             env: cleanEnv({
               KLANGK_PORT: backendPort,
               KLANGK_DATA_DIR: dataDir,
@@ -614,14 +613,6 @@ test.describe("Klangk E2E", () => {
         );
         restartedPid = backendProcess.pid ?? null;
         process.env.KLANGK_E2E_PID = String(backendProcess.pid);
-
-        // Pipe output to log
-        const logPath = process.env.KLANGK_E2E_LOG;
-        if (logPath) {
-          const logStream = createWriteStream(logPath, { flags: "a" });
-          backendProcess.stdout?.pipe(logStream);
-          backendProcess.stderr?.pipe(logStream);
-        }
 
         // Wait for the server to be ready
         const baseUrl = `http://localhost:${backendPort}`;

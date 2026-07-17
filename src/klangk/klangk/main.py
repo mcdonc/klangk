@@ -898,5 +898,6 @@ from .api._common import get_app_dep  # noqa: F401, E402
 # No module-level ``app = build_app(...)`` and no ``__getattr__`` shim: the
 # composition root is sealed (#1454). ``klangkd`` constructs the app
 # explicitly (``build_app(settings)``) and passes the object to uvicorn. The
-# E2E suites launch ``e2e-tests/runtestserver.py``, which builds the app and
-# passes the object to uvicorn — no ``module:app`` string import anywhere.
+# E2E suites launch real ``klangkd`` (``python -m klangk.launcher``) and
+# contact it over its UDS — no ``module:app`` string import anywhere
+# (#1525).

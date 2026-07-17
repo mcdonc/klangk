@@ -1,5 +1,5 @@
 import { execSync, spawn } from "child_process";
-import { createWriteStream, mkdirSync, mkdtempSync } from "fs";
+import { mkdirSync, mkdtempSync, openSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -87,63 +87,40 @@ async function globalSetup() {
   const logDir = join(projectRoot, "src", "frontend", "e2e-tests", "logs");
   mkdirSync(logDir, { recursive: true });
 
-  // Start nginx as an LLM proxy so containers can reach the LLM.
-  // Containers are configured with KLANGK_LLM_PROXY_URL pointing at this nginx.
+  // klangkd's own nginx serves both the browser ingress (KLANGK_PORT)
+  // and the container egress (KLANGK_EGRESS_PORT below). The previous
+  // test-only LLM-proxy nginx is gone — it existed only because the old
+  // runtestserver.py launch had nginx disabled; klangkd's real nginx is
+  // the production egress path (#1525).
   const nginxPort = "18995";
-  if (llmUrl) {
-    // Render nginx.conf via the Python renderer (#1396) and launch nginx
-    // directly — replaces the deleted scripts/nginx.sh (#1427).
-    const nginxState = join(dataDir, "nginx");
-    mkdirSync(nginxState, { recursive: true });
-    const confPath = join(nginxState, "nginx.conf");
-
-    const renderEnv = cleanEnv({
-      KLANGK_EGRESS_PORT: nginxPort,
-      KLANGK_PORT: backendPort,
-    });
-    execSync(
-      `python -c "from klangk.nginx import NginxRenderer, tcp_upstream; ` +
-        `from klangk.settings import KlangkSettings; import types, os; ` +
-        `NginxRenderer(types.SimpleNamespace(settings=KlangkSettings(os.environ)))` +
-        `.write_config(tcp_upstream('127.0.0.1', '${backendPort}'), '${confPath}')"`,
-      {
-        cwd: join(projectRoot, "src", "klangk", "klangkd-tests"),
-        env: renderEnv,
-      },
-    );
-
-    const nginxLogPath = join(
-      logDir,
-      `nginx-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
-    );
-    const nginxLogFd = require("fs").openSync(nginxLogPath, "w");
-    const nginxProcess = spawn("nginx", ["-e", "stderr", "-c", confPath], {
-      detached: true,
-      stdio: ["ignore", nginxLogFd, nginxLogFd],
-    });
-    process.env.KLANGK_E2E_NGINX_PID = String(nginxProcess.pid);
-    // Wait briefly for nginx to start
-    await new Promise((r) => setTimeout(r, 1000));
-    console.log(
-      `LLM proxy nginx started on port ${nginxPort} (log: ${nginxLogPath})`,
-    );
-  }
 
   console.log(
     `Starting E2E server on port ${backendPort} ` +
       `with KLANGK_DATA_DIR=${dataDir}`,
   );
 
-  // Start uvicorn directly with E2E overrides as env vars.
+  // Determine the backend log path up front so klangkd's stdout/stderr can
+  // be wired directly to the file (via an fd). klangkd's nginx reopens
+  // /dev/stdout (its access_log), which fails with ENXIO when stdout is a
+  // pipe — a real file fd reopens cleanly. This mirrors the Python E2E
+  // helper's log_path (#1525, #364).
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const logPath = join(logDir, `backend-${timestamp}.log`);
+  process.env.KLANGK_E2E_LOG = logPath;
+  const logFd = openSync(logPath, "w");
+
+  // Start the real production server (klangkd) with nginx enabled. The
+  // browser hits nginx on KLANGK_PORT; nginx proxies to klangkd's UDS,
+  // exactly as in production (#1525). Replaces the test-only
+  // runtestserver.py TCP launcher.
   const backendProcess = spawn(
     "python3",
-    ["e2e-tests/runtestserver.py", "--host", "0.0.0.0", "--port", backendPort],
+    ["-m", "klangk.launcher", "--config=none"],
     {
       cwd: join(projectRoot, "src", "klangk", "klangkd-tests"),
       detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", logFd, logFd],
       env: cleanEnv({
-        _KLANGK_DISABLE_NGINX: "1",
         KLANGK_PORT: backendPort,
         KLANGK_EGRESS_PORT: nginxPort,
         KLANGK_DATA_DIR: dataDir,
@@ -171,15 +148,6 @@ async function globalSetup() {
   );
 
   process.env.KLANGK_E2E_PID = String(backendProcess.pid);
-
-  // Write backend output to a per-run log file so logs aren't overwritten
-  // when test-e2e runs each browser sequentially.
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const logPath = join(logDir, `backend-${timestamp}.log`);
-  const logStream = createWriteStream(logPath);
-  process.env.KLANGK_E2E_LOG = logPath;
-  backendProcess.stdout?.pipe(logStream);
-  backendProcess.stderr?.pipe(logStream);
 
   const baseUrl = `http://localhost:${backendPort}`;
   const maxWait = 600;
