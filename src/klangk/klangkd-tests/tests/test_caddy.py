@@ -502,8 +502,16 @@ class TestFindProxyBin:
         s = make_settings({"KLANGK_PROXY_BIN": "/custom/caddy"})
         assert _renderer(s).find_proxy_bin() == "/custom/caddy"
 
-    def test_fallback_to_which(self):
-        assert len(_renderer(make_settings({})).find_proxy_bin()) > 0
+    def test_fallback_to_which(self, monkeypatch):
+        """When shutil.which finds caddy, that path is used (not the hard-coded
+        fallback). Forced via monkeypatch so it's deterministic on hosts
+        without caddy on PATH (e.g. CI's plain-pip unit job)."""
+        import klangk.caddy as caddy_mod
+
+        monkeypatch.setattr(
+            caddy_mod.shutil, "which", lambda name: "/found/caddy"
+        )
+        assert _renderer(make_settings({})).find_proxy_bin() == "/found/caddy"
 
     def test_fallback_to_usr_bin(self, monkeypatch):
         import klangk.caddy as caddy_mod
