@@ -7,7 +7,7 @@
 # devenv's backend process does this automatically.
 
 # --- Deployment shape ---
-# port: the browser/nginx port. Set it for full/browser mode (UI at http://localhost:8997).
+# port: the browser/proxy port. Set it for full/browser mode (UI at http://localhost:8997).
 # Leave unset for headless mode (no browser listener; container-egress only).
 port: "8997"
 # listen: the browser interface address (rendered only when port is set).

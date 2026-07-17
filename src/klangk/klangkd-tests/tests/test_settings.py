@@ -107,7 +107,7 @@ class TestSettingsModel:
             "egress_listen",
             "port",
             "socket",
-            "nginx_port",
+            "proxy_port",
             "llm_api_key",
             "trusted_proxy_cidrs",
             "container_subnets",
@@ -248,9 +248,9 @@ class TestDualFormKeys:
 # _resolve_socket_and_ports validator (listen-shape settings, #1542)
 # ---------------------------------------------------------------------------
 # KLANGK_PORT (unset ⇒ headless, set ⇒ browser), KLANGK_EGRESS_PORT (container
-# egress), KLANGK_SOCKET (backend UDS), and the deprecated KLANGK_NGINX_PORT
+# egress), KLANGK_SOCKET (backend UDS), and the deprecated KLANGK_PROXY_PORT
 # alias are resolved once at construction. Callers read ``egress_port`` /
-# ``socket`` only; ``nginx_port`` is a deprecated alias folded into
+# ``socket`` only; ``proxy_port`` is a deprecated alias folded into
 # ``egress_port`` (egress-wins) and slated for removal.
 
 
@@ -302,25 +302,25 @@ class TestResolveSocketAndPorts:
         )
         assert s.egress_listen == "192.168.1.5"
 
-    def test_nginx_port_folded_into_egress_with_warning(self, caplog):
-        """KLANGK_NGINX_PORT alone (no egress) is used as egress + a deprecation warning."""
+    def test_proxy_port_folded_into_egress_with_warning(self, caplog):
+        """KLANGK_PROXY_PORT alone (no egress) is used as egress + a deprecation warning."""
         import logging
 
         with caplog.at_level(logging.WARNING):
             s = KlangkSettings(
                 env={
                     "KLANGK_STATE_DIR": "/tmp/state",
-                    "KLANGK_NGINX_PORT": "9999",
+                    "KLANGK_PROXY_PORT": "9999",
                 }
             )
         assert s.egress_port == "9999"
         assert any(
-            "KLANGK_NGINX_PORT is deprecated" in r.message
+            "KLANGK_PROXY_PORT is deprecated" in r.message
             for r in caplog.records
         )
 
-    def test_egress_wins_over_nginx_port_with_warning(self, caplog):
-        """Both set: egress_port wins, nginx_port ignored + a warning."""
+    def test_egress_wins_over_proxy_port_with_warning(self, caplog):
+        """Both set: egress_port wins, proxy_port ignored + a warning."""
         import logging
 
         with caplog.at_level(logging.WARNING):
@@ -328,12 +328,12 @@ class TestResolveSocketAndPorts:
                 env={
                     "KLANGK_STATE_DIR": "/tmp/state",
                     "KLANGK_EGRESS_PORT": "8995",
-                    "KLANGK_NGINX_PORT": "9999",
+                    "KLANGK_PROXY_PORT": "9999",
                 }
             )
         assert s.egress_port == "8995"
         assert any(
-            "KLANGK_NGINX_PORT is ignored" in r.message for r in caplog.records
+            "KLANGK_PROXY_PORT is ignored" in r.message for r in caplog.records
         )
 
     def test_egress_equals_port_rejected(self):

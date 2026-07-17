@@ -2,8 +2,8 @@
 
 The E2E baseline defaults live in :mod:`_e2e_env` (:func:`clean_env`):
 ``KLANGK_AUTH_MODES=password`` and (for UDS-direct suites)
-``_KLANGK_DISABLE_NGINX=1``. The CLI suite launches real ``klangkd`` with
-nginx in front (TCP) because the ``klangk`` CLI it drives has no UDS mode
+``_KLANGK_DISABLE_PROXY=1``. The CLI suite launches real ``klangkd`` with
+the proxy in front (TCP) because the ``klangk`` CLI it drives has no UDS mode
 (#1525); the suites' ``_start_server`` helpers wrap
 :mod:`_e2e_server` accordingly. No ``os.environ`` spread — stray vars
 can't leak (#1526).

@@ -30,7 +30,7 @@ test.describe("Token expiry", () => {
     expect(resp.status()).toBe(401);
     const body = await resp.json();
     expect(body.detail).toBe("Workspace token expired");
-    // Verify the X-Token-Error header is set for nginx forwarding
+    // Verify the X-Token-Error header is set for proxy forwarding
     const tokenError = resp.headers()["x-token-error"];
     expect(tokenError).toBe("expired");
   });

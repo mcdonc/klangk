@@ -1,6 +1,6 @@
 # Hosted Apps
 
-Workspace containers can run web applications (Jupyter, Marimo, Vite dev servers, etc.) on dynamically allocated ports. Klangk's nginx reverse proxy makes them accessible at predictable URLs without exposing raw container ports.
+Workspace containers can run web applications (Jupyter, Marimo, Vite dev servers, etc.) on dynamically allocated ports. Klangk's reverse proxy (nginx) makes them accessible at predictable URLs without exposing raw container ports.
 
 !!! note
 Hosted apps are for **development and demonstration** — not permanent hosting. Port allocations and containers are ephemeral; use a dedicated hosting platform for production deployments.
@@ -12,7 +12,7 @@ Hosted apps are accessible to anyone who can reach the Klangk server. Do not ser
 
 1. Each workspace gets up to **5 ports** (configurable via `KLANGK_HOSTED_PORTS_PER_WORKSPACE`; set to `0` to disable hosting entirely) allocated from the host range starting at port 9000 (configurable via `KLANGK_PORT_RANGE_START`). These map to container ports 8000-8004.
 2. When a container starts, the port mappings are injected as `KLANGK_PORT_MAPPINGS` (e.g., `8000:9000,8001:9001,...`).
-3. Nginx proxies requests from `/hosted/{workspace_id}/{port}/` directly to the container — no Python in the request path.
+3. The proxy proxies requests from `/hosted/{workspace_id}/{port}/` directly to the container — no Python in the request path.
 
 ## Accessing hosted apps
 
@@ -84,7 +84,7 @@ No manual configuration needed — the `KLANGK_HOSTING_*` environment variables 
 | ----------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `KLANGK_PORT_RANGE_START`           | `9000`    | First host port for workspace app allocations                                                                              |
 | `KLANGK_HOSTED_PORTS_PER_WORKSPACE` | `5`       | Ceiling on ports per workspace. `0` disables hosted-app serving entirely (no allocation, no hosting env, `/hosted/` 404s). |
-| `KLANGK_PORT`                       | _(unset)_ | Browser/nginx port (used in URL derivation). Must be set to serve hosted apps (hosted apps are browser-ingress).           |
+| `KLANGK_PORT`                       | _(unset)_ | Browser/proxy port (used in URL derivation). Must be set to serve hosted apps (hosted apps are browser-ingress).           |
 
 Ports are allocated atomically and cleaned up automatically when workspaces are deleted.
 
@@ -98,7 +98,7 @@ server-wide. This is a single knob that doubles as the count configuration:
 - **No hosting env in containers** — `KLANGK_PORT_MAPPINGS` and the
   `KLANGK_HOSTING_*` vars are not injected, so `klangk-hosted-url` and the
   agent's `get_hosted_url` tool error out cleanly.
-- **`/hosted/<ws>/<port>/` returns 404** — the nginx proxy locations are
+- **`/hosted/<ws>/<port>/` returns 404** — the proxy locations are
   collapsed to a single `return 404` block.
 
 A positive value (e.g. `3`) caps each workspace at that many ports. Changing

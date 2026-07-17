@@ -14,9 +14,9 @@ not auto-loaded). The values:
 - `KLANGK_INSTANCE_ID=video` — own pid file + container labels, no port clash.
 - `KLANGK_PORT=8998` — uvicorn's TCP port (only referenced for teardown; the
   bind is a UDS, not TCP).
-- `KLANGK_NGINX_PORT=8996` — the port the browser/CLI hit (the demo's public
+- `KLANGK_EGRESS_PORT=8996` — the port the browser/CLI hit (the demo's public
   port).
-- `KLANGK_LISTEN=127.0.0.1` — selects the full (browser) nginx template.
+- `KLANGK_LISTEN=127.0.0.1` — selects the full (browser) proxy template.
 - `KLANGK_STATE_DIR=/tmp/klangk-demo` — **short path** so the UDS
   (`<state_dir>/klangk.sock`) fits under AF_UNIX's 108-byte `sun_path` limit
   (#1531). The worktree-relative path devenv.nix sets is too long for a deep
@@ -29,7 +29,7 @@ not auto-loaded). The values:
 - `KLANGK_OIDC_CONFIG=<demo>/demo-oidc.yaml` — fake OIDC provider so `both`
   mode boots (the demo never actually authenticates via OIDC).
 - `KLANGK_HOSTING_HOSTNAME=localhost:8996` — hosted-app URLs resolve through
-  nginx on the public port.
+  the proxy on the public port.
 
 ## Changes made
 
@@ -91,14 +91,14 @@ of providers (the external-file format `KLANGK_OIDC_CONFIG` expects), not the
 
 ### 7. README port refs (8995 → 8996)
 
-The demo backend's public port is `8996` (nginx), not `8995` (the main
+The demo backend's public port is `8996` (the proxy), not `8995` (the main
 repo's default). Updated the README's references.
 
 ### 8. CLI scenes use UDS transport (record-cli.sh, cli_demo.py)
 
 CLI scenes now connect over the UDS (`/tmp/klangk-demo/klangk.sock`) instead
 of the TCP URL. Both listeners are up simultaneously (uvicorn on the UDS,
-nginx on TCP :8996), so CLI and browser scenes share one backend with no
+the proxy on TCP :8996), so CLI and browser scenes share one backend with no
 config change between them. `record-cli.sh` exports `KLANGK_DEMO_SERVER` so
 `cli_demo.py` uses the same transport as the prep helpers.
 
@@ -126,7 +126,7 @@ run. Bumped to 360s.
 
 - `tsc --noEmit -p tsconfig.json` passes clean (exit 0) for the whole demo
   directory.
-- `run-demo-backend.sh start` → backend boots (nginx on :8996, UDS at
+- `run-demo-backend.sh start` → backend boots (the proxy on :8996, UDS at
   `/tmp/klangk-demo/klangk.sock`, `auth=both`, OIDC `demo-sso` loaded).
 - `demo-seed.ts --reset` → bootstrap login, hero + cast creation, workspace +
   role grants all succeed.

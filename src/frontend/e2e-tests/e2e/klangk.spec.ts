@@ -579,7 +579,7 @@ test.describe("Klangk E2E", () => {
         const dataDir = process.env.KLANGK_E2E_DATA_DIR || "/tmp/klangk-e2e";
         const stateDir =
           process.env.KLANGK_E2E_STATE_DIR || "/tmp/klangk-e2e-state";
-        // klangkd's nginx reopens /dev/stdout (its access_log), which fails
+        // klangkd's proxy (nginx) reopens /dev/stdout (its access_log), which fails
         // with ENXIO when stdout is a pipe — append to the same log file via
         // an fd so nginx can reopen it cleanly (#1525).
         const logPath = process.env.KLANGK_E2E_LOG;

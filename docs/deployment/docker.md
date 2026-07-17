@@ -1,6 +1,6 @@
 # Running with Docker
 
-The Klangk host container packages the backend, nginx proxy, Flutter
+The Klangk host container packages the backend, the reverse proxy (nginx), Flutter
 web UI, and workspace image into a single Docker image. Workspace
 containers run inside it via rootless podman. No source checkout or
 build tools required.

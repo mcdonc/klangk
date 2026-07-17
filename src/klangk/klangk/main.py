@@ -24,7 +24,7 @@ from . import (
     emailsvc,
     files,
     model,
-    nginx as nginx_mod,
+    proxy as proxy_mod,
     oidc,
     plugins,
     podman,
@@ -380,7 +380,7 @@ class Lifecycle:
         swapping the instance propagates automatically.  Each subsystem's
         ``reconfigure(app_state)`` handles any cached runtime state that
         needs refreshing (OIDC caches, plugin declarations, SSL trust,
-        nginx renderer, email templates).  Most are no-ops.  Each call is
+        proxy renderer, email templates).  Most are no-ops.  Each call is
         best-effort: a failure is logged at warning level and skipped so
         one bad step can't leave the runtime half-reconfigured.
         """
@@ -402,7 +402,7 @@ class Lifecycle:
             "podman",
             "sockets",
             "container_registry",
-            "nginx_watchdog",
+            "proxy_watchdog",
             "terminal",
             "oidc",
             "plugins",
@@ -548,14 +548,14 @@ def enforce_no_auth_bind_safety(app) -> None:
 
 
 # ---------------------------------------------------------------------------
-# nginx child-process ownership (#1396, #1463)
+# proxy child-process ownership (#1396, #1463)
 # ---------------------------------------------------------------------------
-# When the server binds a UDS (only klangkd does this), Python owns the nginx
-# child: it renders nginx.conf, spawns nginx pointing at the UDS, and supervises
-# it with a small async watchdog (spawn + await proc.wait() + respawn-with-
-# backoff + clean SIGTERM to the process group on shutdown). No external
-# supervisor library — bespoke, matching uvicorn's own precedent. devenv /
-# supervisord remain only the outer restart layer for uvicorn (klangkd).
+# When the server binds a UDS (only klangkd does this), Python owns the proxy
+# child (currently nginx): it renders nginx.conf, spawns nginx pointing at the
+# UDS, and supervises it with a small async watchdog (spawn + await proc.wait()
+# + respawn-with- backoff + clean SIGTERM to the process group on shutdown). No
+# external supervisor library — bespoke, matching uvicorn's own precedent.
+# devenv / supervisord remain only the outer restart layer for uvicorn (klangkd).
 
 
 @asynccontextmanager
@@ -609,9 +609,9 @@ async def lifespan(app: FastAPI):
         app.state.sockets.notify_container_status
     )
     await app.state.lifecycle.startup()
-    # Start nginx (only when bound to a UDS — klangkd; no-op for TCP tests).
+    # Start the proxy (only when bound to a UDS — klangkd; no-op for TCP tests).
     # Rendered + owned by Python (#1396); replaces scripts/nginx.sh.
-    await app.state.nginx_watchdog.start()
+    await app.state.proxy_watchdog.start()
     logger.info("Klangk backend started")
 
     # uvicorn only handles SIGINT/SIGTERM, so SIGHUP is ours to claim:
@@ -627,7 +627,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
-        await app.state.nginx_watchdog.stop()
+        await app.state.proxy_watchdog.stop()
         await app.state.lifecycle.runtime_shutdown()
         await app.state.lifecycle.process_shutdown()
         logger.info("Klangk backend stopped")
@@ -798,9 +798,9 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
     app.state.container_registry = container.ContainerRegistry(app)
-    # Slice 2b (#1463): nginx watchdog is an owned instance with start/stop
+    # Slice 2b (#1463): proxy watchdog is an owned instance with start/stop
     # lifecycle methods called by the lifespan.
-    app.state.nginx_watchdog = nginx_mod.NginxWatchdog(app)
+    app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
     # #1480: Terminal(app_state) groups the ~25 tmux-session
     # management functions that share a Podman dependency. Reaches podman,
     # the registry, and settings through the single app_state reference.

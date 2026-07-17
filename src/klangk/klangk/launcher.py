@@ -3,7 +3,7 @@
 Loads config (from a YAML file + env vars + built-in defaults, per the
 precedence rules in :mod:`klangk.settings`), binds uvicorn (to a
 UNIX domain socket when ``KLANGK_LISTEN`` is a path, or a TCP host
-otherwise), and owns the nginx child that fronts it.
+otherwise), and owns the proxy child (currently nginx) that fronts it.
 
 Usage::
 
@@ -18,7 +18,7 @@ Config-file resolution (three states, no implicit escape):
 3. ``--config=none`` → run from env vars + built-in defaults (no file).
 
 See #1392 (the design record), #1395 (config + launcher), and #1396 (UDS +
-nginx ownership) for the full rationale.
+proxy ownership) for the full rationale.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ DEFAULT_CONFIG_PATH = "/etc/klangkd.conf"
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=False,
-    help="Start the klangk server (config + uvicorn + nginx).",
+    help="Start the klangk server (config + uvicorn + proxy).",
 )
 
 
@@ -78,7 +78,7 @@ def main(  # pragma: no cover
         ),
     ),
 ) -> None:
-    """Start the klangk server (uvicorn + nginx child)."""
+    """Start the klangk server (uvicorn + proxy child)."""
     resolved = _resolve_config_path(config)
 
     # Everything below reads through the typed config (config file > env >
@@ -90,7 +90,7 @@ def main(  # pragma: no cover
 
     # uvicorn always binds the UDS at ``settings.socket`` (default
     # ``<state_dir>/klangk.sock``, overridable via ``KLANGK_SOCKET`` — #1542).
-    # ``KLANGK_PORT`` (unset ⇒ headless, set ⇒ full/browser) drives nginx's
+    # ``KLANGK_PORT`` (unset ⇒ headless, set ⇒ full/browser) drives the proxy's
     # rendered template + listen directives; uvicorn never listens on TCP
     # directly.
     state_dir = settings.state_dir

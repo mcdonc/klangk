@@ -44,7 +44,7 @@ async def require_workspace_token(request: Request) -> str:
     """FastAPI dependency: validate workspace JWT from Authorization header.
 
     Returns the workspace_id. Raises 401 if missing, expired, or invalid.
-    This duplicates the nginx auth_request check as defense-in-depth.
+    This duplicates the proxy auth_request check as defense-in-depth.
     """
     authorization = request.headers.get("authorization", "")
     if not authorization.startswith("Bearer "):

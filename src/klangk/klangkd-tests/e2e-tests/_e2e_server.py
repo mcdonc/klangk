@@ -5,21 +5,21 @@ Launches the **real production entry point** — ``python3 -m klangk.launcher``
 the backend the way production does, closing the last gap between the test
 harness and the real server (#1454, #1426):
 
-* **UDS-direct** (default, ``uds=True``): nginx suppressed
-  (``_KLANGK_DISABLE_NGINX=1``), ``klangkd`` binds
+* **UDS-direct** (default, ``uds=True``): the proxy suppressed
+  (``_KLANGK_DISABLE_PROXY=1``), ``klangkd`` binds
   ``<state_dir>/klangk.sock``, and the suite's ``httpx`` / ``websockets``
   clients connect over that UDS via ``httpx`` UDS transports and
   ``websockets.unix_connect``. Used by the Python backend suites whose
   clients are in-process (``httpx`` + ``websockets``), so they exercise the
   same UDS + ``_UDS_MODE`` trust boundary production relies on.
 
-* **TCP via nginx** (``uds=False``): nginx is enabled on a free
-  ``KLANGK_PORT`` (``_KLANGK_DISABLE_NGINX`` cleared) and clients hit
-  ``http://localhost:<port>`` — nginx proxies to the UDS upstream. Used by
+* **TCP via the proxy** (``uds=False``): the proxy is enabled on a free
+  ``KLANGK_PORT`` (``_KLANGK_DISABLE_PROXY`` cleared) and clients hit
+  ``http://localhost:<port>`` — the proxy proxies to the UDS upstream. Used by
   suites whose clients have no UDS mode: the CLI E2E suite (drives the real
   ``klangk`` binary via ``--server <url>``) and the frontend Playwright suite
   (a real browser). This is also the production client path, so it is still
-  faithful — the request traverses nginx → UDS → klangkd.
+  faithful — the request traverses proxy → UDS → klangkd.
 
 Every server's env is built via :func:`_e2e_env.clean_env` (hermetic; no
 ``KLANGK_*`` leak from the ambient env, #1526). Each server gets a unique
@@ -130,10 +130,10 @@ def start_server(
     Parameters
     ----------
     uds:
-        ``True`` (default) → UDS-direct: nginx suppressed, bind the socket at
+        ``True`` (default) → UDS-direct: proxy suppressed, bind the socket at
         ``<state_dir>/klangk.sock``, return a UDS-configured ``client``. Use
         this for in-process Python clients.
-        ``False`` → TCP via nginx: nginx on a free ``KLANGK_PORT``, return a
+        ``False`` → TCP via the proxy: the proxy on a free ``KLANGK_PORT``, return a
         ``url`` and a TCP ``client``. Use this for CLI / browser suites.
     data_dir, state_dir:
         Optional explicit dirs (created otherwise as tempdirs).
@@ -171,19 +171,19 @@ def start_server(
     uds_path: str | None
     url: str | None
     if uds:
-        # Headless: no KLANGK_PORT, nginx suppressed. klangkd binds the UDS.
+        # Headless: no KLANGK_PORT, proxy suppressed. klangkd binds the UDS.
         overrides.pop("KLANGK_PORT", None)
-        overrides.setdefault("_KLANGK_DISABLE_NGINX", "1")
+        overrides.setdefault("_KLANGK_DISABLE_PROXY", "1")
         uds_path = os.path.join(state_dir, "klangk.sock")
         url = None
     else:
-        # nginx fronts the UDS on a TCP port; clients hit nginx. Both the
+        # The proxy fronts the UDS on a TCP port; clients hit the proxy. Both the
         # browser ingress (KLANGK_PORT) and the container egress
         # (KLANGK_EGRESS_PORT, default 8995) are allocated fresh so a test
         # never collides with a dev klangkd on the default egress port.
         # If the caller supplied KLANGK_PORT, honor it (url derives from the
         # resolved port, not a separate free draw).
-        overrides["_KLANGK_DISABLE_NGINX"] = ""
+        overrides["_KLANGK_DISABLE_PROXY"] = ""
         tcp_port = overrides.get("KLANGK_PORT")
         if tcp_port is None:
             tcp_port = str(free_port())

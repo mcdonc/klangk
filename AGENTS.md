@@ -13,7 +13,7 @@ devenv --quiet -O dotenv.enable:bool false shell -- pytest
 
 The flags: `--quiet` suppresses noisy devenv output; `-O dotenv.enable:bool false` prevents devenv from loading `.env` (which can interfere with test environments that set their own env vars via monkeypatch). `shell --` launches an ephemeral shell with the full environment, runs the command, and exits — this is the pattern agents should use for one-off commands. (`devenv shell` with no `--` drops into an interactive shell; not useful for non-interactive agents.) This applies to **all** commands: builds, tests, lint, `git`, `podman`, `flutter`, `gh`.
 
-A long-running interactive `devenv up` (backend + nginx + workspace image build) is a human-facing workflow; agents generally don't run it. If you need the backend up for something, ask.
+A long-running interactive `devenv up` (backend + proxy + workspace image build) is a human-facing workflow; agents generally don't run it. If you need the backend up for something, ask.
 
 ## Running tests (match CI)
 

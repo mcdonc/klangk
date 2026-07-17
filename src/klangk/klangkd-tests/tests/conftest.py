@@ -33,14 +33,15 @@ _TEST_PASSWORD_HASH = bcrypt.hashpw(
 
 
 @pytest.fixture(autouse=True)
-def _disable_nginx(monkeypatch):
-    """Suppress nginx spawn across the suite.
+def _disable_proxy(monkeypatch):
+    """Suppress proxy spawn across the suite.
 
-    The lifespan's nginx watchdog is unconditional in real runs; tests boot
-    the app (often via the lifespan) and never want a real nginx process.
-    Sets the internal, non-user-facing ``_KLANGK_DISABLE_NGINX`` kill switch.
+    The lifespan's proxy watchdog is unconditional in real runs; tests boot
+    the app (often via the lifespan) and never want a real proxy (nginx)
+    process.
+    Sets the internal, non-user-facing ``_KLANGK_DISABLE_PROXY`` kill switch.
     """
-    monkeypatch.setenv("_KLANGK_DISABLE_NGINX", "1")
+    monkeypatch.setenv("_KLANGK_DISABLE_PROXY", "1")
 
 
 @pytest.fixture(autouse=True)

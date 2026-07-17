@@ -132,7 +132,7 @@ class TestConfigureDefaults:
         """
         logger_mod.configure_defaults()
         with caplog.at_level(logging.WARNING, logger="klangk.settings"):
-            # Constructing settings with a deprecated KLANGK_NGINX_PORT emits
+            # Constructing settings with a deprecated KLANGK_PROXY_PORT emits
             # a WARNING from a settings validator — proving the configured
             # root handles pre-app logging.
             from klangk.settings import KlangkSettings
@@ -140,11 +140,11 @@ class TestConfigureDefaults:
             KlangkSettings(
                 env={
                     "KLANGK_STATE_DIR": "/tmp/state",
-                    "KLANGK_NGINX_PORT": "9999",
+                    "KLANGK_PROXY_PORT": "9999",
                 }
             )
         assert any(
-            "KLANGK_NGINX_PORT is deprecated" in r.message
+            "KLANGK_PROXY_PORT is deprecated" in r.message
             for r in caplog.records
         )
 

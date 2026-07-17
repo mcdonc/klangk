@@ -14,7 +14,7 @@
  *   3. Back to the **bash** terminal sub-tab → type `klangk-hosted-url 8000`
  *      → viewer sees the hosted URL that openclaw listens on.
  *   4. Open openclaw's **hosted app** in a new browser tab — proxied through
- *      Klangk's single nginx port. THE key visual of the hosted-apps feature.
+ *      Klangk's single proxy port. THE key visual of the hosted-apps feature.
  *   5. Return to the workspace list → click the **demo** card (Owned by Me).
  *   6. Terminal continuity — just SHOW the existing CLI scrollback (the cloned
  *      repo + Pi session are already there). No new commands, no nav-tab tour:

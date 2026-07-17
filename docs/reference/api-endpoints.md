@@ -306,7 +306,7 @@ email. Returns a session token on success.
 
 ### GET `/api/v1/auth/verify-workspace-token`
 
-Validate a workspace JWT. Used internally by nginx `auth_request` to
+Validate a workspace JWT. Used internally by the proxy's `auth_request` to
 gate container-to-host traffic.
 
 **Auth:** Workspace JWT required (`Authorization: Bearer <workspace_token>`).
@@ -981,7 +981,7 @@ credentials. Only available when `KLANGK_AUTH_MODES=none`; returns **403**
 otherwise. See [Auth Modes](../features/auth-modes.md).
 
 **Auth:** None. Reachable only from loopback (the `KLANGK_LISTEN` bind plus an
-nginx `allow 127.0.0.1/::1; deny all` per-location ACL keep it unreachable from
+the proxy's `allow 127.0.0.1/::1; deny all` per-location ACL keep it unreachable from
 workspace containers).
 
 No request body.
@@ -1101,7 +1101,7 @@ Relay a request from a workspace container to a connected browser tab.
 Used by Pi extensions that need to interact with the user's browser
 (e.g. navigating, reading page content).
 
-**Auth:** Workspace JWT required + nginx IP ACL (container traffic only).
+**Auth:** Workspace JWT required + proxy IP ACL (container traffic only).
 
 ```json
 { "action": "navigate", "browser_id": "string" }
@@ -1116,7 +1116,7 @@ Returns forwarded result from the target browser tab (arbitrary JSON).
 Streaming variant of browser-delegate. Returns results as newline-
 delimited JSON chunks.
 
-**Auth:** Workspace JWT required + nginx IP ACL (container traffic only).
+**Auth:** Workspace JWT required + proxy IP ACL (container traffic only).
 
 ```json
 { "action": "string", "browser_id": "string" }
@@ -1240,7 +1240,7 @@ optional `name` form field.
 Post a chat message from a workspace container to the workspace's chat
 channel. Used by Pi extensions and tools running inside the container.
 
-**Auth:** Workspace JWT required + nginx IP ACL (container traffic only).
+**Auth:** Workspace JWT required + proxy IP ACL (container traffic only).
 
 ```json
 { "message": "text of message" }

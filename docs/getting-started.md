@@ -81,7 +81,7 @@ devenv processes up --no-tui
 
 This sets up the dev shell (Python, Flutter, Dart, Node, podman,
 etc.), builds the workspace image and Flutter web app on first run,
-starts nginx and the FastAPI backend, and watches for file changes.
+starts the proxy and the FastAPI backend, and watches for file changes.
 Open <http://localhost:8995>.
 
 To run project commands like `test-backend` or

@@ -225,7 +225,7 @@ local-dev / customer-locked / team mapping.
 
 > **Note for Docker users:** `none` is loopback-only by design, and a
 > `docker run -p` published port isn't loopback — so `none` mode does not
-> yet work with the published host image (the nginx `/auth/local` ACL denies
+> yet work with the published host image (the proxy `/auth/local` ACL denies
 > the port-forwarded request). For the Docker image, set
 > `KLANGK_AUTH_MODES=password` (or `oidc`/`both`) until #1391 lands.
 > Locally (devenv, or running the binary on your own machine) `none` works

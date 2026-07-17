@@ -74,7 +74,7 @@ ENV HOME=/home/klangk
 ENV PYTHONPATH=/home/klangk/src/klangk:/home/klangk/venv/lib/python3.13/site-packages
 ENV PATH=/home/klangk/bin:/home/klangk/venv/bin:$PATH
 # klangkd binds a UDS (not TCP). KLANGK_PORT (browser) + KLANGK_EGRESS_PORT
-# (container egress) drive nginx's listeners. KLANGK_LISTEN is the browser
+# (container egress) drive the proxy's listeners. KLANGK_LISTEN is the browser
 # interface address (#1542).
 ENV KLANGK_PORT=8997
 ENV KLANGK_EGRESS_PORT=8995

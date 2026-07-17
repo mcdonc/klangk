@@ -85,11 +85,11 @@ Two complementary controls keep `none` mode local:
    you will get a warning, and anyone who can reach that address is
    effectively logged in as admin.
 
-2. **nginx per-location ACL.** `POST /api/v1/auth/local` is wrapped in a
+2. **Proxy per-location ACL.** `POST /api/v1/auth/local` is wrapped in a
    `location` block that does `allow 127.0.0.1; allow ::1; deny all;`.
    Workspace containers reach the host via pasta NAT and appear as the host's
    _non-loopback_ IP, so a container hitting `/auth/local` is denied with 403
-   at nginx — while the host browser (127.0.0.1) succeeds. nginx itself stays
+   at the proxy — while the host browser (127.0.0.1) succeeds. The proxy itself stays
    bound to `0.0.0.0` (hosted apps and remote browsers rely on it).
 
 3. **Backend source-IP self-check.** As a third layer (and to close the
@@ -97,16 +97,16 @@ Two complementary controls keep `none` mode local:
    _effective_ client is loopback: it trusts `X-Real-IP` / `X-Forwarded-For`
    only when the immediate peer is itself a trusted (loopback) proxy, so a
    non-loopback caller can't spoof them. This matters when a loopback proxy
-   (caddy, traefik, a sidecar) sits in front of nginx — then every proxied
-   request has `$remote_addr=127.0.0.1` and the nginx ACL alone would admit
+   (caddy, traefik, a sidecar) sits in front of the klangk proxy — then every proxied
+   request has `$remote_addr=127.0.0.1` and the proxy ACL alone would admit
    everyone; the backend re-check catches the real client via the forwarded
    header and refuses non-loopback values.
 
-> **Do not place a non-loopback proxy in front of nginx in `none` mode.**
+> **Do not place a non-loopback proxy in front of the klangk proxy in `none` mode.**
 > A loopback front-proxy makes `$remote_addr` loopback for all requests, so
-> the nginx ACL admits everyone; control #3 above still refuses non-loopback
+> the proxy ACL admits everyone; control #3 above still refuses non-loopback
 > real clients via `X-Real-IP`, so you stay safe, but the cleaner topology is
-> to let klangk's own nginx be the edge or to use a real auth mode
+> to let klangk's own proxy be the edge or to use a real auth mode
 > (`password`/`oidc`/`both`) when exposing the server beyond loopback.
 
 ### Why the token is kept

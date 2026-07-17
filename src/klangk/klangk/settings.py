@@ -219,8 +219,8 @@ class _KebabYamlConfigSettingsSource(YamlConfigSettingsSource):
     ``cli.yaml`` and the OIDC provider dicts).  pydantic-settings matches
     config keys against snake_case field names only, so a bare
     ``YamlConfigSettingsSource`` silently ignores hyphenated keys.  This
-    subclass normalizes top-level hyphenated keys (``nginx-port`` →
-    ``nginx_port``) so an operator may write **either** form for any key
+    subclass normalizes top-level hyphenated keys (``proxy-port`` →
+    ``proxy_port``) so an operator may write **either** form for any key
     (#1538); snake_case keys pass through unchanged.
 
     Only **top-level** keys are normalized.  Nested mappings (the dicts inside
@@ -404,7 +404,7 @@ class KlangkSettings(BaseSettings):
     log_level: str = "INFO"
 
     # --- Server / network ---
-    # listen: the nginx **browser** interface/address (e.g. ``127.0.0.1``,
+    # listen: the proxy's **browser** interface/address (e.g. ``127.0.0.1``,
     # ``0.0.0.0``). Rendered as ``listen {listen}:{port};`` only when
     # ``KLANGK_PORT`` is set (full/browser mode). Default ``127.0.0.1``
     # (loopback) keeps the browser listener reachable only from the operator's
@@ -412,20 +412,20 @@ class KlangkSettings(BaseSettings):
     # polymorphic socket-path meaning (#1422) never shipped in a release and
     # is retired — the UDS path is now ``KLANGK_SOCKET``.
     listen: str = "127.0.0.1"
-    # port: the nginx **browser** port (e.g. ``8997``). **No default** — unset
+    # port: the proxy's **browser** port (e.g. ``8997``). **No default** — unset
     # ⇒ headless mode (no browser listener is rendered; only the container-
     # egress listener on ``KLANGK_EGRESS_PORT`` is served). Set ⇒ full/browser
     # mode (browser UI + API + hosted apps on ``listen {listen}:{port};``).
     port: str | None = None
-    # egress_port: the container-egress port nginx listens on for
+    # egress_port: the container-egress port the proxy listens on for
     # container→backend traffic (``/llm-proxy``, ``/api/v1/browser-delegate``,
     # ``/api/v1/workspaces/post-chat-message``). Serves both headless and full
     # modes. Default ``8995``. Must differ from ``port`` so ingress vs egress
     # can be firewalled separately (#1542). ``None`` here is a sentinel —
     # ``_resolve_socket_and_ports`` resolves it to ``"8995"`` (or folds the
-    # deprecated ``KLANGK_NGINX_PORT`` into it).
+    # deprecated ``KLANGK_PROXY_PORT`` into it).
     egress_port: str | None = None
-    # egress_listen: the interface/address nginx binds for the container-
+    # egress_listen: the interface/address the proxy binds for the container-
     # egress listener, rendered as ``listen {egress_listen}:{egress_port};``.
     # Default ``0.0.0.0`` (all interfaces) — the only value portable across
     # podman network modes, because the host interface container traffic lands
@@ -437,14 +437,16 @@ class KlangkSettings(BaseSettings):
     # host IP may set this to that IP to drop every other interface from the
     # egress surface (#1542).
     egress_listen: str = "0.0.0.0"
-    # nginx_port: **deprecated** alias for ``egress_port`` (#1542). Folded into
-    # ``egress_port`` by ``_resolve_socket_and_ports``: if both are set,
-    # ``egress_port`` wins and ``nginx_port`` is ignored (with a warning); if
-    # only ``nginx_port`` is set it is used as the egress port (with a
-    # deprecation warning). To be removed in a future release. **Callers read
-    # ``settings.egress_port`` — nothing reads ``nginx_port`` except that one
-    # validator.**
-    nginx_port: str | None = None
+    # proxy_port: **deprecated** alias for ``egress_port`` (#1542, #1430).
+    # Folded into ``egress_port`` by ``_resolve_socket_and_ports``: if both
+    # are set, ``egress_port`` wins and ``proxy_port`` is ignored (with a
+    # warning); if only ``proxy_port`` is set it is used as the egress port
+    # (with a deprecation warning). Renamed from ``nginx_port``/``KLANGK_NGINX_PORT``
+    # to drop nginx-specific terminology (#1430); the old ``KLANGK_NGINX_PORT``
+    # name is no longer recognized. To be removed in a future release.
+    # **Callers read ``settings.egress_port`` — nothing reads ``proxy_port``
+    # except that one validator.**
+    proxy_port: str | None = None
     port_range_start: str | None = "9000"
     # socket: the backend UDS path klangkd binds. Default
     # ``<state_dir>/klangk.sock`` (derived in ``_resolve_socket_and_ports``
@@ -459,11 +461,13 @@ class KlangkSettings(BaseSettings):
     # ``env.KLANGK_STATE_DIR`` in devenv.nix; the host container sets it to
     # ``/tmp/klangk-state``.
     state_dir: str | None = None
-    # nginx_bin: the nginx executable the renderer spawns. Falls back to
-    # shutil.which("nginx") then /usr/sbin/nginx at render time.
-    nginx_bin: str | None = None
+    # proxy_bin: the proxy executable the renderer spawns (currently nginx).
+    # Falls back to shutil.which("nginx") then /usr/sbin/nginx at render time.
+    # Renamed from ``nginx_bin``/``KLANGK_NGINX_BIN`` (#1430); the old
+    # ``KLANGK_NGINX_BIN`` name is no longer recognized.
+    proxy_bin: str | None = None
     # trust_outer_proxy: opt-in to surviving an outer trusted proxy's
-    # X-Forwarded-* in nginx's catch-all (see #1396 renderer). Mirrors the
+    # X-Forwarded-* in the proxy's catch-all (see #1396 renderer). Mirrors the
     # KLANGK_TRUST_OUTER_PROXY env var the old nginx.sh read.
     trust_outer_proxy: str = ""
     # frontend_dir: directory the built Flutter Web UI is served from
@@ -517,7 +521,7 @@ class KlangkSettings(BaseSettings):
     version_file: str | None = None
 
     # --- LLM ---
-    # llm_base_url is consumed by the nginx renderer (the /llm-proxy/
+    # llm_base_url is consumed by the proxy renderer (the /llm-proxy/
     # location proxies to it so containers never see the API key); it's
     # not read by the backend itself. Kept here so the renderer reads it
     # through the same typed config path as everything else (#1396).
@@ -633,41 +637,41 @@ class KlangkSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _resolve_socket_and_ports(self) -> "KlangkSettings":
-        """Resolve the listen-shape settings: fold ``nginx_port`` into
+        """Resolve the listen-shape settings: fold ``proxy_port`` into
         ``egress_port``, default ``socket``, enforce egress≠browser and the
         socket-length invariant.
 
-        Runs after ``_resolve_indirections`` (so ``nginx_port`` /
+        Runs after ``_resolve_indirections`` (so ``proxy_port`` /
         ``egress_port`` / ``socket`` string values are already
         ``file:``/``cmd:``-resolved) and after ``_require_dirs`` (so
         ``state_dir`` is non-None for the ``socket`` default). After this,
         **every consumer reads ``self.egress_port`` and ``self.socket`` —
-        nothing reads ``nginx_port``.**
+        nothing reads ``proxy_port``.**
 
-        ``KLANGK_NGINX_PORT`` deprecation ladder (no hard error, #1542):
+        ``KLANGK_PROXY_PORT`` deprecation ladder (no hard error, #1542):
 
-        - ``egress_port`` set, ``nginx_port`` unset → use egress (clean).
-        - ``egress_port`` unset, ``nginx_port`` set → use ``nginx_port`` as
+        - ``egress_port`` set, ``proxy_port`` unset → use egress (clean).
+        - ``egress_port`` unset, ``proxy_port`` set → use ``proxy_port`` as
           the egress port + a loud deprecation warning.
-        - both set → ``egress_port`` wins, ``nginx_port`` ignored + a warning.
+        - both set → ``egress_port`` wins, ``proxy_port`` ignored + a warning.
         """
-        # --- KLANGK_NGINX_PORT → egress_port fold ---
-        if self.nginx_port is not None:
+        # --- KLANGK_PROXY_PORT → egress_port fold ---
+        if self.proxy_port is not None:
             if self.egress_port is not None:
                 logger.warning(
-                    "KLANGK_NGINX_PORT is ignored because KLANGK_EGRESS_PORT "
+                    "KLANGK_PROXY_PORT is ignored because KLANGK_EGRESS_PORT "
                     "is also set; KLANGK_EGRESS_PORT takes precedence. "
-                    "KLANGK_NGINX_PORT is deprecated — remove it and use "
+                    "KLANGK_PROXY_PORT is deprecated — remove it and use "
                     "KLANGK_EGRESS_PORT."
                 )
             else:
                 logger.warning(
-                    "KLANGK_NGINX_PORT is deprecated; rename it to "
+                    "KLANGK_PROXY_PORT is deprecated; rename it to "
                     "KLANGK_EGRESS_PORT. Its value is used as the egress "
                     "port for this run, but a future release will stop "
-                    "recognizing KLANGK_NGINX_PORT."
+                    "recognizing KLANGK_PROXY_PORT."
                 )
-                self.egress_port = self.nginx_port
+                self.egress_port = self.proxy_port
         if self.egress_port is None:
             self.egress_port = "8995"
 
@@ -675,9 +679,9 @@ class KlangkSettings(BaseSettings):
         if self.port is not None and self.egress_port == self.port:
             raise ValueError(
                 f"KLANGK_EGRESS_PORT ({self.egress_port!r}) must differ from "
-                f"KLANGK_PORT ({self.port!r}). The two nginx listeners carry "
+                f"KLANGK_PORT ({self.port!r}). The two proxy listeners carry "
                 "browser ingress vs container egress so operators can firewall "
-                "them separately; sharing a port defeats that and nginx cannot "
+                "them separately; sharing a port defeats that and the proxy cannot "
                 "bind two server blocks to the same port."
             )
 

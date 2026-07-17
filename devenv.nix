@@ -5,7 +5,7 @@
   ...
 }:
 let
-  # klangkd binds a UDS and owns nginx as a child (#1396); the old
+  # klangkd binds a UDS and owns the proxy (nginx) as a child (#1396); the old
   # two-process layout (uvicorn + scripts/nginx.sh) is collapsed into this
   # single entry. Dev config lives in klangkd.yaml (gitignored);
   # copy from klangkd.yaml.example if missing.
@@ -16,7 +16,7 @@ let
   dataDir = config.devenv.root + "/.devenv/state/klangk/data";
   versionFile = config.devenv.state + "/klangk/version.json";
   stateDir = config.devenv.state + "/klangk";
-  # Browser (ingress) and container-egress ports — nginx listens on both
+  # Browser (ingress) and container-egress ports — the proxy listens on both
   # (#1542). kill-port-holders frees both before startup.
   browserPort = "8997";
   egressPort = "8995";

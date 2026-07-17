@@ -51,10 +51,10 @@ from _e2e_server import start_server, stop_server
 
 
 def _start_server(data_dir, health_interval="2"):
-    """Start a real klangkd (nginx on a TCP port) with a fast health-check
+    """Start a real klangkd (the proxy on a TCP port) with a fast health-check
     poll interval. Returns (server_handle, base_url).
 
-    The CLI drives the real ``klangk`` binary against ``base_url``; nginx
+    The CLI drives the real ``klangk`` binary against ``base_url``; the proxy
     proxies to klangkd's UDS (#1525). Server output is streamed to a file
     (PIPE's 64 KB OS buffer can deadlock the event loop on chatty servers —
     #364).

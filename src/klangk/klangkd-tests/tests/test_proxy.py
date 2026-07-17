@@ -1,8 +1,8 @@
-"""Unit tests for the nginx config renderer (#1396).
+"""Unit tests for the proxy config renderer (#1396).
 
-These exercise the pure rendering logic (config generation) without running a
-real nginx — the runtime ACL enforcement is covered by the e2e suite
-(``test_nginx_acl_e2e.py``).
+These exercise the pure rendering logic (config generation, into an
+``nginx.conf``) without running a real nginx — the runtime ACL enforcement
+is covered by the e2e suite (``test_proxy_acl_e2e.py``).
 """
 
 import asyncio
@@ -13,8 +13,8 @@ import pytest
 
 import types
 
-from klangk.nginx import (
-    NginxRenderer,
+from klangk.proxy import (
+    ProxyRenderer,
     detect_host_ipv4s,
     tcp_upstream,
     uds_upstream,
@@ -24,17 +24,17 @@ from klangk.settings import KlangkSettings
 
 
 def _renderer(settings):
-    """Wrap settings in a minimal mock app and build a NginxRenderer (#1469)."""
-    return NginxRenderer(
+    """Wrap settings in a minimal mock app and build a ProxyRenderer (#1469)."""
+    return ProxyRenderer(
         types.SimpleNamespace(state=types.SimpleNamespace(settings=settings))
     )
 
 
 def _wd(settings):
-    """Build a NginxWatchdog from settings (wrapped in a minimal mock app)."""
-    from klangk.nginx import NginxWatchdog
+    """Build a ProxyWatchdog from settings (wrapped in a minimal mock app)."""
+    from klangk.proxy import ProxyWatchdog
 
-    return NginxWatchdog(
+    return ProxyWatchdog(
         types.SimpleNamespace(state=types.SimpleNamespace(settings=settings))
     )
 
@@ -502,47 +502,47 @@ class TestHeadlessTemplate:
             assert "location / {" in full
 
 
-class TestFindNginxBin:
+class TestFindProxyBin:
     def test_configured(self):
-        s = make_settings({"KLANGK_NGINX_BIN": "/custom/nginx"})
-        assert _renderer(s).find_nginx_bin() == "/custom/nginx"
+        s = make_settings({"KLANGK_PROXY_BIN": "/custom/nginx"})
+        assert _renderer(s).find_proxy_bin() == "/custom/nginx"
 
     def test_fallback_to_which(self):
         s = make_settings({})
-        result = _renderer(s).find_nginx_bin()
+        result = _renderer(s).find_proxy_bin()
         # Either found on PATH or falls back to /usr/sbin/nginx.
         assert len(result) > 0
 
     def test_fallback_to_usr_sbin(self, monkeypatch):
         """When shutil.which returns None, fall back to /usr/sbin/nginx."""
-        import klangk.nginx as nginx_mod
+        import klangk.proxy as proxy_mod
 
         s = make_settings({})
-        monkeypatch.setattr(nginx_mod.shutil, "which", lambda _: None)
-        assert _renderer(s).find_nginx_bin() == "/usr/sbin/nginx"
+        monkeypatch.setattr(proxy_mod.shutil, "which", lambda _: None)
+        assert _renderer(s).find_proxy_bin() == "/usr/sbin/nginx"
 
 
 class TestDetectHostIPv4s:
     def test_subprocess_failure_returns_empty(self, monkeypatch):
         """When the ip command fails, returns [] (caller uses fallback)."""
-        import klangk.nginx as nginx_mod
+        import klangk.proxy as proxy_mod
 
         def _raise(*a, **kw):
             raise FileNotFoundError("no ip")
 
-        monkeypatch.setattr(nginx_mod.subprocess, "check_output", _raise)
+        monkeypatch.setattr(proxy_mod.subprocess, "check_output", _raise)
         assert detect_host_ipv4s() == []
 
 
 class TestDnsResolversFromResolvConf:
     def test_parses_resolv_conf(self, monkeypatch):
         """When KLANGK_DNS_SERVERS is unset, nameservers come from resolv.conf."""
-        import klangk.nginx as nginx_mod
+        import klangk.proxy as proxy_mod
 
         s = make_settings({})
         content = "nameserver 1.1.1.1\nnameserver ::1\n"
         monkeypatch.setattr(
-            nginx_mod.Path,
+            proxy_mod.Path,
             "read_text",
             lambda self: content,
         )
@@ -552,24 +552,24 @@ class TestDnsResolversFromResolvConf:
 
     def test_resolv_conf_read_error(self, monkeypatch):
         """OSError reading resolv.conf -> fall back to 8.8.8.8."""
-        import klangk.nginx as nginx_mod
+        import klangk.proxy as proxy_mod
 
         s = make_settings({})
 
         def _raise(self):
             raise OSError("no resolv.conf")
 
-        monkeypatch.setattr(nginx_mod.Path, "read_text", _raise)
+        monkeypatch.setattr(proxy_mod.Path, "read_text", _raise)
         assert _renderer(s).detect_dns_resolvers() == "8.8.8.8"
 
 
 class TestContainerAclFallback:
     def test_fallback_when_no_host_ips(self, monkeypatch):
         """When auto-detect yields nothing, fallback RFC1918 ranges are used."""
-        import klangk.nginx as nginx_mod
+        import klangk.proxy as proxy_mod
 
         s = make_settings({})
-        monkeypatch.setattr(nginx_mod, "detect_host_ipv4s", lambda: [])
+        monkeypatch.setattr(proxy_mod, "detect_host_ipv4s", lambda: [])
         acl, _ = _renderer(s).compute_container_acls()
         assert "allow 172.16.0.0/12;" in acl
         assert "allow 10.0.0.0/8;" in acl
@@ -621,19 +621,19 @@ class TestKlangkdHelpers:
         assert s.state_dir == "/from/config"
 
 
-# The watchdog is gated only by the internal _KLANGK_DISABLE_NGINX kill
+# The watchdog is gated only by the internal _KLANGK_DISABLE_PROXY kill
 # switch (test-only); nginx is owned unconditionally in real runs. Covered
 # below.
 
 
 class TestWatchdogGate:
-    """NginxWatchdog.start() respects the test kill switch; otherwise prepares+spawns."""
+    """ProxyWatchdog.start() respects the test kill switch; otherwise prepares+spawns."""
 
     @pytest.mark.asyncio
     async def test_start_noop_when_disabled(self, monkeypatch):
-        """No-op when the test-only _KLANGK_DISABLE_NGINX is set."""
+        """No-op when the test-only _KLANGK_DISABLE_PROXY is set."""
 
-        monkeypatch.setenv("_KLANGK_DISABLE_NGINX", "1")
+        monkeypatch.setenv("_KLANGK_DISABLE_PROXY", "1")
         wd = _wd(make_settings({}))
         await wd.start()
         assert wd._task is None
@@ -646,7 +646,7 @@ class TestWatchdogGate:
         watchdog. The real nginx spawn is e2e-covered; here _watch is stubbed
         so the orchestration (prepare, set _stopping=False, create_task) is
         unit-tested."""
-        from klangk.nginx import NginxWatchdog
+        from klangk.proxy import ProxyWatchdog
 
         sock = str(tmp_path / "klangk.sock")
         s = make_settings(
@@ -656,9 +656,9 @@ class TestWatchdogGate:
                 "KLANGK_EGRESS_PORT": "19999",
             }
         )
-        monkeypatch.delenv("_KLANGK_DISABLE_NGINX", raising=False)
+        monkeypatch.delenv("_KLANGK_DISABLE_PROXY", raising=False)
         monkeypatch.setattr(
-            "klangk.nginx.NginxRenderer.find_nginx_bin",
+            "klangk.proxy.ProxyRenderer.find_proxy_bin",
             lambda self: "/fake/nginx",
         )
 
@@ -668,7 +668,7 @@ class TestWatchdogGate:
             spawned["bin"] = bin_path
             spawned["conf"] = conf_path
 
-        monkeypatch.setattr(NginxWatchdog, "_watch", _fake_watch)
+        monkeypatch.setattr(ProxyWatchdog, "_watch", _fake_watch)
         wd = _wd(s)
         await wd.start()
         try:
@@ -684,8 +684,8 @@ class TestWatchdogGate:
             pass
 
 
-class TestPrepareNginx:
-    """NginxWatchdog._prepare() renders nginx.conf with UDS upstream (#1400)."""
+class TestPrepareProxy:
+    """ProxyWatchdog._prepare() renders nginx.conf with UDS upstream (#1400)."""
 
     def test_renders_config_and_returns_paths(self, monkeypatch, tmp_path):
 
@@ -697,7 +697,7 @@ class TestPrepareNginx:
             }
         )
         monkeypatch.setattr(
-            "klangk.nginx.NginxRenderer.find_nginx_bin",
+            "klangk.proxy.ProxyRenderer.find_proxy_bin",
             lambda self: "/fake/nginx",
         )
         wd = _wd(s)
@@ -711,7 +711,7 @@ class TestPrepareNginx:
 
 
 class TestStopWatchdog:
-    """NginxWatchdog.stop() teardown when a proc/task were injected."""
+    """ProxyWatchdog.stop() teardown when a proc/task were injected."""
 
     @pytest.mark.asyncio
     async def test_stops_no_proc_no_task(self):
@@ -798,7 +798,7 @@ class TestStopWatchdog:
         """If the proc doesn't exit within the timeout, SIGKILL via killpg."""
         import signal
 
-        import klangk.nginx as nginx_mod
+        import klangk.proxy as proxy_mod
 
         actions = []
 
@@ -825,7 +825,7 @@ class TestStopWatchdog:
             coro.close()
             raise asyncio.TimeoutError()
 
-        monkeypatch.setattr(nginx_mod.asyncio, "wait_for", _fake_wait_for)
+        monkeypatch.setattr(proxy_mod.asyncio, "wait_for", _fake_wait_for)
         wd = _wd(make_settings({}))
         wd._proc = HungProc()
         await wd.stop()
@@ -840,7 +840,7 @@ class TestStopWatchdog:
         """Falls back to proc.kill() when killpg SIGKILL raises."""
         import signal
 
-        import klangk.nginx as nginx_mod
+        import klangk.proxy as proxy_mod
 
         actions = []
         call_count = [0]
@@ -872,7 +872,7 @@ class TestStopWatchdog:
             coro.close()
             raise asyncio.TimeoutError()
 
-        monkeypatch.setattr(nginx_mod.asyncio, "wait_for", _fake_wait_for)
+        monkeypatch.setattr(proxy_mod.asyncio, "wait_for", _fake_wait_for)
         wd = _wd(make_settings({}))
         wd._proc = HungProc()
         await wd.stop()

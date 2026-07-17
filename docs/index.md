@@ -73,4 +73,4 @@ connect from your local terminal with
 ## Architecture
 
 See the [architecture overview](architecture/index.md) for how the
-backend, frontend, containers, and nginx fit together.
+backend, frontend, containers, and the proxy fit together.

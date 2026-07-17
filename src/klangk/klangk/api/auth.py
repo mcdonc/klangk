@@ -1,4 +1,4 @@
-"""Authentication routes: register/verify/login/logout, password and email/handle changes, resend-verification, forgot/reset-password, refresh, accept-invite, and the nginx auth_request workspace-token validator."""
+"""Authentication routes: register/verify/login/logout, password and email/handle changes, resend-verification, forgot/reset-password, refresh, accept-invite, and the proxy auth_request workspace-token validator."""
 
 import logging
 import time
@@ -32,7 +32,7 @@ router = APIRouter()
 
 @router.get("/auth/verify-workspace-token")
 async def verify_workspace_token(request: Request):
-    """Validate a workspace JWT. Used by nginx auth_request to gate
+    """Validate a workspace JWT. Used by the proxy auth_request to gate
     container→host endpoints (/llm-proxy, /api/browser-delegate, etc.)."""
     authorization = request.headers.get("authorization", "")
     if not authorization.startswith("Bearer "):
@@ -310,13 +310,13 @@ async def local_login(request: Request):
     user, no credentials accepted (#1374).
 
     Only available when ``KLANGK_AUTH_MODES=none``. The loopback bind
-    (``KLANGK_LISTEN``) plus the nginx per-location ``allow 127.0.0.1``
+    (``KLANGK_LISTEN``) plus the proxy per-location ``allow 127.0.0.1``
     ACL keep this endpoint unreachable from workspace containers; the
     freely-issued Bearer token is kept as belt-and-suspenders CSRF
     defense on every subsequent request.
 
     As a second belt-and-suspenders layer (and to close the front-proxy
-    bypass, where a loopback proxy in front of nginx makes every request
+    bypass, where a loopback proxy in front of the proxy makes every request
     appear to come from 127.0.0.1), the backend independently verifies
     the *effective* client is loopback via :func:`util.client_is_loopback`.
     """

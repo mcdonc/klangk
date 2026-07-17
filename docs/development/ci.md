@@ -19,7 +19,7 @@ Unit tests (Python, frontend) run with `pip install` or `flutter test`
 and do not require devenv. The Python suite covers both the `klangkd`
 (server) and `klangk` (client) packages from one `pip install -e src/klangk`;
 E2E tests use `devenv shell` with the full environment (podman, workspace
-image, nginx).
+image, the proxy).
 
 ## Security
 

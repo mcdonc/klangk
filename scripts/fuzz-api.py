@@ -11,7 +11,7 @@ Usage:
 
 The script:
   - Starts its own klangkd server in a subprocess (bound to a Unix socket
-    in a temp state dir; nginx suppressed) and talks to it over the UDS
+    in a temp state dir; the proxy suppressed) and talks to it over the UDS
   - Logs in as admin and uses the token for authenticated requests
   - Generates random payloads: valid-ish values, boundary values, type
     confusion, oversized strings, unicode, null bytes, nested objects
@@ -592,8 +592,8 @@ def start_server(data_dir: str) -> tuple[subprocess.Popen, TeeReader, str]:
     ``klangkd`` is the real server launcher (``--config none`` = env-only);
     it always binds a UDS at ``settings.socket`` (default
     ``<state_dir>/klangk.sock``, overridable via ``KLANGK_SOCKET`` — #1542)
-    and would normally start an nginx child, so ``_KLANGK_DISABLE_NGINX``
-    suppresses nginx — the fuzzer talks to the backend directly over the
+    and would normally start the proxy child, so ``_KLANGK_DISABLE_PROXY``
+    suppresses it — the fuzzer talks to the backend directly over the
     socket. ``KLANGK_TEST_MODE`` registers the ``/api/v1/test/*`` routes the
     fuzzer also exercises.
 
@@ -611,8 +611,8 @@ def start_server(data_dir: str) -> tuple[subprocess.Popen, TeeReader, str]:
         "KLANGK_MIN_PASSWORD_LENGTH": "1",
         "KLANGK_AUTH_MODES": "password",
         "KLANGK_TEST_MODE": "1",
-        # Suppress nginx spawn (the fuzzer hits the backend UDS directly).
-        "_KLANGK_DISABLE_NGINX": "1",
+        # Suppress proxy spawn (the fuzzer hits the backend UDS directly).
+        "_KLANGK_DISABLE_PROXY": "1",
         # Disable features that need external services
         "KLANGK_IMAGE_PULL_POLICY": "never",
     }
@@ -1015,7 +1015,7 @@ def _backend_routes() -> set[tuple[str, str]]:
     # the KlangkSettings env dict), so set it on os.environ before build_app
     # imports/registers the test routes.
     os.environ["KLANGK_TEST_MODE"] = "1"
-    os.environ["_KLANGK_DISABLE_NGINX"] = "1"
+    os.environ["_KLANGK_DISABLE_PROXY"] = "1"
     env = {
         **os.environ,
         "KLANGK_STATE_DIR": tempfile.mkdtemp(prefix="klangk-check-"),

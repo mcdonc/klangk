@@ -151,6 +151,20 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **Proxy terminology replaces nginx in code, docs, and env vars (#1430).**
+  The reverse proxy klangkd owns and supervises is referred to as "the proxy"
+  throughout the codebase rather than by the underlying implementation
+  (currently nginx). Renames: the `klangk.nginx` module is now `klangk.proxy`
+  (`NginxRenderer`/`NginxWatchdog` → `ProxyRenderer`/`ProxyWatchdog`); the
+  settings fields `nginx_bin`/`nginx_port` → `proxy_bin`/`proxy_port` (env
+  `KLANGK_NGINX_BIN`/`KLANGK_NGINX_PORT` → `KLANGK_PROXY_BIN`/`KLANGK_PROXY_PORT`);
+  `app.state.nginx_watchdog` → `app.state.proxy_watchdog`; the internal
+  `_KLANGK_DISABLE_NGINX` test kill switch → `_KLANGK_DISABLE_PROXY`; and the
+  `test_nginx*.py` suites → `test_proxy*.py`. The actual `nginx` binary,
+  rendered `nginx.conf`, and nginx packages are unchanged — the proxy is still
+  implemented with nginx. Operators using `KLANGK_NGINX_BIN` or
+  `KLANGK_NGINX_PORT` must rename them to `KLANGK_PROXY_*`.
+
 - **CLI command renamed `klangkc` → `klangk` (#1615).** One `pip install
 klangk` now yields `klangk` (client) and `klangkd` (server), matching the
   unified distribution name. The `klangkc` entrypoint is removed; the Typer
@@ -206,11 +220,13 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
 
 ### Deprecated
 
-- **`KLANGK_NGINX_PORT`** is deprecated; rename to `KLANGK_EGRESS_PORT`. If
-  `KLANGK_EGRESS_PORT` is unset, the `KLANGK_NGINX_PORT` value is used as the
+- **`KLANGK_PROXY_PORT`** is deprecated; rename to `KLANGK_EGRESS_PORT`. If
+  `KLANGK_EGRESS_PORT` is unset, the `KLANGK_PROXY_PORT` value is used as the
   egress port (with a deprecation warning); if both are set,
-  `KLANGK_EGRESS_PORT` wins and `KLANGK_NGINX_PORT` is ignored. A future
-  release will stop recognizing it (#1542).
+  `KLANGK_EGRESS_PORT` wins and `KLANGK_PROXY_PORT` is ignored. A future
+  release will stop recognizing it (#1542, #1430). Renamed from
+  `KLANGK_NGINX_PORT` in #1430; the old `KLANGK_NGINX_PORT` name is no longer
+  recognized.
 
 ### Removed
 

@@ -40,9 +40,9 @@ DEMO_DIR="src/frontend/e2e-tests/demo"
 RECORDINGS_DIR="$DEMO_DIR/recordings"
 mkdir -p "$RECORDINGS_DIR"
 # Demo backend's CLI transport = the UDS (uvicorn's socket, direct — bypasses
-# nginx). The browser scenes use TCP-to-nginx (KLANGK_TEST_URL), but the CLI
+# the proxy). The browser scenes use TCP-to-proxy (KLANGK_TEST_URL), but the CLI
 # scenes go over the socket: both listeners are up simultaneously on the one
-# backend (listen=127.0.0.1 → nginx on TCP, uvicorn always on the UDS), so no
+# backend (listen=127.0.0.1 → the proxy on TCP, uvicorn always on the UDS), so no
 # config change is needed between CLI and browser recording. The socket path
 # is <KLANGK_STATE_DIR>/klangk.sock; default matches run-demo-backend.sh.
 DEMO_SOCKET="${KLANGK_DEMO_SOCKET:-${KLANGK_DEMO_STATE_DIR:-/tmp/klangk-demo}/klangk.sock}"
