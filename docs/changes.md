@@ -38,6 +38,23 @@ operators or integrators to act when upgrading.
   (devenv, the host container) set `KLANGK_FRONTEND_DIR` to the repo's
   `src/frontend/build/web`. See [Packaged klangkd](../deployment/packaged.md).
 
+- **`KLANGK_LOG_LEVEL` — centralized, settings-driven logging (#1467).**
+  Logging is no longer configured as an import-time side-effect of
+  `klangk.main` (the `logging.basicConfig(...)` call is gone). It is now
+  configured by a dedicated module, `klangk.logger`, with two phases:
+  sensible defaults (INFO level, the pre-refactor colored console format,
+  and central silencing of chatty third-party loggers) are applied at import,
+  so logging is formatted from the very first log call — including during
+  `KlangkSettings` construction, which runs before any `app` exists; then
+  `build_app()` re-applies the level from the new `log_level` setting
+  (`KLANGK_LOG_LEVEL`, default `INFO`; accepts a level name like
+  `DEBUG`/`WARNING`/`ERROR`/`CRITICAL` in any case, or a numeric value, and
+  rejects garbage at boot). The level is re-applied on a SIGHUP reload (after
+  the settings swap, before the subsystem reconfigure loop), so
+  `KLANGK_LOG_LEVEL` takes effect without a process restart. Chatty
+  third-party loggers (`uvicorn.access`, `sqlalchemy.engine`, `httpx`,
+  `httpcore`, `watchfiles`, `asyncio`) are silenced centrally to `WARNING`.
+
 - **Option to require consent banner acceptance on every visit (#1544).**
   New setting `login_banner_every_visit` / `KLANGK_LOGIN_BANNER_EVERY_VISIT`
   (default `false`, surfaced on `GET /api/v1/config`). When `true`, the

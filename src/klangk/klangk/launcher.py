@@ -29,6 +29,12 @@ from pathlib import Path
 import typer
 import uvicorn
 
+# Import the logger module before settings so its module-level default
+# configuration is active during ``KlangkSettings(...)`` construction
+# (validators + the file:/cmd: indirection resolver log before any app
+# exists). ``build_app``'s ``configure(settings)`` later overrides the
+# level from ``KLANGK_LOG_LEVEL`` (#1467).
+from klangk import logger  # noqa: F401
 from klangk.settings import KlangkSettings
 
 # The default config-file location — a deployed klangkd finds its config here

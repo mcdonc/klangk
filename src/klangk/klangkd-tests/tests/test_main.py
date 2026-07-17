@@ -1419,6 +1419,42 @@ class TestBuildApp:
         ]
         assert mounts, "expected '/' static mount when frontend dir exists"
 
+    def test_build_app_configures_logging_from_settings(self):
+        """build_app re-applies the log level from KLANGK_LOG_LEVEL (#1467).
+
+        Logging is global module state (no app.state.logger object);
+        build_app calls ``klangk.logger.configure(settings)`` after settings
+        are finalized. Build an app with DEBUG and confirm the root level
+        reflects it.
+        """
+        import logging
+
+        app = main.build_app(make_settings({"KLANGK_LOG_LEVEL": "DEBUG"}))
+        assert app.state.settings.log_level == "DEBUG"
+        assert logging.getLogger().level == logging.DEBUG
+
+    def test_no_module_scope_basic_config(self):
+        """Logging is not configured as an import side-effect (#1467).
+
+        main.py must not call ``logging.basicConfig(...)`` at module scope —
+        configuration lives in :mod:`klangk.logger` (applied at its import
+        and re-applied via ``configure(settings)`` in build_app). Checked via
+        AST so comments / docstrings that merely mention the name don't trip
+        it.
+        """
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(main))
+        basic_config_calls = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "basicConfig"
+        ]
+        assert not basic_config_calls
+
     def test_no_module_level_app_attribute(self):
         """main.py no longer exposes an ``app`` attribute (#1454).
 
