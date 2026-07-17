@@ -1,10 +1,12 @@
-"""Python-owned nginx config renderer + process manager (#1396).
+"""Python-owned reverse-proxy config renderer + process manager (#1396).
 
-Replaces ``scripts/nginx.sh`` (the bash heredoc that generated ``nginx.conf``)
-and the ``/home/klangk/bin/nginx`` shim it was copied into for the host
-container. ``klangkd`` calls :func:`render_config` to write the config, then
-:func:`start_nginx` / :func:`stop_nginx` (an async watchdog in the lifespan
-owns the child process).
+The proxy fronting the backend is currently implemented with nginx: this
+module renders an ``nginx.conf`` from the merged settings and supervises the
+nginx child process. It replaces ``scripts/nginx.sh`` (the bash heredoc that
+generated ``nginx.conf``) and the ``/home/klangk/bin/nginx`` shim it was
+copied into for the host container. ``klangkd`` calls :meth:`ProxyRenderer.render_config`
+to write the config, then :meth:`ProxyWatchdog.start` / :meth:`ProxyWatchdog.stop`
+(an async watchdog in the lifespan owns the child process).
 
 The renderer is a pure function of the merged config (settings + env probes
 for host-IP / DNS auto-detection). It takes the upstream proxy target as a
@@ -14,7 +16,7 @@ parameter so it serves both the production UDS bind
 
 See #1392 (design record) and #1396 (this chunk).
 
-The settings-driven rendering logic lives on :class:`NginxRenderer`, an
+The settings-driven rendering logic lives on :class:`ProxyRenderer`, an
 owned instance constructed with ``app_state`` per the composition-root
 refactor (#1426, #1469).  Settings are read live via
 ``self.app.state.settings`` (#1608).
@@ -156,14 +158,14 @@ def _egress_auth_locations(upstream: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-class NginxRenderer:
-    """Settings-driven ``nginx.conf`` renderer (#1396, #1469).
+class ProxyRenderer:
+    """Settings-driven reverse-proxy (``nginx.conf``) renderer (#1396, #1469).
 
     Constructed with ``app_state`` per the composition-root pattern; settings
     are read live via ``self.app.state.settings`` (#1608). The renderer is a pure function of the
     merged config (settings + env probes); it does not touch podman.
-    ``NginxWatchdog`` owns an instance and calls :meth:`render_config` /
-    :meth:`find_nginx_bin` / :meth:`write_config` from its ``_prepare`` step.
+    ``ProxyWatchdog`` owns an instance and calls :meth:`render_config` /
+    :meth:`find_proxy_bin` / :meth:`write_config` from its ``_prepare`` step.
     """
 
     def __init__(self, app) -> None:
@@ -539,12 +541,12 @@ class NginxRenderer:
         """Render the headless ``nginx.conf`` — egress listener only (#1542).
 
         ``KLANGK_PORT`` is unset ⇒ headless: no browser listener is rendered.
-        nginx listens on ``KLANGK_EGRESS_PORT`` for container → backend egress
+        the proxy listens on ``KLANGK_EGRESS_PORT`` for container → backend egress
         (``/llm-proxy``, ``/api/v1/browser-delegate``,
         ``/api/v1/workspaces/post-chat-message``). The browser UI, ``/hosted/``,
         ``/auth/local``, and the catch-all ``location /`` are all absent — the
         only served surface is container egress (plus same-uid UDS access to
-        the backend, which bypasses nginx entirely).
+        the backend, which bypasses the proxy entirely).
         """
         egress_port = self._app.state.settings.egress_port
         egress_listen = self._app.state.settings.egress_listen
@@ -705,9 +707,9 @@ http {{
             f.write(text)
         return text
 
-    def find_nginx_bin(self) -> str:
-        """Locate the nginx binary: KLANGK_NGINX_BIN > PATH > /usr/sbin/nginx."""
-        configured = self._app.state.settings.nginx_bin
+    def find_proxy_bin(self) -> str:
+        """Locate the nginx binary: KLANGK_PROXY_BIN > PATH > /usr/sbin/nginx."""
+        configured = self._app.state.settings.proxy_bin
         if configured:
             return str(configured)
         found = shutil.which("nginx")
@@ -724,7 +726,7 @@ if _HAS_PDEATHSIG:
     )
 
 
-def _nginx_preexec() -> None:  # pragma: no cover  – runs in forked child
+def _proxy_preexec() -> None:  # pragma: no cover  – runs in forked child
     """New session (for killpg) + auto-SIGTERM when parent dies (#1533).
 
     ``os.setsid()`` puts nginx in its own process group so ``stop()`` can
@@ -741,19 +743,20 @@ def _nginx_preexec() -> None:  # pragma: no cover  – runs in forked child
         _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM)
 
 
-class NginxWatchdog:
-    """Owns the nginx child process and its supervision task (#1463).
+class ProxyWatchdog:
+    """Owns the proxy child process and its supervision task (#1463).
 
-    Constructed with ``app_state`` and owns a :class:`NginxRenderer` instance
-    for config rendering (#1469). Settings are read live via
-    ``self.app.state.settings`` (#1608).
-    Stored on ``app.state.nginx_watchdog``; the lifespan calls
+    The proxy is currently the nginx child process rendered by
+    :class:`ProxyRenderer`. Constructed with ``app_state`` and owns a
+    :class:`ProxyRenderer` instance for config rendering (#1469). Settings
+    are read live via ``self.app.state.settings`` (#1608).
+    Stored on ``app.state.proxy_watchdog``; the lifespan calls
     ``.start()`` / ``.stop()``.
     """
 
     def __init__(self, app) -> None:
         self._app = app
-        self._renderer = NginxRenderer(app)
+        self._renderer = ProxyRenderer(app)
         self._proc: asyncio.subprocess.Process | None = None
         self._task: asyncio.Task | None = None
         self._stopping = False
@@ -768,7 +771,7 @@ class NginxWatchdog:
         """Spawn nginx and respawn it on unexpected exit (with backoff).
 
         Exits cleanly when ``_stopping`` is set (a cooperative shutdown).
-        ``_nginx_preexec`` puts nginx in its own session (for ``os.killpg``
+        ``_proxy_preexec`` puts nginx in its own session (for ``os.killpg``
         on clean shutdown) and sets ``PR_SET_PDEATHSIG(SIGTERM)`` so the
         kernel auto-signals nginx if klangkd dies uncleanly (#1533).
         """
@@ -782,7 +785,7 @@ class NginxWatchdog:
                 conf_path,
                 stdout=None,
                 stderr=None,
-                preexec_fn=_nginx_preexec,
+                preexec_fn=_proxy_preexec,
             )
             logger.info(
                 "nginx started (pid %d) with %s", self._proc.pid, conf_path
@@ -801,7 +804,7 @@ class NginxWatchdog:
         """Render nginx.conf and return ``(bin_path, conf_path)``.
 
         uvicorn always binds the UDS at ``settings.socket`` (default
-        ``<state_dir>/klangk.sock``, overridable via ``KLANGK_SOCKET``); nginx
+        ``<state_dir>/klangk.sock``, overridable via ``KLANGK_SOCKET``); the proxy
         proxies to that socket regardless of deployment shape. ``KLANGK_PORT``
         selects headless (unset) vs full (set) templates and the nginx listen
         directives; the upstream is always the UDS.
@@ -810,19 +813,19 @@ class NginxWatchdog:
         conf_path = os.path.join(
             self._app.state.settings.state_dir, "nginx.conf"
         )
-        bin_path = self._renderer.find_nginx_bin()
+        bin_path = self._renderer.find_proxy_bin()
         self._renderer.write_config(uds_upstream(uds_path), conf_path)
         return bin_path, conf_path
 
     async def start(self) -> None:
-        """Render nginx.conf and start the nginx watchdog.
+        """Render the proxy config and start the proxy watchdog.
 
-        Gated only by ``_KLANGK_DISABLE_NGINX`` — an **internal,
+        Gated only by ``_KLANGK_DISABLE_PROXY`` — an **internal,
         non-user-facing** env var the test suite sets to suppress nginx spawn
         (tests boot the app via the lifespan and don't want a real nginx
         process). Not a documented config knob; no operator-facing name.
         """
-        if os.environ.get("_KLANGK_DISABLE_NGINX"):
+        if os.environ.get("_KLANGK_DISABLE_PROXY"):
             return
         bin_path, conf_path = self._prepare()
         self._stopping = False
@@ -831,7 +834,7 @@ class NginxWatchdog:
         self._task = asyncio.create_task(self._watch(bin_path, conf_path))
 
     async def stop(self) -> None:
-        """Stop nginx and cancel the watchdog (cooperative: waits for exit).
+        """Stop the proxy and cancel the watchdog (cooperative: waits for exit).
 
         Kills the entire process group (master + workers) so no orphaned
         workers linger after shutdown (#1533).

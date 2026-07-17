@@ -156,7 +156,7 @@ def free_port() -> int:
     instead of a hardcoded value, so concurrent runs — xdist workers,
     or several suites on one machine — don't collide (#1393). This
     generalizes the ``_find_free_port`` helper first introduced in
-    ``test_nginx_acl_e2e.py``.
+    ``test_proxy_acl_e2e.py``.
 
     The port is released before this returns, so there is an inherent
     TOCTOU window before the caller rebinds it (e.g. uvicorn at server
@@ -167,7 +167,7 @@ def free_port() -> int:
     """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         # Loopback (not INADDR_ANY "") for ephemeral pickup — same
-        # free-port behavior, matches the test_nginx_acl_e2e pattern.
+        # free-port behavior, matches the test_proxy_acl_e2e pattern.
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
@@ -229,10 +229,10 @@ class Util:
         # UNIX domain socket. Over a UDS there is no TCP peer, so uvicorn
         # leaves ``request.client`` as ``None``. The socket file is 0600 in a
         # 0700 dir, both owned by the klangk user, so the only processes that
-        # can open it run as the klangk user (nginx and uvicorn do). A ``None``
+        # can open it run as the klangk user (the proxy and uvicorn do). A ``None``
         # peer over a UDS is therefore treated as the trusted reverse proxy —
         # same as a loopback peer over TCP — but the trust boundary is the
-        # same-uid boundary, not an nginx-vs-attacker boundary. Default False:
+        # same-uid boundary, not a proxy-vs-attacker boundary. Default False:
         # unit/e2e tests that launch uvicorn over TCP are unaffected.
         self.uds_mode = False
 
@@ -382,7 +382,7 @@ class Util:
     #
     # Forwarded headers (X-Forwarded-Host/-Proto/-Prefix) are trusted ONLY
     # when the immediate connection comes from a configured trusted proxy
-    # upstream. klangk's nginx proxies to 127.0.0.1, so the default trusted
+    # upstream. klangk's proxy proxies to 127.0.0.1, so the default trusted
     # set is the loopback addresses; every deployment runs the backend
     # behind a local reverse proxy, so this works out of the box. If the
     # backend port is ever exposed directly to untrusted networks, requests
@@ -465,11 +465,11 @@ class Util:
 
         In ``KLANGK_AUTH_MODES=none`` the ``/auth/local`` endpoint freely
         issues an admin token, so it must only be reachable from the
-        operator's own machine. nginx's per-location ``allow 127.0.0.1; deny
+        operator's own machine. the proxy's per-location ``allow 127.0.0.1; deny
         all`` ACL is the primary control, but this re-checks as
         belt-and-suspenders — and to close the front-proxy bypass: if a
-        loopback proxy sits in front of nginx then every proxied request has
-        ``$remote_addr=127.0.0.1`` and the nginx ACL admits everyone. The
+        loopback proxy sits in front of the proxy then every proxied request has
+        ``$remote_addr=127.0.0.1`` and the proxy ACL admits everyone. The
         backend sees the real client in ``X-Real-IP``/``X-Forwarded-For`` and
         refuses non-loopback values independently.
 

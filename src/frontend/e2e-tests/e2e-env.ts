@@ -36,9 +36,9 @@ export function cleanEnv(
     const val = process.env[name];
     if (val !== undefined) env[name] = val;
   }
-  // E2E baseline defaults. nginx is NOT disabled: the frontend suite
-  // launches real klangkd, fronted by its own nginx on KLANGK_PORT (the
-  // browser hits nginx, which proxies to klangkd's UDS — #1525).
+  // E2E baseline defaults. the proxy is NOT disabled: the frontend suite
+  // launches real klangkd, fronted by its own proxy on KLANGK_PORT (the
+  // browser hits the proxy, which proxies to klangkd's UDS — #1525).
   if (!env.KLANGK_AUTH_MODES) env.KLANGK_AUTH_MODES = "password";
   Object.assign(env, overrides);
   return env;

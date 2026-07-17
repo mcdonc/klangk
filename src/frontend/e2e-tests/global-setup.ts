@@ -87,12 +87,12 @@ async function globalSetup() {
   const logDir = join(projectRoot, "src", "frontend", "e2e-tests", "logs");
   mkdirSync(logDir, { recursive: true });
 
-  // klangkd's own nginx serves both the browser ingress (KLANGK_PORT)
+  // klangkd's own proxy (nginx) serves both the browser ingress (KLANGK_PORT)
   // and the container egress (KLANGK_EGRESS_PORT below). The previous
   // test-only LLM-proxy nginx is gone — it existed only because the old
-  // runtestserver.py launch had nginx disabled; klangkd's real nginx is
+  // runtestserver.py launch had the proxy disabled; klangkd's real proxy is
   // the production egress path (#1525).
-  const nginxPort = "18995";
+  const proxyPort = "18995";
 
   console.log(
     `Starting E2E server on port ${backendPort} ` +
@@ -100,7 +100,7 @@ async function globalSetup() {
   );
 
   // Determine the backend log path up front so klangkd's stdout/stderr can
-  // be wired directly to the file (via an fd). klangkd's nginx reopens
+  // be wired directly to the file (via an fd). klangkd's proxy (nginx) reopens
   // /dev/stdout (its access_log), which fails with ENXIO when stdout is a
   // pipe — a real file fd reopens cleanly. This mirrors the Python E2E
   // helper's log_path (#1525, #364).
@@ -109,8 +109,8 @@ async function globalSetup() {
   process.env.KLANGK_E2E_LOG = logPath;
   const logFd = openSync(logPath, "w");
 
-  // Start the real production server (klangkd) with nginx enabled. The
-  // browser hits nginx on KLANGK_PORT; nginx proxies to klangkd's UDS,
+  // Start the real production server (klangkd) with the proxy enabled. The
+  // browser hits the proxy on KLANGK_PORT; the proxy proxies to klangkd's UDS,
   // exactly as in production (#1525). Replaces the test-only
   // runtestserver.py TCP launcher.
   const backendProcess = spawn(
@@ -122,7 +122,7 @@ async function globalSetup() {
       stdio: ["ignore", logFd, logFd],
       env: cleanEnv({
         KLANGK_PORT: backendPort,
-        KLANGK_EGRESS_PORT: nginxPort,
+        KLANGK_EGRESS_PORT: proxyPort,
         KLANGK_DATA_DIR: dataDir,
         KLANGK_STATE_DIR: stateDir,
         KLANGK_CUSTOMIZE_DIR: join(dataDir, "customize"),

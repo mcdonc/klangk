@@ -45,10 +45,10 @@ def _run(args, timeout=120, input=None, **kwargs):
 
 
 def _start_server(data_dir, port=None, extra_env=None):
-    """Start a real klangkd (nginx on a TCP port) and wait for readiness.
+    """Start a real klangkd (the proxy on a TCP port) and wait for readiness.
 
     Returns (server_handle, base_url). The CLI drives the real ``klangk``
-    binary against ``base_url`` — nginx proxies to klangkd's UDS, as in
+    binary against ``base_url`` — the proxy proxies to klangkd's UDS, as in
     production (#1525). Server output is streamed to a file (not a pipe)
     so a long-lived run can't fill the 64 KB OS pipe buffer and deadlock
     (#364).

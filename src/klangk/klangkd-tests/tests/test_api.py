@@ -846,21 +846,21 @@ class TestLocalLogin:
             verified=True,
         )
         # Simple POST (no JSON body, no custom header) — the loopback bind +
-        # nginx ACL, not a credential, is the identity boundary in this mode.
+        # proxy ACL, not a credential, is the identity boundary in this mode.
         resp = await client.post("/api/v1/auth/local")
         assert resp.status_code == 200
 
     # --- source-IP self-defense (front-proxy bypass, #1374 review) ---
-    # The nginx `allow 127.0.0.1; deny all` ACL keys off $remote_addr, which
-    # is the loopback nginx<->uvicorn hop when any loopback proxy fronts nginx.
-    # So the ACL alone admits a workspace container that reached nginx through
+    # The proxy `allow 127.0.0.1; deny all` ACL keys off $remote_addr, which
+    # is the loopback proxy<->uvicorn hop when any loopback proxy fronts the klangk proxy.
+    # So the ACL alone admits a workspace container that reached the proxy through
     # such a proxy. The backend re-checks the effective client here and refuses
     # non-loopback X-Real-IP even when the immediate peer is loopback.
 
-    async def test_rejects_nonloopback_real_client_via_nginx(
+    async def test_rejects_nonloopback_real_client_via_proxy(
         self, client, app, db, monkeypatch, app_state
     ):
-        """Front-proxy bypass: peer is loopback (nginx) but X-Real-IP is the
+        """Front-proxy bypass: peer is loopback (the proxy) but X-Real-IP is the
         real client (a workspace container) -> backend refuses independently."""
         monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")
         monkeypatch.setattr(
@@ -878,10 +878,10 @@ class TestLocalLogin:
         assert resp.status_code == 403
         assert "loopback" in resp.json()["detail"].lower()
 
-    async def test_admits_loopback_real_client_via_nginx(
+    async def test_admits_loopback_real_client_via_proxy(
         self, client, app, db, monkeypatch, app_state
     ):
-        """The benign mirror: peer loopback (nginx), X-Real-IP loopback (the
+        """The benign mirror: peer loopback (the proxy), X-Real-IP loopback (the
         operator's browser) -> admit. (ASGI test client peer is itself
         loopback, satisfying the trust gate that honors X-Real-IP.)"""
         monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "none")

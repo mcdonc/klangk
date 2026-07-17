@@ -64,7 +64,7 @@ def clean_env(**overrides: str) -> dict[str, str]:
 
     Starts from ``os.environ`` with every config-affecting var stripped, then
     applies ``overrides`` (the test's explicit KLANGK_* / LOGFIRE_* keys).
-    The baseline includes ``_KLANGK_DISABLE_NGINX=1`` and
+    The baseline includes ``_KLANGK_DISABLE_PROXY=1`` and
     ``KLANGK_AUTH_MODES=password`` (the E2E default — most suites exercise the
     password auth flow); pass ``KLANGK_AUTH_MODES="none"`` in overrides to
     opt into no-auth mode.
@@ -89,7 +89,7 @@ def clean_env(**overrides: str) -> dict[str, str]:
         if val is not None:
             env[name] = val
     # E2E baseline defaults.
-    env["_KLANGK_DISABLE_NGINX"] = "1"
+    env["_KLANGK_DISABLE_PROXY"] = "1"
     env.setdefault("KLANGK_AUTH_MODES", "password")
     env.update(overrides)
     return env

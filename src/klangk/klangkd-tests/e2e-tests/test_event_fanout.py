@@ -25,7 +25,7 @@ from _e2e_server import start_server, stop_server, ws_connect as _ws_dial
 def server():
     """Start a real Klangk server (klangkd over its UDS) for the test module.
 
-    No LLM or nginx needed — these tests only exercise WebSocket event
+    No LLM or proxy needed — these tests only exercise WebSocket event
     fanout (container ready, exec output routing), not LLM interactions.
     """
     server = start_server(

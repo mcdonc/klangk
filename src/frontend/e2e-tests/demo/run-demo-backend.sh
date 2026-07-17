@@ -12,12 +12,12 @@
 #
 #   backend (uvicorn):     127.0.0.1:$KLANGK_PORT  (.demo-env -> 8998; TCP because
 #                                                  KLANGK_LISTEN=127.0.0.1)
-#   nginx (klangk target)::$KLANGK_EGRESS_PORT     (.demo-env -> 8996)
+#   proxy/nginx (klangk target)::$KLANGK_EGRESS_PORT     (.demo-env -> 8996)
 #   instance id:           "video"   (unique pid file + container labels)
 #
 # KLANGK_LISTEN=127.0.0.1 is load-bearing: post-#1400 the default listen is
 # None → klangkd binds a UDS and renders the headless (no-browser) template.
-# The demo needs the browser UI, so we force TCP loopback → nginx renders the
+# The demo needs the browser UI, so we force TCP loopback → the proxy renders the
 # full browser template and the web-UI scenes can drive it.
 #
 # Teardown is bulletproof and does NOT rely on `devenv processes down`:
@@ -49,7 +49,7 @@ cd "$WT" || exit 1
 # devenv.nix's env. block). Read them back so the script can report/target the
 # right ports.
 DEMO_PORT="${KLANGK_PORT:-8998}"
-DEMO_NGINX_PORT="${KLANGK_EGRESS_PORT:-8996}"
+DEMO_PROXY_PORT="${KLANGK_EGRESS_PORT:-8996}"
 DEMO_LISTEN="${KLANGK_LISTEN:-127.0.0.1}"
 # `both` = password + OIDC. The login screen shows the OIDC button above the
 # password fields, which the demo's login-card click coordinates assume (see
@@ -89,7 +89,7 @@ DEMO_BOOTSTRAP_PASSWORD="${KLANGK_DEFAULT_PASSWORD:-admin}"
 DEMO_LLM_BASE_URL="${KLANGK_DEMO_LLM_BASE_URL:-https://api.z.ai/api/coding/paas/v4}"
 DEMO_LLM_API_KEY="${KLANGK_DEMO_LLM_API_KEY:-cmd:cat /run/agenix/zai-authtoken-chrism2}"
 DEMO_LLM_MODEL="${KLANGK_DEMO_LLM_MODEL:-glm-5.2}"
-URL="http://localhost:${DEMO_NGINX_PORT}"
+URL="http://localhost:${DEMO_PROXY_PORT}"
 
 # ---------------------------------------------------------------------------
 # .demo-env bootstrap
@@ -106,19 +106,19 @@ _ensure_env() {
   # Already configured (and nothing changed)? Skip the rewrite.
   if grep -qF "KLANGK_INSTANCE_ID=$DEMO_INSTANCE" .demo-env 2>/dev/null &&
     grep -qF "KLANGK_PORT=$DEMO_PORT" .demo-env 2>/dev/null &&
-    grep -qF "KLANGK_EGRESS_PORT=$DEMO_NGINX_PORT" .demo-env 2>/dev/null &&
+    grep -qF "KLANGK_EGRESS_PORT=$DEMO_PROXY_PORT" .demo-env 2>/dev/null &&
     grep -qF "KLANGK_LISTEN=$DEMO_LISTEN" .demo-env 2>/dev/null &&
     grep -qF "KLANGK_STATE_DIR=$DEMO_STATE_DIR" .demo-env 2>/dev/null &&
     grep -qF "KLANGK_OIDC_CONFIG=$DEMO_OIDC_CONFIG" .demo-env 2>/dev/null &&
     grep -qF "KLANGK_DEFAULT_USER=$DEMO_BOOTSTRAP_EMAIL" .demo-env 2>/dev/null &&
     grep -qF "KLANGK_LLM_BASE_URL='$DEMO_LLM_BASE_URL'" .demo-env 2>/dev/null &&
     grep -qF "KLANGK_LLM_MODEL='$DEMO_LLM_MODEL'" .demo-env 2>/dev/null &&
-    grep -qF "KLANGK_HOSTING_HOSTNAME=localhost:$DEMO_NGINX_PORT" .demo-env 2>/dev/null &&
+    grep -qF "KLANGK_HOSTING_HOSTNAME=localhost:$DEMO_PROXY_PORT" .demo-env 2>/dev/null &&
     grep -qF "KLANGK_AUTH_MODES=$DEMO_AUTH_MODES" .demo-env 2>/dev/null &&
     grep -qF "KLANGK_ALLOW_AUTOSTART=1" .demo-env 2>/dev/null; then
     return 0
   fi
-  echo "  configuring demo ports in .demo-env (instance=$DEMO_INSTANCE, backend=$DEMO_PORT, nginx=$DEMO_NGINX_PORT)"
+  echo "  configuring demo ports in .demo-env (instance=$DEMO_INSTANCE, backend=$DEMO_PORT, proxy=$DEMO_PROXY_PORT)"
   # Create the short state dir so klangkd can place its UDS + rendered
   # nginx.conf there. /tmp/klangk-demo survives across runs for warm reuse;
   # demo-seed.ts --reset wipes the DB + users, not the dir.
@@ -136,7 +136,7 @@ _ensure_env() {
     echo "# run-demo-backend.sh — re-runnable."
     echo "KLANGK_INSTANCE_ID=$DEMO_INSTANCE"
     echo "KLANGK_PORT=$DEMO_PORT"
-    echo "KLANGK_EGRESS_PORT=$DEMO_NGINX_PORT"
+    echo "KLANGK_EGRESS_PORT=$DEMO_PROXY_PORT"
     # Bootstrap admin (the server's KLANGK_DEFAULT_USER). demo-seed.ts logs in
     # as this account to create the hero + cast users. klangkd creates it at
     # startup with KLANGK_DEFAULT_PASSWORD. Must match the seed's
@@ -152,7 +152,7 @@ _ensure_env() {
     echo "KLANGK_LLM_BASE_URL='$DEMO_LLM_BASE_URL'"
     echo "KLANGK_LLM_API_KEY='$DEMO_LLM_API_KEY'"
     echo "KLANGK_LLM_MODEL='$DEMO_LLM_MODEL'"
-    # Force a TCP loopback bind so nginx renders the full (browser) template.
+    # Force a TCP loopback bind so the proxy renders the full (browser) template.
     # The post-#1400 default is a UDS → headless (no browser); the demo needs
     # the browser UI, so this override is load-bearing.
     echo "KLANGK_LISTEN=$DEMO_LISTEN"
@@ -175,9 +175,9 @@ _ensure_env() {
     echo "KLANGK_OIDC_CONFIG=$DEMO_OIDC_CONFIG"
     # Post-#1241: derive_hosting_info treats the env var as the
     # authoritative override, so the eager-start path (no live request)
-    # builds hosted URLs that resolve through nginx on the public port.
-    # Carries host[:port]; the demo's public origin is the nginx port.
-    echo "KLANGK_HOSTING_HOSTNAME=localhost:$DEMO_NGINX_PORT"
+    # builds hosted URLs that resolve through the proxy on the public port.
+    # Carries host[:port]; the demo's public origin is the proxy port.
+    echo "KLANGK_HOSTING_HOSTNAME=localhost:$DEMO_PROXY_PORT"
     # Scene 3 (sandbox) needs auto-start so the workspace container boots
     # automatically when the sandbox config requests it.
     echo "KLANGK_ALLOW_AUTOSTART=1"
@@ -237,13 +237,13 @@ stop_all() {
   # 2. final safety net: whatever still holds our dedicated ports (catches any
   #    orphaned nginx worker that slipped step 1).
   sleep 0.3
-  for port in "$DEMO_PORT" "$DEMO_NGINX_PORT"; do
+  for port in "$DEMO_PORT" "$DEMO_PROXY_PORT"; do
     holders=$(ss -tlnpH "sport = :$port" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
     for p in $holders; do kill -9 "$p" 2>/dev/null || true; done
   done
 }
 
-is_up() { ss -tln 2>/dev/null | grep -q ":${DEMO_NGINX_PORT} "; }
+is_up() { ss -tln 2>/dev/null | grep -q ":${DEMO_PROXY_PORT} "; }
 
 # ---------------------------------------------------------------------------
 # commands
@@ -298,7 +298,7 @@ start)
   ' >/tmp/klangk-video-processes.log 2>&1 &
 
   # Wait for nginx to bind (uvicorn binds a UDS, not TCP, so :$DEMO_PORT is
-  # never listened on; nginx on :$DEMO_NGINX_PORT is the readiness signal).
+  # never listened on; nginx on :$DEMO_PROXY_PORT is the readiness signal).
   for _ in $(seq 1 120); do
     if is_up; then
       echo "$URL"

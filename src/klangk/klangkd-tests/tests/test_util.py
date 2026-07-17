@@ -447,7 +447,7 @@ class TestDeriveHostingInfo:
     def test_host_header_used_verbatim(self):
         """Direct access: the Host header (with its port) is used verbatim.
 
-        nginx forwards the client's Host as both Host and X-Forwarded-Host,
+        the proxy forwards the client's Host as both Host and X-Forwarded-Host,
         so the port the browser hit rides along unmodified — no port is
         synthesized from KLANGK_EGRESS_PORT (that is internal wiring, not the
         public port; wrong behind a real proxy/ingress).
@@ -526,7 +526,7 @@ class TestDeriveHostingInfo:
 
 # --- client_is_loopback (moved from test_wshandler.py, #1503) ---
 # Powers the none-mode /auth/local self-defense (#1374). Must admit a real
-# loopback browser, admit a request proxied by nginx (peer loopback, real
+# loopback browser, admit a request proxied by the proxy (peer loopback, real
 # client loopback in X-Real-IP), and reject a workspace container. Forwarded
 # headers from an untrusted peer are ignored so they can't be spoofed.
 
@@ -541,18 +541,18 @@ class TestClientIsLoopback:
         assert u.client_is_loopback(self._hdr(), "127.0.0.1") is True
         assert u.client_is_loopback(self._hdr(), "::1") is True
 
-    def test_nginx_proxied_loopback_client_admitted(self):
-        """nginx fronts uvicorn on loopback; the real browser is loopback.
-        nginx set X-Real-IP to the real client (loopback) -> admit."""
+    def test_proxy_proxied_loopback_client_admitted(self):
+        """The proxy fronts uvicorn on loopback; the real browser is loopback.
+        The proxy set X-Real-IP to the real client (loopback) -> admit."""
         u = _util({})
         h = self._hdr(**{"x-real-ip": "127.0.0.1"})
         assert u.client_is_loopback(h, "127.0.0.1") is True
 
-    def test_nginx_proxied_nonloopback_client_rejected(self):
-        """The front-proxy bypass: a workspace container reaches nginx, nginx
+    def test_proxy_proxied_nonloopback_client_rejected(self):
+        """The front-proxy bypass: a workspace container reaches the proxy, the proxy
         proxies to uvicorn on loopback, but X-Real-IP shows the real client
-        is non-loopback -> reject (the nginx ACL alone would have admitted
-        it because $remote_addr was nginx's loopback)."""
+        is non-loopback -> reject (the proxy ACL alone would have admitted
+        it because $remote_addr was the proxy's loopback)."""
         u = _util({})
         h = self._hdr(**{"x-real-ip": "10.89.0.5"})
         assert u.client_is_loopback(h, "127.0.0.1") is False
@@ -579,7 +579,7 @@ class TestClientIsLoopback:
 
     def test_reject_proxy_header_forces_peer_only(self):
         """KLANGK_REJECT_PROXY_HEADERS=1 disables forwarded-header trust, so
-        the loopback peer (nginx) is evaluated directly -> admit, and the
+        the loopback peer (the proxy) is evaluated directly -> admit, and the
         spoofed non-loopback X-Real-IP is ignored."""
         u = _util({"KLANGK_REJECT_PROXY_HEADERS": "1"})
         h = self._hdr(**{"x-real-ip": "10.89.0.5"})
@@ -594,9 +594,9 @@ class TestClientIsLoopback:
         assert u.client_is_loopback(self._hdr(), "not-an-ip") is False
 
     def test_empty_forwarded_headers_fall_back_to_peer(self):
-        """Trusted peer but no forwarded header at all: the peer (nginx,
+        """Trusted peer but no forwarded header at all: the peer (the proxy,
         loopback) is the candidate -> admit (a loopback browser hitting
-        nginx directly with no X-Real-IP set is the benign case)."""
+        the proxy directly with no X-Real-IP set is the benign case)."""
         u = _util({})
         assert u.client_is_loopback(self._hdr(), "127.0.0.1") is True
 
@@ -604,8 +604,8 @@ class TestClientIsLoopback:
 
     def test_uds_mode_none_client_trusts_forwarded(self):
         """Over a UDS (set_uds_mode(True)), a None client is the same-uid
-        nginx peer. Its X-Real-IP IS consulted — a loopback value admits
-        (the loopback Browser behind nginx)."""
+        proxy peer. Its X-Real-IP IS consulted — a loopback value admits
+        (the loopback Browser behind the proxy)."""
         u = _util({})
         u.set_uds_mode(True)
         h = self._hdr(**{"x-real-ip": "127.0.0.1"})
@@ -613,7 +613,7 @@ class TestClientIsLoopback:
 
     def test_uds_mode_none_client_rejects_nonloopback(self):
         """Over a UDS, a None client's X-Real-IP shows non-loopback -> reject
-        (a container behind nginx)."""
+        (a container behind the proxy)."""
         u = _util({})
         u.set_uds_mode(True)
         h = self._hdr(**{"x-real-ip": "10.89.0.5"})
@@ -628,7 +628,7 @@ class TestClientIsLoopback:
         assert u.client_is_loopback(self._hdr(), None) is False
 
     def test_uds_direct_connection_admitted(self):
-        """Direct UDS connection (no nginx, no forwarded headers): client_host
+        """Direct UDS connection (no proxy, no forwarded headers): client_host
         is None, uds_mode is True → treat as loopback (#1399)."""
         u = _util({})
         u.set_uds_mode(True)

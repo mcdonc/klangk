@@ -384,7 +384,7 @@ The agent runs Pi inside the container. It can read and write files, run shell c
 
 _[Wait ~30s. clanker's reply appears]_
 
-There it is. Now here's something important about the security model. My LLM API key — the key that talks to the AI provider — never enters the container. Klangk runs an nginx reverse proxy on the host that injects the key into requests. Inside the container, Pi just talks to a local proxy URL. So even if the container were compromised, the API key isn't there.
+There it is. Now here's something important about the security model. My LLM API key — the key that talks to the AI provider — never enters the container. Klangk runs a reverse proxy (nginx) on the host that injects the key into requests. Inside the container, Pi just talks to a local proxy URL. So even if the container were compromised, the API key isn't there.
 
 _[Click the Terminal tab in the left rail, then type: env, wait for 10 seconds]_
 

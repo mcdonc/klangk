@@ -149,10 +149,10 @@ def _login(base_url):
 
 
 def _start_server(data_dir, extra_env=None):
-    """Start a real ``klangkd`` (nginx on a TCP port); return (handle, url).
+    """Start a real ``klangkd`` (the proxy on a TCP port); return (handle, url).
 
     ``uds=False`` gives this suite a real ``http://localhost:<port>`` URL —
-    nginx fronts klangkd's UDS (#1525) — which the CLI (``klangk login``)
+    the proxy fronts klangkd's UDS (#1525) — which the CLI (``klangk login``)
     and the suite's ``httpx`` calls need. ``clean_env`` strips every
     ``KLANGK_*`` by default (#1526), so the runner-provided infra the
     openclaw gateway depends on — system podman (nix podman lacks SUID

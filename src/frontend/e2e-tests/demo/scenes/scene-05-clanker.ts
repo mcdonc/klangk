@@ -86,7 +86,7 @@ test("clanker chat", async ({ page, request }) => {
 
   // 7. Security-model proof: switch to the Terminal nav tab and run `env`.
   //    The container's full environment shows NO API keys / secrets — the
-  //    LLM key lives only in the host nginx proxy, never inside the container.
+  //    LLM key lives only in the host proxy, never inside the container.
   //    (Hold ~10s so the viewer can scan the output.)
   await openTab(page, 0); // Terminal nav tab (index 0)
   await waitForTerminal(page);

@@ -1,11 +1,11 @@
 """
-E2E tests for the nginx container ACL (LLM proxy / browser-delegate).
+E2E tests for the proxy container ACL (LLM proxy / browser-delegate).
 
-TestNginxAclConfig — renders nginx.conf via the Python renderer (#1396) with
+TestProxyAclConfig — renders nginx.conf via the Python renderer (#1396) with
 controlled env to verify the generated config contains the correct
 allow/deny directives (replaces the old scripts/nginx.sh invocation).
 
-TestNginxAclEnforcement — starts nginx + uvicorn and verifies that
+TestProxyAclEnforcement — starts the proxy (nginx) + uvicorn and verifies that
 requests from 127.0.0.1 are denied when KLANGK_CONTAINER_SUBNETS is
 set to a non-local subnet (explicit override does not add 127.0.0.1).
 """
@@ -28,7 +28,7 @@ def _render_conf(env_overrides, tmpdir=None):
     """Render nginx.conf via the Python renderer (#1396) with controlled env.
 
     Replaces the old ``_run_nginx_sh`` (which ran ``scripts/nginx.sh`` and
-    killed it after config generation). Renders via :func:`klangk.nginx.render_config`
+    killed it after config generation). Renders via :func:`klangk.proxy.render_config`
     from an explicit settings dict built from ``env_overrides`` — no
     ``os.environ`` mutation. Returns the conf text.
 
@@ -45,11 +45,11 @@ def _render_conf(env_overrides, tmpdir=None):
         "KLANGK_STATE_DIR": str(tmpdir or "/tmp/klangk-e2e-state"),
         **env_overrides,
     }
-    from klangk.nginx import NginxRenderer, tcp_upstream
+    from klangk.proxy import ProxyRenderer, tcp_upstream
     from klangk.settings import KlangkSettings
     import types
 
-    return NginxRenderer(
+    return ProxyRenderer(
         types.SimpleNamespace(
             state=types.SimpleNamespace(settings=KlangkSettings(env))
         )
@@ -60,8 +60,8 @@ def _find_free_port():
     return str(free_port())
 
 
-class TestNginxAclConfig:
-    """Verify that nginx.sh generates correct allow/deny lines."""
+class TestProxyAclConfig:
+    """Verify the renderer generates correct allow/deny lines."""
 
     def test_explicit_subnets(self, tmp_path):
         """KLANGK_CONTAINER_SUBNETS override produces exact allow lines."""
@@ -200,7 +200,7 @@ class TestNginxAclConfig:
         assert "deny all;" in bd_block
 
     # --- /api/v1/auth/local ACL (#1374) ---
-    # In `none` mode this endpoint freely issues an admin token, so the nginx
+    # In `none` mode this endpoint freely issues an admin token, so the proxy's
     # `allow 127.0.0.1/::1; deny all` ACL is the control that keeps workspace
     # containers (which appear via pasta NAT as the host's non-loopback IP)
     # from minting one. It is always generated regardless of mode (outside
@@ -293,7 +293,7 @@ class TestNginxAclConfig:
         assert "if ($container_source) { return 403; }" in conf
 
 
-class TestNginxHostedBlock:
+class TestProxyHostedBlock:
     """KLANGK_HOSTED_PORTS_PER_WORKSPACE gates the /hosted/ proxy (#1237)."""
 
     def test_default_emits_proxy_locations(self, tmp_path):
@@ -329,7 +329,7 @@ class TestNginxHostedBlock:
 
     def test_non_int_does_not_disable(self, tmp_path):
         """Garbage is not '0', so the proxy stays enabled (backend clamps
-        to the default 5; nginx only needs the boolean off-switch)."""
+        to the default 5; the proxy only needs the boolean off-switch)."""
         conf = _render_conf(
             {"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "garbage"}, str(tmp_path)
         )
@@ -337,13 +337,13 @@ class TestNginxHostedBlock:
         assert "return 404;" not in conf
 
 
-class TestNginxAclEnforcement:
-    """Start nginx + uvicorn and verify ACL enforcement at runtime."""
+class TestProxyAclEnforcement:
+    """Start the proxy (nginx) + uvicorn and verify ACL enforcement at runtime."""
 
     @pytest.fixture(scope="class")
     @staticmethod
-    def nginx_stack(tmp_path_factory):
-        """Start uvicorn + nginx with a restrictive KLANGK_CONTAINER_SUBNETS.
+    def proxy_stack(tmp_path_factory):
+        """Start uvicorn + the proxy (nginx) with a restrictive KLANGK_CONTAINER_SUBNETS.
 
         KLANGK_CONTAINER_SUBNETS=192.0.2.0/24 (TEST-NET-1). With an
         explicit override, 127.0.0.1 is NOT implicitly added, so
@@ -360,12 +360,12 @@ class TestNginxAclEnforcement:
         browser_port = _find_free_port()
         egress_port = _find_free_port()
 
-        # Start the real backend (klangkd on its UDS); nginx (started
+        # Start the real backend (klangkd on its UDS); the proxy (started
         # below) proxies to this socket, as in production (#1525).
         server = start_server(
             data_dir=data_dir,
             state_dir=state_dir,
-            KLANGK_JWT_SECRET="nginx-acl-test-secret",
+            KLANGK_JWT_SECRET="proxy-acl-test-secret",
             KLANGK_PREVENT_INSECURE_JWT_SECRET="",
             KLANGK_DEFAULT_USER="test@example.com",
             KLANGK_DEFAULT_PASSWORD="testpass",
@@ -375,13 +375,13 @@ class TestNginxAclEnforcement:
         )
         uds_path = server["uds_path"]
 
-        # Start nginx via the Python renderer (#1396): render the conf
+        # Start the proxy via the Python renderer (#1396): render the conf
         # from an explicit settings dict, then launch nginx directly with -c.
-        from klangk.nginx import NginxRenderer, uds_upstream
+        from klangk.proxy import ProxyRenderer, uds_upstream
         from klangk.settings import KlangkSettings
         import types
 
-        nginx_env = {
+        proxy_env = {
             "KLANGK_PORT": browser_port,
             "KLANGK_LISTEN": "0.0.0.0",
             "KLANGK_EGRESS_PORT": egress_port,
@@ -391,21 +391,21 @@ class TestNginxAclEnforcement:
             "KLANGK_DATA_DIR": data_dir,
             "KLANGK_STATE_DIR": state_dir,
         }
-        nginx_state = os.path.join(tmpdir, "nginx")
-        os.makedirs(nginx_state, exist_ok=True)
-        conf_path = os.path.join(nginx_state, "nginx.conf")
-        NginxRenderer(
+        proxy_state = os.path.join(tmpdir, "nginx")
+        os.makedirs(proxy_state, exist_ok=True)
+        conf_path = os.path.join(proxy_state, "nginx.conf")
+        ProxyRenderer(
             types.SimpleNamespace(
-                state=types.SimpleNamespace(settings=KlangkSettings(nginx_env))
+                state=types.SimpleNamespace(settings=KlangkSettings(proxy_env))
             )
         ).write_config(uds_upstream(uds_path), conf_path)
-        nginx_proc = subprocess.Popen(
+        proxy_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
 
-        # Wait for nginx (browser /health on the browser port).
+        # Wait for the proxy (browser /health on the browser port).
         deadline = time.time() + 10
         while time.time() < deadline:
             try:
@@ -418,39 +418,39 @@ class TestNginxAclEnforcement:
                 pass
             time.sleep(0.3)
         else:
-            nginx_proc.kill()
+            proxy_proc.kill()
             stop_server(server)
-            raise RuntimeError("Nginx did not start")
+            raise RuntimeError("Proxy did not start")
 
         yield {
             "browser_port": browser_port,
             "egress_port": egress_port,
         }
 
-        nginx_proc.kill()
-        nginx_proc.wait(timeout=5)
+        proxy_proc.kill()
+        proxy_proc.wait(timeout=5)
         stop_server(server)
 
-    def test_regular_endpoint_allowed(self, nginx_stack):
+    def test_regular_endpoint_allowed(self, proxy_stack):
         """Regular browser endpoints (/health) are not ACL-gated and should work."""
         r = httpx.get(
-            f"http://127.0.0.1:{nginx_stack['browser_port']}/health",
+            f"http://127.0.0.1:{proxy_stack['browser_port']}/health",
             timeout=5,
         )
         assert r.status_code == 200
 
-    def test_llm_proxy_denied(self, nginx_stack):
+    def test_llm_proxy_denied(self, proxy_stack):
         """LLM proxy returns 403 when source IP is not in allowed subnet."""
         r = httpx.get(
-            f"http://127.0.0.1:{nginx_stack['egress_port']}/llm-proxy/v1/models",
+            f"http://127.0.0.1:{proxy_stack['egress_port']}/llm-proxy/v1/models",
             timeout=5,
         )
         assert r.status_code == 403
 
-    def test_browser_delegate_denied(self, nginx_stack):
+    def test_browser_delegate_denied(self, proxy_stack):
         """browser-delegate returns 403 from non-container IP."""
         r = httpx.post(
-            f"http://127.0.0.1:{nginx_stack['egress_port']}/api/v1/browser-delegate",
+            f"http://127.0.0.1:{proxy_stack['egress_port']}/api/v1/browser-delegate",
             timeout=5,
         )
         assert r.status_code == 403
@@ -481,12 +481,14 @@ def _host_nonloopback_ipv4():
     return None
 
 
-class TestNginxDenyByDefault:
+class TestProxyDenyByDefault:
     """Runtime enforcement of deny-by-default from container source IPs (#1376).
+
+    The proxy is currently nginx; these tests spawn it directly.
 
     The catch-all `location /` denies the container source IPs while allowing
     loopback (local browsers) and other IPs (remote browsers). We simulate a
-    container source by connecting to nginx via the host's own non-loopback
+    container source by connecting to the proxy via the host's own non-loopback
     IPv4 — exactly the address pasta NAT traffic appears as — and assert the
     catch-all 403s it (capping the API brute-force surface) while the container
     endpoints' own ACLs still let it through to auth_request.
@@ -507,12 +509,12 @@ class TestNginxDenyByDefault:
         browser_port = _find_free_port()
         egress_port = _find_free_port()
 
-        # Start the real backend (klangkd on its UDS); nginx (started
+        # Start the real backend (klangkd on its UDS); the proxy (started
         # below) proxies to this socket (#1525).
         server = start_server(
             data_dir=data_dir,
             state_dir=state_dir,
-            KLANGK_JWT_SECRET="nginx-deny-test-secret",
+            KLANGK_JWT_SECRET="proxy-deny-test-secret",
             KLANGK_PREVENT_INSECURE_JWT_SECRET="",
             KLANGK_DEFAULT_USER="test@example.com",
             KLANGK_DEFAULT_PASSWORD="testpass",
@@ -522,16 +524,16 @@ class TestNginxDenyByDefault:
         )
         uds_path = server["uds_path"]
 
-        # Start nginx via the Python renderer (#1396) with the host IP as
+        # Start the proxy via the Python renderer (#1396) with the host IP as
         # the (sole) container source IP. The browser catch-all's container
         # guard (geo on $realip_remote_addr) then denies a *direct* request
         # from exactly that IP — while a trusted-proxy request whose XFF is
         # that IP still passes (the peer is the proxy, not a container source).
-        from klangk.nginx import NginxRenderer, uds_upstream
+        from klangk.proxy import ProxyRenderer, uds_upstream
         from klangk.settings import KlangkSettings
         import types
 
-        nginx_env = {
+        proxy_env = {
             "KLANGK_PORT": browser_port,
             "KLANGK_LISTEN": "0.0.0.0",
             "KLANGK_EGRESS_PORT": egress_port,
@@ -539,21 +541,21 @@ class TestNginxDenyByDefault:
             "KLANGK_DATA_DIR": data_dir,
             "KLANGK_STATE_DIR": state_dir,
         }
-        nginx_state = os.path.join(tmpdir, "nginx")
-        os.makedirs(nginx_state, exist_ok=True)
-        conf_path = os.path.join(nginx_state, "nginx.conf")
-        NginxRenderer(
+        proxy_state = os.path.join(tmpdir, "nginx")
+        os.makedirs(proxy_state, exist_ok=True)
+        conf_path = os.path.join(proxy_state, "nginx.conf")
+        ProxyRenderer(
             types.SimpleNamespace(
-                state=types.SimpleNamespace(settings=KlangkSettings(nginx_env))
+                state=types.SimpleNamespace(settings=KlangkSettings(proxy_env))
             )
         ).write_config(uds_upstream(uds_path), conf_path)
-        nginx_proc = subprocess.Popen(
+        proxy_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
 
-        # Wait for nginx (probe via loopback on the browser port, always allowed).
+        # Wait for the proxy (probe via loopback on the browser port, always allowed).
         deadline = time.time() + 10
         while time.time() < deadline:
             try:
@@ -566,9 +568,9 @@ class TestNginxDenyByDefault:
                 pass
             time.sleep(0.3)
         else:
-            nginx_proc.kill()
+            proxy_proc.kill()
             stop_server(server)
-            raise RuntimeError("Nginx did not start")
+            raise RuntimeError("Proxy did not start")
 
         yield {
             "browser_port": browser_port,
@@ -576,13 +578,13 @@ class TestNginxDenyByDefault:
             "host_ip": host_ip,
         }
 
-        nginx_proc.kill()
-        nginx_proc.wait(timeout=5)
+        proxy_proc.kill()
+        proxy_proc.wait(timeout=5)
         stop_server(server)
 
     def test_api_denied_from_container_ip(self, stack):
         """From the container source IP, a non-container /api/v1 path is
-        refused at nginx (403) — deny-by-default caps the brute-force surface."""
+        refused at the proxy (403) — deny-by-default caps the brute-force surface."""
         r = httpx.get(
             f"http://{stack['host_ip']}:{stack['browser_port']}/api/v1/users",
             timeout=5,
@@ -602,7 +604,7 @@ class TestNginxDenyByDefault:
             headers={"X-Forwarded-For": stack["host_ip"]},
             timeout=5,
         )
-        # Reached the backend (not nginx-denied): 401 unauth is fine.
+        # Reached the backend (not proxy-denied): 401 unauth is fine.
         assert r.status_code != 403
 
     def test_api_allowed_from_loopback(self, stack):
@@ -612,7 +614,7 @@ class TestNginxDenyByDefault:
             f"http://127.0.0.1:{stack['browser_port']}/api/v1/users",
             timeout=5,
         )
-        # Not nginx-denied (401 unauth or similar is fine) — proves loopback
+        # Not proxy-denied (401 unauth or similar is fine) — proves loopback
         # is exempt from the catch-all deny.
         assert r.status_code != 403
 
@@ -636,18 +638,18 @@ class TestNginxDenyByDefault:
         assert r.status_code != 403
 
 
-class TestNginxAuthLocalAcl:
+class TestProxyAuthLocalAcl:
     """Runtime enforcement of the /api/v1/auth/local loopback ACL (#1374).
 
-    In `none` mode this endpoint freely issues an admin token, so the nginx
+    In `none` mode this endpoint freely issues an admin token, so the proxy's
     `allow 127.0.0.1/::1; deny all` ACL is the control that keeps a workspace
     container (which appears via pasta NAT as the host's non-loopback IP) from
     minting one. This is the runtime complement to the config-gen tests in
-    TestNginxAclConfig.test_auth_local_* — it proves the generated ACL actually
+    TestProxyAclConfig.test_auth_local_* — it proves the generated ACL actually
     fires at request time, not just that the text is present in nginx.conf.
 
     Two layers are exercised:
-      * nginx ACL:   a non-loopback source -> 403 at nginx (never proxied).
+      * proxy ACL:   a non-loopback source -> 403 at the proxy (never proxied).
       * backend:     a loopback source -> 200 (reaches local_login, which has
                      its own source-IP self-check; see test_api TestLocalLogin).
     """
@@ -667,13 +669,13 @@ class TestNginxAuthLocalAcl:
         browser_port = _find_free_port()
         egress_port = _find_free_port()
 
-        # Start the real backend (klangkd on its UDS); nginx (started
+        # Start the real backend (klangkd on its UDS); the proxy (started
         # below) proxies to this socket (#1525).
         # KLANGK_AUTH_MODES=none so /auth/local actually mints a token.
         server = start_server(
             data_dir=data_dir,
             state_dir=state_dir,
-            KLANGK_JWT_SECRET="nginx-auth-local-test-secret",
+            KLANGK_JWT_SECRET="proxy-auth-local-test-secret",
             KLANGK_PREVENT_INSECURE_JWT_SECRET="",
             KLANGK_DEFAULT_USER="test@example.com",
             KLANGK_DEFAULT_PASSWORD="testpass",
@@ -684,29 +686,29 @@ class TestNginxAuthLocalAcl:
         )
         uds_path = server["uds_path"]
 
-        # nginx via the Python renderer (#1396) with no container subnets —
+        # The proxy via the Python renderer (#1396) with no container subnets —
         # the /auth/local block is always generated with its fixed loopback
         # allowlist.
-        from klangk.nginx import NginxRenderer, uds_upstream
+        from klangk.proxy import ProxyRenderer, uds_upstream
         from klangk.settings import KlangkSettings
         import types
 
-        nginx_env = {
+        proxy_env = {
             "KLANGK_PORT": browser_port,
             "KLANGK_LISTEN": "0.0.0.0",
             "KLANGK_EGRESS_PORT": egress_port,
             "KLANGK_DATA_DIR": data_dir,
             "KLANGK_STATE_DIR": state_dir,
         }
-        nginx_state = os.path.join(tmpdir, "nginx")
-        os.makedirs(nginx_state, exist_ok=True)
-        conf_path = os.path.join(nginx_state, "nginx.conf")
-        NginxRenderer(
+        proxy_state = os.path.join(tmpdir, "nginx")
+        os.makedirs(proxy_state, exist_ok=True)
+        conf_path = os.path.join(proxy_state, "nginx.conf")
+        ProxyRenderer(
             types.SimpleNamespace(
-                state=types.SimpleNamespace(settings=KlangkSettings(nginx_env))
+                state=types.SimpleNamespace(settings=KlangkSettings(proxy_env))
             )
         ).write_config(uds_upstream(uds_path), conf_path)
-        nginx_proc = subprocess.Popen(
+        proxy_proc = subprocess.Popen(
             ["nginx", "-e", "stderr", "-c", conf_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -724,22 +726,22 @@ class TestNginxAuthLocalAcl:
                 pass
             time.sleep(0.3)
         else:
-            nginx_proc.kill()
+            proxy_proc.kill()
             stop_server(server)
-            raise RuntimeError("Nginx did not start")
+            raise RuntimeError("Proxy did not start")
 
         yield {
             "browser_port": browser_port,
             "host_ip": host_ip,
         }
 
-        nginx_proc.kill()
-        nginx_proc.wait(timeout=5)
+        proxy_proc.kill()
+        proxy_proc.wait(timeout=5)
         stop_server(server)
 
     def test_auth_local_denied_from_non_loopback(self, stack):
         """From the host's non-loopback IP (the address pasta NAT traffic
-        appears as), POST /auth/local is refused at nginx (403) — the
+        appears as), POST /auth/local is refused at the proxy (403) — the
         free-token endpoint is unreachable to workspace containers."""
         r = httpx.post(
             f"http://{stack['host_ip']}:{stack['browser_port']}/api/v1/auth/local",

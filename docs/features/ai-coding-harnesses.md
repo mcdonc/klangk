@@ -115,8 +115,8 @@ in the container.
 ## How the LLM proxy works
 
 Pi does not have direct access to your LLM API key. Instead, klangk
-configures Pi to send requests through an nginx reverse proxy on the
-host. Nginx forwards the request to your `KLANGK_LLM_BASE_URL` and
+configures Pi to send requests through the reverse proxy on the
+host. The proxy forwards the request to your `KLANGK_LLM_BASE_URL` and
 injects the real `KLANGK_LLM_API_KEY` in the `Authorization` header.
 
 This means your LLM API key never enters the container environment.

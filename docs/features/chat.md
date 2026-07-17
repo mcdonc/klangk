@@ -156,5 +156,5 @@ POST /api/v1/workspaces/post-chat-message
 ```
 
 This is how the AI agent sends its responses. The endpoint is authenticated
-via the workspace JWT and restricted by nginx IP ACL to container traffic
+via the workspace JWT and restricted by the proxy IP ACL to container traffic
 only.

@@ -144,12 +144,12 @@ Every key below corresponds to a `KLANGK_*` environment variable (uppercased, wi
 
 The deployment shape is **derived** from two knobs: the browser port
 (`KLANGK_PORT`) and the auth gate (`KLANGK_AUTH_MODE`). klangk picks the
-nginx template and enforces its one safety rule from their combination —
+proxy template and enforces its one safety rule from their combination —
 there is no separate "mode" to set.
 
-**`KLANGK_PORT`** is the browser/nginx port. **Unset ⇒ headless** (no browser
-listener is rendered; nginx serves only the container-egress listener on
-`KLANGK_EGRESS_PORT`). **Set ⇒ full/browser mode** — nginx serves the browser
+**`KLANGK_PORT`** is the browser/proxy port. **Unset ⇒ headless** (no browser
+listener is rendered; the proxy serves only the container-egress listener on
+`KLANGK_EGRESS_PORT`). **Set ⇒ full/browser mode** — the proxy serves the browser
 UI, API, WebSocket, and hosted apps on `listen {KLANGK_LISTEN}:{KLANGK_PORT};`
 plus a separate container-egress listener on `KLANGK_EGRESS_PORT`.
 
@@ -157,10 +157,10 @@ plus a separate container-egress listener on `KLANGK_EGRESS_PORT`.
 `password` / `oidc` / `both`). When unset it defaults to `none`; OIDC settings
 never promote it.
 
-For each combination, klangk renders the **maximum-feature nginx template
-the combination can service**:
+For each combination, klangk renders the **maximum-feature proxy template
+the combination can service** (the proxy is currently nginx):
 
-| `KLANGK_PORT`    | `KLANGK_AUTH_MODE`     | nginx template | browser?    | status                                               |
+| `KLANGK_PORT`    | `KLANGK_AUTH_MODE`     | proxy template | browser?    | status                                               |
 | ---------------- | ---------------------- | -------------- | ----------- | ---------------------------------------------------- |
 | unset (headless) | none                   | headless       | no          | ✅ (most secure)                                     |
 | unset (headless) | password / oidc / both | headless       | no          | ✅ (most secure, less convenient)                    |
@@ -181,8 +181,9 @@ the combination can service**:
 **Security ordering** (most → least secure): headless+password > headless+none
 
 > loopback TCP (local) > non-loopback TCP+gate. Headless is the most-secure
-> posture: the backend binds only a UDS (same-uid socket access), and nginx
+> posture: the backend binds only a UDS (same-uid socket access), and the proxy
 > serves only the container-egress listener — no browser/TCP surface at all.
+> (The proxy is implemented with nginx today.)
 
 | Key      | Default     | Env var         |
 | -------- | ----------- | --------------- |
@@ -190,7 +191,7 @@ the combination can service**:
 
 ```yaml
 # --- Deployment shape ---
-# port is the browser/nginx port. Unset ⇒ headless (no browser listener).
+# port is the browser/proxy port. Unset ⇒ headless (no browser listener).
 # Set ⇒ full/browser mode (UI + API + hosted apps).
 port: "8997"
 # listen is the browser interface address (rendered only when port is set).
@@ -236,7 +237,7 @@ port: "8997"
 | `port`                   | _(unset)_                        | `KLANGK_PORT`                   |
 | `egress_port`            | `8995`                           | `KLANGK_EGRESS_PORT`            |
 | `egress_listen`          | `0.0.0.0`                        | `KLANGK_EGRESS_LISTEN`          |
-| `nginx_port`             | _(deprecated)_                   | `KLANGK_NGINX_PORT`             |
+| `proxy_port`             | _(deprecated)_                   | `KLANGK_PROXY_PORT`             |
 | `socket`                 | `<state_dir>/klangk.sock`        | `KLANGK_SOCKET`                 |
 | `port_range_start`       | `9000`                           | `KLANGK_PORT_RANGE_START`       |
 | `cors_origins`           |                                  | `KLANGK_CORS_ORIGINS`           |
