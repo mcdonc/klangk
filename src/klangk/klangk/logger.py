@@ -20,14 +20,22 @@ other subsystem (``Util``, ``Model``, ``Container``, ...) uses. It owns:
 - the root level, read live from ``settings.log_level`` (``KLANGK_LOG_LEVEL``),
 - central silencing of chatty third-party loggers.
 
+**Two-phase configuration.** Sensible defaults are applied at *import* of
+this module (``Logger.configure_defaults()``, INFO level + colored format +
+third-party silencing), so logging is formatted from the very first log
+call — including during :class:`~klangk.settings.KlangkSettings` construction,
+which runs *before* any ``app``/``app.state.logger`` exists (the settings
+validators and the ``file:``/``cmd:`` indirection resolver log). Once
+``build_app`` runs, ``Logger(app)`` re-applies the level from
+``KLANGK_LOG_LEVEL``, overriding the defaults. This is a single, central,
+idempotent setup point — not the old scattered, import-order-dependent
+``basicConfig`` that used to live in ``main.py``'s body.
+
 Per-module ``logger = logging.getLogger(__name__)`` calls elsewhere in the
 package are **kept** — those obtain *named logger handles* (not configuration)
 that propagate to the root logger :class:`Logger` configures. They are the
-idiomatic Python pattern and cannot be replaced with ``app.state.logger``
-references: several modules (notably :mod:`klangk.settings`) log during
-construction, before any ``app`` exists. Centralizing the *configuration* in
-one deliberate setup point is what the composition-root refactor (#1426)
-calls for; the named-handle pattern is orthogonal and correct.
+idiomatic Python pattern; centralizing the *configuration* in one deliberate
+setup point is what the composition-root refactor (#1426) calls for.
 
 Live reload: :meth:`reconfigure` re-applies the level from a freshly-reloaded
 settings object, so ``KLANGK_LOG_LEVEL`` takes effect on a SIGHUP restart
@@ -77,6 +85,10 @@ class Logger:
         f"{_LIGHT_BLUE}%(asctime)s %(levelname)s:%(name)s:%(message)s{_RESET}"
     )
     _DATEFMT = "%H:%M:%S"
+    # The level applied by ``configure_defaults()`` (the pre-settings phase).
+    # ``Logger(app)`` overrides this with ``settings.log_level`` once settings
+    # are constructed.
+    _DEFAULT_LEVEL = logging.INFO
 
     # Third-party loggers managed centrally (logger name -> level). These are
     # libraries klangk depends on that log at their own verbosity by default
@@ -104,11 +116,24 @@ class Logger:
     def __init__(self, app):
         self.app = app
         # The handler this instance installed on the root logger, tracked so
-        # reconfigure() can replace rather than stack. See configure() for
-        # the cross-instance dedup that also keeps repeated construction
-        # (e.g. per-test app_state mocks) from stacking handlers.
+        # reconfigure() can replace rather than stack. See _apply() for the
+        # cross-instance dedup that also keeps repeated construction (e.g.
+        # per-test app_state mocks) from stacking handlers.
         self._handler: logging.Handler | None = None
         self.configure()
+
+    @classmethod
+    def configure_defaults(cls) -> None:
+        """Configure root logging with default (pre-settings) values.
+
+        Applied once at this module's import (see the module-level call
+        below), so logging is formatted from the very first log call —
+        including during ``KlangkSettings`` construction, which runs before
+        any ``app`` exists. Idempotent: ``_apply`` removes any prior
+        klangk-tagged handler first. ``Logger(app)`` later overrides the
+        level from ``KLANGK_LOG_LEVEL``.
+        """
+        cls._apply(cls._DEFAULT_LEVEL)
 
     def reconfigure(self, app) -> None:
         """Re-apply configuration against a freshly-reloaded ``app``.
@@ -128,18 +153,24 @@ class Logger:
         return _level_to_int(self.app.state.settings.log_level)
 
     def configure(self) -> None:
-        """Configure the root logger: handler, format, level, third-party.
+        """Re-apply configuration from settings (handler, format, level)."""
+        self._handler = self._apply(self._level)
 
+    @classmethod
+    def _apply(cls, level: int) -> logging.Handler:
+        """Install/replace the klangk root handler at ``level`` + silence 3rd-party.
+
+        Shared by :meth:`configure_defaults` (pre-settings, default level) and
+        instance :meth:`configure`/:meth:`reconfigure` (settings-driven level).
         Idempotent across instances: any handler previously tagged by a
-        :class:`Logger` is removed from the root logger before the new one
-        is added, so repeated construction (a fresh ``Logger`` per test app,
-        or a reconfigure) never stacks duplicate handlers. The handler is
-        tagged via a private attribute so this dedup is robust to other
-        handlers on the root (pytest's ``caplog`` handler, operator-added
-        handlers, ...).
+        :class:`Logger` is removed from the root logger before the new one is
+        added, so repeated construction (a fresh ``Logger`` per test app, or a
+        reconfigure) never stacks duplicate handlers. The handler is tagged
+        via a private attribute so this dedup is robust to other handlers on
+        the root (pytest's ``caplog`` handler, operator-added handlers, ...).
+        Returns the installed handler so the caller can track it.
         """
         root = logging.getLogger()
-        level = self._level
 
         # Drop any pre-existing klangk-tagged handler(s) so we never stack.
         for handler in list(root.handlers):
@@ -150,13 +181,22 @@ class Logger:
         # Private tag for cross-instance dedup (see the loop above).
         handler._klangk_log_handler = True  # type: ignore[attr-defined]
         handler.setFormatter(
-            logging.Formatter(self._FORMAT, datefmt=self._DATEFMT)
+            logging.Formatter(cls._FORMAT, datefmt=cls._DATEFMT)
         )
         handler.setLevel(level)
         root.addHandler(handler)
-        self._handler = handler
 
         root.setLevel(level)
 
-        for name, lvl in self._THIRD_PARTY_LEVELS.items():
+        for name, lvl in cls._THIRD_PARTY_LEVELS.items():
             logging.getLogger(name).setLevel(lvl)
+        return handler
+
+
+# Configure sensible defaults at import so logging is formatted from the very
+# first log call — including during ``KlangkSettings`` construction, which
+# runs before any ``app``/``app.state.logger`` exists. ``Logger(app)`` (in
+# ``build_app``) later overrides the level from ``KLANGK_LOG_LEVEL``. This is
+# a single, central, idempotent setup point (not the old scattered,
+# import-order-dependent ``basicConfig`` that lived in ``main.py``). (#1467)
+Logger.configure_defaults()

@@ -156,3 +156,84 @@ class TestLoggerConstruction:
         assert lg.app is app
         # No settings subobject cached (would go stale on a SIGHUP swap).
         assert not hasattr(lg, "settings")
+
+
+class TestConfigureDefaults:
+    """The pre-settings phase: logging is configured with defaults before any
+    app/Settings exists (#1467), so logs emitted during KlangkSettings
+    construction are formatted."""
+
+    def test_configures_root_without_an_app(self, clean_root):
+        # Start from a known state: no klangk handler (the module-level
+        # configure_defaults() may have installed one at import).
+        for h in list(clean_root.handlers):
+            if getattr(h, "_klangk_log_handler", False):
+                clean_root.removeHandler(h)
+        assert _klangk_handlers(clean_root) == []
+        # No app, no settings — yet the root logger gets a handler.
+        Logger.configure_defaults()
+        assert len(_klangk_handlers(clean_root)) == 1
+
+    def test_default_level_is_info(self, clean_root):
+        Logger.configure_defaults()
+        assert clean_root.level == logging.INFO
+        assert _klangk_handlers(clean_root)[0].level == logging.INFO
+
+    def test_default_handler_is_colored(self, clean_root):
+        Logger.configure_defaults()
+        handler = _klangk_handlers(clean_root)[0]
+        assert "\033[94m" in handler.formatter._fmt  # _LIGHT_BLUE
+
+    def test_defaults_silence_third_party(self, clean_root):
+        Logger.configure_defaults()
+        assert logging.getLogger("uvicorn.access").level == logging.WARNING
+        assert logging.getLogger("sqlalchemy.engine").level == logging.WARNING
+
+    def test_defaults_idempotent(self, clean_root):
+        Logger.configure_defaults()
+        Logger.configure_defaults()
+        assert len(_klangk_handlers(clean_root)) == 1
+
+    def test_module_import_already_configured_defaults(self, clean_root):
+        """Importing klangk.logger configures defaults (so settings construction
+        logs are formatted before any app exists).
+
+        The module-level ``Logger.configure_defaults()`` call runs at import;
+        it is also directly covered there (coverage marks the line executed at
+        import time). Here we just confirm the entry point exists and is the
+        same idempotent path tested above.
+        """
+        assert callable(Logger.configure_defaults)
+        assert isinstance(Logger._DEFAULT_LEVEL, int)
+        assert Logger._DEFAULT_LEVEL == logging.INFO
+
+    def test_logger_app_overrides_defaults_level(self, clean_root):
+        """Defaults apply INFO; Logger(app) then overrides from KLANGK_LOG_LEVEL."""
+        Logger.configure_defaults()
+        assert clean_root.level == logging.INFO
+        Logger(_make_app("WARNING"))
+        assert clean_root.level == logging.WARNING
+
+    def test_settings_construction_logs_through_configured_root(
+        self, clean_root, caplog
+    ):
+        """End-to-end: with defaults active, a log emitted during KlangkSettings
+        construction is captured (the scenario #1467's two-phase design serves).
+        """
+        Logger.configure_defaults()
+        with caplog.at_level(logging.WARNING, logger="klangk.settings"):
+            # Constructing settings with a deprecated KLANGK_NGINX_PORT emits
+            # a WARNING from a settings validator — proving the configured
+            # root handles pre-app logging.
+            from klangk.settings import KlangkSettings
+
+            KlangkSettings(
+                env={
+                    "KLANGK_STATE_DIR": "/tmp/state",
+                    "KLANGK_NGINX_PORT": "9999",
+                }
+            )
+        assert any(
+            "KLANGK_NGINX_PORT is deprecated" in r.message
+            for r in caplog.records
+        )

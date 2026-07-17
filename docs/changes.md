@@ -32,14 +32,18 @@ operators or integrators to act when upgrading.
   `klangk.main` (the `logging.basicConfig(...)` call is gone). It is now
   owned by a `Logger(app)` state object constructed in `build_app()` and
   stored on `app.state.logger`, the same composition-root pattern as the
-  other owned subsystems. The root log level is read from the new
-  `log_level` setting (`KLANGK_LOG_LEVEL`, default `INFO`; accepts a level
-  name like `DEBUG`/`WARNING`/`ERROR`/`CRITICAL` in any case, or a numeric
-  value, and rejects garbage at boot). The level is re-applied on a SIGHUP
-  reload, so `KLANGK_LOG_LEVEL` takes effect without a process restart.
-  Chatty third-party loggers (`uvicorn.access`, `sqlalchemy.engine`,
-  `httpx`, `httpcore`, `watchfiles`, `asyncio`) are now silenced centrally
-  to `WARNING`.
+  other owned subsystems. Sensible defaults (INFO level, the pre-refactor
+  colored console format, and central silencing of chatty third-party
+  loggers) are applied at import of `klangk.logger`, so logging is formatted
+  from the very first log call — including during `KlangkSettings`
+  construction, which runs before any `app` exists. Once `build_app` runs,
+  `Logger(app)` re-applies the level from the new `log_level` setting
+  (`KLANGK_LOG_LEVEL`, default `INFO`; accepts a level name like
+  `DEBUG`/`WARNING`/`ERROR`/`CRITICAL` in any case, or a numeric value, and
+  rejects garbage at boot). The level is re-applied on a SIGHUP reload, so
+  `KLANGK_LOG_LEVEL` takes effect without a process restart. Chatty
+  third-party loggers (`uvicorn.access`, `sqlalchemy.engine`, `httpx`,
+  `httpcore`, `watchfiles`, `asyncio`) are silenced centrally to `WARNING`.
 
 - **Option to require consent banner acceptance on every visit (#1544).**
   New setting `login_banner_every_visit` / `KLANGK_LOGIN_BANNER_EVERY_VISIT`
