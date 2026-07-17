@@ -27,6 +27,17 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Packaged `klangkd` now ships and serves the web UI (#1600).** The
+  compiled Flutter web build is `force-include`d into the `klangk` wheel at
+  `klangk/frontend/`, and the `frontend_dir` default now resolves to that
+  in-package location — so `pip install klangk` serves the UI out of the box
+  with no checkout or separate build. A missing wheel artifact fails the
+  wheel build at hatchling time (`Forced include not found`). When the
+  resolved `frontend_dir` is absent at startup, `klangkd` now logs a warning
+  instead of silently serving an API-only app. Source-tree deployments
+  (devenv, the host container) set `KLANGK_FRONTEND_DIR` to the repo's
+  `src/frontend/build/web`. See [Packaged klangkd](../deployment/packaged.md).
+
 - **`KLANGK_LOG_LEVEL` — centralized, settings-driven logging (#1467).**
   Logging is no longer configured as an import-time side-effect of
   `klangk.main` (the `logging.basicConfig(...)` call is gone). It is now
@@ -124,6 +135,13 @@ operators or integrators to act when upgrading.
   set (#1558).
 
 ### Changed
+
+- **`frontend_dir` default moved in-package (#1600).** The default changed
+  from the repo-relative `src/frontend/build/web` (which only worked under an
+  editable install) to the in-package `klangk/frontend/` shipped in the
+  wheel. Source-tree deployments that relied on the old default must now set
+  `KLANGK_FRONTEND_DIR` (devenv and the host container already do); packaged
+  installs need no action.
 
 - **SIGHUP now reloads configuration (#1587).** Sending `SIGHUP` to
   `klangkd` re-resolves `KlangkSettings` from the environment / YAML

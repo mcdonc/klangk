@@ -44,6 +44,7 @@ nav = [
   ]},
   { "Deployment" = [
     { "Running with Docker" = "deployment/docker.md" },
+    { "Packaged klangkd" = "deployment/packaged.md" },
     { "Hosting & Nginx" = "deployment/hosting.md" },
     { "Customizing" = "deployment/customizing.md" },
     { "Process Signals" = "deployment/signals.md" },

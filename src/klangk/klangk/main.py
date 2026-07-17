@@ -854,11 +854,23 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     async def websocket_endpoint(ws: WebSocket):  # pragma: no cover
         await handle_websocket(ws, app)
 
-    # Frontend UI dir, resolved from settings (#1456). Mounted only when it
-    # exists (absent in installed-package deployments -> UI not served).
+    # Frontend UI dir, resolved from settings (#1456, #1600). Mounted only
+    # when it exists; a packaged/installed klangkd ships the UI inside the
+    # wheel (klangk/frontend) so this is the common case. When the dir is
+    # absent -- a misconfigured override, or a wheel built without the
+    # Flutter artifact -- log a loud warning instead of silently serving an
+    # API-only app (#1600).
     frontend_dir = Path(settings.frontend_dir)
-    if frontend_dir.exists():  # pragma: no cover
+    if frontend_dir.exists():
         setup_static_files(app, frontend_dir)
+    else:
+        logger.warning(
+            "frontend_dir %s does not exist; the web UI will not be "
+            "served. Point KLANGK_FRONTEND_DIR at a built Flutter web "
+            "directory, or (for a packaged install) reinstall a wheel that "
+            "ships the frontend artifact (#1600).",
+            frontend_dir,
+        )
 
     return app
 
