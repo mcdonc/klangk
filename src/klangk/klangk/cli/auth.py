@@ -277,7 +277,7 @@ def login(
         server_url,
         "POST",
         "/api/v1/auth/login",
-        json={"email": email, "password": password},
+        json={"identifier": email, "password": password},
         timeout=15.0,
     )
     if resp.status_code != 200:

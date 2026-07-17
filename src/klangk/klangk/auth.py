@@ -83,9 +83,11 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    # Named ``email`` on the wire for client back-compat (frontend/CLI
-    # both POST this field), but accepts an email *or* a handle —
-    # ``Auth.login`` resolves it via ``get_user_by_identifier`` (#616).
+    identifier: str
+    password: str
+
+
+class EmailRequest(BaseModel):
     email: str
     password: str
 
@@ -426,17 +428,16 @@ class Auth:
         )
 
     async def login(self, req: LoginRequest) -> TokenResponse:
-        # Resolve the user by email or handle (#616): the wire field is
-        # named ``email`` for back-compat but accepts a handle too.
+        # Resolve the user by email or handle (#616).
         user = await self.app.state.model.users.get_user_by_identifier(
-            req.email
+            req.identifier
         )
         # Key lockout accounting on the resolved user's canonical email so
         # handle and email attempts against the same account share one
         # counter. For an unresolved (nonexistent) identifier, fall back to
         # the raw input so brute-force on a made-up address is still
         # rate-limited.
-        lockout_key = user["email"] if user else req.email
+        lockout_key = user["email"] if user else req.identifier
 
         # Check if locked out before doing any expensive work (the only
         # expensive step below is verify_password's bcrypt).

@@ -116,7 +116,7 @@ async def client(app):
 async def _auth_headers(client):
     resp = await client.post(
         "/api/v1/auth/login",
-        json={"email": "testuser@example.com", "password": "testpass"},
+        json={"identifier": "testuser@example.com", "password": "testpass"},
     )
     token = resp.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
@@ -554,7 +554,10 @@ class TestAuthRoutes:
     async def test_register(self, client, admin_user):
         login_resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testadmin@example.com", "password": "testpass"},
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
         )
         token = login_resp.json()["access_token"]
         with patch.object(
@@ -661,7 +664,10 @@ class TestAuthRoutes:
     async def test_register_duplicate(self, client, admin_user):
         login_resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testadmin@example.com", "password": "testpass"},
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
         )
         token = login_resp.json()["access_token"]
         resp = await client.post(
@@ -686,7 +692,7 @@ class TestAuthRoutes:
         # User can now log in
         login_resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "unverified@example.com", "password": "pass"},
+            json={"identifier": "unverified@example.com", "password": "pass"},
         )
         assert login_resp.status_code == 200
 
@@ -702,7 +708,10 @@ class TestAuthRoutes:
     async def test_login(self, client, user):
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testuser@example.com", "password": "testpass"},
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
         )
         assert resp.status_code == 200
         assert "access_token" in resp.json()
@@ -710,7 +719,7 @@ class TestAuthRoutes:
     async def test_login_bad_password(self, client, user):
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testuser@example.com", "password": "wrong"},
+            json={"identifier": "testuser@example.com", "password": "wrong"},
         )
         assert resp.status_code == 401
 
@@ -1158,7 +1167,7 @@ class TestResetPassword:
         resp2 = await client.post(
             "/api/v1/auth/login",
             json={
-                "email": "reset@example.com",
+                "identifier": "reset@example.com",
                 "password": "newpass1",
             },
         )
@@ -1208,7 +1217,7 @@ class TestChangePassword:
         resp2 = await client.post(
             "/api/v1/auth/login",
             json={
-                "email": "testuser@example.com",
+                "identifier": "testuser@example.com",
                 "password": "newpass1",
             },
         )
@@ -2287,7 +2296,7 @@ class TestWorkspaceSharingRoutes:
     async def _other_headers(self, client):
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "other@example.com", "password": "otherpass"},
+            json={"identifier": "other@example.com", "password": "otherpass"},
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
@@ -3773,7 +3782,7 @@ class TestUserGroupEndpoints:
         """User without permission on the group gets 403."""
         # Admin creates a group (no ACE for regular user)
         admin_headers = {
-            "Authorization": f"Bearer {(await client.post('/api/v1/auth/login', json={'email': 'testadmin@example.com', 'password': 'testpass'})).json()['access_token']}"
+            "Authorization": f"Bearer {(await client.post('/api/v1/auth/login', json={'identifier': 'testadmin@example.com', 'password': 'testpass'})).json()['access_token']}"
         }
         resp = await client.post(
             "/api/v1/admin/groups",
@@ -4982,7 +4991,10 @@ class TestGroups:
     async def test_login_jwt_has_no_roles(self, client, user):
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testuser@example.com", "password": "testpass"},
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
         )
         assert resp.status_code == 200
         token = resp.json()["access_token"]
@@ -4997,7 +5009,10 @@ class TestAdminEndpoints:
     async def _admin_headers(self, client):
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testadmin@example.com", "password": "testpass"},
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
@@ -5141,7 +5156,10 @@ class TestAdminEndpoints:
     async def test_list_users_requires_admin(self, client, user):
         login_resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testuser@example.com", "password": "testpass"},
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
         )
         headers = {
             "Authorization": f"Bearer {login_resp.json()['access_token']}"
@@ -5162,7 +5180,10 @@ class TestAdminEndpoints:
         # User should be verified and able to log in
         login_resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "newuser@example.com", "password": "testpass123"},
+            json={
+                "identifier": "newuser@example.com",
+                "password": "testpass123",
+            },
         )
         assert login_resp.status_code == 200
 
@@ -5232,7 +5253,10 @@ class TestAdminEndpoints:
     async def test_admin_create_user_requires_admin(self, client, user):
         login_resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testuser@example.com", "password": "testpass"},
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
         )
         headers = {
             "Authorization": f"Bearer {login_resp.json()['access_token']}"
@@ -5308,7 +5332,10 @@ class TestAdminEndpoints:
         # Create a workspace for the user
         user_login = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testuser@example.com", "password": "testpass"},
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
         )
         user_headers = {
             "Authorization": f"Bearer {user_login.json()['access_token']}"
@@ -5349,7 +5376,10 @@ class TestAdminEndpoints:
         # Create a workspace as that user, then it should appear.
         user_login = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testuser@example.com", "password": "testpass"},
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
         )
         user_headers = {
             "Authorization": f"Bearer {user_login.json()['access_token']}"
@@ -5397,7 +5427,10 @@ class TestAdminEndpoints:
         # Verify can login with new password
         login_resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testuser@example.com", "password": "newpass123"},
+            json={
+                "identifier": "testuser@example.com",
+                "password": "newpass123",
+            },
         )
         assert login_resp.status_code == 200
 
@@ -5472,7 +5505,10 @@ class TestAdminEndpoints:
     async def test_unlock_requires_admin(self, client, user):
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testuser@example.com", "password": "testpass"},
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
         )
         headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
         resp = await client.post(
@@ -5485,7 +5521,10 @@ class TestGroupEndpoints:
     async def _admin_headers(self, client):
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testadmin@example.com", "password": "testpass"},
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
@@ -5776,7 +5815,10 @@ class TestACLEndpoints:
     async def _admin_headers(self, client):
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testadmin@example.com", "password": "testpass"},
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
@@ -5866,7 +5908,10 @@ class TestAdminResourceACL:
     async def _admin_headers(self, client):
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testadmin@example.com", "password": "testpass"},
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
@@ -6397,14 +6442,20 @@ class TestWorkspaceExportImport:
     async def _admin_headers(self, client):
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testadmin@example.com", "password": "testpass"},
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
     async def _user_headers(self, client):
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testuser@example.com", "password": "testpass"},
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
@@ -7504,7 +7555,10 @@ class TestInvitations:
     async def _admin_headers(self, client):
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testadmin@example.com", "password": "testpass"},
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
@@ -7586,7 +7640,10 @@ class TestInvitations:
     async def test_send_invitation_requires_admin(self, client, user):
         login_resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testuser@example.com", "password": "testpass"},
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
         )
         headers = {
             "Authorization": f"Bearer {login_resp.json()['access_token']}"
@@ -7934,7 +7991,10 @@ class TestInvitations:
         # User can log in
         login_resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "accept@example.com", "password": "newpassword"},
+            json={
+                "identifier": "accept@example.com",
+                "password": "newpassword",
+            },
         )
         assert login_resp.status_code == 200
 
@@ -8123,7 +8183,10 @@ class TestOIDCAuthModeGuards:
         )
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testuser@example.com", "password": "testpass"},
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
         )
         assert resp.status_code == 403
         assert "disabled" in resp.json()["detail"]
@@ -8148,7 +8211,10 @@ class TestOIDCAuthModeGuards:
         )
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testuser@example.com", "password": "testpass"},
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
         )
         assert resp.status_code == 200
 
@@ -8977,7 +9043,10 @@ class TestOIDCLogout:
         """Local user gets no oidc_logout_url."""
         login_resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testuser@example.com", "password": "testpass"},
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
         )
         headers = {
             "Authorization": f"Bearer {login_resp.json()['access_token']}"
@@ -9124,7 +9193,10 @@ class TestHandleEndpoints:
     ):
         admin_resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testadmin@example.com", "password": "testpass"},
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
         )
         admin_headers = {
             "Authorization": f"Bearer {admin_resp.json()['access_token']}"
@@ -9143,7 +9215,10 @@ class TestHandleEndpoints:
     ):
         admin_resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testadmin@example.com", "password": "testpass"},
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
         )
         admin_headers = {
             "Authorization": f"Bearer {admin_resp.json()['access_token']}"
@@ -9168,7 +9243,10 @@ class TestHandleEndpoints:
     ):
         admin_resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "testadmin@example.com", "password": "testpass"},
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
         )
         admin_headers = {
             "Authorization": f"Bearer {admin_resp.json()['access_token']}"

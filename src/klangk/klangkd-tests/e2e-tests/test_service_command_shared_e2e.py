@@ -127,7 +127,7 @@ def _login(server, email, password):
     url = server["url"]
     resp = httpx.post(
         f"{url}/api/v1/auth/login",
-        json={"email": email, "password": password},
+        json={"identifier": email, "password": password},
         timeout=10,
     )
     assert resp.status_code == 200, resp.text

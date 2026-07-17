@@ -124,7 +124,7 @@ def api(server):
 def _login(api, email, password):
     """Login and return auth headers."""
     resp = api.post(
-        "/api/v1/auth/login", json={"email": email, "password": password}
+        "/api/v1/auth/login", json={"identifier": email, "password": password}
     )
     assert resp.status_code == 200, f"Login failed for {email}: {resp.text}"
     token = resp.json()["access_token"]
