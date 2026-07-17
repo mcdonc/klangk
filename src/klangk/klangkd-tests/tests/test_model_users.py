@@ -42,6 +42,26 @@ async def test_get_user_by_handle_and_handle(users):
     assert await users.get_user_handle("nope") is None
 
 
+async def test_get_user_by_identifier(users):
+    """get_user_by_identifier resolves by email (contains '@') or by
+    handle (no '@'), returning the full row incl. password_hash (#616)."""
+    u = await users.create_user("ident@x.com", "secret-hash", verified=True)
+    handle = u["handle"]
+    # email branch
+    by_email = await users.get_user_by_identifier("ident@x.com")
+    assert by_email["id"] == u["id"]
+    # handle branch — same full-row shape as get_user_by_email
+    by_handle = await users.get_user_by_identifier(handle)
+    assert by_handle["id"] == u["id"]
+    assert by_handle["email"] == "ident@x.com"
+    assert by_handle["password_hash"] == "secret-hash"
+    assert by_handle["handle"] == handle
+    assert by_handle["verified"] is True
+    # missing in each namespace
+    assert await users.get_user_by_identifier("nope@x.com") is None
+    assert await users.get_user_by_identifier("nope-handle") is None
+
+
 async def test_set_user_handle(users):
     u = await users.create_user("c@x.com", "hash")
     await users.set_user_handle(u["id"], "newhandle")
@@ -131,6 +151,19 @@ async def test_list_users_search_delete(users):
     assert any(f["id"] == u["id"] for f in found)
     assert await users.delete_user(u["id"]) is True
     assert await users.delete_user(u["id"]) is False
+
+
+async def test_search_users_matches_handle_prefix(users):
+    """search_users matches an email *or* handle prefix (#616)."""
+    u = await users.create_user("findme@x.com", "hash")
+    handle = u["handle"]
+    # full handle + its prefix both hit
+    assert any(f["id"] == u["id"] for f in await users.search_users(handle))
+    assert any(
+        f["id"] == u["id"] for f in await users.search_users(handle[:3])
+    )
+    # still matches an email prefix too
+    assert any(f["id"] == u["id"] for f in await users.search_users("findme@"))
 
 
 async def test_update_email_and_password(users):

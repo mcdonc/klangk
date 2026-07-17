@@ -3914,6 +3914,38 @@ class TestAdminUsersCLI:
         called_path = client.patch.call_args.args[0]
         assert called_path == "/api/v1/admin/users/u-1"
 
+    def test_set_password_by_handle(self, logged_in_cfg, monkeypatch):
+        """set-password resolves a *handle* to a user id (#616)."""
+        from klangk.cli import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        # /users/search returns the user; the CLI matches on handle.
+        search_resp = MagicMock(status_code=200)
+        search_resp.json.return_value = [
+            {"id": "u-1", "email": "hero@example.com", "handle": "hero"}
+        ]
+        patch_resp = MagicMock(status_code=200)
+        patch_resp.json.return_value = {"status": "updated"}
+        patch_resp.headers = {"content-type": "application/json"}
+        client.get.return_value = search_resp
+        client.patch.return_value = patch_resp
+        monkeypatch.setattr(main, "_client", lambda: client)
+        result = CliRunner().invoke(
+            main.app,
+            [
+                "admin",
+                "users",
+                "set-password",
+                "hero",  # handle, not email
+                "--password",
+                "newpw123",
+            ],
+        )
+        assert result.exit_code == 0
+        client.patch.assert_called_once()
+        assert client.patch.call_args.args[0] == "/api/v1/admin/users/u-1"
+
     def test_set_password_prompt_match(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
         from typer.testing import CliRunner

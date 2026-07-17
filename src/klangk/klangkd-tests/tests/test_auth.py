@@ -234,6 +234,21 @@ class TestLogin:
         assert result.access_token
         assert result.token_type == "bearer"
 
+    async def test_login_success_by_handle(self, user):
+        """Login accepts a handle as well as an email (#616)."""
+        result = await _auth().login(
+            auth.LoginRequest(email=user["handle"], password="testpass")
+        )
+        assert result.access_token
+
+    async def test_login_wrong_password_by_handle(self, user):
+        """A bad password presented with a handle still 401s (#616)."""
+        with pytest.raises(HTTPException) as exc_info:
+            await _auth().login(
+                auth.LoginRequest(email=user["handle"], password="wrong")
+            )
+        assert exc_info.value.status_code == 401
+
     async def test_login_wrong_password(self, user):
         with pytest.raises(HTTPException) as exc_info:
             await _auth().login(
@@ -308,6 +323,33 @@ class TestLoginRateLimit:
             )
         )
         assert info["attempt_count"] == _auth().login_lockout_failures - 1
+
+    async def test_login_handle_attempts_rekeyed_to_email(
+        self, user, app_state
+    ):
+        """Failed attempts presented by *handle* are recorded against the
+        resolved user's canonical email, so handle and email attempts
+        share one lockout counter (#616)."""
+        handle = user["handle"]
+        for i in range(_auth().login_lockout_failures - 1):
+            with pytest.raises(HTTPException) as exc_info:
+                await _auth().login(
+                    auth.LoginRequest(email=handle, password="wrong")
+                )
+            assert exc_info.value.status_code == 401
+        # counter lives under the canonical email, not the raw handle
+        by_email = (
+            await app_state.state.model.login_attempts.get_login_attempt_info(
+                "testuser@example.com"
+            )
+        )
+        assert by_email["attempt_count"] == _auth().login_lockout_failures - 1
+        assert (
+            await app_state.state.model.login_attempts.get_login_attempt_info(
+                handle
+            )
+            is None
+        )
 
     async def test_login_lockout_after_max_attempts(self, user):
         """Locked out after LOGIN_LOCKOUT_FAILURES failed attempts."""

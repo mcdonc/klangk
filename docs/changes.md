@@ -27,6 +27,21 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Handles accepted at login and user-lookup surfaces (#616).** The
+  login identifier field (named `email` on the wire for back-compat) now
+  accepts a **handle** as well as an email everywhere a user is
+  identified: the `POST /auth/login` endpoint, the `klangkd` web login
+  page (field relabeled "Email or handle", validator no longer requires
+  `@`), and the `klangkc` commands `login`, `admin users set-password`,
+  `share`, and `unshare`. Resolution dispatches on whether the identifier
+  contains `@` (emails always do, handles never do — disjoint
+  namespaces). Login brute-force lockout is now keyed on the resolved
+  user's canonical email, so handle and email attempts against one
+  account share a single counter. `GET /users/search` matches an email
+  **or** handle prefix. Registration and `admin invitations send` stay
+  email-only (a deliverable address is required). `admin invitations
+send`'s arg help documents this.
+
 - **Packaged `klangkd` now ships and serves the web UI (#1600).** The
   compiled Flutter web build is `force-include`d into the `klangk` wheel at
   `klangk/frontend/`, and the `frontend_dir` default now resolves to that

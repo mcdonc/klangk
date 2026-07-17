@@ -135,18 +135,37 @@ void main() {
       expect(find.text('Please log in to continue.'), findsNothing);
     });
 
-    testWidgets('login mode validates email format', (tester) async {
+    testWidgets('login mode rejects an invalid identifier', (tester) async {
       await tester.pumpWidget(buildLoginPage());
       await tester.pumpAndSettle();
 
       final fields = find.byType(TextField);
-      await tester.enterText(fields.first, 'notanemail');
+      // Neither a valid email (no '@') nor a valid handle (contains a
+      // space, outside the [a-z0-9._-] charset) — rejected in login mode.
+      await tester.enterText(fields.first, 'bad email');
       await tester.enterText(fields.last, 'password');
 
       await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('valid email'), findsOneWidget);
+    });
+
+    testWidgets('login mode accepts a handle', (tester) async {
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      // A bare handle is valid in login mode (#616).
+      await tester.enterText(fields.first, 'somehandle');
+      // Trigger validation without a real HTTP call: empty password fails
+      // its own validator, so submit returns early with no email error.
+      await tester.enterText(fields.last, '');
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('valid email'), findsNothing);
     });
 
     testWidgets('register mode validates email format', (tester) async {
@@ -198,11 +217,11 @@ void main() {
       expect(find.text('Email'), findsOneWidget);
     });
 
-    testWidgets('login mode shows Email label', (tester) async {
+    testWidgets('login mode shows Email or handle label', (tester) async {
       await tester.pumpWidget(buildLoginPage());
       await tester.pumpAndSettle();
 
-      expect(find.text('Email'), findsOneWidget);
+      expect(find.text('Email or handle'), findsOneWidget);
     });
 
     testWidgets('shows error when login fails', (tester) async {
@@ -589,7 +608,7 @@ void main() {
       expect(find.text('Log in with CAC Login'), findsOneWidget);
       expect(find.text('Log in with Internal SSO'), findsOneWidget);
       // Password form still visible in "both" mode
-      expect(find.text('Email'), findsOneWidget);
+      expect(find.text('Email or handle'), findsOneWidget);
       expect(find.text('or'), findsOneWidget);
     });
 
@@ -668,7 +687,7 @@ void main() {
       // No SSO buttons
       expect(find.textContaining('Log in with'), findsNothing);
       // Password form visible
-      expect(find.text('Email'), findsOneWidget);
+      expect(find.text('Email or handle'), findsOneWidget);
     });
 
     testWidgets('OIDC button triggers navigateTo', (tester) async {

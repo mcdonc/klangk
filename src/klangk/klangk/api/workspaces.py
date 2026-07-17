@@ -792,7 +792,7 @@ async def add_workspace_member(
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
     app=Depends(get_app_dep),
 ):
-    target = await app.state.model.users.get_user_by_email(body.email)
+    target = await app.state.model.users.get_user_by_identifier(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
     if target["id"] == user["id"]:
@@ -898,7 +898,7 @@ async def add_to_workspace_role(
     group = await app.state.model.users.get_group_by_name(group_name)
     if group is None:
         raise HTTPException(status_code=404, detail="Role group not found")
-    target = await app.state.model.users.get_user_by_email(body.email)
+    target = await app.state.model.users.get_user_by_identifier(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
     await app.state.model.users.add_user_to_group(target["id"], group["id"])
@@ -946,7 +946,7 @@ async def change_workspace_role(
     them to the target role.  If ``role`` is null, removes the user
     from all roles.
     """
-    target = await app.state.model.users.get_user_by_email(body.email)
+    target = await app.state.model.users.get_user_by_identifier(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -1108,7 +1108,7 @@ async def transfer_workspace_ownership(
     app=Depends(get_app_dep),
 ):
     """Transfer workspace ownership to another user."""
-    target = await app.state.model.users.get_user_by_email(body.email)
+    target = await app.state.model.users.get_user_by_identifier(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
 
