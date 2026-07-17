@@ -175,7 +175,7 @@ test.describe("Workspace export streaming (#700)", () => {
       }
     });
     const loginResp = await request.post(`${API_BASE}/api/v1/auth/login`, {
-      data: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+      data: { identifier: ADMIN_EMAIL, password: ADMIN_PASSWORD },
     });
     expect(loginResp.ok()).toBeTruthy();
     const adminToken = (await loginResp.json()).access_token;

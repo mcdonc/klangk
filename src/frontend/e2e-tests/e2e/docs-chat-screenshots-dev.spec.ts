@@ -122,7 +122,7 @@ test.describe("chat dev server screenshots", () => {
 
     // Find or create workspace via API
     const loginResp = await request.post(`${BASE_URL}/auth/login`, {
-      data: { email: "admin@plope.com", password: "admin" },
+      data: { identifier: "admin@plope.com", password: "admin" },
     });
     const { access_token: token } = await loginResp.json();
     const wsResp = await request.get(`${BASE_URL}/workspaces`, {

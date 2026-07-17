@@ -86,7 +86,7 @@ test.describe("files screenshots", () => {
 
     // Find or create workspace via API
     const loginResp = await request.post(`${BASE_URL}/auth/login`, {
-      data: { email: "admin@plope.com", password: "admin" },
+      data: { identifier: "admin@plope.com", password: "admin" },
     });
     const { access_token: token } = await loginResp.json();
     const headers = { Authorization: `Bearer ${token}` };

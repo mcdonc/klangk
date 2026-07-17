@@ -107,7 +107,7 @@ const post = (p: string, b: unknown, t?: string) => req("POST", p, b, t);
 const get = (p: string, t?: string) => req("GET", p, undefined, t);
 
 async function login(email: string, password: string): Promise<string> {
-  const r = await post("/auth/login", { email, password });
+  const r = await post("/auth/login", { identifier: email, password });
   if (!r.ok) throw new Error(`login failed for ${email} (${r.status})`);
   return JSON.parse(r.body).access_token;
 }
