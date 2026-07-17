@@ -350,7 +350,7 @@ test.describe("API", () => {
   }) => {
     // Login as the default admin user (seeded on startup)
     const loginResp = await request.post(`${API_BASE}/api/v1/auth/login`, {
-      data: { email: "admin@example.com", password: "admin" },
+      data: { identifier: "admin@example.com", password: "admin" },
     });
     expect(loginResp.ok()).toBeTruthy();
     const adminToken = (await loginResp.json()).access_token;
@@ -443,7 +443,7 @@ test.describe("API", () => {
     // Login as the default admin user via the API, then set the token
     // and navigate directly to the admin page.
     const loginResp = await request.post(`${API_BASE}/api/v1/auth/login`, {
-      data: { email: "admin@example.com", password: "admin" },
+      data: { identifier: "admin@example.com", password: "admin" },
     });
     expect(loginResp.ok()).toBeTruthy();
     const adminToken = (await loginResp.json()).access_token;
@@ -822,7 +822,7 @@ test.describe("API", () => {
   }) => {
     // Login as admin
     const loginResp = await request.post(`${API_BASE}/api/v1/auth/login`, {
-      data: { email: "admin@example.com", password: "admin" },
+      data: { identifier: "admin@example.com", password: "admin" },
     });
     expect(loginResp.ok()).toBeTruthy();
     const adminHeaders = {
@@ -914,7 +914,7 @@ test.describe("API", () => {
     request,
   }) => {
     const loginResp = await request.post(`${API_BASE}/api/v1/auth/login`, {
-      data: { email: "admin@example.com", password: "admin" },
+      data: { identifier: "admin@example.com", password: "admin" },
     });
     const adminHeaders = {
       Authorization: `Bearer ${(await loginResp.json()).access_token}`,
@@ -941,7 +941,7 @@ test.describe("API", () => {
   test("workspace export and import round-trip", async ({ request }) => {
     // Login as admin (export requires admin permission)
     const loginResp = await request.post(`${API_BASE}/api/v1/auth/login`, {
-      data: { email: "admin@example.com", password: "admin" },
+      data: { identifier: "admin@example.com", password: "admin" },
     });
     expect(loginResp.ok()).toBeTruthy();
     const adminToken = (await loginResp.json()).access_token;
@@ -1062,7 +1062,7 @@ test.describe("API", () => {
   test("workspace import with custom name", async ({ request }) => {
     // Login as admin
     const loginResp = await request.post(`${API_BASE}/api/v1/auth/login`, {
-      data: { email: "admin@example.com", password: "admin" },
+      data: { identifier: "admin@example.com", password: "admin" },
     });
     const adminHeaders = {
       Authorization: `Bearer ${(await loginResp.json()).access_token}`,

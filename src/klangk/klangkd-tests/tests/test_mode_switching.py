@@ -185,7 +185,7 @@ class TestNoneToPasswordUpgrade:
         _password()
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": DEFAULT_EMAIL, "password": NEW_PASSWORD},
+            json={"identifier": DEFAULT_EMAIL, "password": NEW_PASSWORD},
         )
         assert resp.status_code == 200
         assert resp.json()["token_type"] == "bearer"
@@ -209,7 +209,7 @@ class TestNoneToPasswordUpgrade:
 
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": DEFAULT_EMAIL, "password": SEEDED_PASSWORD},
+            json={"identifier": DEFAULT_EMAIL, "password": SEEDED_PASSWORD},
         )
         assert resp.status_code == 401
 
@@ -271,7 +271,7 @@ class TestPasswordToNone:
         _password()
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": DEFAULT_EMAIL, "password": SEEDED_PASSWORD},
+            json={"identifier": DEFAULT_EMAIL, "password": SEEDED_PASSWORD},
         )
         assert resp.status_code == 200
         token = resp.json()["access_token"]
@@ -306,7 +306,7 @@ class TestDataCarriesOver:
         _password()
         login = await client.post(
             "/api/v1/auth/login",
-            json={"email": DEFAULT_EMAIL, "password": SEEDED_PASSWORD},
+            json={"identifier": DEFAULT_EMAIL, "password": SEEDED_PASSWORD},
         )
         assert login.status_code == 200
         pw_me = (

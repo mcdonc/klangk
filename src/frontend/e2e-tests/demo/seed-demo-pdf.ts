@@ -30,7 +30,7 @@ async function login(): Promise<string> {
   const r = await fetch(`${DEMO_URL}/api/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: HERO, password: PASS }),
+    body: JSON.stringify({ identifier: HERO, password: PASS }),
   });
   if (!r.ok) throw new Error(`hero login failed: ${r.status}`);
   return (await r.json()).access_token;

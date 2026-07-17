@@ -269,15 +269,15 @@ def login(
                 _oidc_browser_login(server_url, provider["id"], state)
                 return
 
-    # Fall through to password login
-    email = email or Prompt.ask("[bold]Email[/bold]")
+    # Fall through to password login (accepts an email or a handle, #616)
+    email = email or Prompt.ask("[bold]Email or handle[/bold]")
     password = password or Prompt.ask("[bold]Password[/bold]", password=True)
 
     resp = http_request(
         server_url,
         "POST",
         "/api/v1/auth/login",
-        json={"email": email, "password": password},
+        json={"identifier": email, "password": password},
         timeout=15.0,
     )
     if resp.status_code != 200:

@@ -83,6 +83,11 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
+    identifier: str
+    password: str
+
+
+class EmailRequest(BaseModel):
     email: str
     password: str
 
@@ -423,16 +428,27 @@ class Auth:
         )
 
     async def login(self, req: LoginRequest) -> TokenResponse:
-        # Check if locked out before doing any expensive work
+        # Resolve the user by email or handle (#616).
+        user = await self.app.state.model.users.get_user_by_identifier(
+            req.identifier
+        )
+        # Key lockout accounting on the resolved user's canonical email so
+        # handle and email attempts against the same account share one
+        # counter. For an unresolved (nonexistent) identifier, fall back to
+        # the raw input so brute-force on a made-up address is still
+        # rate-limited.
+        lockout_key = user["email"] if user else req.identifier
+
+        # Check if locked out before doing any expensive work (the only
+        # expensive step below is verify_password's bcrypt).
         if self.login_lockout_failures > 0:
             attempt_info = await self.app.state.model.login_attempts.get_login_attempt_info(
-                req.email
+                lockout_key
             )
             is_locked, msg = is_locked_out(attempt_info)
             if is_locked:
                 raise HTTPException(status_code=429, detail=msg)
 
-        user = await self.app.state.model.users.get_user_by_email(req.email)
         # OIDC-only users have no password hash; treat that as invalid
         # credentials rather than letting verify_password crash on None.
         if (
@@ -447,11 +463,11 @@ class Auth:
                 # failures stop counting toward the threshold.
                 reset = self.window_elapsed(attempt_info)
                 await self.app.state.model.login_attempts.record_failed_login(
-                    req.email, reset=reset
+                    lockout_key, reset=reset
                 )
                 # Check if this attempt triggered a lockout
                 updated_info = await self.app.state.model.login_attempts.get_login_attempt_info(
-                    req.email
+                    lockout_key
                 )
                 if self.should_lockout(updated_info):
                     locked_until = datetime.now(timezone.utc) + timedelta(
@@ -459,7 +475,7 @@ class Auth:
                     )
                     await (
                         self.app.state.model.login_attempts.set_login_lockout(
-                            req.email, locked_until.isoformat()
+                            lockout_key, locked_until.isoformat()
                         )
                     )
                     raise HTTPException(
@@ -475,7 +491,7 @@ class Auth:
 
         if self.login_lockout_failures > 0:
             await self.app.state.model.login_attempts.clear_login_attempts(
-                req.email
+                lockout_key
             )
         token = self.create_token(user["id"], user["email"])
         return TokenResponse(access_token=token)

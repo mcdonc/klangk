@@ -83,12 +83,12 @@ class TestHttpRequest:
                 "/tmp/klangk.sock",
                 "POST",
                 "/api/v1/auth/login",
-                json={"email": "a"},
+                json={"identifier": "a"},
             )
 
         mock_transport.assert_called_once_with(uds="/tmp/klangk.sock")
         mock_client.request.assert_called_once_with(
-            "POST", "/api/v1/auth/login", json={"email": "a"}
+            "POST", "/api/v1/auth/login", json={"identifier": "a"}
         )
         assert resp is mock_resp
 

@@ -164,7 +164,7 @@ RESEND_COOLDOWN_SECONDS = 60
 
 @router.post("/auth/resend-verification")
 async def resend_verification(
-    req: auth.LoginRequest,
+    req: auth.EmailRequest,
     request: Request,
     app=Depends(get_app_dep),
 ):

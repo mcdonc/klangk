@@ -244,7 +244,7 @@ export async function apiLogin(
   password = DEMO_PASSWORD,
 ) {
   const d = await postJson(request, `${DEMO_URL}/api/v1/auth/login`, {
-    email,
+    identifier: email,
     password,
   });
   const token = d.access_token;

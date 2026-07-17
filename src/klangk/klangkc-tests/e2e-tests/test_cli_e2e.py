@@ -1217,7 +1217,7 @@ class TestExportSymlinks:
 
         resp = httpx.post(
             f"{server['url']}/api/v1/auth/login",
-            json={"email": "test@example.com", "password": "testpass"},
+            json={"identifier": "test@example.com", "password": "testpass"},
         )
         token = resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
@@ -1378,7 +1378,10 @@ class TestExportImport:
 
             resp = httpx.post(
                 f"{server['url']}/api/v1/auth/login",
-                json={"email": "test@example.com", "password": "testpass"},
+                json={
+                    "identifier": "test@example.com",
+                    "password": "testpass",
+                },
                 timeout=30,
             )
             token = resp.json()["access_token"]

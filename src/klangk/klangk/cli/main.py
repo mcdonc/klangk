@@ -1667,7 +1667,7 @@ _ROLE_TO_GROUP = {
 @app.command("share")
 def share_workspace(
     workspace: str = typer.Argument(help="Workspace name"),
-    email: str = typer.Argument(help="Email of user to add"),
+    email: str = typer.Argument(help="Email or handle of user to add"),
     role: str = typer.Option(
         "coder", help="Role: owner, coder, collaborator, or spectator"
     ),
@@ -1696,7 +1696,7 @@ def share_workspace(
 @app.command("unshare")
 def unshare_workspace(
     workspace: str = typer.Argument(help="Workspace name"),
-    email: str = typer.Argument(help="Email of user to remove"),
+    email: str = typer.Argument(help="Email or handle of user to remove"),
 ) -> None:
     """Remove a user's access to a workspace."""
     require_auth()
@@ -2109,7 +2109,9 @@ def admin_users_ls(
 
 @admin_users_app.command("set-password")
 def admin_users_set_password(
-    email: str = typer.Argument(..., help="Email of the user to update"),
+    email: str = typer.Argument(
+        ..., help="Email or handle of the user to update"
+    ),
     password: str | None = typer.Option(
         None,
         "--password",
@@ -2127,15 +2129,20 @@ def admin_users_set_password(
     """
     require_auth()
     client = _client()
-    # Resolve email -> user id. /users/search is prefix-match (LIKE), so
-    # exact-match the result; emails are unique so there's at most one.
+    # Resolve email-or-handle -> user id. /users/search is prefix-match
+    # (LIKE) on email *and* handle (#616), so exact-match the result on
+    # either field; both are unique so there's at most one.
     search = client.get("/api/v1/users/search", params={"q": email})
     client.check_auth(search)
     if search.status_code != 200:
         _admin_error(search)
-    matches = [u for u in search.json() if u.get("email") == email]
+    matches = [
+        u
+        for u in search.json()
+        if u.get("email") == email or u.get("handle") == email
+    ]
     if not matches:
-        _err.print(f"[red]No user found with email {email}[/red]")
+        _err.print(f"[red]No user found with email or handle {email}[/red]")
         raise typer.Exit(code=1)
     user_id = matches[0]["id"]
 
@@ -2158,7 +2165,10 @@ def admin_users_set_password(
 
 @admin_invitations_app.command("send")
 def admin_invitations_send(
-    email: str = typer.Argument(..., help="Email address to invite"),
+    email: str = typer.Argument(
+        ...,
+        help="Email address to invite (must be email; invitations are delivered by email)",
+    ),
 ) -> None:
     """Send an invitation email (admin only)."""
     require_auth()

@@ -138,7 +138,7 @@ def auth(server):
     url = server["url"]
     resp = httpx.post(
         f"{url}/api/v1/auth/login",
-        json={"email": "test@example.com", "password": "testpass"},
+        json={"identifier": "test@example.com", "password": "testpass"},
         timeout=10,
     )
     assert resp.status_code == 200
@@ -404,7 +404,7 @@ def test_config_reload_via_sighup():
         # Login.
         resp = httpx.post(
             f"{base_url}/api/v1/auth/login",
-            json={"email": "test@example.com", "password": "testpass"},
+            json={"identifier": "test@example.com", "password": "testpass"},
             timeout=10,
         )
         assert resp.status_code == 200

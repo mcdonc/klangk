@@ -627,6 +627,38 @@ class UsersModel:
             "handle": row["handle"],
         }
 
+    async def get_user_by_identifier(self, identifier: str) -> dict | None:
+        """Resolve a user by email or handle (#616).
+
+        Dispatches on whether *identifier* contains ``@``: emails always
+        contain it and handles never do (the handle charset is
+        ``[a-z0-9._-]``; see :func:`derive_handle`), so the two
+        namespaces are syntactically disjoint and the dispatch is
+        unambiguous. Returns the same full row shape as
+        :meth:`get_user_by_email` (incl. ``password_hash``), so the login
+        and workspace-share paths can verify a password / read ACL
+        fields without a second lookup.
+        """
+        if "@" in identifier:
+            return await self.get_user_by_email(identifier)
+        row = await self.app.state.db.fetchone(
+            "SELECT id, email, password_hash, verified, provider,"
+            " external_id, handle"
+            " FROM users WHERE handle = ?",
+            (identifier,),
+        )
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "email": row["email"],
+            "password_hash": row["password_hash"],
+            "verified": bool(row["verified"]),
+            "provider": row["provider"],
+            "external_id": row["external_id"],
+            "handle": row["handle"],
+        }
+
     async def list_users(
         self,
         page: int = 1,
@@ -737,12 +769,13 @@ class UsersModel:
         }
 
     async def search_users(self, query: str, limit: int = 10) -> list[dict]:
-        """Search users by email prefix."""
+        """Search users by email or handle prefix (#616)."""
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT id, email, handle FROM users"
-                " WHERE email LIKE ? ORDER BY email LIMIT ?",
-                (f"{query}%", limit),
+                " WHERE email LIKE ? OR handle LIKE ?"
+                " ORDER BY email LIMIT ?",
+                (f"{query}%", f"{query}%", limit),
             )
             return [
                 {

@@ -210,15 +210,25 @@ class _LoginPageState extends State<LoginPage> {
       TextFormField(
         controller: _emailController,
         decoration: InputDecoration(
-          labelText: 'Email',
+          labelText: _isRegister ? 'Email' : 'Email or handle',
           border: const OutlineInputBorder(),
         ),
         validator: (v) {
           if (v == null || v.trim().isEmpty) return 'Required';
-          if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim())) {
-            return 'Enter a valid email address';
+          final value = v.trim();
+          if (RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value)) {
+            return null;
           }
-          return null;
+          // Login also accepts a handle (#616); registration requires
+          // an email (a deliverable address is needed for verification).
+          if (!_isRegister &&
+              RegExp(r'^[a-z0-9._-]+$').hasMatch(value) &&
+              value.length <= 32) {
+            return null;
+          }
+          return _isRegister
+              ? 'Enter a valid email address'
+              : 'Enter a valid email address or handle';
         },
         onFieldSubmitted: (_) => _submit(),
       ),

@@ -272,7 +272,7 @@ class AuthService extends ChangeNotifier {
       final response = await _client.post(
         Uri.parse('$_baseUrl/api/v1/auth/login'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': email, 'password': password}),
+        body: jsonEncode({'identifier': email, 'password': password}),
       );
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);

@@ -953,13 +953,20 @@ doesn't exist (prevents user enumeration). 60s rate limit per email.
 
 ### POST `/api/v1/auth/login`
 
-Authenticate with email and password. Returns a JWT access token.
+Authenticate with an email **or** handle plus a password. Returns a JWT
+access token.
 
 **Auth:** None. Rate-limited (see Rate Limiting below).
 
 ```json
-{ "email": "user@example.com", "password": "secretpass" }
+{ "identifier": "user@example.com", "password": "secretpass" }
 ```
+
+The `identifier` may be a user's email address (e.g.
+`user@example.com`) or their handle (e.g. `alice`); the two are
+disambiguated by the presence of `@`. Login brute-force lockout is keyed
+on the resolved user's canonical email, so attempts under either form
+share one counter.
 
 ```json
 { "access_token": "jwt-string", "token_type": "bearer" }

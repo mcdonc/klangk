@@ -171,7 +171,7 @@ def _login(base_url, env):
 def _get_token(base_url):
     r = httpx.post(
         f"{base_url}/api/v1/auth/login",
-        json={"email": "test@example.com", "password": "testpass"},
+        json={"identifier": "test@example.com", "password": "testpass"},
     )
     r.raise_for_status()
     return r.json()["access_token"]
