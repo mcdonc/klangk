@@ -16,10 +16,8 @@ import asyncio
 import json
 import logging
 import os
-import shutil
 import subprocess
 import tempfile
-import time
 
 import httpx
 import pytest
@@ -35,7 +33,7 @@ sys.path.insert(
     ),
 )
 from _e2e_env import clean_env
-from pathlib import Path
+from _e2e_server import start_server, stop_server
 
 logger = logging.getLogger(__name__)
 
@@ -55,102 +53,24 @@ def _run(args, timeout=120, input=None, **kwargs):
 
 
 def _start_server(data_dir):
-    state_dir = tempfile.mkdtemp(prefix="klangk-tw-e2e-state-")
-    env = clean_env(
-        KLANGK_PORT=PORT,
-        KLANGK_DATA_DIR=data_dir,
-        KLANGK_STATE_DIR=state_dir,
+    log_path = os.path.join(data_dir, "server.log")
+    server = start_server(
+        uds=False,
+        data_dir=data_dir,
         KLANGK_JWT_SECRET="tw-e2e-secret",
         KLANGK_PREVENT_INSECURE_JWT_SECRET="",
         KLANGK_DEFAULT_USER="test@example.com",
         KLANGK_DEFAULT_PASSWORD="testpass",
         KLANGK_TEST_MODE="1",
         KLANGK_IDLE_TIMEOUT_SECONDS="300",
-        KLANGK_PORT_RANGE_START=str(free_port()),
         LOGFIRE_TOKEN="",
+        log_path=log_path,
     )
-    log_path = os.path.join(data_dir, "server.log")
-    log_file = open(log_path, "w")  # noqa: SIM115
-    proc = subprocess.Popen(
-        [
-            "python3",
-            os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "..",
-                "klangkd-tests",
-                "e2e-tests",
-                "runtestserver.py",
-            ),
-            "--host",
-            "0.0.0.0",
-            "--port",
-            PORT,
-            "--ws-max-size",
-            "16777216",
-            "--ws-ping-interval",
-            "20",
-            "--ws-ping-timeout",
-            "20",
-        ],
-        cwd=os.path.join(os.path.dirname(__file__), ".."),
-        env=env,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-    )
-    proc._log_file = log_file
-    proc._log_path = log_path
-    base_url = f"http://localhost:{PORT}"
-    for _ in range(60):
-        try:
-            if httpx.get(f"{base_url}/health", timeout=2).status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-    else:
-        proc.kill()
-        log_file.close()
-        stdout = open(log_path).read() if os.path.exists(log_path) else ""
-        raise RuntimeError(f"Server failed to start:\n{stdout}")
-    return proc, base_url, env
+    return server, server["url"]
 
 
-def _stop_server(proc, data_dir):
-    if hasattr(proc, "_log_file"):
-        proc._log_file.close()
-    try:
-        proc.kill()
-        proc.wait(timeout=5)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        pass
-    # Instance-scoped cleanup: only remove containers THIS test server
-    # started (label=klangk.instance=<id>), never another suite's or xdist
-    # worker's. The old ``label=klangk.managed=true`` filter was a cross-run
-    # hazard once suites could run concurrently (#1393). The ID lives in
-    # ``<data_dir>/instance-id`` (written by klangkd at startup, #1553); read
-    # it directly rather than shelling out to a console script (#1565).
-    _id_file = Path(data_dir) / "instance-id"
-    instance_id = _id_file.read_text().strip() if _id_file.exists() else ""
-    if instance_id:
-        result = subprocess.run(
-            [
-                "podman",
-                "ps",
-                "-a",
-                "--filter",
-                f"label=klangk.instance={instance_id}",
-                "-q",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.stdout.strip():
-            subprocess.run(
-                ["podman", "rm", "-f", *result.stdout.strip().split()],
-                capture_output=True,
-            )
-    shutil.rmtree(data_dir, ignore_errors=True)
+def _stop_server(server, data_dir=None):
+    stop_server(server)
 
 
 def _login(base_url, env):
@@ -393,7 +313,7 @@ class TestTerminalWindows:
     @staticmethod
     def _dedicated_server(tmp_path_factory, request):
         data_dir = tempfile.mkdtemp(prefix="klangk-tw-e2e-")
-        proc, base_url, server_env = _start_server(data_dir)
+        proc, base_url = _start_server(data_dir)
         config_dir = tmp_path_factory.mktemp("klangk-tw-config")
         env = clean_env(HOME=str(config_dir))
         (config_dir / ".config" / "klangk").mkdir(parents=True)
@@ -403,7 +323,7 @@ class TestTerminalWindows:
         request.cls._base_url = base_url
         request.cls._token = token
         yield
-        _stop_server(proc, data_dir)
+        _stop_server(proc)
 
     @pytest.fixture(autouse=True)
     def _fresh_workspace(self):

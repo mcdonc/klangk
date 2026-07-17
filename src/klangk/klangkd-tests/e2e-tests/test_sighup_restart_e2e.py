@@ -27,9 +27,7 @@ Run with: devenv shell -- test-backend-e2e test_sighup_restart_e2e.py
 import asyncio
 import json
 import os
-import shutil
 import subprocess
-import sys
 import tempfile
 import time
 
@@ -37,107 +35,35 @@ import httpx
 import pytest
 import websockets
 
-from klangk.model import free_port
-from _e2e_env import clean_env, close_popen_pipes
+from _e2e_server import start_server, stop_server, ws_connect as _ws_dial
 
 
 @pytest.fixture(scope="module")
 def server():
-    """Start a real Klangk server with short idle + health intervals."""
-    data_dir = tempfile.mkdtemp(prefix="klangk-sighup-e2e-")
-    state_dir = tempfile.mkdtemp(prefix="klangk-sighup-e2e-state-")
-    port = str(free_port())
-
-    env = clean_env(
-        KLANGK_PORT=port,
-        KLANGK_DATA_DIR=data_dir,
-        KLANGK_STATE_DIR=state_dir,
+    """Start a real Klangk server (klangkd over its UDS) with short idle +
+    health intervals."""
+    server = start_server(
         KLANGK_JWT_SECRET="sighup-e2e-secret",
         KLANGK_PREVENT_INSECURE_JWT_SECRET="",
         KLANGK_DEFAULT_USER="test@example.com",
         KLANGK_DEFAULT_PASSWORD="testpass",
         KLANGK_TEST_MODE="1",
         KLANGK_IDLE_TIMEOUT_SECONDS="300",
-        KLANGK_PORT_RANGE_START=str(free_port()),
         KLANGK_ALLOW_AUTOSTART="1",
         LOGFIRE_TOKEN="",
         KLANGK_LLM_BASE_URL="",
         KLANGK_LLM_API_KEY="",
         KLANGK_LLM_MODEL="",
     )
-    proc = subprocess.Popen(
-        [
-            "python3",
-            os.path.join(os.path.dirname(__file__), "runtestserver.py"),
-            "--host",
-            "0.0.0.0",
-            "--port",
-            port,
-        ],
-        cwd=os.path.join(os.path.dirname(__file__), ".."),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    base_url = f"http://localhost:{port}"
-    for _ in range(60):
-        try:
-            resp = httpx.get(f"{base_url}/health", timeout=2)
-            if resp.status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-    else:
-        proc.kill()
-        stdout = proc.stdout.read().decode() if proc.stdout else ""
-        raise RuntimeError(f"Server failed to start:\n{stdout}")
-
-    yield {
-        "url": base_url,
-        "port": port,
-        "data_dir": data_dir,
-        "proc": proc,
-    }
-
-    try:
-        proc.kill()
-        proc.wait(timeout=10)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        pass
-    if proc.stdout:
-        server_log = proc.stdout.read().decode("utf-8", errors="replace")
-        if server_log.strip():
-            sys.stderr.write(
-                f"\n=== SIGHUP e2e server log ===\n{server_log}\n===\n"
-            )
-    close_popen_pipes(proc)
-    result = subprocess.run(
-        [
-            "podman",
-            "ps",
-            "-a",
-            "--filter",
-            "label=klangk.instance=sighup-e2e",
-            "-q",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.stdout.strip():
-        subprocess.run(
-            ["podman", "rm", "-f", *result.stdout.strip().split()],
-            capture_output=True,
-        )
-    shutil.rmtree(data_dir, ignore_errors=True)
+    yield server
+    stop_server(server)
 
 
 @pytest.fixture(scope="module")
 def auth(server):
     """Login as the default user and return token + headers."""
-    url = server["url"]
-    resp = httpx.post(
-        f"{url}/api/v1/auth/login",
+    resp = server["client"].post(
+        "/api/v1/auth/login",
         json={"identifier": "test@example.com", "password": "testpass"},
         timeout=10,
     )
@@ -156,10 +82,7 @@ def _wait_http_ok(server, timeout=60) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            if (
-                httpx.get(f"{server['url']}/health", timeout=2).status_code
-                == 200
-            ):
+            if server["client"].get("/health", timeout=2).status_code == 200:
                 return True
         except Exception:
             pass
@@ -189,10 +112,7 @@ def test_http_listener_stays_up_across_sighup(server):
     while time.monotonic() < deadline:
         checked += 1
         try:
-            if (
-                httpx.get(f"{server['url']}/health", timeout=2).status_code
-                == 200
-            ):
+            if server["client"].get("/health", timeout=2).status_code == 200:
                 successes += 1
         except Exception:
             pass
@@ -205,10 +125,7 @@ def test_http_listener_stays_up_across_sighup(server):
 
 async def test_websocket_closed_with_1012_and_reconnects(server, auth):
     """#2: SIGHUP closes WS clients with code 1012; they can reconnect."""
-    ws_url = server["url"].replace("http://", "ws://")
-    ws = await websockets.connect(
-        f"{ws_url}/ws?token={auth['token']}", max_size=2**20
-    )
+    ws = await _ws_dial(server, f"/ws?token={auth['token']}", max_size=2**20)
     try:
         _send_sighup(server)
 
@@ -228,9 +145,7 @@ async def test_websocket_closed_with_1012_and_reconnects(server, auth):
         await ws.close()
 
     # Reconnect succeeds and the new socket stays open.
-    ws2 = await websockets.connect(
-        f"{ws_url}/ws?token={auth['token']}", max_size=2**20
-    )
+    ws2 = await _ws_dial(server, f"/ws?token={auth['token']}", max_size=2**20)
     try:
         # A ping/pong round-trip confirms the new connection is live.
         pong_waiter = await ws2.ping()
@@ -266,12 +181,12 @@ async def test_containers_stopped_then_autostarted(server, auth):
     via the workspace status API: it goes from 'running' (pre-SIGHUP) to
     gone/stopped, then back to 'running' once auto-start completes.
     """
-    url = server["url"]
+    client = server["client"]
     headers = auth["headers"]
 
     # Create a workspace with auto_start enabled.
-    resp = httpx.post(
-        f"{url}/api/v1/workspaces",
+    resp = client.post(
+        "/api/v1/workspaces",
         headers=headers,
         json={"name": "sighup-autostart", "auto_start": True},
         timeout=30,
@@ -280,8 +195,8 @@ async def test_containers_stopped_then_autostarted(server, auth):
     workspace_id = resp.json()["id"]
 
     def status_value():
-        r = httpx.get(
-            f"{url}/api/v1/workspaces/{workspace_id}/status",
+        r = client.get(
+            f"/api/v1/workspaces/{workspace_id}/status",
             headers=headers,
             timeout=30,
         )
@@ -289,10 +204,7 @@ async def test_containers_stopped_then_autostarted(server, auth):
         return r.json().get("running", False)
 
     # Bring the container up by connecting once.
-    ws_url = server["url"].replace("http://", "ws://")
-    ws = await websockets.connect(
-        f"{ws_url}/ws?token={auth['token']}", max_size=2**20
-    )
+    ws = await _ws_dial(server, f"/ws?token={auth['token']}", max_size=2**20)
     try:
         await ws.send(
             json.dumps(
@@ -323,8 +235,8 @@ async def test_containers_stopped_then_autostarted(server, auth):
 
     # Cleanup.
     try:
-        httpx.delete(
-            f"{url}/api/v1/workspaces/{workspace_id}",
+        client.delete(
+            f"/api/v1/workspaces/{workspace_id}",
             headers=headers,
             timeout=30,
         )
@@ -347,63 +259,31 @@ def test_config_reload_via_sighup():
 
     data_dir = tempfile.mkdtemp(prefix="klangk-reload-e2e-")
     state_dir = tempfile.mkdtemp(prefix="klangk-reload-e2e-state-")
-    port = str(free_port())
 
     config_path = os.path.join(state_dir, "klangk.yaml")
     with open(config_path, "w") as f:
         yaml.dump({"product_name": "Before"}, f)
 
-    env = clean_env(
-        KLANGK_PORT=port,
-        KLANGK_DATA_DIR=data_dir,
-        KLANGK_STATE_DIR=state_dir,
+    server = start_server(
+        data_dir=data_dir,
+        state_dir=state_dir,
+        config=config_path,
         KLANGK_JWT_SECRET="reload-e2e-secret",
         KLANGK_PREVENT_INSECURE_JWT_SECRET="",
         KLANGK_DEFAULT_USER="test@example.com",
         KLANGK_DEFAULT_PASSWORD="testpass",
         KLANGK_TEST_MODE="1",
         KLANGK_IDLE_TIMEOUT_SECONDS="300",
-        KLANGK_PORT_RANGE_START=str(free_port()),
         LOGFIRE_TOKEN="",
         KLANGK_LLM_BASE_URL="",
         KLANGK_LLM_API_KEY="",
         KLANGK_LLM_MODEL="",
     )
-    proc = subprocess.Popen(
-        [
-            "python3",
-            os.path.join(os.path.dirname(__file__), "runtestserver.py"),
-            "--host",
-            "0.0.0.0",
-            "--port",
-            port,
-            "--config",
-            config_path,
-        ],
-        cwd=os.path.join(os.path.dirname(__file__), ".."),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    base_url = f"http://localhost:{port}"
+    client = server["client"]
     try:
-        for _ in range(60):
-            try:
-                if (
-                    httpx.get(f"{base_url}/health", timeout=2).status_code
-                    == 200
-                ):
-                    break
-            except Exception:
-                pass
-            time.sleep(1)
-        else:
-            stdout = proc.stdout.read().decode() if proc.stdout else ""
-            raise RuntimeError(f"Server failed to start:\n{stdout}")
-
         # Login.
-        resp = httpx.post(
-            f"{base_url}/api/v1/auth/login",
+        resp = client.post(
+            "/api/v1/auth/login",
             json={"identifier": "test@example.com", "password": "testpass"},
             timeout=10,
         )
@@ -411,33 +291,20 @@ def test_config_reload_via_sighup():
         headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
         # Assert initial config.
-        resp = httpx.get(
-            f"{base_url}/api/v1/config", headers=headers, timeout=10
-        )
+        resp = client.get("/api/v1/config", headers=headers, timeout=10)
         assert resp.status_code == 200
         assert resp.json()["product_name"] == "Before"
 
         # Rewrite the config file and send SIGHUP.
         with open(config_path, "w") as f:
             yaml.dump({"product_name": "After"}, f)
-        os.kill(proc.pid, subprocess.signal.SIGHUP)
+        os.kill(server["proc"].pid, subprocess.signal.SIGHUP)
 
         # Wait for the restart to complete and assert the new value.
         time.sleep(5)
-        assert _wait_http_ok({"url": base_url, "proc": proc}), (
-            "server did not recover after SIGHUP"
-        )
-        resp = httpx.get(
-            f"{base_url}/api/v1/config", headers=headers, timeout=10
-        )
+        assert _wait_http_ok(server), "server did not recover after SIGHUP"
+        resp = client.get("/api/v1/config", headers=headers, timeout=10)
         assert resp.status_code == 200
         assert resp.json()["product_name"] == "After"
     finally:
-        try:
-            proc.kill()
-            proc.wait(timeout=10)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
-            pass
-        close_popen_pipes(proc)
-        shutil.rmtree(data_dir, ignore_errors=True)
-        shutil.rmtree(state_dir, ignore_errors=True)
+        stop_server(server)

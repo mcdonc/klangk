@@ -46,16 +46,6 @@ async function globalTeardown() {
     }
   }
 
-  // Stop nginx LLM proxy
-  const nginxPid = process.env.KLANGK_E2E_NGINX_PID;
-  if (nginxPid) {
-    try {
-      process.kill(Number(nginxPid), "SIGKILL");
-    } catch {
-      // Already dead
-    }
-  }
-
   // Remove any containers that survived shutdown (including stopped ones holding ports)
   const podman = process.env.KLANGK_PODMAN_BIN || "podman";
   // Strip LD_LIBRARY_PATH so system podman on CI doesn't load nix's glibc

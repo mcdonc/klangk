@@ -6,75 +6,26 @@ and permission denials.
 Run with: devenv shell -- test-backend-e2e test_api_e2e.py
 """
 
-import os
 import shutil
 import subprocess
 import tempfile
-import time
 import uuid
 
-import httpx
 import pytest
 
-from klangk.model import free_port
-from _e2e_env import clean_env, close_popen_pipes
+from _e2e_server import httpx_client, start_server, stop_server
 from pathlib import Path
-
-
-def _start_server(data_dir, port):
-    """Start a Klangk server and wait for it to be ready."""
-    state_dir = tempfile.mkdtemp(prefix="klangk-acl-e2e-state-")
-    env = clean_env(
-        KLANGK_PORT=port,
-        KLANGK_DATA_DIR=data_dir,
-        KLANGK_STATE_DIR=state_dir,
-        KLANGK_JWT_SECRET="acl-e2e-test-secret",
-        KLANGK_DEFAULT_USER="admin@example.com",
-        KLANGK_DEFAULT_PASSWORD="adminpass",
-        KLANGK_TEST_MODE="1",
-        KLANGK_IDLE_TIMEOUT_SECONDS="300",
-        KLANGK_PORT_RANGE_START=str(free_port()),
-        LOGFIRE_TOKEN="",
-    )
-    proc = subprocess.Popen(
-        [
-            "python3",
-            os.path.join(os.path.dirname(__file__), "runtestserver.py"),
-            "--host",
-            "0.0.0.0",
-            "--port",
-            port,
-            "--ws-max-size",
-            "16777216",
-        ],
-        cwd=os.path.join(os.path.dirname(__file__), ".."),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    base_url = f"http://localhost:{port}"
-    for _ in range(60):
-        try:
-            if httpx.get(f"{base_url}/health", timeout=2).status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-    else:
-        proc.kill()
-        stdout = proc.stdout.read().decode() if proc.stdout else ""
-        raise RuntimeError(f"Server failed to start:\n{stdout}")
-    return proc, base_url
 
 
 def _stop_server(proc, data_dir):
     """Stop a server and clean up."""
+    # Kept for the autostart class fixture's explicit teardown signature;
+    # the module server fixture uses stop_server() directly.
     try:
         proc.kill()
         proc.wait(timeout=5)
     except (ProcessLookupError, subprocess.TimeoutExpired):
         pass
-    close_popen_pipes(proc)
     # The instance ID lives in ``<data_dir>/instance-id`` (written by klangkd
     # at startup, #1553); read it directly rather than shelling out to a
     # console script (#1565).
@@ -102,11 +53,17 @@ def _stop_server(proc, data_dir):
 
 @pytest.fixture(scope="module")
 def server():
-    """Start a real Klangk server for the test module."""
-    data_dir = tempfile.mkdtemp(prefix="klangk-acl-e2e-")
-    proc, base_url = _start_server(data_dir, str(free_port()))
-    yield {"url": base_url, "data_dir": data_dir, "proc": proc}
-    _stop_server(proc, data_dir)
+    """Start a real Klangk server (klangkd over its UDS) for the test module."""
+    server = start_server(
+        KLANGK_JWT_SECRET="acl-e2e-test-secret",
+        KLANGK_DEFAULT_USER="admin@example.com",
+        KLANGK_DEFAULT_PASSWORD="adminpass",
+        KLANGK_TEST_MODE="1",
+        KLANGK_IDLE_TIMEOUT_SECONDS="300",
+        LOGFIRE_TOKEN="",
+    )
+    yield server
+    stop_server(server)
 
 
 def _ws_name(prefix: str) -> str:
@@ -116,8 +73,8 @@ def _ws_name(prefix: str) -> str:
 
 @pytest.fixture(scope="module")
 def api(server):
-    """httpx client pointing at the test server."""
-    with httpx.Client(base_url=server["url"], timeout=10.0) as client:
+    """httpx client pointing at the test server (over its UDS)."""
+    with httpx_client(server, timeout=10.0) as client:
         yield client
 
 
@@ -1020,62 +977,23 @@ class TestAutoStartWithServiceCommand:
     @pytest.fixture(autouse=True, scope="class")
     @staticmethod
     def autostart_server(request):
-        data_dir = tempfile.mkdtemp(prefix="klangk-autostart-e2e-")
-        state_dir = tempfile.mkdtemp(prefix="klangk-autostart-e2e-state-")
-        port = str(free_port())
-        env = clean_env(
-            KLANGK_PORT=port,
-            KLANGK_DATA_DIR=data_dir,
-            KLANGK_STATE_DIR=state_dir,
+        server = start_server(
+            data_dir=tempfile.mkdtemp(prefix="klangk-autostart-e2e-"),
             KLANGK_JWT_SECRET="autostart-e2e-secret",
             KLANGK_DEFAULT_USER="admin@example.com",
             KLANGK_DEFAULT_PASSWORD="adminpass",
             KLANGK_TEST_MODE="1",
             KLANGK_IDLE_TIMEOUT_SECONDS="300",
-            KLANGK_PORT_RANGE_START=str(free_port()),
             KLANGK_ALLOW_AUTOSTART="1",
             LOGFIRE_TOKEN="",
         )
-        proc = subprocess.Popen(
-            [
-                "python3",
-                os.path.join(os.path.dirname(__file__), "runtestserver.py"),
-                "--host",
-                "0.0.0.0",
-                "--port",
-                port,
-                "--ws-max-size",
-                "16777216",
-            ],
-            cwd=os.path.join(os.path.dirname(__file__), ".."),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        base_url = f"http://localhost:{port}"
-        for _ in range(60):
-            try:
-                if (
-                    httpx.get(f"{base_url}/health", timeout=2).status_code
-                    == 200
-                ):
-                    break
-            except Exception:
-                pass
-            time.sleep(1)
-        else:
-            proc.kill()
-            stdout = proc.stdout.read().decode() if proc.stdout else ""
-            raise RuntimeError(f"Server failed to start:\n{stdout}")
-        request.cls._base_url = base_url
-        request.cls._proc = proc
-        request.cls._data_dir = data_dir
+        request.cls._server = server
         yield
-        _stop_server(proc, data_dir)
+        stop_server(server)
 
     @pytest.fixture()
     def api(self):
-        with httpx.Client(base_url=self._base_url, timeout=10.0) as client:
+        with httpx_client(self._server, timeout=10.0) as client:
             yield client
 
     @pytest.fixture()

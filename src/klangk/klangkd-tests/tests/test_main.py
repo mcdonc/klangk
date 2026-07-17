@@ -1635,27 +1635,27 @@ class TestBuildApp:
     def test_no_module_level_app_attribute(self):
         """main.py no longer exposes an ``app`` attribute (#1454).
 
-        The composition root is sealed: ``klangkd`` builds the app explicitly.
-        E2E suites launch ``e2e-tests/runtestserver.py`` (which builds the
-        app and passes the object to uvicorn) instead of a string import.
+        The composition root is sealed: ``klangkd`` builds the app
+        explicitly. The E2E suites launch real ``klangkd`` (``python -m
+        klangk.launcher``) and contact it over its UDS (#1525).
         """
         assert not hasattr(main, "app")
 
-    def test_runtestserver_builds_app(self):
-        """The E2E launcher script builds a real FastAPI app."""
+    def test_launcher_builds_app(self):
+        """The ``klangkd`` launcher module imports cleanly and exposes a
+        Typer ``app`` (the entry point the E2E suites now launch, #1525).
+        """
         import runpy
         from pathlib import Path
 
         script = (
-            Path(__file__).resolve().parent.parent
-            / "e2e-tests"
-            / "runtestserver.py"
+            Path(__file__).resolve().parent.parent.parent
+            / "klangk"
+            / "launcher.py"
         )
-        # Don't execute __main__ (that would call uvicorn.run); just verify
-        # the module imports and exposes build_app correctly.
         ns = runpy.run_path(str(script), run_name="not_main")
-        app = ns["build_app"](ns["KlangkSettings"](os.environ))
-        assert isinstance(app, FastAPI)
+        # The launcher exposes a Typer app used as the ``klangkd`` entry point.
+        assert ns["app"] is not None
 
 
 class TestGetAppDep:

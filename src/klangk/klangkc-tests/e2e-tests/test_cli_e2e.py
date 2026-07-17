@@ -10,7 +10,6 @@ Run with: devenv shell -- test-backend-e2e
 
 import logging
 import os
-import shutil
 import subprocess
 import tempfile
 import time
@@ -28,6 +27,7 @@ sys.path.insert(
     ),
 )
 from _e2e_env import clean_env
+from _e2e_server import start_server, stop_server
 
 logger = logging.getLogger(__name__)
 
@@ -44,114 +44,38 @@ def _run(args, timeout=120, input=None, **kwargs):
     )
 
 
-def _start_server(data_dir, port, extra_env=None):
-    """Start a Klangk server and wait for it to be ready.
+def _start_server(data_dir, port=None, extra_env=None):
+    """Start a real klangkd (nginx on a TCP port) and wait for readiness.
 
-    Returns (proc, base_url).
+    Returns (server_handle, base_url). The CLI drives the real ``klangk``
+    binary against ``base_url`` — nginx proxies to klangkd's UDS, as in
+    production (#1525). Server output is streamed to a file (not a pipe)
+    so a long-lived run can't fill the 64 KB OS pipe buffer and deadlock
+    (#364).
     """
-    import httpx
-
-    state_dir = tempfile.mkdtemp(prefix="klangk-cli-e2e-state-")
-    env = clean_env(
-        KLANGK_PORT=port,
-        KLANGK_DATA_DIR=data_dir,
-        KLANGK_STATE_DIR=state_dir,
-        KLANGK_JWT_SECRET="cli-e2e-test-secret",
-        KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-        KLANGK_DEFAULT_USER="test@example.com",
-        KLANGK_DEFAULT_PASSWORD="testpass",
-        KLANGK_TEST_MODE="1",
-        KLANGK_IDLE_TIMEOUT_SECONDS="300",
-        KLANGK_PORT_RANGE_START=str(free_port()),
-        LOGFIRE_TOKEN="",
-        **(extra_env or {}),
-    )
-    # Write server output to a temp file instead of PIPE.  With PIPE,
-    # the OS buffer (64 KB) fills up when the server emits enough log
-    # lines, deadlocking the event loop — the root cause of #364.
     log_path = os.path.join(data_dir, "server.log")
-    log_file = open(log_path, "w")  # noqa: SIM115
-    proc = subprocess.Popen(
-        [
-            "python3",
-            os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "..",
-                "klangkd-tests",
-                "e2e-tests",
-                "runtestserver.py",
-            ),
-            "--host",
-            "0.0.0.0",
-            "--port",
-            port,
-            "--ws-max-size",
-            "16777216",
-            "--ws-ping-interval",
-            "20",
-            "--ws-ping-timeout",
-            "20",
-        ],
-        cwd=os.path.join(os.path.dirname(__file__), ".."),
-        env=env,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
+    overrides = {
+        "KLANGK_JWT_SECRET": "cli-e2e-test-secret",
+        "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
+        "KLANGK_DEFAULT_USER": "test@example.com",
+        "KLANGK_DEFAULT_PASSWORD": "testpass",
+        "KLANGK_TEST_MODE": "1",
+        "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
+        "LOGFIRE_TOKEN": "",
+    }
+    if port is not None:
+        overrides["KLANGK_PORT"] = port
+    if extra_env:
+        overrides.update(extra_env)
+    server = start_server(
+        uds=False, data_dir=data_dir, log_path=log_path, **overrides
     )
-    proc._log_file = log_file  # keep reference for cleanup
-    proc._log_path = log_path
-    base_url = f"http://localhost:{port}"
-    for _ in range(60):
-        try:
-            if httpx.get(f"{base_url}/health", timeout=2).status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-    else:
-        proc.kill()
-        log_file.close()
-        stdout = open(log_path).read() if os.path.exists(log_path) else ""
-        raise RuntimeError(f"Server failed to start:\n{stdout}")
-    return proc, base_url
+    return server, server["url"]
 
 
-def _stop_server(proc, data_dir):
-    """Stop a server, clean up containers and data."""
-    if hasattr(proc, "_log_file"):
-        proc._log_file.close()
-    try:
-        proc.kill()
-        proc.wait(timeout=5)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        pass
-    # Instance-scoped cleanup: only remove containers THIS test server
-    # started (label=klangk.instance=<id>), never another suite's or xdist
-    # worker's. The old ``label=klangk.managed=true`` filter was a cross-run
-    # hazard once suites could run concurrently (#1393). The ID lives in
-    # ``<data_dir>/instance-id`` (written by klangkd at startup, #1553); read
-    # it directly rather than shelling out to a console script (#1565).
-    _id_file = Path(data_dir) / "instance-id"
-    instance_id = _id_file.read_text().strip() if _id_file.exists() else ""
-    if instance_id:
-        result = subprocess.run(
-            [
-                "podman",
-                "ps",
-                "-a",
-                "--filter",
-                f"label=klangk.instance={instance_id}",
-                "-q",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.stdout.strip():
-            subprocess.run(
-                ["podman", "rm", "-f", *result.stdout.strip().split()],
-                capture_output=True,
-            )
-    shutil.rmtree(data_dir, ignore_errors=True)
+def _stop_server(server, data_dir=None):
+    """Stop a server started by ``_start_server``."""
+    stop_server(server)
 
 
 @pytest.fixture(scope="session")
