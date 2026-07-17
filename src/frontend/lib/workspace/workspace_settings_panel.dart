@@ -115,7 +115,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       _loadData();
       _saveMessageTimer?.cancel();
       _saveMessageTimer = Timer(const Duration(seconds: 2), () {
-        if (mounted) setState(() => _saveMessage = null);
+        setState(() => _saveMessage = null);
       });
     } else {
       String detail;
