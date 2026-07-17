@@ -555,15 +555,15 @@ class ExecSession:
 
         By default *command* is passed to ``podman exec`` as raw argv
         (no shell) -- the right thing for programmatic transports like
-        ``klangkc sync``'s rsync, which must NOT source startup files: a
+        ``klangk sync``'s rsync, which must NOT source startup files: a
         ``~/.profile`` that prints to stdout would corrupt the binary
         rsync stream (the classic ssh/scp footgun), and rsync's argv is
         shell-quoted precisely so a non-login round-trips cleanly.
 
         When *login* is set the command runs under a **login shell** that
         sources ``~/.profile`` -- matching what an interactive terminal
-        sees, and what ``klangkc exec`` needs by default (#1041): a user
-        typing ``klangkc exec ws openclaw --version`` expects the
+        sees, and what ``klangk exec`` needs by default (#1041): a user
+        typing ``klangk exec ws openclaw --version`` expects the
         nvm-installed binary on PATH. The login shell is run as
         ``bash -lc 'exec "$@"'`` with the command as its argv -- the
         standard wrapper-script idiom that gets BOTH a login shell

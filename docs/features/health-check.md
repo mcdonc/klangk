@@ -49,7 +49,7 @@ For each workspace with a health check configured:
    client that connects to an _already_-unhealthy workspace also
    receives a one-time **snapshot** of every health-checked
    workspace's current status immediately on connect -- so a pure-WS
-   consumer like `klangkc monitor` sees steady-state failures right
+   consumer like `klangk monitor` sees steady-state failures right
    away instead of being blind until the next transition (#1175).
    Each `service_health` frame also carries three additive fields:
    `running` (`false` on the terminal **container-death** frame, so a
@@ -152,12 +152,12 @@ miss:
   when healthy), plus the time of the last check (`health_checked_at`).
 - **Server logs** — on each transition to unhealthy, the check's output is
   logged at `INFO` (steady-state unhealthy polls log it at `DEBUG`).
-- **`klangkc monitor`** — stream events and optionally **run a command**
+- **`klangk monitor`** — stream events and optionally **run a command**
   when something changes. This is the automation hook.
 
-### Reacting to failures automatically with `klangkc monitor`
+### Reacting to failures automatically with `klangk monitor`
 
-`klangkc monitor` connects to the server and receives the same events
+`klangk monitor` connects to the server and receives the same events
 the web UI does — health transitions, container starts/stops, workspace
 changes — and can run a command for each one. The event JSON is piped
 to the command's stdin, and details are exposed as environment
@@ -175,21 +175,21 @@ variables. For `service_health` events those are:
 Fire a desktop notification when a service goes unhealthy:
 
 ```bash
-klangkc monitor --type service_health -- \
+klangk monitor --type service_health -- \
   sh -c '[ "$KLANGK_HEALTHY" = false ] && notify-send "klangk" "$KLANGK_HEALTH_MESSAGE"'
 ```
 
 Page yourself (or a Slack webhook) on any health change:
 
 ```bash
-klangkc monitor --type service_health --workspace $WS_ID -- \
+klangk monitor --type service_health --workspace $WS_ID -- \
   sh -c 'curl -s -d "klangk health: $KLANGK_HEALTHY" https://hooks.example.com/alerts'
 ```
 
 Just watch the stream (pipe to `jq`):
 
 ```bash
-klangkc monitor --type service_health | jq .
+klangk monitor --type service_health | jq .
 ```
 
 Because the stream is deltas-only, silence normally means "nothing
@@ -205,7 +205,7 @@ filters it out — drop the filter to observe it.
 exponential backoff — and refreshes its login token on auth failures,
 so it survives server restarts and token expiry as a long-running
 daemon. Bound it with `--max-reconnects N`, or disable reconnect with
-`--no-reconnect`. See `klangkc monitor --help`.
+`--no-reconnect`. See `klangk monitor --help`.
 
 ## Setting the health check
 
@@ -218,13 +218,13 @@ the workspace **Settings** tab.
 
 ```bash
 # Set during creation
-klangkc create my-service --health-check 'curl -sf http://localhost:8080/health'
+klangk create my-service --health-check 'curl -sf http://localhost:8080/health'
 
 # Change it later
-klangkc edit my-service --health-check 'pgrep -f "openclaw gateway"'
+klangk edit my-service --health-check 'pgrep -f "openclaw gateway"'
 
 # Clear it
-klangkc edit my-service --health-check ''
+klangk edit my-service --health-check ''
 ```
 
 ### Sandbox config

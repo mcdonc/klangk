@@ -61,7 +61,7 @@ real time.
 Terminals run inside [tmux](features/the-shell.md) for session
 persistence and window management. Access them from the web UI or
 connect from your local terminal with
-[`klangkc shell`](reference/cli.md).
+[`klangk shell`](reference/cli.md).
 
 ### Administration
 

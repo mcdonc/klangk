@@ -3,7 +3,7 @@
  *
  * CONTINUITY: still in the hero's `demo` workspace (from Sc 2/4/5), Terminal
  * tab. A BROWSER scene (Playwright drives the web Terminal tab; this is NOT a
- * klangkc-shell CLI scene — scenes 2/3/3b are the shell scenes, 4/5/5b are
+ * klangk-shell CLI scene — scenes 2/3/3b are the shell scenes, 4/5/5b are
  * browser).
  *
  * THREE terminal tabs are already open from Sc 2 + Sc 4 (left → right):
@@ -25,7 +25,7 @@
  *
  * The browser types every prompt/command visibly for the camera, but the scene
  * does NOT use fixed timeouts for pi's LIVE turns: the container's shell IS a
- * tmux session (named <user-id>), so a side `klangkc exec` reads the bash pane
+ * tmux session (named <user-id>), so a side `klangk exec` reads the bash pane
  * (window 0) — the VERY same pane the browser renders. waitForPaneText /
  * waitForPiIdle detect pi's completion deterministically. The scratch/terminal2
  * beats are deterministic shell commands (instant output), so they use fixed
@@ -55,7 +55,7 @@ import {
   getMeId,
   openWorkspaceDemo,
   waitForTerminal,
-  klangkcExec,
+  klangkExec,
   waitForPaneText,
   waitForPiIdle,
   getWorkspaceStatus,
@@ -99,7 +99,7 @@ test("pi debug", async ({ page, context, request }) => {
   // port (the stale flask app), never the cleanup shell itself — a pkill/pgrep
   // on "app.py" or "python" self-matches this very command line and exits 137
   // (SIGKILL). Each stage || true; the trailing echo fixes exit 0.
-  klangkcExec(
+  klangkExec(
     ws.name,
     "fuser -k 8000/tcp 2>/dev/null || true; " +
       "cd ~ && rm -f app.py requirements.txt && rm -rf .venv; " +
@@ -184,7 +184,7 @@ test("pi debug", async ({ page, context, request }) => {
   // virtualenv — terminal2's bare `python3 app.py` uses system python). This
   // guarantees terminal2's on-camera run serves on 8000 regardless of what pi
   // did. Invisible to the recording.
-  klangkcExec(
+  klangkExec(
     ws.name,
     "fuser -k 8000/tcp 2>/dev/null || true; " +
       "pip install flask >/dev/null 2>&1 || true; echo ready",

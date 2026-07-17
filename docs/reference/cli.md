@@ -2,28 +2,28 @@
 
 # CLI
 
-`klangkc` is the command-line client for Klangk. It lets you manage
+`klangk` is the command-line client for Klangk. It lets you manage
 workspaces, connect to container shells, sync files, and administer
 users from your terminal without needing the web UI. It also
 supports [sandboxing projects](../features/sandbox.md) from a config
 file and [SSH agent forwarding](../features/ssh-agent-forwarding.md)
 for using your local SSH keys inside containers.
 
-[![klangkc --help](../assets/cli-help.png)](../assets/cli-help.png)
+[![klangk --help](../assets/cli-help.png)](../assets/cli-help.png)
 
 ## Installation
 
-Install `klangkc` from PyPI:
+Install `klangk` from PyPI:
 
 ```bash
-pip install klangkc
+pip install klangk
 ```
 
 Requires Python 3.12+.
 
 ## Configuration
 
-`klangkc` uses two files in `~/.config/klangk/`:
+`klangk` uses two files in `~/.config/klangk/`:
 
 - **`cli.yaml`** — user-edited settings. The CLI never writes to this
   file. Define server aliases, default users, and per-server overrides
@@ -60,11 +60,11 @@ servers:
 ```
 
 You do not need to create `cli.yaml` manually. On your first
-`klangkc login`, the CLI creates one automatically using the
+`klangk login`, the CLI creates one automatically using the
 hostname as the alias and the login user as the default:
 
 ```bash
-klangkc login http://myhost:8995 admin@example.com
+klangk login http://myhost:8995 admin@example.com
 # Creates ~/.config/klangk/cli.yaml with:
 #   servers:
 #     myhost:
@@ -77,12 +77,12 @@ freely after the initial creation.
 
 #### Settings
 
-| Setting         | Scope            | Default  | Description                                        |
-| --------------- | ---------------- | -------- | -------------------------------------------------- |
-| `forward-agent` | global or server | `false`  | Forward local SSH agent into containers            |
-| `ws-max-size`   | global or server | 16777216 | Maximum WebSocket message size in bytes            |
-| `user`          | server only      |          | Default user (email or handle) for `klangkc login` |
-| `url`           | server only      |          | Server URL (required for each server entry)        |
+| Setting         | Scope            | Default  | Description                                       |
+| --------------- | ---------------- | -------- | ------------------------------------------------- |
+| `forward-agent` | global or server | `false`  | Forward local SSH agent into containers           |
+| `ws-max-size`   | global or server | 16777216 | Maximum WebSocket message size in bytes           |
+| `user`          | server only      |          | Default user (email or handle) for `klangk login` |
+| `url`           | server only      |          | Server URL (required for each server entry)       |
 
 Per-server settings override global settings. CLI flags override both.
 
@@ -102,17 +102,17 @@ http://localhost:8995:
       token: eyJ...
 ```
 
-Multiple users can be cached per server. `klangkc login` switches
+Multiple users can be cached per server. `klangk login` switches
 the active user and reuses a cached token if it is still valid.
 
 ### No-auth (single-user) servers
 
 If the server runs with `KLANGK_AUTH_MODES=none` (no-login local-dev mode),
-login requires **no password** — `klangkc login` calls `/api/v1/auth/local`
+login requires **no password** — `klangk login` calls `/api/v1/auth/local`
 and stores the freely-issued token. See [Auth Modes](../features/auth-modes.md).
 
-In `none` mode you don't even need to run `klangkc login` for each command:
-register the server once with `klangkc login <server>`, and thereafter every
+In `none` mode you don't even need to run `klangk login` for each command:
+register the server once with `klangk login <server>`, and thereafter every
 protected command auto-logs in (the `require_auth` gate probes the server mode
 and calls `/auth/local`). Against a `password`/`oidc`/`both` server the normal
 "Not logged in" error still fires.
@@ -122,9 +122,9 @@ and calls `/auth/local`). Against a `password`/`oidc`/`both` server the normal
 Commands need a server to talk to. The active server is determined by:
 
 1. **`--server` flag** (highest priority) — pass on any command:
-   `klangkc --server=prod ls`
+   `klangk --server=prod ls`
 2. **`active-server` in state.yaml** — set automatically by
-   `klangkc login`
+   `klangk login`
 3. **Error** — if neither is available, the CLI exits with an error
    message
 
@@ -135,80 +135,80 @@ or a raw URL. It does not change `state.yaml`.
 
 ```bash
 # Authentication
-klangkc login local                          # login to "local" alias (uses default user from config)
-klangkc login http://localhost:8995          # login with a raw URL (prompts for user)
-klangkc login prod chris@example.com         # login as a specific user
-klangkc logout                               # logout from active server
-klangkc logout prod                          # logout from a specific server
-klangkc status                               # show active server and user
+klangk login local                          # login to "local" alias (uses default user from config)
+klangk login http://localhost:8995          # login with a raw URL (prompts for user)
+klangk login prod chris@example.com         # login as a specific user
+klangk logout                               # logout from active server
+klangk logout prod                          # logout from a specific server
+klangk status                               # show active server and user
 
 # Non-interactive login (for scripts)
-klangkc login prod admin --password-file /path/to/pwfile
-echo "secret" | klangkc login prod admin --password-file -
+klangk login prod admin --password-file /path/to/pwfile
+echo "secret" | klangk login prod admin --password-file -
 
 # Working with a non-default server
-klangkc --server=prod ls                     # list workspaces on prod
-klangkc --server=prod shell my-project       # connect to shell on prod
+klangk --server=prod ls                     # list workspaces on prod
+klangk --server=prod shell my-project       # connect to shell on prod
 
 # Workspaces
-klangkc ls                               # list workspaces (first page)
-klangkc ls --shared                      # include workspaces shared with you
-klangkc ls --limit 50                    # list up to 50 per section
-klangkc ls --all                         # page through every workspace
-klangkc ls --sort name --order asc       # sort by name, ascending
-klangkc ls --filter gamma                # substring filter on name
-klangkc create my-project                # create a workspace
-klangkc create my-project --auto-start   # create with auto-start on server boot
-klangkc create my-project --mount ~/src:/home/klangk/work/src          # with bind mount
-klangkc create my-project --mount nix-store:/nix           # with named volume
-klangkc create my-project --env FOO=bar                      # with env vars
-klangkc create my-project --health-check 'curl -sf http://localhost:8080/health'  # with a service health check
-klangkc create my-project --command 'npm run dev'  # with a service command
-klangkc create my-project -c 'npm run dev'         # short form of --command
-klangkc edit my-project                  # interactive edit (name, image, command, health check, mounts, env)
-klangkc edit my-project --auto-start     # enable auto-start on server boot
-klangkc edit my-project --no-auto-start  # disable auto-start
-klangkc edit my-project --env FOO=bar    # set env var via flag
-klangkc dup my-project my-copy           # duplicate a workspace
-klangkc shell my-project                 # drop into bash inside the container
-klangkc shell my-project debug           # attach to the "debug" terminal window (created if it doesn't exist)
-klangkc sandbox myws                     # create workspace from .klangk-sandbox.yaml
-klangkc sandbox myws ~/projects/myapp    # specify sandbox root explicitly
-klangkc sandbox myws --force             # re-apply config and re-run setup on existing workspace
-klangkc exec my-project ls /home/klangk/work         # run a command in the container (login shell: sources ~/.profile)
-klangkc exec --raw my-project rsync --server ...      # raw argv, no shell (for transports like rsync)
-klangkc monitor                                        # stream all server events as JSON
-klangkc monitor --type service_health | jq .           # pretty-print health transitions
-klangkc monitor --type service_health -- sh -c '[ "$KLANGK_HEALTHY" = false ] && notify-send "klangk" "$KLANGK_HEALTH_MESSAGE"'  # alert with the failure reason
-klangkc sync ~/src my-project:/home/klangk/work      # sync files to/from the container
-klangkc rm my-project                # delete a workspace
-klangkc restart my-project           # restart the container for a workspace (owner only)
-klangkc export my-project            # export workspace to my-project.tar.gz (admin only)
-klangkc export my-project -o bak.tar.gz  # export to specific file
-klangkc import bak.tar.gz            # import workspace from archive
-klangkc import bak.tar.gz --name new-name  # import with a different name
+klangk ls                               # list workspaces (first page)
+klangk ls --shared                      # include workspaces shared with you
+klangk ls --limit 50                    # list up to 50 per section
+klangk ls --all                         # page through every workspace
+klangk ls --sort name --order asc       # sort by name, ascending
+klangk ls --filter gamma                # substring filter on name
+klangk create my-project                # create a workspace
+klangk create my-project --auto-start   # create with auto-start on server boot
+klangk create my-project --mount ~/src:/home/klangk/work/src          # with bind mount
+klangk create my-project --mount nix-store:/nix           # with named volume
+klangk create my-project --env FOO=bar                      # with env vars
+klangk create my-project --health-check 'curl -sf http://localhost:8080/health'  # with a service health check
+klangk create my-project --command 'npm run dev'  # with a service command
+klangk create my-project -c 'npm run dev'         # short form of --command
+klangk edit my-project                  # interactive edit (name, image, command, health check, mounts, env)
+klangk edit my-project --auto-start     # enable auto-start on server boot
+klangk edit my-project --no-auto-start  # disable auto-start
+klangk edit my-project --env FOO=bar    # set env var via flag
+klangk dup my-project my-copy           # duplicate a workspace
+klangk shell my-project                 # drop into bash inside the container
+klangk shell my-project debug           # attach to the "debug" terminal window (created if it doesn't exist)
+klangk sandbox myws                     # create workspace from .klangk-sandbox.yaml
+klangk sandbox myws ~/projects/myapp    # specify sandbox root explicitly
+klangk sandbox myws --force             # re-apply config and re-run setup on existing workspace
+klangk exec my-project ls /home/klangk/work         # run a command in the container (login shell: sources ~/.profile)
+klangk exec --raw my-project rsync --server ...      # raw argv, no shell (for transports like rsync)
+klangk monitor                                        # stream all server events as JSON
+klangk monitor --type service_health | jq .           # pretty-print health transitions
+klangk monitor --type service_health -- sh -c '[ "$KLANGK_HEALTHY" = false ] && notify-send "klangk" "$KLANGK_HEALTH_MESSAGE"'  # alert with the failure reason
+klangk sync ~/src my-project:/home/klangk/work      # sync files to/from the container
+klangk rm my-project                # delete a workspace
+klangk restart my-project           # restart the container for a workspace (owner only)
+klangk export my-project            # export workspace to my-project.tar.gz (admin only)
+klangk export my-project -o bak.tar.gz  # export to specific file
+klangk import bak.tar.gz            # import workspace from archive
+klangk import bak.tar.gz --name new-name  # import with a different name
 
 # Sharing
-klangkc members my-project           # list workspace members by role
-klangkc share my-project user@x.com  # share workspace (default: coder role)
-klangkc share my-project user@x.com --role=spectator  # share with specific role
-klangkc unshare my-project user@x.com # remove a user from all roles
-klangkc terminal ls my-project       # list all terminals (own + shared)
-klangkc terminal share my-project bash        # share a terminal with workspace members
-klangkc terminal unshare my-project bash      # stop sharing a terminal
+klangk members my-project           # list workspace members by role
+klangk share my-project user@x.com  # share workspace (default: coder role)
+klangk share my-project user@x.com --role=spectator  # share with specific role
+klangk unshare my-project user@x.com # remove a user from all roles
+klangk terminal ls my-project       # list all terminals (own + shared)
+klangk terminal share my-project bash        # share a terminal with workspace members
+klangk terminal unshare my-project bash      # stop sharing a terminal
 
 # Admin
-klangkc admin users ls                    # list all user accounts (admin only)
-klangkc admin users set-password user@example.com   # set/reset a password (admin only)
-klangkc admin invitations send user@example.com     # send an invitation email (admin only)
-klangkc admin invitations ls                       # list all invitations (admin only)
-klangkc images                       # list available container images
-klangkc volumes ls                   # list your podman volumes
-klangkc volumes create nix-store     # create a named volume (owned by you)
-klangkc volumes rm nix-store         # delete a volume (must be yours)
+klangk admin users ls                    # list all user accounts (admin only)
+klangk admin users set-password user@example.com   # set/reset a password (admin only)
+klangk admin invitations send user@example.com     # send an invitation email (admin only)
+klangk admin invitations ls                       # list all invitations (admin only)
+klangk images                       # list available container images
+klangk volumes ls                   # list your podman volumes
+klangk volumes create nix-store     # create a named volume (owned by you)
+klangk volumes rm nix-store         # delete a volume (must be yours)
 ```
 
-`klangkc status` shows the active server, your user id/email, and whether
+`klangk status` shows the active server, your user id/email, and whether
 you hold site-wide admin privileges (derived from the server's
 `/my-permissions` — the same source the web UI uses).
 
@@ -216,7 +216,7 @@ The CLI connects to the running Klangk backend over HTTP + WebSocket — it work
 
 ## Exiting the shell
 
-To disconnect from `klangkc shell`, use the SSH-style escape sequence:
+To disconnect from `klangk shell`, use the SSH-style escape sequence:
 **Enter**, **~**, **.** (three keystrokes in sequence).
 
 1. Press **Enter** to make sure you're at the beginning of a new line.
@@ -238,12 +238,12 @@ tildes freely in commands and text without triggering the escape.
 
 ## Named terminal windows
 
-`klangkc shell` accepts an optional terminal name argument to connect to
+`klangk shell` accepts an optional terminal name argument to connect to
 a specific terminal window inside the workspace:
 
 ```bash
-klangkc shell my-project build    # attach to the "build" window
-klangkc shell my-project logs     # attach to the "logs" window
+klangk shell my-project build    # attach to the "build" window
+klangk shell my-project logs     # attach to the "logs" window
 ```
 
 If the named window doesn't exist, it is created automatically. This
@@ -251,15 +251,15 @@ lets you open multiple named terminals from the CLI without using the web
 UI. The new window also appears as a tab in the web UI for anyone
 viewing the workspace.
 
-Without a terminal name, `klangkc shell` connects to the currently
+Without a terminal name, `klangk shell` connects to the currently
 active window.
 
 ## Terminal behavior differences
 
-`klangkc shell` provides the same tmux-based terminal as the web frontend, but clipboard behavior differs:
+`klangk shell` provides the same tmux-based terminal as the web frontend, but clipboard behavior differs:
 
 - **Web frontend**: Text selections auto-copy to the system clipboard via the browser bridge. Mouse wheel scrolls through scrollback. No extra setup needed.
-- **CLI (`klangkc shell`)**: Text selections auto-copy to the system clipboard via [OSC 52](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Operating-System-Commands), which requires your terminal emulator to support it. Mouse wheel scrollback works. Native text selection (viewport-only) is available via **Shift+drag**.
+- **CLI (`klangk shell`)**: Text selections auto-copy to the system clipboard via [OSC 52](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Operating-System-Commands), which requires your terminal emulator to support it. Mouse wheel scrollback works. Native text selection (viewport-only) is available via **Shift+drag**.
 
 ### OSC 52 terminal support
 
@@ -280,4 +280,4 @@ The following terminal emulators support OSC 52 clipboard integration (auto-copy
 | MATE Terminal    | No             |
 | Terminator       | No             |
 
-If your terminal does not support OSC 52, tmux selections will still be captured in the tmux paste buffer but will not automatically appear on your system clipboard. Consider switching to a terminal emulator that supports OSC 52 for the best `klangkc shell` experience.
+If your terminal does not support OSC 52, tmux selections will still be captured in the tmux paste buffer but will not automatically appear on your system clipboard. Consider switching to a terminal emulator that supports OSC 52 for the best `klangk shell` experience.

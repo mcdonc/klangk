@@ -18,7 +18,7 @@ container auto-starts with the server.
 
 ```bash
 cd sandboxes/openclaw
-klangkc sandbox openclaw
+klangk sandbox openclaw
 ```
 
 First run installs Node.js 24 (via nvm), openclaw, writes a config

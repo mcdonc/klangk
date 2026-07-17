@@ -6,7 +6,7 @@
 # clobbering the /opt/klangk/bin prefix that the Dockerfile ENV sets. This
 # snippet re-prepends it so EVERY login shell finds pi and the
 # klangk-* helpers — including non-interactive login shells (`bash -lc`),
-# which is what `klangkc exec` uses.
+# which is what `klangk exec` uses.
 # /etc/bash.bashrc was the wrong home because it is only sourced for
 # interactive shells; a non-interactive login shell never saw the export.
 #

@@ -12,16 +12,16 @@ One continuous story across a single evolving workspace, **`demo`**, created
 on camera in Scene 2 and kept alive through every scene after. State
 accumulates shot to shot:
 
-| Workspace  | Born in                                    | Owner               | Role in the video                                                                                                                                                                                                                                                   |
-| ---------- | ------------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`demo`** | Scene 2 (`klangkc create demo`, on camera) | `admin@example.com` | **Hero.** Kept alive through every scene after. Accumulates: cloned klangk repo + Pi session (Sc 2) → clanker's Flask app `app.py`/`requirements.txt` (Sc 5) → debugged, running app (Sc 5b) → browsed files + Pyramid PDF (Sc 6) → shared with the team (Sc 7/7b). |
-| `openclaw` | Scene 3 (`klangkc sandbox openclaw`)       | `admin@example.com` | Self-contained sandbox + service feature demo. Stays in the list (green health icon); its Service tab + hosted app are shown in Sc 3b/4.                                                                                                                            |
-| Potemkin   | Pre-seeded (see Accounts below)            | various             | Decorative — fill every account's list so it looks lived-in. Never opened on camera.                                                                                                                                                                                |
+| Workspace  | Born in                                   | Owner               | Role in the video                                                                                                                                                                                                                                                   |
+| ---------- | ----------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`demo`** | Scene 2 (`klangk create demo`, on camera) | `admin@example.com` | **Hero.** Kept alive through every scene after. Accumulates: cloned klangk repo + Pi session (Sc 2) → clanker's Flask app `app.py`/`requirements.txt` (Sc 5) → debugged, running app (Sc 5b) → browsed files + Pyramid PDF (Sc 6) → shared with the team (Sc 7/7b). |
+| `openclaw` | Scene 3 (`klangk sandbox openclaw`)       | `admin@example.com` | Self-contained sandbox + service feature demo. Stays in the list (green health icon); its Service tab + hosted app are shown in Sc 3b/4.                                                                                                                            |
+| Potemkin   | Pre-seeded (see Accounts below)           | various             | Decorative — fill every account's list so it looks lived-in. Never opened on camera.                                                                                                                                                                                |
 
 **Rules:**
 
 - Whenever a scene says "open a workspace", it means **open the `demo` workspace**.
-- **Do not `klangkc rm demo` during the run** — it must survive into the next
+- **Do not `klangk rm demo` during the run** — it must survive into the next
   scene. `rm` is mentioned verbally in Sc 2 as the eventual cleanup, not
   executed on `demo`.
 - Record the browser arc (Sc 4→5→5b→6→7→7b) **in order**, against the same live
@@ -40,7 +40,7 @@ accumulates shot to shot:
       Sc 3/3b service scene).
 - [ ] **Real LLM key configured** for the proxy. The clanker chat scene AND the
       openclaw scene both depend on the LLM proxy actually working. Test it.
-- [ ] `jq` installed locally (for the `klangkc monitor | jq .` beat).
+- [ ] `jq` installed locally (for the `klangk monitor | jq .` beat).
 - [ ] For Sc 3b's unhealthy beat: `KLANGK_HEALTH_CHECK_INTERVAL=10` set (snappier
       flip on camera; product default is 30s). Needs a **full** backend restart
       (not SIGHUP) — set it off camera, before recording.
@@ -99,9 +99,9 @@ script firing synthetic events.
 
 > Recording a fresh install live is the #1 way to waste a take.
 
-- [ ] **openclaw sandbox:** run `klangkc sandbox openclaw` once off-camera so the
+- [ ] **openclaw sandbox:** run `klangk sandbox openclaw` once off-camera so the
       nvm + Node 24 + openclaw download is done. On-camera, keep the workspace
-      and `klangkc restart openclaw` (fast — install guards fire because
+      and `klangk restart openclaw` (fast — install guards fire because
       `/openclaw` is a mount).
 - [ ] **A repo to clone** in the CLI scene: `git@github.com:mcdonc/klangk.git`.
       Verify `ssh-add -l` shows your key so `-A` works.
@@ -119,14 +119,14 @@ script firing synthetic events.
 - [ ] **CLI scenes** are driven by `cli_demo.py` (xterm+tmux+ffmpeg via
       `record-terminal.sh`). Cursor must not blink (`xterm cursorBlink:false` +
       `PROMPT_COMMAND='printf "\033[2 q"'`). Plain `host $` host prompt; venv on
-      PATH for `klangkc`. ≥5s pauses between commands (`KLANGK_DEMO_HOLD`,
+      PATH for `klangk`. ≥5s pauses between commands (`KLANGK_DEMO_HOLD`,
       default 5).
 
 ### Master reset (between full re-runs)
 
 ```bash
-klangkc rm demo            # hero workspace — wipes the accumulated state
-klangkc rm openclaw        # only if you want a truly fresh sandbox/service scene
+klangk rm demo            # hero workspace — wipes the accumulated state
+klangk rm openclaw        # only if you want a truly fresh sandbox/service scene
 # then re-run Sc 2, 3 to rebuild demo/openclaw on camera
 ```
 
@@ -171,25 +171,25 @@ I'll start by showing a solo workflow from the command line, then move to the we
 
 ## Scene 2 — The CLI — Creating Your First Workspace (2 minutes)
 
-_[Screen: local terminal, klangkc already installed]_
+_[Screen: local terminal, klangk already installed]_
 
-The CLI is called `klangkc`. You install it with pip and point it at your Klangk server. Let me log in.
+The CLI is called `klangk`. You install it with pip and point it at your Klangk server. Let me log in.
 
-_[Type: klangkc login admin@example.com]_
+_[Type: klangk login admin@example.com]_
 
 Now let me create a workspace.
 
-_[Type: klangkc create demo]_
+_[Type: klangk create demo]_
 
 That's it — a fresh Linux container with Python, Node, git, and build tools is now running. Let me drop into it.
 
-_[Type: klangkc shell demo]_
+_[Type: klangk shell demo]_
 
 This is an SSH-like connection into an Ubuntu container. I'm in a real bash shell on Linux, regardless of what my local machine is. Under the hood this is backed by tmux, so if I disconnect and reconnect, everything is exactly where I left it — same scrollback, same running processes.
 
 Let me do something useful. I'll clone a repo.
 
-_[Type: klangkc shell demo -A]_
+_[Type: klangk shell demo -A]_
 
 The `-A` flag forwards my local SSH agent into the container, so I can use my GitHub SSH keys without copying any private keys into the container.
 
@@ -211,7 +211,7 @@ _[Type: hostname — shows the container ID. Then: echo "$(hostname)" > ~/contai
 
 Now let me split my screen and connect again, this time to a named window.
 
-_[Split the terminal into two horizontally split panes. In the new (bottom) pane, type: klangkc shell demo terminal2]_
+_[Split the terminal into two horizontally split panes. In the new (bottom) pane, type: klangk shell demo terminal2]_
 
 Now I've got two terminals open to the same workspace, on top of each other. The second one connected to a separate, named window — "terminal2". And here's the proof that it's the same container:
 
@@ -221,16 +221,16 @@ Same hostname — because both terminals share one container. Each connection is
 
 _[Disconnect the second pane with ~. , then the first]_
 
-The container keeps running. Back at my host prompt, I can see all my workspaces with `klangkc ls` — there's `demo`, the one we just made.
+The container keeps running. Back at my host prompt, I can see all my workspaces with `klangk ls` — there's `demo`, the one we just made.
 
-_[Type: klangkc ls]_
+_[Type: klangk ls]_
 
-And when I'm eventually done with a workspace, `klangkc rm` tears it down and cleans up its files. But I'm going to keep this one around — we'll come back to it from the browser in a minute.
+And when I'm eventually done with a workspace, `klangk rm` tears it down and cleans up its files. But I'm going to keep this one around — we'll come back to it from the browser in a minute.
 
-> **Production —** _on screen:_ local terminal, `klangkc` installed, clean
+> **Production —** _on screen:_ local terminal, `klangk` installed, clean
 > prompt. _pre-roll:_ confirm `ssh-add -l` lists your key; repo is
 > `git@github.com:mcdonc/klangk.git`; have `pi` functional in a workspace (test
-> the prompt once off-camera). _reset:_ `klangkc rm demo && klangkc create demo`
+> the prompt once off-camera). _reset:_ `klangk rm demo && klangk create demo`
 > — but only for a full arc re-run, since `demo` must survive into Sc 4–7.
 > _gotchas:_ the `pi` interaction is **live/nondeterministic** — one long take,
 > leave dead air, narrate over later; `-A` must actually work (test first); the
@@ -238,31 +238,31 @@ And when I'm eventually done with a workspace, `klangkc rm` tears it down and cl
 > split-pane beat connects to a **named** window (`logs`) via a tmux control call
 > (it never appears as typed text).
 
-## Scene 3 — klangkc sandbox — One Command to Rule Them All (~1.5 minutes)
+## Scene 3 — klangk sandbox — One Command to Rule Them All (~1.5 minutes)
 
 _[Screen: local terminal, in a project directory]_
 
-Creating workspaces manually is fine, but the real power for solo developers is `klangkc sandbox`. You check a config file into your repo, and then one command sets up everything.
+Creating workspaces manually is fine, but the real power for solo developers is `klangk sandbox`. You check a config file into your repo, and then one command sets up everything.
 
 We have a sandbox config for `openclaw` in our repository.
 
 _[Type: cat sandboxes/openclaw/.klangk-sandbox.yaml — point at the mount-at and setup lines]_
 
-Here's what a sandbox config looks like — it mounts the project at a fixed path inside the container and runs a setup script to get it ready. When I run `klangkc sandbox openclaw`, it creates the workspace, mounts everything, and starts the container.
+Here's what a sandbox config looks like — it mounts the project at a fixed path inside the container and runs a setup script to get it ready. When I run `klangk sandbox openclaw`, it creates the workspace, mounts everything, and starts the container.
 
-_[Type: klangkc sandbox openclaw sandboxes/openclaw]_
+_[Type: klangk sandbox openclaw sandboxes/openclaw]_
 
 The idea is that you commit this config file to your repo. Any teammate — or future you on a different machine — runs the same command and gets the exact same environment. It's like a Dockerfile for your dev environment, but the container lifecycle is managed for you.
 
-You can connect to the workspace with `klangkc shell`.
+You can connect to the workspace with `klangk shell`.
 
-_[Type: klangkc shell openclaw]_
+_[Type: klangk shell openclaw]_
 
 > **Production —** _on screen:_ local terminal at the klangk repo root. _pre-roll:_
 > openclaw **pre-warmed** (Node install done off-camera); `jq` installed; LLM proxy
-> working (so the gateway comes up healthy, not red); confirm `klangkc ls` shows a
+> working (so the gateway comes up healthy, not red); confirm `klangk ls` shows a
 > **Status** column (post-#1207). _reset:_ keep the openclaw workspace and
-> `klangkc restart openclaw` (re-installs are slow); only `rm && sandbox` for a
+> `klangk restart openclaw` (re-installs are slow); only `rm && sandbox` for a
 > truly fresh take. _gotchas:_ **never record the first-run install live**;
 > CLI-only — the hosted app is Scene 4.
 
@@ -274,19 +274,19 @@ But a workspace can also run a **long-lived service**: a dev server, a database,
 
 _[Scroll back to the three lines under `workspace:` — service-command, auto-start: true, health-check]_
 
-When I ran `klangkc sandbox openclaw`, the setup installed Node and openclaw, wrote a config that points at the Klangk LLM proxy, and started the gateway automatically. That's the **service command** at work — a per-workspace singleton: it runs once in its own session and is shared with everyone you give access to. And I can see that straight from the command line:
+When I ran `klangk sandbox openclaw`, the setup installed Node and openclaw, wrote a config that points at the Klangk LLM proxy, and started the gateway automatically. That's the **service command** at work — a per-workspace singleton: it runs once in its own session and is shared with everyone you give access to. And I can see that straight from the command line:
 
-_[Type: klangkc ls — the Status column shows openclaw as healthy, in green]_
+_[Type: klangk ls — the Status column shows openclaw as healthy, in green]_
 
 The Status column shows `openclaw` as **healthy** — the service command is running and its health check is passing. Everything the CLI knows about the workspace, you see right here.
 
 I can even attach to the service command itself — here's the gateway running live.
 
-_[Split the terminal horizontally. In the new pane: klangkc shell openclaw clanker:service-cmd — joins the service command's session; gateway logs stream]_
+_[Split the terminal horizontally. In the new pane: klangk shell openclaw clanker:service-cmd — joins the service command's session; gateway logs stream]_
 
-Now here's what turns this from "a process I left running" into an actual service. First, **health checks**. A running container only proves the container is alive — it says nothing about the process inside it. So Klangk runs my health-check command inside the container every ten seconds: exit zero means healthy, anything else is unhealthy — and that status is the very thing lighting up the Status column. Because it's all surfaced as events, I can watch it live from the command line with `klangkc monitor`:
+Now here's what turns this from "a process I left running" into an actual service. First, **health checks**. A running container only proves the container is alive — it says nothing about the process inside it. So Klangk runs my health-check command inside the container every ten seconds: exit zero means healthy, anything else is unhealthy — and that status is the very thing lighting up the Status column. Because it's all surfaced as events, I can watch it live from the command line with `klangk monitor`:
 
-_[In the top pane: klangkc monitor --type service_health | jq . — a healthy frame arrives immediately on connect]_
+_[In the top pane: klangk monitor --type service_health | jq . — a healthy frame arrives immediately on connect]_
 
 There — healthy. And I can even run a command on a change, like firing a Slack alert when the service goes down. So what happens when the service actually breaks?
 
@@ -300,7 +300,7 @@ _[Ctrl+C the monitor; close the bottom pane; back to a single terminal]_
 
 Second, **auto-start and recovery**. I've got `KLANGK_ALLOW_AUTOSTART` enabled on the server, so if the server reboots, openclaw's container boots on its own and the gateway is running _before anyone connects_. And the same thing happens any time the container is recreated — the service command re-fires on every fresh container create. So I can show you right now with a per-workspace restart, without taking the whole server down:
 
-_[Host terminal: klangkc restart openclaw — a per-workspace restart. Then: watch -n 3 klangkc ls — openclaw's Status goes starting → healthy again as the service command re-fires on the fresh container]_
+_[Host terminal: klangk restart openclaw — a per-workspace restart. Then: watch -n 3 klangk ls — openclaw's Status goes starting → healthy again as the service command re-fires on the fresh container]_
 
 The gateway here is also exposed as a **hosted app** — once we switch to the browser I can click straight through to openclaw's own web UI, proxied through Klangk's single port. No separate port to open, no extra auth to wire up. We'll see that in a moment.
 
@@ -311,14 +311,14 @@ So the same sandbox idea — one config file, one command — scales from "my de
 > `jq` + LLM proxy working); **`KLANGK_HEALTH_CHECK_INTERVAL=10`** set (snappier
 > unhealthy flip; product default 30s; needs a **full** backend restart, off
 > camera). _mechanic (the unhealthy beat):_ two-pane split (horizontal
-> divider) — bottom pane `klangkc shell openclaw clanker:service-cmd` (joins the
-> service command; gateway logs stream), top pane `klangkc monitor --type
+> divider) — bottom pane `klangk shell openclaw clanker:service-cmd` (joins the
+> service command; gateway logs stream), top pane `klangk monitor --type
 service_health | jq .` (shows a healthy frame immediately via
 > snapshot-on-connect). Ctrl+C the **bottom** pane kills the gateway; the
 > **top** pane emits `"healthy": false` within ≤ interval (the next health
 > check). Then Ctrl+C the monitor, kill the bottom pane, and recover with
-> `klangkc restart openclaw` (the service command re-fires on the fresh
-> container — #1244/#1246). _reset:_ to re-run, `klangkc restart openclaw`
+> `klangk restart openclaw` (the service command re-fires on the fresh
+> container — #1244/#1246). _reset:_ to re-run, `klangk restart openclaw`
 > again to get back to healthy before re-breaking.
 > _gotchas:_ the unhealthy flip is silent dead air (≤10s at interval=10) — trim in
 > edit; the gateway binds a port, so **localhost only**; per-workspace restart
@@ -347,11 +347,11 @@ There — openclaw's own web UI, proxied through Klangk's single port. No separa
 
 _[Return to the workspace list, click the demo workspace card on the "Owned by Me" tab]_
 
-This is a continuation of exactly what we were doing. The terminal here is the same tmux session I had from `klangkc shell` — the repo I cloned and the Pi session I ran from the command line are all still here. That's the whole point: the CLI and the web UI are two windows into the same container.
+This is a continuation of exactly what we were doing. The terminal here is the same tmux session I had from `klangk shell` — the repo I cloned and the Pi session I ran from the command line are all still here. That's the whole point: the CLI and the web UI are two windows into the same container.
 
 _[Click the "+" next to the terminal tab bar to open a new tab, then double-click the tab name and rename it "scratch"]_
 
-I can create multiple interactive terminal tabs, rename them, close them. And these aren't trapped in the browser — any tab I create here can be connected to from the CLI too, with `klangkc shell`. The web UI and the CLI are just two ways into the same sessions.
+I can create multiple interactive terminal tabs, rename them, close them. And these aren't trapped in the browser — any tab I create here can be connected to from the CLI too, with `klangk shell`. The web UI and the CLI are just two ways into the same sessions.
 
 But the web UI has features beyond the terminal — files, chat, and collaboration. Let me show those.
 
@@ -414,7 +414,7 @@ One thing worth being clear about: clanker is a **chat agent**, not a coding-age
 > doing exactly that. Treat it like the live `pi` beats in Scenes 2 and 6 — one
 > long take, leave dead air while Pi works, narrate over later.
 >
-> Note that the pi session files are in ~/.pi within the container and those contain the conversation with Pi. While you're recording the session you can also use "podman exec" or "klangkc exec" and tmux to capture the conversation and respond interactively.
+> Note that the pi session files are in ~/.pi within the container and those contain the conversation with Pi. While you're recording the session you can also use "podman exec" or "klangk exec" and tmux to capture the conversation and respond interactively.
 
 _[Screen: same workspace, Terminal tab]_
 
@@ -648,7 +648,7 @@ For example, the "boingball" plugin lets Pi trigger a bouncing ball amimation. T
 
 Plugins are declared in a YAML file and fetched automatically.
 
-How do plugins differ from the `klangkc sandbox` setup scripts we saw earlier? They're both ways to customize a workspace, but they make a different trade-off.
+How do plugins differ from the `klangk sandbox` setup scripts we saw earlier? They're both ways to customize a workspace, but they make a different trade-off.
 
 The downside of plugins is that they require Klangk itself to be recompiled to pick them up — you can't just add one on the fly. But the payoff is that there's **no startup cost**: a plugin is baked into the image at build time, so every workspace that uses that image is ready to go instantly, with no setup script to run on first creation. The feature is available to all workspaces instantly.
 
@@ -671,7 +671,7 @@ The admin panel lets you manage users and groups, send email invitations, and co
 
 ## Scene 10 — Closing (30 seconds)
 
-So that's some of Klangk. For solo developers: sandboxed containers you manage from the CLI, one-command project setup with `klangkc sandbox`, SSH agent forwarding so your keys just work, and workspaces that can run always-on services with auto-start and health checks. For teams: shared workspaces, pair programming through shared terminals, real-time chat with an AI agent, and role-based access control. All self-hosted, all open source.
+So that's some of Klangk. For solo developers: sandboxed containers you manage from the CLI, one-command project setup with `klangk sandbox`, SSH agent forwarding so your keys just work, and workspaces that can run always-on services with auto-start and health checks. For teams: shared workspaces, pair programming through shared terminals, real-time chat with an AI agent, and role-based access control. All self-hosted, all open source.
 
 Most containers auto-stop after an idle timeout to save resources, but your files persist. You can get started with a single Docker command or clone the repo and use devenv for development.
 

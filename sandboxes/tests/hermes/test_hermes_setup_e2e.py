@@ -2,7 +2,7 @@
 
 Covers two invariants (#1109):
 
-- **Installs as a sandbox.** ``klangkc sandbox hermes`` fetches and runs the
+- **Installs as a sandbox.** ``klangk sandbox hermes`` fetches and runs the
   upstream Hermes installer at runtime (per-workspace, as the non-root
   ``klangk`` user), writes ``~/.profile`` exports + the llm-proxy config, and
   lands the ``hermes`` binary.
@@ -28,7 +28,7 @@ in the root/FHS branch, which a non-root sandbox never takes).
 
 This reads files directly from the host (the per-user home and the ``/hermes``
 mount both live under the server data dir / the sandbox dir). It deliberately
-avoids ``klangkc exec`` for the profile check: exec runs a raw command with
+avoids ``klangk exec`` for the profile check: exec runs a raw command with
 no login shell (#1041), so it would not source ``~/.profile`` and would give
 a false negative.
 
@@ -305,7 +305,7 @@ class TestHermesSetup:
         env = {**os.environ, "HOME": str(config_dir)}
         os.makedirs(config_dir / ".config" / "klangk", exist_ok=True)
         _run(
-            ["klangkc", "login", base_url, EMAIL, "--password-file", "-"],
+            ["klangk", "login", base_url, EMAIL, "--password-file", "-"],
             input=PASSWORD + "\n",
             env=env,
         )
@@ -390,7 +390,7 @@ class TestHermesSetup:
 
         This is the #1109 end-to-end validation. The whole chain must work:
 
-        1. ``klangkc sandbox hermes`` creates the workspace carrying
+        1. ``klangk sandbox hermes`` creates the workspace carrying
            ``service_command``, ``health_check``, and ``auto_start`` from
            the sandbox config.
         2. ``setup.sh`` writes ``~/.profile`` exports up front, fetches +
@@ -408,7 +408,7 @@ class TestHermesSetup:
            status endpoint reports ``healthy``.
         """
         sandbox_proc = subprocess.Popen(
-            ["klangkc", "sandbox", WS, SANDBOX_DIR],
+            ["klangk", "sandbox", WS, SANDBOX_DIR],
             env=self._env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -417,7 +417,7 @@ class TestHermesSetup:
         try:
             rc = sandbox_proc.wait(timeout=SETUP_TIMEOUT)
             out = sandbox_proc.stdout.read() or ""
-            assert rc == 0, "klangkc sandbox (hermes install) failed:\n" + out
+            assert rc == 0, "klangk sandbox (hermes install) failed:\n" + out
 
             ws_id = self._await_container()
 

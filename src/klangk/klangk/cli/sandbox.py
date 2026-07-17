@@ -1,4 +1,4 @@
-"""Sandbox config loading and path resolution for ``klangkc sandbox``."""
+"""Sandbox config loading and path resolution for ``klangk sandbox``."""
 
 from __future__ import annotations
 

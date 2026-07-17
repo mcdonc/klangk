@@ -45,7 +45,7 @@ nginx/Postgres convention):
    automatically by the live CORS middleware; `KLANGK_FRONTEND_DIR` is
    remounted if it changed (#1610).
 3. **Close every WebSocket client** with close code `1012` ("service
-   restarted"). Both the web UI and `klangkc monitor` reconnect
+   restarted"). Both the web UI and `klangk monitor` reconnect
    automatically with backoff and rebuild their state on reconnect.
 4. Tear down chat-agent subprocesses and cancel in-flight agent runs.
 5. **Stop and remove all workspace containers** and cancel the

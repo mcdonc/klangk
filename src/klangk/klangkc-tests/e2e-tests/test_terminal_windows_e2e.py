@@ -1,10 +1,10 @@
 """E2E tests for terminal window independence across CLI and web sessions.
 
 Constraints tested:
-1. Within a given web tab or klangkc shell, the displayed window never
+1. Within a given web tab or klangk shell, the displayed window never
    changes unless the user explicitly switches.
-2. klangkc shell ws = visiting the default terminal (window 0).
-3. klangkc shell ws NAME = creating/attaching to a named window.
+2. klangk shell ws = visiting the default terminal (window 0).
+3. klangk shell ws NAME = creating/attaching to a named window.
 4. Web and CLI viewing the same named window see the same tmux window.
 5. Terminal window mutations (create, close, rename) are broadcast to
    all connections for the same user.
@@ -156,7 +156,7 @@ def _stop_server(proc, data_dir):
 def _login(base_url, env):
     _run(
         [
-            "klangkc",
+            "klangk",
             "login",
             base_url,
             "test@example.com",
@@ -182,7 +182,7 @@ def _cli_check_window(ws_name, env, timeout=25):
     script = f"""
 set timeout {timeout}
 log_user 0
-spawn klangkc shell {ws_name}
+spawn klangk shell {ws_name}
 expect {{
     -re {{\\$ }} {{}}
     timeout {{ puts "TIMEOUT"; exit 1 }}
@@ -214,9 +214,9 @@ wait
 def _cli_hold_and_check(ws_name, window_name, hold_seconds, env):
     """Start CLI shell, check window before and after a hold period."""
     if window_name:
-        cmd = f"klangkc shell {ws_name} {window_name}"
+        cmd = f"klangk shell {ws_name} {window_name}"
     else:
-        cmd = f"klangkc shell {ws_name}"
+        cmd = f"klangk shell {ws_name}"
     script = f"""
 set timeout 30
 log_user 0
@@ -408,8 +408,8 @@ class TestTerminalWindows:
     @pytest.fixture(autouse=True)
     def _fresh_workspace(self):
         """Create a fresh workspace for each test."""
-        _run(["klangkc", "rm", WS_NAME], env=self._env)
-        result = _run(["klangkc", "create", WS_NAME], env=self._env)
+        _run(["klangk", "rm", WS_NAME], env=self._env)
+        result = _run(["klangk", "create", WS_NAME], env=self._env)
         assert result.returncode == 0, result.stderr
         # Resolve full ID via API
         r = httpx.get(
@@ -424,12 +424,12 @@ class TestTerminalWindows:
         assert self._ws_id, f"Workspace {WS_NAME} not found after create"
         # Warm up container
         _run(
-            ["klangkc", "exec", WS_NAME, "true"],
+            ["klangk", "exec", WS_NAME, "true"],
             env=self._env,
             timeout=120,
         )
         yield
-        _run(["klangkc", "rm", WS_NAME], env=self._env)
+        _run(["klangk", "rm", WS_NAME], env=self._env)
 
     def test_web_tab_switch_doesnt_move_cli(self):
         """Clicking a different tab in web UI doesn't change CLI window."""
@@ -465,11 +465,11 @@ class TestTerminalWindows:
         asyncio.run(_test())
 
     def test_named_cli_doesnt_move_default_cli(self):
-        """Opening klangkc shell ws NAME doesn't move default CLI."""
+        """Opening klangk shell ws NAME doesn't move default CLI."""
         script = f"""
 set timeout 30
 log_user 0
-spawn klangkc shell {WS_NAME}
+spawn klangk shell {WS_NAME}
 set s1 $spawn_id
 expect -re {{\\$ }}
 sleep 3
@@ -477,7 +477,7 @@ send "echo B1S; tmux display-message -p '#I:#W'; echo B1E\\r"
 expect -re {{B1S\\r?\\n(\\d+:\\S+)\\r?\\nB1E}}
 set b1 $expect_out(1,string)
 
-spawn klangkc shell {WS_NAME} named1
+spawn klangk shell {WS_NAME} named1
 set s2 $spawn_id
 expect -re {{\\$ }}
 sleep 3
@@ -665,7 +665,7 @@ puts "AFTER=$a1"
             script = f"""
 set timeout 25
 log_user 0
-spawn klangkc shell {WS_NAME} shared
+spawn klangk shell {WS_NAME} shared
 expect {{
     -re {{\\$ }} {{}}
     timeout {{ puts "TIMEOUT"; exit 1 }}
@@ -700,7 +700,7 @@ wait
         asyncio.run(_test())
 
     def test_cli_default_is_window_zero(self):
-        """klangkc shell ws (no arg) lands on window 0."""
+        """klangk shell ws (no arg) lands on window 0."""
         window = _cli_check_window(WS_NAME, self._env)
         assert window.startswith("0:"), f"Expected 0:*, got {window}"
 

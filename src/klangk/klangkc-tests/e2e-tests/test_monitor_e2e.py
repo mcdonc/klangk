@@ -1,9 +1,9 @@
-"""End-to-end test for ``klangkc monitor`` health-event detection (#1174).
+"""End-to-end test for ``klangk monitor`` health-event detection (#1174).
 
 The monitor command (added in #1015) previously had only stub-based unit
-tests (``src/klangk/klangkc-tests/tests/test_cli.py`` exercises ``monitor_connection`` /
+tests (``src/klangk/klangk-tests/tests/test_cli.py`` exercises ``monitor_connection`` /
 ``monitor_run`` against a fake WebSocket).  This module launches the real
-``klangkc monitor`` as a subprocess against a live server driving real
+``klangk monitor`` as a subprocess against a live server driving real
 health-check transitions, and asserts it receives both the unhealthy and
 healthy ``service_health`` events as a workspace's check flips down and back
 up.
@@ -188,7 +188,7 @@ def auth(server):
 
 @pytest.fixture(scope="module")
 def cli_env(server, tmp_path_factory):
-    """An isolated HOME with ``klangkc`` logged into the test server.
+    """An isolated HOME with ``klangk`` logged into the test server.
 
     The monitor reads its server URL + token from the CLI config under
     ``~/.config/klangk/cli.yaml``, so a separate HOME (with a fresh login)
@@ -198,7 +198,7 @@ def cli_env(server, tmp_path_factory):
     env = clean_env(HOME=str(config_dir))
     result = subprocess.run(
         [
-            "klangkc",
+            "klangk",
             "login",
             server["url"],
             "test@example.com",
@@ -212,7 +212,7 @@ def cli_env(server, tmp_path_factory):
         timeout=30,
     )
     assert result.returncode == 0, (
-        f"klangkc login failed: {result.stdout=}\n{result.stderr=}"
+        f"klangk login failed: {result.stdout=}\n{result.stderr=}"
     )
     return env
 
@@ -348,7 +348,7 @@ class TestMonitorDetectsHealthFlips:
     async def test_monitor_sees_unhealthy_then_healthy(
         self, server, auth, cli_env
     ):
-        """``klangkc monitor`` prints the down->up service_health pair (#1174)."""
+        """``klangk monitor`` prints the down->up service_health pair (#1174)."""
         workspace_id = _create_workspace(server, auth)
         try:
             # Hold the container alive so the health loop polls it.
@@ -369,7 +369,7 @@ class TestMonitorDetectsHealthFlips:
                 # discarded (the reconnect/status banners go there) so its
                 # OS buffer can't deadlock the process.
                 proc = await asyncio.create_subprocess_exec(
-                    "klangkc",
+                    "klangk",
                     "monitor",
                     "--type",
                     "service_health",

@@ -9,7 +9,7 @@ No sudo required — uses single-user nix (no daemon).
 
 ```bash
 cd sandboxes/devenv-sandbox
-klangkc sandbox -A
+klangk sandbox -A
 ```
 
 First run installs nix, devenv, and cachix into the container. The

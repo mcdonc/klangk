@@ -17,7 +17,7 @@ triggering.
 
 Unit tests (Python, frontend) run with `pip install` or `flutter test`
 and do not require devenv. The Python suite covers both the `klangkd`
-(server) and `klangkc` (client) packages from one `pip install -e src/klangk`;
+(server) and `klangk` (client) packages from one `pip install -e src/klangk`;
 E2E tests use `devenv shell` with the full environment (podman, workspace
 image, nginx).
 
@@ -36,8 +36,8 @@ image, nginx).
 
 ## Release and publishing
 
-| Workflow                | File              | Trigger           | Description                       |
-| ----------------------- | ----------------- | ----------------- | --------------------------------- |
-| **Release**             | `release.yml`     | Manual            | Build and publish host container  |
-| **Publish CLI to PyPI** | `cli-publish.yml` | Push `cli-v*` tag | Build and publish klangkc to PyPI |
-| **Deploy Docs**         | `docs.yml`        | Manual            | Deploy docs to GitHub Pages       |
+| Workflow                | File              | Trigger           | Description                      |
+| ----------------------- | ----------------- | ----------------- | -------------------------------- |
+| **Release**             | `release.yml`     | Manual            | Build and publish host container |
+| **Publish CLI to PyPI** | `cli-publish.yml` | Push `cli-v*` tag | Build and publish klangk to PyPI |
+| **Deploy Docs**         | `docs.yml`        | Manual            | Deploy docs to GitHub Pages      |

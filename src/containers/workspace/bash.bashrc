@@ -4,7 +4,7 @@
 #
 # NOTE: environment exports (PATH=/opt/klangk/bin, EDITOR) live in
 # /etc/profile.d/klangk-*.sh so that non-interactive login shells (bash -lc
-# — e.g. `klangkc exec`) see them too. This file is only sourced
+# — e.g. `klangk exec`) see them too. This file is only sourced
 # for interactive shells, so anything placed here is invisible to one-shot
 # non-interactive commands. See issue #1093. (The workspace health check is
 # the exception: it runs a non-login `bash -c` and sources nothing — see

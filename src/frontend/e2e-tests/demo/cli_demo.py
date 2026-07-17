@@ -26,7 +26,7 @@ Scenes
 
     The built-in ``demo`` scene needs **no klangk server** — it's a
     self-contained smoke test so the recorder is verifiable anywhere. The
-    ``scene_2`` / ``scene_3`` / ``scene_4`` stubs drive the real ``klangkc``
+    ``scene_2`` / ``scene_3`` / ``scene_4`` stubs drive the real ``klangk``
     CLI and require a live server (see ``README.md``).
 """
 
@@ -185,7 +185,7 @@ class Term:
         prompt, steady cursor — see ``record-terminal.sh``), so it looks
         identical to the first pane and becomes the active pane. ``-v`` stacks
         the panes (horizontal divider) so each gets the full terminal width —
-        important for scene 3b's long ``klangkc monitor | jq .`` JSON lines.
+        important for scene 3b's long ``klangk monitor | jq .`` JSON lines.
         The split is a tmux control call, so it never appears as typed text in
         the recording.
         """
@@ -226,7 +226,7 @@ class Term:
 
         Unlike :meth:`_send` (which is literal), this is interpreted by
         tmux as a key name so modifiers like Ctrl work. Used for
-        interrupts (Ctrl+C on a long-running ``klangkc monitor``).
+        interrupts (Ctrl+C on a long-running ``klangk monitor``).
         """
         subprocess.run(["tmux", "send-keys", "-t", self.session, key], check=True)
 
@@ -286,7 +286,7 @@ def scene_demo(t: Term) -> None:
 def _row_healthy(pane: str, name: str = "openclaw") -> bool:
     """True if the ``name`` workspace row shows ``healthy`` in the pane.
 
-    Used while ``watch klangkc ls`` refreshes the Status column live: Rich
+    Used while ``watch klangk ls`` refreshes the Status column live: Rich
     strips color under the non-TTY watch capture, so the status reads as plain
     text. A per-line check for both the workspace name and ``healthy`` is
     reliable (the table header says "Status", not "healthy").
@@ -351,7 +351,7 @@ def scene_2(t: Term) -> None:
     The hero user is ``admin@example.com`` (created once via the admin API).
     This scene creates the ``demo`` workspace, which is KEPT for continuity —
     the browser scenes later operate on the same workspace. Requires a live
-    klangk server reachable by ``klangkc`` (see README).
+    klangk server reachable by ``klangk`` (see README).
     """
     # The CLI transport is the UDS (uvicorn's socket, direct). record-cli.sh
     # sets KLANGK_DEMO_SERVER to the socket path; this default matches for
@@ -374,9 +374,9 @@ def scene_2(t: Term) -> None:
     t.pause(5)
 
     # --- login --------------------------------------------------------
-    # No narration is printed — the voiceover covers it. klangkc login prompts
+    # No narration is printed — the voiceover covers it. klangk login prompts
     # for a password (masked, no echo).
-    t.type(f"klangkc login {server} {admin}", per_char=0.03)
+    t.type(f"klangk login {server} {admin}", per_char=0.03)
     t.enter()
     t.expect("Password", timeout=15)
     t.type(password, per_char=0.06)  # masked: no echo, but type at demo speed
@@ -385,14 +385,14 @@ def scene_2(t: Term) -> None:
     t.pause(HOLD)
 
     # --- create -------------------------------------------------------
-    t.type("klangkc create demo", per_char=0.03)
+    t.type("klangk create demo", per_char=0.03)
     t.enter()
     t.expect("Created workspace", timeout=30)
     t.pause(HOLD)
 
     # --- FIRST shell: drop into the container (plain) ----------------
     # Demonstrate the container experience, then reconnect with -A to clone.
-    t.type("klangkc shell demo", per_char=0.03)
+    t.type("klangk shell demo", per_char=0.03)
     t.enter()
     t.expect("Escape: Enter", timeout=15)  # the "~." hint line
     _wait_remote(t, timeout=20)
@@ -409,7 +409,7 @@ def scene_2(t: Term) -> None:
     _disconnect_ssh(t, hold=HOLD)
 
     # --- SECOND shell: re-enter with agent forwarding (-A) -------------
-    t.type("klangkc shell demo -A", per_char=0.03)
+    t.type("klangk shell demo -A", per_char=0.03)
     t.enter()
     t.expect("Escape: Enter", timeout=15)
     _wait_remote(t, timeout=20)
@@ -465,7 +465,7 @@ def scene_2(t: Term) -> None:
     # Connect to a NAMED window ("terminal2") — a separate terminal in the
     # same workspace (created if absent), not the active one. Shows that one
     # workspace can have several CLI terminals open at once.
-    t.type("klangkc shell demo terminal2", per_char=0.03)
+    t.type("klangk shell demo terminal2", per_char=0.03)
     t.enter()
     t.expect("Escape: Enter", timeout=15)
     _wait_remote(t, timeout=20)
@@ -489,11 +489,11 @@ def scene_2(t: Term) -> None:
     _disconnect_ssh(t, hold=HOLD)
 
     # --- list workspaces from the host ---------------------------------
-    # klangkc ls is a quick API call; `demo` (and any seeded workspaces) show.
+    # klangk ls is a quick API call; `demo` (and any seeded workspaces) show.
     # No `expect` here: any plausible marker ("demo", the "Name" header) would
-    # false-match scrollback (e.g. the earlier `klangkc shell demo` line), so
+    # false-match scrollback (e.g. the earlier `klangk shell demo` line), so
     # a fixed pause is safer for this final beat.
-    t.type("klangkc ls", per_char=0.03)
+    t.type("klangk ls", per_char=0.03)
     t.enter()
     t.pause(3)
     t.pause(HOLD)
@@ -501,7 +501,7 @@ def scene_2(t: Term) -> None:
 
 
 def scene_3(t: Term) -> None:
-    """klangkc sandbox: one config, one command (~1.5 min).
+    """klangk sandbox: one config, one command (~1.5 min).
 
     The sandbox-concept scene — **CLI only** (no browser). Shows that a
     checked-in config file plus one command reproduces a full dev
@@ -534,13 +534,13 @@ def scene_3(t: Term) -> None:
     # step 2 — create the workspace from the sandbox config. Mounts
     # everything, runs setup (fast: pre-warmed + /openclaw is a mount),
     # starts the container.
-    t.type("klangkc sandbox openclaw sandboxes/openclaw", per_char=0.03)
+    t.type("klangk sandbox openclaw sandboxes/openclaw", per_char=0.03)
     t.enter()
     t.expect("Setup complete", timeout=360)
     t.pause(HOLD)
 
     # step 3 — connect, show the project mounted inside, then disconnect.
-    t.type("klangkc shell openclaw", per_char=0.03)
+    t.type("klangk shell openclaw", per_char=0.03)
     t.enter()
     t.expect("Escape: Enter", timeout=15)  # the "~." hint line
     _wait_remote(t, timeout=20)
@@ -572,7 +572,7 @@ def scene_3b(t: Term) -> None:
     (``clanker:service-cmd``) in the bottom pane to see the gateway's logs,
     then watch live ``service_health`` events in the top pane. Ctrl+C the
     gateway to trigger an ``unhealthy`` event, then recover via
-    ``klangkc restart openclaw`` (the service command re-fires on the fresh
+    ``klangk restart openclaw`` (the service command re-fires on the fresh
     container -- #1244/#1246). Narrate over the whole arc.
 
     Carries the same preconditions as Scene 3 (live server, autostart on,
@@ -593,10 +593,10 @@ def scene_3b(t: Term) -> None:
     # ``workspace:`` lines while you say this.)
     t.pause(HOLD)
 
-    # step 2 — klangkc ls: the Status column shows openclaw as healthy
+    # step 2 — klangk ls: the Status column shows openclaw as healthy
     # (green). Narrate: the service command is running and its health
     # check is passing — everything the CLI knows, right here.
-    t.type("klangkc ls", per_char=0.03)
+    t.type("klangk ls", per_char=0.03)
     t.enter()
     t.pause(3)  # let the table land
     t.pause(HOLD)
@@ -608,7 +608,7 @@ def scene_3b(t: Term) -> None:
     top = t.pane_id()
     bottom = t.split()
     t.pause(HOLD)
-    t.type("klangkc shell openclaw clanker:service-cmd", per_char=0.03)
+    t.type("klangk shell openclaw clanker:service-cmd", per_char=0.03)
     t.enter()
     t.expect("Escape: Enter", timeout=20)  # the "~." hint = joined
     t.pause(HOLD)  # let the gateway logs stream
@@ -618,7 +618,7 @@ def scene_3b(t: Term) -> None:
     # Narrate: exit 0 = healthy; you can wire a command (-- sh -c '...')
     # to fire on change (e.g. a Slack alert). jq pretty-prints the JSON.
     t.select_pane(top)
-    t.type("klangkc monitor --type service_health | jq .", per_char=0.03)
+    t.type("klangk monitor --type service_health | jq .", per_char=0.03)
     t.enter()
     t.expect("service_health", timeout=30)
     t.pause(HOLD)
@@ -648,27 +648,27 @@ def scene_3b(t: Term) -> None:
     t.select_pane(top)  # focus survives, but be explicit
     t.pause(HOLD)
 
-    # step 7 — recovery via `klangkc restart openclaw` (#1244/#1246).
+    # step 7 — recovery via `klangk restart openclaw` (#1244/#1246).
     # Restarting the workspace stops + removes the container, then creates a
     # fresh one -- and the service command RE-FIRES on every fresh container
     # create (the #1244/#1246 fix), so the gateway comes back on its own.
     # Watch the Status column live: stopped -> starting -> healthy. ``watch``
-    # does the repeated refresh for us -- no re-typing klangkc ls. Ctrl+C once
+    # does the repeated refresh for us -- no re-typing klangk ls. Ctrl+C once
     # the openclaw row reads healthy again. (This window is trimmed in edit.)
     # Per-workspace restart (not a full-server SIGHUP), so the `demo` workspace
     # and the rest of the recording are untouched -- scene 3b no longer has to
     # be recorded last.
     t.run("clear")
-    t.type("klangkc restart openclaw", per_char=0.03)
+    t.type("klangk restart openclaw", per_char=0.03)
     t.enter()
     # restart blocks until the fresh container is created (stop+remove+start
     # is one synchronous request). Wait for its COMPLETION line -- NOT
     # "host $", which is already in the pane as the echoed command's prompt
-    # prefix ("host $ klangkc restart openclaw") and would match instantly,
+    # prefix ("host $ klangk restart openclaw") and would match instantly,
     # typing watch into the still-running restart.
     t.expect("Restarted workspace openclaw", timeout=60)
     t.pause(1)
-    t.type("watch -n 3 klangkc ls", per_char=0.03)
+    t.type("watch -n 3 klangk ls", per_char=0.03)
     t.enter()
     t.pause(4)  # let the first watch frame land
     deadline = time.monotonic() + 180
@@ -692,9 +692,9 @@ def scene_4(t: Term) -> None:
     """openclaw service sandbox (~1.5 min). Requires a live server."""
     _intro(t, "A long-lived service: openclaw")
     t.run("cd sandboxes/openclaw", expect="$")
-    t.run("klangkc sandbox openclaw", expect="$", timeout=180)
+    t.run("klangk sandbox openclaw", expect="$", timeout=180)
     t.pause(1.0)
-    t.run("klangkc monitor --type service_health | jq .", expect="$", timeout=20)
+    t.run("klangk monitor --type service_health | jq .", expect="$", timeout=20)
     t.pause(1.0)
 
 

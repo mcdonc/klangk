@@ -1,6 +1,6 @@
 # Klangk Intro Video — demo scene scripts
 
-Scripts that drive the klangk web UI **and** the `klangkc` CLI through each scene
+Scripts that drive the klangk web UI **and** the `klangk` CLI through each scene
 of the intro video (`videoscript.md`), recording video you can voice over and cut
 together in DaVinci Resolve. This is **not** part of the CI test suite — it's a
 recording harness, separate from `../e2e/` (the real Playwright config explicitly
@@ -12,8 +12,8 @@ recorders:
 - **Web-UI scenes** (5, 6, 6b, 7, 8, 9, 10) — driven by **Playwright**
   against the Flutter web app (`record-demo.sh` wraps the Xvfb + ffmpeg
   capture). See "Running a web-UI scene" below.
-- **CLI scenes** (2, 3, 4) — host-terminal work (`klangkc shell`, `git clone`,
-  `klangkc sandbox`) that Playwright can't drive. Driven by **`record-terminal.sh`**
+- **CLI scenes** (2, 3, 4) — host-terminal work (`klangk shell`, `git clone`,
+  `klangk sandbox`) that Playwright can't drive. Driven by **`record-terminal.sh`**
   - `cli_demo.py` (Xvfb + xterm + tmux + ffmpeg). See "CLI terminal scenes"
     below.
 
@@ -187,8 +187,8 @@ that recording, and trim dead air in DaVinci (or narrate over it).
 
 ## CLI terminal scenes (`record-terminal.sh` + `cli_demo.py`)
 
-The CLI scenes (2, 3, 4) drive a real terminal — `klangkc login`, `klangkc
-create`, `klangkc shell`, `klangkc sandbox`, `git clone`, `klangkc monitor` —
+The CLI scenes (2, 3, 4) drive a real terminal — `klangk login`, `klangk
+create`, `klangk shell`, `klangk sandbox`, `git clone`, `klangk monitor` —
 which Playwright can't touch. The recorder scripts a terminal and captures it as
 a **true 1080p** `.mp4` with no manual recording.
 
@@ -204,7 +204,7 @@ same insight the web-UI harness (`record-demo.sh`) uses to beat Playwright's
    session.
 3. **tmux** — owns the pty. xterm _displays_ the session; the driver _writes_
    to it (`send-keys`) and reads it (`capture-pane`). It's also the persistence
-   layer (`klangkc shell` is tmux-backed, so this matches the real UX).
+   layer (`klangk shell` is tmux-backed, so this matches the real UX).
 4. **ffmpeg** (`x11grab`) — captures the whole Xvfb display into a true
    full-resolution `.mp4`.
 

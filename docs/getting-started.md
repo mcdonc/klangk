@@ -98,7 +98,7 @@ instructions.
 
 Out of the box (the default `none` auth mode) there is **nothing to log in
 with** — open <http://localhost:8995> and you're already in, as the default
-user (`KLANGK_DEFAULT_USER`). The CLI likewise needs no `klangkc login`.
+user (`KLANGK_DEFAULT_USER`). The CLI likewise needs no `klangk login`.
 
 If you switched to a real auth mode (`password`, `oidc`, or `both` — e.g. the
 Docker examples above set `KLANGK_AUTH_MODES=password`), log in with the

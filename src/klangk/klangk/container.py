@@ -1581,7 +1581,7 @@ class ContainerRegistry:
 
         # Fresh create: provision the agent home and fire the service
         # command (#1244). This is the single choke point -- every
-        # start path (boot autostart, create, connect, klangkc restart)
+        # start path (boot autostart, create, connect, klangk restart)
         # routes through start_container, so the bring-up runs once per
         # fresh container regardless of caller. ensure_service_session
         # is idempotent, and setup_state gates the create-time deferral

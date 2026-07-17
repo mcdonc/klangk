@@ -2,23 +2,23 @@
 
 # Sandbox
 
-`klangkc sandbox` creates a workspace using a project-level config
+`klangk sandbox` creates a workspace using a project-level config
 file. It reads `.klangk-sandbox.yaml`, creates the workspace with the
 configured image, mounts, and volumes, copies files, and runs the
-setup script. Use `klangkc shell` afterwards to connect.
+setup script. Use `klangk shell` afterwards to connect.
 
-`klangkc sandbox` is a quality-of-life feature of the
-[`klangkc` CLI](../reference/cli.md) that combines several of
+`klangk sandbox` is a quality-of-life feature of the
+[`klangk` CLI](../reference/cli.md) that combines several of
 Klangk's individual features — workspace creation, bind mounts,
 file copying, and command execution — into a single step driven by
 a config file. Everything it does can be done manually with
-`klangkc create`, `klangkc exec`, and `klangkc shell`, but the
+`klangk create`, `klangk exec`, and `klangk shell`, but the
 sandbox command makes it easy to check a `.klangk-sandbox.yaml` into
 your repo so you or your teammates can spin up an identical sandboxed
 environment with one command.
 
 This feature is most useful when run with the Klangk server on your own
-machine. It requires the `klangkc` client program. It is not a feature of the
+machine. It requires the `klangk` client program. It is not a feature of the
 web UI.
 
 > **Sandboxes vs. plugins.** Sandboxes are a _runtime_ feature: they
@@ -43,15 +43,15 @@ sandbox:
 Then run:
 
 ```bash
-klangkc sandbox myworkspace
-klangkc shell myworkspace
+klangk sandbox myworkspace
+klangk shell myworkspace
 ```
 
 The first command creates a workspace named `myworkspace`, mounts the
 sandbox root into the container at `~/myproj`, and runs any setup
 script. The second command connects you to an interactive shell.
 
-Run `klangkc sandbox myworkspace` again on an existing workspace and
+Run `klangk sandbox myworkspace` again on an existing workspace and
 it will error — pass `--force` to re-apply the config and re-run
 setup.
 
@@ -178,7 +178,7 @@ mounts:
 ```
 
 Then in your `~/.profile` (so the service command — running as the
-agent — and `klangkc exec` see the variables too; see
+agent — and `klangk exec` see the variables too; see
 [The Shell](the-shell.md#startup-files)) or setup script:
 
 ```bash
@@ -191,7 +191,7 @@ next shell session without recreating the workspace.
 ## Command reference
 
 ```text
-klangkc sandbox WORKSPACE [PATH] [--force]
+klangk sandbox WORKSPACE [PATH] [--force]
 ```
 
 | Argument/Flag | Default | Description                                                             |
@@ -210,7 +210,7 @@ klangkc sandbox WORKSPACE [PATH] [--force]
 3. Mount the sandbox root at `mount-at`
 4. Copy files listed in `copy` into the container home
 5. Run the `setup` script inside the container (if configured)
-6. Print a message to run `klangkc shell` to connect
+6. Print a message to run `klangk shell` to connect
 
 **Subsequent runs** (workspace already exists):
 
@@ -219,16 +219,16 @@ klangkc sandbox WORKSPACE [PATH] [--force]
 
 ### Connecting after sandbox
 
-After `klangkc sandbox` completes, connect with:
+After `klangk sandbox` completes, connect with:
 
 ```bash
-klangkc shell myworkspace
+klangk shell myworkspace
 ```
 
 To forward your SSH agent into the container:
 
 ```bash
-klangkc shell myworkspace -A
+klangk shell myworkspace -A
 ```
 
 If the workspace has a `service-command` configured (e.g.
@@ -239,15 +239,15 @@ above). To get an interactive shell alongside it, connect to a
 named terminal window:
 
 ```bash
-klangkc shell myworkspace dev
+klangk shell myworkspace dev
 ```
 
 This creates a new terminal window called `dev` where you can
 work interactively while the service command continues running in
 the first window.
 
-The copy and setup steps only run during `klangkc sandbox`. On
-`klangkc shell`, the command connects directly to the existing
+The copy and setup steps only run during `klangk sandbox`. On
+`klangk shell`, the command connects directly to the existing
 workspace. This means:
 
 - **Mounts** are always current (they're live links to host paths).
@@ -340,11 +340,11 @@ If the setup script is interrupted (Ctrl+C, network failure, etc.),
 the workspace is left in an inconsistent state. To recover:
 
 - **If your script is idempotent:** re-run with `--force`:
-  `klangkc sandbox myws --force`
+  `klangk sandbox myws --force`
 - **If not:** restart the container and try again:
-  `klangkc restart myws && klangkc sandbox myws --force`.
+  `klangk restart myws && klangk sandbox myws --force`.
   Or delete the workspace entirely and start over:
-  `klangkc rm myws && klangkc sandbox myws`.
+  `klangk rm myws && klangk sandbox myws`.
 
 ### Tips
 
@@ -448,8 +448,8 @@ Usage:
 
 ```bash
 cd ~/projects/klangk
-klangkc sandbox myproj
-klangkc shell myproj -A
+klangk sandbox myproj
+klangk shell myproj -A
 # First sandbox: creates workspace, mounts everything, installs nix
 # shell: connects with SSH agent forwarding
 # Subsequent sandbox calls: error unless --force

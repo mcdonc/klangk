@@ -58,7 +58,7 @@ export const DEMO_HERO_EMAIL = DEMO_ADMIN_EMAIL;
 export const DEMO_HERO_PASSWORD = DEMO_ADMIN_PASSWORD;
 
 /** The single shared workspace every web-UI scene accumulates into. Created
- *  on-camera by CLI Scene 2 (`klangkc create demo`) and carried forward: the
+ *  on-camera by CLI Scene 2 (`klangk create demo`) and carried forward: the
  *  web-UI scenes operate this SAME workspace so clanker's app.py (Sc 5)
  *  survives into the Files tab (Sc 6), the collaboration (Sc 7), etc. */
 export const SHARED_WORKSPACE = "demo";
@@ -717,7 +717,7 @@ export function terminalTabCenterPx(tabIndex: number): number {
  *  `existingTabs` = how many tabs are already open BEFORE this click (the
  *  "+" sits right after the last one). A fresh single-terminal workspace
  *  passes 1 ("+" at fracX ≈ 0.145); the hero `demo` workspace passes 2
- *  because scene 2's `klangkc shell demo terminal2` left a second window
+ *  because scene 2's `klangk shell demo terminal2` left a second window
  *  that shows up as a tab ("+" at fracX ≈ 0.272). */
 export const addTerminalTab = (page: Page, existingTabs = 1) => {
   const { width, height } = vp(page);
@@ -755,7 +755,7 @@ export async function waitForTerminal(
 // Container tmux introspection (side channel for live-agent scenes).
 // ---------------------------------------------------------------------------
 // The container's shell IS a tmux session (named <user-id>), so a side
-// `klangkc exec` can read the VERY SAME pane the browser Terminal tab renders.
+// `klangk exec` can read the VERY SAME pane the browser Terminal tab renders.
 // Live-agent scenes (5b) use this to detect pi's completion deterministically
 // (e.g. "Successfully installed", the hosted URL, or an idle status line)
 // WITHOUT on-screen OCR or fixed timeouts -- the browser types the prompts
@@ -764,15 +764,15 @@ export async function waitForTerminal(
 
 import { execFileSync } from "node:child_process";
 
-/** Run `klangkc exec <workspace> bash -lc <cmd>` and return stdout. Points at
+/** Run `klangk exec <workspace> bash -lc <cmd>` and return stdout. Points at
  *  the demo server (KLANGK_DEMO_SERVER / KLANGK_TEST_URL). Throws on non-zero
  *  exit so callers fail fast. */
-export function klangkcExec(
+export function klangkExec(
   workspace: string,
   cmd: string,
   extraEnv: Record<string, string> = {},
 ): string {
-  // klangkcExec uses the UDS (same login token as the CLI scenes) rather than
+  // klangkExec uses the UDS (same login token as the CLI scenes) rather than
   // the TCP URL, so browser-scene prep doesn't need a separate TCP login.
   const stateDir = process.env.KLANGK_DEMO_STATE_DIR || "/tmp/klangk-demo";
   const server =
@@ -780,7 +780,7 @@ export function klangkcExec(
     process.env.KLANGK_DEMO_SERVER ||
     `${stateDir}/klangk.sock`;
   return execFileSync(
-    "klangkc",
+    "klangk",
     ["--server", server, "exec", workspace, "bash", "-lc", cmd],
     {
       env: { ...process.env, ...extraEnv },
@@ -799,7 +799,7 @@ export function captureContainerPane(
   window = 0,
   lines = 12,
 ): string {
-  return klangkcExec(
+  return klangkExec(
     workspace,
     `tmux capture-pane -t ${session}:${window} -p -S -${lines}`,
   );
@@ -813,7 +813,7 @@ export function sendContainerKey(
   key: string,
   window = 0,
 ): void {
-  klangkcExec(workspace, `tmux send-keys -t ${session}:${window} ${key}`);
+  klangkExec(workspace, `tmux send-keys -t ${session}:${window} ${key}`);
 }
 
 /** Wait until the container pane contains `needle` (substring or RegExp),

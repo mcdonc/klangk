@@ -53,7 +53,7 @@ Users are created automatically on their first SSO login — no
 separate registration step. If a user already has an email/password
 account with the same address, it is linked to their SSO identity.
 
-The CLI (`klangkc login`) supports OIDC too: it opens a browser for
+The CLI (`klangk login`) supports OIDC too: it opens a browser for
 the SSO flow and receives the token via a temporary localhost callback.
 
 See [OIDC Configuration](../reference/oidc.md) for setup instructions.

@@ -15,7 +15,7 @@ test-frontend
 # Backend E2E tests (starts real server + podman containers)
 test-backend-e2e
 
-# CLI E2E tests (starts real server, runs klangkc commands)
+# CLI E2E tests (starts real server, runs klangk commands)
 test-cli-e2e
 
 # Frontend E2E tests (Playwright, needs flutter build + podman build)

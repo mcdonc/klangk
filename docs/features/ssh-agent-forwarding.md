@@ -1,6 +1,6 @@
 # SSH Agent Forwarding
 
-When connecting via `klangkc shell -A`, your local SSH agent is
+When connecting via `klangk shell -A`, your local SSH agent is
 forwarded into the workspace container. This lets you use
 `git push git@github.com:...`, `ssh`, and other SSH-based tools
 inside the container using your local SSH keys — without copying any
@@ -9,7 +9,7 @@ private keys.
 ## How it works
 
 When `--forward-agent` (`-A`) is enabled (via CLI flag or config
-file), `klangkc shell` checks for a local `SSH_AUTH_SOCK` and sets
+file), `klangk shell` checks for a local `SSH_AUTH_SOCK` and sets
 up a relay over the existing WebSocket tunnel:
 
 1. A Unix socket is created inside the container at a well-known path
@@ -29,7 +29,7 @@ Pass `-A` (or `--forward-agent`) to enable forwarding:
 ssh-add -l
 
 # Connect with agent forwarding
-klangkc shell -A my-workspace
+klangk shell -A my-workspace
 
 # Inside the container:
 ssh-add -l                          # shows your forwarded keys
@@ -68,7 +68,7 @@ config file documentation.
 
 - A running SSH agent on your local machine (`SSH_AUTH_SOCK` must
   be set and point to a valid socket)
-- The `klangkc shell` CLI (agent forwarding is not available from
+- The `klangk shell` CLI (agent forwarding is not available from
   the web frontend)
 
 ## Limitations
@@ -77,7 +77,7 @@ config file documentation.
   connection at a time. This works for typical usage (single `git
 push`, `ssh` commands) but may not work correctly with parallel
   SSH operations like `git clone --recurse-submodules -j4`.
-- **Web frontend**: Agent forwarding is only available via `klangkc
+- **Web frontend**: Agent forwarding is only available via `klangk
 shell`, not from the browser-based terminal.
 
 ## Session persistence
@@ -93,7 +93,7 @@ same path, so existing shells continue to work.
 - Check that `SSH_AUTH_SOCK` is set: `echo $SSH_AUTH_SOCK`
 - If empty, either `-A` was not passed or your local agent wasn't
   running when you connected. Exit the shell, ensure `ssh-agent` is
-  running locally, and reconnect with `klangkc shell -A`.
+  running locally, and reconnect with `klangk shell -A`.
 
 ### Agent forwarding doesn't work after reconnecting
 
@@ -105,7 +105,7 @@ same path, so existing shells continue to work.
 
 Set `KLANGKC_DEBUG_SSH_AGENT=1` to enable verbose logging of the SSH
 agent relay. On the backend, messages go to the server log. On the
-CLI, messages are written to `~/.klangkc-ssh-agent.log` (to avoid
+CLI, messages are written to `~/.klangk-ssh-agent.log` (to avoid
 corrupting the terminal display).
 
 ```bash
@@ -114,9 +114,9 @@ KLANGKC_DEBUG_SSH_AGENT=1
 
 # CLI side
 export KLANGKC_DEBUG_SSH_AGENT=1
-klangkc shell -A my-workspace
+klangk shell -A my-workspace
 # In another terminal:
-tail -f ~/.klangkc-ssh-agent.log
+tail -f ~/.klangk-ssh-agent.log
 ```
 
 Log messages are prefixed with `[ssh-agent]` and show data flow

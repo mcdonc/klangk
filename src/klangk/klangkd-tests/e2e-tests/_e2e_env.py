@@ -1,7 +1,7 @@
 """Shared hermetic env helper for E2E test suites (#1526).
 
 Every E2E suite that launches a subprocess (``runtestserver.py``, ``klangkd``,
-or ``klangkc``) must build the child's env from :func:`clean_env`, **not**
+or ``klangk``) must build the child's env from :func:`clean_env`, **not**
 ``{**os.environ, ...}``. A stray ``KLANGK_*`` var in the CI runner's env
 (or one leaked by a prior test) silently becomes the child's config and can
 change test results — ``clean_env`` strips all config-affecting prefixes so

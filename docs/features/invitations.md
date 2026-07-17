@@ -16,7 +16,7 @@ secure link that expires after 72 hours.
 You can also invite users from the CLI:
 
 ```text
-klangkc admin invitations send user@example.com
+klangk admin invitations send user@example.com
 ```
 
 ## Invitation States
@@ -49,6 +49,6 @@ in and can start using workspaces.
 ## CLI Commands
 
 ```text
-klangkc admin invitations send <email>   # Send an invitation
-klangkc admin invitations ls             # List all invitations
+klangk admin invitations send <email>   # Send an invitation
+klangk admin invitations ls             # List all invitations
 ```

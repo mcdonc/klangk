@@ -346,7 +346,7 @@ class TestOpenclawSetupProfileExports:
         env = {**os.environ, "HOME": str(config_dir)}
         os.makedirs(config_dir / ".config" / "klangk", exist_ok=True)
         _run(
-            ["klangkc", "login", base_url, EMAIL, "--password-file", "-"],
+            ["klangk", "login", base_url, EMAIL, "--password-file", "-"],
             input=PASSWORD + "\n",
             env=env,
         )
@@ -406,7 +406,7 @@ class TestOpenclawSetupProfileExports:
         # Run the sandbox in the background; it blocks on the sentinel
         # right after writing the consolidated ~/.profile exports.
         sandbox_proc = subprocess.Popen(
-            ["klangkc", "sandbox", WS, SANDBOX_DIR],
+            ["klangk", "sandbox", WS, SANDBOX_DIR],
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -434,7 +434,7 @@ class TestOpenclawSetupProfileExports:
             # Release setup.sh and let the real openclaw install finish.
             os.remove(SENTINEL)
             assert sandbox_proc.wait(timeout=SETUP_TIMEOUT) == 0, (
-                "klangkc sandbox failed:\n" + (sandbox_proc.stdout.read() or "")
+                "klangk sandbox failed:\n" + (sandbox_proc.stdout.read() or "")
             )
 
             # The real install ran: the openclaw binary lands on the
@@ -454,7 +454,7 @@ class TestOpenclawSetupProfileExports:
             else:
                 out, _ = self._capture_sandbox(sandbox_proc)
                 if out:
-                    print(f"--- klangkc sandbox output ---\n{out}")
+                    print(f"--- klangk sandbox output ---\n{out}")
 
     def test_second_workspace_reuses_install_but_writes_own_profile(self):
         """A second workspace at the same /openclaw mount SKIPS the install
@@ -490,7 +490,7 @@ class TestOpenclawSetupProfileExports:
         # No sentinel: WS2's setup runs to completion. The install is
         # skipped (openclaw already on the mount), so this is fast.
         sandbox_proc = subprocess.Popen(
-            ["klangkc", "sandbox", WS2, SANDBOX_DIR],
+            ["klangk", "sandbox", WS2, SANDBOX_DIR],
             env=self._env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -499,7 +499,7 @@ class TestOpenclawSetupProfileExports:
         try:
             rc = sandbox_proc.wait(timeout=SETUP_TIMEOUT)
             out = sandbox_proc.stdout.read() or ""
-            assert rc == 0, f"klangkc sandbox (WS2) failed:\n{out}"
+            assert rc == 0, f"klangk sandbox (WS2) failed:\n{out}"
 
             # The install was genuinely skipped -- proving we're on the
             # skip path, not a vacuous pass where a regression re-ran
@@ -541,7 +541,7 @@ class TestOpenclawSetupProfileExports:
         This is the #1089 end-to-end validation. The whole chain must
         work for the status to flip to healthy:
 
-        1. ``klangkc sandbox`` creates the workspace carrying
+        1. ``klangk sandbox`` creates the workspace carrying
            ``health_check`` from the sandbox config.
         2. setup completes -> ``setup_state == complete`` (the monitor
            skips checks until then).
@@ -573,7 +573,7 @@ class TestOpenclawSetupProfileExports:
         # WS3 reuses the populated mount, so its setup SKIPS the install
         # (fast) -- the point here is the health-check path, not install.
         sandbox_proc = subprocess.Popen(
-            ["klangkc", "sandbox", WS3, SANDBOX_DIR],
+            ["klangk", "sandbox", WS3, SANDBOX_DIR],
             env=self._env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -582,7 +582,7 @@ class TestOpenclawSetupProfileExports:
         try:
             rc = sandbox_proc.wait(timeout=SETUP_TIMEOUT)
             out = sandbox_proc.stdout.read() or ""
-            assert rc == 0, f"klangkc sandbox (WS3) failed:\n{out}"
+            assert rc == 0, f"klangk sandbox (WS3) failed:\n{out}"
             # The install was genuinely skipped, proving the fast path.
             assert "openclaw already installed, skipping." in out, (
                 "expected setup to SKIP the install (mount already "
