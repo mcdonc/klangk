@@ -49,7 +49,7 @@ import {
   connectWs,
   getMeId,
   captureContainerPane,
-  klangkcExec,
+  klangkExec,
   type DemoWs,
 } from "./demo-helpers";
 
@@ -404,7 +404,7 @@ export async function resetCollabState(ctx: CollabCtx): Promise<void> {
   // window directly, bypassing the grouped-session / WS routing that causes
   // desync.
   try {
-    klangkcExec(
+    klangkExec(
       ctx.workspaceName,
       `tmux send-keys -t ${ctx.ownerUserId}:${ctx.scratchWindowName} C-l`,
     );
@@ -701,11 +701,11 @@ async function performSidechannel(ctx: CollabCtx, beat: Beat): Promise<void> {
     // Owner sidechannel (teammate perspective): terminal_input via the WS
     // routes to the grouped session's active window, which defaults to 0
     // (bash) after terminal_start.  Bypass the WS entirely and send keys
-    // directly to the correct tmux window via klangkc exec so the input
+    // directly to the correct tmux window via klangk exec so the input
     // lands in scratch (not pi in bash).
     if (beat.actor === "owner" && ctx.perspective === "teammate") {
       const escaped = beat.text.replace(/'/g, "'\\''");
-      klangkcExec(
+      klangkExec(
         ctx.workspaceName,
         `tmux send-keys -t ${ctx.ownerUserId}:${ctx.scratchWindowName} '${escaped}' Enter`,
       );
@@ -781,13 +781,13 @@ async function waitForPaneTextShallow(
   // The shared terminal's window name is ctx.scratchWindowName in the owner's
   // tmux session (ownerUserId). captureContainerPane takes (workspace, session,
   // window, lines) where window is an int index — but our window is named, not
-  // necessarily index 2. Use the bash helper directly via klangkcExec through
+  // necessarily index 2. Use the bash helper directly via klangkExec through
   // the owner WS? Simpler: capture by session+window-name using tmux's name
   // form. We approximate by capturing the owner session across a few windows.
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      // Try the named window directly via klangkcExec (captureContainerPane
+      // Try the named window directly via klangkExec (captureContainerPane
       // only takes an int window; replicate its tmux call with a window name).
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { execFileSync } = require("node:child_process") as {
@@ -795,7 +795,7 @@ async function waitForPaneTextShallow(
       };
       const server = process.env.KLANGK_TEST_URL || "http://localhost:8996";
       const pane = execFileSync(
-        "klangkc",
+        "klangk",
         [
           "--server",
           server,

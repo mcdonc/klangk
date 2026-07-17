@@ -14,7 +14,7 @@
  * /opt/klangk/pi-agent/extensions/boingball.ts), so there's no image-rebuild
  * prep — it's available in any workspace, instantly, with no setup script.
  * That zero-startup-cost, baked-at-build-time property is the whole point of
- * the scene's VO (vs the klangkc sandbox setup scripts from Sc 3).
+ * the scene's VO (vs the klangk sandbox setup scripts from Sc 3).
  *
  * How the animation works: pi calls the `boing` tool (registered by the
  * boingball extension). The tool POSTs `{action:"boing", browser_id}` to the

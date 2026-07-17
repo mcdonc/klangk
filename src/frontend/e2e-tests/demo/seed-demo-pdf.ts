@@ -2,7 +2,7 @@
  * Seed the Pyramid PDF into the hero's `demo` workspace home.
  *
  * Run this RIGHT AFTER the demo container is created (Scene 2's
- * `klangkc create demo`), so the file is present for Scene 6 (File Browser) to
+ * `klangk create demo`), so the file is present for Scene 6 (File Browser) to
  * browse. Idempotent — a re-run just overwrites. Called by record-cli.sh after
  * the CLI pass; also safe to run standalone for a browser-only continuation:
  *
@@ -11,7 +11,7 @@
  *
  * Standalone (no Playwright): uses node's global fetch + child_process. Logs
  * in as the hero, finds `demo`, resolves the container's $HOME off-camera via
- * `klangkc exec`, and uploads the PDF via the files/upload API (which needs the
+ * `klangk exec`, and uploads the PDF via the files/upload API (which needs the
  * container running).
  */
 import { readFileSync } from "node:fs";
@@ -48,10 +48,10 @@ async function findWorkspace(token: string): Promise<string> {
 }
 
 function containerHome(name: string): string {
-  // klangkc exec resolves the hero's per-user home symlink off-camera.
+  // klangk exec resolves the hero's per-user home symlink off-camera.
   const server = DEMO_URL;
   return execFileSync(
-    "klangkc",
+    "klangk",
     ["--server", server, "exec", name, "bash", "-lc", "echo -n $HOME"],
     { encoding: "utf-8" },
   ).trim();

@@ -271,7 +271,7 @@ in
       -v -n auto --no-cov "$@"
   '';
 
-  # CLI E2E tests: start real server, run klangkc commands.
+  # CLI E2E tests: start real server, run klangk commands.
   # Ports are free-allocated (#1393), so xdist is no longer forcibly
   # disabled. The suite runs serially by default (no -n) because the
   # tests spawn real podman containers and within-suite parallelism is

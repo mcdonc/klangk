@@ -33,13 +33,13 @@ Enable auto-start from the workspace **Settings** tab.
 
 ```bash
 # Enable during creation
-klangkc create my-service --auto-start
+klangk create my-service --auto-start
 
 # Enable on an existing workspace
-klangkc edit my-service --auto-start
+klangk edit my-service --auto-start
 
 # Disable
-klangkc edit my-service --no-auto-start
+klangk edit my-service --no-auto-start
 ```
 
 ### Sandbox config
@@ -62,7 +62,7 @@ workspace's `service-cmd` terminal window — so the service is already
 running by the time any user connects. Auto-started containers are
 pinned alive (they do not idle out between connections).
 
-Users connect later with `klangkc shell` and see the service output in
+Users connect later with `klangk shell` and see the service output in
 the `service-cmd` tab. They can open another tab for a shell alongside
 the running service.
 
@@ -84,7 +84,7 @@ This gives you:
 1. Server starts → container starts → `openclaw gateway` runs
 2. Health check confirms the gateway is responding — see
    [Health Check](health-check.md)
-3. User runs `klangkc shell my-service` → sees gateway output
-4. User runs `klangkc shell my-service shell` → gets a bash prompt
+3. User runs `klangk shell my-service` → sees gateway output
+4. User runs `klangk shell my-service shell` → gets a bash prompt
    in a separate tmux window
 5. Ctrl+C in the gateway window stops it; up-arrow + Enter restarts

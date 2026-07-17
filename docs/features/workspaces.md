@@ -48,8 +48,8 @@ Toggle auto-start from the workspace **Settings** tab, or via the
 CLI:
 
 ```bash
-klangkc edit my-project --auto-start
-klangkc edit my-project --no-auto-start
+klangk edit my-project --auto-start
+klangk edit my-project --no-auto-start
 ```
 
 When the server starts, it starts containers for all auto-start
@@ -76,10 +76,10 @@ Workspace owners can share access with other users or groups from the
 **Sharing** tab, or from the CLI:
 
 ```bash
-klangkc share my-project user@example.com                # share (coder role)
-klangkc share my-project user@example.com --role=owner   # share with role
-klangkc unshare my-project user@example.com              # remove access
-klangkc members my-project                               # list members
+klangk share my-project user@example.com                # share (coder role)
+klangk share my-project user@example.com --role=owner   # share with role
+klangk unshare my-project user@example.com              # remove access
+klangk members my-project                               # list members
 ```
 
 Shared users connect to the same container and see the workspace in

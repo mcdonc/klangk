@@ -59,10 +59,10 @@ required from the caller:
 
 - The **frontend** calls `POST /api/v1/auth/local` on load and stores the
   token, skipping the login form entirely.
-- The **CLI** (`klangkc`) probes the server's auth mode on each
+- The **CLI** (`klangk`) probes the server's auth mode on each
   command (via `GET /config`) and auto-calls `/auth/local` when it's `none`,
-  so no `klangkc login` is ever needed — the first command after registering
-  the server with `klangkc login <server>` just works (and re-registration
+  so no `klangk login` is ever needed — the first command after registering
+  the server with `klangk login <server>` just works (and re-registration
   isn't: a saved token that 401s triggers the same auto-login fallback).
 - **Workspace terminals** (WebSocket) flow the token through the existing
   `?token=` path unchanged.
@@ -147,23 +147,23 @@ admin token:
 ```bash
 # 1. Still in none mode — you're auto-logged-in as the admin default user.
 #    Give that user a real password via the admin endpoint:
-klangkc admin users set-password admin@example.com
+klangk admin users set-password admin@example.com
 
 # 2. (Optional) invite teammates while you're still admin-with-token:
-klangkc admin invitations send teammate@example.com
+klangk admin invitations send teammate@example.com
 
 # 3. Flip the mode and restart the substrate:
 #    (set KLANGK_AUTH_MODES=password in your substrate env, then restart)
 
 # 4. Log in for real — you and your invitees now use the login form / CLI:
-klangkc login
+klangk login
 ```
 
-`klangkc admin users set-password` resolves the email to a user id and
+`klangk admin users set-password` resolves the email to a user id and
 `PATCH`es the password (admin-gated). Run it **while still in `none` mode**,
 when you're holding the free admin token — after the flip, the old free token
 still authorizes until it expires, but it's simplest to do the password set
-first. Confirm you're the admin with `klangkc status` (it reports
+first. Confirm you're the admin with `klangk status` (it reports
 `admin: yes`).
 
 ### `password` / `oidc` / `both` -> `none` (dropping back to solo)

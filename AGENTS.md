@@ -91,7 +91,7 @@ not process-compose. Consequences when debugging a managed stack:
 
 ## CLI subpackage isolation (`klangk.cli`)
 
-Code in `src/klangk/klangk/cli/` (the `klangkc` client) must **not** import
+Code in `src/klangk/klangk/cli/` (the `klangk` client) must **not** import
 anything from the rest of the `klangk` package — only stdlib, third-party
 deps, and sibling modules within `cli/` itself (`from .config import ...`,
 `from .transport import ...`). The CLI is a standalone client that ships in

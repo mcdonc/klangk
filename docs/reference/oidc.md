@@ -105,7 +105,7 @@ This is configured per provider, so a deployment with multiple IdPs can trust so
 ## How It Works
 
 - **Web**: Login page shows one button per provider. Clicking redirects to the IdP via Authorization Code flow with PKCE. After authentication, the IdP redirects back to Klangk which exchanges the code for tokens, validates the ID token, and issues a Klangk JWT.
-- **CLI**: `klangkc login` detects OIDC from the server config, opens a browser for authentication, and receives the token via a temporary localhost callback server.
+- **CLI**: `klangk login` detects OIDC from the server config, opens a browser for authentication, and receives the token via a temporary localhost callback server.
 - **Login hook**: A Python script (`KLANGK_OIDC_LOGIN_HOOK`) can handle login validation and group mapping. See [OIDC Login Hook](#oidc-login-hook) below.
 - **User provisioning**: On first OIDC login, a user is created automatically (verified, no password). If a local user with the same email already exists, the OIDC identity is linked to it.
 - **OIDC users** cannot use forgot-password, change-password, or change-email.

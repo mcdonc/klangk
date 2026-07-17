@@ -247,7 +247,7 @@ class ExecController:
         # `login` (default raw) selects whether the command runs as a
         # bash login shell (sources ~/.profile, like a terminal) or as
         # raw argv (no shell, for programmatic transports like rsync).
-        # klangkc exec sends login=true; klangkc exec --raw and the
+        # klangk exec sends login=true; klangk exec --raw and the
         # rsync transport send login=false. See #1041.
         login = bool(msg.get("login", False))
         session = ExecSession(

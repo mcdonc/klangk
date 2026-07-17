@@ -2665,7 +2665,7 @@ class TestExecController:
     async def test_start_login_true_threads_through(self, app_state):
         """#1041: ``login: True`` in the message reaches ExecSession.start
         so the command runs as a bash login shell (sources ~/.profile).
-        This is the klangkc exec default."""
+        This is the klangk exec default."""
         app_state = _make_app_state()
         registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(app_state=app_state)

@@ -56,7 +56,7 @@ container. It starts on demand when you click the Terminal tab.
 - If the container stops (idle timeout or crash), an overlay appears
   with a restart button. The terminal auto-reconnects after restart.
 
-### Exiting a `klangkc shell` session
+### Exiting a `klangk shell` session
 
 Typing `exit` or pressing **Ctrl+D** does **not** disconnect you from
 the container. Klangk's tmux is configured with `remain-on-exit`, which
@@ -64,7 +64,7 @@ keeps the pane alive and immediately respawns a new shell. This is
 intentional — it prevents you from accidentally losing your terminal
 session.
 
-To actually disconnect from a `klangkc shell` session, use the SSH-style
+To actually disconnect from a `klangk shell` session, use the SSH-style
 escape sequence: press **Enter**, then **~**, then **.** (period). This
 cleanly disconnects the CLI client without affecting the tmux session
 inside the container.

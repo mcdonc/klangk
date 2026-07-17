@@ -18,7 +18,7 @@ still reports healthy.
 
 ```bash
 cd sandboxes/hermes
-klangkc sandbox hermes
+klangk sandbox hermes
 ```
 
 First run fetches and runs the upstream Hermes installer, writes a config

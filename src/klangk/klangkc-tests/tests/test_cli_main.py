@@ -2386,7 +2386,7 @@ class TestMainCLI:
         """With allow_extra_args + allow_interspersed_args=False, Click
         does NOT consume the ``--`` end-of-options separator -- it lands
         in ctx.args verbatim. exec_cmd strips a single leading ``--`` so
-        the conventional ``klangkc exec ws -- echo hi`` works instead of
+        the conventional ``klangk exec ws -- echo hi`` works instead of
         trying to run ``--`` as a command.
         """
         from klangk.cli import main
@@ -2456,13 +2456,13 @@ class TestMainCLI:
         # #1041: sync uses ``exec --raw`` as the rsync transport so the
         # remote command runs raw (no login shell) -- a ~/.profile that
         # prints would otherwise corrupt the binary rsync stream.
-        assert "klangkc exec --raw" in " ".join(cmd)
+        assert "klangk exec --raw" in " ".join(cmd)
 
     def test_sync_no_rsync(self, logged_in_cfg):
         from klangk.cli import main
 
         def which_no_rsync(name):
-            return "/usr/bin/klangkc" if name == "klangkc" else None
+            return "/usr/bin/klangk" if name == "klangk" else None
 
         ctx = MagicMock()
         ctx.args = []
@@ -3110,7 +3110,7 @@ class TestSandboxCommand:
         call_kwargs = client.create_workspace.call_args
         assert call_kwargs[0][0] == "myws"
         assert "Creating workspace" in result.output
-        assert "klangkc shell" in result.output
+        assert "klangk shell" in result.output
 
     def test_existing_workspace_errors_without_force(
         self, logged_in_cfg, tmp_path

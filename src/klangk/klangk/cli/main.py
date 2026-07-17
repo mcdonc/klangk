@@ -63,7 +63,7 @@ from .sandbox import (
 )
 
 app = typer.Typer(
-    name="klangkc",
+    name="klangk",
     help="Klangk Client",
     rich_markup_mode="rich",
 )
@@ -108,7 +108,7 @@ def server_url() -> str:
         return active
     _err.print(
         "[red]No server configured[/red] — run"
-        " [bold]klangkc login <server>[/bold] first,"
+        " [bold]klangk login <server>[/bold] first,"
         " or pass [bold]--server[/bold]."
     )
     raise typer.Exit(code=1)
@@ -130,7 +130,7 @@ def require_auth() -> None:
 
     In ``none`` (no-auth) mode the server freely issues a token for the
     seeded default user, so any command auto-logs in on first run rather
-    than demanding a prior ``klangkc login`` (#1374). The server's mode is
+    than demanding a prior ``klangk login`` (#1374). The server's mode is
     probed live (not cached) so a mode switch takes effect immediately:
     flipping none->password after a command auto-logged in still leaves
     that token valid until it expires, but a *fresh* command with no
@@ -143,7 +143,7 @@ def require_auth() -> None:
     if _maybe_none_login(state, url):
         return
     _err.print(
-        "[red]Not logged in[/red] — run [bold]klangkc login[/bold] first."
+        "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
     )
     raise typer.Exit(code=1)
 
@@ -417,7 +417,7 @@ def list_workspaces(
 def create(
     name: str = typer.Argument(..., help="Workspace name"),
     image: str | None = typer.Option(
-        None, "--image", help="Container image to use (see `klangkc images`)"
+        None, "--image", help="Container image to use (see `klangk images`)"
     ),
     auto_start: bool = typer.Option(
         False,
@@ -436,7 +436,7 @@ def create(
         None,
         "--command",
         "-c",
-        help="Service shell command (see `klangkc edit --command`).",
+        help="Service shell command (see `klangk edit --command`).",
     ),
     mount: list[str] | None = typer.Option(
         None,
@@ -949,7 +949,7 @@ def shell(
     token = _state().get_token(server_url())
     if not token:  # pragma: no cover
         _err.print(
-            "[red]Not logged in[/red] — run [bold]klangkc login[/bold] first."
+            "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
         )  # pragma: no cover
         raise typer.Exit(code=1)  # pragma: no cover
 
@@ -965,7 +965,7 @@ def shell(
     else:
         workspaces = client.list_workspaces(all_pages=True)
         if not workspaces:
-            typer.echo("No workspaces found — create one with klangkc create.")
+            typer.echo("No workspaces found — create one with klangk create.")
             raise typer.Exit(code=1)
         if len(workspaces) == 1:
             ws = workspaces[0]
@@ -1004,7 +1004,7 @@ def shell(
         drain_stdin()
         if e.response.status_code in (4001, 4002):
             _err.print(
-                "[red]Session expired. Run `klangkc login`"
+                "[red]Session expired. Run `klangk login`"
                 " to re-authenticate.[/red]"
             )
         else:
@@ -1199,7 +1199,7 @@ def monitor(
         None,
         help=(
             "Optional command to run for each event. Pass it after '--' "
-            "so its own flags aren't parsed by klangkc."
+            "so its own flags aren't parsed by klangk."
         ),
     ),
     event_type: list[str] = typer.Option(
@@ -1267,19 +1267,19 @@ def monitor(
 
     \b
     Examples:
-      klangkc monitor                                # stream all events
-      klangkc monitor --type service_health | jq .   # pretty health events
-      klangkc monitor --type service_health -- sh -c \
+      klangk monitor                                # stream all events
+      klangk monitor --type service_health | jq .   # pretty health events
+      klangk monitor --type service_health -- sh -c \
         '[ "$KLANGK_HEALTHY" = false ] && notify-send "Service unhealthy"'
-      klangkc monitor --type service_health -- sh -c \
+      klangk monitor --type service_health -- sh -c \
         '[ "$KLANGK_RUNNING" = false ] && echo "container stopped"'
-      klangkc monitor --workspace <id> --type service_health
+      klangk monitor --workspace <id> --type service_health
     """
     require_auth()
     surl = server_url()
     token = _state().get_token(surl)
     if not token:  # pragma: no cover  # require_auth already guards this
-        _err.print("[red]Not logged in. Run `klangkc login` first.[/red]")
+        _err.print("[red]Not logged in. Run `klangk login` first.[/red]")
         raise typer.Exit(code=1)
     effective_max = 0 if no_reconnect else max_reconnects
     try:
@@ -1399,12 +1399,12 @@ def sandbox(
 
     Creates the workspace with the configured image, mounts, and
     volumes, copies files, and runs the setup script.  Use
-    ``klangkc shell`` afterwards to connect.
+    ``klangk shell`` afterwards to connect.
     """
     token = _state().get_token(server_url())
     if not token:  # pragma: no cover
         _err.print(
-            "[red]Not logged in[/red] — run [bold]klangkc login[/bold] first."
+            "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
         )
         raise typer.Exit(code=1)
 
@@ -1474,7 +1474,7 @@ def sandbox(
             if e.response.status_code in (4001, 4002):
                 _err.print(
                     "[red]Session expired.[/red] Run"
-                    " [bold]klangkc login[/bold] to re-authenticate."
+                    " [bold]klangk login[/bold] to re-authenticate."
                 )
                 raise typer.Exit(code=1) from None
             raise
@@ -1483,7 +1483,7 @@ def sandbox(
             raise typer.Exit(code=1) from None
 
     _err.print(
-        f"[green]Done.[/green] Run [bold]klangkc shell"
+        f"[green]Done.[/green] Run [bold]klangk shell"
         f" {workspace}[/bold] to connect."
     )
 
@@ -1895,17 +1895,17 @@ def exec_cmd(
     it sources ``~/.profile`` and sees the same environment an
     interactive terminal does -- PATH additions, tool homes
     (OPENCLAW_HOME, nvm/asdf), etc. (#1041). Pass ``--raw`` to run raw
-    argv with no shell (used by ``klangkc sync``'s rsync transport).
+    argv with no shell (used by ``klangk sync``'s rsync transport).
 
     Also usable as an rsync transport:
-    rsync -avz -e "klangkc exec --raw" src/ ws:/dest/
+    rsync -avz -e "klangk exec --raw" src/ ws:/dest/
     """
     require_auth()
 
     command = ctx.args
     # With allow_extra_args + allow_interspersed_args=False, Click does
     # NOT consume the ``--`` end-of-options separator -- it lands in
-    # ctx.args verbatim (verified), so ``klangkc exec ws -- echo hi``
+    # ctx.args verbatim (verified), so ``klangk exec ws -- echo hi``
     # would try to run ``--`` as a command. Strip a single leading
     # ``--`` so the conventional separator works. A ``--`` elsewhere is
     # left alone (it is then a real command argument).
@@ -1960,17 +1960,17 @@ def sync(
 
     Examples:
 
-        klangkc sync ~/project my-workspace:/work/project
+        klangk sync ~/project my-workspace:/work/project
 
-        klangkc sync my-workspace:/work/output ~/output
+        klangk sync my-workspace:/work/output ~/output
 
-        klangkc sync ~/src ws:/work/src --delete --exclude .git
+        klangk sync ~/src ws:/work/src --delete --exclude .git
     """
     require_auth()
 
-    klangkc_bin = shutil.which("klangkc")
-    if not klangkc_bin:  # pragma: no cover
-        _err.print("[red]Cannot find klangkc in PATH[/red]")
+    klangk_bin = shutil.which("klangk")
+    if not klangk_bin:  # pragma: no cover
+        _err.print("[red]Cannot find klangk in PATH[/red]")
         raise typer.Exit(code=1)
 
     rsync_bin = shutil.which("rsync")
@@ -1987,7 +1987,7 @@ def sync(
         # shell): rsync's binary protocol must not be corrupted by a
         # ~/.profile that prints to stdout, and rsync shell-quotes its
         # argv so a non-login round-trips cleanly. See #1041.
-        f"{klangkc_bin} exec --raw",
+        f"{klangk_bin} exec --raw",
         *ctx.args,
         src,
         dest,

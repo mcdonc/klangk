@@ -196,7 +196,7 @@ def decode_token_claims(token: str) -> dict:
 
     The CLI already trusts the token it holds (it came from a successful
     login), so signature verification adds nothing for read-only local
-    use like reading the ``sub`` (user id) claim in ``klangkc status``.
+    use like reading the ``sub`` (user id) claim in ``klangk status``.
     Returns ``{}`` on any decode failure.
     """
     try:
@@ -299,7 +299,7 @@ class KlangkClient:
     def check_auth(self, resp: httpx.Response) -> None:
         """Raise AuthError if the server returned 401."""
         if resp.status_code == 401:
-            raise AuthError("Session expired — run `klangkc login`")
+            raise AuthError("Session expired — run `klangk login`")
 
     @staticmethod
     def _raise_for_status(resp: httpx.Response) -> None:
@@ -782,7 +782,7 @@ async def ws_shell(
         local_agent_sock = os.environ.get("SSH_AUTH_SOCK")
         _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
         if _debug_agent:  # pragma: no cover
-            _agent_log = os.path.expanduser("~/.klangkc-ssh-agent.log")
+            _agent_log = os.path.expanduser("~/.klangk-ssh-agent.log")
             _fh = logging.FileHandler(_agent_log, mode="w")
             _fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
             logger.addHandler(_fh)
@@ -1249,12 +1249,12 @@ class TerminalSession(_ShellSession):
                         )
                     else:
                         self.stdout.write(
-                            "\r\nSession expired. Run `klangkc login`"
+                            "\r\nSession expired. Run `klangk login`"
                             " to re-authenticate.\r\n"
                         )
                 elif _code in (4001, 4002):
                     self.stdout.write(
-                        "\r\nSession expired. Run `klangkc login` to"
+                        "\r\nSession expired. Run `klangk login` to"
                         " re-authenticate.\r\n"
                     )
                 else:
@@ -1489,7 +1489,7 @@ async def exec_on_ws(
     Returns the remote process exit code.  ``login`` defaults to False
     (raw argv) -- this is the low-level primitive used by setup/file-copy
     paths that already build their own ``sh -c`` command; the
-    interactive ``klangkc exec`` entrypoint (ws_exec) overrides it to
+    interactive ``klangk exec`` entrypoint (ws_exec) overrides it to
     True. See #1041.
     """
     session = ExecSession(
@@ -1515,7 +1515,7 @@ async def ws_exec(
 
     Returns the remote process exit code.  Defaults to ``login=True``
     (run as a bash login shell so ~/.profile is sourced, like a
-    terminal -- #1041); ``klangkc exec --raw`` and the rsync transport
+    terminal -- #1041); ``klangk exec --raw`` and the rsync transport
     pass False for raw argv.
     """
     async with ws_connect(server_spec, token=token, max_size=max_size) as ws:

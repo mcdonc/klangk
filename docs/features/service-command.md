@@ -49,18 +49,18 @@ later in the workspace **Settings** tab.
 
 ### CLI
 
-`klangkc create` accepts `--command`/`-c` to set the service command at
-creation time. On an existing workspace, use `klangkc edit`:
+`klangk create` accepts `--command`/`-c` to set the service command at
+creation time. On an existing workspace, use `klangk edit`:
 
 ```bash
 # Set it when creating the workspace
-klangkc create my-workspace --command 'npm run dev'
+klangk create my-workspace --command 'npm run dev'
 
 # Set or change it on an existing workspace
-klangkc edit my-workspace --command 'npm run dev'
+klangk edit my-workspace --command 'npm run dev'
 
 # Clear it
-klangkc edit my-workspace --command ''
+klangk edit my-workspace --command ''
 ```
 
 ### Sandbox config
@@ -75,7 +75,7 @@ workspace:
 ## When does the command run?
 
 The service command runs whenever a **fresh container** is created
-for the workspace — at workspace creation, on `klangkc restart`, at
+for the workspace — at workspace creation, on `klangk restart`, at
 server boot (for [auto-start](#auto-start-workspaces) workspaces), or
 on the first connection that starts the container. It does **not**
 re-run on reconnect; if you disconnect and reconnect, you pick up the
@@ -87,7 +87,7 @@ running, or you may be at a bash prompt if it exited).
 If the workspace has [auto-start](workspaces.md#auto-start) enabled,
 the container also starts when the Klangk server starts (boot), so
 the service is already running before any user connects. When you
-later run `klangkc shell`, you walk up to the service already
+later run `klangk shell`, you walk up to the service already
 running in the `service-cmd` tab. Visitors who open the workspace see
 it as a shared terminal without any action from the owner.
 

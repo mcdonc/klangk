@@ -9,7 +9,7 @@
 #   record-cli.sh 3b     record Scene 3b only
 #   record-cli.sh all    record 2 → 3 → 3b in sequence
 #
-# State flow (the recording shell shares $HOME, so klangkc login state and the
+# State flow (the recording shell shares $HOME, so klangk login state and the
 # container layer persist between takes):
 #   Scene 2  prep: seed --reset (full repave → only potemkin remain) + logout
 #                 → records an on-camera login + create
@@ -59,7 +59,7 @@ SCENE="${1:-}"
 # Filter devenv shell's progress noise so only real output shows.
 quiet() { grep -vE "Validating|^•|Configuring|cachix|Evaluating|Loading|Running|✓ Running tasks|warning: Substituter|Using config|^✓ " || true; }
 
-kc() { devenv shell -- klangkc "$@" 2>&1 | quiet; }
+kc() { devenv shell -- klangk "$@" 2>&1 | quiet; }
 
 # Ensure the dedicated demo backend is up (start it if not). Idempotent.
 ensure_backend() {
@@ -83,7 +83,7 @@ current_user() {
 
 # Ensure we're logged in as $HERO WITHOUT tearing down containers.
 #
-# IMPORTANT: `klangkc logout` makes the backend stop the logging-out user's
+# IMPORTANT: `klangk logout` makes the backend stop the logging-out user's
 # containers (api/auth.logout -> session.logout_user -> stop_and_remove).
 # So a naive "logout then login" here would kill the openclaw container that
 # Scene 3 created and that Scene 3b must inherit ALREADY healthy (to show
@@ -99,7 +99,7 @@ ensure_logged_in() {
   fi
   echo "  [prep] login as $HERO (was: ${cur:-logged out})"
   [ -n "$cur" ] && kc logout "$SERVER" >/dev/null 2>&1 || true
-  printf "%s" "$PASS" | devenv shell -- klangkc login --password-file - "$SERVER" "$HERO" 2>&1 | quiet | tail -1
+  printf "%s" "$PASS" | devenv shell -- klangk login --password-file - "$SERVER" "$HERO" 2>&1 | quiet | tail -1
 }
 
 rm_ws() {

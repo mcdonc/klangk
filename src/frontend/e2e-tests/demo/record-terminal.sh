@@ -134,9 +134,9 @@ echo "  Xvfb up (pid $XVFB_PID)"
 # --- 2. tmux session (shared rc-file shell) + xterm ----------------------
 # Every pane — the session shell AND any `split-window` the driver creates —
 # runs `bash --rcfile` against one generated file, so they share an identical
-# setup: the klangk venv on PATH (so `klangkc` resolves), the clean `host $ `
+# setup: the klangk venv on PATH (so `klangk` resolves), the clean `host $ `
 # prompt (NOT devenv shell, so no powerline/starship banner to hide), the
-# forwarded SSH agent socket (so `klangkc shell -A` works), and a steady
+# forwarded SSH agent socket (so `klangk shell -A` works), and a steady
 # non-blinking cursor. Writing it once — instead of typing the exports into
 # the session via send-keys — keeps startup reliable and lets split panes
 # inherit the same environment with no extra typing on camera.

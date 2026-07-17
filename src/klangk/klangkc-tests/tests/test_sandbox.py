@@ -1,4 +1,4 @@
-"""Tests for klangkc sandbox config loading and path resolution."""
+"""Tests for klangk sandbox config loading and path resolution."""
 
 import pytest
 import yaml

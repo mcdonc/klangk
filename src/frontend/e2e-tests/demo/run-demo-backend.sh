@@ -12,7 +12,7 @@
 #
 #   backend (uvicorn):     127.0.0.1:$KLANGK_PORT  (.demo-env -> 8998; TCP because
 #                                                  KLANGK_LISTEN=127.0.0.1)
-#   nginx (klangkc target)::$KLANGK_EGRESS_PORT     (.demo-env -> 8996)
+#   nginx (klangk target)::$KLANGK_EGRESS_PORT     (.demo-env -> 8996)
 #   instance id:           "video"   (unique pid file + container labels)
 #
 # KLANGK_LISTEN=127.0.0.1 is load-bearing: post-#1400 the default listen is

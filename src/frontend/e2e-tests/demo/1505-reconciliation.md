@@ -113,7 +113,7 @@ single-quoted because `.demo-env` is `source`d by bash: unquoted
 
 ### 10. KLANGK_ALLOW_AUTOSTART=1 in .demo-env (run-demo-backend.sh)
 
-Scene 3 (`klangkc sandbox`) creates a workspace with `auto_start: true` from the
+Scene 3 (`klangk sandbox`) creates a workspace with `auto_start: true` from the
 sandbox config. The server rejects this with 400 unless `KLANGK_ALLOW_AUTOSTART=1`
 is set. Added to the managed `.demo-env` block and the idempotency guard.
 

@@ -1,4 +1,4 @@
-"""Tests for the klangkc CLI."""
+"""Tests for the klangk CLI."""
 
 import asyncio
 import json
@@ -1562,7 +1562,7 @@ class TestRequireAuthNoneMode:
         )
         monkeypatch.setattr(main, "_state_cache", None)
         # Server is already registered (active_server set) — mirroring the
-        # scoped behavior where `klangkc login <server>` registers it once.
+        # scoped behavior where `klangk login <server>` registers it once.
         state = CLIState()
         state.active_server = "http://localhost:8995"
         state.save()
@@ -2604,9 +2604,9 @@ class TestMisc:
         monkeypatch.setattr("klangk.cli.auth.fetch_config", lambda _: {})
 
     def test_auth_error_message(self):
-        err = AuthError("Session expired — run `klangkc login`")
+        err = AuthError("Session expired — run `klangk login`")
         assert "Session expired" in str(err)
-        assert "klangkc login" in str(err)
+        assert "klangk login" in str(err)
 
     def test_workspace_dataclass_fields(self):
         ws = Workspace(id="x", name="y", created_at="z")
@@ -3153,7 +3153,7 @@ class TestExecSessionRunClosedWs:
 
 
 class _FakeMonitorConn:
-    """Async-iterator WS stub for ``klangkc monitor``."""
+    """Async-iterator WS stub for ``klangk monitor``."""
 
     def __init__(self, messages: list[str]):
         self._messages = list(messages)

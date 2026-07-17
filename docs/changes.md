@@ -120,7 +120,7 @@ invitations send` stay email-only (a deliverable address is required);
   `<KLANGK_STATE_DIR>/plugins` when unset; an explicit value always wins
   (#1461, #1506). `klangkd` no longer mutates `os.environ` to inject a
   `state_dir` default; the field enforces its own requirement (#1459).
-- **CLI transport resolver:** `klangkc --server` now accepts a Unix socket
+- **CLI transport resolver:** `klangk --server` now accepts a Unix socket
   path (e.g. `/tmp/klangk.sock`) in addition to `http(s)://` URLs. All HTTP
   and WebSocket connections route through a single transport resolver that
   picks UDS or TCP based on the server spec (#1399).
@@ -133,7 +133,7 @@ invitations send` stay email-only (a deliverable address is required);
   bind without `KLANGK_ALLOW_INSECURE_NO_AUTH` — socket file permissions
   (0700 parent dir) provide the same trust boundary as loopback (#1399).
 - **Direct UDS login:** `client_is_loopback` treats direct UDS connections
-  (no nginx proxy) as loopback, so `klangkc login /path/to/sock` works in
+  (no nginx proxy) as loopback, so `klangk login /path/to/sock` works in
   no-auth mode (#1399).
 - **Per-test timeout for the Python test suites** — both backend and CLI
   suites now run with `pytest-timeout` (`--timeout=60`). A hanging test
@@ -150,6 +150,13 @@ invitations send` stay email-only (a deliverable address is required);
   set (#1558).
 
 ### Changed
+
+- **CLI command renamed `klangkc` → `klangk` (#1615).** One `pip install
+klangk` now yields `klangk` (client) and `klangkd` (server), matching the
+  unified distribution name. The `klangkc` entrypoint is removed; the Typer
+  app name, all help/error text, docs, demo scripts, and backend comment
+  references are updated to the new name. The Python module (`klangk.cli`)
+  and the `klangkc-tests` test directory are unchanged.
 
 - **`frontend_dir` default moved in-package (#1600).** The default changed
   from the repo-relative `src/frontend/build/web` (which only worked under an
@@ -291,25 +298,25 @@ invitations send` stay email-only (a deliverable address is required);
   nginx per-location `allow 127.0.0.1/::1; deny all` ACL keep `/auth/local`
   unreachable from workspace containers, and the server refuses to start in
   `none` mode on a non-loopback bind unless `KLANGK_ALLOW_INSECURE_NO_AUTH=1`
-  is set. The CLI (`klangkc`) auto-logs in on first command run with no prior
-  `klangkc login`; the server's auth mode is probed live (not cached) so a
+  is set. The CLI (`klangk`) auto-logs in on first command run with no prior
+  `klangk login`; the server's auth mode is probed live (not cached) so a
   mode switch takes effect immediately. See [Auth Modes](features/auth-modes.md)
   for the full mode-switching guide.
-- **`klangkc admin` command group** (#1374): site-wide administration now
+- **`klangk admin` command group** (#1374): site-wide administration now
   has a dedicated CLI surface — `admin users ls`, `admin users
 set-password <email>` (set a known password for the default user — whose
   password is random unless `KLANGK_DEFAULT_PASSWORD` was set — before
   flipping `none` -> `password`), and `admin invitations send/ls`. The
   top-level `invite`/`invitations` commands moved under `admin invitations`.
-- **`klangkc status`** now reports your user id and admin status (derived
+- **`klangk status`** now reports your user id and admin status (derived
   from `/my-permissions`).
 
 ### Breaking
 
-- **One `klangk` distribution ships the renamed server package `klangkd` and the folded-in client `klangkc` (#1606).** The backend package is renamed `klangk_backend` → `klangkd` and the standalone `klangkc` distribution is retired — the client is promoted to a sibling top-level package under the same source root. One `pip install klangk` yields both `klangkd` (server) and `klangkc` (client); the entrypoint command names are unchanged. The distribution name (`klangk`) is distinct from the import packages (`klangkd` / `klangkc`), like `python-dateutil` → `dateutil`.
+- **One `klangk` distribution ships the renamed server package `klangkd` and the folded-in client `klangk` (#1606).** The backend package is renamed `klangk_backend` → `klangkd` and the standalone `klangkc` distribution is retired — the client is promoted to a sibling top-level package under the same source root. One `pip install klangk` yields both `klangkd` (server) and `klangk` (client); the entrypoint command names are unchanged. The distribution name (`klangk`) is distinct from the import packages (`klangkd` / `klangk`), like `python-dateutil` → `dateutil`.
   - **Integrators** who `import klangk_backend` (e.g. OIDC login hooks) must update to `import klangkd`.
   - **The `klangkc` PyPI distribution is retired** in favor of `klangk`; the `cli-v*` tag line and `cli-publish.yml` workflow are removed. Both binaries release together off the single `v*` tag line.
-  - **Test layout**: tests are split into per-package suites — `src/klangk/klangkd-tests/{tests,e2e-tests}` (server) and `src/klangk/klangkc-tests/{tests,e2e-tests}` (client) — as hyphenated siblings of the package dirs so they don't ship in the wheel. Both unit suites share one `--cov=klangkd --cov=klangkc` 100% gate (run together via `test-backend`).
+  - **Test layout**: tests are split into per-package suites — `src/klangk/klangkd-tests/{tests,e2e-tests}` (server) and `src/klangk/klangkc-tests/{tests,e2e-tests}` (client) — as hyphenated siblings of the package dirs so they don't ship in the wheel. Both unit suites share one `--cov=klangkd --cov=klangk` 100% gate (run together via `test-backend`).
 
 - **The listen/port settings model is restructured** (#1542):
   - `KLANGK_NGINX_PORT` → rename to `KLANGK_EGRESS_PORT` (deprecated alias
@@ -366,10 +373,10 @@ set-password <email>` (set a known password for the default user — whose
   bypassing nginx — must set `KLANGK_LISTEN=0.0.0.0` to restore the old
   behavior. Applies to both the devenv dev server and the host container.
   (#1375)
-- **`klangkc invite` moved under the `admin` group** (#1374). The top-level
-  `klangkc invite <email>` command is gone, with no backward-compat alias.
-  Use `klangkc admin invitations send <email>` (and list with
-  `klangkc admin invitations ls`). Site-wide administration — users and
+- **`klangk invite` moved under the `admin` group** (#1374). The top-level
+  `klangk invite <email>` command is gone, with no backward-compat alias.
+  Use `klangk admin invitations send <email>` (and list with
+  `klangk admin invitations ls`). Site-wide administration — users and
   invitations — now has a dedicated `admin` CLI surface matching the
   `terminal`/`volumes` noun-subgroup convention.
 - **`klangkd` binds a UDS; `scripts/nginx.sh` retired** (#1396). uvicorn now

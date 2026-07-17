@@ -926,7 +926,7 @@ class TestStdoutLoopAuthClose:
 
         output = "".join(captured)
         assert "Session expired" in output
-        assert "klangkc login" in output
+        assert "klangk login" in output
 
 
 class TestStdinTerminalResponseFilter:

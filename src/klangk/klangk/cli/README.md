@@ -1,4 +1,4 @@
-# klangkc
+# klangk
 
 CLI client for [Klangk](https://github.com/mcdonc/klangk), a multi-user
 containerized development environment.
@@ -6,7 +6,7 @@ containerized development environment.
 ## Installation
 
 ```bash
-pip install klangkc
+pip install klangk
 ```
 
 Requires Python 3.12+.
@@ -14,10 +14,10 @@ Requires Python 3.12+.
 ## Quick start
 
 ```bash
-klangkc login admin@example.com        # authenticate
-klangkc ls                             # list workspaces
-klangkc create my-project              # create a workspace
-klangkc shell my-project               # drop into a shell
+klangk login admin@example.com        # authenticate
+klangk ls                             # list workspaces
+klangk create my-project              # create a workspace
+klangk shell my-project               # drop into a shell
 ```
 
 ## Features

@@ -1,11 +1,11 @@
 [project]
 name = "klangk"
 dynamic = ["version"]
-description = "Klangk: multi-user Pi coding agent — server (klangkd) and client (klangkc)"
+description = "Klangk: multi-user Pi coding agent — server (klangkd) and client (klangk)"
 requires-python = ">=3.12"
 # One unified wheel ships a single top-level package (klangk) with the CLI
 # folded in as klangk.cli.  One ``pip install klangk`` yields both the
-# ``klangkd`` server and ``klangkc`` client binaries (#1606).
+# ``klangkd`` server and ``klangk`` client binaries (#1606).
 dependencies = [
     "fastapi>=0.115.0",
     "pydantic-settings>=2.5.0",
@@ -35,7 +35,7 @@ dependencies = [
 # User-facing command names are unchanged — they're entrypoint names,
 # distinct from the package names. One ``pip install klangk`` yields both.
 klangkd = "klangk.launcher:app"
-klangkc = "klangk.cli.main:main"
+klangk = "klangk.cli.main:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
