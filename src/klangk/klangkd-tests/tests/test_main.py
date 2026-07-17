@@ -1563,6 +1563,20 @@ class TestBuildApp:
         app = main.build_app(make_settings({}))
         assert model.AgentPrincipalError in app.exception_handlers
 
+    def test_build_app_default_engine_is_nginx(self):
+        """KLANGK_PROXY_ENGINE unset → the nginx ProxyWatchdog (#1559)."""
+        from klangk.proxy import ProxyWatchdog
+
+        app = main.build_app(make_settings({}))
+        assert isinstance(app.state.proxy_watchdog, ProxyWatchdog)
+
+    def test_build_app_caddy_engine_wires_caddy_watchdog(self):
+        """KLANGK_PROXY_ENGINE=caddy → the Caddy CaddyWatchdog (#1559)."""
+        from klangk.caddy import CaddyWatchdog
+
+        app = main.build_app(make_settings({"KLANGK_PROXY_ENGINE": "caddy"}))
+        assert isinstance(app.state.proxy_watchdog, CaddyWatchdog)
+
     def test_build_app_warns_when_frontend_dir_absent(self, caplog):
         """build_app warns when frontend_dir doesn't exist (#1600).
 

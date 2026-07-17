@@ -53,6 +53,7 @@ in
       git # "error: Failed to find git" during devenv:git-hooks:install
       gzip
       gnutar
+      caddy # reverse-proxy engine behind KLANGK_PROXY_ENGINE=caddy (#1559)
       nginx
       podman
       ruff

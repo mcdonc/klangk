@@ -25,6 +25,7 @@ from . import (
     files,
     model,
     proxy as proxy_mod,
+    caddy as caddy_mod,
     oidc,
     plugins,
     podman,
@@ -65,6 +66,10 @@ _NON_RELOADABLE_SETTINGS: tuple[tuple[str, str], ...] = (
     ("listen", "the HTTP listener is already bound"),
     ("data_dir", "the DB engine is already open"),
     ("state_dir", "instance state is already on disk"),
+    # The proxy engine is selected once at process start (build_app picks
+    # ProxyWatchdog vs CaddyWatchdog); a SIGHUP can't swap the child binary
+    # or the render/delivery path in place (#1559).
+    ("proxy_engine", "the proxy child process is already spawned"),
 )
 
 
@@ -799,8 +804,15 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # module global. The lifespan reads app.state.container_registry.
     app.state.container_registry = container.ContainerRegistry(app)
     # Slice 2b (#1463): proxy watchdog is an owned instance with start/stop
-    # lifecycle methods called by the lifespan.
-    app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
+    # lifecycle methods called by the lifespan. The engine is selected once
+    # here by KLANGK_PROXY_ENGINE (#1559): ``nginx`` (default, the
+    # Python-owned nginx renderer) or ``caddy`` (Caddyfile rendered and
+    # pushed to Caddy's admin API over a UDS). Both expose the same
+    # start()/stop()/reconfigure() surface the lifespan + SIGHUP path use.
+    if settings.proxy_engine == "caddy":
+        app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
+    else:
+        app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
     # #1480: Terminal(app_state) groups the ~25 tmux-session
     # management functions that share a Podman dependency. Reaches podman,
     # the registry, and settings through the single app_state reference.
