@@ -27,18 +27,11 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   bool _loading = true;
   String? _error;
   String? _saveMessage;
-  Timer? _saveMessageTimer;
 
   @override
   void initState() {
     super.initState();
     _loadData();
-  }
-
-  @override
-  void dispose() {
-    _saveMessageTimer?.cancel();
-    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -113,19 +106,9 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     if (resp.statusCode == 200) {
       setState(() => _saveMessage = 'Settings saved');
       _loadData();
-      // coverage:ignore-start
-      // The 2s auto-clear is a fire-and-forget Timer. Its closure's
-      // coverage attribution races teardown on slow CI runners (the
-      // Timer fires after unmount) and intermittently leaves a line in
-      // this block uncovered, flaking the 100% gate. dispose() cancels
-      // the Timer so there's no real setState-after-dispose; this whole
-      // trivial clear is excluded from coverage rather than gating the
-      // suite on Timer-fires-before-teardown timing.
-      _saveMessageTimer?.cancel();
-      _saveMessageTimer = Timer(const Duration(seconds: 2), () {
+      Future.delayed(const Duration(seconds: 2), () {
         if (mounted) setState(() => _saveMessage = null);
       });
-      // coverage:ignore-end
     } else {
       String detail;
       try {

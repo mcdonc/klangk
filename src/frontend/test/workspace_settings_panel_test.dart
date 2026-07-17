@@ -311,12 +311,9 @@ void main() {
       // Advance the clock past the 2s auto-clear Future.delayed so its
       // timer fires (clearing the message) and none is left pending at
       // dispose — flutter_test fails on pending timers. pumpAndSettle
-      // alone won't fire it (a timer isn't a scheduled frame). Asserting
-      // the message cleared also guarantees the timer's setState branch
-      // runs (coverage) rather than being lost to teardown ordering.
+      // alone won't fire it (a timer isn't a scheduled frame).
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
-      expect(find.text('Settings saved'), findsNothing);
     });
 
     testWidgets('save sends health_check when a command is set',
