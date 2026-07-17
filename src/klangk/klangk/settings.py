@@ -71,16 +71,15 @@ __all__ = [
 
 _CMD_TIMEOUT_SECONDS = 10
 
-# Default frontend dir: repo-relative build output (dev/devenv). Computed
-# from this module's location so it resolves identically whether running
-# from a checkout (exists -> UI mounted) or an installed package (absent ->
-# build_app's exists()-skip handles it). KLANGK_FRONTEND_DIR overrides (#1456).
-_DEFAULT_FRONTEND_DIR = str(
-    Path(__file__).resolve().parent.parent.parent
-    / "frontend"
-    / "build"
-    / "web"
-)
+# Default frontend dir: the built Flutter Web UI ships inside the wheel at
+# klangk/frontend (force-include, #1600), so an installed (non-editable)
+# package serves the UI out of the box. Resolved from this module's location
+# so it lands at <site-packages>/klangk/frontend for a wheel install.
+# Source-tree deployments (devenv, the host container) don't have the
+# in-package dir -- they set KLANGK_FRONTEND_DIR to the repo's
+# src/frontend/build/web (see devenv.nix, src/containers/host/Dockerfile).
+# KLANGK_FRONTEND_DIR always overrides (#1456).
+_DEFAULT_FRONTEND_DIR = str(Path(__file__).resolve().parent / "frontend")
 
 
 def _read_file(value: str) -> tuple[str | None, OSError | None]:
@@ -457,9 +456,12 @@ class KlangkSettings(BaseSettings):
     # KLANGK_TRUST_OUTER_PROXY env var the old nginx.sh read.
     trust_outer_proxy: str = ""
     # frontend_dir: directory the built Flutter Web UI is served from
-    # (#1456). Defaults to the repo-relative build path (src/frontend/build/web,
-    # computed above as _DEFAULT_FRONTEND_DIR) so dev/devenv keeps working
-    # unchanged; klangkd deployments override with the installed path.
+    # (#1456, #1600). Defaults to the in-package location (klangk/frontend,
+    # computed above as _DEFAULT_FRONTEND_DIR) so a packaged/installed
+    # klangkd serves the UI out of the box; source-tree deployments (devenv,
+    # the host container) override via KLANGK_FRONTEND_DIR to point at the
+    # repo's src/frontend/build/web. The UI is mounted only when the dir
+    # exists; build_app logs a warning otherwise (#1600).
     frontend_dir: str = _DEFAULT_FRONTEND_DIR
     # ws_msg_size_max: max WebSocket message size (bytes), passed to uvicorn.
     # Default 16 MiB; klangkd reads it through the typed config (config file +

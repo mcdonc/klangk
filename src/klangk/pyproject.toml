@@ -61,6 +61,16 @@ raw-options.root = "../.."
 raw-options.tag_regex = "^v(?P<version>[vV]?\\d+(?:\\.\\d+){0,2}[^\\+]*)(?:\\+.*)?$"
 raw-options.git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "v*"]
 
+# Ship the compiled Flutter web build inside the wheel at klangk/frontend so
+# a `pip install klangk` deployment serves the UI out of the box (#1600).
+# Implemented by a build hook (hatch_build_frontend.py) rather than a static
+# `force-include`: a static force-include is strict for every build mode and
+# would break editable installs (devenv, CI) where the gitignored frontend
+# artifact is absent. The hook includes it when present and *requires* it
+# only for a non-editable wheel build (the release guard).
+[tool.hatch.build.hooks.custom]
+path = "hatch_build_frontend.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["klangk"]
 

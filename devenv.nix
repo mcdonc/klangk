@@ -207,6 +207,13 @@ in
   # state_dir: runtime state (UDS, rendered nginx.conf, pid). Devenv pins it
   # to $DEVENV_STATE/klangk; the field default is /tmp/klangk-state (#1459).
   env.KLANGK_STATE_DIR = stateDir;
+  # Frontend dir: the backend runs editable in devenv (PYTHONPATH on the
+  # source tree), so the in-package default (klangk/frontend, #1600) does
+  # not exist. Point at the repo's Flutter web build output instead --
+  # produced by scripts/flutterbuildweb.sh before `devenv up`. Operators
+  # running an installed wheel leave this unset and get the in-package
+  # default (#1456, #1600).
+  env.KLANGK_FRONTEND_DIR = config.devenv.root + "/src/frontend/build/web";
   # Docker build platform for klangk images. On Linux, default to the host
   # architecture so arm64 machines build/run natively instead of under amd64
   # emulation. The published GHCR base (klangk-workspace-base:latest) is

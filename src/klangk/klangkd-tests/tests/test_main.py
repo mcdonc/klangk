@@ -1386,6 +1386,39 @@ class TestBuildApp:
         app = main.build_app(make_settings({}))
         assert model.AgentPrincipalError in app.exception_handlers
 
+    def test_build_app_warns_when_frontend_dir_absent(self, caplog):
+        """build_app warns when frontend_dir doesn't exist (#1600).
+
+        A packaged install whose wheel lacked the Flutter artifact, or a
+        bad KLANGK_FRONTEND_DIR override, must be obvious instead of
+        silently serving an API-only app.
+        """
+        import logging
+
+        settings = make_settings(
+            {"KLANGK_FRONTEND_DIR": "/nonexistent/klangk/frontend"}
+        )
+        with caplog.at_level(logging.WARNING, logger=main.logger.name):
+            app = main.build_app(settings)
+        assert isinstance(app, FastAPI)
+        assert any(
+            "will not be served" in rec.message for rec in caplog.records
+        )
+        # No "/" static mount was added (starlette names it "frontend").
+        assert not [
+            r for r in app.routes if getattr(r, "name", "") == "frontend"
+        ]
+
+    def test_build_app_mounts_frontend_when_dir_exists(self, tmp_path):
+        """build_app mounts the UI when frontend_dir exists (#1600)."""
+        (tmp_path / "index.html").write_text("<html></html>")
+        settings = make_settings({"KLANGK_FRONTEND_DIR": str(tmp_path)})
+        app = main.build_app(settings)
+        mounts = [
+            r for r in app.routes if getattr(r, "name", "") == "frontend"
+        ]
+        assert mounts, "expected '/' static mount when frontend dir exists"
+
     def test_no_module_level_app_attribute(self):
         """main.py no longer exposes an ``app`` attribute (#1454).
 

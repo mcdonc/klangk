@@ -85,6 +85,11 @@ ENV KLANGK_IMAGE_NAME=klangk-workspace
 ENV KLANGK_VERSION_FILE=/home/klangk/version.json
 # Where klangkd writes the UDS + rendered nginx.conf
 ENV KLANGK_STATE_DIR=/tmp/klangk-state
+# The image runs klangkd from the source tree
+# (PYTHONPATH=/home/klangk/src/klangk), not an installed wheel, so the
+# in-package default (klangk/frontend, #1600) doesn't apply -- point at the
+# Flutter web build copied into the image above.
+ENV KLANGK_FRONTEND_DIR=/home/klangk/src/frontend/build/web
 
 USER klangk
 WORKDIR /home/klangk
