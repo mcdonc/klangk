@@ -163,6 +163,183 @@ class TestSeedDefaultUser:
         assert "Default admin password for" in captured.err
 
 
+class TestSeedDefaultUserGating:
+    """#1622: seed exactly once, gated on admin-group emptiness.
+
+    Once the ``admin`` group has ≥1 member, ``seed_default_user`` must not
+    create a new admin or modify any existing user, no matter what
+    ``KLANGK_DEFAULT_*`` says — closes the config-mints-admin hole and
+    prevents lockout.
+    """
+
+    async def test_does_not_create_when_admin_group_has_member(
+        self, db, app_state
+    ):
+        """Legacy/post-first-boot install: an admin already exists → seed is
+        a no-op on users, regardless of KLANGK_DEFAULT_USER."""
+        # Seed once to populate the admin group.
+        await _lifecycle(
+            make_settings(
+                {
+                    "KLANGK_DEFAULT_USER": "first@example.com",
+                    "KLANGK_DEFAULT_PASSWORD": "first-pass",
+                }
+            )
+        ).seed_default_user()
+        original = await app_state.state.model.users.get_user_by_email(
+            "first@example.com"
+        )
+        assert original is not None
+
+        # Now change KLANGK_DEFAULT_USER and re-seed → must NOT create a
+        # second admin from the new config.
+        await _lifecycle(
+            make_settings(
+                {
+                    "KLANGK_DEFAULT_USER": "second@example.com",
+                    "KLANGK_DEFAULT_PASSWORD": "second-pass",
+                }
+            )
+        ).seed_default_user()
+        assert (
+            await app_state.state.model.users.get_user_by_email(
+                "second@example.com"
+            )
+            is None
+        )
+        # Original admin untouched.
+        assert (
+            await app_state.state.model.users.get_user_by_email(
+                "first@example.com"
+            )
+        )["id"] == original["id"]
+
+    async def test_does_not_modify_existing_admin_when_config_changes(
+        self, db, app_state
+    ):
+        """Changing KLANGK_DEFAULT_* after first boot cannot clobber the
+        existing admin's email/password (no lockout)."""
+        await _lifecycle(
+            make_settings(
+                {
+                    "KLANGK_DEFAULT_USER": "keep@example.com",
+                    "KLANGK_DEFAULT_PASSWORD": "original-pass",
+                }
+            )
+        ).seed_default_user()
+        admin = await app_state.state.model.users.get_user_by_email(
+            "keep@example.com"
+        )
+        assert admin is not None
+        original_hash = admin["password_hash"]
+
+        # Re-seed with a different email/password in config.
+        await _lifecycle(
+            make_settings(
+                {
+                    "KLANGK_DEFAULT_USER": "changed@example.com",
+                    "KLANGK_DEFAULT_PASSWORD": "changed-pass",
+                }
+            )
+        ).seed_default_user()
+
+        admin_after = await app_state.state.model.users.get_user_by_email(
+            "keep@example.com"
+        )
+        assert admin_after is not None
+        # Email, id, and password hash all unchanged.
+        assert admin_after["id"] == admin["id"]
+        assert admin_after["email"] == "keep@example.com"
+        assert admin_after["password_hash"] == original_hash
+
+    async def test_reseeds_after_admin_group_emptied(self, db, app_state):
+        """Delete-resurrection at the group level: deleting the admin user
+        account (which cascades their group membership) + restart re-seeds
+        from KLANGK_DEFAULT_* (the gate is group membership, not a tombstone).
+        The operator "reset to seeded config" flow is deleting the admin
+        account, not demoting it."""
+        await _lifecycle(
+            make_settings(
+                {
+                    "KLANGK_DEFAULT_USER": "resurrect@example.com",
+                    "KLANGK_DEFAULT_PASSWORD": "resurrect-pass",
+                }
+            )
+        ).seed_default_user()
+        admin = await app_state.state.model.users.get_user_by_email(
+            "resurrect@example.com"
+        )
+        admin_group = await app_state.state.model.users.get_group_by_name(
+            "admin"
+        )
+        assert admin is not None and admin_group is not None
+
+        # Delete the admin user account → CASCADE empties the admin group
+        # → next seed re-creates from config (the email is gone too, so no
+        # UNIQUE collision).
+        await app_state.state.model.users.delete_user(admin["id"])
+        assert (
+            await app_state.state.model.users.get_group_members(
+                admin_group["id"]
+            )
+            == []
+        )
+        await _lifecycle(
+            make_settings(
+                {
+                    "KLANGK_DEFAULT_USER": "resurrect@example.com",
+                    "KLANGK_DEFAULT_PASSWORD": "resurrect-pass",
+                }
+            )
+        ).seed_default_user()
+
+        # A member is back in the admin group.
+        members = await app_state.state.model.users.get_group_members(
+            admin_group["id"]
+        )
+        assert len(members) == 1
+
+    async def test_seed_creates_admin_on_truly_fresh_db(self, db, app_state):
+        """Fresh install (empty admin group) → seed creates, mirroring
+        pre-#1622 first-boot behavior."""
+        admin_group = await app_state.state.model.users.get_group_by_name(
+            "admin"
+        )
+        # admin group may not exist yet; ensure it then assert empty.
+        if admin_group is None:
+            admin_group = await app_state.state.model.users.create_group(
+                "admin", description="Administrators"
+            )
+        assert (
+            await app_state.state.model.users.get_group_members(
+                admin_group["id"]
+            )
+            == []
+        )
+        await _lifecycle(
+            make_settings(
+                {
+                    "KLANGK_DEFAULT_USER": "fresh@example.com",
+                    "KLANGK_DEFAULT_PASSWORD": "fresh-pass",
+                }
+            )
+        ).seed_default_user()
+        assert (
+            await app_state.state.model.users.get_user_by_email(
+                "fresh@example.com"
+            )
+            is not None
+        )
+        assert (
+            len(
+                await app_state.state.model.users.get_group_members(
+                    admin_group["id"]
+                )
+            )
+            == 1
+        )
+
+
 # --- no-auth bind safety gate (#1374) ---
 
 
