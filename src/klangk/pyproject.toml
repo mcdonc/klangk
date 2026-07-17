@@ -1,0 +1,69 @@
+[project]
+name = "klangk"
+dynamic = ["version"]
+description = "Klangk: multi-user Pi coding agent — server (klangkd) and client (klangkc)"
+requires-python = ">=3.12"
+# One unified wheel ships a single top-level package (klangk) with the CLI
+# folded in as klangk.cli.  One ``pip install klangk`` yields both the
+# ``klangkd`` server and ``klangkc`` client binaries (#1606).
+dependencies = [
+    "fastapi>=0.115.0",
+    "pydantic-settings>=2.5.0",
+    "typer[all]>=0.12.0",
+    "uvicorn[standard]>=0.32.0",
+    "websockets>=14.0",
+    "aiosqlite>=0.20.0",
+    "sqlalchemy[asyncio]>=2.0",
+    "bcrypt>=4.0.0",
+    "python-jose[cryptography]>=3.3.0",
+    "cryptography>=48.0.1",
+    "python-multipart>=0.0.30",
+    "starlette>=1.3.1",
+    "aiosmtplib>=3.0.0",
+    "jinja2>=3.1",
+    "logfire[fastapi]>=3.0.0",
+    "pyyaml>=6.0",
+    "httpx>=0.28.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "pytest-xdist>=3.0.0",
+    "pytest-timeout>=2.3.0",
+]
+
+[project.scripts]
+# User-facing command names are unchanged — they're entrypoint names,
+# distinct from the package names. One ``pip install klangk`` yields both.
+klangkd = "klangk.launcher:app"
+klangkc = "klangk.cli.main:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "--capture=no --cov=klangk --cov-report=term-missing --no-cov-on-fail --cov-fail-under=100 --timeout=60"
+# Treat new warnings as errors so they can't re-accumulate (#1493). The
+# two ignores are pre-existing mock-induced GC artifacts (MagicMock stubs
+# whose coroutine objects are collected in a later test) -- not real bugs
+# -- and are mirrored in the repo-root pyproject for the combined run.
+filterwarnings = [
+    "error",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+    "ignore:coroutine .* was never awaited:RuntimeWarning",
+]
+
+[tool.ruff]
+line-length = 79
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0.dev0"
+raw-options.root = "../.."
+raw-options.tag_regex = "^v(?P<version>[vV]?\\d+(?:\\.\\d+){0,2}[^\\+]*)(?:\\+.*)?$"
+raw-options.git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "v*"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["klangk"]
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"

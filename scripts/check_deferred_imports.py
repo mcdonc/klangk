@@ -5,8 +5,8 @@ Imports inside functions, methods, or branches are flagged. Add
 ``# noqa: allow-deferred-import`` on the import line to suppress.
 
 Usage:
-    check_imports.py src/backend/klangk_backend src/cli/klangkc
-    check_imports.py src/backend/klangk_backend/main.py  # discovers package
+    check_imports.py src/klangk/klangk src/klangk/klangk/cli
+    check_imports.py src/klangk/klangk/main.py  # discovers package
     check_imports.py                                      # discovers from cwd
 """
 

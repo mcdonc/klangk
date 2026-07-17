@@ -10,7 +10,7 @@ let
   # single entry. Dev config lives in klangkd.yaml (gitignored);
   # copy from klangkd.yaml.example if missing.
   backendCmd = ''
-    python3 -m klangk_backend.klangkd --config="$DEVENV_ROOT/klangkd.yaml"
+    python3 -m klangk.launcher --config="$DEVENV_ROOT/klangkd.yaml"
   '';
   pluginsDir = config.devenv.root + "/.devenv/state/klangk/plugins";
   dataDir = config.devenv.root + "/.devenv/state/klangk/data";
@@ -167,7 +167,7 @@ in
   processes = {
     backend = {
       exec = ''
-        cd $DEVENV_ROOT/src/backend && exec ${backendCmd}
+        cd $DEVENV_ROOT/src/klangk && exec ${backendCmd}
       '';
       after = [
         "klangk:flutter-build"
@@ -240,25 +240,28 @@ in
   '';
 
   # -n auto: run tests in parallel across CPUs (pytest-xdist)
+  # Runs both unit suites (server + client) in one invocation. The single
+  # --cov gate covers the klangk package (#1606). The two
+  # dirs share rootdir = src/klangk (the pyproject there carries addopts).
   scripts.test-backend.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/backend/tests -v -n auto "$@"
+    exec python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
+      -v -n auto "$@"
   '';
 
-  # CLI unit tests
+  # CLI unit tests only — scoped run for iterating on the client without
+  # the server corpus (#1606).
   scripts.test-cli.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/cli/tests -v -n auto "$@"
+    exec python -m pytest src/klangk/klangkc-tests/tests -v -n auto "$@"
   '';
 
-  # Both unit suites in one invocation. The root pyproject.toml carries
-  # the asyncio + capture config this needs (each suite alone resolves to
-  # its own package config); see #1393. No coverage here -- the 100% gate
-  # stays per-suite (test-backend / test-cli). This is the fast "does the
-  # whole unit corpus pass?" smoke (~2818 tests in ~26s).
+  # Both unit suites, no coverage gate — the fast "does it all pass?"
+  # smoke.
   scripts.test-unit.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/backend/tests src/cli/tests -v -n auto --no-cov "$@"
+    exec python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
+      -v -n auto --no-cov "$@"
   '';
 
   # CLI E2E tests: start real server, run klangkc commands.
@@ -270,13 +273,13 @@ in
   # (--dist=loadscope keeps each module/class-scoped server on one worker).
   scripts.test-cli-e2e.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/cli/e2e-tests \
+    exec python -m pytest src/klangk/klangkc-tests/e2e-tests \
       -v --no-cov "$@"
   '';
 
   scripts.test-terminal-windows-e2e.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/cli/e2e-tests/test_terminal_windows_e2e.py \
+    exec python -m pytest src/klangk/klangkc-tests/e2e-tests/test_terminal_windows_e2e.py \
       -v --no-cov "$@"
   '';
 
@@ -285,7 +288,7 @@ in
   # opt-in with -n auto --dist=loadscope). See #1393.
   scripts.test-backend-e2e.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/backend/e2e-tests \
+    exec python -m pytest src/klangk/klangkd-tests/e2e-tests \
       -v --no-cov "$@"
   '';
 
@@ -300,12 +303,13 @@ in
   scripts.test-all.exec = ''
     cd $DEVENV_ROOT
     set -e
-    echo "=== unit (backend + cli, combined, parallel) ==="
-    python -m pytest src/backend/tests src/cli/tests -v -n auto --no-cov "$@"
-    echo "=== backend e2e ==="
-    python -m pytest src/backend/e2e-tests -v --no-cov "$@"
-    echo "=== cli e2e ==="
-    python -m pytest src/cli/e2e-tests -v --no-cov "$@"
+    echo "=== unit (server + client, parallel) ==="
+    python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
+      -v -n auto --no-cov "$@"
+    echo "=== server e2e ==="
+    python -m pytest src/klangk/klangkd-tests/e2e-tests -v --no-cov "$@"
+    echo "=== client e2e ==="
+    python -m pytest src/klangk/klangkc-tests/e2e-tests -v --no-cov "$@"
     echo "=== all green ==="
   '';
 

@@ -589,7 +589,7 @@ test.describe("Klangk E2E", () => {
             backendPort,
           ],
           {
-            cwd: join(projectRoot, "src", "backend"),
+            cwd: join(projectRoot, "src", "klangk", "klangkd-tests"),
             detached: true,
             stdio: ["ignore", "pipe", "pipe"],
             env: cleanEnv({

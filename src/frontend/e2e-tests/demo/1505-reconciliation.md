@@ -52,7 +52,7 @@ process manager. Two problems on current main:
 - devenv.nix does not enable dotenv, so `.demo-env` is not auto-loaded either.
 
 Switched to launching `klangkd` directly: `nohup devenv shell -- bash -c 'set
--a; . ./.demo-env; set +a; exec python3 -m klangk_backend.klangkd --config=none'`.
+-a; . ./.demo-env; set +a; exec python3 -m klangk.launcher --config=none'`.
 Sourcing `.demo-env` _inside_ the devenv shell (after devenv's env setup) makes
 `.demo-env`'s values win over devenv.nix's `env.` block. Teardown was simplified
 (removed the devenv-manager-discovery logic — there's no manager to fight

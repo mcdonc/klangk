@@ -102,12 +102,12 @@ async function globalSetup() {
       KLANGK_PORT: backendPort,
     });
     execSync(
-      `python -c "from klangk_backend.nginx import NginxRenderer, tcp_upstream; ` +
-        `from klangk_backend.settings import KlangkSettings; import types, os; ` +
+      `python -c "from klangk.nginx import NginxRenderer, tcp_upstream; ` +
+        `from klangk.settings import KlangkSettings; import types, os; ` +
         `NginxRenderer(types.SimpleNamespace(settings=KlangkSettings(os.environ)))` +
         `.write_config(tcp_upstream('127.0.0.1', '${backendPort}'), '${confPath}')"`,
       {
-        cwd: join(projectRoot, "src", "backend"),
+        cwd: join(projectRoot, "src", "klangk", "klangkd-tests"),
         env: renderEnv,
       },
     );
@@ -139,7 +139,7 @@ async function globalSetup() {
     "python3",
     ["e2e-tests/runtestserver.py", "--host", "0.0.0.0", "--port", backendPort],
     {
-      cwd: join(projectRoot, "src", "backend"),
+      cwd: join(projectRoot, "src", "klangk", "klangkd-tests"),
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
       env: cleanEnv({

@@ -36,8 +36,8 @@ FROM base
 COPY --from=venv --chown=klangk:klangk /home/klangk/venv /home/klangk/venv
 
 # Backend source
-COPY --chown=klangk:klangk src/backend/klangk_backend /home/klangk/src/backend/klangk_backend
-COPY --chown=klangk:klangk src/backend/pyproject.toml /home/klangk/src/backend/pyproject.toml
+COPY --chown=klangk:klangk src/klangk/klangk /home/klangk/src/klangk/klangk
+COPY --chown=klangk:klangk src/klangk/pyproject.toml /home/klangk/src/klangk/pyproject.toml
 
 # Flutter web build output
 COPY --chown=klangk:klangk src/frontend/build/web /home/klangk/src/frontend/build/web
@@ -71,7 +71,7 @@ RUN mkdir -p /var/log/nginx /var/lib/nginx && \
     chown -R klangk:klangk /var/log/nginx /var/lib/nginx
 
 ENV HOME=/home/klangk
-ENV PYTHONPATH=/home/klangk/src/backend:/home/klangk/venv/lib/python3.13/site-packages
+ENV PYTHONPATH=/home/klangk/src/klangk:/home/klangk/venv/lib/python3.13/site-packages
 ENV PATH=/home/klangk/bin:/home/klangk/venv/bin:$PATH
 # klangkd binds a UDS (not TCP). KLANGK_PORT (browser) + KLANGK_EGRESS_PORT
 # (container egress) drive nginx's listeners. KLANGK_LISTEN is the browser

@@ -10,7 +10,7 @@ Usage (mount the file anywhere, point the env var at it):
                ...
 """
 
-from klangk_backend.model import get_db
+from klangk.model import get_db
 
 
 async def on_login(provider, claims, email, tokens):

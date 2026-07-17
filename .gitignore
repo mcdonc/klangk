@@ -11,8 +11,8 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
-src/backend/.venv/
-src/backend/uv.lock
+src/klangk/.venv/
+src/klangk/uv.lock
 
 # Flutter
 src/frontend/.dart_tool/

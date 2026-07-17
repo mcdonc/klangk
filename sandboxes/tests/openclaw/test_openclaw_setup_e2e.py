@@ -67,7 +67,7 @@ import time
 import httpx
 import pytest
 
-from klangk_backend.model import free_port
+from klangk.model import free_port
 from pathlib import Path
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -95,7 +95,7 @@ WS3 = "e2e-openclaw-setup-3"
 PORT = str(free_port())
 EMAIL = "test@example.com"
 PASSWORD = "testpass"
-# The agent's user id (klangk_backend.model.AGENT_USER_ID). setup.sh
+# The agent's user id (klangk.model.AGENT_USER_ID). setup.sh
 # repoints HOME at the agent's home (#1171) so the ~/.profile exports
 # land in the agent's home, not the owner's; the tests read that profile.
 AGENT_USER_ID = "00000000-0000-0000-0000-000000000001"
@@ -163,11 +163,18 @@ def _start_server(data_dir, port, extra_env=None):
     log_file = open(log_path, "w")  # noqa: SIM115
     # Launch via runtestserver.py (build_app() explicitly) — the composition
     # root is sealed (#1454), so there's no module-level ``app`` for
-    # ``uvicorn klangk_backend.main:app`` to import.
+    # ``uvicorn klangk.main:app`` to import.
     proc = subprocess.Popen(
         [
             "python3",
-            os.path.join(REPO_ROOT, "src", "backend", "e2e-tests", "runtestserver.py"),
+            os.path.join(
+                REPO_ROOT,
+                "src",
+                "klangk",
+                "klangkd-tests",
+                "e2e-tests",
+                "runtestserver.py",
+            ),
             "--host",
             "0.0.0.0",
             "--port",
@@ -179,7 +186,7 @@ def _start_server(data_dir, port, extra_env=None):
             "--ws-ping-timeout",
             "20",
         ],
-        cwd=os.path.join(REPO_ROOT, "src", "backend"),
+        cwd=os.path.join(REPO_ROOT, "src", "klangk", "klangkd-tests"),
         env=env,
         stdout=log_file,
         stderr=subprocess.STDOUT,
