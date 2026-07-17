@@ -118,7 +118,10 @@ Widget _buildPanel({WsClient? wsClient}) => MultiProvider(
         ChangeNotifierProvider(create: (_) => AuthService()),
         ChangeNotifierProvider.value(value: wsClient ?? WsClient()),
       ],
-      child: const MaterialApp(
+      // Non-const so that the Dart VM's coverage instrumentation observes
+      // the constructor call at runtime.  Const constructors are evaluated
+      // at compile time and invisible to coverage (dart-lang/sdk#38934).
+      child: MaterialApp(
         home: Scaffold(body: WorkspaceSettingsPanel(workspaceId: _wsId)),
       ),
     );

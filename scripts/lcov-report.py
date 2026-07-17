@@ -13,11 +13,16 @@ def main():
         return
 
     files = {}
+    uncovered_lines: dict[str, list[int]] = {}
     current = None
     for line in lines:
         line = line.strip()
         if line.startswith("SF:"):
             current = line[3:]
+        elif line.startswith("DA:"):
+            parts = line[3:].split(",")
+            if len(parts) >= 2 and parts[1] == "0":
+                uncovered_lines.setdefault(current, []).append(int(parts[0]))
         elif line.startswith("LH:"):
             files.setdefault(current, {})["hit"] = int(line[3:])
         elif line.startswith("LF:"):
@@ -52,7 +57,11 @@ def main():
         for f, d in missing:
             short = f.replace("lib/", "")
             hit, total = d.get("hit", 0), d.get("total", 0)
-            print(f"  {short}: {total - hit} lines uncovered")
+            line_nums = uncovered_lines.get(f, [])
+            if line_nums:
+                print(f"  {short}: {total - hit} lines uncovered: {line_nums}")
+            else:
+                print(f"  {short}: {total - hit} lines uncovered")
         print(
             f"\nFAIL Required test coverage of {required}% "
             f"not reached. Total coverage: {pct:.2f}%"

@@ -26,6 +26,7 @@ jobs:
               - 'src/frontend/test/**'
               - 'src/frontend/pubspec.yaml'
               - 'plugins/**/klangk/**'
+              - 'scripts/lcov-report.py'
               - '.github/workflows/frontend-tests.yml'
 
       - uses: subosito/flutter-action@v2
