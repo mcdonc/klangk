@@ -134,7 +134,7 @@ def _login(base_url):
     """Log in and return (token, user_id)."""
     r = httpx.post(
         f"{base_url}/api/v1/auth/login",
-        json={"email": EMAIL, "password": PASSWORD},
+        json={"identifier": EMAIL, "password": PASSWORD},
         timeout=30,
     )
     r.raise_for_status()
