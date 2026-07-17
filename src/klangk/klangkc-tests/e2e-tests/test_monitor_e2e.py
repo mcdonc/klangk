@@ -1,7 +1,7 @@
 """End-to-end test for ``klangk monitor`` health-event detection (#1174).
 
 The monitor command (added in #1015) previously had only stub-based unit
-tests (``src/klangk/klangk-tests/tests/test_cli.py`` exercises ``monitor_connection`` /
+tests (``src/klangk/klangkc-tests/tests/test_cli.py`` exercises ``monitor_connection`` /
 ``monitor_run`` against a fake WebSocket).  This module launches the real
 ``klangk monitor`` as a subprocess against a live server driving real
 health-check transitions, and asserts it receives both the unhealthy and
