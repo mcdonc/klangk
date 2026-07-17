@@ -191,6 +191,7 @@ OIDC identity on their **first SSO login**, keyed on the identity's `sub` and
 email. If the default user's seeded email doesn't match a real SSO account,
 that first SSO login creates a _new_ user row and the default user's solo-mode
 data stays under the old email. To avoid orphaning data, set
-`KLANGK_DEFAULT_USER` to your SSO email **before** the first seed, or assign
+`KLANGK_DEFAULT_USER` to your SSO email **before the first boot** (it's
+read only on first seed — editing it later has no effect, #1622), or assign
 the default user's workspaces to the SSO identity via the admin API after
 linking.

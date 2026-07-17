@@ -391,6 +391,25 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Security
 
+- **Admin seeding is first-boot-only: config can no longer mint or
+  reset admins once an admin exists (#1622).** Previously
+  `seed_default_user` ran on every boot and created a fresh admin from
+  `KLANGK_DEFAULT_USER` / `KLANGK_DEFAULT_PASSWORD` whenever the configured
+  email didn't match an existing user — so anyone able to edit
+  `klangkd.conf` (or set the `KLANGK_DEFAULT_*` env vars) could mint or
+  reset an admin account by editing those values and restarting, bypassing
+  all auth and admin-invite flows. Seeding is now gated on **`admin`-group
+  emptiness**: an admin is created from `KLANGK_DEFAULT_*` only when the
+  `admin` group has no members (first boot, or after every admin has been
+  deleted); once at least one admin exists, startup never creates, renames,
+  re-emails, or re-passwords a user regardless of `KLANGK_DEFAULT_*`. This
+  also prevents lockout: editing `KLANGK_DEFAULT_USER` and restarting can
+  no longer clobber the already-seeded admin's identity. To change the
+  admin after first boot, use the normal in-app / `klangkc admin` paths.
+  Deployers should still treat `klangkd.conf` as sensitive (first-boot
+  password, LLM keys, JWT secret), but it is no longer a standing
+  admin-minting credential.
+
 - **nginx now denies container source IPs by default on the catch-all
   `location /`** (#1376). Previously the catch-all was open to container
   source IPs (the host's own IP via pasta NAT), so safety relied on every

@@ -177,52 +177,65 @@ class Lifecycle:
         return group["id"]
 
     async def seed_default_user(self) -> None:
-        """Create default user if it doesn't exist.
+        """Seed the default admin user exactly once, gated on admin-group
+        emptiness (#1622).
 
-        If KLANGK_DEFAULT_PASSWORD is set, use it. Otherwise generate a
-        random password and print it to the console (only on first
-        creation).
+        Creates the admin from ``KLANGK_DEFAULT_USER`` / ``KLANGK_DEFAULT_PASSWORD``
+        **only when the ``admin`` group has no members** (first boot on a fresh
+        install, or after every admin has been deleted). Once at least one admin
+        exists, this method **never** creates, renames, re-emails, or
+        re-passwords a user: ``KLANGK_DEFAULT_*`` is ignored, so editing it in
+        ``klangkd.conf`` and restarting cannot mint a new admin (the
+        config-mints-admin security hole) or clobber the existing admin's
+        identity (lockout). Changing the admin after the first boot is done
+        via the normal in-app / ``klangkc admin`` paths.
+
+        If ``KLANGK_DEFAULT_PASSWORD`` is set, use it; otherwise generate a
+        random password and print it to stderr (only on the seeding boot).
         """
         settings = self.app.state.settings
         admin_group_id = await self.ensure_admin_group()
         await self.seed_default_acls(admin_group_id)
 
+        # Once an admin exists, startup must not touch users (#1622). The
+        # gate is group membership, not a row id: "admin" is a group, and a
+        # deployer can promote more than one admin, so keying on a fixed
+        # seeded-admin id would be the wrong concept. Emptying the admin
+        # group + restart re-seeds (delete-resurrection at the group level).
+        members = await self.app.state.model.users.get_group_members(
+            admin_group_id
+        )
+        if members:
+            return
+
         email = settings.default_user
         password = settings.default_password
-        existing = await self.app.state.model.users.get_user_by_email(email)
-        if existing is None:
-            generated = password is None
-            if generated:
-                password = secrets.token_urlsafe(16)
-            password_hash = bcrypt.hashpw(
-                password.encode(), bcrypt.gensalt()
-            ).decode()
-            user = await self.app.state.model.users.create_user(
-                email, password_hash, verified=True
+        generated = password is None
+        if generated:
+            password = secrets.token_urlsafe(16)
+        password_hash = bcrypt.hashpw(
+            password.encode(), bcrypt.gensalt()
+        ).decode()
+        user = await self.app.state.model.users.create_user(
+            email, password_hash, verified=True
+        )
+        await self.app.state.model.users.add_user_to_group(
+            user["id"], admin_group_id
+        )
+        if generated:
+            logger.info(
+                "Created default admin user '%s' (password printed to stderr)",
+                email,
             )
-            await self.app.state.model.users.add_user_to_group(
-                user["id"], admin_group_id
+            # Print password to stderr only — keep it out of structured
+            # logs where it could be shipped to a log aggregator.
+            print(
+                f"{_GREEN}Default admin password for"
+                f" '{email}': {password}{_RESET}",
+                file=sys.stderr,
             )
-            if generated:
-                logger.info(
-                    "Created default admin user '%s'"
-                    " (password printed to stderr)",
-                    email,
-                )
-                # Print password to stderr only — keep it out of structured
-                # logs where it could be shipped to a log aggregator.
-                print(
-                    f"{_GREEN}Default admin password for"
-                    f" '{email}': {password}{_RESET}",
-                    file=sys.stderr,
-                )
-            else:
-                logger.info("Created default user '%s' in admin group", email)
         else:
-            # Ensure existing default user is in admin group
-            await self.app.state.model.users.add_user_to_group(
-                existing["id"], admin_group_id
-            )
+            logger.info("Created default user '%s' in admin group", email)
 
     async def seed_agent_user(self) -> None:
         """Ensure the chat agent user exists in the DB.
