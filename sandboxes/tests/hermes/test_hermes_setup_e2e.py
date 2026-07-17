@@ -45,23 +45,36 @@ sync`` of the upstream repo).
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
 import httpx
 import pytest
 
-from klangk.model import free_port
-
-from pathlib import Path
+# Launch the real ``klangkd`` via the shared backend E2E launcher (#1525).
+# ``runtestserver.py`` was retired when every suite migrated off the
+# test-only uvicorn shim to the production entry point; this standalone
+# suite imports that launcher instead of reimplementing subprocess wiring.
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "..",
+        "..",
+        "src",
+        "klangk",
+        "klangkd-tests",
+        "e2e-tests",
+    ),
+)
+from _e2e_server import start_server, stop_server
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 SANDBOX_DIR = os.path.join(REPO_ROOT, "sandboxes", "hermes")
 
 WS = "e2e-hermes-setup"
-# Free port (allocated once at import) so this never collides with other
-# e2e suites or concurrent runs (#1393).
-PORT = str(free_port())
 EMAIL = "test@example.com"
 PASSWORD = "testpass"
 # The agent's user id (klangk.model.AGENT_USER_ID). setup.sh
@@ -102,12 +115,19 @@ def _login(base_url):
     return token, user_id
 
 
-def _start_server(data_dir, port, extra_env=None):
-    env = {
-        **os.environ,
-        "_KLANGK_DISABLE_NGINX": "1",  # bare uvicorn; lifespan must not spawn nginx
-        "KLANGK_PORT": port,
-        "KLANGK_DATA_DIR": data_dir,
+def _start_server(data_dir, extra_env=None):
+    """Start a real ``klangkd`` (nginx on a TCP port); return (handle, url).
+
+    ``uds=False`` gives this suite a real ``http://localhost:<port>`` URL —
+    nginx fronts klangkd's UDS (#1525) — which the CLI (``klangk login``)
+    and the suite's ``httpx`` calls need. ``clean_env`` strips every
+    ``KLANGK_*`` by default (#1526), so the runner-provided infra the hermes
+    gateway depends on — system podman (nix podman lacks SUID newuidmap on
+    Ubuntu runners) and the LLM endpoint setup.sh bakes into the gateway
+    config.yaml — is forwarded explicitly from the ambient env.
+    """
+    log_path = os.path.join(data_dir, "server.log")
+    overrides = {
         "KLANGK_JWT_SECRET": "hermes-e2e-test-secret",
         "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
         "KLANGK_DEFAULT_USER": EMAIL,
@@ -120,115 +140,35 @@ def _start_server(data_dir, port, extra_env=None):
         # setup). Health checks are skipped until setup_state == complete, so
         # this is harmless during the install.
         "KLANGK_HEALTH_CHECK_INTERVAL": "3",
-        "KLANGK_PORT_RANGE_START": str(free_port()),
         "KLANGK_ALLOW_AUTOSTART": "1",
         "LOGFIRE_TOKEN": "",
-        **(extra_env or {}),
+        "log_path": log_path,
     }
-    log_path = os.path.join(data_dir, "server.log")
-    log_file = open(log_path, "w")  # noqa: SIM115
-    # Launch via runtestserver.py (build_app() explicitly) — the composition
-    # root is sealed (#1454), so there's no module-level ``app`` for
-    # ``uvicorn klangk.main:app`` to import.
-    proc = subprocess.Popen(
-        [
-            "python3",
-            os.path.join(
-                REPO_ROOT,
-                "src",
-                "klangk",
-                "klangkd-tests",
-                "e2e-tests",
-                "runtestserver.py",
-            ),
-            "--host",
-            "0.0.0.0",
-            "--port",
-            port,
-            "--ws-max-size",
-            "16777216",
-            "--ws-ping-interval",
-            "20",
-            "--ws-ping-timeout",
-            "20",
-        ],
-        cwd=os.path.join(REPO_ROOT, "src", "klangk", "klangkd-tests"),
-        env=env,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    proc._log_file = log_file  # type: ignore[attr-defined]
-    proc._log_path = log_path  # type: ignore[attr-defined]
-    base_url = f"http://localhost:{port}"
-    for _ in range(90):
-        try:
-            if httpx.get(f"{base_url}/health", timeout=2).status_code == 200:
-                return proc, base_url
-        except Exception:
-            pass
-        time.sleep(1)
-    proc.kill()
-    log_file.close()
-    stdout = open(log_path).read() if os.path.exists(log_path) else ""
-    raise RuntimeError(f"Server failed to start:\n{stdout}")
+    # Runner/devenv infra clean_env would otherwise strip (#1526): system
+    # podman + the LLM endpoint the hermes gateway proxies to.
+    for _k in (
+        "KLANGK_PODMAN_BIN",
+        "KLANGK_LLM_API_KEY",
+        "KLANGK_LLM_BASE_URL",
+        "KLANGK_LLM_MODEL",
+    ):
+        _v = os.environ.get(_k)
+        if _v is not None:
+            overrides[_k] = _v
+    if extra_env:
+        overrides.update(extra_env)
+    server = start_server(uds=False, data_dir=data_dir, **overrides)
+    return server, server["url"]
 
 
-def _stop_server(proc, data_dir):
-    if hasattr(proc, "_log_file"):
-        proc._log_file.close()
-    try:
-        os.killpg(os.getpgid(proc.pid), 9)
-    except (ProcessLookupError, PermissionError):
-        try:
-            proc.kill()
-            proc.wait(timeout=5)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
-            pass
-    # Instance-scoped cleanup: only remove containers THIS test server
-    # started (label=klangk.instance=<id>), never another suite's or xdist
-    # worker's. The old ``label=klangk.managed=true`` filter was a cross-run
-    # hazard once suites could run concurrently (#1393). The ID lives in
-    # ``<data_dir>/instance-id" (written by klangkd at startup, #1553); read
-    # it directly rather than shelling out to a console script (#1565).
-    _id_file = Path(data_dir) / "instance-id"
-    instance_id = _id_file.read_text().strip() if _id_file.exists() else ""
-    if instance_id:
-        res = subprocess.run(
-            [
-                "podman",
-                "ps",
-                "-a",
-                "--filter",
-                f"label=klangk.instance={instance_id}",
-                "-q",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if res.stdout.strip():
-            subprocess.run(
-                ["podman", "rm", "-f", *res.stdout.strip().split()],
-                capture_output=True,
-            )
-    shutil.rmtree(data_dir, ignore_errors=True)
+def _stop_server(server, data_dir=None):
+    """Stop a server started by ``_start_server``.
 
-
-def _force_kill_port(port):
-    """SIGKILL any process bound to *port* (TERM is not always enough)."""
-    try:
-        out = subprocess.run(["ss", "-tlnHp"], capture_output=True, text=True).stdout
-    except FileNotFoundError:
-        return
-    for line in out.splitlines():
-        if f":{port}" not in line:
-            continue
-        for tok in line.split():
-            if tok.startswith("pid="):
-                try:
-                    os.kill(int(tok[4:].split(",")[0]), 9)
-                except (ProcessLookupError, ValueError):
-                    pass
+    ``stop_server`` kills the klangkd subprocess, removes its
+    instance-labelled containers, and deletes the data/state dirs — the
+    per-instance sweep this suite used to inline (#1393, #1553).
+    """
+    stop_server(server)
 
 
 def _workspace_id(base_url, token, name):
@@ -300,7 +240,7 @@ class TestHermesSetup:
     @staticmethod
     def server(tmp_path_factory, request):
         data_dir = tempfile.mkdtemp(prefix="klangk-hermes-e2e-")
-        proc, base_url = _start_server(data_dir, PORT)
+        server, base_url = _start_server(data_dir)
         config_dir = tmp_path_factory.mktemp("klangk-hermes-config")
         env = {**os.environ, "HOME": str(config_dir)}
         os.makedirs(config_dir / ".config" / "klangk", exist_ok=True)
@@ -334,8 +274,7 @@ class TestHermesSetup:
             elif os.path.exists(p):
                 os.remove(p)
         yield
-        _stop_server(proc, data_dir)
-        _force_kill_port(PORT)
+        _stop_server(server, data_dir)
 
     def _server_log_tail(self, n=40):
         log_path = os.path.join(self._data_dir, "server.log")
