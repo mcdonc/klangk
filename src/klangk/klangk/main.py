@@ -35,6 +35,7 @@ from . import (
     wshandler,
 )
 from .settings import KlangkSettings
+from .logger import configure as configure_logging
 from .api import root_router, router
 from .util import API_PREFIX
 from .model import (
@@ -48,15 +49,9 @@ from .model import (
 from .model import AGENT_USER_ID
 from .wshandler import handle_websocket
 
-_LIGHT_BLUE = "\033[94m"
 _GREEN = "\033[32m"
 _RESET = "\033[0m"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format=f"{_LIGHT_BLUE}%(asctime)s %(levelname)s:%(name)s:%(message)s{_RESET}",
-    datefmt="%H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -380,6 +375,12 @@ class Lifecycle:
         old = app.state.settings
         self._warn_non_reloadable(old, new)
         app.state.settings = new
+        # #1467: reconfigure global logging from the new settings *first*, so
+        # any warnings the subsystem loop below emits (e.g. "ssl_trust
+        # reconfigure failed") use the new KLANGK_LOG_LEVEL. Logging is global
+        # module state, reconfigured at this explicit seam (not an
+        # app.state.* subsystem).
+        configure_logging(new)
 
         # Every app.state subsystem that implements reconfigure().
         subsystems = [
@@ -758,6 +759,12 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     """
     app = FastAPI(title="Klangk", lifespan=lifespan)
     app.state.settings = settings
+    # #1467: logging is configured centrally (module-level defaults are
+    # already active from the import of klangk.logger; this call re-applies
+    # the level from KLANGK_LOG_LEVEL now that settings are finalized, and
+    # is also the SIGHUP reconfigure path). No app.state.logger object —
+    # logging is global module state, reconfigured at this explicit seam.
+    configure_logging(settings)
     # #1501: Auth(app_state) owns every auth config value and JWT
     # operation (previously module-level globals + import-time
     # resolve_env_value reads in auth.py). Reads self.settings at
