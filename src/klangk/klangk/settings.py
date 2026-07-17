@@ -396,11 +396,12 @@ class KlangkSettings(BaseSettings):
     # --- Logging ---
     # log_level: root logger level for the klangkd backend. A level name
     # (DEBUG/INFO/WARNING/ERROR/CRITICAL, any case) or a numeric string.
-    # Defaults to INFO. Read live by ``Logger(app)`` at construction and on
-    # every SIGHUP reload (reconfigure), so ``KLANGK_LOG_LEVEL`` can be
-    # changed without a process restart (#1467). The field validator below
-    # rejects garbage at construction (fail-fast) so a typo'd level aborts
-    # boot rather than silently leaving logging at the wrong verbosity.
+    # Defaults to INFO. Applied by ``klangk.logger.configure(settings)`` in
+    # build_app, and re-applied on every SIGHUP reload (after the settings
+    # swap), so ``KLANGK_LOG_LEVEL`` can be changed without a process restart
+    # (#1467). The field validator below rejects garbage at construction
+    # (fail-fast) so a typo'd level aborts boot rather than silently leaving
+    # logging at the wrong verbosity.
     log_level: str = "INFO"
 
     # --- Server / network ---

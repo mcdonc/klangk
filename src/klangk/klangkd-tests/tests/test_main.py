@@ -18,7 +18,6 @@ from klangk import (
     auth as auth_mod,
     emailsvc as emailsvc_mod,
     files as files_mod,
-    logger as logger_mod,
     nginx as nginx_mod,
     ssl_trust as ssl_trust_mod,
     util as util_mod,
@@ -44,9 +43,6 @@ def _make_app_state(settings=None):
     app_state = types.SimpleNamespace(
         state=types.SimpleNamespace(settings=settings)
     )
-    # #1467: Logger(app_state) is wired first so subsequent subsystem
-    # construction logs through the configured root, mirroring build_app.
-    app_state.state.logger = logger_mod.Logger(app_state)
     sockets = WebSocketState(app_state)
     app_state.state.sockets = sockets
     registry = ContainerRegistry(app_state)
@@ -803,7 +799,6 @@ class TestStartupShutdownRestart:
         old_settings = app_state.state.settings
         called = []
         for attr in (
-            "logger",
             "ssl_trust",
             "auth",
             "podman",
@@ -843,7 +838,7 @@ class TestStartupShutdownRestart:
         assert "ssl_trust" in called
         assert "oidc" in called
         assert "plugins" in called
-        assert len(called) == 19
+        assert len(called) == 18
         mock_reseed.assert_awaited_once()
 
     async def test_apply_logs_warning_when_reconfigure_fails(
@@ -1391,18 +1386,28 @@ class TestBuildApp:
         app = main.build_app(make_settings({}))
         assert model.AgentPrincipalError in app.exception_handlers
 
-    def test_build_app_wires_logger(self):
-        """build_app constructs Logger(app) onto app.state.logger (#1467)."""
-        app = main.build_app(make_settings({}))
-        assert isinstance(app.state.logger, logger_mod.Logger)
+    def test_build_app_configures_logging_from_settings(self):
+        """build_app re-applies the log level from KLANGK_LOG_LEVEL (#1467).
+
+        Logging is global module state (no app.state.logger object);
+        build_app calls ``klangk.logger.configure(settings)`` after settings
+        are finalized. Build an app with DEBUG and confirm the root level
+        reflects it.
+        """
+        import logging
+
+        app = main.build_app(make_settings({"KLANGK_LOG_LEVEL": "DEBUG"}))
+        assert app.state.settings.log_level == "DEBUG"
+        assert logging.getLogger().level == logging.DEBUG
 
     def test_no_module_scope_basic_config(self):
         """Logging is not configured as an import side-effect (#1467).
 
         main.py must not call ``logging.basicConfig(...)`` at module scope —
-        configuration now lives in ``Logger(app)`` (``app.state.logger``),
-        constructed explicitly in build_app. Checked via AST so comments /
-        docstrings that merely mention the name don't trip it.
+        configuration lives in :mod:`klangk.logger` (applied at its import
+        and re-applied via ``configure(settings)`` in build_app). Checked via
+        AST so comments / docstrings that merely mention the name don't trip
+        it.
         """
         import ast
         import inspect

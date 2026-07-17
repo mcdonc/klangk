@@ -35,7 +35,7 @@ from . import (
     wshandler,
 )
 from .settings import KlangkSettings
-from .logger import Logger
+from .logger import configure as configure_logging
 from .api import root_router, router
 from .util import API_PREFIX
 from .model import (
@@ -375,10 +375,15 @@ class Lifecycle:
         old = app.state.settings
         self._warn_non_reloadable(old, new)
         app.state.settings = new
+        # #1467: reconfigure global logging from the new settings *first*, so
+        # any warnings the subsystem loop below emits (e.g. "ssl_trust
+        # reconfigure failed") use the new KLANGK_LOG_LEVEL. Logging is global
+        # module state, reconfigured at this explicit seam (not an
+        # app.state.* subsystem).
+        configure_logging(new)
 
         # Every app.state subsystem that implements reconfigure().
         subsystems = [
-            "logger",
             "ssl_trust",
             "auth",
             "podman",
@@ -754,13 +759,12 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     """
     app = FastAPI(title="Klangk", lifespan=lifespan)
     app.state.settings = settings
-    # #1467: Logger(app_state) owns centralized logging configuration (root
-    # handler, colored format, level from KLANGK_LOG_LEVEL, and third-party
-    # logger silencing). Configured first so every subsystem constructed
-    # below logs through the configured root. Replaces the import-time
-    # logging.basicConfig that previously ran in this module's body —
-    # importing klangk no longer configures logging as a side-effect.
-    app.state.logger = Logger(app)
+    # #1467: logging is configured centrally (module-level defaults are
+    # already active from the import of klangk.logger; this call re-applies
+    # the level from KLANGK_LOG_LEVEL now that settings are finalized, and
+    # is also the SIGHUP reconfigure path). No app.state.logger object —
+    # logging is global module state, reconfigured at this explicit seam.
+    configure_logging(settings)
     # #1501: Auth(app_state) owns every auth config value and JWT
     # operation (previously module-level globals + import-time
     # resolve_env_value reads in auth.py). Reads self.settings at
