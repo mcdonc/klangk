@@ -60,6 +60,23 @@ not process-compose. Consequences when debugging a managed stack:
   process takes the unit down. Debug by running the suspect process directly
   under the devenv shell (bypassing the supervisor) to see its real stderr.
 
+## CLI subpackage isolation (`klangk.cli`)
+
+Code in `src/klangk/klangk/cli/` (the `klangkc` client) must **not** import
+anything from the rest of the `klangk` package — only stdlib, third-party
+deps, and sibling modules within `cli/` itself (`from .config import ...`,
+`from .transport import ...`). The CLI is a standalone client that ships in
+the same wheel but runs in the user's environment against a remote backend;
+it has no access to the server's `app.state`, settings, or process-local
+singletons.
+
+Practical consequence: anything centralized on the server side as an
+`app.state.*` object (e.g. logging via a `Logger(app)` state object) is
+**not** shared with the CLI — the client keeps its own setup and reaches the
+backend only over HTTP/WebSocket. Don't refactor `cli/` to import a shared
+helper from `klangk.*`; duplicate the small bit of logic instead, or put the
+shared code somewhere both can import without crossing the boundary.
+
 ## Changelog (`docs/changes.md`)
 
 `docs/changes.md` is the single source of truth for human-authored release notes,
