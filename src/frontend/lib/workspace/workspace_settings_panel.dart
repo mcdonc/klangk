@@ -27,11 +27,18 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   bool _loading = true;
   String? _error;
   String? _saveMessage;
+  Timer? _saveMessageTimer;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _saveMessageTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -106,7 +113,8 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     if (resp.statusCode == 200) {
       setState(() => _saveMessage = 'Settings saved');
       _loadData();
-      Future.delayed(const Duration(seconds: 2), () {
+      _saveMessageTimer?.cancel();
+      _saveMessageTimer = Timer(const Duration(seconds: 2), () {
         if (mounted) setState(() => _saveMessage = null);
       });
     } else {
