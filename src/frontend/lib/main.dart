@@ -79,7 +79,12 @@ Future<Set<String>> _resolveActiveFeatures() async {
   // 1. /api/config — features_enable knob (deploy-chosen list).
   String? featuresEnable;
   try {
-    final response = await http.get(Uri.parse('$baseUrl/api/v1/config'));
+    // Bound the wait so a slow/hung server can't hang app boot
+    // indefinitely — on timeout we fall through to the manifest
+    // defaults (or all-compiled-in if no manifest).
+    final response = await http
+        .get(Uri.parse('$baseUrl/api/v1/config'))
+        .timeout(const Duration(seconds: 5));
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       if (data is Map<String, dynamic>) {
