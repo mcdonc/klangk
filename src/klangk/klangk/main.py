@@ -190,7 +190,7 @@ class Lifecycle:
         install, or after every admin has been deleted). Once at least one admin
         exists, this method **never** creates, renames, re-emails, or
         re-passwords a user: ``KLANGK_DEFAULT_*`` is ignored, so editing it in
-        ``klangkd.conf`` and restarting cannot mint a new admin (the
+        ``klangkd.yaml`` and restarting cannot mint a new admin (the
         config-mints-admin security hole) or clobber the existing admin's
         identity (lockout). Changing the admin after the first boot is done
         via the normal in-app / ``klangkc admin`` paths.

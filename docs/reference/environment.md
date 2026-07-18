@@ -6,7 +6,7 @@
 
 `$DEVENV_STATE` refers to `<project root>/.devenv/state` — this is where devenv stores runtime data.
 
-For local development, settings live in `klangkd.conf` (gitignored; copy from `klangkd.conf.example`). Environment variables override config-file values.
+For local development, settings live in `klangkd.yaml` (gitignored; copy from `klangkd.yaml.example`). Environment variables override config-file values.
 
 **`file:` prefix:** Any env var can be prefixed with `file:` to read the value from a file (e.g. `KLANGK_JWT_SECRET=file:/run/secrets/jwt`). The file contents are stripped of leading/trailing whitespace. This works with secret management tools like agenix/sops that write decrypted secrets to files. If the file cannot be read, construction **fails** with a `ValidationError` — see [#1461](https://github.com/mcdonc/klangk/issues/1461) (fail-fast at boot, not silently at use time).
 
