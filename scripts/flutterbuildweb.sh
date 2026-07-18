@@ -3,13 +3,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 
-# Auto-fetch plugins on first run
-if [ -f "$KLANGK_PLUGINS_DIR/plugins.yaml" ] && [ ! -f "$KLANGK_PLUGINS_DIR/plugins.lock" ]; then
-  echo "No plugins.lock found, running update-plugins..."
-  python3 scripts/update_plugins.py
-fi
+# Materialized plugin payload lives in a build-owned tempdir (#1660): the
+# declaration is the checked-in plugins.yaml at the repo root, the payload
+# (symlinked trees + plugins.lock + generated .dart package) is ephemeral.
+# Cleaned up on exit. flutterbuildweb also shares this dir with the workspace/
+# host image builds when they chain off it via build-host-image.sh — but each
+# top-level build driver owns its own tempdir, so a single EXIT trap per
+# driver is enough.
+PAYLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/klangk-plugins-XXXXXX")"
+trap 'rm -rf "$PAYLOAD_DIR"' EXIT
 
-python3 scripts/import_dart_plugins.py
+# Fetch/symlink plugins into the payload dir, then generate the Dart
+# aggregator + features.json from those trees.
+python3 scripts/update_plugins.py --payload-dir "$PAYLOAD_DIR"
+python3 scripts/import_dart_plugins.py --payload-dir "$PAYLOAD_DIR"
 
 # flterm is forked (github.com/runyaga/flterm) to build on the nix Flutter
 # (3.41 / Dart 3.11) -- upstream 0.0.3 needs Dart 3.12 for private-named
@@ -93,5 +100,7 @@ echo "Cache-bust: v=$HASH"
 # boot + one field by klangkd for container-env bridging) and must survive
 # the Flutter build. Invoke via $SCRIPT_DIR (absolute) because CWD is
 # src/frontend here (the cd above); the generator resolves its own paths
-# from __file__ so it lands the manifest correctly regardless of CWD.
-python3 "$SCRIPT_DIR/import_dart_plugins.py" --features-only
+# from __file__ so it lands the manifest correctly regardless of CWD. The
+# payload dir is the same one populated above — still populated, still
+# readable (the trap fires only on exit).
+python3 "$SCRIPT_DIR/import_dart_plugins.py" --payload-dir "$PAYLOAD_DIR" --features-only

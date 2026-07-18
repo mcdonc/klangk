@@ -211,6 +211,24 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **`KLANGK_PLUGINS_DIR` is gone from every layer (#1660).** The plugin
+  declaration list is now the checked-in `plugins.yaml` at the repo root
+  (the build-time source of truth, analogue of a committed `package.json` /
+  `Cargo.toml`). The materialized payload — fetched/symlinked plugin trees,
+  `plugins.lock`, the generated `klangk_plugins` Dart package — is a
+  throwaway `mktemp -d` each build script (`flutterbuildweb.sh`,
+  `build-workspace-image.sh`, `build-host-image.sh`) owns and cleans up on
+  exit. `update_plugins.py` and `import_dart_plugins.py` take the payload
+  dir via `--payload-dir` instead of reading `KLANGK_PLUGINS_DIR` from the
+  environment. The host image no longer copies plugin trees in (the runtime
+  reads `features.json` from the frontend build, not on-disk `package.json`
+  files — the workspace image still bakes them in for Pi). The first-run
+  `plugins.yaml` template-creation bootstrap is removed; the file is
+  source-controlled. Operators who overrode `KLANGK_PLUGINS_DIR` to point
+  at a custom declaration should instead edit the checked-in `plugins.yaml`
+  (or, for `customize/build/build.sh`, the build script overwrites the
+  clone's `plugins.yaml` with `customize/build/plugins.yaml`).
+
 - **`KLANGK_STATE_DIR` now defaults to `$XDG_STATE_HOME/klangk` (#1644).**
   The runtime-state directory (UDS socket, rendered proxy config, pid file,
   DB) defaults to `~/.local/state/klangk` when no explicit value is supplied,

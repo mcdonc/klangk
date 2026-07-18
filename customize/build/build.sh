@@ -27,7 +27,6 @@ cd "$SCRIPT_DIR"
 KLANGK_REF="${KLANGK_REF:-main}"
 KLANGK_REPO="${KLANGK_REPO:-https://github.com/mcdonc/klangk.git}"
 KLANGK_DIR="$SCRIPT_DIR/.klangk"
-PLUGINS_DIR="$SCRIPT_DIR/.plugins"
 
 # Image tag. Override with KLANGK_HOST_IMAGE to publish elsewhere.
 IMAGE="${KLANGK_HOST_IMAGE:-ghcr.io/mcdonc/klangk/klangk-host-custom}"
@@ -58,23 +57,22 @@ else
   git -C "$KLANGK_DIR" checkout "$KLANGK_REF"
 fi
 
-# 2. Stage plugin config into the plugins dir
-echo "=== Fetching plugins ==="
-rm -rf "$PLUGINS_DIR"
-mkdir -p "$PLUGINS_DIR"
-cp "$SCRIPT_DIR/plugins.yaml" "$PLUGINS_DIR/plugins.yaml"
+# 2. Override the checked-in plugin declaration with this build's custom
+#    list. update_plugins.py reads plugins.yaml from the repo root (#1660),
+#    so overwriting the checked-in copy in the clone is how a custom build
+#    swaps the declaration. (The clone is throwaway; the upstream repo is
+#    untouched.)
+echo "=== Overriding plugin declaration ==="
+cp "$SCRIPT_DIR/plugins.yaml" "$KLANGK_DIR/plugins.yaml"
 
-# 3. Fetch plugins and build the host image from source, with plugins baked in.
-#    devenv's profile defaults KLANGK_PLUGINS_DIR to an empty dir inside the
-#    clone, so KLANGK_PLUGINS_DIR / KLANGK_HOST_IMAGE / KLANGK_VARIANT must be
-#    overridden *inside* the shell — exporting before `devenv shell` is
-#    clobbered by the profile.
+# 3. Build the host image from source. The build scripts materialize plugins
+#    into their own tempdirs now (#1660), so there's no KLANGK_PLUGINS_DIR to
+#    set — just HOST_IMAGE / VARIANT, which devenv's profile would otherwise
+#    clobber, so they must be exported *inside* the shell.
 cd "$KLANGK_DIR"
 "${DEVENV_CMD[@]}" bash -c "
-  export KLANGK_PLUGINS_DIR='$PLUGINS_DIR'
   export KLANGK_HOST_IMAGE='$IMAGE'
   export KLANGK_VARIANT='$VARIANT'
-  python3 scripts/update_plugins.py
   bash scripts/build-host-image.sh
 "
 

@@ -44,15 +44,14 @@ def close_popen_pipes(proc: Popen) -> None:
 _STRIP_PREFIXES = ("KLANGK", "_KLANGK", "KLANGKC", "LOGFIRE")
 
 # Build-infra vars that locate *artifacts the test must use* (the workspace
-# container image, the built plugin packages, the compiled frontend, the
-# version stamp) — their values are produced by devenv's
-# ``klangk:build-workspace-image`` / ``klangk:flutter-build`` tasks, not
-# by any test, and every E2E server subprocess needs the real ones. These are
-# forwarded from the ambient env deliberately (not stripped) so the server
-# finds the built image/plugins/frontend. They are not test config —
-# overriding one in a ``clean_env(...)`` call still wins.
+# container image, the compiled frontend, the version stamp) — their values
+# are produced by devenv's ``klangk:build-workspace-image`` /
+# ``klangk:flutter-build`` tasks, not by any test, and every E2E server
+# subprocess needs the real ones. These are forwarded from the ambient env
+# deliberately (not stripped) so the server finds the built image/frontend.
+# They are not test config — overriding one in a ``clean_env(...)`` call
+# still wins.
 _INFRA_VARS = (
-    "KLANGK_PLUGINS_DIR",
     "KLANGK_IMAGE_NAME",
     "KLANGK_VERSION_FILE",
     "KLANGK_FRONTEND_DIR",

@@ -710,9 +710,10 @@ class KlangkSettings(BaseSettings):
         ``$XDG_CONFIG_HOME/klangk`` (the config-tree root, #1649) and
         ``customize_dir`` derives from it (user-edited, durable config).
         ``plugins_dir`` is gone from settings entirely (#1655): the runtime
-        reads the build-emitted ``features.json`` from ``frontend_dir``;
-        ``KLANGK_PLUGINS_DIR`` stays as a build-time env var only (read by
-        ``update_plugins.py`` / image-build scripts via ``os.environ``).
+        reads the build-emitted ``features.json`` from ``frontend_dir``. The
+        build reads the checked-in ``plugins.yaml`` at the repo root and
+        materializes plugin trees into a throwaway tempdir (#1660) — no
+        ``KLANGK_PLUGINS_DIR`` env var exists at any layer.
         """
         if not self.state_dir:
             # If neither $XDG_STATE_HOME nor $HOME is set (the pathological

@@ -1,6 +1,7 @@
 """Tests for update_plugins.py — local path plugin support."""
 
 import os
+import shutil
 import sys
 
 
@@ -137,3 +138,124 @@ class TestLinkPlugin:
         assert result is not None
         assert dest.is_symlink()
         assert os.readlink(str(dest)) == str(source)
+
+
+class TestMainPayloadDir:
+    """main() reads the checked-in plugins.yaml and writes to --payload-dir (#1660)."""
+
+    def test_main_reads_repo_root_yaml_writes_payload_lock(self, tmp_path, monkeypatch):
+        # Fake a repo root with plugins.yaml + a plugin tree.
+        fake_repo = tmp_path / "repo"
+        fake_repo.mkdir()
+        (fake_repo / "plugins.yaml").write_text(
+            "plugins:\n  - name: demo\n    path: plugins/demo\n"
+        )
+        demo = fake_repo / "plugins" / "demo"
+        demo.mkdir(parents=True)
+        (demo / "extension.ts").write_text("// hi")
+
+        # Point ROOT + YAML_PATH at the fake repo.
+        monkeypatch.setattr(update_plugins, "ROOT", str(fake_repo))
+        monkeypatch.setattr(
+            update_plugins, "YAML_PATH", str(fake_repo / "plugins.yaml")
+        )
+
+        payload = tmp_path / "payload"
+        payload.mkdir()
+        rc = update_plugins.main(["--payload-dir", str(payload)])
+
+        assert rc == 0
+        # The plugin is symlinked into the payload dir.
+        assert (payload / "demo").is_symlink()
+        # The lockfile landed in the payload dir (not next to plugins.yaml).
+        lock = payload / "plugins.lock"
+        assert lock.is_file()
+        import yaml
+
+        data = yaml.safe_load(lock.read_text())
+        assert data["plugins"][0]["name"] == "demo"
+
+    def test_main_ignores_klangk_plugins_dir_env(self, tmp_path, monkeypatch):
+        # KLANGK_PLUGINS_DIR must have no effect on where the payload lands
+        # (#1660 — the var is gone from every layer).
+        fake_repo = tmp_path / "repo"
+        fake_repo.mkdir()
+        (fake_repo / "plugins.yaml").write_text("plugins: []\n")
+        monkeypatch.setattr(update_plugins, "ROOT", str(fake_repo))
+        monkeypatch.setattr(
+            update_plugins, "YAML_PATH", str(fake_repo / "plugins.yaml")
+        )
+
+        bogus = tmp_path / "bogus-env-target"
+        bogus.mkdir()
+        monkeypatch.setenv("KLANGK_PLUGINS_DIR", str(bogus))
+
+        payload = tmp_path / "payload"
+        payload.mkdir()
+        rc = update_plugins.main(["--payload-dir", str(payload)])
+
+        assert rc == 0
+        # Nothing was written under the env-var-named dir.
+        assert not (bogus / "plugins.lock").exists()
+        # The module no longer references the env var at all.
+        assert "KLANGK_PLUGINS_DIR" not in {
+            name for name, _ in update_plugins.__dict__.items()
+        }
+
+    def test_main_errors_when_plugins_yaml_missing(self, tmp_path, monkeypatch):
+        # No checked-in plugins.yaml -> clear error, not silent template creation
+        # (the old first-run bootstrap is gone; the file is source-controlled).
+        empty_repo = tmp_path / "repo"
+        empty_repo.mkdir()
+        monkeypatch.setattr(update_plugins, "ROOT", str(empty_repo))
+        monkeypatch.setattr(
+            update_plugins, "YAML_PATH", str(empty_repo / "plugins.yaml")
+        )
+        rc = update_plugins.main(["--payload-dir", str(tmp_path / "payload")])
+        assert rc == 1
+
+    def test_main_without_payload_dir_uses_atexit_cleaned_tempdir(
+        self, tmp_path, monkeypatch
+    ):
+        # The standalone-debugging path: no --payload-dir, so main() mints a
+        # fresh tempdir itself and registers it with atexit so it can't leak
+        # (#1665 review finding). Verify (a) main() registers exactly one new
+        # atexit callback and (b) the payload dir it created is a real tempdir
+        # with the expected contents, then unregister the callback so the test
+        # doesn't hold a stale reference.
+        import atexit
+
+        fake_repo = tmp_path / "repo"
+        fake_repo.mkdir()
+        (fake_repo / "plugins.yaml").write_text(
+            "plugins:\n  - name: solo\n    path: plugins/solo\n"
+        )
+        solo = fake_repo / "plugins" / "solo"
+        solo.mkdir(parents=True)
+        (solo / "extension.ts").write_text("// hi")
+        monkeypatch.setattr(update_plugins, "ROOT", str(fake_repo))
+        monkeypatch.setattr(
+            update_plugins, "YAML_PATH", str(fake_repo / "plugins.yaml")
+        )
+
+        before = atexit._ncallbacks()  # type: ignore[attr-defined]
+        rc = update_plugins.main([])
+        after = atexit._ncallbacks()  # type: ignore[attr-defined]
+
+        assert rc == 0
+        assert after == before + 1, (
+            "main() must register exactly one atexit cleanup for its tempdir"
+        )
+        # _make_temp_payload_dir used the "klangk-plugins-" prefix; find the
+        # dir it created so we can assert contents, then clean it up (the
+        # registered rmtree would fire at session end otherwise).
+        import glob
+
+        candidates = glob.glob("/tmp/klangk-plugins-*") + glob.glob(
+            os.environ.get("TMPDIR", "/tmp") + "/klangk-plugins-*"
+        )
+        assert candidates, "expected a klangk-plugins-* tempdir to exist"
+        payload_path = max(candidates, key=os.path.getmtime)
+        assert os.path.isfile(os.path.join(payload_path, "plugins.lock"))
+        # Reap now so the test is tidy; unregister so atexit doesn't touch it.
+        shutil.rmtree(payload_path, ignore_errors=True)

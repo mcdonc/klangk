@@ -1,19 +1,33 @@
 #!/usr/bin/env bash
 # Create a stub klangk_plugins package so flutter pub get works without
 # running the full import_dart_plugins.py codegen. Useful for CI and
-# first-time checkouts before plugins are fetched.
+# first-time checkouts before plugins are materialized.
 #
-# Skips if pubspec_overrides.yaml already exists (real plugins are set up).
+# This is a *dev-shell/CI convenience* only — the real build
+# (flutterbuildweb.sh / build-*-image.sh) materializes plugins into its own
+# tempdir and runs the full codegen there (#1660). The stub lives at a
+# persistent path so the symlink it creates at src/frontend/pubspec_overrides.yaml
+# stays valid between commands; a build will repoint that symlink at its
+# tempdir while it runs, and this stub (re-run on the next shell entry /
+# CI step) restores it.
+#
+# Usage: bash scripts/stub_dart_plugins.sh [stub-dir]
+#   stub-dir defaults to ${XDG_STATE_HOME:-$HOME/.local/state}/klangk/dart-stub
+#
+# Skips if pubspec_overrides.yaml already exists with a non-dangling target
+# (real plugins are set up).
 set -euo pipefail
-
-FRONTEND_DIR="$(cd "$(dirname "$0")/../src/frontend" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+FRONTEND_DIR="$REPO_ROOT/src/frontend"
 
 if [ -e "$FRONTEND_DIR/pubspec_overrides.yaml" ]; then
+  # Symlink exists and resolves (non-dangling) — real plugins (or a prior
+  # stub) are in place. `-e` follows the symlink and is false if it dangles.
   exit 0
 fi
 
-PLUGINS_DIR="${KLANGK_PLUGINS_DIR:-$HOME/.klangk/plugins}"
-STUB_DIR="$PLUGINS_DIR/.dart"
+STUB_DIR="${1:-${XDG_STATE_HOME:-$HOME/.local/state}/klangk/dart-stub}"
 mkdir -p "$STUB_DIR/lib"
 
 cat >"$STUB_DIR/pubspec.yaml" <<'EOF'

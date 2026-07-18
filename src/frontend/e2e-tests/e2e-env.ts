@@ -10,12 +10,12 @@
 const STRIP_PREFIXES = ["KLANGK", "_KLANGK", "KLANGKC", "LOGFIRE"];
 
 // Build-infra vars that locate artifacts the test must use (the workspace
-// container image, built plugins, the compiled frontend, version stamp) —
-// produced by devenv's klangk:build-workspace-image / klangk:flutter-build
-// tasks, not by any test. Forwarded deliberately so the server finds the
-// built image/plugins/frontend.
+// container image, the compiled frontend, version stamp) — produced by
+// devenv's klangk:build-workspace-image / klangk:flutter-build tasks, not
+// by any test. Forwarded deliberately so the server finds the built
+// image/frontend. (KLANGK_PLUGINS_DIR was removed in #1660/#1665 — the
+// runtime reads features.json from the frontend bundle, not plugin trees.)
 const INFRA_VARS = [
-  "KLANGK_PLUGINS_DIR",
   "KLANGK_IMAGE_NAME",
   "KLANGK_VERSION_FILE",
   "KLANGK_FRONTEND_DIR",
@@ -31,7 +31,7 @@ export function cleanEnv(
     if (STRIP_PREFIXES.some((p) => upper.startsWith(p))) continue;
     env[key] = value;
   }
-  // Forward build-infra vars (image / plugins / version stamp).
+  // Forward build-infra vars (image / version stamp / frontend).
   for (const name of INFRA_VARS) {
     const val = process.env[name];
     if (val !== undefined) env[name] = val;
