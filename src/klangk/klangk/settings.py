@@ -455,6 +455,16 @@ class KlangkSettings(BaseSettings):
     # a diagnostic telling the deployer to shorten ``KLANGK_SOCKET`` or move
     # ``KLANGK_STATE_DIR`` shallower (#1531, #1542).
     socket: str | None = None
+    # caddy_admin_socket: the admin-API UDS path for the Caddy engine
+    # (KLANGK_PROXY_ENGINE=caddy, #1559). Default
+    # ``<state_dir>/caddy-admin.sock`` (derived in ``_resolve_socket_and_ports``
+    # after ``state_dir`` is resolved — mirrors ``socket``). A fail-fast
+    # validator rejects resolved paths exceeding the portable AF_UNIX
+    # ``sun_path`` bound (104 chars), pointing the deployer at
+    # ``KLANGK_CADDY_ADMIN_SOCKET`` / ``KLANGK_STATE_DIR`` (#1636 — the
+    # backend-UDS ``socket`` field has the same guard from #1531/#1542).
+    # The nginx engine never reads this field.
+    caddy_admin_socket: str | None = None
     # state_dir: runtime state (the UDS when listen is a socket path, rendered
     # nginx.conf, pid). **Required** — no default; a missing value fails at
     # construction (#1461). Devenv pins it to ``$DEVENV_STATE/klangk`` via
@@ -698,23 +708,50 @@ class KlangkSettings(BaseSettings):
         # --- socket default + length guard (#1531, #1542) ---
         if self.socket is None:
             self.socket = os.path.join(self.state_dir, "klangk.sock")
+        # --- caddy admin socket default + length guard (#1636) ---
+        if self.caddy_admin_socket is None:
+            self.caddy_admin_socket = os.path.join(
+                self.state_dir, "caddy-admin.sock"
+            )
         # Portable bound: macOS sun_path is 104 usable bytes; Linux is 107.
         # Use the smaller so one check is correct on both platforms.
+        # Applied to BOTH UDS paths the engines bind: the backend socket
+        # (always) and the Caddy admin socket (only bound under the Caddy
+        # engine, but checked unconditionally so a deep state_dir fails at
+        # construction regardless of engine — the diagnostic names which
+        # var to fix). See #1531/#1542 (backend) and #1636 (admin).
         max_socket_len = 104
-        if len(self.socket) > max_socket_len:
+        self._enforce_socket_length(
+            self.socket, "KLANGK_SOCKET", max_socket_len
+        )
+        self._enforce_socket_length(
+            self.caddy_admin_socket,
+            "KLANGK_CADDY_ADMIN_SOCKET",
+            max_socket_len,
+        )
+        return self
+
+    @staticmethod
+    def _enforce_socket_length(value: str, env_var: str, max_len: int) -> None:
+        """Raise ValueError if a UDS path exceeds the portable sun_path bound.
+
+        Naming the env var in the message lets the operator fix *this* socket
+        (vs the generic "move KLANGK_STATE_DIR shallower") when only one of
+        the two is too long.
+        """
+        if len(value) > max_len:
             raise ValueError(
-                f"KLANGK_SOCKET resolves to {self.socket!r} "
-                f"({len(self.socket)} chars), which exceeds the "
-                f"{max_socket_len}-character AF_UNIX sun_path limit. "
-                "Either set KLANGK_SOCKET to a shorter absolute path "
+                f"{env_var} resolves to {value!r} "
+                f"({len(value)} chars), which exceeds the "
+                f"{max_len}-character AF_UNIX sun_path limit. "
+                f"Either set {env_var} to a shorter absolute path "
                 "(e.g. /tmp/klangk.sock) or move KLANGK_STATE_DIR shallower "
                 "in the filesystem. (The kernel caps UDS paths at "
                 "sockaddr_un.sun_path: 108 bytes incl. NUL on Linux → 107 "
                 "usable; 104 on macOS, so a deep state_dir overflows the "
-                "default <state_dir>/klangk.sock and the bind fails.) "
-                "See #1531."
+                "default <state_dir>/...sock and the bind fails.) "
+                "See #1531 / #1636."
             )
-        return self
 
     @field_validator("log_level")
     @classmethod

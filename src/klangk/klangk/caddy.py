@@ -602,13 +602,15 @@ class CaddyWatchdog:
     def admin_socket(self) -> str:
         """The admin UDS **path** (bare filesystem path; what httpx dials).
 
-        Caddy's *bind* address (:attr:`admin_bind_address`) appends a
-        ``|0600`` mode suffix so the socket is created owner-only; the httpx
-        dial uses this bare path (the suffix is a bind-side directive only).
+        Read live from ``settings.caddy_admin_socket`` (default
+        ``<state_dir>/caddy-admin.sock``, overridable via
+        ``KLANGK_CADDY_ADMIN_SOCKET`` for environments where the default would
+        overflow the AF_UNIX sun_path bound, #1636). Caddy's *bind* address
+        (:attr:`admin_bind_address`) appends a ``|0600`` mode suffix so the
+        socket is created owner-only; the httpx dial uses this bare path (the
+        suffix is a bind-side directive only).
         """
-        return os.path.join(
-            self.app.state.settings.state_dir, "caddy-admin.sock"
-        )
+        return self.app.state.settings.caddy_admin_socket
 
     @property
     def admin_bind_address(self) -> str:

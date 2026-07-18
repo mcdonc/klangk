@@ -27,6 +27,17 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`KLANGK_CADDY_ADMIN_SOCKET` overrides the Caddy engine's admin-API
+  socket path (#1636).** The admin UDS was hardcoded to
+  `<state_dir>/caddy-admin.sock` with no override and no length check; a deep
+  `KLANGK_STATE_DIR` could push it over the portable `AF_UNIX` `sun_path`
+  bound (≤104 chars) and make the Caddy engine unstartable (the admin UDS is
+  its only config-delivery path). The new setting mirrors the backend-UDS
+  `KLANGK_SOCKET` escape hatch, and the existing length validator now covers
+  **both** socket paths — a too-long either one fails at construction with a
+  diagnostic naming the offending variable, regardless of engine. Unused by
+  the nginx engine.
+
 - **Caddy reverse-proxy engine behind `KLANGK_PROXY_ENGINE=caddy` (#1559).**
   A second, opt-in proxy engine joins the default nginx one: `klangkd`
   renders a **Caddyfile** and pushes it to Caddy's **admin API** over a

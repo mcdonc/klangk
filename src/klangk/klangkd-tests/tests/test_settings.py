@@ -380,6 +380,63 @@ class TestResolveSocketAndPorts:
         assert "KLANGK_STATE_DIR" in msg
         assert "KLANGK_SOCKET" in msg
 
+    # --- Caddy admin socket (#1636) ---
+    # Mirrors the backend-socket field's default + override + length guard.
+    # The admin UDS is only bound under the Caddy engine, but the length check
+    # fires at construction regardless of engine so a deep state_dir fails fast
+    # with a named-var diagnostic instead of cryptically in _wait_for_admin.
+
+    def test_caddy_admin_socket_defaults_to_state_dir(self):
+        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        assert s.caddy_admin_socket == os.path.join(
+            "/tmp/state", "caddy-admin.sock"
+        )
+
+    def test_explicit_caddy_admin_socket_wins(self):
+        s = KlangkSettings(
+            env={
+                "KLANGK_STATE_DIR": "/tmp/state",
+                "KLANGK_CADDY_ADMIN_SOCKET": "/short/caddy-admin.sock",
+            }
+        )
+        assert s.caddy_admin_socket == "/short/caddy-admin.sock"
+
+    def test_caddy_admin_socket_too_long_rejected(self):
+        from pydantic import ValidationError
+
+        long_admin = "/" + "a" * 104 + ".sock"
+        assert len(long_admin) > 104
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGK_STATE_DIR": "/tmp/state",
+                    "KLANGK_CADDY_ADMIN_SOCKET": long_admin,
+                    # Keep the backend socket short so the ONLY failure is the
+                    # admin socket — proves the check is per-field.
+                    "KLANGK_SOCKET": "/short/klangk.sock",
+                }
+            )
+        msg = str(exc_info.value)
+        assert "KLANGK_CADDY_ADMIN_SOCKET" in msg
+        assert "#1636" in msg
+
+    def test_caddy_admin_socket_error_names_the_var(self):
+        """The diagnostic names KLANGK_CADDY_ADMIN_SOCKET (not just state_dir)
+        so the operator can fix the right socket when only one is too long."""
+        from pydantic import ValidationError
+
+        long_admin = "/" + "a" * 104 + ".sock"
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGK_STATE_DIR": "/tmp/state",
+                    "KLANGK_CADDY_ADMIN_SOCKET": long_admin,
+                    "KLANGK_SOCKET": "/short/klangk.sock",
+                }
+            )
+        msg = str(exc_info.value)
+        assert "KLANGK_CADDY_ADMIN_SOCKET" in msg
+
 
 class TestKlangkdLauncher:
     """Tests for the klangkd launcher's --config resolution."""

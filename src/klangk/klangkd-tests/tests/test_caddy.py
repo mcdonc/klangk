@@ -581,6 +581,19 @@ class TestWatchdogPaths:
         wd = _wd(s)
         assert wd.admin_socket == str(tmp_path / "caddy-admin.sock")
 
+    def test_admin_socket_override(self, tmp_path):
+        """KLANGK_CADDY_ADMIN_SOCKET overrides the default path (#1636) — read
+        live off settings, not built inline."""
+        s = make_settings(
+            {
+                "KLANGK_STATE_DIR": str(tmp_path),
+                "KLANGK_CADDY_ADMIN_SOCKET": "/short/caddy-admin.sock",
+            }
+        )
+        wd = _wd(s)
+        assert wd.admin_socket == "/short/caddy-admin.sock"
+        assert wd.admin_bind_address == "unix///short/caddy-admin.sock|0600"
+
     def test_admin_bind_address_has_0600_suffix(self, tmp_path):
         """The Caddy bind address carries |0600 (owner-only socket creation);
         the bare path (admin_socket) is what httpx dials."""
