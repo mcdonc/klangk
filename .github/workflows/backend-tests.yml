@@ -23,6 +23,9 @@ jobs:
           filters: |
             python:
               - 'src/klangk/**'
+              - 'scripts/**'
+              - 'plugins/**'
+              - 'plugins.yaml'
               - '.github/workflows/backend-tests.yml'
 
       - uses: actions/setup-python@v6
@@ -41,6 +44,14 @@ jobs:
         if: steps.filter.outputs.python == 'true'
         # -n auto: run tests in parallel across CPUs (pytest-xdist)
         run: python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests -v -n auto
+
+      - name: Run build-pipeline tests
+        if: steps.filter.outputs.python == 'true'
+        # Exercises update_plugins.py + import_dart_plugins.py against the
+        # real checked-in plugins.yaml + plugins/ — catches build-side
+        # regressions the runtime test suite can't see (#1666). No coverage
+        # gate here (scripts/ isn't part of the klangk package).
+        run: python -m pytest scripts/tests/ -v
 
       - name: Skip notice
         if: steps.filter.outputs.python != 'true'
