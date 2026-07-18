@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:typed_data';
 import 'package:flutter/widgets.dart';
@@ -325,7 +326,9 @@ Future<bool> downloadStreamedUrl(
       (await _streamFetch(url.toJS, fetchOpts).toDart) as _FetchResponse;
   if (response.status != 200) {
     throw StreamedDownloadException(
-        response.status, response.statusText.toDart);
+      response.status,
+      response.statusText.toDart,
+    );
   }
   final body = response.body;
   if (body == null) {
@@ -393,4 +396,23 @@ class StreamedDownloadException implements Exception {
   StreamedDownloadException(this.status, this.statusText);
   @override
   String toString() => 'StreamedDownloadException: $status $statusText';
+}
+
+/// Fetch + parse the sibling `features.json` (next to index.html) — the
+/// runtime feature manifest emitted by the build (#1655). Returns null when
+/// the file is absent (pre-build, or a wheel that didn't include it) so the
+/// caller can degrade: no manifest means no defaults list, so the active set
+/// is whatever /api/config's features_enable says verbatim, or — when that's
+/// also unset — every compiled-in feature stays active (no filtering).
+Future<Map<String, dynamic>?> fetchFeaturesManifest() async {
+  try {
+    final response = await web.window.fetch('features.json'.toJS).toDart;
+    if (response.status != 200) return null;
+    final text = (await (await response.blob().toDart).text().toDart).toDart;
+    final decoded = jsonDecode(text);
+    if (decoded is Map<String, dynamic>) return decoded;
+    return null;
+  } catch (_) {
+    return null;
+  }
 }

@@ -104,13 +104,13 @@ async def version(app=Depends(get_app_dep)):
         if os.path.isfile(version_file):
             with open(version_file) as f:
                 info = json.load(f)
-            info["plugins"] = app.state.plugins.plugin_list()
+            info["plugins"] = app.state.plugins.feature_list()
             return info
     return {
         "version": "dev",
         "commit": "unknown",
         "built_at": None,
-        "plugins": app.state.plugins.plugin_list(),
+        "plugins": app.state.plugins.feature_list(),
     }
 
 
@@ -220,6 +220,13 @@ async def get_config(app=Depends(get_app_dep)):
         "support_email": s.support_email,
     }
     config.update(app.state.plugins.frontend_config())
+    # KLANGK_FEATURES_ENABLE: the deploy's chosen active-feature list,
+    # forwarded verbatim so the frontend can resolve the active set against
+    # its sibling features.json (canonical semantics — see #1655). None when
+    # unset (the frontend then uses the manifest's `defaults`).
+    features_enable = app.state.plugins.features_enable()
+    if features_enable is not None:
+        config["features_enable"] = features_enable
     return config
 
 

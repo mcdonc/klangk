@@ -316,20 +316,36 @@ class TestVersion:
         self, client, app, tmp_path, monkeypatch
     ):
         monkeypatch.setattr(app.state.settings, "version_file", None)
-        plugin_dir = tmp_path / "plugins" / "myplugin"
-        plugin_dir.mkdir(parents=True)
-        (plugin_dir / "package.json").write_text(
-            '{"name": "myplugin", "version": "1.2.3",'
-            ' "description": "A test plugin"}'
+        # The feature manifest is a single features.json at frontend_dir
+        # (#1655) — no per-plugin package.json scan.
+        import json as json_mod
+
+        frontend_dir = tmp_path / "frontend"
+        frontend_dir.mkdir()
+        (frontend_dir / "features.json").write_text(
+            json_mod.dumps(
+                {
+                    "features": [
+                        {
+                            "name": "myplugin",
+                            "version": "1.2.3",
+                            "description": "A test plugin",
+                            "config": {},
+                        }
+                    ],
+                    "defaults": [],
+                    "container_env_keys": [],
+                }
+            )
         )
-        # Rebuild the Plugins instance pointing at the tmp plugin dir
+        # Rebuild the Plugins instance pointing at the tmp frontend dir
         import types as types_mod
 
         app.state.plugins = app.state.plugins.__class__(
             types_mod.SimpleNamespace(
                 state=types_mod.SimpleNamespace(
                     settings=make_settings(
-                        env={"KLANGK_PLUGINS_DIR": str(tmp_path / "plugins")}
+                        env={"KLANGK_FRONTEND_DIR": str(frontend_dir)}
                     )
                 )
             )
@@ -396,26 +412,74 @@ class TestConfig:
         assert "login_banner" in data
         assert "instance_id" in data
 
-    async def test_get_config_includes_plugins(self, client, app, monkeypatch):
-        monkeypatch.setattr(
-            app.state.plugins,
-            "declarations",
-            {
-                "MY_PLUGIN_VAR": {
-                    "plugin": "test",
-                    "description": "",
-                    "default": "",
-                    "scope": "frontend",
+    async def test_get_config_includes_plugins(
+        self, client, app, tmp_path, monkeypatch
+    ):
+        # frontend_config() resolves frontend-scope values from the per-feature
+        # config blocks in features.json (#1655).
+        import json as json_mod
+
+        frontend_dir = tmp_path / "frontend"
+        frontend_dir.mkdir()
+        (frontend_dir / "features.json").write_text(
+            json_mod.dumps(
+                {
+                    "features": [
+                        {
+                            "name": "test",
+                            "version": "1.0.0",
+                            "description": "",
+                            "config": {
+                                "MY_PLUGIN_VAR": {
+                                    "description": "",
+                                    "default": "",
+                                    "scope": "frontend",
+                                }
+                            },
+                        }
+                    ],
+                    "defaults": [],
+                    "container_env_keys": [],
                 }
-            },
+            )
         )
-        monkeypatch.setattr(
-            app.state.plugins, "values", {"MY_PLUGIN_VAR": "test-value"}
+        import types as types_mod
+
+        app.state.plugins = app.state.plugins.__class__(
+            types_mod.SimpleNamespace(
+                state=types_mod.SimpleNamespace(
+                    settings=make_settings(
+                        env={"KLANGK_FRONTEND_DIR": str(frontend_dir)}
+                    )
+                )
+            )
         )
+        monkeypatch.setenv("MY_PLUGIN_VAR", "test-value")
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
         assert data["my_plugin_var"] == "test-value"
+
+    async def test_get_config_includes_features_enable_when_set(
+        self, client, app, monkeypatch
+    ):
+        # KLANGK_FEATURES_ENABLE is forwarded verbatim via /api/config when
+        # set (#1655); absent when unset (frontend falls back to manifest
+        # defaults).
+        monkeypatch.setattr(
+            app.state.settings, "features_enable", "celebrate,soliplex"
+        )
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        assert resp.json()["features_enable"] == "celebrate,soliplex"
+
+    async def test_get_config_omits_features_enable_when_unset(
+        self, client, app, monkeypatch
+    ):
+        monkeypatch.setattr(app.state.settings, "features_enable", None)
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        assert "features_enable" not in resp.json()
 
     async def test_get_config_banner_fields(self, client, app, monkeypatch):
         monkeypatch.setattr(app.state.settings, "login_banner_title", "Notice")
