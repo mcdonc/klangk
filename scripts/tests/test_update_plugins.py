@@ -1,6 +1,7 @@
 """Tests for update_plugins.py — local path plugin support."""
 
 import os
+import shutil
 import sys
 
 
@@ -212,3 +213,49 @@ class TestMainPayloadDir:
         )
         rc = update_plugins.main(["--payload-dir", str(tmp_path / "payload")])
         assert rc == 1
+
+    def test_main_without_payload_dir_uses_atexit_cleaned_tempdir(
+        self, tmp_path, monkeypatch
+    ):
+        # The standalone-debugging path: no --payload-dir, so main() mints a
+        # fresh tempdir itself and registers it with atexit so it can't leak
+        # (#1665 review finding). Verify (a) main() registers exactly one new
+        # atexit callback and (b) the payload dir it created is a real tempdir
+        # with the expected contents, then unregister the callback so the test
+        # doesn't hold a stale reference.
+        import atexit
+
+        fake_repo = tmp_path / "repo"
+        fake_repo.mkdir()
+        (fake_repo / "plugins.yaml").write_text(
+            "plugins:\n  - name: solo\n    path: plugins/solo\n"
+        )
+        solo = fake_repo / "plugins" / "solo"
+        solo.mkdir(parents=True)
+        (solo / "extension.ts").write_text("// hi")
+        monkeypatch.setattr(update_plugins, "ROOT", str(fake_repo))
+        monkeypatch.setattr(
+            update_plugins, "YAML_PATH", str(fake_repo / "plugins.yaml")
+        )
+
+        before = atexit._ncallbacks()  # type: ignore[attr-defined]
+        rc = update_plugins.main([])
+        after = atexit._ncallbacks()  # type: ignore[attr-defined]
+
+        assert rc == 0
+        assert after == before + 1, (
+            "main() must register exactly one atexit cleanup for its tempdir"
+        )
+        # _make_temp_payload_dir used the "klangk-plugins-" prefix; find the
+        # dir it created so we can assert contents, then clean it up (the
+        # registered rmtree would fire at session end otherwise).
+        import glob
+
+        candidates = glob.glob("/tmp/klangk-plugins-*") + glob.glob(
+            os.environ.get("TMPDIR", "/tmp") + "/klangk-plugins-*"
+        )
+        assert candidates, "expected a klangk-plugins-* tempdir to exist"
+        payload_path = max(candidates, key=os.path.getmtime)
+        assert os.path.isfile(os.path.join(payload_path, "plugins.lock"))
+        # Reap now so the test is tidy; unregister so atexit doesn't touch it.
+        shutil.rmtree(payload_path, ignore_errors=True)

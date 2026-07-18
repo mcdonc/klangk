@@ -11,13 +11,18 @@ STAMP="$DEVENV_STATE/klangk/.backend-image-hash"
 # Compute a hash of all files that affect the workspace image. The plugin
 # payload is a build-owned tempdir now (#1660), so hash the *source* — the
 # checked-in declaration (plugins.yaml) + the plugin trees under plugins/ —
-# rather than the ephemeral materialized dir.
+# rather than the ephemeral materialized dir. Use -print0 / -0 so plugin
+# names with spaces don't corrupt the hash (silently landing on a malformed
+# value that never matches the stamp → needless rebuilds).
 CURRENT_HASH=$(find \
   scripts/build-workspace-image.sh \
   src/containers/workspace/ \
   plugins.yaml \
   plugins/ \
-  -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)
+  -type f -print0 2>/dev/null |
+  sort -z |
+  xargs -0 sha256sum 2>/dev/null |
+  sha256sum | cut -d' ' -f1)
 
 # Skip rebuild if the image exists and the hash hasn't changed.
 # --no-cache and --force bypass the hash check.

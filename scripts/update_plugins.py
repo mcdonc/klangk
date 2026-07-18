@@ -14,6 +14,7 @@ checked-in ``plugins.yaml`` lives).
 """
 
 import argparse
+import atexit
 import os
 import re
 import shutil
@@ -41,9 +42,14 @@ def _make_temp_payload_dir():
     Used when the caller (e.g. a direct ``python3 update_plugins.py``) didn't
     pass ``--payload-dir``. Build scripts always pass an explicit dir so they
     can read the materialized trees afterward; this default exists so the
-    script remains runnable standalone for debugging.
+    script remains runnable standalone for debugging. The tempdir is recorded
+    with :mod:`atexit` so a forgotten standalone invocation can't leak — the
+    dir is removed on interpreter exit whether main() succeeds, fails, or is
+    interrupted.
     """
-    return tempfile.mkdtemp(prefix="klangk-plugins-")
+    payload = tempfile.mkdtemp(prefix="klangk-plugins-")
+    atexit.register(shutil.rmtree, payload, ignore_errors=True)
+    return payload
 
 
 def resolve_ref(git_url, ref):
