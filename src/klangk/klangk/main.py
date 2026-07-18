@@ -610,7 +610,8 @@ async def lifespan(app: FastAPI):
     setup_logfire(app)
 
     app.state.auth.require_secure_jwt_secret()
-    app.state.plugins.load()
+    # Plugins reads the build-emitted features.json at construction
+    # (Plugins(app) in build_app); no separate load() step (#1655).
     app.state.oidc.init_providers()
     enforce_no_auth_bind_safety(app)
     app.state.oidc.load_login_hook()

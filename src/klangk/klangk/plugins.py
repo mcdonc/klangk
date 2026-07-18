@@ -1,8 +1,32 @@
-"""Plugin configuration: load declared config keys and resolve values.
+"""Feature manifest: read the build-emitted ``features.json`` and bridge the
+declared config keys.
 
-Scans ``$KLANGK_PLUGINS_DIR/*/package.json`` for ``klangk.config`` entries
-and resolves each declared key from the server environment.  Provides
-helpers to retrieve values by scope (container, frontend, or both).
+The runtime no longer scans ``KLANGK_PLUGINS_DIR`` for per-plugin
+``package.json`` files — that presumed materialized source trees on the
+``klangkd`` host, which pip/uv installs never have (#1655). Instead the build
+(``import_dart_plugins.py``) emits a single ``features.json`` into the frontend
+bundle directory (next to ``index.html``), and the frontend reads its sibling
+file for per-feature metadata + the default-on set. ``klangkd`` reads **one
+field** of that same file — ``container_env_keys`` — to bridge the declared
+container-scope env vars into workspace containers; it does not read the
+per-feature metadata (the frontend owns that).
+
+``features.json`` shape (emitted by the build)::
+
+    {
+      "features": [
+        {"name": "celebrate", "version": "1.0.0", "description": "...",
+         "config": { "KEY": {"description": "...", "default": "", "scope": "container"|"frontend"|"both"} }},
+        ...
+      ],
+      "defaults": ["celebrate", "beep", ...],
+      "container_env_keys": ["KLANGK_GITHUB_OAUTH_CLIENT_ID", ...]
+    }
+
+Values for the declared keys are resolved via :func:`resolve_dynamic_config`
+(honoring ``file:``/``cmd:`` prefixes — feature config may itself be a
+secret). Today the value source is the server's env; a future issue (#1659)
+adds a ``features_config:`` block in ``klangkd.yaml`` as an additional source.
 """
 
 import json
@@ -13,133 +37,136 @@ from .settings import resolve_dynamic_config
 
 logger = logging.getLogger(__name__)
 
-VALID_SCOPES = {"container", "frontend", "both"}
+# Scopes that make a klangk.config key eligible for the container env bridge
+# (injected into workspace containers at create-time). "frontend" only is
+# excluded — those go to the UI via /api/config, not into the container env.
+# Mirrors _CONTAINER_SCOPES in scripts/import_dart_plugins.py.
+_CONTAINER_SCOPES = {"container", "both"}
+_FRONTEND_SCOPES = {"frontend", "both"}
 
 
 class Plugins:
-    """Plugin config scanner: loads declared keys and resolved values.
+    """Feature manifest reader + config-key bridge.
 
-    Constructed once in :func:`build_app` and stored on
-    ``app.state.plugins`` (#1451). The plugins dir is computed at
-    construction from ``self.settings.plugins_dir`` — no import-time env
-    read (#1450's frozen-at-import hazard). Declarations and values are
-    instance attrs (no mutable module globals).
+    Constructed once in :func:`build_app` and stored on ``app.state.plugins``.
+    Reads ``features.json`` (sibling of the frontend's ``index.html``) at
+    construction; the manifest is a build artifact, so a SIGHUP settings
+    reload (which may change ``frontend_dir``) re-reads it via
+    :meth:`reconfigure`.
 
-    Plugin-declared config keys (discovered at ``load()`` time from
-    ``package.json``) are dynamic — they're not settings fields — so
-    their values are still resolved via :func:`resolve_dynamic_config` at
-    load time (honoring ``file:``/``cmd:`` prefixes for plugin secrets).
+    The class keeps the ``Plugins`` name (and ``app.state.plugins`` slot) for
+    continuity with the broader codebase even though the user-facing concept
+    is now "feature" (#1655) — the Flutter ``ToolPlugin`` API contract is
+    unchanged; only the deploy/runtime activation surface was renamed.
     """
 
     def __init__(self, app):
         self.app = app
-        # Loaded at startup: {env_key: {plugin, description, default, scope}}
-        self.declarations: dict[str, dict] = {}
-        # Resolved values: {env_key: str}
-        self.values: dict[str, str] = {}
+        # Parsed features.json: {features: [...], defaults: [...],
+        # container_env_keys: [...]}. Empty when no manifest is present
+        # (pre-build source deploy, missing frontend_dir) — every method
+        # degrades cleanly to "no features, no env bridge."
+        self._manifest = self._read_manifest()
 
     def reconfigure(self, app) -> None:
+        # Re-read on a SIGHUP settings reload (frontend_dir may have changed).
         self.app = app
-        self.load()
+        self._manifest = self._read_manifest()
 
     @property
-    def plugins_dir(self) -> str:
-        # Read live off app_state (#1608) so a SIGHUP settings reload picks
-        # up a changed KLANGK_PLUGINS_DIR / KLANGK_CUSTOMIZE_DIR.
-        return self.app.state.settings.plugins_dir
+    def _features_path(self) -> str:
+        return os.path.join(
+            self.app.state.settings.frontend_dir, "features.json"
+        )
 
-    def load(self) -> None:
-        """Scan plugin package.json files and resolve config values."""
-        self.declarations = {}
-        self.values = {}
+    def _read_manifest(self) -> dict:
+        """Read + parse features.json. Empty dict on any failure (missing
+        file, bad JSON) — callers degrade to empty feature/env lists."""
+        path = self._features_path
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return data
 
-        if not os.path.isdir(self.plugins_dir):
-            return
+    def feature_list(self) -> list[dict[str, str]]:
+        """Return metadata for every compiled-in feature (name, version,
+        description).
 
-        for name in sorted(os.listdir(self.plugins_dir)):
-            pkg_json = os.path.join(self.plugins_dir, name, "package.json")
-            if not os.path.isfile(pkg_json):
+        Backs the ``plugins`` field of ``GET /api/version`` — the full set
+        of features possible to use on this install, regardless of whether
+        they're active for this deploy (#1655: activation is a frontend
+        concern, gated by KLANGK_FEATURES_ENABLE against this list).
+        """
+        features = self._manifest.get("features", [])
+        return [
+            {
+                "name": f.get("name", ""),
+                "version": f.get("version", ""),
+                "description": f.get("description", ""),
+            }
+            for f in features
+            if isinstance(f, dict)
+        ]
+
+    def container_env(self) -> dict[str, str]:
+        """Return env vars to inject into workspace containers.
+
+        The build emits ``container_env_keys`` (every klangk.config key
+        declared with scope ``container`` or ``both`` across all compiled-in
+        features) into ``features.json``; the server reads that list and
+        resolves each key from its environment via
+        :func:`resolve_dynamic_config` (so ``file:``/``cmd:`` prefixes work
+        for feature secrets). The value source today is the server's env;
+        #1659 adds a ``features_config:`` block in ``klangkd.yaml`` as an
+        additional source.
+        """
+        result: dict[str, str] = {}
+        for key in self._manifest.get("container_env_keys", []):
+            if not isinstance(key, str):
                 continue
+            result[key] = resolve_dynamic_config(key, "") or ""
+        return result
 
-            try:
-                with open(pkg_json) as f:
-                    manifest = json.load(f)
-            except (json.JSONDecodeError, ValueError, OSError):
+    def frontend_config(self) -> dict[str, str]:
+        """Return config entries for the ``GET /api/config`` response.
+
+        Keys are lowercased for JSON convention (e.g. ``SOLIPLEX_URL`` →
+        ``soliplex_url``). The shape (which keys exist, descriptions,
+        defaults) is read from the per-feature ``config`` blocks in
+        ``features.json``; the values are resolved server-side via
+        :func:`resolve_dynamic_config` so the frontend doesn't need access
+        to klangkd's environment (today's only value source).
+        """
+        result: dict[str, str] = {}
+        for feature in self._manifest.get("features", []):
+            if not isinstance(feature, dict):
                 continue
-
-            config = manifest.get("klangk", {}).get("config", {})
+            config = feature.get("config", {})
             if not isinstance(config, dict):
                 continue
-
             for key, spec in config.items():
                 if not isinstance(spec, dict):
                     continue
                 scope = spec.get("scope", "container")
-                if scope not in VALID_SCOPES:
-                    scope = "container"
-                self.declarations[key] = {
-                    "plugin": name,
-                    "description": spec.get("description", ""),
-                    "default": spec.get("default", ""),
-                    "scope": scope,
-                }
-
-        for key, spec in self.declarations.items():
-            default = spec.get("default", "")
-            # resolve_dynamic_config (not raw os.environ) so plugin-declared keys
-            # also honor the file:/cmd: prefixes — plugin config may itself be
-            # a secret (e.g. an API token declared by a plugin). These keys
-            # are dynamic (discovered from package.json), not settings fields,
-            # so they can't be migrated to typed settings.
-            self.values[key] = resolve_dynamic_config(key, default) or ""
-
-        if self.declarations:
-            logger.info(
-                "Loaded %d plugin config key(s): %s",
-                len(self.declarations),
-                ", ".join(sorted(self.declarations)),
-            )
-
-    def plugin_list(self) -> list[dict[str, str]]:
-        """Return metadata for each loaded plugin (name, version, description)."""
-        if not os.path.isdir(self.plugins_dir):
-            return []
-        plugins = []
-        for name in sorted(os.listdir(self.plugins_dir)):
-            pkg_json = os.path.join(self.plugins_dir, name, "package.json")
-            if not os.path.isfile(pkg_json):
-                continue
-            try:
-                with open(pkg_json) as f:
-                    manifest = json.load(f)
-            except (json.JSONDecodeError, ValueError, OSError):
-                continue
-            plugins.append(
-                {
-                    "name": name,
-                    "version": manifest.get("version", ""),
-                    "description": manifest.get("description", ""),
-                }
-            )
-        return plugins
-
-    def container_env(self) -> dict[str, str]:
-        """Return env vars to inject into workspace containers."""
-        result = {}
-        for key, spec in self.declarations.items():
-            scope = spec.get("scope", "container")
-            if scope in ("container", "both"):
-                result[key] = self.values.get(key, "")
+                if scope not in _FRONTEND_SCOPES:
+                    continue
+                default = spec.get("default", "")
+                result[key.lower()] = (
+                    resolve_dynamic_config(key, default) or ""
+                )
         return result
 
-    def frontend_config(self) -> dict[str, str]:
-        """Return config entries for the GET /api/config response.
+    def features_enable(self) -> str | None:
+        """The deploy's chosen active-feature list (``KLANGK_FEATURES_ENABLE``).
 
-        Keys are lowercased for JSON convention (e.g. SOLIPLEX_URL → soliplex_url).
+        Forwarded verbatim via ``/api/config`` so the frontend can resolve
+        the active set against its sibling ``features.json`` (canonical
+        semantics: unset → manifest ``defaults``; any explicit value →
+        exactly that list). The server does no resolution itself — the
+        frontend owns the activation logic (#1655).
         """
-        result = {}
-        for key, spec in self.declarations.items():
-            scope = spec.get("scope", "container")
-            if scope in ("frontend", "both"):
-                result[key.lower()] = self.values.get(key, "")
-        return result
+        return self.app.state.settings.features_enable

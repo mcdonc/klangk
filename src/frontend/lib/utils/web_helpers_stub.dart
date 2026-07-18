@@ -61,3 +61,9 @@ Future<bool> downloadStreamedUrl(
   Map<String, String>? headers,
 }) async =>
     false;
+
+/// Stub — no sibling features.json outside the browser (VM tests). Returns
+/// null so the caller treats all compiled-in features as active (no manifest
+/// = no filtering; the active set is whatever /api/config's features_enable
+/// says, or the plugin set itself when that's also unset).
+Future<Map<String, dynamic>?> fetchFeaturesManifest() async => null;

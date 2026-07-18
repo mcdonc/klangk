@@ -27,6 +27,25 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Feature manifest (`features.json`) + per-deploy activation
+  (`KLANGK_FEATURES_ENABLE`) (#1655).** The build emits a single
+  `features.json` into the frontend bundle directory (next to `index.html`)
+  carrying every compiled-in feature's metadata + a `defaults` list + the
+  container-scope env keys. The frontend reads its sibling file for
+  per-feature metadata and (when `KLANGK_FEATURES_ENABLE` is unset) the
+  stock default-on set. `KLANGK_FEATURES_ENABLE` (comma-separated feature
+  names, canonical semantics — any explicit value is **exactly** that list,
+  nothing implied; unset → manifest `defaults`; no `*` form) is forwarded via
+  `/api/config`, and `main.dart` filters `createAllPlugins()` against the
+  active set before registration — a shipped-but-inactive feature's Dart is
+  in the monolithic bundle but inert (no app-bar icon, overlay, routes, or
+  dispatched tools). This is what lets a single-client feature ship dormant
+  in every wheel and turn on only where wanted — no fork, no custom tag,
+  no rebuild. Activation is wheel-side only for now; the workspace side
+  (TS extensions + tools) stays always-on by design (deferred as future
+  work). Compiled-in set ⊇ `defaults` deliberately — the delta is the
+  dormant-on-stock-deliver features.
+
 - **`KLANGK_CONFIG_DIR` is the config-tree root (#1649).** The single
   overridable knob for user-edited, durable config paths — the config-tree
   analogue of `KLANGK_STATE_DIR`. Defaults to `$XDG_CONFIG_HOME/klangk` (→
@@ -381,6 +400,18 @@ set-password <email>` (set a known password for the default user — whose
   from `/my-permissions`).
 
 ### Breaking
+
+- **`KLANGK_PLUGINS_DIR` retires as a runtime setting (#1655).** The
+  runtime no longer scans `$KLANGK_PLUGINS_DIR/*/package.json` for plugin
+  config — that presumed materialized source trees on the klangkd host,
+  which pip/uv installs never have. The server now reads the build-emitted
+  `features.json` (one field — `container_env_keys` — to bridge container
+  env vars; the frontend reads the rest). `KLANGK_PLUGINS_DIR` is **removed
+  from `KlangkSettings`** with no successor; it stays as a **build-time-only**
+  env var consumed by `update_plugins.py` and the image-build scripts (read
+  from `os.environ`, not via settings). Operators who set it expecting the
+  server to scan it: the server no longer scans anything; the shipped
+  `features.json` is the whole runtime truth.
 
 - **`KLANGK_CUSTOMIZE_DIR` relocates from the state tree to the config
   tree (#1644).** It holds user-edited, durable intent (branding, email

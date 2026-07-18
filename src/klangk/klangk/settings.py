@@ -564,10 +564,6 @@ class KlangkSettings(BaseSettings):
     # from ``state_dir``). An explicit ``KLANGK_CONFIG_DIR`` wins; per-sub-dir
     # env vars still win over the derivation. Read at boot and on SIGHUP
     # (reloadable, like the sub-dirs).
-    #
-    # Note: ``plugins_dir`` is deliberately **not** a ``config_dir`` child —
-    # its tree placement is decided separately (#1651: payload → state, env
-    # deprecated). It keeps deriving from ``state_dir`` here, as on main.
     config_dir: str | None = None
     # customize_dir: branding + email templates — user-edited, durable
     # intent, so it's **config**, not state. Defaults to
@@ -575,15 +571,17 @@ class KlangkSettings(BaseSettings):
     # deriving from the resolved ``config_dir`` (#1644, #1649); no longer
     # under ``state_dir``. Explicit ``KLANGK_CUSTOMIZE_DIR`` still wins.
     customize_dir: str | None = None
-    # plugins_dir: plugin packages. Defaults to ``<state_dir>/plugins`` when
-    # unset (derived in the ``_require_dirs`` validator after state_dir is
-    # resolved). Shell scripts and the host container set
-    # ``KLANGK_PLUGINS_DIR`` explicitly (that override path is unchanged).
-    # The config-vs-state placement of the plugins tree is being reworked in
-    # #1651 (payload → ``state_dir/plugins``, ``KLANGK_PLUGINS_DIR``
-    # deprecated) — until that lands, plugins_dir stays under ``state_dir``
-    # exactly as on main, and is **not** a ``config_dir`` child.
-    plugins_dir: str | None = None
+    # features_enable: which compiled-in features (plugins) are turned on for
+    # this deploy. Canonical semantics (#1655): unset → the manifest's
+    # ``defaults`` list (the stock set, backwards-compatible); any explicit
+    # value → exactly that comma-separated list, nothing implied (no `*`
+    # form). The frontend reads its sibling ``features.json`` for the
+    # per-feature metadata + defaults, and this value (forwarded via
+    # ``/api/config``) for the deploy's chosen set; filtering happens in
+    # ``main.dart`` before ``registry.register()``. Distinct from build-time
+    # declaration (#1651): "what's compiled in" is build-time; "what's
+    # turned on" is deploy-time. Read at boot and on SIGHUP (reloadable).
+    features_enable: str | None = None
     image_name: str | None = "klangk-workspace"
     image_pull_policy: str | None = "never"
     allowed_images: str | None = None
@@ -691,7 +689,7 @@ class KlangkSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_dirs(self) -> "KlangkSettings":
-        """Default ``state_dir``; derive ``data_dir``, ``customize_dir``, ``plugins_dir``.
+        """Default ``state_dir``; derive ``data_dir``, ``customize_dir``, ``config_dir``.
 
         ``state_dir`` defaults to ``$XDG_STATE_HOME/klangk`` (→
         ``~/.local/state/klangk`` when the var is unset, incl. macOS) when no
@@ -708,16 +706,13 @@ class KlangkSettings(BaseSettings):
 
         ``data_dir`` still derives from ``state_dir`` (the SQLite DB +
         workspace volumes are runtime state too), so one default populates
-        the state tree. ``customize_dir`` is config (user-edited, durable
-        intent — branding, email templates), so it derives from
-        ``config_dir`` (the config-tree root, #1649) which itself defaults
-        to ``$XDG_CONFIG_HOME/klangk`` — the symmetric analogue of
-        ``state_dir``. ``plugins_dir`` is **not** a ``config_dir`` child;
-        it keeps deriving from ``state_dir`` (as on main) pending #1651's
-        plugins-tree rework. Explicit values still win at every level:
-        ``KLANGK_CONFIG_DIR`` overrides the root, ``KLANGK_CUSTOMIZE_DIR``
-        / ``KLANGK_PLUGINS_DIR`` override the sub-dirs (over the derived
-        default, not the root).
+        the state tree. ``config_dir`` defaults to
+        ``$XDG_CONFIG_HOME/klangk`` (the config-tree root, #1649) and
+        ``customize_dir`` derives from it (user-edited, durable config).
+        ``plugins_dir`` is gone from settings entirely (#1655): the runtime
+        reads the build-emitted ``features.json`` from ``frontend_dir``;
+        ``KLANGK_PLUGINS_DIR`` stays as a build-time env var only (read by
+        ``update_plugins.py`` / image-build scripts via ``os.environ``).
         """
         if not self.state_dir:
             # If neither $XDG_STATE_HOME nor $HOME is set (the pathological
@@ -740,14 +735,9 @@ class KlangkSettings(BaseSettings):
         if not self.data_dir:
             self.data_dir = os.path.join(self.state_dir, "data")
         # config_dir is the config-tree root (the state_tree analogue of
-        # state_dir, #1649): customize_dir derives from it. Resolved before
-        # customize_dir so the derivation has a root.
+        # state_dir, #1649): customize_dir derives from it.
         if not self.config_dir:
             self.config_dir = os.path.join(_xdg_config_home(), _XDG_SUBDIR)
-        # plugins_dir stays under state_dir (as on main) — NOT a config_dir
-        # child. Its tree placement is reworked separately in #1651.
-        if not self.plugins_dir:
-            self.plugins_dir = os.path.join(self.state_dir, "plugins")
         # customize_dir is config (user-edited, durable) — derive from
         # config_dir, not state_dir (#1644/#1649).
         if not self.customize_dir:

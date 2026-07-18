@@ -1139,23 +1139,15 @@ class TestStartContainer:
     async def test_plugins_env_injected(
         self, workspace, monkeypatch, app_state
     ):
+        # container_env() reads the build-emitted container_env_keys list and
+        # resolves each from the server env (#1655). Patch the parsed manifest
+        # so the test doesn't need a real features.json on disk.
         monkeypatch.setattr(
             self.registry.app.state.plugins,
-            "declarations",
-            {
-                "PLUGIN_VAR": {
-                    "plugin": "test",
-                    "description": "",
-                    "default": "",
-                    "scope": "container",
-                }
-            },
+            "_manifest",
+            {"container_env_keys": ["PLUGIN_VAR"]},
         )
-        monkeypatch.setattr(
-            self.registry.app.state.plugins,
-            "values",
-            {"PLUGIN_VAR": "plugin-val"},
-        )
+        monkeypatch.setenv("PLUGIN_VAR", "plugin-val")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"

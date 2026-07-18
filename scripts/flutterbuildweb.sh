@@ -85,3 +85,13 @@ sed -i "s|flutter_bootstrap.js|flutter_bootstrap.js?v=${HASH}|" "$BUILD_DIR/inde
 # Inject build hash as a meta tag so the Dart app can detect stale builds.
 sed -i "s|</head>|<meta name=\"klangk-build-hash\" content=\"${HASH}\" />\n</head>|" "$BUILD_DIR/index.html"
 echo "Cache-bust: v=$HASH"
+
+# Re-emit features.json AFTER the Flutter build (#1655). flutter build web
+# may regenerate build/web/ and wipe a manifest written before it, so the
+# pre-build emit in import_dart_plugins.py is followed by this post-build
+# re-emit. The manifest is a frontend sibling file (read by the frontend at
+# boot + one field by klangkd for container-env bridging) and must survive
+# the Flutter build. Invoke via $SCRIPT_DIR (absolute) because CWD is
+# src/frontend here (the cd above); the generator resolves its own paths
+# from __file__ so it lands the manifest correctly regardless of CWD.
+python3 "$SCRIPT_DIR/import_dart_plugins.py" --features-only

@@ -706,11 +706,11 @@ class TestResolveIndirectionsValidator:
 
 class TestRequireDirsValidator:
     """``state_dir`` defaults to ``$XDG_STATE_HOME/klangk`` (→
-    ``~/.local/state/klangk``) when unset (#1644); ``data_dir`` and
-    ``plugins_dir`` derive from ``state_dir`` (as on main — plugins_dir is
-    **not** a config_dir child; its tree placement is reworked separately in
-    #1651); ``customize_dir`` defaults to ``$XDG_CONFIG_HOME/klangk/custom``
-    via the new ``config_dir`` root (config, not state — #1644/#1649).
+    ``~/.local/state/klangk``) when unset (#1644); ``data_dir`` derives from
+    ``state_dir``; ``customize_dir`` defaults to ``<config_dir>/custom`` via
+    the new ``config_dir`` root (config, not state — #1644/#1649).
+    ``plugins_dir`` is gone from settings entirely (#1655) — the runtime
+    reads the build-emitted ``features.json`` from ``frontend_dir``.
     Explicit values win. The #1461 fail-fast intent is preserved only for the
     pathological case where no home can be computed ($HOME unset)."""
 
@@ -762,20 +762,27 @@ class TestRequireDirsValidator:
         )
         assert s.data_dir == "/explicit/data"
 
-    def test_plugins_dir_defaults_to_state_dir_plugins(self):
-        # plugins_dir derives from state_dir (as on main) — NOT a config_dir
-        # child. Its tree placement is reworked separately in #1651.
+    def test_plugins_dir_removed_from_settings(self):
+        # plugins_dir is gone from KlangkSettings entirely (#1655) — the
+        # runtime reads the build-emitted features.json from frontend_dir;
+        # KLANGK_PLUGINS_DIR stays as a build-time env var only.
         s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
-        assert s.plugins_dir == os.path.join("/tmp/state", "plugins")
+        assert not hasattr(s, "plugins_dir")
 
-    def test_explicit_plugins_dir_wins(self):
+    def test_klangk_plugins_dir_env_not_recognized(self):
+        # The env var is no longer a settings source (build-time-only).
+        # pydantic-settings ignores unknown env keys (no error), and the
+        # resulting settings object has no plugins_dir attribute — the var
+        # simply has no effect.
         s = KlangkSettings(
             env={
                 "KLANGK_STATE_DIR": "/tmp/state",
                 "KLANGK_PLUGINS_DIR": "/explicit/plugins",
             }
         )
-        assert s.plugins_dir == "/explicit/plugins"
+        assert not hasattr(s, "plugins_dir")
+        # The var didn't get picked up as anything else either.
+        assert s.state_dir == "/tmp/state"
 
     def test_customize_dir_defaults_to_xdg_config_home(self, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/xcfg")
@@ -797,14 +804,11 @@ class TestRequireDirsValidator:
         monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/xcfg")
         monkeypatch.setenv("XDG_STATE_HOME", "/tmp/xstate")
         s = KlangkSettings(env={})
-        # state tree (derived from state_dir): data_dir + plugins_dir
+        # state tree (derived from state_dir): data_dir only — plugins_dir is
+        # gone (#1655).
         assert s.state_dir == os.path.join("/tmp/xstate", "klangk")
         assert s.data_dir == os.path.join("/tmp/xstate", "klangk", "data")
-        assert s.plugins_dir == os.path.join(
-            "/tmp/xstate", "klangk", "plugins"
-        )
-        # config tree root (#1649) + its derived customize_dir (plugins_dir
-        # is NOT under config_dir — see #1651)
+        # config tree root (#1649) + its derived customize_dir.
         assert s.config_dir == os.path.join("/tmp/xcfg", "klangk")
         assert s.customize_dir == os.path.join("/tmp/xcfg", "klangk", "custom")
 
@@ -826,7 +830,7 @@ class TestRequireDirsValidator:
     def test_explicit_config_dir_wins_and_propagates(self):
         # An explicit KLANGK_CONFIG_DIR overrides the XDG default AND
         # customize_dir derives from it (the single-knob relocation point).
-        # plugins_dir is unaffected — it derives from state_dir (#1651).
+        # plugins_dir is gone (#1655) — nothing to check there.
         s = KlangkSettings(
             env={
                 "KLANGK_STATE_DIR": "/tmp/state",
@@ -835,13 +839,9 @@ class TestRequireDirsValidator:
         )
         assert s.config_dir == "/my/cfg"
         assert s.customize_dir == os.path.join("/my/cfg", "custom")
-        # plugins_dir still derives from state_dir, not config_dir.
-        assert s.plugins_dir == os.path.join("/tmp/state", "plugins")
 
     def test_customize_override_wins_over_config_dir_derivation(self):
-        # KLANGK_CUSTOMIZE_DIR still wins over the config_dir-derived default
-        # (over the derivation, not over the root itself). plugins_dir is
-        # unaffected by config_dir — it has its own KLANGK_PLUGINS_DIR override.
+        # KLANGK_CUSTOMIZE_DIR still wins over the config_dir-derived default.
         s = KlangkSettings(
             env={
                 "KLANGK_STATE_DIR": "/tmp/state",
@@ -851,8 +851,32 @@ class TestRequireDirsValidator:
         )
         assert s.config_dir == "/my/cfg"
         assert s.customize_dir == "/explicit/custom"
-        # plugins_dir still derives from state_dir (its own var unset).
-        assert s.plugins_dir == os.path.join("/tmp/state", "plugins")
+
+    # --- features_enable: per-deploy activation (#1655) ---
+
+    def test_features_enable_defaults_to_none(self):
+        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        assert s.features_enable is None
+
+    def test_features_enable_explicit_list(self):
+        s = KlangkSettings(
+            env={
+                "KLANGK_STATE_DIR": "/tmp/state",
+                "KLANGK_FEATURES_ENABLE": "celebrate,beep,soliplex",
+            }
+        )
+        # Canonical semantics: the value is carried verbatim (no parsing,
+        # no `*` expansion — the frontend resolves it against features.json).
+        assert s.features_enable == "celebrate,beep,soliplex"
+
+    def test_features_enable_single_value(self):
+        s = KlangkSettings(
+            env={
+                "KLANGK_STATE_DIR": "/tmp/state",
+                "KLANGK_FEATURES_ENABLE": "soliplex",
+            }
+        )
+        assert s.features_enable == "soliplex"
 
 
 class TestReload:
