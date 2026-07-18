@@ -254,28 +254,29 @@ port: "8997"
 
 ### Container / workspace
 
-| Key                          | Default               | Env var                             |
-| ---------------------------- | --------------------- | ----------------------------------- |
-| `data_dir`                   | **required**          | `KLANGK_DATA_DIR`                   |
-| `state_dir`                  | **required**          | `KLANGK_STATE_DIR`                  |
-| `customize_dir`              |                       | `KLANGK_CUSTOMIZE_DIR`              |
-| `plugins_dir`                | `<state_dir>/plugins` | `KLANGK_PLUGINS_DIR`                |
-| `image_name`                 | `klangk-workspace`    | `KLANGK_IMAGE_NAME`                 |
-| `image_pull_policy`          | `never`               | `KLANGK_IMAGE_PULL_POLICY`          |
-| `allowed_images`             |                       | `KLANGK_ALLOWED_IMAGES`             |
-| `allowed_mount_roots`        |                       | `KLANGK_ALLOWED_MOUNT_ROOTS`        |
-| `allow_autostart`            |                       | `KLANGK_ALLOW_AUTOSTART`            |
-| `allow_sudo`                 |                       | `KLANGK_ALLOW_SUDO`                 |
-| `container_subnets`          | _(auto-derived)_      | `KLANGK_CONTAINER_SUBNETS`          |
-| `userns`                     |                       | `KLANGK_USERNS`                     |
-| `podman_bin`                 | `podman`              | `KLANGK_PODMAN_BIN`                 |
-| `disable_tmux`               |                       | `KLANGK_DISABLE_TMUX`               |
-| `health_check_interval`      |                       | `KLANGK_HEALTH_CHECK_INTERVAL`      |
-| `health_check_startup_grace` |                       | `KLANGK_HEALTH_CHECK_STARTUP_GRACE` |
-| `health_check_timeout`       |                       | `KLANGK_HEALTH_CHECK_TIMEOUT`       |
-| `hosted_ports_per_workspace` | `5`                   | `KLANGK_HOSTED_PORTS_PER_WORKSPACE` |
-| `test_mode`                  |                       | `KLANGK_TEST_MODE`                  |
-| `version_file`               |                       | `KLANGK_VERSION_FILE`               |
+| Key                          | Default                   | Env var                             |
+| ---------------------------- | ------------------------- | ----------------------------------- |
+| `data_dir`                   | `<state_dir>/data`        | `KLANGK_DATA_DIR`                   |
+| `state_dir`                  | `$XDG_STATE_HOME/klangk`  | `KLANGK_STATE_DIR`                  |
+| `config_dir`                 | `$XDG_CONFIG_HOME/klangk` | `KLANGK_CONFIG_DIR`                 |
+| `customize_dir`              | `<config_dir>/custom`     | `KLANGK_CUSTOMIZE_DIR`              |
+| `plugins_dir`                | `<state_dir>/plugins`     | `KLANGK_PLUGINS_DIR`                |
+| `image_name`                 | `klangk-workspace`        | `KLANGK_IMAGE_NAME`                 |
+| `image_pull_policy`          | `never`                   | `KLANGK_IMAGE_PULL_POLICY`          |
+| `allowed_images`             |                           | `KLANGK_ALLOWED_IMAGES`             |
+| `allowed_mount_roots`        |                           | `KLANGK_ALLOWED_MOUNT_ROOTS`        |
+| `allow_autostart`            |                           | `KLANGK_ALLOW_AUTOSTART`            |
+| `allow_sudo`                 |                           | `KLANGK_ALLOW_SUDO`                 |
+| `container_subnets`          | _(auto-derived)_          | `KLANGK_CONTAINER_SUBNETS`          |
+| `userns`                     |                           | `KLANGK_USERNS`                     |
+| `podman_bin`                 | `podman`                  | `KLANGK_PODMAN_BIN`                 |
+| `disable_tmux`               |                           | `KLANGK_DISABLE_TMUX`               |
+| `health_check_interval`      |                           | `KLANGK_HEALTH_CHECK_INTERVAL`      |
+| `health_check_startup_grace` |                           | `KLANGK_HEALTH_CHECK_STARTUP_GRACE` |
+| `health_check_timeout`       |                           | `KLANGK_HEALTH_CHECK_TIMEOUT`       |
+| `hosted_ports_per_workspace` | `5`                       | `KLANGK_HOSTED_PORTS_PER_WORKSPACE` |
+| `test_mode`                  |                           | `KLANGK_TEST_MODE`                  |
+| `version_file`               |                           | `KLANGK_VERSION_FILE`               |
 
 ### LLM
 

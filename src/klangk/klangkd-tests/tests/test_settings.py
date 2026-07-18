@@ -705,23 +705,49 @@ class TestResolveIndirectionsValidator:
 
 
 class TestRequireDirsValidator:
-    """`state_dir` is required -- no default (#1461); a missing value fails at
-    construction, not at the first use that dereferences a ``None`` path.
-    `data_dir` and `plugins_dir` both default to `<state_dir>/<name>` when
-    unset (#1506); explicit values win."""
+    """``state_dir`` defaults to ``$XDG_STATE_HOME/klangk`` (→
+    ``~/.local/state/klangk``) when unset (#1644); ``data_dir`` and
+    ``plugins_dir`` derive from ``state_dir`` (as on main — plugins_dir is
+    **not** a config_dir child; its tree placement is reworked separately in
+    #1651); ``customize_dir`` defaults to ``$XDG_CONFIG_HOME/klangk/custom``
+    via the new ``config_dir`` root (config, not state — #1644/#1649).
+    Explicit values win. The #1461 fail-fast intent is preserved only for the
+    pathological case where no home can be computed ($HOME unset)."""
 
-    def test_missing_state_dir_fails(self):
+    def test_state_dir_defaults_to_xdg_state_home(self, monkeypatch):
+        # Pin both XDG roots + HOME so the default is deterministic and
+        # doesn't leak the developer's real home into the assertion.
+        monkeypatch.setenv("XDG_STATE_HOME", "/tmp/xstate")
+        monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/xcfg")
+        monkeypatch.setenv("HOME", "/tmp/fakehome")
+        s = KlangkSettings(env={})
+        assert s.state_dir == os.path.join("/tmp/xstate", "klangk")
+
+    def test_state_dir_defaults_to_home_when_xdg_unset(self, monkeypatch):
+        # The documented XDG fallback: unset var → ~/.local/state.
+        monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+        monkeypatch.setenv("HOME", "/tmp/fakehome")
+        s = KlangkSettings(env={})
+        assert s.state_dir == os.path.join(
+            "/tmp/fakehome", ".local", "state", "klangk"
+        )
+
+    def test_explicit_state_dir_wins_over_default(self, monkeypatch):
+        monkeypatch.setenv("XDG_STATE_HOME", "/tmp/xstate")
+        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/explicit/state"})
+        assert s.state_dir == "/explicit/state"
+
+    def test_state_dir_still_required_when_home_unset(self, monkeypatch):
+        """The #1461 fail-fast intent survives — but only for the genuinely
+        unconfigured case where no home path can be computed ($HOME unset and
+        $XDG_STATE_HOME unset). A sensible default exists whenever $HOME does."""
         from pydantic import ValidationError
 
+        monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+        monkeypatch.delenv("HOME", raising=False)
         with pytest.raises(ValidationError) as exc_info:
-            KlangkSettings(env={"KLANGK_DATA_DIR": "/tmp/data"})
-        assert "KLANGK_STATE_DIR" in str(exc_info.value)
-
-    def test_missing_state_dir_alone_fails(self):
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
             KlangkSettings(env={})
+        assert "KLANGK_STATE_DIR" in str(exc_info.value)
 
     def test_data_dir_defaults_to_state_dir_data(self):
         s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
@@ -737,6 +763,8 @@ class TestRequireDirsValidator:
         assert s.data_dir == "/explicit/data"
 
     def test_plugins_dir_defaults_to_state_dir_plugins(self):
+        # plugins_dir derives from state_dir (as on main) — NOT a config_dir
+        # child. Its tree placement is reworked separately in #1651.
         s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
         assert s.plugins_dir == os.path.join("/tmp/state", "plugins")
 
@@ -749,11 +777,10 @@ class TestRequireDirsValidator:
         )
         assert s.plugins_dir == "/explicit/plugins"
 
-    def test_both_derived_dirs_default_together(self):
+    def test_customize_dir_defaults_to_xdg_config_home(self, monkeypatch):
+        monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/xcfg")
         s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
-        assert s.data_dir == os.path.join("/tmp/state", "data")
-        assert s.plugins_dir == os.path.join("/tmp/state", "plugins")
-        assert s.customize_dir == os.path.join("/tmp/state", "custom")
+        assert s.customize_dir == os.path.join("/tmp/xcfg", "klangk", "custom")
 
     def test_explicit_customize_dir_wins(self):
         s = KlangkSettings(
@@ -763,6 +790,69 @@ class TestRequireDirsValidator:
             }
         )
         assert s.customize_dir == "/explicit/custom"
+
+    def test_config_dir_and_customize_default_under_config_home(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/xcfg")
+        monkeypatch.setenv("XDG_STATE_HOME", "/tmp/xstate")
+        s = KlangkSettings(env={})
+        # state tree (derived from state_dir): data_dir + plugins_dir
+        assert s.state_dir == os.path.join("/tmp/xstate", "klangk")
+        assert s.data_dir == os.path.join("/tmp/xstate", "klangk", "data")
+        assert s.plugins_dir == os.path.join(
+            "/tmp/xstate", "klangk", "plugins"
+        )
+        # config tree root (#1649) + its derived customize_dir (plugins_dir
+        # is NOT under config_dir — see #1651)
+        assert s.config_dir == os.path.join("/tmp/xcfg", "klangk")
+        assert s.customize_dir == os.path.join("/tmp/xcfg", "klangk", "custom")
+
+    # --- config_dir: the config-tree root (#1649) ---
+
+    def test_config_dir_defaults_to_xdg_config_home(self, monkeypatch):
+        monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/xcfg")
+        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        assert s.config_dir == os.path.join("/tmp/xcfg", "klangk")
+
+    def test_config_dir_defaults_to_home_when_xdg_unset(self, monkeypatch):
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        monkeypatch.setenv("HOME", "/tmp/fakehome")
+        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        assert s.config_dir == os.path.join(
+            "/tmp/fakehome", ".config", "klangk"
+        )
+
+    def test_explicit_config_dir_wins_and_propagates(self):
+        # An explicit KLANGK_CONFIG_DIR overrides the XDG default AND
+        # customize_dir derives from it (the single-knob relocation point).
+        # plugins_dir is unaffected — it derives from state_dir (#1651).
+        s = KlangkSettings(
+            env={
+                "KLANGK_STATE_DIR": "/tmp/state",
+                "KLANGK_CONFIG_DIR": "/my/cfg",
+            }
+        )
+        assert s.config_dir == "/my/cfg"
+        assert s.customize_dir == os.path.join("/my/cfg", "custom")
+        # plugins_dir still derives from state_dir, not config_dir.
+        assert s.plugins_dir == os.path.join("/tmp/state", "plugins")
+
+    def test_customize_override_wins_over_config_dir_derivation(self):
+        # KLANGK_CUSTOMIZE_DIR still wins over the config_dir-derived default
+        # (over the derivation, not over the root itself). plugins_dir is
+        # unaffected by config_dir — it has its own KLANGK_PLUGINS_DIR override.
+        s = KlangkSettings(
+            env={
+                "KLANGK_STATE_DIR": "/tmp/state",
+                "KLANGK_CONFIG_DIR": "/my/cfg",
+                "KLANGK_CUSTOMIZE_DIR": "/explicit/custom",
+            }
+        )
+        assert s.config_dir == "/my/cfg"
+        assert s.customize_dir == "/explicit/custom"
+        # plugins_dir still derives from state_dir (its own var unset).
+        assert s.plugins_dir == os.path.join("/tmp/state", "plugins")
 
 
 class TestReload:
