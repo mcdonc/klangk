@@ -1,6 +1,6 @@
 # Creating Plugins
 
-All plugins live in `$KLANGK_PLUGINS_DIR/<name>/` directories (defaults to `.devenv/state/klangk/plugins/`). A plugin can contain any combination of:
+All plugins live in `plugins/<name>/` directories at the repo root, declared in the checked-in [`plugins.yaml`](../../plugins.yaml). A plugin can contain any combination of:
 
 - `extension.ts` — Pi extension with `pi.registerTool()`. Symlinked as `<plugin-name>.ts` into the workspace image at build time.
 - `skills/` — Pi skill directories (each containing a `SKILL.md`). Symlinked as `<plugin-name>-<skill>/` into the image.
@@ -18,16 +18,20 @@ No single component is required — a plugin can be an extension + Dart UI, just
 
 ## Build Integration
 
-- `scripts/import_dart_plugins.py` scans `$KLANGK_PLUGINS_DIR/*/klangk/` for plugin Dart packages and generates `$KLANGK_PLUGINS_DIR/.dart/` (the `klangk_plugins` package with path deps and `createAllPlugins()`)
-- `build-workspace-image` copies entire plugin directories into `$KLANGK_PLUGINS_DIR/.docker/plugins/` and passes them as a single `plugins` build context. The Dockerfile copies them to `/opt/klangk/plugins/` and symlinks discoverable pieces (extensions, skills, prompts, tools) into central directories.
-- `flutterbuildweb` runs the codegen before compiling
-- `stub_dart_plugins.sh` creates a minimal stub at `$KLANGK_PLUGINS_DIR/.dart/` so `flutter pub get` works before plugins are fetched (runs automatically as part of the `klangk:update-plugins` task; skips if `pubspec_overrides.yaml` already exists)
-- Plugins are fetched automatically on `devenv up`: `klangk:init-plugins` creates `plugins.yaml` on first run, then `klangk:update-plugins` fetches plugins when `plugins.yaml` changes
+The build materializes the declared plugins into a throwaway tempdir, then compiles them into the frontend + workspace image (#1660):
+
+- `scripts/update_plugins.py` reads the checked-in `plugins.yaml` and fetches/symlinks each declared plugin into a build-owned tempdir (the payload dir).
+- `scripts/import_dart_plugins.py` scans `<payload-dir>/*/klangk/` for plugin Dart packages and generates the `klangk_plugins` package (with path deps and `createAllPlugins()` / `createAllNamedPlugins()`) plus `features.json` — the runtime feature manifest (#1655).
+- `build-workspace-image` copies entire plugin directories from the payload dir into a `plugins` build context. The workspace Dockerfile copies them to `/opt/klangk/plugins/` and symlinks discoverable pieces (extensions, skills, prompts, tools) into central directories.
+- `flutterbuildweb` runs the codegen before compiling the frontend.
+- `stub_dart_plugins.sh` creates a minimal stub package so `flutter pub get` works before any build runs (runs automatically in the devenv shell hook and CI; skips if `pubspec_overrides.yaml` already resolves).
+- In devenv, `klangk:update-plugins` re-materializes the payload when the checked-in `plugins.yaml` or any `plugins/**/` source changes.
 
 ## Adding a Plugin
 
 The easiest way to develop a plugin locally is to add a `path` entry
-to `plugins.yaml` pointing at your plugin directory:
+to the checked-in `plugins.yaml` at the repo root, pointing at your
+plugin directory:
 
 ```yaml
 plugins:
@@ -35,20 +39,22 @@ plugins:
     path: /home/user/projects/my-plugin
 ```
 
-This creates a symlink in `$KLANGK_PLUGINS_DIR` pointing at your
-local directory, so edits are reflected immediately without
-re-fetching. Paths support `~`, `$ENV_VARS`, and relative paths
-(resolved from the `plugins.yaml` directory). Run `update-plugins` or
-restart `devenv up` to apply.
+`update_plugins.py` symlinks the directory into the build's payload
+dir, so edits are reflected immediately without re-fetching. Paths
+support `~`, `$ENV_VARS`, and relative paths (resolved from the repo
+root, where `plugins.yaml` lives). Run `update-plugins` or restart
+`devenv up` to apply.
 
-Alternatively, create files directly in `$KLANGK_PLUGINS_DIR`:
+Alternatively, drop your plugin tree directly under `plugins/<name>/`
+in the repo (no `plugins.yaml` entry needed if it's a default-on
+plugin — just append it to the list):
 
-1. Create `$KLANGK_PLUGINS_DIR/<name>/extension.ts` with `pi.registerTool()`
+1. Create `plugins/<name>/extension.ts` with `pi.registerTool()`
 2. For client-side browser actions, add `klangk/pubspec.yaml` (depends on `klangk_plugin_api`) and `klangk/lib/plugin.dart` extending `ToolPlugin`
-3. For server-side scripts, add files in `$KLANGK_PLUGINS_DIR/<name>/tools/`
-4. `devenv up` rebuilds automatically when `$KLANGK_PLUGINS_DIR` changes
+3. For server-side scripts, add files in `plugins/<name>/tools/`
+4. `devenv up` rebuilds automatically when `plugins/` or `plugins.yaml` changes
 
-For remote plugins, add an entry with a `git` key to `$KLANGK_PLUGINS_DIR/plugins.yaml` and run `update-plugins` to fetch it.
+For remote plugins, add an entry with a `git` key to `plugins.yaml` and run `update-plugins` to fetch it.
 
 ## Lifecycle Hooks
 
@@ -169,7 +175,7 @@ If an environment variable is not set, the `default` from the plugin manifest is
 
 ### How It Works
 
-1. **Startup**: The backend scans `$KLANGK_PLUGINS_DIR/*/package.json` for `klangk.config` entries and resolves each declared key from the server environment (with fallback to declared defaults).
+1. **Startup**: The build emits a `features.json` manifest (next to the frontend's `index.html`) carrying each compiled-in feature's `klangk.config` declarations. The backend reads that one file and resolves each declared container-scope key from the server environment (with fallback to declared defaults). The server no longer scans on-disk plugin trees at runtime (#1655).
 2. **Container creation**: Keys with `scope: "container"` or `"both"` are injected as env vars into workspace containers alongside system env vars like `KLANGK_BRIDGE_URL`.
 3. **Frontend requests**: Keys with `scope: "frontend"` or `"both"` are included in the `GET /api/config` response. Dart plugins can fetch this endpoint to discover their configuration.
 

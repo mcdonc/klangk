@@ -20,7 +20,7 @@ Python/FastAPI backend (UDS, serves API + frontend static files)
     ├── Terminal/exec session management
     ↕ podman exec subprocess
 Pi container per workspace (interactive terminal mode)
-    ├── Pi extensions (from $KLANGK_PLUGINS_DIR/*/extension.ts)
+    ├── Pi extensions (from plugins/*/extension.ts in the repo, baked into the workspace image)
     ├── AGENTS.md (dynamically generated on container start)
     ├── /tmp/klangk/workspace-token (per-workspace JWT, auto-renewed)
     ↕ bind mount

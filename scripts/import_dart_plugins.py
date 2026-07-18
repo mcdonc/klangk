@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Register Dart plugins as a generated package in $KLANGK_PLUGINS_DIR/.dart/.
+"""Register Dart plugins as a generated package in <payload-dir>/.dart/.
 
-Scans $KLANGK_PLUGINS_DIR/*/klangk/pubspec.yaml for plugins with Dart packages
+Scans <payload-dir>/*/klangk/pubspec.yaml for plugins with Dart packages
 and generates:
 
-  $KLANGK_PLUGINS_DIR/.dart/pubspec.yaml         — package with path deps
-  $KLANGK_PLUGINS_DIR/.dart/lib/klangk_plugins.dart — createAllPlugins()
-  $KLANGK_PLUGINS_DIR/.dart/pubspec_overrides.yaml — real path override
+  <payload-dir>/.dart/pubspec.yaml         — package with path deps
+  <payload-dir>/.dart/lib/klangk_plugins.dart — createAllPlugins()
+  <payload-dir>/.dart/pubspec_overrides.yaml — real path override
+
+``<payload-dir>`` is supplied by the calling build script (normally a fresh
+``mktemp -d`` it owns and cleans up, #1660) via ``--payload-dir``.
 
 Also emits ``features.json`` — the runtime feature manifest consumed by the
 frontend (per-feature metadata + the default-on set) and by ``klangkd``
@@ -21,32 +24,22 @@ placeholder dependency to the actual package. No committed source files
 are modified.
 """
 
+import argparse
 import json
 import os
 import re
+import tempfile
 
 import yaml
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PLUGINS_DIR = os.environ.get("KLANGK_PLUGINS_DIR") or os.path.join(
-    os.path.expanduser("~"), ".klangk", "plugins"
-)
-KLANGK_DART_PLUGINS_PKG = os.path.join(PLUGINS_DIR, ".dart")
-PUBSPEC = os.path.join(KLANGK_DART_PLUGINS_PKG, "pubspec.yaml")
-OUTPUT = os.path.join(KLANGK_DART_PLUGINS_PKG, "lib", "klangk_plugins.dart")
-
-# The runtime feature manifest (#1655). Emitted next to the frontend's
-# index.html so the hatch build hook ships it inside the wheel at
-# klangk/frontend/features.json. The frontend reads its sibling file for
-# per-feature metadata + the defaults list; klangkd reads one field
-# (container_env_keys) for the env-var bridge into workspace containers.
 FEATURES_JSON = os.path.join(ROOT, "src", "frontend", "build", "web", "features.json")
 
 # The default-on set: features a bare install gets when KLANGK_FEATURES_ENABLE
-# is unset (canonical activation — see #1655). Kept in sync with
-# _DEFAULT_PLUGINS in update_plugins.py (the build-time fetch list) — the
-# two are equal today; they're allowed to differ when a feature ships
-# dormant (compiled in but not in defaults, e.g. a single-client feature).
+# is unset (canonical activation — see #1655). This is the runtime default-on
+# list; the build-time fetch list is the checked-in ``plugins.yaml`` at the
+# repo root. The two are equal today; they're allowed to differ when a feature
+# ships dormant (compiled in but not in defaults, e.g. a single-client feature).
 DEFAULT_FEATURES = [
     "celebrate",
     "beep",
@@ -67,14 +60,14 @@ PLUGIN_API_DEP = {
 }
 
 
-def find_plugins():
+def find_plugins(plugins_dir):
     """Scan plugins/*/klangk/ for Dart packages, return metadata."""
     plugins = []
-    if not os.path.isdir(PLUGINS_DIR):
+    if not os.path.isdir(plugins_dir):
         return plugins
 
-    for name in sorted(os.listdir(PLUGINS_DIR)):
-        plugin_dir = os.path.join(PLUGINS_DIR, name)
+    for name in sorted(os.listdir(plugins_dir)):
+        plugin_dir = os.path.join(plugins_dir, name)
         dart_dir = os.path.join(plugin_dir, "klangk")
         pubspec_file = os.path.join(dart_dir, "pubspec.yaml")
         plugin_dart = os.path.join(dart_dir, "lib", "plugin.dart")
@@ -114,7 +107,7 @@ def find_plugins():
 _CONTAINER_SCOPES = {"container", "both"}
 
 
-def collect_feature_metadata(dart_plugins):
+def collect_feature_metadata(dart_plugins, plugins_dir):
     """Build the per-feature metadata + container_env_keys from package.json.
 
     Reads each compiled-in feature's ``package.json`` (sibling of ``klangk/``)
@@ -131,7 +124,7 @@ def collect_feature_metadata(dart_plugins):
     container_env_keys = []
     for p in dart_plugins:
         name = p["name"]
-        pkg_json = os.path.join(PLUGINS_DIR, name, "package.json")
+        pkg_json = os.path.join(plugins_dir, name, "package.json")
         version = ""
         description = ""
         config = {}
@@ -172,7 +165,7 @@ def collect_feature_metadata(dart_plugins):
     return features, container_env_keys
 
 
-def write_features_json(dart_plugins):
+def write_features_json(dart_plugins, plugins_dir):
     """Emit features.json next to the frontend's index.html (#1655).
 
     The frontend reads this sibling file for per-feature metadata + the
@@ -181,7 +174,7 @@ def write_features_json(dart_plugins):
     container-scope env vars into workspace containers (the server reads no
     on-disk plugin trees; the build did the knowing). See #1655.
     """
-    features, container_env_keys = collect_feature_metadata(dart_plugins)
+    features, container_env_keys = collect_feature_metadata(dart_plugins, plugins_dir)
     manifest = {
         "features": features,
         "defaults": list(DEFAULT_FEATURES),
@@ -193,8 +186,9 @@ def write_features_json(dart_plugins):
         f.write("\n")
 
 
-def write_pubspec(plugins):
-    """Generate $KLANGK_PLUGINS_DIR/.dart/pubspec.yaml with plugin path dependencies."""
+def write_pubspec(plugins, dart_pkg_dir):
+    """Generate <payload-dir>/.dart/pubspec.yaml with plugin path dependencies."""
+    pubspec_path = os.path.join(dart_pkg_dir, "pubspec.yaml")
     deps = {
         "flutter": {"sdk": "flutter"},
     }
@@ -214,20 +208,13 @@ def write_pubspec(plugins):
         "dependencies": deps,
     }
 
-    os.makedirs(os.path.dirname(PUBSPEC), exist_ok=True)
-    with open(PUBSPEC, "w") as f:
+    os.makedirs(dart_pkg_dir, exist_ok=True)
+    with open(pubspec_path, "w") as f:
         yaml.dump(pubspec, f, default_flow_style=False, sort_keys=False)
 
 
 def generate_dart(plugins):
-    """Generate klangk_plugins.dart with package imports.
-
-    Emits two aggregators: the legacy `createAllPlugins()` (positional list,
-    kept for back-compat) and `createAllNamedPlugins()` (name+instance records,
-    used by main.dart to filter against the active-feature set before register
-    — #1655). The name is the feature's build-time dir name (the same string
-    that appears in features.json `features[].name` and `defaults`).
-    """
+    """Generate klangk_plugins.dart source as a string."""
     lines = [
         "// GENERATED by import_dart_plugins.py — do not edit.",
         "import 'package:klangk_plugin_api/klangk_plugin_api.dart';",
@@ -258,14 +245,13 @@ def generate_dart(plugins):
     return "\n".join(lines)
 
 
-def write_overrides_and_symlink():
-    """Write pubspec_overrides.yaml at ~/.klangk/klangk/ and symlink it
+def write_overrides_and_symlink(dart_pkg_dir):
+    """Write pubspec_overrides.yaml at <payload-dir>/.dart/ and symlink it
     into the frontend directory so Flutter can find it."""
     overrides_content = (
-        "dependency_overrides:\n"
-        f"  klangk_plugins:\n    path: {KLANGK_DART_PLUGINS_PKG}\n"
+        f"dependency_overrides:\n  klangk_plugins:\n    path: {dart_pkg_dir}\n"
     )
-    overrides_path = os.path.join(KLANGK_DART_PLUGINS_PKG, "pubspec_overrides.yaml")
+    overrides_path = os.path.join(dart_pkg_dir, "pubspec_overrides.yaml")
     with open(overrides_path, "w") as f:
         f.write(overrides_content)
 
@@ -284,33 +270,58 @@ def main(argv=None):
     ``features.json`` — used by ``flutterbuildweb.sh`` *after* the Flutter
     build, because ``flutter build web`` may regenerate ``build/web/`` and
     wipe a manifest written before it (#1655).
+
+    ``--payload-dir`` (required unless ``--features-only`` is given without
+    having a prior payload to read) points at the materialized plugin
+    payload — the tempdir the build script owns (#1660).
     """
-    import sys
+    parser = argparse.ArgumentParser(
+        description="Generate the klangk_plugins Dart package + features.json manifest."
+    )
+    parser.add_argument(
+        "--payload-dir",
+        default=None,
+        help=(
+            "Directory holding the materialized plugin trees (from "
+            "update_plugins.py). Defaults to a fresh mktemp -d."
+        ),
+    )
+    parser.add_argument(
+        "--features-only",
+        action="store_true",
+        help="Skip Dart codegen; just (re-)emit features.json.",
+    )
+    args = parser.parse_args(argv)
 
-    features_only = "--features-only" in (argv or sys.argv[1:])
-    plugins = find_plugins()
+    plugins_dir = args.payload_dir or tempfile.mkdtemp(prefix="klangk-plugins-")
+    dart_pkg_dir = os.path.join(plugins_dir, ".dart")
+    plugins = find_plugins(plugins_dir)
 
-    if not features_only:
-        write_pubspec(plugins)
-        write_overrides_and_symlink()
+    if not args.features_only:
+        write_pubspec(plugins, dart_pkg_dir)
+        write_overrides_and_symlink(dart_pkg_dir)
 
     # Always (re-)emit the manifest. Pre-flutter-build, this creates
     # build/web/ so the dir exists; post-flutter-build (--features-only),
     # it restores the manifest if Flutter wiped/regenerated the dir.
-    write_features_json(plugins)
+    write_features_json(plugins, plugins_dir)
 
-    if features_only:
+    if args.features_only:
         print(f"Regenerated feature manifest {FEATURES_JSON}")
         return
 
     output = generate_dart(plugins)
-    os.makedirs(os.path.dirname(OUTPUT), exist_ok=True)
-    with open(OUTPUT, "w") as f:
+    output_path = os.path.join(dart_pkg_dir, "lib", "klangk_plugins.dart")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w") as f:
         f.write(output)
 
     names = [p["class_name"] for p in plugins]
-    print(f"Generated Dart {PUBSPEC} with {len(plugins)} plugin(s)")
-    print(f"Generated Dart {OUTPUT}: {', '.join(names) or '(none)'}")
+    print(
+        f"Generated Dart pubspec at {os.path.join(dart_pkg_dir, 'pubspec.yaml')} "
+        f"with {len(plugins)} plugin(s)"
+    )
+    print(f"Generated Dart {output_path}: {', '.join(names) or '(none)'}")
     print(f"Generated feature manifest {FEATURES_JSON}")
 
 

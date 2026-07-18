@@ -8,11 +8,15 @@ source "$SCRIPT_DIR/_podman_common.sh"
 
 STAMP="$DEVENV_STATE/klangk/.backend-image-hash"
 
-# Compute a hash of all files that affect the workspace image.
+# Compute a hash of all files that affect the workspace image. The plugin
+# payload is a build-owned tempdir now (#1660), so hash the *source* — the
+# checked-in declaration (plugins.yaml) + the plugin trees under plugins/ —
+# rather than the ephemeral materialized dir.
 CURRENT_HASH=$(find \
   scripts/build-workspace-image.sh \
   src/containers/workspace/ \
-  "$KLANGK_PLUGINS_DIR" \
+  plugins.yaml \
+  plugins/ \
   -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)
 
 # Skip rebuild if the image exists and the hash hasn't changed.
@@ -29,17 +33,18 @@ if ! $FORCE_BUILD && "$PODMAN" image exists "${KLANGK_IMAGE_NAME}" 2>/dev/null &
   fi
 fi
 
-# Auto-fetch plugins on first run
-if [ -f "$KLANGK_PLUGINS_DIR/plugins.yaml" ] && [ ! -f "$KLANGK_PLUGINS_DIR/plugins.lock" ]; then
-  echo "No plugins.lock found, running update-plugins..."
-  python3 scripts/update_plugins.py
-fi
+# Materialize plugins into a build-owned tempdir (#1660): the declaration
+# is checked in at plugins.yaml; the payload (symlinked trees + plugins.lock)
+# is ephemeral. Cleaned up on exit.
+PAYLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/klangk-plugins-XXXXXX")"
+trap 'rm -rf "$PAYLOAD_DIR"' EXIT
+python3 scripts/update_plugins.py --payload-dir "$PAYLOAD_DIR"
 
 # Stage full plugin directories outside the source tree
-STAGING="$KLANGK_PLUGINS_DIR/.docker"
+STAGING="$PAYLOAD_DIR/.docker"
 rm -rf "$STAGING"
 mkdir -p "$STAGING/plugins"
-for d in "$KLANGK_PLUGINS_DIR"/*/; do
+for d in "$PAYLOAD_DIR"/*/; do
   [ -d "$d" ] || continue
   name=$(basename "$d")
   cp -r "$d" "$STAGING/plugins/$name"

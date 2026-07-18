@@ -1,0 +1,26 @@
+# Default plugin declaration list — the canonical set a bare install builds.
+#
+# Each entry is a *local path* (no git fetch): the plugin source trees live
+# in this repo under plugins/<name>/, so the build symlinks them straight in
+# rather than cloning. This file is the source of truth for which features a
+# fresh build compiles; KLANGK_FEATURES_ENABLE (runtime) decides which of the
+# compiled-in features are active at boot (#1655). See docs/features/plugins.md.
+#
+# To add a plugin: drop its tree under plugins/<name>/ and append an entry
+# here. To fetch a remote plugin instead, use a `git:`/`ref:` entry (see
+# scripts/update_plugins.py).
+plugins:
+  - name: celebrate
+    path: plugins/celebrate
+  - name: beep
+    path: plugins/beep
+  - name: pig-latin
+    path: plugins/pig-latin
+  - name: word-count
+    path: plugins/word-count
+  - name: browser-fetch
+    path: plugins/browser-fetch
+  - name: boingball
+    path: plugins/boingball
+  - name: git-credential
+    path: plugins/git-credential

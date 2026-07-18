@@ -123,8 +123,10 @@ in
         "src/frontend/web/**"
         "src/frontend/pubspec.yaml"
         "src/frontend/pubspec.lock"
-        "${pluginsDir}/**/*.dart"
-        "${pluginsDir}/plugins.lock"
+        # Key on plugin *source* (checked-in), not the materialized payload —
+        # flutterbuildweb.sh materializes into its own tempdir (#1660).
+        "plugins/**/*.dart"
+        "plugins.yaml"
       ];
     };
     "klangk:build-workspace-image" = {
@@ -141,26 +143,21 @@ in
         fi
       '';
     };
-    "klangk:init-plugins" = {
-      exec = ''
-        if [ ! -f "${pluginsDir}/plugins.yaml" ]; then
-          cd $DEVENV_ROOT
-          python3 scripts/update_plugins.py
-        fi
-      '';
-      before = [ "klangk:update-plugins" ];
-      showOutput = true;
-    };
     "klangk:update-plugins" = {
       exec = ''
         cd $DEVENV_ROOT
         bash scripts/stub_dart_plugins.sh
-        exec python3 scripts/update_plugins.py
+        exec python3 scripts/update_plugins.py --payload-dir "${pluginsDir}"
       '';
       before = [ "klangk:flutter-build" ];
       showOutput = true;
       execIfModified = [
-        "${pluginsDir}/plugins.yaml"
+        # The declaration lives at the repo root now (#1660); the materialized
+        # payload under ``pluginsDir`` is derived from it + plugins/*/.
+        "plugins.yaml"
+        "plugins/**/*.dart"
+        "plugins/*/package.json"
+        "plugins/*/klangk/pubspec.yaml"
       ];
     };
   };
@@ -183,11 +180,6 @@ in
 
   # --- Devenv-only env vars (used by shell hooks and scripts, NOT by the
   # backend — backend config lives in klangkd.yaml). ---
-
-  # KLANGK_PLUGINS_DIR is still exported for shell scripts (update_plugins.py,
-  # stub_dart_plugins.sh) that read it from the environment. The Nix-level
-  # references use the ``pluginsDir`` let binding instead.
-  env.KLANGK_PLUGINS_DIR = pluginsDir;
 
   # Rootless podman from nix (Linux) ships no default policy.json, so a
   # build/pull fails with "no policy.json file found". enterShell generates a

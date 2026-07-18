@@ -764,16 +764,17 @@ class TestRequireDirsValidator:
 
     def test_plugins_dir_removed_from_settings(self):
         # plugins_dir is gone from KlangkSettings entirely (#1655) — the
-        # runtime reads the build-emitted features.json from frontend_dir;
-        # KLANGK_PLUGINS_DIR stays as a build-time env var only.
+        # runtime reads the build-emitted features.json from frontend_dir.
+        # The build materializes plugins into a tempdir (#1660); there is no
+        # KLANGK_PLUGINS_DIR env var at any layer.
         s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
         assert not hasattr(s, "plugins_dir")
 
     def test_klangk_plugins_dir_env_not_recognized(self):
-        # The env var is no longer a settings source (build-time-only).
-        # pydantic-settings ignores unknown env keys (no error), and the
-        # resulting settings object has no plugins_dir attribute — the var
-        # simply has no effect.
+        # KLANGK_PLUGINS_DIR does not exist as a concept anywhere (#1660 —
+        # dropped from the build too). pydantic-settings ignores unknown env
+        # keys (no error), and the resulting settings object has no
+        # plugins_dir attribute — the var simply has no effect.
         s = KlangkSettings(
             env={
                 "KLANGK_STATE_DIR": "/tmp/state",
