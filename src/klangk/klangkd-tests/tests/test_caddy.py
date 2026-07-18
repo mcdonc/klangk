@@ -11,7 +11,7 @@ caddy, so nothing here shells out to it).
 import asyncio
 import signal
 import types
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -252,9 +252,19 @@ class TestGlobalBlock:
     def test_admin_uds_autohttps_persist(self):
         s = make_settings({"KLANGK_PORT": "8997"})
         g = _renderer(s)._global_block("/d/caddy-admin.sock")
-        assert "admin unix///d/caddy-admin.sock" in g
+        assert "admin unix///d/caddy-admin.sock|0600" in g
         assert "auto_https off" in g
         assert "persist_config off" in g
+
+    def test_admin_uds_mode_suffix_is_0600(self):
+        """The admin socket is created owner-only (#1559 locked decision: 0600,
+        not Caddy's group-readable default). Regression for the perms review
+        finding."""
+        s = make_settings({"KLANGK_PORT": "8997"})
+        g = _renderer(s)._global_block("/d/caddy-admin.sock")
+        assert "|0600" in g
+        assert "|0660" not in g
+        assert "|0644" not in g
 
     def test_trusted_proxies_present_by_default(self):
         s = make_settings(
@@ -400,10 +410,20 @@ class TestRenderConfig:
     def test_auth_local_loopback_acl(self):
         s = make_settings({"KLANGK_PORT": "8997"})
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
-        m = cf.index("handle /api/v1/auth/local {")
-        block = cf[m : cf.index("}\n", m) + 1]
+        # nginx uses ``location =`` (exact); Caddy mirrors with a path matcher.
+        assert "@authlocal path /api/v1/auth/local" in cf
+        assert "handle @authlocal {" in cf
         assert "@notLoopback not remote_ip 127.0.0.1 ::1" in cf
-        assert "respond @notLoopback 403" in block
+        assert "respond @notLoopback 403" in cf
+
+    def test_auth_local_is_exact_match(self):
+        """/auth/local uses an exact path matcher (nginx ``location =``), so a
+        sub-path like /api/v1/auth/local/other does NOT match the handle."""
+        s = make_settings({"KLANGK_PORT": "8997"})
+        cf = _renderer(s).render_config("unix//s", self.ADMIN)
+        assert "path /api/v1/auth/local\n" in cf
+        # no trailing /* (which would make it prefix)
+        assert "path /api/v1/auth/local/*" not in cf
 
     def test_browser_catch_all_container_deny(self):
         s = make_settings(
@@ -436,6 +456,15 @@ class TestRenderConfig:
         )
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         assert "@notContainerSrc not remote_ip 10.89.0.0/24" in cf
+
+    def test_post_chat_message_is_exact_match(self):
+        """nginx uses ``location =`` (exact) for post-chat-message; Caddy
+        mirrors with a path matcher so sub-paths don't match."""
+        s = make_settings(env={"KLANGK_EGRESS_PORT": "8995"})
+        cf = _renderer(s).render_config("unix//s", self.ADMIN)
+        assert "@postchat path /api/v1/workspaces/post-chat-message" in cf
+        assert "handle @postchat {" in cf
+        assert "path /api/v1/workspaces/post-chat-message/*" not in cf
 
     def test_egress_fail_closed_when_no_container_sources(self, monkeypatch):
         """Whitespace-only KLANGK_CONTAINER_SUBNETS → no sources → egress
@@ -480,6 +509,25 @@ class TestRenderConfig:
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         assert 'Authorization "Bearer resolved-key"' in cf
         assert "cmd:" not in cf
+
+    def test_llm_proxy_strips_prefix(self):
+        """The /llm-proxy/ prefix is stripped before proxying — nginx rewrites
+        ``/llm-proxy/(.*)`` → ``{base_url}/$1``; Caddy mirrors with
+        ``uri strip_prefix /llm-proxy``. Without it, the path forwards
+        verbatim and 404s at every provider (regression, found in review)."""
+        s = make_settings(
+            env={
+                "KLANGK_PORT": "8997",
+                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGK_LLM_API_KEY": "k",
+            }
+        )
+        cf = _renderer(s).render_config("unix//s", self.ADMIN)
+        assert "uri strip_prefix /llm-proxy" in cf
+        # the strip precedes the reverse_proxy in the handle block
+        strip_pos = cf.index("uri strip_prefix /llm-proxy")
+        rp_pos = cf.index("reverse_proxy http://127.0.0.1:11434")
+        assert strip_pos < rp_pos
 
     def test_llm_absent_without_url(self):
         s = make_settings({"KLANGK_PORT": "8997"})
@@ -531,6 +579,16 @@ class TestWatchdogPaths:
     def test_admin_socket_under_state_dir(self, tmp_path):
         s = make_settings({"KLANGK_STATE_DIR": str(tmp_path)})
         wd = _wd(s)
+        assert wd.admin_socket == str(tmp_path / "caddy-admin.sock")
+
+    def test_admin_bind_address_has_0600_suffix(self, tmp_path):
+        """The Caddy bind address carries |0600 (owner-only socket creation);
+        the bare path (admin_socket) is what httpx dials."""
+        s = make_settings({"KLANGK_STATE_DIR": str(tmp_path)})
+        wd = _wd(s)
+        assert (
+            wd.admin_bind_address == f"unix//{tmp_path}/caddy-admin.sock|0600"
+        )
         assert wd.admin_socket == str(tmp_path / "caddy-admin.sock")
 
     def test_find_proxy_bin_delegates_to_renderer(self, monkeypatch):
@@ -809,7 +867,7 @@ class TestWatchdogStop:
 
 
 class TestWatchdogReconfigure:
-    def test_reconfigure_swaps_app(self):
+    def test_reconfigure_swaps_app_and_flags_reload(self):
         wd = _wd(make_settings({}))
         new_app = types.SimpleNamespace(
             state=types.SimpleNamespace(settings=make_settings({}))
@@ -817,3 +875,62 @@ class TestWatchdogReconfigure:
         wd.reconfigure(new_app)
         assert wd.app is new_app
         assert wd._renderer.app is new_app
+        # reconfigure flags a pending admin-API reload (#1559: a settings
+        # change is a fresh POST /load).
+        assert wd._pending_reload is True
+
+    @pytest.mark.asyncio
+    async def test_apply_pending_reload_noop_when_not_flagged(self):
+        """No reload flag → apply is a no-op (no load_config call)."""
+        wd = _wd(make_settings({}))
+        wd._task = object()  # pretend started so we reach the load guard
+        called = []
+        wd.load_config = AsyncMock(side_effect=lambda: called.append(1))
+        await wd.apply_pending_reload()
+        assert called == []
+
+    @pytest.mark.asyncio
+    async def test_apply_pending_reload_noop_when_not_started(self):
+        """Flag set but watchdog never started (disabled) → no load attempt."""
+        wd = _wd(make_settings({}))
+        wd.reconfigure(
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(settings=make_settings({}))
+            )
+        )
+        assert wd._task is None  # never started
+        called = []
+        wd.load_config = AsyncMock(side_effect=lambda: called.append(1))
+        await wd.apply_pending_reload()
+        assert called == []
+        assert wd._pending_reload is False  # flag cleared
+
+    @pytest.mark.asyncio
+    async def test_apply_pending_reload_pushes_when_running(self):
+        """Flagged + started → load_config is called and the flag clears."""
+        wd = _wd(make_settings({}))
+        wd._task = object()  # started
+        wd.reconfigure(
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(settings=make_settings({}))
+            )
+        )
+        wd.load_config = AsyncMock()
+        await wd.apply_pending_reload()
+        wd.load_config.assert_awaited_once()
+        assert wd._pending_reload is False
+
+    @pytest.mark.asyncio
+    async def test_apply_pending_reload_swallows_load_failure(self):
+        """A load_config failure is logged + swallowed (Caddy keeps its
+        last-known-good config); the flag still clears so we don't retry-loop."""
+        wd = _wd(make_settings({}))
+        wd._task = object()
+        wd.reconfigure(
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(settings=make_settings({}))
+            )
+        )
+        wd.load_config = AsyncMock(side_effect=httpx.ConnectError("down"))
+        await wd.apply_pending_reload()  # must not raise
+        assert wd._pending_reload is False

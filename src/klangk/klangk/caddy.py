@@ -16,11 +16,13 @@ issue #1559):
   no SIGHUP, no reload dance — a settings change is a fresh ``POST /load``.
 
 - **The admin endpoint is a ``klangkd``-owned Unix domain socket.** Caddy is
-  bootstrapped with ``CADDY_ADMIN=unix//<data_dir>/caddy-admin.sock`` (empty
-  config, no file), so the only way to reach the admin API is via a process
-  that can open that socket — i.e. ``klangkd`` and its children. No auth
-  token / mTLS / loopback-TCP surface. The rendered Caddyfile re-declares
-  ``admin unix//...`` in its global options so the binding survives reloads.
+  bootstrapped with ``CADDY_ADMIN=unix//<data_dir>/caddy-admin.sock|0600``
+  (empty config, pinned to ``/dev/null`` so an accidental CWD ``Caddyfile``
+  can't override it), so the only way to reach the admin API is via a
+  process that can open that owner-only socket — i.e. ``klangkd`` and its
+  children. No auth token / mTLS / loopback-TCP surface. The rendered
+  Caddyfile re-declares ``admin unix//...|0600`` in its global options so
+  the binding (and the owner-only mode) survive reloads.
 
 The renderer is a pure function of the merged config (settings + the same
 host-IP auto-detection probe the nginx renderer uses). It takes the upstream
@@ -259,7 +261,9 @@ class CaddyRenderer:
           immediate peer — matching nginx with no realip directives.
         """
         lines = [
-            "	admin unix//" + admin_socket,
+            # |0600 so Caddy creates the socket owner-only (its default
+            # UDS mode is group-readable; #1559 requires 0600).
+            "	admin unix//" + admin_socket + "|0600",
             "	auto_https off",
             "	persist_config off",
         ]
@@ -317,6 +321,13 @@ class CaddyRenderer:
             "	@llm path /llm-proxy/*\n"
             "	handle @llm {\n"
             f"{guard}"
+            # Strip the /llm-proxy prefix before proxying, matching
+            # nginx's regex capture (proxy.py: /llm-proxy/(.*) ->
+            # {base_url}/$1). Caddy's reverse_proxy preserves the
+            # request URI by default, so without this a request to
+            # /llm-proxy/v1/chat hits {base_url}/llm-proxy/v1/chat
+            # and 404s at every provider.
+            "		uri strip_prefix /llm-proxy\n"
             f"		reverse_proxy {base_url} {{\n"
             f'			header_up Authorization "Bearer {api_key}"\n'
             "			header_up Host {upstream.hostport}\n"
@@ -355,8 +366,12 @@ class CaddyRenderer:
             "		}\n"
             "	}\n"
         )
+        # nginx uses ``location =`` (exact) for this endpoint; mirror
+        # it with a ``path`` matcher (exact by default) so e.g.
+        # /api/v1/workspaces/post-chat-message/other does not match.
         post_chat = (
-            "	handle /api/v1/workspaces/post-chat-message {\n"
+            "	@postchat path /api/v1/workspaces/post-chat-message\n"
+            "	handle @postchat {\n"
             f"{guard}"
             f"		reverse_proxy {upstream}\n"
             "	}\n"
@@ -432,9 +447,13 @@ class CaddyRenderer:
             # geo ``default 0`` is the equivalent (never flags).
             deny_matcher = ""
             deny_guard = ""
+        # nginx uses ``location =`` (exact) for /auth/local; mirror it
+        # with a ``path`` matcher (exact by default) so only the bare
+        # endpoint matches, not sub-paths.
         auth_local = (
             "	@notLoopback not remote_ip 127.0.0.1 ::1\n"
-            "	handle /api/v1/auth/local {\n"
+            "	@authlocal path /api/v1/auth/local\n"
+            "	handle @authlocal {\n"
             "		respond @notLoopback 403\n"
             f"		reverse_proxy {upstream} {{\n"
             f"{self._common_rp_headers()}\n"
@@ -536,19 +555,73 @@ class CaddyWatchdog:
         self._proc: asyncio.subprocess.Process | None = None
         self._task: asyncio.Task | None = None
         self._stopping = False
+        # Flagged by reconfigure() on a SIGHUP settings swap; applied
+        # async by apply_pending_reload() (POST /load can't run in the
+        # sync reconfigure loop). #1559 Phase 1: a settings change is a
+        # fresh POST /load, not stale-until-restart.
+        self._pending_reload = False
 
     def reconfigure(self, app) -> None:
         self.app = app
         self._renderer.reconfigure(app)
+        # The SIGHUP path swapped in new settings; flag that the running
+        # Caddy needs a fresh POST /load (applied async after the sync
+        # reconfigure loop). No-op when the watchdog never started
+        # (_KLANGK_DISABLE_PROXY) — the flag is just never applied.
+        self._pending_reload = True
+
+    async def apply_pending_reload(self) -> None:
+        """Push the re-rendered Caddyfile if reconfigure() flagged one.
+
+        Mirrors :meth:`klangk.main.Lifecycle.apply_pending_reseed`: the
+        sync ``reconfigure()`` can't ``POST /load`` (it runs inside the
+        SIGHUP subsystem loop, not a coroutine), so it flags and this
+        async method — called by ``_apply_reloaded_settings`` after the
+        loop — does the push. No-op when the watchdog didn't start
+        (``_KLANGK_DISABLE_PROXY``) or nothing flagged. A push failure
+        is logged + swallowed so a broken reload can't abort the wider
+        SIGHUP (Caddy keeps its last-known-good config).
+        """
+        if not self._pending_reload:
+            return
+        self._pending_reload = False
+        if self._task is None:
+            return
+        try:
+            await self.load_config()
+            logger.info("caddy config reloaded via admin API (SIGHUP)")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "caddy SIGHUP reload failed (running config unchanged): %s",
+                exc,
+            )
 
     # -- paths / config ----------------------------------------------------
 
     @property
     def admin_socket(self) -> str:
-        """The admin UDS path (under state_dir, same trust boundary as the UDS)."""
+        """The admin UDS **path** (bare filesystem path; what httpx dials).
+
+        Caddy's *bind* address (:attr:`admin_bind_address`) appends a
+        ``|0600`` mode suffix so the socket is created owner-only; the httpx
+        dial uses this bare path (the suffix is a bind-side directive only).
+        """
         return os.path.join(
             self.app.state.settings.state_dir, "caddy-admin.sock"
         )
+
+    @property
+    def admin_bind_address(self) -> str:
+        """The Caddy bind address for the admin UDS: ``unix//<path>|0600``.
+
+        The ``|0600`` suffix tells Caddy to create the socket with mode
+        ``0600`` (owner read/write only). Without it Caddy's default UDS mode
+        is group-readable, which widens the admin-API surface beyond the
+        ``klangkd``-only trust boundary issue #1559's locked decision requires
+        (any same-group process could drive the admin API, which accepts a
+        full config replace including arbitrary upstreams).
+        """
+        return f"unix//{self.admin_socket}|0600"
 
     def _render_caddyfile(self) -> str:
         """Render the full Caddyfile (global + sites), UDS backend upstream."""
@@ -605,7 +678,7 @@ class CaddyWatchdog:
         """
         backoff = 1.0
         env = dict(os.environ)
-        env["CADDY_ADMIN"] = f"unix//{self.admin_socket}"
+        env["CADDY_ADMIN"] = self.admin_bind_address
         while not self._stopping:
             # A stale socket from a prior run blocks the bind.
             try:
@@ -616,6 +689,11 @@ class CaddyWatchdog:
                 bin_path,
                 "run",
                 "--environ",
+                # Pin the initial config to /dev/null so an accidental
+                # Caddyfile in CWD can't override the "no on-disk source of
+                # truth" guarantee — the real config arrives via POST /load.
+                "--config",
+                "/dev/null",
                 stdout=None,
                 stderr=None,
                 env=env,
@@ -626,15 +704,29 @@ class CaddyWatchdog:
                 self._proc.pid,
                 self.admin_socket,
             )
+            load_ok = False
             if await self._wait_for_admin():
                 try:
                     await self.load_config()
+                    load_ok = True
                 except Exception as exc:  # noqa: BLE001
-                    logger.error("caddy POST /load failed: %s", exc)
+                    logger.error(
+                        "caddy POST /load failed (killing for respawn): %s",
+                        exc,
+                    )
             else:
                 logger.error(
                     "caddy admin UDS never came up at %s", self.admin_socket
                 )
+            if not load_ok and self._proc and self._proc.returncode is None:
+                # A failed /load leaves Caddy serving a *blank* config (no
+                # sites) — a healthy process doing nothing, which would never
+                # exit and so never respawn. Kill it so the backoff loop
+                # retries, mirroring nginx's fail-fast-on-bad-config behavior.
+                try:
+                    self._proc.terminate()
+                except ProcessLookupError:
+                    pass
             rc = await self._proc.wait()
             self._proc = None
             if self._stopping:

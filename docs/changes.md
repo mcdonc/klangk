@@ -30,16 +30,18 @@ operators or integrators to act when upgrading.
 - **Caddy reverse-proxy engine behind `KLANGK_PROXY_ENGINE=caddy` (#1559).**
   A second, opt-in proxy engine joins the default nginx one: `klangkd`
   renders a **Caddyfile** and pushes it to Caddy's **admin API** over a
-  `klangkd`-owned Unix domain socket (`<state_dir>/caddy-admin.sock`) via
-  `POST /load` (`text/caddyfile`) — no on-disk config source of truth and no
-  SIGHUP/reload (a settings change is a fresh `POST /load`). Caddy is
-  bootstrapped with `CADDY_ADMIN=unix//…` (empty config, no file), so the
-  admin endpoint is reachable only by `klangkd` and its children. Both
-  engines cover the same surface (two listeners, token gate via
+  `klangkd`-owned Unix domain socket (`<state_dir>/caddy-admin.sock`, mode
+  `0600`) via `POST /load` (`text/caddyfile`) — no on-disk config source of
+  truth. Caddy is bootstrapped with `CADDY_ADMIN=unix//…|0600` (empty config
+  pinned to `/dev/null`), so the admin endpoint is reachable only by
+  `klangkd`. A SIGHUP settings change re-pushes the Caddyfile over the admin
+  API (the nginx engine, by contrast, stays stale until a full restart).
+  Both engines cover the same surface (two listeners, token gate via
   `forward_auth`/`auth_request`, container-source `remote_ip` matchers,
-  body-size limits, UDS upstream, injected LLM `Authorization`). The engine
-  is selected once at process start (restart required to change it — SIGHUP
-  logs a non-reloadable warning); the default stays `nginx` until the
+  body-size limits, UDS upstream, injected LLM `Authorization`, exact-match
+  `/auth/local` + `/post-chat-message`, `/llm-proxy/` prefix strip). The
+  engine is selected once at process start (restart required to change it —
+  SIGHUP logs a non-reloadable warning); the default stays `nginx` until the
   cutover. `caddy` is added to the devenv shell; stock Caddy (no plugins)
   suffices — `caddy-l4` and `fastcaddy` are explicitly out of scope.
 

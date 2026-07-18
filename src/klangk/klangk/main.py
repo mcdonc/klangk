@@ -436,6 +436,18 @@ class Lifecycle:
             logger.warning(
                 "SIGHUP: agent user re-seed failed (skipped): %s", exc
             )
+        # CaddyWatchdog.reconfigure flags an admin-API POST /load of the
+        # re-rendered Caddyfile; apply it now (async). No-op for the nginx
+        # engine (its watchdog has no apply_pending_reload) and when the
+        # proxy is disabled. #1559: a settings change is a fresh /load.
+        caddy_wd = getattr(app.state, "proxy_watchdog", None)
+        if caddy_wd is not None and hasattr(caddy_wd, "apply_pending_reload"):
+            try:
+                await caddy_wd.apply_pending_reload()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "SIGHUP: caddy config reload failed (skipped): %s", exc
+                )
         # #1610: remount frontend_dir if it changed.
         if old.frontend_dir != new.frontend_dir:
             self._remount_frontend(app, new)
