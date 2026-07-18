@@ -336,6 +336,47 @@ class TestResolveSocketAndPorts:
             "KLANGK_PROXY_PORT is ignored" in r.message for r in caplog.records
         )
 
+    # --- proxy_engine default + nginx deprecation (#1634) ---
+
+    def test_proxy_engine_defaults_to_caddy(self):
+        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        assert s.proxy_engine == "caddy"
+
+    def test_explicit_caddy_engine(self):
+        s = KlangkSettings(
+            env={
+                "KLANGK_STATE_DIR": "/tmp/state",
+                "KLANGK_PROXY_ENGINE": "caddy",
+            }
+        )
+        assert s.proxy_engine == "caddy"
+
+    def test_nginx_engine_warns_deprecated(self, caplog):
+        """Selecting KLANGK_PROXY_ENGINE=nginx fires a deprecation warning
+        (nginx is the escape hatch for a Caddy regression, slated for removal)."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            s = KlangkSettings(
+                env={
+                    "KLANGK_STATE_DIR": "/tmp/state",
+                    "KLANGK_PROXY_ENGINE": "nginx",
+                }
+            )
+        assert s.proxy_engine == "nginx"  # still selectable
+        assert any(
+            "KLANGK_PROXY_ENGINE=nginx is deprecated" in r.message
+            for r in caplog.records
+        )
+
+    def test_caddy_default_does_not_warn(self, caplog):
+        """The new default (caddy) emits no deprecation warning."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        assert not any("deprecated" in r.message for r in caplog.records)
+
     def test_egress_equals_port_rejected(self):
         from pydantic import ValidationError
 

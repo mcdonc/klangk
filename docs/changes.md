@@ -358,6 +358,22 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Breaking
 
+- **`KLANGK_PROXY_ENGINE` now defaults to `caddy` (#1634).** The Caddy
+  reverse-proxy engine replaces nginx as the default. The rendered proxy
+  config is delivered to Caddy's admin API over a `klangkd`-owned Unix
+  domain socket (`POST /load`, `text/caddyfile`) instead of being written
+  to an `nginx.conf` and applied by `nginx -c` — no on-disk source of
+  truth, no reload. **Operators with no `KLANGK_PROXY_ENGINE` set switch
+  engines on upgrade.** The nginx engine remains selectable this release
+  via `KLANGK_PROXY_ENGINE=nginx` as the escape hatch for a Caddy
+  regression — selecting it fires a deprecation warning, and it will be
+  removed in a future release (#1642). If you hit a regression, set
+  `KLANGK_PROXY_ENGINE=nginx` and file an issue. Otherwise, unset the
+  variable (caddy is the default). `klangkd` manages the proxy config
+  entirely in both engines — operators never template proxy config or run
+  reloads — so the swap is transparent to anyone not overriding
+  `KLANGK_PROXY_BIN`.
+
 - **One `klangk` distribution ships the renamed server package `klangkd` and the folded-in client `klangk` (#1606).** The backend package is renamed `klangk_backend` → `klangkd` and the standalone `klangkc` distribution is retired — the client is promoted to a sibling top-level package under the same source root. One `pip install klangk` yields both `klangkd` (server) and `klangk` (client); the entrypoint command names are unchanged. The distribution name (`klangk`) is distinct from the import packages (`klangkd` / `klangk`), like `python-dateutil` → `dateutil`.
   - **Integrators** who `import klangk_backend` (e.g. OIDC login hooks) must update to `import klangkd`.
   - **The `klangkc` PyPI distribution is retired** in favor of `klangk`; the `cli-v*` tag line and `cli-publish.yml` workflow are removed. Both binaries release together off the single `v*` tag line.

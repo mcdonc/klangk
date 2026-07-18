@@ -158,7 +158,8 @@ plus a separate container-egress listener on `KLANGK_EGRESS_PORT`.
 never promote it.
 
 For each combination, klangk renders the **maximum-feature proxy template
-the combination can service** (the proxy is currently nginx):
+the combination can service** (the proxy is Caddy by default since #1634;
+nginx remains selectable as a deprecated fallback):
 
 | `KLANGK_PORT`    | `KLANGK_AUTH_MODE`     | proxy template | browser?    | status                                               |
 | ---------------- | ---------------------- | -------------- | ----------- | ---------------------------------------------------- |
@@ -183,7 +184,8 @@ the combination can service** (the proxy is currently nginx):
 > loopback TCP (local) > non-loopback TCP+gate. Headless is the most-secure
 > posture: the backend binds only a UDS (same-uid socket access), and the proxy
 > serves only the container-egress listener — no browser/TCP surface at all.
-> (The proxy is implemented with nginx today.)
+> (The default proxy engine is Caddy since #1634; nginx remains selectable as
+> a deprecated fallback.)
 
 | Key      | Default     | Env var         |
 | -------- | ----------- | --------------- |

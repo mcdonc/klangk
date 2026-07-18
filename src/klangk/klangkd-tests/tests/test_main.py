@@ -1610,19 +1610,27 @@ class TestBuildApp:
         app = main.build_app(make_settings({}))
         assert model.AgentPrincipalError in app.exception_handlers
 
-    def test_build_app_default_engine_is_nginx(self):
-        """KLANGK_PROXY_ENGINE unset → the nginx ProxyWatchdog (#1559)."""
-        from klangk.proxy import ProxyWatchdog
+    def test_build_app_default_engine_is_caddy(self):
+        """KLANGK_PROXY_ENGINE unset → the Caddy CaddyWatchdog (#1559, #1634).
 
-        app = main.build_app(make_settings({}))
-        assert isinstance(app.state.proxy_watchdog, ProxyWatchdog)
-
-    def test_build_app_caddy_engine_wires_caddy_watchdog(self):
-        """KLANGK_PROXY_ENGINE=caddy → the Caddy CaddyWatchdog (#1559)."""
+        Since #1634 the default is ``caddy``; nginx is a deprecated escape
+        hatch selected explicitly.
+        """
         from klangk.caddy import CaddyWatchdog
 
-        app = main.build_app(make_settings({"KLANGK_PROXY_ENGINE": "caddy"}))
+        app = main.build_app(make_settings({}))
         assert isinstance(app.state.proxy_watchdog, CaddyWatchdog)
+
+    def test_build_app_nginx_engine_wires_nginx_watchdog(self):
+        """KLANGK_PROXY_ENGINE=nginx → the (deprecated) nginx ProxyWatchdog.
+
+        Kept this release as the escape hatch for a Caddy regression; the
+        settings layer warns on selection (#1634).
+        """
+        from klangk.proxy import ProxyWatchdog
+
+        app = main.build_app(make_settings({"KLANGK_PROXY_ENGINE": "nginx"}))
+        assert isinstance(app.state.proxy_watchdog, ProxyWatchdog)
 
     def test_build_app_warns_when_frontend_dir_absent(self, caplog):
         """build_app warns when frontend_dir doesn't exist (#1600).
