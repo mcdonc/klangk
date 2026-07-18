@@ -505,3 +505,12 @@ set-password <email>` (set a known password for the default user — whose
   nginx with 403. Loopback (local browsers) and other IPs (remote browsers)
   are unaffected. The three container endpoints keep their existing allowlist +
   workspace-token `auth_request`.
+
+- **Removed unused `adm-zip` devDependency from the frontend e2e-test
+  package (#2).** `adm-zip` and `@types/adm-zip` were declared in
+  `src/frontend/e2e-tests/package.json` but never imported anywhere in the
+  tree; dropping them eliminates the vulnerable `0.5.x` line
+  (CVE-2026-39244 / GHSA-xcpc-8h2w-3j85 — crafted ZIP triggers a 4 GB
+  memory allocation) flagged by Dependabot. `npm audit` now reports 0
+  vulnerabilities; Playwright still compiles all 202 tests. No production
+  code depended on the package.
