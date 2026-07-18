@@ -22,6 +22,7 @@ from klangk.caddy import (
 )
 from klangk.caddy import (
     CADDYFILE_CONTENT_TYPE,
+    config_request,
     post_load,
     tcp_upstream,
     uds_upstream,
@@ -49,9 +50,13 @@ def _wd(settings):
 
 
 class _FakeResponse:
-    def __init__(self, status_code: int = 200) -> None:
+    def __init__(self, status_code: int = 200, json_data=None) -> None:
         self.status_code = status_code
         self.text = ""
+        self._json = json_data
+
+    def json(self):
+        return self._json
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -61,7 +66,7 @@ class _FakeResponse:
 
 
 class _FakeAsyncClient:
-    """A minimal stand-in for httpx.AsyncClient (post + get + async-cm)."""
+    """A minimal stand-in for httpx.AsyncClient (post + get + request + async-cm)."""
 
     # class-level capture so tests can inspect the last POST without holding
     # a reference to the instance the SUT constructed.
@@ -73,6 +78,11 @@ class _FakeAsyncClient:
         self.closed = False
         self.posts: list[tuple] = []
         self.get_ok = kwargs.pop("get_ok", True)
+        # Config-tree (request()) capture: per-instance list of
+        # (method, url, json_body) plus a callable the test can set to
+        # synthesize responses. Default: 200 with no body.
+        self.requests: list[tuple] = []
+        self.request_responder = kwargs.pop("request_responder", None)
         _FakeAsyncClient.instances.append(self)
 
     async def post(self, url, *, content=None, headers=None):
@@ -87,6 +97,12 @@ class _FakeAsyncClient:
     async def get(self, url):
         if not self.get_ok:
             raise httpx.ConnectError("no socket")
+        return _FakeResponse()
+
+    async def request(self, method, url, **kwargs):
+        self.requests.append((method, url, kwargs.get("json")))
+        if self.request_responder is not None:
+            return self.request_responder(method, url, kwargs.get("json"))
         return _FakeResponse()
 
     async def aclose(self):
@@ -947,3 +963,381 @@ class TestWatchdogReconfigure:
         wd.load_config = AsyncMock(side_effect=httpx.ConnectError("down"))
         await wd.apply_pending_reload()  # must not raise
         assert wd._pending_reload is False
+
+
+# ---------------------------------------------------------------------------
+# config_request (path-based admin API client, #1633 Phase 3)
+# ---------------------------------------------------------------------------
+
+
+class TestConfigRequest:
+    """The generic config-tree REST client (GET/POST/PUT/PATCH/DELETE)."""
+
+    @pytest.mark.asyncio
+    async def test_get_uses_request_no_body(self):
+        client = _FakeAsyncClient()
+        await config_request(
+            "GET", "/sock", "/config/apps/http/servers", client=client
+        )
+        assert client.requests[-1][0] == "GET"
+        assert (
+            client.requests[-1][1]
+            == "http://localhost/config/apps/http/servers"
+        )
+        assert client.requests[-1][2] is None  # no body on GET
+
+    @pytest.mark.asyncio
+    async def test_post_serializes_json_body(self):
+        client = _FakeAsyncClient()
+        route = {"@id": "x", "match": [{"path": ["/x"]}], "handle": []}
+        await config_request(
+            "POST",
+            "/sock",
+            "/config/apps/http/servers/srv0/routes",
+            body=route,
+            client=client,
+        )
+        method, url, body = client.requests[-1]
+        assert method == "POST"
+        assert url == "http://localhost/config/apps/http/servers/srv0/routes"
+        # body is the dict, not pre-serialized — httpx does json= encoding.
+        assert body == route
+
+    @pytest.mark.asyncio
+    async def test_delete_path(self):
+        client = _FakeAsyncClient()
+        await config_request("DELETE", "/sock", "/id/myroute", client=client)
+        assert client.requests[-1][0] == "DELETE"
+        assert client.requests[-1][1] == "http://localhost/id/myroute"
+        assert client.requests[-1][2] is None
+
+    @pytest.mark.asyncio
+    async def test_raises_for_status(self):
+        """A 4xx/5xx surfaces as httpx.HTTPStatusError."""
+        client = _FakeAsyncClient(
+            request_responder=lambda m, u, b: _FakeResponse(404)
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            await config_request("GET", "/sock", "/id/missing", client=client)
+
+    @pytest.mark.asyncio
+    async def test_owns_and_closes_client_when_none_injected(
+        self, monkeypatch
+    ):
+        """client=None → builds a UDS-backed client and closes it after."""
+        import klangk.caddy as caddy_mod
+
+        monkeypatch.setattr(
+            caddy_mod.httpx,
+            "AsyncHTTPTransport",
+            lambda uds: "transport:/cfg/sock",
+        )
+        monkeypatch.setattr(caddy_mod.httpx, "AsyncClient", _FakeAsyncClient)
+        await config_request(
+            "GET",
+            "/cfg/sock",
+            "/config/",
+        )
+        assert (
+            _FakeAsyncClient.instances
+            and _FakeAsyncClient.instances[-1].closed
+        )
+
+
+# ---------------------------------------------------------------------------
+# CaddyWatchdog dynamic-route mutations (#1633 Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def _servers_responder(servers_json):
+    """A request_responder that returns the servers dict for GET .../servers,
+    200 otherwise. Models the real admin API: one GET to read servers, then
+    POST/DELETE/GET /id/... for the route ops."""
+
+    def _r(method, url, body):
+        if method == "GET" and url.endswith("/servers"):
+            return _FakeResponse(200, json_data=servers_json)
+        return _FakeResponse(200, json_data={"@id": "r"} if body else None)
+
+    return _r
+
+
+class TestServerKeyForPort:
+    @pytest.mark.asyncio
+    async def test_finds_server_by_listen_port(self):
+        wd = _wd(make_settings({}))
+        client = _FakeAsyncClient(
+            request_responder=_servers_responder(
+                {
+                    "srv0": {"listen": ["0.0.0.0:8995"]},
+                    "srv1": {"listen": ["127.0.0.1:19998"]},
+                }
+            )
+        )
+        assert await wd._server_key_for_port("8995", client=client) == "srv0"
+        assert await wd._server_key_for_port("19998", client=client) == "srv1"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_port_not_listening(self):
+        wd = _wd(make_settings({}))
+        client = _FakeAsyncClient(
+            request_responder=_servers_responder(
+                {"srv0": {"listen": ["0.0.0.0:8995"]}}
+            )
+        )
+        assert await wd._server_key_for_port("9999", client=client) is None
+
+
+class TestAddRoute:
+    @pytest.mark.asyncio
+    async def test_posts_to_resolved_server_routes_and_tracks(self):
+        wd = _wd(make_settings({}))
+        client = _FakeAsyncClient(
+            request_responder=_servers_responder(
+                {"srv0": {"listen": ["0.0.0.0:8995"]}}
+            )
+        )
+        route = {
+            "@id": "ws-123-hosted",
+            "match": [{"path": ["/dynamic/*"]}],
+            "handle": [{"handler": "static_response", "status_code": "200"}],
+        }
+        await wd.add_route("8995", route, client=client)
+        # The POST targeted the resolved server key, with the route as body.
+        posts = [r for r in client.requests if r[0] == "POST"]
+        assert posts[-1][1] == (
+            "http://localhost/config/apps/http/servers/srv0/routes"
+        )
+        assert posts[-1][2] == route
+        # Tracked for re-apply after /load.
+        assert wd._dynamic_routes["ws-123-hosted"] == ("8995", route)
+
+    @pytest.mark.asyncio
+    async def test_requires_at_id(self):
+        wd = _wd(make_settings({}))
+        with pytest.raises(ValueError, match="@id"):
+            await wd.add_route(
+                "8995",
+                {"match": [{"path": ["/x"]}]},
+                client=_FakeAsyncClient(),
+            )
+
+    @pytest.mark.asyncio
+    async def test_raises_when_no_server_listens_on_port(self):
+        wd = _wd(make_settings({}))
+        client = _FakeAsyncClient(
+            request_responder=_servers_responder(
+                {"srv0": {"listen": ["0.0.0.0:8995"]}}
+            )
+        )
+        with pytest.raises(RuntimeError, match="no caddy server"):
+            await wd.add_route("9999", {"@id": "x"}, client=client)
+
+
+class TestGetRoute:
+    @pytest.mark.asyncio
+    async def test_returns_route_json(self):
+        wd = _wd(make_settings({}))
+        client = _FakeAsyncClient(
+            request_responder=lambda m, u, b: _FakeResponse(
+                200, json_data={"@id": "r", "match": [{"path": ["/x"]}]}
+            )
+        )
+        assert (await wd.get_route("r", client=client)) == {
+            "@id": "r",
+            "match": [{"path": ["/x"]}],
+        }
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_404(self):
+        wd = _wd(make_settings({}))
+        client = _FakeAsyncClient(
+            request_responder=lambda m, u, b: _FakeResponse(404)
+        )
+        assert await wd.get_route("missing", client=client) is None
+
+    @pytest.mark.asyncio
+    async def test_reraises_non_404_errors(self):
+        wd = _wd(make_settings({}))
+        client = _FakeAsyncClient(
+            request_responder=lambda m, u, b: _FakeResponse(500)
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            await wd.get_route("r", client=client)
+
+
+class TestPutRoute:
+    @pytest.mark.asyncio
+    async def test_puts_by_id_and_updates_tracking(self):
+        wd = _wd(make_settings({}))
+        # Seed tracking so put_route reuses the recorded server port.
+        wd._dynamic_routes["r"] = (
+            "8995",
+            {"@id": "r", "handle": [{"handler": "subroute"}]},
+        )
+        client = _FakeAsyncClient()
+        new = {"@id": "r", "match": [{"path": ["/y"]}]}
+        await wd.put_route("r", new, client=client)
+        puts = [x for x in client.requests if x[0] == "PUT"]
+        assert puts[-1][1] == "http://localhost/id/r"
+        assert puts[-1][2] == new
+        assert wd._dynamic_routes["r"] == ("8995", new)
+
+    @pytest.mark.asyncio
+    async def test_put_brand_new_id_falls_back_to_egress_port(self):
+        """put_route on an id NOT already tracked records it against the
+        egress port (the _find_port_for_route fallback — dynamic routes are
+        an egress-side concern in practice). Covers the put_route else-branch."""
+        wd = _wd(make_settings(env={"KLANGK_EGRESS_PORT": "8995"}))
+        client = _FakeAsyncClient()
+        new = {"@id": "fresh", "match": [{"path": ["/z"]}]}
+        await wd.put_route("fresh", new, client=client)
+        puts = [x for x in client.requests if x[0] == "PUT"]
+        assert puts[-1][1] == "http://localhost/id/fresh"
+        # Tracked against the egress port (the fallback), ready for re-apply.
+        assert wd._dynamic_routes["fresh"] == ("8995", new)
+
+
+class TestDeleteRoute:
+    @pytest.mark.asyncio
+    async def test_deletes_by_id_and_untracks(self):
+        wd = _wd(make_settings({}))
+        wd._dynamic_routes["r"] = ("8995", {"@id": "r"})
+        client = _FakeAsyncClient()
+        assert await wd.delete_route("r", client=client) is True
+        dels = [x for x in client.requests if x[0] == "DELETE"]
+        assert dels[-1][1] == "http://localhost/id/r"
+        assert "r" not in wd._dynamic_routes
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_404_and_untracks(self):
+        wd = _wd(make_settings({}))
+        wd._dynamic_routes["ghost"] = ("8995", {"@id": "ghost"})
+        client = _FakeAsyncClient(
+            request_responder=lambda m, u, b: _FakeResponse(404)
+        )
+        assert await wd.delete_route("ghost", client=client) is False
+        assert "ghost" not in wd._dynamic_routes
+
+    @pytest.mark.asyncio
+    async def test_reraises_non_404_errors(self):
+        wd = _wd(make_settings({}))
+        client = _FakeAsyncClient(
+            request_responder=lambda m, u, b: _FakeResponse(500)
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            await wd.delete_route("r", client=client)
+
+
+class TestReapplyDynamicRoutes:
+    @pytest.mark.asyncio
+    async def test_reposts_tracked_routes_after_load(self):
+        """load_config re-POSTs tracked routes because /load wipes them."""
+        wd = _wd(make_settings({}))
+        # Two tracked routes on the egress server (8995).
+        wd._dynamic_routes = {
+            "a": ("8995", {"@id": "a", "match": [{"path": ["/a"]}]}),
+            "b": ("8995", {"@id": "b", "match": [{"path": ["/b"]}]}),
+        }
+        client = _FakeAsyncClient(
+            request_responder=_servers_responder(
+                {"srv0": {"listen": ["0.0.0.0:8995"]}}
+            )
+        )
+        await wd.load_config("cf", client=client)
+        # The full /load POST happened...
+        assert _FakeAsyncClient.last_post["content"] == "cf"
+        # ...then both dynamic routes were re-POSTed to the resolved server.
+        posts = [r for r in client.requests if r[0] == "POST"]
+        route_posts = [
+            p
+            for p in posts
+            if p[1] == "http://localhost/config/apps/http/servers/srv0/routes"
+        ]
+        assert {p[2]["@id"] for p in route_posts} == {"a", "b"}
+
+    @pytest.mark.asyncio
+    async def test_load_skips_reapply_when_no_tracked_routes(self):
+        """No dynamic routes → load_config is just the POST /load (no extra
+        requests). Keeps the existing Phase-1 behavior unchanged."""
+        wd = _wd(make_settings({}))
+        client = _FakeAsyncClient()
+        await wd.load_config("cf", client=client)
+        assert client.requests == []  # no config_request calls
+
+    @pytest.mark.asyncio
+    async def test_reapply_skips_missing_server(self):
+        """A tracked route whose server is gone (e.g. headless after a mode
+        swap) is skipped, not fatal — the other routes still re-apply."""
+        wd = _wd(make_settings({}))
+        wd._dynamic_routes = {
+            "a": ("8995", {"@id": "a", "match": [{"path": ["/a"]}]}),
+            "b": ("9999", {"@id": "b", "match": [{"path": ["/b"]}]}),  # gone
+        }
+        client = _FakeAsyncClient(
+            request_responder=_servers_responder(
+                {"srv0": {"listen": ["0.0.0.0:8995"]}}
+            )
+        )
+        await wd.load_config("cf", client=client)  # must not raise
+        posts = [
+            r
+            for r in client.requests
+            if r[0] == "POST"
+            and r[1] == "http://localhost/config/apps/http/servers/srv0/routes"
+        ]
+        assert {p[2]["@id"] for p in posts} == {"a"}  # only the live one
+
+    @pytest.mark.asyncio
+    async def test_reapply_swallows_individual_failure(self):
+        """One route's re-POST failing (non-404) doesn't abort the rest."""
+        wd = _wd(make_settings({}))
+        wd._dynamic_routes = {
+            "a": ("8995", {"@id": "a"}),
+            "b": ("8995", {"@id": "b"}),
+        }
+
+        # First POST (route a) 500s; second (route b) 200s.
+        call = {"n": 0}
+
+        def _r(m, u, b):
+            if m == "GET":
+                return _FakeResponse(
+                    200, json_data={"srv0": {"listen": ["0.0.0.0:8995"]}}
+                )
+            call["n"] += 1
+            return _FakeResponse(500 if call["n"] == 1 else 200)
+
+        client = _FakeAsyncClient(request_responder=_r)
+        await wd.load_config("cf", client=client)  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_load_owns_and_closes_client_when_none_injected(
+        self, monkeypatch
+    ):
+        """load_config with client=None builds one UDS client for both the
+        POST /load and the re-apply, then closes it."""
+        import klangk.caddy as caddy_mod
+
+        wd = _wd(make_settings({}))
+        wd._dynamic_routes = {
+            "a": ("8995", {"@id": "a", "match": [{"path": ["/a"]}]}),
+        }
+        monkeypatch.setattr(
+            caddy_mod.httpx, "AsyncHTTPTransport", lambda uds: "t"
+        )
+
+        class _C(_FakeAsyncClient):
+            def __init__(self, *a, **k):
+                k.setdefault(
+                    "request_responder",
+                    _servers_responder({"srv0": {"listen": ["0.0.0.0:8995"]}}),
+                )
+                super().__init__(*a, **k)
+
+        monkeypatch.setattr(caddy_mod.httpx, "AsyncClient", _C)
+        await wd.load_config("cf")
+        assert (
+            _FakeAsyncClient.instances
+            and _FakeAsyncClient.instances[-1].closed
+        )

@@ -125,6 +125,53 @@ async def post_load(
             await client.aclose()
 
 
+async def config_request(
+    method: str,
+    admin_socket: str,
+    path: str,
+    *,
+    body: dict | list | None = None,
+    client: httpx.AsyncClient | None = None,
+    timeout: float = 10.0,
+) -> httpx.Response:
+    """Generic config-tree REST call to Caddy's admin API (#1633 Phase 3).
+
+    The path-based API (``GET``/``POST``/``PUT``/``PATCH``/``DELETE`` on
+    ``/config/...`` and ``/id/<name>``) mutates a single route in place — the
+    surgical alternative to the full-config ``POST /load``. Used for dynamic
+    routes (workspace / hosted-app add/remove) keyed by ``@id`` so they stay
+    addressable across reloads without re-counting positional array indices
+    (the ``/config/.../routes/N`` indices are brittle; ``/id/<name>`` is stable).
+
+    ``path`` is the URL path (with leading slash) under ``http://localhost`` —
+    e.g. ``/config/apps/http/servers/<srv>/routes`` (append a route) or
+    ``/id/<route_id>`` (address a tagged route). ``body``, when given, is sent
+    as JSON — Caddy's path mutations take ``application/json``, unlike
+    ``/load`` which takes a Caddyfile.
+
+    ``client`` is injectable so the unit suite drives this against a fake
+    (same pattern as :func:`post_load`); in production the caller leaves it
+    ``None`` and a short-lived UDS-backed client is constructed and closed
+    here. The response's ``raise_for_status()`` runs before return.
+    """
+    own_client = client is None
+    if own_client:
+        transport = httpx.AsyncHTTPTransport(uds=admin_socket)
+        client = httpx.AsyncClient(transport=transport, timeout=timeout)
+    try:
+        kwargs: dict = {}
+        if body is not None:
+            kwargs["json"] = body
+        resp = await client.request(
+            method, f"http://localhost{path}", **kwargs
+        )
+        resp.raise_for_status()
+        return resp
+    finally:
+        if own_client:
+            await client.aclose()
+
+
 # ---------------------------------------------------------------------------
 # Renderer (settings-driven — owned instance, parallel to ProxyRenderer)
 # ---------------------------------------------------------------------------
@@ -560,6 +607,13 @@ class CaddyWatchdog:
         # sync reconfigure loop). #1559 Phase 1: a settings change is a
         # fresh POST /load, not stale-until-restart.
         self._pending_reload = False
+        # Dynamic JSON routes added via the path-based admin API (#1633
+        # Phase 3), keyed by ``@id`` → ``(server_port, route_json)``. A full
+        # ``POST /load`` wipes non-Caddyfile routes (the Caddyfile is the
+        # whole config on /load), so after every load we re-POST these to
+        # the server that owns each route — a SIGHUP settings swap must not
+        # silently drop live workspace/hosted-app routes.
+        self._dynamic_routes: dict[str, tuple[int | str, dict]] = {}
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -641,10 +695,202 @@ class CaddyWatchdog:
         *,
         client: httpx.AsyncClient | None = None,
     ) -> httpx.Response:
-        """Render (if omitted) and ``POST /load`` the Caddyfile to running Caddy."""
+        """Render (if omitted) and ``POST /load`` the Caddyfile to running Caddy.
+
+        After a successful load, any tracked dynamic JSON routes are re-applied
+        — a full ``/load`` replaces the entire config, wiping routes that
+        aren't in the Caddyfile (see :attr:`_dynamic_routes`). One shared
+        client (built when none is injected) covers both the load and the
+        re-apply so they're a single connection's worth of churn.
+        """
         if caddyfile is None:
             caddyfile = self._render_caddyfile()
-        return await post_load(self.admin_socket, caddyfile, client=client)
+        own_client = client is None
+        if own_client:
+            transport = httpx.AsyncHTTPTransport(uds=self.admin_socket)
+            client = httpx.AsyncClient(transport=transport, timeout=10.0)
+        try:
+            resp = await post_load(self.admin_socket, caddyfile, client=client)
+            if self._dynamic_routes:
+                await self._reapply_dynamic_routes(client=client)
+            return resp
+        finally:
+            if own_client:
+                await client.aclose()
+
+    # -- dynamic route mutations (path-based admin API, #1633 Phase 3) ------
+
+    async def _server_key_for_port(
+        self, port: int | str, *, client: httpx.AsyncClient | None = None
+    ) -> str | None:
+        """The admin-API server key whose ``listen`` includes ``:<port>``.
+
+        The Caddyfile adapter names servers positionally (``srv0``, ``srv1``…)
+        and the ordering can shift across reloads, so a positional key is
+        brittle. The ``listen`` address is stable (it's the bound port), so
+        this looks the key up by it. Returns ``None`` when no server listens
+        on that port (e.g. a headless deployment has no browser server).
+        """
+        resp = await config_request(
+            "GET",
+            self.admin_socket,
+            "/config/apps/http/servers",
+            client=client,
+        )
+        port_s = str(port)
+        for key, sdef in resp.json().items():
+            for listen in sdef.get("listen", []):
+                if str(listen).endswith(f":{port_s}"):
+                    return key
+        return None
+
+    async def add_route(
+        self,
+        server_port: int | str,
+        route: dict,
+        *,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        """Append a dynamic JSON ``route`` to the server listening on ``server_port``.
+
+        The route MUST include an ``@id`` so it is addressable for later
+        replace/delete (``PUT``/``DELETE /id/<@id>``). Tracked internally and
+        re-applied after every full ``POST /load`` so the route survives a
+        SIGHUP settings swap.
+        """
+        if "@id" not in route:
+            raise ValueError(
+                "dynamic route must include an @id (for /id/<name> addressing)"
+            )
+        key = await self._server_key_for_port(server_port, client=client)
+        if key is None:
+            raise RuntimeError(
+                f"no caddy server listening on port {server_port}; "
+                "cannot attach dynamic route"
+            )
+        await config_request(
+            "POST",
+            self.admin_socket,
+            f"/config/apps/http/servers/{key}/routes",
+            body=route,
+            client=client,
+        )
+        self._dynamic_routes[route["@id"]] = (server_port, route)
+
+    async def get_route(
+        self, route_id: str, *, client: httpx.AsyncClient | None = None
+    ) -> dict | None:
+        """Read a route by ``@id`` (``None`` if it isn't loaded in Caddy)."""
+        try:
+            resp = await config_request(
+                "GET",
+                self.admin_socket,
+                f"/id/{route_id}",
+                client=client,
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return None
+            raise
+        return resp.json()
+
+    async def put_route(
+        self,
+        route_id: str,
+        route: dict,
+        *,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        """Replace the route addressed by ``@id`` ``route_id`` with ``route``."""
+        await config_request(
+            "PUT",
+            self.admin_socket,
+            f"/id/{route_id}",
+            body=route,
+            client=client,
+        )
+        # Preserve the server binding from the tracked entry so the next
+        # /load re-apply targets the right server; fall back to a best-effort
+        # lookup if this is a brand-new id.
+        if route_id in self._dynamic_routes:
+            server_port = self._dynamic_routes[route_id][0]
+        else:
+            server_port = self._find_port_for_route(route)
+        self._dynamic_routes[route_id] = (server_port, route)
+
+    async def delete_route(
+        self, route_id: str, *, client: httpx.AsyncClient | None = None
+    ) -> bool:
+        """Delete the route addressed by ``@id`` ``route_id``.
+
+        Returns ``True`` if a route was deleted, ``False`` if it was already
+        absent. Either way the id is dropped from the tracked set so a later
+        ``/load`` re-apply doesn't resurrect it.
+        """
+        try:
+            await config_request(
+                "DELETE",
+                self.admin_socket,
+                f"/id/{route_id}",
+                client=client,
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                self._dynamic_routes.pop(route_id, None)
+                return False
+            raise
+        self._dynamic_routes.pop(route_id, None)
+        return True
+
+    async def _reapply_dynamic_routes(
+        self, *, client: httpx.AsyncClient | None = None
+    ) -> None:
+        """Re-POST every tracked dynamic route after a full ``/load`` wipes them.
+
+        A failure to re-apply one route is logged and swallowed so a single
+        bad route can't abort the wider load — the other routes still go in,
+        and Caddy keeps the Caddyfile's static config either way. A missing
+        server (e.g. headless mode after a mode swap dropped the browser
+        listener) is skipped, not fatal.
+        """
+        for route_id, (server_port, route) in list(
+            self._dynamic_routes.items()
+        ):
+            try:
+                key = await self._server_key_for_port(
+                    server_port, client=client
+                )
+                if key is None:
+                    logger.warning(
+                        "caddy: server for dynamic route %s (port %s) "
+                        "gone after /load; skipping re-apply",
+                        route_id,
+                        server_port,
+                    )
+                    continue
+                await config_request(
+                    "POST",
+                    self.admin_socket,
+                    f"/config/apps/http/servers/{key}/routes",
+                    body=route,
+                    client=client,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "caddy: failed to re-apply dynamic route %s after /load: %s",
+                    route_id,
+                    exc,
+                )
+
+    def _find_port_for_route(self, route: dict) -> int | str:
+        """Best-effort: the server port a route belongs to (for put_route tracking).
+
+        Used only when ``put_route`` introduces a brand-new id (not already
+        tracked): scan the known servers' ports and return the first whose
+        listener is up. Falls back to the egress port (dynamic routes are an
+        egress-side concern in practice)."""
+        egress = self.app.state.settings.egress_port
+        return egress
 
     # -- supervision -------------------------------------------------------
 

@@ -1012,3 +1012,199 @@ class TestCaddySecretNotOnDisk:
                 proc.wait(timeout=5)
         finally:
             _stop_echo(echo)
+
+
+# ---------------------------------------------------------------------------
+# Live route mutations via the path-based admin API (#1633 Phase 3)
+# ---------------------------------------------------------------------------
+
+
+class TestCaddyLiveRouteMutation:
+    """Dynamic JSON routes added/removed over the admin config-tree API.
+
+    The path-based API (``POST``/``GET``/``PUT``/``DELETE`` on
+    ``/config/.../routes`` and ``/id/<name>``) mutates a single route in
+    place — the surgical alternative to the full-config ``POST /load``.
+    These tests drive the real production path: a :class:`CaddyWatchdog`
+    against a live Caddy admin UDS, proving add → serve → get → delete →
+    gone, and that a full ``/load`` re-applies tracked dynamic routes (a
+    ``/load`` wipes non-Caddyfile routes, so the watchdog re-POSTs them).
+
+    Uses a minimal Caddyfile (one listener, a static ``/health`` route, no
+    ``forward_auth``) rather than the full klangk config. The full egress
+    server compiles ``forward_auth`` into a subroute, so an appended
+    top-level route doesn't interleave with it after a ``/load`` — a
+    position-aware-insertion concern for when a concrete dynamic route
+    (e.g. a per-workspace hosted app needing its own ACL/body-size) is
+    actually migrated. Phase 3 delivers the client + the re-apply
+    mechanism; this config is where that mechanism is demonstrably correct.
+    """
+
+    @pytest.fixture(scope="class")
+    @staticmethod
+    def stack(tmp_path_factory):
+        tmpdir = str(tmp_path_factory.mktemp("caddy-dyn-routes"))
+        port = free_port()
+        admin_sock = os.path.join(tmpdir, "caddy-admin.sock")
+
+        # Minimal config: one listener, a static /health route, admin on the
+        # klangkd-owned UDS. No forward_auth / reverse_proxy — the dynamic
+        # route's static_response is the sole variable.
+        caddyfile = (
+            "{\n"
+            f"\tadmin unix//{admin_sock}|0600\n"
+            "\tauto_https off\n"
+            "\tpersist_config off\n"
+            "}\n"
+            f"http://:{port} {{\n"
+            "\tbind 127.0.0.1\n"
+            '\trespond /health "ok" 200\n'
+            "}\n"
+        )
+        conf_path = os.path.join(tmpdir, "test.caddy")
+        with open(conf_path, "w") as f:
+            f.write(caddyfile)
+        try:
+            os.unlink(admin_sock)
+        except FileNotFoundError:
+            pass
+        proc = subprocess.Popen(
+            ["caddy", "run", "--config", conf_path, "--adapter", "caddyfile"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        # Wait for /health (the static route) so we know the listener is up
+        # before the dynamic-route probes run.
+        if not _wait_for_caddy_health(port):
+            proc.kill()
+            pytest.fail(f"Caddy did not start:\n{_caddy_output(proc)}")
+
+        # A real CaddyWatchdog pointed at the running Caddy's admin UDS. Its
+        # settings carry the listener port (for _server_key_for_port) and
+        # the state_dir whose caddy-admin.sock the watchdog dials.
+        import types
+
+        from klangk.caddy import CaddyWatchdog
+        from klangk.settings import KlangkSettings
+
+        settings = KlangkSettings(
+            {
+                "KLANGK_DATA_DIR": tmpdir,
+                "KLANGK_STATE_DIR": tmpdir,
+                "KLANGK_EGRESS_PORT": str(port),
+            }
+        )
+        app = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=settings)
+        )
+        wd = CaddyWatchdog(app)
+
+        yield {"port": port, "wd": wd, "caddyfile": caddyfile}
+
+        proc.terminate()
+        proc.wait(timeout=5)
+
+    def test_add_route_serves_then_delete_removes(self, stack):
+        """Add a dynamic route by @id → it serves through the listener →
+        delete it → it's gone. The full add/get/delete round-trip over the
+        path-based admin API against a real Caddy."""
+        import asyncio
+
+        wd = stack["wd"]
+        port = stack["port"]
+        route = {
+            "@id": "dyn-test-route",
+            "match": [{"path": ["/dyn-probe/*"]}],
+            "handle": [
+                {
+                    "handler": "static_response",
+                    "status_code": "418",
+                    "body": "teapot",
+                }
+            ],
+        }
+
+        async def _add_get_delete():
+            await wd.add_route(port, route)
+            got = await wd.get_route("dyn-test-route")
+            deleted = await wd.delete_route("dyn-test-route")
+            return got, deleted
+
+        got, deleted = asyncio.run(_add_get_delete())
+        assert got is not None
+        assert got.get("@id") == "dyn-test-route"
+        assert deleted is True
+
+        # Verify the listener actually reflected the add (418) and the
+        # delete (back to no handler → not 418). Re-add+probe+delete in one
+        # async block so the route is live exactly during the probe.
+        async def _probe_with_route():
+            await wd.add_route(port, route)
+            status = httpx.get(
+                f"http://127.0.0.1:{port}/dyn-probe/x", timeout=5
+            ).status_code
+            await wd.delete_route("dyn-test-route")
+            return status
+
+        assert asyncio.run(_probe_with_route()) == 418  # served
+        # After delete it's gone: /dyn-probe/x no longer returns 418.
+        after = httpx.get(
+            f"http://127.0.0.1:{port}/dyn-probe/x", timeout=5
+        ).status_code
+        assert after != 418
+
+    def test_load_reapplies_tracked_dynamic_routes(self, stack):
+        """A full POST /load wipes non-Caddyfile routes; the watchdog
+        re-POSTs its tracked set so dynamic routes survive a SIGHUP reload.
+
+        This is the core Phase-3 invariant: ``add_route`` tracks the route,
+        and ``load_config`` re-applies tracked routes after the /load.
+        """
+        import asyncio
+
+        wd = stack["wd"]
+        port = stack["port"]
+        caddyfile = stack["caddyfile"]
+        route = {
+            "@id": "dyn-persist-route",
+            "match": [{"path": ["/dyn-persist/*"]}],
+            "handle": [{"handler": "static_response", "status_code": "419"}],
+        }
+
+        async def _scenario():
+            await wd.add_route(port, route)  # tracked
+            await wd.load_config(caddyfile)  # full /load wipes + re-applies
+            return await wd.get_route("dyn-persist-route")
+
+        got = asyncio.run(_scenario())
+        assert got is not None, (
+            "dynamic route was not re-applied after POST /load"
+        )
+        assert got.get("@id") == "dyn-persist-route"
+
+        # And the listener reflects the re-applied route.
+        status = httpx.get(
+            f"http://127.0.0.1:{port}/dyn-persist/x", timeout=5
+        ).status_code
+        assert status == 419
+
+        # Cleanup: delete + drop from tracking.
+        asyncio.run(wd.delete_route("dyn-persist-route"))
+
+    def test_get_route_returns_none_after_delete(self, stack):
+        import asyncio
+
+        wd = stack["wd"]
+        port = stack["port"]
+        route = {
+            "@id": "dyn-gone-route",
+            "match": [{"path": ["/dyn-gone/*"]}],
+            "handle": [{"handler": "static_response", "status_code": "418"}],
+        }
+
+        async def _scenario():
+            await wd.add_route(port, route)
+            await wd.delete_route("dyn-gone-route")
+            return await wd.get_route("dyn-gone-route")
+
+        assert asyncio.run(_scenario()) is None
