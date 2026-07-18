@@ -11,7 +11,7 @@ OIDC providers can be configured in two ways: **inline** in the `klangkd` config
 Add an `oidc_providers` section to your `klangkd` config file:
 
 ```yaml
-# /etc/klangkd.conf
+# /etc/klangkd.yaml
 auth_modes: both
 
 oidc_providers:

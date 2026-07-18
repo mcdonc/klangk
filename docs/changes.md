@@ -479,7 +479,7 @@ set-password <email>` (set a known password for the default user — whose
   `seed_default_user` ran on every boot and created a fresh admin from
   `KLANGK_DEFAULT_USER` / `KLANGK_DEFAULT_PASSWORD` whenever the configured
   email didn't match an existing user — so anyone able to edit
-  `klangkd.conf` (or set the `KLANGK_DEFAULT_*` env vars) could mint or
+  `klangkd.yaml` (or set the `KLANGK_DEFAULT_*` env vars) could mint or
   reset an admin account by editing those values and restarting, bypassing
   all auth and admin-invite flows. Seeding is now gated on **`admin`-group
   emptiness**: an admin is created from `KLANGK_DEFAULT_*` only when the
@@ -489,7 +489,7 @@ set-password <email>` (set a known password for the default user — whose
   also prevents lockout: editing `KLANGK_DEFAULT_USER` and restarting can
   no longer clobber the already-seeded admin's identity. To change the
   admin after first boot, use the normal in-app / `klangkc admin` paths.
-  Deployers should still treat `klangkd.conf` as sensitive (first-boot
+  Deployers should still treat `klangkd.yaml` as sensitive (first-boot
   password, LLM keys, JWT secret), but it is no longer a standing
   admin-minting credential.
 

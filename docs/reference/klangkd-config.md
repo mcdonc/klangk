@@ -18,7 +18,7 @@ This means an operator can set the bulk of a deployment's config in the YAML fil
 
 | Invocation                              | Behavior                                                        |
 | --------------------------------------- | --------------------------------------------------------------- |
-| `klangkd`                               | Requires `/etc/klangkd.conf` to exist. Missing → startup error. |
+| `klangkd`                               | Requires `/etc/klangkd.yaml` to exist. Missing → startup error. |
 | `klangkd --config /path/to/config.yaml` | Uses the specified file. Missing → startup error.               |
 | `klangkd --config=none`                 | No config file — env vars and built-in defaults only.           |
 
@@ -81,7 +81,7 @@ If `KLANGK_OIDC_CONFIG` is also set (as an env var), the separate file wins — 
 A production-ready config file covering all common settings:
 
 ```yaml
-# /etc/klangkd.conf
+# /etc/klangkd.yaml
 
 # --- Auth / identity ---
 auth_modes: both
