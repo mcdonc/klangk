@@ -466,6 +466,16 @@ class KlangkSettings(BaseSettings):
     # Renamed from ``nginx_bin``/``KLANGK_NGINX_BIN`` (#1430); the old
     # ``KLANGK_NGINX_BIN`` name is no longer recognized.
     proxy_bin: str | None = None
+    # proxy_engine: which reverse-proxy engine the watchdog owns
+    # (#1559). ``nginx`` (default) keeps the long-standing Python-owned
+    # nginx renderer; ``caddy`` switches to the Caddyfile renderer delivered
+    # to Caddy's admin API over a klangkd-owned UDS (no on-disk config source
+    # of truth, no SIGHUP/reload). The engine is selected once at process
+    # start (build_app) — changing it requires a restart, not just a SIGHUP
+    # (it swaps the child binary and the whole render/delivery path). The
+    # caddy engine is in development behind this flag; the default stays
+    # nginx until the Phase 4 cutover.
+    proxy_engine: str = "nginx"
     # trust_outer_proxy: opt-in to surviving an outer trusted proxy's
     # X-Forwarded-* in the proxy's catch-all (see #1396 renderer). Mirrors the
     # KLANGK_TRUST_OUTER_PROXY env var the old nginx.sh read.

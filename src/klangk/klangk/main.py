@@ -25,6 +25,7 @@ from . import (
     files,
     model,
     proxy as proxy_mod,
+    caddy as caddy_mod,
     oidc,
     plugins,
     podman,
@@ -65,6 +66,10 @@ _NON_RELOADABLE_SETTINGS: tuple[tuple[str, str], ...] = (
     ("listen", "the HTTP listener is already bound"),
     ("data_dir", "the DB engine is already open"),
     ("state_dir", "instance state is already on disk"),
+    # The proxy engine is selected once at process start (build_app picks
+    # ProxyWatchdog vs CaddyWatchdog); a SIGHUP can't swap the child binary
+    # or the render/delivery path in place (#1559).
+    ("proxy_engine", "the proxy child process is already spawned"),
 )
 
 
@@ -431,6 +436,18 @@ class Lifecycle:
             logger.warning(
                 "SIGHUP: agent user re-seed failed (skipped): %s", exc
             )
+        # CaddyWatchdog.reconfigure flags an admin-API POST /load of the
+        # re-rendered Caddyfile; apply it now (async). No-op for the nginx
+        # engine (its watchdog has no apply_pending_reload) and when the
+        # proxy is disabled. #1559: a settings change is a fresh /load.
+        caddy_wd = getattr(app.state, "proxy_watchdog", None)
+        if caddy_wd is not None and hasattr(caddy_wd, "apply_pending_reload"):
+            try:
+                await caddy_wd.apply_pending_reload()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "SIGHUP: caddy config reload failed (skipped): %s", exc
+                )
         # #1610: remount frontend_dir if it changed.
         if old.frontend_dir != new.frontend_dir:
             self._remount_frontend(app, new)
@@ -799,8 +816,15 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # module global. The lifespan reads app.state.container_registry.
     app.state.container_registry = container.ContainerRegistry(app)
     # Slice 2b (#1463): proxy watchdog is an owned instance with start/stop
-    # lifecycle methods called by the lifespan.
-    app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
+    # lifecycle methods called by the lifespan. The engine is selected once
+    # here by KLANGK_PROXY_ENGINE (#1559): ``nginx`` (default, the
+    # Python-owned nginx renderer) or ``caddy`` (Caddyfile rendered and
+    # pushed to Caddy's admin API over a UDS). Both expose the same
+    # start()/stop()/reconfigure() surface the lifespan + SIGHUP path use.
+    if settings.proxy_engine == "caddy":
+        app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
+    else:
+        app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
     # #1480: Terminal(app_state) groups the ~25 tmux-session
     # management functions that share a Podman dependency. Reaches podman,
     # the registry, and settings through the single app_state reference.

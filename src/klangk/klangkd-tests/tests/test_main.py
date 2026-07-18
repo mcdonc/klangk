@@ -1018,6 +1018,53 @@ class TestStartupShutdownRestart:
         assert len(called) == 18
         mock_reseed.assert_awaited_once()
 
+    async def test_apply_reloaded_settings_calls_caddy_reload(self, app_state):
+        """When the proxy watchdog is the Caddy engine, _apply_reloaded_settings
+        calls its apply_pending_reload (#1559: a settings change is a fresh
+        POST /load). The nginx engine has no apply_pending_reload and is skipped."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        new_settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
+        # Stand in a Caddy-shaped watchdog with a flagging reconfigure +
+        # an apply_pending_reload awaitable we can assert on.
+        reload_calls = []
+
+        class _FakeCaddyWd:
+            def reconfigure(self, app):
+                pass
+
+            async def apply_pending_reload(self):
+                reload_calls.append(1)
+
+        app_state.state.proxy_watchdog = _FakeCaddyWd()
+        with patch.object(lc, "apply_pending_reseed", new_callable=AsyncMock):
+            await lc._apply_reloaded_settings(new_settings)
+        assert reload_calls == [1]
+
+    async def test_apply_reloaded_settings_swallows_caddy_reload_failure(
+        self, app_state, caplog
+    ):
+        """A caddy apply_pending_reload failure is logged + skipped (doesn't
+        abort the wider SIGHUP); Caddy keeps its last-known-good config."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        new_settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
+
+        class _BadCaddyWd:
+            def reconfigure(self, app):
+                pass
+
+            async def apply_pending_reload(self):
+                raise RuntimeError("admin API down")
+
+        app_state.state.proxy_watchdog = _BadCaddyWd()
+        with (
+            patch.object(lc, "apply_pending_reseed", new_callable=AsyncMock),
+            caplog.at_level("WARNING"),
+        ):
+            await lc._apply_reloaded_settings(new_settings)  # must not raise
+        assert "caddy config reload failed" in caplog.text
+
     async def test_apply_logs_warning_when_reconfigure_fails(
         self, app_state, caplog
     ):
@@ -1562,6 +1609,20 @@ class TestBuildApp:
     def test_build_app_registers_exception_handlers(self):
         app = main.build_app(make_settings({}))
         assert model.AgentPrincipalError in app.exception_handlers
+
+    def test_build_app_default_engine_is_nginx(self):
+        """KLANGK_PROXY_ENGINE unset → the nginx ProxyWatchdog (#1559)."""
+        from klangk.proxy import ProxyWatchdog
+
+        app = main.build_app(make_settings({}))
+        assert isinstance(app.state.proxy_watchdog, ProxyWatchdog)
+
+    def test_build_app_caddy_engine_wires_caddy_watchdog(self):
+        """KLANGK_PROXY_ENGINE=caddy → the Caddy CaddyWatchdog (#1559)."""
+        from klangk.caddy import CaddyWatchdog
+
+        app = main.build_app(make_settings({"KLANGK_PROXY_ENGINE": "caddy"}))
+        assert isinstance(app.state.proxy_watchdog, CaddyWatchdog)
 
     def test_build_app_warns_when_frontend_dir_absent(self, caplog):
         """build_app warns when frontend_dir doesn't exist (#1600).
