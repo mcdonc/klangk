@@ -597,10 +597,15 @@ class TestWriteConfig:
 
 
 class TestKlangkdHelpers:
-    def test_state_dir_required_when_unset(self):
-        # #1459/#1461: state_dir has no default — missing fails at construction.
+    def test_state_dir_required_when_home_unset(self, monkeypatch):
+        # #1459/#1461/#1644: state_dir now defaults to $XDG_STATE_HOME/klangk
+        # when unset, so the fail-fast intent only survives the genuinely
+        # unconfigured case — no home path computable ($HOME and
+        # $XDG_STATE_HOME both unset).
         from pydantic import ValidationError
 
+        monkeypatch.delenv("HOME", raising=False)
+        monkeypatch.delenv("XDG_STATE_HOME", raising=False)
         with pytest.raises(ValidationError) as exc_info:
             KlangkSettings(env={"KLANGK_DATA_DIR": "/tmp/data"})
         assert "KLANGK_STATE_DIR" in str(exc_info.value)

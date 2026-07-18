@@ -1,5 +1,6 @@
 """Tests for util: file- and command-backed secret resolution."""
 
+import os
 import uuid
 
 
@@ -158,9 +159,14 @@ class TestCustomizeDir:
         u = _util({"KLANGK_CUSTOMIZE_DIR": "/opt/custom"})
         assert u.customize_dir() == "/opt/custom"
 
-    def test_defaults_to_state_dir_custom(self):
+    def test_defaults_to_xdg_config_home_custom(self, monkeypatch):
+        # #1644: customize_dir is config (user-edited, durable), not state —
+        # derives from $XDG_CONFIG_HOME, not state_dir.
+        monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/xcfg")
         u = _util({"KLANGK_STATE_DIR": "/tmp/state"})
-        assert u.customize_dir() == "/tmp/state/custom"
+        assert u.customize_dir() == os.path.join(
+            "/tmp/xcfg", "klangk", "custom"
+        )
 
 
 class TestInstanceId:

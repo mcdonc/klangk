@@ -54,6 +54,40 @@ logger = logging.getLogger(__name__)
 # freely issues an admin token). See the ``auth_modes`` field validator below.
 _VALID_AUTH_MODES = frozenset({"password", "oidc", "both", "none"})
 
+# The XDG "klangk" subdir used by the default-roots (state + config). Both
+# trees use the same subdir name so config and state sit side-by-side and are
+# easy to find; matching the CLI's existing ``~/.config/klangk/`` (the CLI is
+# folded into the klangkd wheel, #1606). See #1607 / #1644.
+_XDG_SUBDIR = "klangk"
+
+
+def _xdg_config_home() -> str:
+    """Return ``$XDG_CONFIG_HOME`` with the documented unset fallback.
+
+    Per the XDG base-dir spec, an unset ``XDG_CONFIG_HOME`` resolves to
+    ``~/.config``. This applies on Linux *and* macOS (where the var is also
+    unset by default; we deliberately do not switch to
+    ``~/Library/Application Support`` — see #1607's cross-platform note).
+    Used for the config-tree defaults of ``plugins_dir`` / ``customize_dir``
+    (#1644).
+    """
+    return os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+
+
+def _xdg_state_home() -> str:
+    """Return ``$XDG_STATE_HOME`` with the documented unset fallback.
+
+    Per the XDG base-dir spec, an unset ``XDG_STATE_HOME`` resolves to
+    ``~/.local/state`` (Linux and macOS both). Used for the default
+    ``state_dir`` (#1644): the UDS, rendered proxy conf/pid, ssh-agent log,
+    and the DB are disposable runtime state, so ``XDG_STATE_HOME`` is the
+    principled home.
+    """
+    return os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
+        "~/.local/state"
+    )
+
+
 # Re-exported for backward compat — callers that ``from ..util import ...``
 # still work because util.py re-exports these.  ``resolve_indirection`` is
 # NOT exported: ``file:``/``cmd:`` resolution now happens once, inside
@@ -466,10 +500,13 @@ class KlangkSettings(BaseSettings):
     # The nginx engine never reads this field.
     caddy_admin_socket: str | None = None
     # state_dir: runtime state (the UDS when listen is a socket path, rendered
-    # nginx.conf, pid). **Required** — no default; a missing value fails at
-    # construction (#1461). Devenv pins it to ``$DEVENV_STATE/klangk`` via
-    # ``env.KLANGK_STATE_DIR`` in devenv.nix; the host container sets it to
-    # ``/tmp/klangk-state``.
+    # proxy config, pid). Defaults to ``$XDG_STATE_HOME/klangk`` (→
+    # ``~/.local/state/klangk`` when the var is unset, incl. macOS) when no
+    # explicit value is supplied (#1644); explicit ``KLANGK_STATE_DIR`` /
+    # config-file values still win (devenv pins it to ``$DEVENV_STATE/klangk``
+    # via devenv.nix; the host container sets ``/tmp/klangk-state``). If
+    # neither ``$XDG_STATE_HOME`` nor ``$HOME`` is set, construction fails
+    # fast (the #1461 intent preserved for the genuinely-unconfigured case).
     state_dir: str | None = None
     # proxy_bin: the proxy executable the renderer spawns (currently nginx).
     # Falls back to shutil.which("nginx") then /usr/sbin/nginx at render time.
@@ -519,11 +556,17 @@ class KlangkSettings(BaseSettings):
     # ``state_dir`` gets a sensible data location. An explicit
     # ``KLANGK_DATA_DIR`` / config-file value wins (#1506).
     data_dir: str | None = None
+    # customize_dir: branding + email templates — user-edited, durable
+    # intent, so it's **config**, not state. Defaults to
+    # ``$XDG_CONFIG_HOME/klangk/custom`` (→ ``~/.config/klangk/custom``) when
+    # unset, no longer under ``state_dir`` (#1644). Explicit
+    # ``KLANGK_CUSTOMIZE_DIR`` still wins.
     customize_dir: str | None = None
-    # plugins_dir: plugin packages. Defaults to ``<state_dir>/plugins`` when
-    # unset (derived in the ``_require_dirs`` validator after state_dir is
-    # resolved). Shell scripts and the host container set KLANGK_PLUGINS_DIR
-    # explicitly.
+    # plugins_dir: plugin packages — user-installed, durable, so it's
+    # **config**, not state. Defaults to ``$XDG_CONFIG_HOME/klangk/plugins``
+    # (→ ``~/.config/klangk/plugins``) when unset, no longer under
+    # ``state_dir`` (#1644). Shell scripts and the host container set
+    # ``KLANGK_PLUGINS_DIR`` explicitly (that override path is unchanged).
     plugins_dir: str | None = None
     image_name: str | None = "klangk-workspace"
     image_pull_policy: str | None = "never"
@@ -632,29 +675,59 @@ class KlangkSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_dirs(self) -> "KlangkSettings":
-        """Require ``state_dir``; derive ``data_dir``, ``customize_dir``, ``plugins_dir``.
+        """Default ``state_dir``; derive ``data_dir``, ``customize_dir``, ``plugins_dir``.
 
-        ``state_dir`` has no default — an operator must set it (env or config
-        file); a missing value fails fast at construction (boot), not at the
-        first use that dereferences a ``None`` path (#1461).
+        ``state_dir`` defaults to ``$XDG_STATE_HOME/klangk`` (→
+        ``~/.local/state/klangk`` when the var is unset, incl. macOS) when no
+        explicit value is supplied (#1644). This does **not** undo #1461's
+        intent — that decision was about rejecting a ``None`` path so a
+        dereference fails fast at boot rather than at first use; a concrete
+        default still satisfies "non-None at construction." Explicit values
+        (env / config file / container pin) still win, so operators who want
+        it pinned keep fail-fast behavior; the default only kicks in when
+        nothing is set. If neither ``XDG_STATE_HOME`` nor ``$HOME`` is set
+        (the pathological case — no way to compute a home path), the default
+        cannot be derived and we raise, preserving the fail-fast intent for
+        the genuinely-unconfigured case.
 
-        ``data_dir``, ``customize_dir``, and ``plugins_dir`` all derive from
-        ``state_dir`` when unset (#1506), so an operator who sets only
-        ``state_dir`` gets sensible locations without extra vars. Explicit
-        values win.
+        ``data_dir`` still derives from ``state_dir`` (the SQLite DB +
+        workspace volumes are runtime state too), so one default populates
+        the state tree. But ``plugins_dir`` and ``customize_dir`` move to
+        ``$XDG_CONFIG_HOME/klangk/{plugins,custom}`` — their contents are
+        user-edited, durable intent (plugin packages, branding, email
+        templates), not disposable state (#1644). Explicit values still win.
         """
         if not self.state_dir:
-            raise ValueError(
-                "KLANGK_STATE_DIR is required (env var or config file). "
-                "Set it to the runtime state directory (UDS socket, rendered "
-                "nginx.conf, pid file)."
-            )
+            # If neither $XDG_STATE_HOME nor $HOME is set (the pathological
+            # case — no way to compute a home path), the default cannot be
+            # derived; fail fast per #1461 rather than silently dereferencing
+            # an empty/root path. We check $HOME directly rather than
+            # probing expanduser("~"), which falls back to the pwd database
+            # (the real home from /etc/passwd) when HOME is unset and so
+            # would never actually be "~".
+            if not os.environ.get("HOME") and not os.environ.get(
+                "XDG_STATE_HOME"
+            ):
+                raise ValueError(
+                    "KLANGK_STATE_DIR is required (env var or config file), "
+                    "and no default could be derived: $XDG_STATE_HOME and $HOME "
+                    "are both unset. Set KLANGK_STATE_DIR to the runtime state "
+                    "directory (UDS socket, rendered proxy config, pid file)."
+                )
+            self.state_dir = os.path.join(_xdg_state_home(), _XDG_SUBDIR)
         if not self.data_dir:
             self.data_dir = os.path.join(self.state_dir, "data")
+        # plugins_dir / customize_dir are config (user-edited, durable), not
+        # state — derive them from $XDG_CONFIG_HOME, not state_dir (#1644).
+        config_home = _xdg_config_home()
         if not self.plugins_dir:
-            self.plugins_dir = os.path.join(self.state_dir, "plugins")
+            self.plugins_dir = os.path.join(
+                config_home, _XDG_SUBDIR, "plugins"
+            )
         if not self.customize_dir:
-            self.customize_dir = os.path.join(self.state_dir, "custom")
+            self.customize_dir = os.path.join(
+                config_home, _XDG_SUBDIR, "custom"
+            )
         return self
 
     @model_validator(mode="after")

@@ -180,6 +180,18 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **`KLANGK_STATE_DIR` now defaults to `$XDG_STATE_HOME/klangk` (#1644).**
+  The runtime-state directory (UDS socket, rendered proxy config, pid file,
+  DB) defaults to `~/.local/state/klangk` when no explicit value is supplied,
+  so `pip install klangkd && klangkd` no longer hard-requires an operator to
+  set it. Explicit `KLANGK_STATE_DIR` / config-file values still win (devenv,
+  the host container, and production operators who pin it are unaffected).
+  `KLANGK_DATA_DIR` derives from `state_dir` as before, so it picks up the
+  default too. Construction still fails fast in the genuinely-unconfigured
+  case (neither `$XDG_STATE_HOME` nor `$HOME` set), preserving the #1461
+  intent. The cross-platform XDG fallback applies on macOS too (vars unset →
+  `~/.local/state`).
+
 - **Proxy terminology replaces nginx in code, docs, and env vars (#1430).**
   The reverse proxy klangkd owns and supervises is referred to as "the proxy"
   throughout the codebase rather than by the underlying implementation
@@ -357,6 +369,17 @@ set-password <email>` (set a known password for the default user — whose
   from `/my-permissions`).
 
 ### Breaking
+
+- **`KLANGK_PLUGINS_DIR` / `KLANGK_CUSTOMIZE_DIR` relocate from the state
+  tree to the config tree (#1644).** Both hold user-edited, durable intent
+  (plugin packages, branding, email templates), so they default to
+  `$XDG_CONFIG_HOME/klangk/{plugins,custom}` (→ `~/.config/klangk/...`) when
+  unset — no longer under `state_dir`. **Operators who relied on the old
+  `<state_dir>/plugins` / `<state_dir>/custom` defaults must move their
+  contents** (or set `KLANGK_PLUGINS_DIR` / `KLANGK_CUSTOMIZE_DIR`
+  explicitly to the old paths, which still work). Explicit overrides are
+  unchanged; the host container and shell scripts that set these vars are
+  unaffected.
 
 - **`KLANGK_PROXY_ENGINE` now defaults to `caddy` (#1634).** The Caddy
   reverse-proxy engine replaces nginx as the default. The rendered proxy
