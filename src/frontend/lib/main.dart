@@ -24,6 +24,8 @@ Future<void> main() async {
   // or dispatched tools).
   final activeFeatureNames = await _resolveActiveFeatures();
   final registry = ToolPluginRegistry();
+  // activeFeatureNames is a Set<String>, so .contains() is exact-name
+  // equality (not substring) — "git" does NOT activate "git-credential".
   for (final entry in createAllNamedPlugins()) {
     if (activeFeatureNames.contains(entry.name)) {
       registry.register(entry.plugin);

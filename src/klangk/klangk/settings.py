@@ -579,9 +579,8 @@ class KlangkSettings(BaseSettings):
     # per-feature metadata + defaults, and this value (forwarded via
     # ``/api/config``) for the deploy's chosen set; filtering happens in
     # ``main.dart`` before ``registry.register()``. Distinct from build-time
-    # declaration (``KLANGK_PLUGINS_CONFIG`` / inline ``plugins:``, #1651):
-    # "what's compiled in" is build-time; "what's turned on" is deploy-time.
-    # Read at boot and on SIGHUP (reloadable).
+    # declaration (#1651): "what's compiled in" is build-time; "what's
+    # turned on" is deploy-time. Read at boot and on SIGHUP (reloadable).
     features_enable: str | None = None
     image_name: str | None = "klangk-workspace"
     image_pull_policy: str | None = "never"

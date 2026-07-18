@@ -91,5 +91,7 @@ echo "Cache-bust: v=$HASH"
 # pre-build emit in import_dart_plugins.py is followed by this post-build
 # re-emit. The manifest is a frontend sibling file (read by the frontend at
 # boot + one field by klangkd for container-env bridging) and must survive
-# the Flutter build.
-python3 scripts/import_dart_plugins.py --features-only
+# the Flutter build. Invoke via $SCRIPT_DIR (absolute) because CWD is
+# src/frontend here (the cd above); the generator resolves its own paths
+# from __file__ so it lands the manifest correctly regardless of CWD.
+python3 "$SCRIPT_DIR/import_dart_plugins.py" --features-only
