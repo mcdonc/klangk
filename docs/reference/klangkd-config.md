@@ -239,6 +239,7 @@ port: "8997"
 | `egress_listen`          | `0.0.0.0`                        | `KLANGK_EGRESS_LISTEN`          |
 | `proxy_port`             | _(deprecated)_                   | `KLANGK_PROXY_PORT`             |
 | `socket`                 | `<state_dir>/klangk.sock`        | `KLANGK_SOCKET`                 |
+| `caddy_admin_socket`     | `<state_dir>/caddy-admin.sock`   | `KLANGK_CADDY_ADMIN_SOCKET`     |
 | `port_range_start`       | `9000`                           | `KLANGK_PORT_RANGE_START`       |
 | `cors_origins`           |                                  | `KLANGK_CORS_ORIGINS`           |
 | `frontend_dir`           | _(in-package `klangk/frontend`)_ | `KLANGK_FRONTEND_DIR`           |
