@@ -817,9 +817,11 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     app.state.container_registry = container.ContainerRegistry(app)
     # Slice 2b (#1463): proxy watchdog is an owned instance with start/stop
     # lifecycle methods called by the lifespan. The engine is selected once
-    # here by KLANGK_PROXY_ENGINE (#1559): ``nginx`` (default, the
-    # Python-owned nginx renderer) or ``caddy`` (Caddyfile rendered and
-    # pushed to Caddy's admin API over a UDS). Both expose the same
+    # here by KLANGK_PROXY_ENGINE (#1559): ``caddy`` (default since #1634,
+    # Caddyfile rendered and pushed to Caddy's admin API over a UDS) or
+    # ``nginx`` (the long-standing Python-owned nginx renderer, deprecated
+    # since #1634 — the escape hatch for a Caddy regression; emits a settings
+    # warning and will be removed). Both expose the same
     # start()/stop()/reconfigure() surface the lifespan + SIGHUP path use.
     if settings.proxy_engine == "caddy":
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
