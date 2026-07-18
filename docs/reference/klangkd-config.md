@@ -260,7 +260,7 @@ port: "8997"
 | `state_dir`                  | `$XDG_STATE_HOME/klangk`  | `KLANGK_STATE_DIR`                  |
 | `config_dir`                 | `$XDG_CONFIG_HOME/klangk` | `KLANGK_CONFIG_DIR`                 |
 | `customize_dir`              | `<config_dir>/custom`     | `KLANGK_CUSTOMIZE_DIR`              |
-| `plugins_dir`                | `<config_dir>/plugins`    | `KLANGK_PLUGINS_DIR`                |
+| `plugins_dir`                | `<state_dir>/plugins`     | `KLANGK_PLUGINS_DIR`                |
 | `image_name`                 | `klangk-workspace`        | `KLANGK_IMAGE_NAME`                 |
 | `image_pull_policy`          | `never`                   | `KLANGK_IMAGE_PULL_POLICY`          |
 | `allowed_images`             |                           | `KLANGK_ALLOWED_IMAGES`             |

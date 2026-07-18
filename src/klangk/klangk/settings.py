@@ -68,8 +68,8 @@ def _xdg_config_home() -> str:
     ``~/.config``. This applies on Linux *and* macOS (where the var is also
     unset by default; we deliberately do not switch to
     ``~/Library/Application Support`` — see #1607's cross-platform note).
-    Used for the config-tree defaults of ``plugins_dir`` / ``customize_dir``
-    (#1644).
+    Used for the config-tree default of ``config_dir`` (→ ``customize_dir``,
+    #1644/#1649).
     """
     return os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
 
@@ -557,13 +557,17 @@ class KlangkSettings(BaseSettings):
     # ``KLANGK_DATA_DIR`` / config-file value wins (#1506).
     data_dir: str | None = None
     # config_dir: the config-tree root for user-edited, durable intent
-    # (plugins, branding, email templates) — the config-tree analogue of
+    # (branding, email templates) — the config-tree analogue of
     # ``state_dir`` (#1649). Defaults to ``$XDG_CONFIG_HOME/klangk`` (→
     # ``~/.config/klangk``, read-with-fallback) when unset; ``customize_dir``
-    # and ``plugins_dir`` both derive from the resolved ``config_dir`` (like
-    # ``data_dir`` derives from ``state_dir``). An explicit
-    # ``KLANGK_CONFIG_DIR`` wins; per-sub-dir env vars still win over the
-    # derivation. Read at boot and on SIGHUP (reloadable, like the sub-dirs).
+    # derives from the resolved ``config_dir`` (like ``data_dir`` derives
+    # from ``state_dir``). An explicit ``KLANGK_CONFIG_DIR`` wins; per-sub-dir
+    # env vars still win over the derivation. Read at boot and on SIGHUP
+    # (reloadable, like the sub-dirs).
+    #
+    # Note: ``plugins_dir`` is deliberately **not** a ``config_dir`` child —
+    # its tree placement is decided separately (#1651: payload → state, env
+    # deprecated). It keeps deriving from ``state_dir`` here, as on main.
     config_dir: str | None = None
     # customize_dir: branding + email templates — user-edited, durable
     # intent, so it's **config**, not state. Defaults to
@@ -571,12 +575,14 @@ class KlangkSettings(BaseSettings):
     # deriving from the resolved ``config_dir`` (#1644, #1649); no longer
     # under ``state_dir``. Explicit ``KLANGK_CUSTOMIZE_DIR`` still wins.
     customize_dir: str | None = None
-    # plugins_dir: plugin packages — user-installed, durable, so it's
-    # **config**, not state. Defaults to ``<config_dir>/plugins`` (→
-    # ``~/.config/klangk/plugins``) when unset, deriving from the resolved
-    # ``config_dir`` (#1644, #1649); no longer under ``state_dir``. Shell
-    # scripts and the host container set ``KLANGK_PLUGINS_DIR`` explicitly
-    # (that override path is unchanged).
+    # plugins_dir: plugin packages. Defaults to ``<state_dir>/plugins`` when
+    # unset (derived in the ``_require_dirs`` validator after state_dir is
+    # resolved). Shell scripts and the host container set
+    # ``KLANGK_PLUGINS_DIR`` explicitly (that override path is unchanged).
+    # The config-vs-state placement of the plugins tree is being reworked in
+    # #1651 (payload → ``state_dir/plugins``, ``KLANGK_PLUGINS_DIR``
+    # deprecated) — until that lands, plugins_dir stays under ``state_dir``
+    # exactly as on main, and is **not** a ``config_dir`` child.
     plugins_dir: str | None = None
     image_name: str | None = "klangk-workspace"
     image_pull_policy: str | None = "never"
@@ -702,14 +708,16 @@ class KlangkSettings(BaseSettings):
 
         ``data_dir`` still derives from ``state_dir`` (the SQLite DB +
         workspace volumes are runtime state too), so one default populates
-        the state tree. ``plugins_dir`` and ``customize_dir`` are config
-        (user-edited, durable intent — plugin packages, branding, email
-        templates), so they derive from ``config_dir`` (the config-tree root,
-        #1649) which itself defaults to ``$XDG_CONFIG_HOME/klangk`` — the
-        symmetric analogue of ``state_dir``. Explicit values still win at
-        every level: ``KLANGK_CONFIG_DIR`` overrides the root,
-        ``KLANGK_PLUGINS_DIR`` / ``KLANGK_CUSTOMIZE_DIR`` override the
-        sub-dirs (over the derived default, not the root).
+        the state tree. ``customize_dir`` is config (user-edited, durable
+        intent — branding, email templates), so it derives from
+        ``config_dir`` (the config-tree root, #1649) which itself defaults
+        to ``$XDG_CONFIG_HOME/klangk`` — the symmetric analogue of
+        ``state_dir``. ``plugins_dir`` is **not** a ``config_dir`` child;
+        it keeps deriving from ``state_dir`` (as on main) pending #1651's
+        plugins-tree rework. Explicit values still win at every level:
+        ``KLANGK_CONFIG_DIR`` overrides the root, ``KLANGK_CUSTOMIZE_DIR``
+        / ``KLANGK_PLUGINS_DIR`` override the sub-dirs (over the derived
+        default, not the root).
         """
         if not self.state_dir:
             # If neither $XDG_STATE_HOME nor $HOME is set (the pathological
@@ -732,14 +740,16 @@ class KlangkSettings(BaseSettings):
         if not self.data_dir:
             self.data_dir = os.path.join(self.state_dir, "data")
         # config_dir is the config-tree root (the state_tree analogue of
-        # state_dir, #1649): plugins_dir / customize_dir derive from it.
-        # Resolved before the sub-dirs so the derivation has a root.
+        # state_dir, #1649): customize_dir derives from it. Resolved before
+        # customize_dir so the derivation has a root.
         if not self.config_dir:
             self.config_dir = os.path.join(_xdg_config_home(), _XDG_SUBDIR)
-        # plugins_dir / customize_dir are config (user-edited, durable), not
-        # state — derive from config_dir, not state_dir (#1644/#1649).
+        # plugins_dir stays under state_dir (as on main) — NOT a config_dir
+        # child. Its tree placement is reworked separately in #1651.
         if not self.plugins_dir:
-            self.plugins_dir = os.path.join(self.config_dir, "plugins")
+            self.plugins_dir = os.path.join(self.state_dir, "plugins")
+        # customize_dir is config (user-edited, durable) — derive from
+        # config_dir, not state_dir (#1644/#1649).
         if not self.customize_dir:
             self.customize_dir = os.path.join(self.config_dir, "custom")
         return self
