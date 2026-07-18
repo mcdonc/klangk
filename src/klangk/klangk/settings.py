@@ -556,17 +556,27 @@ class KlangkSettings(BaseSettings):
     # ``state_dir`` gets a sensible data location. An explicit
     # ``KLANGK_DATA_DIR`` / config-file value wins (#1506).
     data_dir: str | None = None
+    # config_dir: the config-tree root for user-edited, durable intent
+    # (plugins, branding, email templates) — the config-tree analogue of
+    # ``state_dir`` (#1649). Defaults to ``$XDG_CONFIG_HOME/klangk`` (→
+    # ``~/.config/klangk``, read-with-fallback) when unset; ``customize_dir``
+    # and ``plugins_dir`` both derive from the resolved ``config_dir`` (like
+    # ``data_dir`` derives from ``state_dir``). An explicit
+    # ``KLANGK_CONFIG_DIR`` wins; per-sub-dir env vars still win over the
+    # derivation. Read at boot and on SIGHUP (reloadable, like the sub-dirs).
+    config_dir: str | None = None
     # customize_dir: branding + email templates — user-edited, durable
     # intent, so it's **config**, not state. Defaults to
-    # ``$XDG_CONFIG_HOME/klangk/custom`` (→ ``~/.config/klangk/custom``) when
-    # unset, no longer under ``state_dir`` (#1644). Explicit
-    # ``KLANGK_CUSTOMIZE_DIR`` still wins.
+    # ``<config_dir>/custom`` (→ ``~/.config/klangk/custom``) when unset,
+    # deriving from the resolved ``config_dir`` (#1644, #1649); no longer
+    # under ``state_dir``. Explicit ``KLANGK_CUSTOMIZE_DIR`` still wins.
     customize_dir: str | None = None
     # plugins_dir: plugin packages — user-installed, durable, so it's
-    # **config**, not state. Defaults to ``$XDG_CONFIG_HOME/klangk/plugins``
-    # (→ ``~/.config/klangk/plugins``) when unset, no longer under
-    # ``state_dir`` (#1644). Shell scripts and the host container set
-    # ``KLANGK_PLUGINS_DIR`` explicitly (that override path is unchanged).
+    # **config**, not state. Defaults to ``<config_dir>/plugins`` (→
+    # ``~/.config/klangk/plugins``) when unset, deriving from the resolved
+    # ``config_dir`` (#1644, #1649); no longer under ``state_dir``. Shell
+    # scripts and the host container set ``KLANGK_PLUGINS_DIR`` explicitly
+    # (that override path is unchanged).
     plugins_dir: str | None = None
     image_name: str | None = "klangk-workspace"
     image_pull_policy: str | None = "never"
@@ -692,10 +702,14 @@ class KlangkSettings(BaseSettings):
 
         ``data_dir`` still derives from ``state_dir`` (the SQLite DB +
         workspace volumes are runtime state too), so one default populates
-        the state tree. But ``plugins_dir`` and ``customize_dir`` move to
-        ``$XDG_CONFIG_HOME/klangk/{plugins,custom}`` — their contents are
-        user-edited, durable intent (plugin packages, branding, email
-        templates), not disposable state (#1644). Explicit values still win.
+        the state tree. ``plugins_dir`` and ``customize_dir`` are config
+        (user-edited, durable intent — plugin packages, branding, email
+        templates), so they derive from ``config_dir`` (the config-tree root,
+        #1649) which itself defaults to ``$XDG_CONFIG_HOME/klangk`` — the
+        symmetric analogue of ``state_dir``. Explicit values still win at
+        every level: ``KLANGK_CONFIG_DIR`` overrides the root,
+        ``KLANGK_PLUGINS_DIR`` / ``KLANGK_CUSTOMIZE_DIR`` override the
+        sub-dirs (over the derived default, not the root).
         """
         if not self.state_dir:
             # If neither $XDG_STATE_HOME nor $HOME is set (the pathological
@@ -717,17 +731,17 @@ class KlangkSettings(BaseSettings):
             self.state_dir = os.path.join(_xdg_state_home(), _XDG_SUBDIR)
         if not self.data_dir:
             self.data_dir = os.path.join(self.state_dir, "data")
+        # config_dir is the config-tree root (the state_tree analogue of
+        # state_dir, #1649): plugins_dir / customize_dir derive from it.
+        # Resolved before the sub-dirs so the derivation has a root.
+        if not self.config_dir:
+            self.config_dir = os.path.join(_xdg_config_home(), _XDG_SUBDIR)
         # plugins_dir / customize_dir are config (user-edited, durable), not
-        # state — derive them from $XDG_CONFIG_HOME, not state_dir (#1644).
-        config_home = _xdg_config_home()
+        # state — derive from config_dir, not state_dir (#1644/#1649).
         if not self.plugins_dir:
-            self.plugins_dir = os.path.join(
-                config_home, _XDG_SUBDIR, "plugins"
-            )
+            self.plugins_dir = os.path.join(self.config_dir, "plugins")
         if not self.customize_dir:
-            self.customize_dir = os.path.join(
-                config_home, _XDG_SUBDIR, "custom"
-            )
+            self.customize_dir = os.path.join(self.config_dir, "custom")
         return self
 
     @model_validator(mode="after")

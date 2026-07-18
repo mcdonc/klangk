@@ -27,6 +27,18 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`KLANGK_CONFIG_DIR` is the config-tree root (#1649).** The single
+  overridable knob for all user-edited, durable config paths — the
+  config-tree analogue of `KLANGK_STATE_DIR`. Defaults to
+  `$XDG_CONFIG_HOME/klangk` (→ `~/.config/klangk`, incl. macOS when the
+  var is unset); `KLANGK_CUSTOMIZE_DIR` and `KLANGK_PLUGINS_DIR` both derive
+  from the resolved `config_dir` (like `KLANGK_DATA_DIR` derives from
+  `state_dir`). Set this to relocate all config-tree paths with one var
+  instead of setting both sub-dir vars; per-sub-dir env vars still win over
+  the derivation. No behavior change for operators not setting it (the
+  default reproduces the previous inline `$XDG_CONFIG_HOME/klangk` root
+  exactly).
+
 - **`KLANGK_CADDY_ADMIN_SOCKET` overrides the Caddy engine's admin-API
   socket path (#1636).** The admin UDS was hardcoded to
   `<state_dir>/caddy-admin.sock` with no override and no length check; a deep
@@ -373,13 +385,14 @@ set-password <email>` (set a known password for the default user — whose
 - **`KLANGK_PLUGINS_DIR` / `KLANGK_CUSTOMIZE_DIR` relocate from the state
   tree to the config tree (#1644).** Both hold user-edited, durable intent
   (plugin packages, branding, email templates), so they default to
-  `$XDG_CONFIG_HOME/klangk/{plugins,custom}` (→ `~/.config/klangk/...`) when
-  unset — no longer under `state_dir`. **Operators who relied on the old
-  `<state_dir>/plugins` / `<state_dir>/custom` defaults must move their
-  contents** (or set `KLANGK_PLUGINS_DIR` / `KLANGK_CUSTOMIZE_DIR`
-  explicitly to the old paths, which still work). Explicit overrides are
-  unchanged; the host container and shell scripts that set these vars are
-  unaffected.
+  `<config_dir>/{plugins,custom}` (→ `~/.config/klangk/...`, deriving from
+  the new `KLANGK_CONFIG_DIR` root — #1649) when unset — no longer under
+  `state_dir`. **Operators who relied on the old `<state_dir>/plugins` /
+  `<state_dir>/custom` defaults must move their contents** (or set
+  `KLANGK_PLUGINS_DIR` / `KLANGK_CUSTOMIZE_DIR` explicitly to the old paths,
+  which still work — or set `KLANGK_CONFIG_DIR` once to relocate both
+  together). Explicit overrides are unchanged; the host container and shell
+  scripts that set these vars are unaffected.
 
 - **`KLANGK_PROXY_ENGINE` now defaults to `caddy` (#1634).** The Caddy
   reverse-proxy engine replaces nginx as the default. The rendered proxy
