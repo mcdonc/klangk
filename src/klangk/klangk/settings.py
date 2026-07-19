@@ -35,6 +35,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, ClassVar, Mapping
 
+import getpass
+
 from pydantic_settings import (
     BaseSettings,
     EnvSettingsSource,
@@ -86,6 +88,24 @@ def _xdg_state_home() -> str:
     return os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
         "~/.local/state"
     )
+
+
+def _safe_getuser() -> str:
+    """Return the invoking Unix user, with a fallback for uid-less envs.
+
+    Used for the dynamic ``default_user`` default (#1645): a bare ``klangkd``
+    seeds ``<unixuser>@example.com`` so the solo user's identity is derived
+    from who's actually running it. In containers / CI where the uid has no
+    passwd entry, ``getpass.getuser()`` raises — fall back to ``"user"`` so
+    construction doesn't crash (the identity is cosmetic in ``none`` mode).
+    """
+    try:
+        return getpass.getuser()
+    except OSError:
+        # In containers/CI where the uid has no passwd entry, getpass.getuser()
+        # raises OSError. Fall back to "user" so construction doesn't crash
+        # (the identity is cosmetic in none mode).
+        return "user"
 
 
 # Re-exported for backward compat — callers that ``from ..util import ...``
@@ -411,7 +431,7 @@ class KlangkSettings(BaseSettings):
     auth_modes: str | None = None
     jwt_secret: str | None = _INSECURE_DEFAULT_SECRET
     prevent_insecure_jwt_secret: str = ""
-    default_user: str = "admin@example.com"
+    default_user: str | None = None
     default_password: str | None = None
     access_token_hours: str | None = "24"
     workspace_token_hours: str | None = "24"
@@ -743,6 +763,13 @@ class KlangkSettings(BaseSettings):
         # config_dir, not state_dir (#1644/#1649).
         if not self.customize_dir:
             self.customize_dir = os.path.join(self.config_dir, "custom")
+        # default_user: the admin identity for first-boot seeding. Derived
+        # from the invoking Unix user (<user>@example.com) so a bare
+        # ``klangkd`` seeds the operator's own identity (#1645). Explicit
+        # KLANGK_DEFAULT_USER (env/config) always wins — unaffected for
+        # intentional deployments that stage a specific admin email.
+        if not self.default_user:
+            self.default_user = f"{_safe_getuser()}@example.com"
         return self
 
     @model_validator(mode="after")

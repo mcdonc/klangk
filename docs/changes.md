@@ -27,6 +27,24 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **First-run config generation: a bare `klangkd` boots with no config
+  file (#1645).** When `klangkd` is invoked with no `--config` and no
+  `klangkd.yaml` exists at the resolved path (`$KLANGK_CONFIG_DIR/klangkd.yaml`,
+  default `~/.config/klangk/klangkd.yaml`), a near-empty template is generated
+  pointing at the solo docs (#1629) with commented examples for the mode
+  transitions. No admin identity or password is emitted — the admin row is
+  seeded at runtime: `default_user` defaults to `<unixuser>@example.com`
+  (derived from `getpass.getuser()`), with `password_hash=None` in `none`/`oidc`
+  mode (the row is load-bearing for `/auth/local` token minting but no
+  endpoint checks the hash). `password`/`both` mode requires
+  `KLANGK_DEFAULT_PASSWORD` (fail-fast if unset — auto-generate-and-print was
+  removed as a lockout footgun for detached deployments). Combined with the
+  wheel publish (#1656), `pip install klangkd && klangkd` yields a usable
+  solo instance with no config file and no password. The `--config` default
+  changed from `/etc/klangkd.yaml` to the XDG config dir — the host container
+  and devenv both pass `--config=none` explicitly, so existing deployments are
+  unaffected. Existing `klangkd.yaml` files are never overwritten.
+
 - **The `klangk` wheel is now published to PyPI on tag push (#1656).**
   `release.yml` gains a parallel `build-wheel` job that builds the frontend
   (default plugin set from the checked-in `plugins.yaml`) and produces the

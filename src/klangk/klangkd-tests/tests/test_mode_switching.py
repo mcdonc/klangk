@@ -72,9 +72,14 @@ async def mode_server(db, monkeypatch, app_state):
     for the seeded default user (so tests know its ``id`` / ``email``).
     """
     global _current_app
-    # Seed exactly as the lifespan does at startup.
+    # Seed the admin row. Seeded in password mode (with a real hash) rather
+    # than none mode so the password-login paths exercised by TestPasswordToNone
+    # have a real credential to validate against. (Real lifespan seeding would
+    # pick none/password based on auth_modes; the fixture pins password-mode
+    # seeding + then starts the server in none mode for the upgrade tests.)
     await _lifecycle(
         {
+            "KLANGK_AUTH_MODES": "password",
             "KLANGK_DEFAULT_USER": DEFAULT_EMAIL,
             "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
         }
@@ -85,7 +90,9 @@ async def mode_server(db, monkeypatch, app_state):
     assert default_user is not None, "seed_default_user must create the user"
 
     app = FastAPI()
-    app.state.settings = make_settings({"KLANGK_AUTH_MODES": "none"})
+    app.state.settings = make_settings(
+        {"KLANGK_AUTH_MODES": "none", "KLANGK_DEFAULT_USER": DEFAULT_EMAIL}
+    )
     app.state.oidc = oidc_mod.OIDC(app)
     app.state.plugins = plugins_mod.Plugins(app)
     app.state.email = emailsvc_mod.EmailService(app)
@@ -118,7 +125,9 @@ def _set_mode(mode: str):
     (same as a real server restart).
     """
     app = _current_app
-    app.state.settings = make_settings({"KLANGK_AUTH_MODES": mode})
+    app.state.settings = make_settings(
+        {"KLANGK_AUTH_MODES": mode, "KLANGK_DEFAULT_USER": DEFAULT_EMAIL}
+    )
     app.state.oidc = oidc_mod.OIDC(app)
 
 

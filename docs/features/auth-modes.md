@@ -48,6 +48,46 @@ OIDC, or combined login.
 > redeploying to preserve your intended auth posture. See
 > [Switching modes](#switching-modes).
 
+## Seeding behavior across modes
+
+On every boot, the lifespan seeds a default admin row **only when the admin
+group is empty** (first boot, or after every admin has been deleted —
+[#1622](https://github.com/mcdonc/klangk/issues/1622)). What gets seeded depends
+on `auth_modes` and (for password modes) whether `KLANGK_DEFAULT_PASSWORD`
+is staged. The two tables below are the acceptance matrix for this behavior
+([#1645](https://github.com/mcdonc/klangk/issues/1645)).
+
+### Table A — first boot (fresh DB, admin group empty)
+
+| `auth_modes`   | bind                                                     | `default_password` | behavior                                                                                                                   |
+| -------------- | -------------------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `none` (unset) | UDS (no `KLANGK_PORT`)                                   | n/a                | Seed admin row, `password_hash=None`. No password minted, nothing printed. `/auth/local` works (loopback-token).           |
+| `none` (unset) | TCP loopback (`KLANGK_PORT` + `KLANGK_LISTEN=127.0.0.1`) | n/a                | Same as UDS row. `/auth/local` works from loopback.                                                                        |
+| `none` (unset) | TCP non-loopback (`KLANGK_LISTEN=0.0.0.0`)               | n/a                | **Fail-fast:** `none` mode refuses a non-loopback bind.                                                                    |
+| `oidc`         | any                                                      | n/a                | Seed admin row, `password_hash=None`. The seeded row exists for `/auth/local` and as a recovery identity.                  |
+| `password`     | any                                                      | set                | Seed admin row with `default_password`'s value (hashed). No print.                                                         |
+| `password`     | any                                                      | unset              | **Fail-fast:** `auth_modes=password requires KLANGK_DEFAULT_PASSWORD (set it in klangkd.yaml or the env)`. Refuse to boot. |
+| `both`         | any                                                      | set                | Seed admin row with `default_password`'s value (hashed). No print.                                                         |
+| `both`         | any                                                      | unset              | **Fail-fast:** same as `password`.                                                                                         |
+
+The admin identity (`default_user`) defaults to `<unixuser>@example.com`,
+derived from the invoking Unix user. Explicit `KLANGK_DEFAULT_USER` (env or
+`klangkd.yaml`) always wins.
+
+### Table B — subsequent starts (admin group non-empty)
+
+The [#1622](https://github.com/mcdonc/klangk/issues/1622) gate short-circuits
+seeding once any admin exists — so `default_user` / `default_password` /
+`auth_modes` changes after first boot have **no effect on the seeded row**.
+Subsequent starts don't re-seed, re-password, or re-email. Changing the admin
+after first boot is done via the in-app UI or `klangk admin users *`.
+
+| `auth_modes` (now) | `default_password` (now) | first-boot admin row state                                                   | behavior on restart                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------ | ------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| any                | any                      | admin row exists with a real hash (was `password`/`both` at first boot)      | Seed skipped. Existing admin's email/password unchanged. Login uses the existing credentials.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| any                | any                      | admin row exists with `password_hash=None` (was `none`/`oidc` at first boot) | Seed skipped. Existing admin row untouched — `password_hash` stays `None`. If `auth_modes` is now `password`/`both`, **boot fails fast** with "requires at least one admin with a password" — the Table B lockout guard fires before the server serves traffic, so the operator can't get into an unrecoverable state. Recovery: flip back to `none` mode (the null hash is fine there), use `/auth/local` to get an admin token, run `klangk admin users set-password` to set a real hash, then flip back to `password`/`both`. Or re-empty the admin group + reseed with `KLANGK_DEFAULT_PASSWORD` staged. |
+| any                | set                      | admin group emptied between boots                                            | Reseed from current `default_user`/`default_password` (delete-resurrection, #1622). Gating per Table A applies to this re-seed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+
 ## No-auth mode (`none`)
 
 `none` is the foundation for a no-friction single-user dev/test loop —
@@ -138,10 +178,9 @@ so the new mode takes effect the moment the server restarts.
 
 This is the common upgrade path: you've been running solo in `none` mode and
 now want real logins (for yourself and/or teammates). One thing to sort out
-first: **the password for the default user.** The seeded admin user always
-has a password — either `KLANGK_DEFAULT_PASSWORD` if you set it, or a random
-one the server printed to stderr at first boot. If you didn't capture that
-random password, set a known one now while you're still holding the free
+first: **the password for the default user.** In `none` mode the seeded
+admin has no password (`password_hash=None` — nothing checks it). Before
+flipping to `password`/`both`, set one while you're still holding the free
 admin token:
 
 ```bash

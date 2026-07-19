@@ -4,9 +4,7 @@ import asyncio
 import ipaddress
 import logging
 import os
-import secrets
 import signal
-import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -49,9 +47,6 @@ from .model import (
 )
 from .model import AGENT_USER_ID
 from .wshandler import handle_websocket
-
-_GREEN = "\033[32m"
-_RESET = "\033[0m"
 
 logger = logging.getLogger(__name__)
 
@@ -183,20 +178,21 @@ class Lifecycle:
 
     async def seed_default_user(self) -> None:
         """Seed the default admin user exactly once, gated on admin-group
-        emptiness (#1622).
+        emptiness (#1622) and the deploy's auth mode (#1645).
 
-        Creates the admin from ``KLANGK_DEFAULT_USER`` / ``KLANGK_DEFAULT_PASSWORD``
-        **only when the ``admin`` group has no members** (first boot on a fresh
-        install, or after every admin has been deleted). Once at least one admin
-        exists, this method **never** creates, renames, re-emails, or
-        re-passwords a user: ``KLANGK_DEFAULT_*`` is ignored, so editing it in
-        ``klangkd.yaml`` and restarting cannot mint a new admin (the
-        config-mints-admin security hole) or clobber the existing admin's
-        identity (lockout). Changing the admin after the first boot is done
-        via the normal in-app / ``klangkc admin`` paths.
+        Password handling depends on ``auth_modes``:
 
-        If ``KLANGK_DEFAULT_PASSWORD`` is set, use it; otherwise generate a
-        random password and print it to stderr (only on the seeding boot).
+        - ``none`` / ``oidc`` → seed with ``password_hash=None``. The row is
+          load-bearing for ``/auth/local`` (token minting, #1374) but no
+          endpoint validates the hash — a password would be noise.
+        - ``password`` / ``both`` → seed with ``KLANGK_DEFAULT_PASSWORD``.
+          **Fail-fast if unset** — auto-generating + printing to stderr was
+          a footgun for detached deployments (the password was lost to a
+          log nobody reads, causing lockout).
+
+        In all modes: once the admin group has ≥1 member, this method is a
+        no-op (#1622 — editing ``KLANGK_DEFAULT_*`` and restarting cannot
+        mint a new admin or clobber the existing one).
         """
         settings = self.app.state.settings
         admin_group_id = await self.ensure_admin_group()
@@ -211,36 +207,97 @@ class Lifecycle:
             admin_group_id
         )
         if members:
+            await self._enforce_password_mode_has_hashed_admin(members)
             return
 
         email = settings.default_user
-        password = settings.default_password
-        generated = password is None
-        if generated:
-            password = secrets.token_urlsafe(16)
-        password_hash = bcrypt.hashpw(
-            password.encode(), bcrypt.gensalt()
-        ).decode()
+        # Read auth_modes inline rather than via self.app.state.oidc.auth_modes()
+        # so the test helper (which builds a minimal namespace without an OIDC
+        # instance) can exercise seeding. Equivalent for valid inputs: the
+        # settings field validator rejects typos at construction, so by here
+        # auth_modes is None or one of the valid modes. None defaults to "none"
+        # (the same default oidc.auth_modes() applies).
+        auth_modes = settings.auth_modes or "none"
+
+        if auth_modes in ("password", "both"):
+            # Password mode: require a staged password. Fail-fast if unset —
+            # auto-generation was removed to prevent lockout on detached
+            # deployments (#1645).
+            password = settings.default_password
+            if password is None:
+                raise RuntimeError(
+                    f"auth_modes={auth_modes} requires KLANGK_DEFAULT_PASSWORD "
+                    "(set it in klangkd.yaml or the env). Refusing to boot "
+                    "without a known admin password."
+                )
+            password_hash = bcrypt.hashpw(
+                password.encode(), bcrypt.gensalt()
+            ).decode()
+        else:
+            # none / oidc: seed with null password. The row exists for
+            # /auth/local token minting; no endpoint checks the hash.
+            password_hash = None
+
         user = await self.app.state.model.users.create_user(
             email, password_hash, verified=True
         )
         await self.app.state.model.users.add_user_to_group(
             user["id"], admin_group_id
         )
-        if generated:
+        if password_hash is not None:
             logger.info(
-                "Created default admin user '%s' (password printed to stderr)",
-                email,
-            )
-            # Print password to stderr only — keep it out of structured
-            # logs where it could be shipped to a log aggregator.
-            print(
-                f"{_GREEN}Default admin password for"
-                f" '{email}': {password}{_RESET}",
-                file=sys.stderr,
+                "Created default admin user '%s' in admin group", email
             )
         else:
-            logger.info("Created default user '%s' in admin group", email)
+            logger.info(
+                "Created default admin user '%s' (no password — auth_modes=%s)",
+                email,
+                auth_modes,
+            )
+
+    async def _enforce_password_mode_has_hashed_admin(
+        self, admin_members: list[dict]
+    ) -> None:
+        """Refuse to boot in password/both mode if no admin can log in.
+
+        The Table B lockout guard (#1645 review): if the admin row was seeded
+        in none/oidc mode (``password_hash=None``) and the operator then flips
+        to password/both, password login would 401 for every admin (``auth.py``
+        treats a null hash as invalid credentials) and ``/auth/local`` is
+        disabled outside none mode — so there is no path to an admin token.
+        Rather than let the operator discover this at the login screen, refuse
+        to boot with a clear error naming the recovery path.
+
+        The check is: in password/both mode, at least one admin must have a
+        non-null ``password_hash``. If none do, raise ``RuntimeError``.
+
+        Recovery (documented in ``docs/features/auth-modes.md`` Table B):
+        flip back to ``none`` mode, use ``/auth/local`` to get a free admin
+        token, run ``klangk admin users set-password`` to set a real hash,
+        then flip back to password/both. Or re-empty the admin group +
+        reseed with ``KLANGK_DEFAULT_PASSWORD`` staged.
+        """
+        auth_modes = self.app.state.settings.auth_modes or "none"
+        if auth_modes not in ("password", "both"):
+            return
+        # get_group_members doesn't carry password_hash; fetch per member.
+        # The admin group is small (typically 1-3 members) so the N queries
+        # are cheap; a single JOIN would require a new model method for this
+        # one call site, which isn't worth it.
+        for member in admin_members:
+            user = await self.app.state.model.users.get_user_by_email(
+                member["email"]
+            )
+            if user and user.get("password_hash"):
+                return  # At least one admin can log in — fine.
+        raise RuntimeError(
+            f"auth_modes={auth_modes} requires at least one admin with a "
+            "password, but every admin has no password hash (seeded in "
+            "none/oidc mode). Recovery: boot in none mode, run "
+            "`klangk admin users set-password <email>` via /auth/local trust, "
+            "then flip back to password/both. Or delete the admin row and "
+            "reseed with KLANGK_DEFAULT_PASSWORD staged."
+        )
 
     async def seed_agent_user(self) -> None:
         """Ensure the chat agent user exists in the DB.

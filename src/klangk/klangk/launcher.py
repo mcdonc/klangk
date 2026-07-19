@@ -1,4 +1,4 @@
-"""``klangkd`` — the klangk server launcher (#1395, #1396).
+"""``klangkd`` — the klangk server launcher (#1395, #1396, #1645).
 
 Loads config (from a YAML file + env vars + built-in defaults, per the
 precedence rules in :mod:`klangk.settings`), binds uvicorn (to a
@@ -7,18 +7,27 @@ otherwise), and owns the proxy child (currently nginx) that fronts it.
 
 Usage::
 
-    klangkd                          # requires /etc/klangkd.yaml
+    klangkd                          # resolves <KLANGK_CONFIG_DIR>/klangkd.yaml;
+    #                                # generates it on first run (#1645)
     klangkd --config /path/to/cfg.yaml
     klangkd --config=none            # env-vars-only (the sole opt-out)
 
 Config-file resolution (three states, no implicit escape):
 
-1. Bare ``klangkd`` → requires ``/etc/klangkd.yaml``; missing → error.
+1. Bare ``klangkd`` → resolves ``$KLANGK_CONFIG_DIR/klangkd.yaml`` (default
+   ``~/.config/klangk/klangkd.yaml``, #1649). If the file is missing it is
+   **generated** as a near-empty template pointing at the docs (#1645) —
+   no admin identity or password is emitted. The admin row is seeded at
+   runtime: ``default_user`` defaults to ``<unixuser>@example.com`` with
+   ``password_hash=None`` in ``none``/``oidc`` mode (no password needed);
+   ``password``/``both`` mode requires ``KLANGK_DEFAULT_PASSWORD`` (fail-fast
+   if unset).
 2. ``--config=<path>`` → that path required to exist; missing → error.
+   Explicit paths are never auto-generated.
 3. ``--config=none`` → run from env vars + built-in defaults (no file).
 
-See #1392 (the design record), #1395 (config + launcher), and #1396 (UDS +
-proxy ownership) for the full rationale.
+See #1392 (the design record), #1395 (config + launcher), #1396 (UDS +
+proxy ownership), and #1645 (first-run generation) for the full rationale.
 """
 
 from __future__ import annotations
@@ -35,11 +44,8 @@ import uvicorn
 # exists). ``build_app``'s ``configure(settings)`` later overrides the
 # level from ``KLANGK_LOG_LEVEL`` (#1467).
 from klangk import logger  # noqa: F401
+from klangk import first_run
 from klangk.settings import KlangkSettings
-
-# The default config-file location — a deployed klangkd finds its config here
-# with no args.  See #1395.
-DEFAULT_CONFIG_PATH = "/etc/klangkd.yaml"
 
 app = typer.Typer(
     add_completion=False,
@@ -48,13 +54,39 @@ app = typer.Typer(
 )
 
 
-def _resolve_config_path(config: str) -> str:
+def _resolve_config_path(config: str | None) -> str:
     """Resolve the ``--config`` value into a path or the 'none' sentinel.
 
-    Returns the path string (which the caller has verified exists), or
-    ``"none"`` for the explicit opt-out.  Raises ``typer.BadParameter`` (which
-    Typer surfaces as a clean CLI error) on a missing required file.
+    Three cases, no implicit escape (#1392 / #1645):
+
+    - ``None`` (bare ``klangkd``, no ``--config``) → resolve the default path
+      at ``<KLANGK_CONFIG_DIR>/klangkd.yaml`` (default
+      ``~/.config/klangk/klangkd.yaml``). **Generate on first run** if the
+      file doesn't exist (#1645): writes a near-empty template pointing at
+      the docs. No admin identity or password is emitted — the admin row
+      is seeded at runtime (``default_user`` defaults to
+      ``<unixuser>@example.com``; null hash in ``none``/``oidc`` mode,
+      ``KLANGK_DEFAULT_PASSWORD`` required in ``password``/``both``).
+    - ``"none"`` → explicit env-only opt-out (no config file).
+    - ``"<path>"`` → that path, required to exist. Missing → ``BadParameter``.
+      Explicit paths are never auto-generated — generation only fires for
+      the implicit default.
+
+    Returns the resolved path string or ``"none"``.  Raises
+    ``typer.BadParameter`` (which Typer surfaces as a clean CLI error) on a
+    missing explicitly-required file.
     """
+    if config is None:
+        path = first_run.default_config_path()
+        if not os.path.isfile(path):
+            try:
+                first_run.generate_default_config(path)
+            except FileExistsError:
+                # Race: another klangkd (e.g. a systemd restart overlap)
+                # generated the file between our isfile check and the open.
+                # Treat it as "the file is there now" and proceed.
+                pass
+        return path
     if config == "none":
         return "none"
     path = Path(config)
@@ -68,13 +100,16 @@ def _resolve_config_path(config: str) -> str:
 
 @app.command()
 def main(  # pragma: no cover
-    config: str = typer.Option(
-        DEFAULT_CONFIG_PATH,
+    config: str | None = typer.Option(
+        None,
         "--config",
         "-c",
         help=(
-            "Path to a YAML config file (default: /etc/klangkd.yaml). "
-            "Use 'none' to run from env vars only (no config file)."
+            "Path to a YAML config file. Bare ``klangkd`` (no --config) "
+            "resolves ``$KLANGK_CONFIG_DIR/klangkd.yaml`` "
+            "(default ``~/.config/klangk/klangkd.yaml``) and generates it "
+            "on first run (#1645). Use 'none' to run from env vars only "
+            "(no config file)."
         ),
     ),
 ) -> None:

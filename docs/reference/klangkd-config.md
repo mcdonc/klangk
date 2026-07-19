@@ -14,15 +14,15 @@ This means an operator can set the bulk of a deployment's config in the YAML fil
 
 ## `--config` flag
 
-`klangkd` requires a config file by default. There are three modes:
+`klangkd` resolves its config file in three modes:
 
-| Invocation                              | Behavior                                                        |
-| --------------------------------------- | --------------------------------------------------------------- |
-| `klangkd`                               | Requires `/etc/klangkd.yaml` to exist. Missing → startup error. |
-| `klangkd --config /path/to/config.yaml` | Uses the specified file. Missing → startup error.               |
-| `klangkd --config=none`                 | No config file — env vars and built-in defaults only.           |
+| Invocation                              | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `klangkd`                               | Resolves `$KLANGK_CONFIG_DIR/klangkd.yaml` (default `~/.config/klangk/klangkd.yaml`). If the file is missing it is **generated** as a near-empty template pointing at the docs ([#1645](https://github.com/mcdonc/klangk/issues/1645)). No admin identity or password is emitted — the admin row is seeded at runtime: `default_user` defaults to `<unixuser>@example.com`, with `password_hash=None` in `none`/`oidc` mode (no password needed) and `KLANGK_DEFAULT_PASSWORD` required in `password`/`both` mode (fail-fast if unset). |
+| `klangkd --config /path/to/config.yaml` | Uses the specified file. Missing → startup error. Explicit paths are never auto-generated.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `klangkd --config=none`                 | No config file — env vars and built-in defaults only.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
-There is no silent fallback. The only way to run without a config file is `--config=none`.
+A bare `klangkd` is the pip/uv first-run path: install the wheel, run `klangkd`, log in with the printed credentials. System deployments that manage config out-of-band typically use `--config=none` (the host container's `supervisord.conf` does this) or `--config=<explicit-path>` (a deployment pipeline writes the file before starting `klangkd`).
 
 ## Key mapping
 
@@ -254,29 +254,29 @@ port: "8997"
 
 ### Container / workspace
 
-| Key                          | Default                              | Env var                                   |
-| ---------------------------- | ------------------------------------ | ----------------------------------------- |
-| `data_dir`                   | `<state_dir>/data`                   | `KLANGK_DATA_DIR`                         |
-| `state_dir`                  | `$XDG_STATE_HOME/klangk`             | `KLANGK_STATE_DIR`                        |
-| `config_dir`                 | `$XDG_CONFIG_HOME/klangk`            | `KLANGK_CONFIG_DIR`                       |
-| `customize_dir`              | `<config_dir>/custom`                | `KLANGK_CUSTOMIZE_DIR`                    |
-| `features_enable`            | _(unset → manifest `defaults`)_      | `KLANGK_FEATURES_ENABLE`                  |
-| `image_name`                 | `klangk-workspace`                   | `KLANGK_IMAGE_NAME`                       |
-| `image_pull_policy`          | `never`                              | `KLANGK_IMAGE_PULL_POLICY`                |
-| `allowed_images`             |                                      | `KLANGK_ALLOWED_IMAGES`                   |
-| `allowed_mount_roots`        |                                      | `KLANGK_ALLOWED_MOUNT_ROOTS`              |
-| `allow_autostart`            |                                      | `KLANGK_ALLOW_AUTOSTART`                  |
-| `allow_sudo`                 |                                      | `KLANGK_ALLOW_SUDO`                       |
-| `container_subnets`          | _(auto-derived)_                     | `KLANGK_CONTAINER_SUBNETS`                |
-| `userns`                     |                                      | `KLANGK_USERNS`                           |
-| `podman_bin`                 | `podman`                             | `KLANGK_PODMAN_BIN`                       |
-| `disable_tmux`               |                                      | `KLANGK_DISABLE_TMUX`                     |
-| `health_check_interval`      |                                      | `KLANGK_HEALTH_CHECK_INTERVAL`            |
-| `health_check_startup_grace` |                                      | `KLANGK_HEALTH_CHECK_STARTUP_GRACE`       |
-| `health_check_timeout`       |                                      | `KLANGK_HEALTH_CHECK_TIMEOUT`             |
-| `hosted_ports_per_workspace` | `5`                                  | `KLANGK_HOSTED_PORTS_PER_WORKSPACE`       |
-| `test_mode`                  |                                      | `KLANGK_TEST_MODE`                        |
-| `version_file`               |                                      | `KLANGK_VERSION_FILE`                     |
+| Key                          | Default                         | Env var                             |
+| ---------------------------- | ------------------------------- | ----------------------------------- |
+| `data_dir`                   | `<state_dir>/data`              | `KLANGK_DATA_DIR`                   |
+| `state_dir`                  | `$XDG_STATE_HOME/klangk`        | `KLANGK_STATE_DIR`                  |
+| `config_dir`                 | `$XDG_CONFIG_HOME/klangk`       | `KLANGK_CONFIG_DIR`                 |
+| `customize_dir`              | `<config_dir>/custom`           | `KLANGK_CUSTOMIZE_DIR`              |
+| `features_enable`            | _(unset → manifest `defaults`)_ | `KLANGK_FEATURES_ENABLE`            |
+| `image_name`                 | `klangk-workspace`              | `KLANGK_IMAGE_NAME`                 |
+| `image_pull_policy`          | `never`                         | `KLANGK_IMAGE_PULL_POLICY`          |
+| `allowed_images`             |                                 | `KLANGK_ALLOWED_IMAGES`             |
+| `allowed_mount_roots`        |                                 | `KLANGK_ALLOWED_MOUNT_ROOTS`        |
+| `allow_autostart`            |                                 | `KLANGK_ALLOW_AUTOSTART`            |
+| `allow_sudo`                 |                                 | `KLANGK_ALLOW_SUDO`                 |
+| `container_subnets`          | _(auto-derived)_                | `KLANGK_CONTAINER_SUBNETS`          |
+| `userns`                     |                                 | `KLANGK_USERNS`                     |
+| `podman_bin`                 | `podman`                        | `KLANGK_PODMAN_BIN`                 |
+| `disable_tmux`               |                                 | `KLANGK_DISABLE_TMUX`               |
+| `health_check_interval`      |                                 | `KLANGK_HEALTH_CHECK_INTERVAL`      |
+| `health_check_startup_grace` |                                 | `KLANGK_HEALTH_CHECK_STARTUP_GRACE` |
+| `health_check_timeout`       |                                 | `KLANGK_HEALTH_CHECK_TIMEOUT`       |
+| `hosted_ports_per_workspace` | `5`                             | `KLANGK_HOSTED_PORTS_PER_WORKSPACE` |
+| `test_mode`                  |                                 | `KLANGK_TEST_MODE`                  |
+| `version_file`               |                                 | `KLANGK_VERSION_FILE`               |
 
 ### LLM
 
