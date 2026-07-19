@@ -523,8 +523,8 @@ class KlangkSettings(BaseSettings):
     # The nginx engine never reads this field.
     caddy_admin_socket: str | None = None
     # state_dir: runtime state (the UDS when listen is a socket path, rendered
-    # proxy config, pid). Defaults to ``$XDG_STATE_HOME/klangk`` (→
-    # ``~/.local/state/klangk`` when the var is unset, incl. macOS) when no
+    # proxy config, pid). Defaults to ``$XDG_STATE_HOME/klangkd`` (→
+    # ``~/.local/state/klangkd`` when the var is unset, incl. macOS) when no
     # explicit value is supplied (#1644); explicit ``KLANGK_STATE_DIR`` /
     # config-file values still win (devenv pins it to ``$DEVENV_STATE/klangk``
     # via devenv.nix; the host container sets ``/tmp/klangk-state``). If
@@ -581,8 +581,8 @@ class KlangkSettings(BaseSettings):
     data_dir: str | None = None
     # config_dir: the config-tree root for user-edited, durable intent
     # (branding, email templates) — the config-tree analogue of
-    # ``state_dir`` (#1649). Defaults to ``$XDG_CONFIG_HOME/klangk`` (→
-    # ``~/.config/klangk``, read-with-fallback) when unset; ``customize_dir``
+    # ``state_dir`` (#1649). Defaults to ``$XDG_CONFIG_HOME/klangkd`` (→
+    # ``~/.config/klangkd``, read-with-fallback) when unset; ``customize_dir``
     # derives from the resolved ``config_dir`` (like ``data_dir`` derives
     # from ``state_dir``). An explicit ``KLANGK_CONFIG_DIR`` wins; per-sub-dir
     # env vars still win over the derivation. Read at boot and on SIGHUP
@@ -590,7 +590,7 @@ class KlangkSettings(BaseSettings):
     config_dir: str | None = None
     # customize_dir: branding + email templates — user-edited, durable
     # intent, so it's **config**, not state. Defaults to
-    # ``<config_dir>/custom`` (→ ``~/.config/klangk/custom``) when unset,
+    # ``<config_dir>/custom`` (→ ``~/.config/klangkd/custom``) when unset,
     # deriving from the resolved ``config_dir`` (#1644, #1649); no longer
     # under ``state_dir``. Explicit ``KLANGK_CUSTOMIZE_DIR`` still wins.
     customize_dir: str | None = None
@@ -714,8 +714,8 @@ class KlangkSettings(BaseSettings):
     def _require_dirs(self) -> "KlangkSettings":
         """Default ``state_dir``; derive ``data_dir``, ``customize_dir``, ``config_dir``.
 
-        ``state_dir`` defaults to ``$XDG_STATE_HOME/klangk`` (→
-        ``~/.local/state/klangk`` when the var is unset, incl. macOS) when no
+        ``state_dir`` defaults to ``$XDG_STATE_HOME/klangkd`` (→
+        ``~/.local/state/klangkd`` when the var is unset, incl. macOS) when no
         explicit value is supplied (#1644). This does **not** undo #1461's
         intent — that decision was about rejecting a ``None`` path so a
         dereference fails fast at boot rather than at first use; a concrete
