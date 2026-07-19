@@ -77,12 +77,14 @@ test.describe("Token expiry", () => {
     const tmpHome = mkdtempSync(join(tmpdir(), "klangk-cli-e2e-"));
     const configDir = join(tmpHome, ".config", "klangk");
     mkdirSync(configDir, { recursive: true });
+    const stateDir = join(tmpHome, ".local", "state", "klangk");
+    mkdirSync(stateDir, { recursive: true });
     writeFileSync(
-      join(configDir, "cli.yaml"),
+      join(configDir, "klangk.yaml"),
       `servers:\n  test:\n    url: ${API_BASE}\n`,
     );
     writeFileSync(
-      join(configDir, "state.yaml"),
+      join(stateDir, "klangk-state.yaml"),
       `active-server: "${API_BASE}"\n"${API_BASE}":\n  active-user: "${email}"\n  users:\n    "${email}":\n      token: ${expiredToken}\n`,
     );
 

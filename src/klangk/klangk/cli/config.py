@@ -139,14 +139,14 @@ def seed_config(server_url: str, user: str | None = None) -> None:
 
 @dataclass
 class UserEntry:
-    """Per-user credentials within a server in state.yaml."""
+    """Per-user credentials within a server in klangk-state.yaml."""
 
     token: str | None = None
 
 
 @dataclass
 class ServerState:
-    """Per-server state in state.yaml."""
+    """Per-server state in klangk-state.yaml."""
 
     active_user: str | None = None
     users: dict[str, UserEntry] = field(default_factory=dict)
@@ -154,7 +154,7 @@ class ServerState:
 
 @dataclass
 class CLIState:
-    """Parsed state.yaml — auto-managed by the CLI."""
+    """Parsed klangk-state.yaml — auto-managed by the CLI."""
 
     active_server: str | None = None
     servers: dict[str, ServerState] = field(default_factory=dict)

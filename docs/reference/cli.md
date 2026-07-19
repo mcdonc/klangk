@@ -26,7 +26,8 @@ Requires Python 3.12+.
 `klangk` uses two files, split across the XDG config and state trees:
 
 - **`~/.config/klangk/klangk.yaml`** — user-edited settings (config tree).
-  The CLI never writes to this file. Define server aliases, default users,
+  The CLI writes this file **once**, on first `klangk login`, then leaves it
+  alone — after that it's yours to edit. Define server aliases, default users,
   and per-server overrides here.
 - **`~/.local/state/klangk/klangk-state.yaml`** — auto-managed by the CLI
   (state tree). Stores authentication tokens and tracks the active server

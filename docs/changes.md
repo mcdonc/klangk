@@ -274,12 +274,14 @@ invitations send` stay email-only (a deliverable address is required);
   **Breaking** (no migration shim): this lands before there's a deployed
   user base with on-disk state worth preserving (#1656 wheel publish just
   landed; #1670 first-run generation is the first time a config file even
-  exists). Existing dev installs with `~/.config/klangk/cli.yaml` or
-  `~/.local/state/klangk/` DBs need manual relocation; devenv and the host
-  container set `KLANGK_STATE_DIR` explicitly (so `state_dir` is unaffected),
-  but neither sets `KLANGK_CONFIG_DIR` — the server-side `config_dir` default
-  changes from `klangk` to `klangkd` for those environments too. CI doesn't
-  set either and runs hermetically, so it's unaffected.
+  exists). Existing dev installs need manual relocation:
+  - CLI config: rename `~/.config/klangk/cli.yaml` → `klangk.yaml`.
+  - CLI state: move `~/.config/klangk/state.yaml` → `~/.local/state/klangk/klangk-state.yaml`
+    (cached tokens; or just `klangk login` again).
+  - Server DB: move `~/.local/state/klangk/data/` → `~/.local/state/klangkd/data/`
+    (if running the server outside devenv / the host container, which pin
+    `KLANGK_STATE_DIR` explicitly and are unaffected).
+    CI doesn't set either env var and runs hermetically, so it's unaffected.
 
 - **The pytest toolchain is now an optional `test` extra, not a runtime
   dependency (#1673).** `src/klangk/pyproject.toml` moves `pytest`,

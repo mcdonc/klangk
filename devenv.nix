@@ -202,8 +202,9 @@ in
       config.devenv.state + "/klangk/podman/policy.json"
   );
   env.KLANGK_VERSION_FILE = versionFile;
-  # state_dir: runtime state (UDS, rendered nginx.conf, pid). Devenv pins it
-  # to $DEVENV_STATE/klangk; the field default is /tmp/klangk-state (#1459).
+  # state_dir: runtime state (UDS, rendered Caddyfile, pid). Devenv pins it
+  # to $DEVENV_STATE/klangk; the field default is $XDG_STATE_HOME/klangkd
+  # (→ ~/.local/state/klangkd; #1459, #1644, #1646).
   env.KLANGK_STATE_DIR = stateDir;
   # Frontend dir: the backend runs editable in devenv (PYTHONPATH on the
   # source tree), so the in-package default (klangk/frontend, #1600) does

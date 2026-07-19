@@ -273,7 +273,7 @@ class _KebabYamlConfigSettingsSource(YamlConfigSettingsSource):
 
     The config file is documented in snake_case (matching the field names),
     but klangk's wider config-file style is kebab-case (e.g. the CLI's
-    ``cli.yaml`` and the OIDC provider dicts).  pydantic-settings matches
+    ``klangk.yaml`` and the OIDC provider dicts).  pydantic-settings matches
     config keys against snake_case field names only, so a bare
     ``YamlConfigSettingsSource`` silently ignores hyphenated keys.  This
     subclass normalizes top-level hyphenated keys (``proxy-port`` →

@@ -170,7 +170,7 @@ class TestDualFormKeys:
     """Every config-file key may be written in either snake_case or
     kebab-case and resolve to the same field (#1538). snake_case remains the
     documented/preferred form; kebab-case is accepted for backwards compat
-    and consistency with the wider config-file style (e.g. cli.yaml, OIDC
+    and consistency with the wider config-file style (e.g. klangk.yaml, OIDC
     provider dicts). Top-level keys are normalized by
     ``_KebabYamlConfigSettingsSource``; nested OIDC provider dicts are
     handled separately by :func:`klangk.oidc.get`."""
