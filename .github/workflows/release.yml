@@ -76,3 +76,64 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build + publish the klangk wheel to PyPI via trusted publishing (OIDC,
+  # no API token — same shape as the deleted cli-publish.yml pre-#1606).
+  # Runs in parallel with the image build — the wheel doesn't need
+  # podman/docker, and pip/uv users (the #1607 / #1645 first-run audience)
+  # get an installable artifact via `pip install klangk==<tag>`. The
+  # distribution name is ``klangk`` (one unified wheel ships the klangkd
+  # server + klangk CLI, #1606); the tag is ``vX.Y.Z``; hatch-vcs derives
+  # the version from it.
+  #
+  # Trusted-publishing prereq (PyPI side, one-time): the `klangk` PyPI
+  # project must have a trusted publisher configured for this repo +
+  # workflow + environment (mcdonc/klangk, .github/workflows/release.yml,
+  # environment name: pypi). With that in place PyPI validates the OIDC
+  # token from GitHub Actions and publishes with no secret on our side.
+  build-wheel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: pypi # PyPI trusted publisher binds to this environment name
+    permissions:
+      id-token: write # OIDC attestation — the only permission trusted publishing needs
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # hatch-vcs needs full history to derive the version
+
+      - uses: ./.github/actions/devenv-setup
+        with:
+          # Build the frontend with the default plugin set (checked-in
+          # plugins.yaml, #1660) so the wheel's klangk/frontend/ carries
+          # the compiled UI + features.json. The hatch build hook
+          # (hatch_build_frontend.py) force-includes it and *requires* it
+          # for non-editable wheel builds (#1600).
+          build-tasks: klangk:flutter-build
+
+      - name: Build wheel
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          # scripts/build_wheel.sh installs python-build transiently (uv-sync
+          # at shell entry would wipe it; the script installs + builds in one
+          # process). Requires the frontend artifact from klangk:flutter-build
+          # above — the hatch build hook force-includes it and requires it for
+          # non-editable wheel builds (#1600).
+          devenv shell -- bash scripts/build_wheel.sh
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: klangk-wheel
+          path: src/klangk/dist/*.whl
+          retention-days: 30
+
+      - name: Publish to PyPI
+        # Trusted publishing (OIDC) — no API token. pypa/gh-action-pypi-publish
+        # negotiates an OIDC token from GitHub Actions and presents it to
+        # PyPI, which validates it against the trusted-publisher config on
+        # the `klangk` project (environment: pypi, workflow: release.yml).
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: src/klangk/dist
+          skip-existing: true # idempotent on re-runs of the same tag

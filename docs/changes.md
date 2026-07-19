@@ -27,6 +27,19 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **The `klangk` wheel is now published to PyPI on tag push (#1656).**
+  `release.yml` gains a parallel `build-wheel` job that builds the frontend
+  (default plugin set from the checked-in `plugins.yaml`) and produces the
+  wheel via `scripts/build_wheel.sh`, then publishes it via **trusted
+  publishing (OIDC)** — `pypa/gh-action-pypi-publish@release/v1` with
+  `permissions.id-token: write` and `environment: pypi`, no API token secret
+  (same shape as the deleted `cli-publish.yml` pre-#1606). `pip install
+klangk==<tag>` now yields a working `klangkd` with the UI served from the
+  in-wheel `klangk/frontend/`. This is the release artifact the pip/uv
+  first-run UX (#1607 / #1645) was designed for. Requires a one-time
+  trusted-publisher config on the `klangk` PyPI project bound to this repo /
+  workflow / environment.
+
 - **Build-pipeline integration tests for the plugin build path (#1666).**
   `scripts/tests/test_build_pipeline.py` runs the real
   `update_plugins.py` + `import_dart_plugins.py` against the checked-in
