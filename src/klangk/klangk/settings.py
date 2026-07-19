@@ -56,11 +56,14 @@ logger = logging.getLogger(__name__)
 # freely issues an admin token). See the ``auth_modes`` field validator below.
 _VALID_AUTH_MODES = frozenset({"password", "oidc", "both", "none"})
 
-# The XDG "klangk" subdir used by the default-roots (state + config). Both
-# trees use the same subdir name so config and state sit side-by-side and are
-# easy to find; matching the CLI's existing ``~/.config/klangk/`` (the CLI is
-# folded into the klangkd wheel, #1606). See #1607 / #1644.
-_XDG_SUBDIR = "klangk"
+# The XDG "klangkd" subdir used by the default-roots (state + config). The
+# server's tree is ``klangkd`` (the binary name) — distinct from the CLI's
+# ``klangk`` tree. Different audiences, different shapes: server state is
+# GB-scale operator-owned DBs + UDS; CLI state is a few hundred bytes of
+# user tokens. Splitting at the filesystem level mirrors the code-level
+# isolation rule (``klangk.cli`` must not import from the server). See
+# #1607 / #1644 / #1646.
+_XDG_SUBDIR = "klangkd"
 
 
 def _xdg_config_home() -> str:
@@ -727,7 +730,7 @@ class KlangkSettings(BaseSettings):
         ``data_dir`` still derives from ``state_dir`` (the SQLite DB +
         workspace volumes are runtime state too), so one default populates
         the state tree. ``config_dir`` defaults to
-        ``$XDG_CONFIG_HOME/klangk`` (the config-tree root, #1649) and
+        ``$XDG_CONFIG_HOME/klangkd`` (the config-tree root, #1649) and
         ``customize_dir`` derives from it (user-edited, durable config).
         ``plugins_dir`` is gone from settings entirely (#1655): the runtime
         reads the build-emitted ``features.json`` from ``frontend_dir``. The

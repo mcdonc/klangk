@@ -27,6 +27,7 @@ import websockets
 from .auth import fetch_config as _fetch_config
 from .auth import local_login as _local_login
 from .auth import refresh_token as _refresh_token
+from .config import _xdg_state_home
 from .transport import http_request, http_stream, ws_connect
 
 
@@ -782,7 +783,11 @@ async def ws_shell(
         local_agent_sock = os.environ.get("SSH_AUTH_SOCK")
         _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
         if _debug_agent:  # pragma: no cover
-            _agent_log = os.path.expanduser("~/.klangk-ssh-agent.log")
+            # The ssh-agent debug log lives under XDG_STATE_HOME/klangk/ —
+            # not in $HOME (state, not config; #1646).
+            _agent_log_dir = _xdg_state_home() / "klangk"
+            _agent_log_dir.mkdir(parents=True, exist_ok=True)
+            _agent_log = _agent_log_dir / "klangk-ssh-agent.log"
             _fh = logging.FileHandler(_agent_log, mode="w")
             _fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
             logger.addHandler(_fh)

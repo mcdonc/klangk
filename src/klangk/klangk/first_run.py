@@ -50,8 +50,10 @@ def default_config_path() -> str:
     """Return the config-file path a bare ``klangkd`` resolves to.
 
     ``$KLANGK_CONFIG_DIR/klangkd.yaml`` when the env var is set (the
-    operator's explicit override), else ``$XDG_CONFIG_HOME/klangk/klangkd.yaml``
+    operator's explicit override), else ``$XDG_CONFIG_HOME/klangkd/klangkd.yaml``
     (XDG fallback to ``~/.config`` — Linux *and* macOS, per #1607).
+    The server's XDG subdir is ``klangkd`` (the binary name); the CLI uses
+    ``klangk`` — different audiences, different trees (#1646).
 
     Resolved purely from the env (no ``KlangkSettings`` construction) per
     #1649's bootstrap rule: ``klangkd.yaml`` can't relocate the config tree

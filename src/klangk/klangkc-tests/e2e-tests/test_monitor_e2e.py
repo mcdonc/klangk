@@ -112,7 +112,7 @@ def cli_env(server, tmp_path_factory):
     """An isolated HOME with ``klangk`` logged into the test server.
 
     The monitor reads its server URL + token from the CLI config under
-    ``~/.config/klangk/cli.yaml``, so a separate HOME (with a fresh login)
+    ``~/.config/klangk/klangk.yaml``, so a separate HOME (with a fresh login)
     is all the subprocess needs to connect.
     """
     config_dir = tmp_path_factory.mktemp("klangk-monitor-cli")

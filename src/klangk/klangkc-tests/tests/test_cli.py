@@ -41,7 +41,7 @@ class TestCLIConfig:
     def test_load_empty(self, monkeypatch):
         monkeypatch.setattr(
             "klangk.cli.config._CONFIG_PATH",
-            Path("/nonexistent/cli.yaml"),
+            Path("/nonexistent/klangk.yaml"),
         )
         cfg = CLIConfig.load()
         assert cfg.servers == {}
@@ -49,7 +49,7 @@ class TestCLIConfig:
         assert cfg.ws_max_size is None
 
     def test_load_existing(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.yaml"
+        config_path = tmp_path / "klangk.yaml"
         config_path.write_text(
             "forward-agent: true\n"
             "ws-max-size: 999\n"
@@ -74,28 +74,28 @@ class TestCLIConfig:
         assert cfg.servers["dev"].ws_max_size is None
 
     def test_load_forward_agent_true(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.yaml"
+        config_path = tmp_path / "klangk.yaml"
         config_path.write_text("forward-agent: true\n")
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert cfg.forward_agent is True
 
     def test_load_forward_agent_false(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.yaml"
+        config_path = tmp_path / "klangk.yaml"
         config_path.write_text("forward-agent: false\n")
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert cfg.forward_agent is False
 
     def test_load_forward_agent_absent(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.yaml"
+        config_path = tmp_path / "klangk.yaml"
         config_path.write_text("ws-max-size: 100\n")
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert cfg.forward_agent is None
 
     def test_load_skips_invalid_server_entries(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.yaml"
+        config_path = tmp_path / "klangk.yaml"
         config_path.write_text(
             "servers:\n"
             "  bad1: not-a-dict\n"
@@ -110,7 +110,7 @@ class TestCLIConfig:
         assert "good" in cfg.servers
 
     def test_load_empty_yaml(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.yaml"
+        config_path = tmp_path / "klangk.yaml"
         config_path.write_text("")
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
@@ -203,7 +203,7 @@ class TestCLIConfig:
         assert cfg.get_user("http://dev:8995") is None
 
     def test_load_existing_with_user(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.yaml"
+        config_path = tmp_path / "klangk.yaml"
         config_path.write_text(
             "servers:\n"
             "  prod:\n"
@@ -220,7 +220,7 @@ class TestCLIConfig:
 
 class TestSeedConfig:
     def test_creates_config_if_missing(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.yaml"
+        config_path = tmp_path / "klangk.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         seed_config("http://localhost:8995", "admin@example.com")
         assert config_path.exists()
@@ -230,7 +230,7 @@ class TestSeedConfig:
         assert cfg.servers["localhost"].user == "admin@example.com"
 
     def test_does_not_overwrite_existing(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.yaml"
+        config_path = tmp_path / "klangk.yaml"
         config_path.write_text("forward-agent: true\n")
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         seed_config("http://localhost:8995", "admin@example.com")
@@ -241,7 +241,7 @@ class TestSeedConfig:
         assert len(cfg.servers) == 0
 
     def test_creates_without_user(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.yaml"
+        config_path = tmp_path / "klangk.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         seed_config("https://klangk.example.com")
         cfg = CLIConfig.load()
@@ -251,7 +251,7 @@ class TestSeedConfig:
         assert entry.user is None
 
     def test_uses_hostname_as_alias(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "cli.yaml"
+        config_path = tmp_path / "klangk.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         seed_config("http://myhost:9000")
         cfg = CLIConfig.load()
@@ -265,14 +265,14 @@ class TestCLIState:
     def test_load_empty(self, monkeypatch):
         monkeypatch.setattr(
             "klangk.cli.config._STATE_PATH",
-            Path("/nonexistent/state.yaml"),
+            Path("/nonexistent/klangk-state.yaml"),
         )
         state = CLIState.load()
         assert state.active_server is None
         assert state.servers == {}
 
     def test_load_existing(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         state_path.write_text(
             "active-server: http://prod:8995\n"
             "http://prod:8995:\n"
@@ -289,7 +289,7 @@ class TestCLIState:
         assert ss.users["user@example.com"].token == "tok123"
 
     def test_load_empty_yaml(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         state_path.write_text("")
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         state = CLIState.load()
@@ -297,7 +297,7 @@ class TestCLIState:
         assert state.servers == {}
 
     def test_load_skips_non_dict_values(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         state_path.write_text(
             "active-server: http://good:8995\n"
             "http://good:8995:\n"
@@ -313,7 +313,7 @@ class TestCLIState:
         assert "http://good:8995" in state.servers
 
     def test_save_roundtrip(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials("http://test:8995", "a@b.com", "tok")
@@ -324,14 +324,14 @@ class TestCLIState:
         assert loaded.get_email("http://test:8995") == "a@b.com"
 
     def test_save_creates_parent_dirs(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "sub" / "dir" / "state.yaml"
+        state_path = tmp_path / "sub" / "dir" / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         state = CLIState()
         state.save()
         assert state_path.exists()
 
     def test_save_permissions(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "klangk" / "state.yaml"
+        state_path = tmp_path / "klangk" / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials("http://test:8995", "u@t.com", "secret")
@@ -340,7 +340,7 @@ class TestCLIState:
         assert oct(state_path.parent.stat().st_mode & 0o777) == oct(0o700)
 
     def test_save_omits_empty_entries(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         state = CLIState(
             servers={
@@ -355,7 +355,7 @@ class TestCLIState:
         assert "http://test:8995" not in data
 
     def test_save_omits_active_server_when_none(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         state = CLIState()
         state.save()
@@ -450,7 +450,7 @@ class TestAuth:
         monkeypatch.setattr("klangk.cli.auth.fetch_config", lambda _: {})
 
     def test_login_success(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -471,7 +471,7 @@ class TestAuth:
         assert state.active_server == "http://localhost:8995"
 
     def test_login_with_user_flag(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -492,7 +492,7 @@ class TestAuth:
         assert state.get_email("http://localhost:8995") == "cli@test.com"
 
     def test_login_with_password_file(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         pw_file = tmp_path / "pw.txt"
         pw_file.write_text("file-secret\n")
@@ -514,7 +514,7 @@ class TestAuth:
         assert state.get_email("http://localhost:8995") == "pw@test.com"
 
     def test_login_reuses_valid_token(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         # Pre-populate state with an existing token
         state = CLIState()
@@ -538,7 +538,7 @@ class TestAuth:
         assert loaded.get_email("http://localhost:8995") == "saved@test.com"
 
     def test_login_network_error_falls_through(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials(
@@ -566,7 +566,7 @@ class TestAuth:
         assert loaded.get_token("http://localhost:8995") == "fresh"
 
     def test_login_expired_token_prompts(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials(
@@ -597,7 +597,7 @@ class TestAuth:
         assert loaded.get_email("http://localhost:8995") == "old@test.com"
 
     def test_login_failure(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 401
@@ -615,7 +615,7 @@ class TestAuth:
                     auth.login("http://localhost:8995")
 
     def test_logout_clears_token(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials("http://localhost:8995", "x@y.com", "tok")
@@ -633,7 +633,7 @@ class TestAuth:
         assert loaded.active_server is None
 
     def test_logout_swallows_server_error(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials("http://localhost:8995", "u@t.com", "tok")
@@ -647,7 +647,7 @@ class TestAuth:
             auth.logout("http://localhost:8995")  # Should not raise
 
     def test_logout_no_existing_token(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         state = CLIState()
         state.save()
@@ -656,7 +656,7 @@ class TestAuth:
         auth.logout("http://localhost:8995")  # Should not raise
 
     def test_logout_only_clears_target_server(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials("http://server1:8995", "a@a.com", "tok1")
@@ -716,7 +716,7 @@ class TestOIDCCLILogin:
         """OIDC login with single provider goes straight to browser."""
         from klangk.cli import auth
 
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         monkeypatch.setattr(
             "klangk.cli.auth.fetch_config",
@@ -734,7 +734,7 @@ class TestOIDCCLILogin:
         """OIDC login with multiple providers prompts for selection."""
         from klangk.cli import auth
 
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         monkeypatch.setattr(
             "klangk.cli.auth.fetch_config",
@@ -763,7 +763,7 @@ class TestOIDCCLILogin:
         """Explicit email+password skips OIDC even in both mode."""
         from klangk.cli import auth
 
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         monkeypatch.setattr(
             "klangk.cli.auth.fetch_config",
@@ -789,7 +789,7 @@ class TestOIDCCLILogin:
     def test_oidc_invalid_provider_choice(self, tmp_path, monkeypatch):
         from klangk.cli import auth
 
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         monkeypatch.setattr(
             "klangk.cli.auth.fetch_config",
@@ -814,7 +814,7 @@ class TestOIDCCLILogin:
         """301 redirect shows a helpful hint about HTTPS."""
         from klangk.cli import auth
 
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         monkeypatch.setattr("klangk.cli.auth.fetch_config", lambda _: {})
         mock_resp = MagicMock()
@@ -836,7 +836,7 @@ class TestOIDCCLILogin:
         """Login with empty error response doesn't crash."""
         from klangk.cli import auth
 
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         monkeypatch.setattr("klangk.cli.auth.fetch_config", lambda _: {})
         mock_resp = MagicMock()
@@ -859,7 +859,7 @@ class TestOIDCCLILogin:
         """Non-klangk server shows helpful error with subpath hint."""
         from klangk.cli import auth
 
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         monkeypatch.setattr("klangk.cli.auth.fetch_config", lambda _: None)
         with pytest.raises(SystemExit):
@@ -873,7 +873,7 @@ class TestOIDCCLILogin:
         """Unreachable server shows connection error, not subpath hint."""
         from klangk.cli import auth
 
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         monkeypatch.setattr(
             "klangk.cli.auth.fetch_config", lambda _: auth._UNREACHABLE
@@ -2615,7 +2615,7 @@ class TestMisc:
         assert ws.created_at == "z"
 
     def test_login_success_stores_email(self, tmp_path, monkeypatch):
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200

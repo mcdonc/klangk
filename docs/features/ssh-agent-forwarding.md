@@ -38,7 +38,7 @@ git clone git@github.com:user/repo  # works without any credentials
 ```
 
 To enable forwarding by default, add `forward-agent: true` to your
-CLI config file (`~/.config/klangk/cli.yaml`):
+CLI config file (`~/.config/klangk/klangk.yaml`):
 
 ```yaml
 # Enable for all servers
@@ -57,8 +57,8 @@ servers:
 The resolution priority is:
 
 1. CLI flag (`--forward-agent` / `--no-forward-agent`) — highest
-2. Per-server setting in `cli.yaml`
-3. Global setting in `cli.yaml`
+2. Per-server setting in `klangk.yaml`
+3. Global setting in `klangk.yaml`
 4. Default: `false`
 
 See [CLI Configuration](../reference/cli.md#configuration) for full
@@ -105,8 +105,8 @@ same path, so existing shells continue to work.
 
 Set `KLANGKC_DEBUG_SSH_AGENT=1` to enable verbose logging of the SSH
 agent relay. On the backend, messages go to the server log. On the
-CLI, messages are written to `~/.klangk-ssh-agent.log` (to avoid
-corrupting the terminal display).
+CLI, messages are written to `~/.local/state/klangk/klangk-ssh-agent.log`
+(under XDG_STATE_HOME; #1646) to avoid corrupting the terminal display.
 
 ```bash
 # Backend side (in .env or environment)
@@ -116,7 +116,7 @@ KLANGKC_DEBUG_SSH_AGENT=1
 export KLANGKC_DEBUG_SSH_AGENT=1
 klangk shell -A my-workspace
 # In another terminal:
-tail -f ~/.klangk-ssh-agent.log
+tail -f ~/.local/state/klangk/klangk-ssh-agent.log
 ```
 
 Log messages are prefixed with `[ssh-agent]` and show data flow
