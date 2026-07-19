@@ -87,6 +87,18 @@ def clean_env(**overrides: str) -> dict[str, str]:
         val = os.environ.get(name)
         if val is not None:
             env[name] = val
+    # If the caller pinned HOME, also pin XDG_CONFIG_HOME / XDG_STATE_HOME to
+    # under it — unless the caller set them explicitly. Without this, the
+    # inherited runner env (GitHub Actions ubuntu runners set
+    # XDG_CONFIG_HOME=/home/runner/.config in /etc/environment; the value is
+    # not re-expanded per-process) leaks past the HOME override, and any code
+    # that correctly reads the XDG var (per spec) writes outside the tmpdir
+    # the test set up. The CLI's config/state resolution (post-#1646) and the
+    # server's (post-#1644) both honor these vars.
+    if "HOME" in overrides and "XDG_CONFIG_HOME" not in overrides:
+        env["XDG_CONFIG_HOME"] = f"{overrides['HOME']}/.config"
+    if "HOME" in overrides and "XDG_STATE_HOME" not in overrides:
+        env["XDG_STATE_HOME"] = f"{overrides['HOME']}/.local/state"
     # E2E baseline defaults.
     env["_KLANGK_DISABLE_PROXY"] = "1"
     env.setdefault("KLANGK_AUTH_MODES", "password")
