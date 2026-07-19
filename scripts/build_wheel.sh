@@ -27,6 +27,11 @@ uv pip install build
 cd "$REPO_ROOT/src/klangk"
 python3 -m build --wheel
 
-# Report what we produced.
+# Report what we produced. The script cd'd into src/klangk before building,
+# so dist/ is relative to that dir, not the caller's CWD — print absolute
+# paths so the wheel can be located from anywhere.
 echo "=== built wheels ==="
 ls -lh dist/*.whl
+for whl in dist/*.whl; do
+  echo "$(cd "$(dirname "$whl")" && pwd)/$(basename "$whl")"
+done
