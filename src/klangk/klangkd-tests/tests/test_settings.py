@@ -518,10 +518,27 @@ class TestEnvConstructor:
         assert s.egress_port != "9999"
 
     def test_empty_env_dict_uses_defaults(self):
+        import getpass
+
         s = make_settings({})
         assert s.auth_modes is None
-        assert s.default_user == "admin@example.com"
+        # default_user is derived from the invoking Unix user (#1645).
+        assert s.default_user == f"{getpass.getuser()}@example.com"
         assert s.min_password_length == "8"
+
+    def test_default_user_falls_back_when_getuser_fails(self, monkeypatch):
+        # In containers/CI where the uid has no passwd entry, getpass.getuser()
+        # raises OSError (since Python 3.13; earlier versions raised KeyError
+        # / ImportError, but the wrapper normalizes now) — the default must
+        # fall back to "user" so construction doesn't crash (#1645).
+        import getpass as getpass_mod
+
+        def _raise():
+            raise OSError("No username set in the environment")
+
+        monkeypatch.setattr(getpass_mod, "getuser", _raise)
+        s = make_settings({})
+        assert s.default_user == "user@example.com"
 
     def test_env_for_sources_reset_after_construction(self):
         # The class-var bridge is cleaned up after construction so it doesn't

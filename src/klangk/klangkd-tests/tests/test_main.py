@@ -35,8 +35,9 @@ from klangk.wshandler.session import WebSocketState
 def _make_app_state(settings=None):
     """Build a minimal mock app for tests."""
     if settings is None:
-        # Pin a default password so the lifespan's seed_default_user does
-        # not generate (and print) one to stderr on every boot (#1493).
+        # Pin a default password so tests that exercise the full lifespan
+        # (where seed_default_user runs) don't fail-fast in password mode.
+        # In none mode (the default) the password is ignored (null hash).
         settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
     # Two-phase: shell first so owned instances can take app at
     # construction (#1426).
@@ -125,18 +126,16 @@ class TestSeedDefaultUser:
         user = await app_state.state.model.users.get_user_by_email("seed-test")
         assert user is not None
 
-    async def test_generates_password_when_not_set(
-        self, db, capsys, app_state
-    ):
+    async def test_seeds_null_password_in_none_mode(self, db, app_state):
+        # Default mode (none): seed with null password_hash. The row exists
+        # for /auth/local token minting but no endpoint checks the hash (#1645).
         await _lifecycle(
-            make_settings({"KLANGK_DEFAULT_USER": "gen-test"})
+            make_settings({"KLANGK_DEFAULT_USER": "none-test"})
         ).seed_default_user()
-        # Swallow the incidental generated-password print to stderr
-        # (asserted explicitly by test_generated_password_printed_to_stderr).
-        capsys.readouterr()
-        user = await app_state.state.model.users.get_user_by_email("gen-test")
+        user = await app_state.state.model.users.get_user_by_email("none-test")
         assert user is not None
-        # User exists and is in the admin group
+        assert user["password_hash"] is None
+        # User is in the admin group
         admin_group = await app_state.state.model.users.get_group_by_name(
             "admin"
         )
@@ -146,21 +145,154 @@ class TestSeedDefaultUser:
         )
         assert admin_group["id"] in group_ids
 
-    async def test_generated_password_printed_to_stderr(
-        self, db, caplog, capsys
-    ):
-        import logging
 
-        with caplog.at_level(logging.INFO):
+class TestSeedDefaultUserAuthModeGating:
+    """#1645 Table A: password handling depends on auth_modes.
+
+    none / oidc → null password_hash (row is for /auth/local token minting).
+    password / both → require KLANGK_DEFAULT_PASSWORD or fail-fast.
+    """
+
+    async def test_none_mode_seeds_null_password(self, db, app_state):
+        await _lifecycle(
+            make_settings({"KLANGK_DEFAULT_USER": "u-none"})
+        ).seed_default_user()
+        user = await app_state.state.model.users.get_user_by_email("u-none")
+        assert user["password_hash"] is None
+
+    async def test_oidc_mode_seeds_null_password(self, db, app_state):
+        await _lifecycle(
+            make_settings(
+                {
+                    "KLANGK_AUTH_MODES": "oidc",
+                    "KLANGK_DEFAULT_USER": "u-oidc",
+                }
+            )
+        ).seed_default_user()
+        user = await app_state.state.model.users.get_user_by_email("u-oidc")
+        assert user["password_hash"] is None
+
+    async def test_password_mode_uses_default_password(self, db, app_state):
+        await _lifecycle(
+            make_settings(
+                {
+                    "KLANGK_AUTH_MODES": "password",
+                    "KLANGK_DEFAULT_USER": "u-pw",
+                    "KLANGK_DEFAULT_PASSWORD": "real-pass",
+                }
+            )
+        ).seed_default_user()
+        user = await app_state.state.model.users.get_user_by_email("u-pw")
+        assert user["password_hash"] is not None
+        import bcrypt
+
+        assert bcrypt.checkpw(b"real-pass", user["password_hash"].encode())
+
+    async def test_password_mode_fails_fast_without_default_password(
+        self, db, app_state
+    ):
+        with pytest.raises(RuntimeError, match="KLANGK_DEFAULT_PASSWORD"):
             await _lifecycle(
-                make_settings({"KLANGK_DEFAULT_USER": "log-test"})
+                make_settings(
+                    {
+                        "KLANGK_AUTH_MODES": "password",
+                        "KLANGK_DEFAULT_USER": "u-nopw",
+                    }
+                )
             ).seed_default_user()
-        # Password must NOT appear in log output (security)
-        assert "password printed to stderr" in caplog.text
-        assert "log-test" in caplog.text
-        # Password appears on stderr only
-        captured = capsys.readouterr()
-        assert "Default admin password for" in captured.err
+
+    async def test_both_mode_uses_default_password(self, db, app_state):
+        await _lifecycle(
+            make_settings(
+                {
+                    "KLANGK_AUTH_MODES": "both",
+                    "KLANGK_DEFAULT_USER": "u-both",
+                    "KLANGK_DEFAULT_PASSWORD": "both-pass",
+                }
+            )
+        ).seed_default_user()
+        user = await app_state.state.model.users.get_user_by_email("u-both")
+        assert user["password_hash"] is not None
+
+    async def test_both_mode_fails_fast_without_default_password(
+        self, db, app_state
+    ):
+        with pytest.raises(RuntimeError, match="KLANGK_DEFAULT_PASSWORD"):
+            await _lifecycle(
+                make_settings(
+                    {
+                        "KLANGK_AUTH_MODES": "both",
+                        "KLANGK_DEFAULT_USER": "u-both-nopw",
+                    }
+                )
+            ).seed_default_user()
+
+    async def test_table_b_guard_blocks_password_boot_when_admin_has_null_hash(
+        self, db, app_state
+    ):
+        """Table B lockout guard (#1645 review): booting in password mode with
+        a null-hash admin (seeded in none/oidc) is refused before the server
+        serves traffic. Without this guard the operator would discover the
+        lockout at the login screen with no recovery path (/auth/local is
+        disabled outside none mode)."""
+        # Seed in none mode → admin row with password_hash=None.
+        await _lifecycle(
+            make_settings({"KLANGK_DEFAULT_USER": "u-nullhash@example.com"})
+        ).seed_default_user()
+        admin = await app_state.state.model.users.get_user_by_email(
+            "u-nullhash@example.com"
+        )
+        assert admin["password_hash"] is None
+
+        # Subsequent boot in password mode (admin group non-empty → seeding
+        # skipped, but the guard fires on the existing members).
+        with pytest.raises(RuntimeError, match="admin with a password"):
+            await _lifecycle(
+                make_settings(
+                    {
+                        "KLANGK_AUTH_MODES": "password",
+                        "KLANGK_DEFAULT_USER": "u-nullhash@example.com",
+                    }
+                )
+            ).seed_default_user()
+
+    async def test_table_b_guard_passes_when_admin_has_hash(
+        self, db, app_state
+    ):
+        """Mirror of the lockout guard: a password-mode boot where the admin
+        DOES have a hash proceeds normally (seed skipped, no error)."""
+        # Seed in password mode → admin row with real hash.
+        await _lifecycle(
+            make_settings(
+                {
+                    "KLANGK_AUTH_MODES": "password",
+                    "KLANGK_DEFAULT_USER": "u-hashed@example.com",
+                    "KLANGK_DEFAULT_PASSWORD": "real-pass",
+                }
+            )
+        ).seed_default_user()
+
+        # Subsequent boot in password mode (same admin, same hash) — no raise.
+        await _lifecycle(
+            make_settings(
+                {
+                    "KLANGK_AUTH_MODES": "password",
+                    "KLANGK_DEFAULT_USER": "u-hashed@example.com",
+                    "KLANGK_DEFAULT_PASSWORD": "real-pass",
+                }
+            )
+        ).seed_default_user()
+
+    async def test_table_b_guard_noop_in_none_mode(self, db, app_state):
+        """The guard doesn't fire in none mode even with a null-hash admin —
+        none mode never validates passwords."""
+        await _lifecycle(
+            make_settings({"KLANGK_DEFAULT_USER": "u-none@example.com"})
+        ).seed_default_user()
+        # Second boot, still none mode — no raise.
+        await _lifecycle(
+            make_settings({"KLANGK_DEFAULT_USER": "u-none@example.com"})
+        ).seed_default_user()
 
 
 class TestSeedDefaultUserGating:
@@ -222,6 +354,7 @@ class TestSeedDefaultUserGating:
         await _lifecycle(
             make_settings(
                 {
+                    "KLANGK_AUTH_MODES": "password",
                     "KLANGK_DEFAULT_USER": "keep@example.com",
                     "KLANGK_DEFAULT_PASSWORD": "original-pass",
                 }
@@ -237,6 +370,7 @@ class TestSeedDefaultUserGating:
         await _lifecycle(
             make_settings(
                 {
+                    "KLANGK_AUTH_MODES": "password",
                     "KLANGK_DEFAULT_USER": "changed@example.com",
                     "KLANGK_DEFAULT_PASSWORD": "changed-pass",
                 }
@@ -261,6 +395,7 @@ class TestSeedDefaultUserGating:
         await _lifecycle(
             make_settings(
                 {
+                    "KLANGK_AUTH_MODES": "password",
                     "KLANGK_DEFAULT_USER": "resurrect@example.com",
                     "KLANGK_DEFAULT_PASSWORD": "resurrect-pass",
                 }
@@ -287,6 +422,7 @@ class TestSeedDefaultUserGating:
         await _lifecycle(
             make_settings(
                 {
+                    "KLANGK_AUTH_MODES": "password",
                     "KLANGK_DEFAULT_USER": "resurrect@example.com",
                     "KLANGK_DEFAULT_PASSWORD": "resurrect-pass",
                 }
@@ -319,6 +455,7 @@ class TestSeedDefaultUserGating:
         await _lifecycle(
             make_settings(
                 {
+                    "KLANGK_AUTH_MODES": "password",
                     "KLANGK_DEFAULT_USER": "fresh@example.com",
                     "KLANGK_DEFAULT_PASSWORD": "fresh-pass",
                 }
