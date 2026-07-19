@@ -24,6 +24,15 @@ dependencies = [
     "logfire[fastapi]>=3.0.0",
     "pyyaml>=6.0",
     "httpx>=0.28.0",
+]
+
+# Test toolchain — opt in via `pip install klangk[test]` or
+# `uv sync --extra test`. Kept out of the runtime ``dependencies`` so a
+# production ``pip install klangk`` doesn't pull pytest + its transitive
+# deps (pluggy, iniconfig, packaging, coverage, execnet, ~a dozen pkgs)
+# that have no role at runtime (#1673).
+[project.optional-dependencies]
+test = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",

@@ -239,6 +239,18 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **The pytest toolchain is now an optional `test` extra, not a runtime
+  dependency (#1673).** `src/klangk/pyproject.toml` moves `pytest`,
+  `pytest-asyncio`, `pytest-cov`, `pytest-xdist`, and `pytest-timeout` out
+  of `dependencies` into `[project.optional-dependencies] test`. A plain
+  `pip install klangk` (or `pip install klangk==<tag>` from PyPI) no longer
+  pulls in pytest + its transitive deps (pluggy, iniconfig, packaging,
+  coverage, execnet — ~a dozen packages / several MB with no runtime role).
+  Dev and CI installs opt in explicitly: `pip install klangk[test]`, or
+  `uv sync --extra test` (the path the devenv shell and `backend-tests.yml`
+  now use). **Integrator action:** if you install `klangk` into an env where
+  you also run the test suite, add the `[test]` extra.
+
 - **`KLANGK_PLUGINS_DIR` is gone from every layer (#1660).** The plugin
   declaration list is now the checked-in `plugins.yaml` at the repo root
   (the build-time source of truth, analogue of a committed `package.json` /
