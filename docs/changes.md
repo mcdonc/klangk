@@ -275,9 +275,11 @@ invitations send` stay email-only (a deliverable address is required);
   user base with on-disk state worth preserving (#1656 wheel publish just
   landed; #1670 first-run generation is the first time a config file even
   exists). Existing dev installs with `~/.config/klangk/cli.yaml` or
-  `~/.local/state/klangk/` DBs need manual relocation; CI / devenv / the
-  host container set `KLANGK_CONFIG_DIR` / `KLANGK_STATE_DIR` explicitly
-  so they're unaffected.
+  `~/.local/state/klangk/` DBs need manual relocation; devenv and the host
+  container set `KLANGK_STATE_DIR` explicitly (so `state_dir` is unaffected),
+  but neither sets `KLANGK_CONFIG_DIR` — the server-side `config_dir` default
+  changes from `klangk` to `klangkd` for those environments too. CI doesn't
+  set either and runs hermetically, so it's unaffected.
 
 - **The pytest toolchain is now an optional `test` extra, not a runtime
   dependency (#1673).** `src/klangk/pyproject.toml` moves `pytest`,

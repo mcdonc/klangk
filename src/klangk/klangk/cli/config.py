@@ -124,7 +124,7 @@ class CLIConfig:
 
 
 def seed_config(server_url: str, user: str | None = None) -> None:
-    """Create cli.yaml with an initial server entry if it doesn't exist."""
+    """Create klangk.yaml with an initial server entry if it doesn't exist."""
     if _CONFIG_PATH.exists():
         return
     parsed = urlparse(server_url)
