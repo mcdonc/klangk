@@ -109,7 +109,12 @@ in
     "klangk:uv-sync" = {
       exec = ''
         cd "$DEVENV_ROOT"
-        uv sync -p "$UV_PYTHON"
+        # --extra test: pull the pytest toolchain (klangk[test]) so the
+        # venv runs the suite. Without it, uv sync installs only the
+        # runtime deps (pytest* live in the ``test`` optional-dependency
+        # extra, #1673) and `devenv test` / `pytest` blow up with
+        # ModuleNotFoundError.
+        uv sync --extra test -p "$UV_PYTHON"
       '';
       after = [ "devenv:python:virtualenv" ];
       before = [ "devenv:enterShell" ];

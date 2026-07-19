@@ -38,7 +38,7 @@ jobs:
         if: steps.filter.outputs.python == 'true'
         # One unified distribution (src/klangk) ships the klangk package
         # (server + CLI). The two unit suites share one --cov gate (#1606).
-        run: pip install -e src/klangk/
+        run: pip install -e 'src/klangk/[test]'
 
       - name: Run tests
         if: steps.filter.outputs.python == 'true'
