@@ -632,6 +632,13 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **`pip install klangk` no longer warns `typer 0.27.0 does not provide the
+extra 'all'`** (#1679). The declaration was `typer[all]>=0.12.0`, but the
+  `all` extra was removed from typer (its constituents `rich`, `shellingham`,
+  `colorama` are now unconditional typer runtime deps — `colorama` only on
+  Windows). Changed to `typer>=0.12.0`; the deps `[all]` used to pull in are
+  still installed transitively, so no functionality is lost.
+
 - **The browser-listener container-source deny no longer false-positives
   behind a trusted proxy co-located on klangk's host** (#1546). The
   `location /` deny (#1376) was an inline `deny <ip>; allow all;` list,
