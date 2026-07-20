@@ -4,7 +4,7 @@ Most Klangk customization is done at **runtime** via environment variables and b
 
 **The only reason to build a custom host image is plugins** (Dart UI plugins require a Flutter web rebuild; TypeScript workspace plugins require a workspace image rebuild). See [Building a Custom Image (Plugins)](#building-a-custom-image-plugins) below.
 
-The [`customize/`](https://github.com/mcdonc/klangk/tree/main/customize) directory in the Klangk repo provides a working example: a `docker-compose.yml` showcasing runtime configuration, and build scripts for the plugins-only custom image path. Copy it and adapt to your needs.
+The [`customize/`](https://github.com/mcdonc/klangk/tree/main/customize) directory in the Klangk repo provides a working example: a `docker-compose.yml` showcasing runtime configuration, and example runtime-customization files under `custom/`. Copy it and adapt to your needs.
 
 ## Runtime Customization
 
@@ -235,40 +235,45 @@ local-dev / customer-locked / team mapping.
 
 A custom image build is needed **only for plugins**. If you don't need plugins, use the stock `klangk-host` image with the runtime customization above.
 
+The plugin declaration list is the checked-in [`plugins.yaml`](https://github.com/mcdonc/klangk/blob/main/plugins.yaml) at the repository root — the build-time source of truth. To ship a different plugin set than stock, **fork the repo and edit that file directly** (the same model `package.json`/`Cargo.toml`/`go.mod` use). There is no separate overlay or build script to maintain.
+
 ### Prerequisites
 
 - [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/)
 - Docker
 - SSH key with access to the git repos listed in `plugins.yaml`
 
-### Directory Layout
+### Fork-and-build workflow
 
-```text
-customize/
-  docker-compose.yml  # Example runtime configuration (all runtime knobs)
-  build/
-    build.sh          # Main build script (run this)
-    plugins.yaml      # Plugin list for the build
-  custom/             # Mounted as KLANGK_CUSTOMIZE_DIR at runtime
-    oidc/
-      oidc.yaml       # Example OIDC provider config (runtime-mounted)
-      login_hook.py   # Example OIDC login hook (runtime-mounted, not baked)
-    certs/
-      cacert.pem      # Example custom CA certificate (runtime-mounted)
-    branding/
-      logo.png        # Example logo served at /branding (runtime-mounted)
-    email-templates/  # Jinja2 email template overrides (runtime-mounted)
-  data/               # Persistent state (bind-mounted, gitignored)
-  mount/              # Workspace bind-mount root (bind-mounted, gitignored)
+```bash
+# 1. Fork klangk on GitHub, clone your fork.
+git clone https://github.com/<your-org>/klangk.git
+cd klangk
+
+# 2. Add plugin source trees under plugins/<name>/ (for local plugins) and
+#    declare every plugin you want compiled in via the checked-in plugins.yaml
+#    at the repo root — same format (local `path:` or remote `git:`/`ref:`
+#    entries).
+$EDITOR plugins.yaml
+
+# 3. Build the host image from source (inside the devenv shell — the
+#    wrapped `build-host-image` script is on PATH there).
+devenv shell -- build-host-image
+
+# Tag the build with a variant identity (surfaced in version.json + debug pane).
+# NOTE: KLANGK_VARIANT is captured at devenv-shell entry (generate-version.sh
+# runs in enterShell), so set it *before* `devenv shell`:
+KLANGK_VARIANT="Acme 1.0.0" devenv shell -- build-host-image
+
+# Publish elsewhere than the default local tag (klangk-host):
+KLANGK_HOST_IMAGE=ghcr.io/<your-org>/klangk-host devenv shell -- build-host-image
 ```
 
-The `custom/` directory is bind-mounted as `KLANGK_CUSTOMIZE_DIR` by
-`docker-compose.yml` — no image rebuild needed. Only `build/` is involved
-in the image build.
+To pull upstream klangk improvements into your custom build, `git pull upstream main` (or `origin main`, depending on how you cloned) from the fork — the plugin declaration and plugin trees merge like any other source file.
 
 ### Plugins
 
-Edit `plugins.yaml` to add or remove plugins. The default set includes the built-in plugins: celebrate, beep, pig-latin, word-count, browser-fetch, bobdobbs.
+Edit the checked-in `plugins.yaml` to add or remove plugins. The default build compiles in the built-in plugins declared there: celebrate, beep, pig-latin, word-count, browser-fetch, boingball, git-credential (soliplex ships compiled-in but dormant — activate it with `KLANGK_FEATURES_ENABLE`, #1664).
 
 To add an external plugin:
 
@@ -281,43 +286,19 @@ plugins:
 
 See the [Creating Plugins](../development/creating-plugins.md) reference for plugin structure details.
 
-### Build
-
-```bash
-cd customize
-./build/build.sh
-
-# Or pin to a specific Klangk release:
-KLANGK_REF=v1.0.1 ./build/build.sh
-
-# Tag the build with a variant identity (surfaced in version.json + debug pane):
-KLANGK_VARIANT="Acme 1.0.0" ./build/build.sh
-```
-
-The resulting image is tagged `ghcr.io/mcdonc/klangk/klangk-host-custom:latest` by default. Override with `KLANGK_HOST_IMAGE`.
-
 ### How the Build Works
 
-The build is a single source build: `build/build.sh` clones klangk at the
-pinned ref, stages `plugins.yaml`, then runs klangk's own
-`scripts/build-host-image.sh` inside a devenv shell. That upstream script
-already embeds the Flutter web build, the workspace tarball, **and** the
-plugin directories — so one build produces the final image with plugins
-baked in. There is no separate overlay, `Dockerfile`, or base-image pass.
-
-The variant string (`KLANGK_VARIANT`, default `custom`) is exported into the
-devenv shell so `generate-version.sh` writes it into the image's
-`version.json` (see [Build Variant](#build-variant) below).
+`scripts/build-host-image.sh` is a single source build: it embeds the Flutter web build, the workspace tarball, **and** the plugin directories declared in `plugins.yaml` — so one build produces the final image with plugins baked in. There is no separate overlay, `Dockerfile`, or base-image pass. Run it via the devenv-wrapped `build-host-image` script (`devenv shell -- build-host-image`); `KLANGK_VARIANT` is captured by `scripts/generate-version.sh` in devenv's `enterShell` hook, so set it (and `KLANGK_HOST_IMAGE`) **before** entering the shell, not on the build command.
 
 ### Build Options
 
-| Variable            | Default                                    | Description                                                                           |
-| ------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------- |
-| `KLANGK_REF`        | `main`                                     | Klangk branch, tag, or commit SHA to build against                                    |
-| `KLANGK_REPO`       | `https://github.com/mcdonc/klangk.git`     | Klangk repo URL                                                                       |
-| `KLANGK_HOST_IMAGE` | `ghcr.io/mcdonc/klangk/klangk-host-custom` | Output image name                                                                     |
-| `KLANGK_VARIANT`    | `custom`                                   | Build identity string written to `version.json` (see [Build Variant](#build-variant)) |
-| `KLANGK_PLATFORM`   | `linux/amd64`                              | Target platform                                                                       |
+The build reads these from the environment (`KLANGK_HOST_IMAGE` / `KLANGK_PLATFORM` by `scripts/build-host-image.sh`; `KLANGK_VARIANT` by `scripts/generate-version.sh` during the build):
+
+| Variable            | Default       | Description                                                                               |
+| ------------------- | ------------- | ----------------------------------------------------------------------------------------- |
+| `KLANGK_HOST_IMAGE` | `klangk-host` | Output image name — a local tag by default; override with a full registry path to publish |
+| `KLANGK_VARIANT`    | _unset_       | Build identity string written to `version.json` (see [Build Variant](#build-variant))     |
+| `KLANGK_PLATFORM`   | `linux/amd64` | Target platform                                                                           |
 
 ### Build Variant
 
@@ -334,16 +315,13 @@ the klangk release (tag/branch/SHA), while `variant` names _this_ downstream
 build. Set it to your product name and release, e.g. `"Acme 1.0.0"`:
 
 ```bash
-KLANGK_VARIANT="Acme 1.0.0" ./build/build.sh
+# KLANGK_VARIANT is read at devenv-shell entry, so set it before `devenv shell`:
+KLANGK_VARIANT="Acme 1.0.0" devenv shell -- build-host-image
 ```
 
-Or edit the `VARIANT` default at the top of `customize/build/build.sh`.
-
 When empty (or unset), the `variant` field is **omitted entirely** from
-`version.json` and the API/debug output — stock klangk builds are byte-identical
-whether the feature exists or not. The `customize/build.sh` template defaults
-it to `"custom"` so a copied template never impersonates upstream klangk; clear
-that default only if you want stock output.
+`version.json` and the API/debug output — so a fork that doesn't set it is
+byte-identical to upstream. Set it only if you want to distinguish your build.
 
 > The variant is a single free-form string (e.g. `"Acme 1.0.0"`). A split into
 > separate name + version fields is a non-goal for now — keep them together in

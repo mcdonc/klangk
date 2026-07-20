@@ -14,7 +14,7 @@ git tag v0.1.1
 git push origin v0.1.1
 ```
 
-This triggers the release workflow, which builds and pushes versioned images. The deployment repo (e.g. `klangk-host-with-plugins`) references the tag via `KLANGK_REF=v0.1.1`.
+This triggers the release workflow, which builds and pushes versioned images. A downstream deployment fork pins a version by checking out the tag (`git checkout v0.1.1`) before building the host image.
 
 Note: do not use `+` in tags — Docker image tags don't allow the `+` character.
 

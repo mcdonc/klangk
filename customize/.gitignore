@@ -1,8 +1,3 @@
-# Build artifacts (the cloned klangk source + staged plugins; created by
-# build/build.sh). Tracked templates live alongside them in build/.
-build/.klangk/
-build/.plugins/
-
 # Local secrets / overrides
 .env
 
