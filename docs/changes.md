@@ -657,6 +657,23 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **Default builds skip the soliplex remote plugin (CI unblock, #1691).**
+  Every PR triggering `klangk:flutter-build` was failing during
+  `flutter pub get`: the soliplex plugin (#1683) pulls `soliplex_client` /
+  `soliplex_agent` from `soliplex/frontend.git`, one of which depends on the
+  **git** source of `ag_ui` (`ag-ui-protocol/ag-ui`) — and that repo has an
+  LFS-tracked fixture (`apps/dojo/e2e/fixtures/test-image.png`) whose object
+  went missing on the remote, breaking every clone's smudge filter.
+  Workaround: `scripts/flutterbuildweb.sh` and
+  `scripts/build-workspace-image.sh` now default to `update_plugins.py
+--local-only`, which skips git-sourced plugins (records them in
+  `plugins.lock` with `sha: 'skipped'`). Soliplex is dormant by default
+  anyway (not in `DEFAULT_FEATURES`), so a default build produces a
+  pre-#1683-equivalent bundle with no ag-ui LFS dependency. Release /
+  single-client builds that need soliplex compiled in opt in with
+  `KLANGK_BUILD_INCLUDE_REMOTE=1`. Proper fix is upstream (consume the
+  hosted `ag_ui` from pub.dev instead of the git repo) — tracked in #1691.
+
 - **`pip install klangk` no longer warns `typer 0.27.0 does not provide the
 extra 'all'`** (#1679). The declaration was `typer[all]>=0.12.0`, but the
   `all` extra was removed from typer (its constituents `rich`, `shellingham`,

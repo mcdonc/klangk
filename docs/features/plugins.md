@@ -133,6 +133,16 @@ harmless on a non-Soliplex install — but they do appear in the tool list.
 Workspace-side gating (filtering extensions per `KLANGK_FEATURES_ENABLE`
 at container entrypoint) is a follow-up, not part of #1664.
 
+**Build-time note (#1691):** soliplex is a remote (`git:`) plugin, and its
+transitive `ag_ui` dep is currently pulled from a git repo with an
+upstream LFS-object gap that breaks every default build. To keep CI green,
+the build scripts (`scripts/flutterbuildweb.sh`,
+`scripts/build-workspace-image.sh`) skip git-sourced plugins by default
+(`update_plugins.py --local-only`). A bare `pip install klangk` therefore
+ships **without soliplex compiled in** until the upstream LFS issue is
+fixed; set `KLANGK_BUILD_INCLUDE_REMOTE=1` at build time to fetch soliplex
+(and other remote plugins) into the bundle.
+
 ## Additional plugins
 
 These plugins ship with klangk but are **not** included in the default
