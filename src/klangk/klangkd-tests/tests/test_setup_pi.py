@@ -70,6 +70,38 @@ class TestWriteSettings:
 
         assert json.loads((agent / "settings.json").read_text()) == existing
 
+    def test_provisions_when_image_has_no_settings(
+        self, tmp_path, monkeypatch
+    ):
+        # An image with no pre-installed npm extensions has no settings.json
+        # in IMAGE_DIR (the file is a side effect of `pi install`). The
+        # setup script must still provision a working settings.json rather
+        # than crash (#1689).
+        home = tmp_path / "home" / "testuser"
+        home.mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("KLANGK_LLM_MODEL", "test-model")
+
+        image_dir = tmp_path / "opt" / "klangk" / "pi-agent"
+        for d in ("extensions", "skills", "prompts", "npm"):
+            (image_dir / d).mkdir(parents=True)
+        # NOTE: deliberately no image_dir / settings.json.
+        monkeypatch.setattr(sc, "IMAGE_DIR", image_dir)
+        monkeypatch.setattr(sc, "ERROR_LOG", tmp_path / "errors.log")
+
+        agent = home / ".pi" / "agent"
+        agent.mkdir(parents=True)
+
+        sc.write_settings()  # must not raise
+
+        settings = json.loads((agent / "settings.json").read_text())
+        assert settings["defaultProvider"] == "llm-proxy"
+        assert settings["defaultModel"] == "test-model"
+        assert settings["defaultThinkingLevel"] == "off"
+        assert settings["extensions"] == [str(image_dir / "extensions")]
+        assert settings["skills"] == [str(image_dir / "skills")]
+        assert settings["prompts"] == [str(image_dir / "prompts")]
+
 
 class TestEnsureSettingsKeys:
     def test_backfills_missing_keys(self, fake_home):

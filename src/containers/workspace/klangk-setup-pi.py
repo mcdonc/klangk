@@ -53,7 +53,16 @@ def write_settings():
     if settings_path.exists():
         return  # don't overwrite user's settings
 
-    image_settings = json.loads((IMAGE_DIR / "settings.json").read_text())
+    # The image's settings.json is emitted by ``pi install`` at build time
+    # (Pi records installed extensions there as a side effect of installing
+    # any npm extension). An image with no pre-installed npm extensions has
+    # no settings.json — start from an empty dict and write the standard
+    # keys below so the agent home is still fully provisioned.
+    image_settings_path = IMAGE_DIR / "settings.json"
+    if image_settings_path.is_file():
+        image_settings = json.loads(image_settings_path.read_text())
+    else:
+        image_settings = {}
     model = os.environ.get("KLANGK_LLM_MODEL", "")
     image_settings["defaultProvider"] = "llm-proxy"
     image_settings["defaultModel"] = model
