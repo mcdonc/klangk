@@ -53,6 +53,19 @@ jobs:
         # gate here (scripts/ isn't part of the klangk package).
         run: python -m pytest scripts/tests/ -v
 
+      - name: deferred-imports check
+        if: steps.filter.outputs.python == 'true'
+        # CI enforcement of the local pre-commit `deferred-imports` hook
+        # (scripts/check_deferred_imports.py). The hook scans the whole
+        # klangk package from any staged .py file, so a single deferred
+        # import landing on main blocks every subsequent .py touch locally
+        # (contributors end up at --no-verify, #1695). CI never ran the
+        # hook, so the breakage was invisible and accumulated. This step
+        # runs the same checker directly — pure stdlib, no deps — so a
+        # regression fails CI instead of silently shipping. Stdlib import,
+        # the checker prints `file:line: deferred import: ...` to stderr.
+        run: python3 scripts/check_deferred_imports.py src/klangk/klangk src/klangk/klangk/cli
+
       - name: Skip notice
         if: steps.filter.outputs.python != 'true'
         run: echo "No Python package changes — skipping tests"
