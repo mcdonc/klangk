@@ -500,6 +500,13 @@ set-password <email>` (set a known password for the default user — whose
   top-level `invite`/`invitations` commands moved under `admin invitations`.
 - **`klangk status`** now reports your user id and admin status (derived
   from `/my-permissions`).
+- **`KLANGKC_DEBUG_SSH_AGENT` env var (#1522):** the debug-only knob that
+  enabled verbose `[ssh-agent]` logging on the backend (`SshAgentForwarder`)
+  and CLI (the local agent relay) is gone, along with the `log_stderr()`
+  socat-stderr relay it spawned and the `~/.local/state/klangk/klangk-ssh-agent.log`
+  file handler the CLI wrote. The SSH agent forwarding feature itself is
+  unchanged; only the debug scaffolding is removed. The name was also wrong
+  (`KLANGKC_` is the CLI prefix, but the backend read it too).
 
 ### Breaking
 

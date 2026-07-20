@@ -135,9 +135,6 @@ class Connection:
     async def _forward_ssh_agent_output(self) -> None:
         await self.ssh_agent.forward_output()
 
-    async def _log_ssh_agent_stderr(self) -> None:
-        await self.ssh_agent.log_stderr()
-
     # --- Terminal sessions (delegates to TerminalController) ---
 
     # Backwards-compatible proxies for the state formerly held on

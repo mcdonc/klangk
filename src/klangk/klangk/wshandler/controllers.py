@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-import os
 import time
 from typing import TYPE_CHECKING
 
@@ -50,7 +49,6 @@ class SshAgentForwarder:
 
     async def start(self) -> None:
         """Start SSH agent forwarding via socat inside the container."""
-        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
         container_id = self._conn.container_id
         if not container_id:
             send_error(
@@ -65,8 +63,6 @@ class SshAgentForwarder:
         await self._conn.app.state.podman.exec_container(
             container_id, ["rm", "-f", sock_path]
         )
-        if _debug_agent:
-            logger.info("[ssh-agent] starting socat at %s", sock_path)
         # Start socat: listen on the Unix socket, relay to stdin/stdout.
         proc = await asyncio.create_subprocess_exec(
             self._conn.app.state.podman.bin,
@@ -78,15 +74,11 @@ class SshAgentForwarder:
             "STDIO",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-            if _debug_agent
-            else asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         self.proc = proc
         self.socket = sock_path
         self.task = asyncio.create_task(self.forward_output())
-        if _debug_agent and proc.stderr is not None:
-            asyncio.create_task(self.log_stderr())
         self._conn.sock.send_json(
             {
                 "type": "ssh_agent_started",
@@ -99,25 +91,8 @@ class SshAgentForwarder:
             sock_path,
         )
 
-    async def log_stderr(self) -> None:
-        """Log socat stderr when KLANGKC_DEBUG_SSH_AGENT is set."""
-        proc = self.proc
-        if proc is None or proc.stderr is None:
-            return
-        try:
-            while True:
-                line = await proc.stderr.readline()
-                if not line:
-                    break
-                logger.info(
-                    "[ssh-agent] socat stderr: %s", line.decode().rstrip()
-                )
-        except (asyncio.CancelledError, OSError):
-            pass
-
     async def forward_output(self) -> None:
         """Read from socat stdout and send to the CLI as ssh_agent_response."""
-        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
         proc = self.proc
         if proc is None or proc.stdout is None:
             return
@@ -125,13 +100,7 @@ class SshAgentForwarder:
             while True:
                 data = await proc.stdout.read(65536)
                 if not data:
-                    if _debug_agent:
-                        logger.info("[ssh-agent] socat stdout EOF")
                     break
-                if _debug_agent:
-                    logger.info(
-                        "[ssh-agent] socat stdout: %d bytes", len(data)
-                    )
                 self._conn.sock.send_json(
                     {
                         "type": "ssh_agent_response",
@@ -145,23 +114,12 @@ class SshAgentForwarder:
 
     async def data(self, msg: dict) -> None:
         """Write data from the CLI's local agent into socat stdin."""
-        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
         proc = self.proc
         if proc is None or proc.stdin is None:
-            if _debug_agent:
-                logger.info(
-                    "[ssh-agent] data received but no proc (proc=%s)",
-                    proc,
-                )
             return
         raw = msg.get("data", "")
         if raw:
             decoded = base64.b64decode(raw)
-            if _debug_agent:
-                logger.info(
-                    "[ssh-agent] writing %d bytes to socat stdin",
-                    len(decoded),
-                )
             proc.stdin.write(decoded)
             await proc.stdin.drain()
 
