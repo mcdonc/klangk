@@ -3167,13 +3167,18 @@ class TestSshAgentForwarder:
                 new=AsyncMock(return_value=mock_proc),
             ),
         ):
-            async with self._track_tasks():
+            async with self._track_tasks() as tasks:
                 await fwd.start()
                 # Let the forward_output task run to completion.
                 for _ in range(5):
                     await asyncio.sleep(0)
         assert fwd.proc is mock_proc
         assert fwd.socket == "/tmp/klangk-ssh-agent-uid.sock"
+        # start() must wire up the forward_output relay as a background task.
+        assert any(
+            t.get_coro().__qualname__ == "SshAgentForwarder.forward_output"
+            for t in tasks
+        )
         msg = sock.send_json.call_args[0][0]
         assert msg["type"] == "ssh_agent_started"
         assert msg["socket"] == "/tmp/klangk-ssh-agent-uid.sock"
