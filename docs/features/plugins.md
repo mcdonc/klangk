@@ -80,9 +80,9 @@ These plugins are included in the default `plugins.yaml`:
 | ---------------- | --------------------------------------------------------- |
 | `git-credential` | Git credential helper with browser-based PAT/OAuth dialog |
 | `word-count`     | File stats tool for Pi (lines, words, characters, size)   |
-| `pig-latin`      | Text-to-Pig-Latin converter for Pi                        |
 | `celebrate`      | Triggers confetti animation in the browser via Pi         |
 | `beep`           | Plays an audible beep via Web Audio API                   |
+| `bobdobbs`       | Bob "J.R." Dobbs quote overlay via Pi                     |
 | `browser-fetch`  | HTTP fetch using browser session cookies via Pi           |
 | `boingball`      | Bouncing Boing Ball animation overlay via Pi              |
 
@@ -93,8 +93,10 @@ active set** — a bare install builds them in, but `KLANGK_FEATURES_ENABLE`
 unset (→ the manifest's `defaults` list) leaves them inactive in the
 **frontend**. Operators opt in at activation time. This is the "compiled-in ⊋
 defaults" pattern from
-[#1655](https://github.com/mcdonc/klangk/issues/1655): today compiled-in ==
-defaults (the 7 above); dormant features make compiled-in a strict superset.
+[#1655](https://github.com/mcdonc/klangk/issues/1655): `word-count` and
+`soliplex` are compiled in but not in the defaults list, so today compiled-in is
+a strict superset of `DEFAULT_FEATURES` (the 6: beep, bobdobbs, boingball,
+browser-fetch, celebrate, git-credential).
 
 | Feature    | Source                                                                                                                                                                                                     | Activate                                   |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
@@ -115,7 +117,7 @@ an explicit `KLANGK_FEATURES_ENABLE` is the **exact** active list, not
 additive, so listing only `soliplex` would deactivate the stock tools):
 
 ```bash
-KLANGK_FEATURES_ENABLE=celebrate,beep,pig-latin,word-count,browser-fetch,boingball,git-credential,soliplex
+KLANGK_FEATURES_ENABLE=celebrate,beep,bobdobbs,word-count,browser-fetch,boingball,git-credential,soliplex
 ```
 
 See [the `KLANGK_FEATURES_ENABLE` docs](../reference/environment.md) for the
@@ -151,5 +153,5 @@ These plugins ship with klangk but are **not** included in the default
 | Plugin        | What it does                                                                       |
 | ------------- | ---------------------------------------------------------------------------------- |
 | `claude-code` | Installs Claude Code CLI agent at image build time                                 |
-| `bobdobbs`    | Bob Dobbs overlay via Pi                                                           |
 | `herdr`       | Installs herdr (terminal-based agent runtime) and sets up its per-shell API socket |
+| `pig-latin`   | Text-to-Pig-Latin converter for Pi                                                 |

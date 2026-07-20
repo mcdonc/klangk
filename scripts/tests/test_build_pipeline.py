@@ -46,7 +46,7 @@ import update_plugins
 EXPECTED_FEATURE_NAMES = {
     "celebrate",
     "beep",
-    "pig-latin",
+    "bobdobbs",
     "word-count",
     "browser-fetch",
     "boingball",
@@ -61,18 +61,19 @@ EXPECTED_FEATURE_NAMES = {
 REMOTE_FEATURE_NAMES = {"soliplex"}
 
 # Plugins with a klangk/ Dart package → class names emitted into the
-# generated aggregator. Plugins without klangk/ (pig-latin, word-count,
-# browser-fetch) are TS-only and must NOT appear in the Dart aggregator.
+# generated aggregator. Plugins without klangk/ (word-count, browser-fetch)
+# are TS-only and must NOT appear in the Dart aggregator.
 EXPECTED_DART_PLUGINS = {
     "celebrate": "CelebratePlugin",
     "beep": "BeepPlugin",
+    "bobdobbs": "BobDobbsPlugin",
     "boingball": "BoingBallPlugin",
     "git-credential": "GitCredentialPlugin",
 }
 
 # The subset that appears in features.json's features[] list. import_dart_plugins
 # only carries features with a klangk/ Dart package (the frontend-activatable
-# set). TS-only plugins (pig-latin, word-count, browser-fetch) are baked into
+# set). TS-only plugins (word-count, browser-fetch) are baked into
 # the workspace image and always-on — they never appear in features.json.
 # This is the wheel/workspace activation asymmetry from #1655.
 EXPECTED_DART_FEATURE_NAMES = set(EXPECTED_DART_PLUGINS)
@@ -286,10 +287,10 @@ class TestManifestContract:
     def test_defaults_are_default_features_constant(self, tmp_path, monkeypatch):
         """The manifest's defaults list == DEFAULT_FEATURES in
         import_dart_plugins.py — the build-time constant. This is the full
-        conceptual default-on set (7 today), which is a SUPERSET of features[]
-        (4 Dart plugins): the extra names are TS-only features that are
-        always-on in the workspace image and harmlessly ignored by the
-        frontend's Dart-only active-set filter (#1655 asymmetry)."""
+        conceptual default-on set (6 today), a SUPERSET of the default-on Dart
+        features (5): the extra name is the TS-only browser-fetch, always-on in
+        the workspace image and harmlessly ignored by the frontend's Dart-only
+        active-set filter (#1655 asymmetry)."""
         manifest = self._build_manifest(tmp_path, monkeypatch)
         assert manifest["defaults"] == list(import_dart_plugins.DEFAULT_FEATURES)
 
@@ -310,8 +311,8 @@ class TestManifestContract:
             f"Unexpected dormant features (not in defaults and not declared "
             f"dormant): {dormant - REMOTE_FEATURE_NAMES}"
         )
-        # The default-on Dart features are exactly the stock set (the 4 local
-        # Dart plugins — celebrate, beep, boingball, git-credential).
+        # The default-on Dart features are exactly the stock set (the 5 local
+        # Dart plugins — celebrate, beep, boingball, git-credential, bobdobbs).
         default_on_dart = feature_names & defaults
         assert default_on_dart == set(EXPECTED_DART_PLUGINS), (
             f"Default-on Dart features drifted: {sorted(default_on_dart)}"
@@ -428,8 +429,10 @@ class TestRemotePluginCodegen:
             f"feature that needs a Soliplex server to be useful. "
             f"defaults={manifest['defaults']}"
         )
-        # Defaults stay at the stock 7.
-        assert set(manifest["defaults"]) == EXPECTED_FEATURE_NAMES
+        # Defaults stay exactly DEFAULT_FEATURES (the stock 6) — soliplex is
+        # dormant, and word-count is now dormant too (#1700), so defaults is no
+        # longer == EXPECTED_FEATURE_NAMES.
+        assert set(manifest["defaults"]) == set(import_dart_plugins.DEFAULT_FEATURES)
 
     def test_remote_plugin_dart_aggregator_record(self, tmp_path, monkeypatch):
         """createAllNamedPlugins() emits a (name, plugin) record for soliplex.

@@ -297,6 +297,17 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **Default active-feature set is now `beep, bobdobbs, boingball,
+browser-fetch, celebrate, git-credential` (#1700).** `DEFAULT_FEATURES`
+  (`scripts/import_dart_plugins.py`) now ships `bobdobbs` (a compiled-in Dart
+  plugin promoted from the optional set) and drops `pig-latin` and `word-count`
+  from the default-on list. `plugins.yaml` is aligned: `bobdobbs` is added and
+  `pig-latin` removed entirely (no longer compiled in — its source tree stays
+  in the repo as an opt-in `path:` entry); `word-count` stays compiled in but is
+  now dormant (activate with `KLANGK_FEATURES_ENABLE=word-count`). This breaks
+  the prior "compiled-in == defaults" invariant — `word-count` joins `soliplex`
+  as a compiled-in-but-dormant feature.
+
 - **CLI config/state files renamed + relocated onto the XDG trees; server's
   XDG subdir is now `klangkd` (#1646).** The CLI's two files move:
   `cli.yaml` → `~/.config/klangk/klangk.yaml` (read via the `XDG_CONFIG_HOME`
