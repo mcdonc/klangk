@@ -430,7 +430,7 @@ class TestConfig:
                             "version": "1.0.0",
                             "description": "",
                             "config": {
-                                "MY_PLUGIN_VAR": {
+                                "KLANGK_FEATURE_MY_PLUGIN_VAR": {
                                     "description": "",
                                     "default": "",
                                     "scope": "frontend",
@@ -454,10 +454,12 @@ class TestConfig:
                 )
             )
         )
-        monkeypatch.setenv("MY_PLUGIN_VAR", "test-value")
+        monkeypatch.setenv("KLANGK_FEATURE_MY_PLUGIN_VAR", "test-value")
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
+        # KLANGK_FEATURE_MY_PLUGIN_VAR → lowercased suffix `my_plugin_var`
+        # (#1662: strip prefix + lowercase suffix for /api/config keys).
         assert data["my_plugin_var"] == "test-value"
 
     async def test_get_config_includes_features_enable_when_set(

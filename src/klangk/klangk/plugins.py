@@ -20,7 +20,7 @@ per-feature metadata (the frontend owns that).
         ...
       ],
       "defaults": ["celebrate", "beep", ...],
-      "container_env_keys": ["KLANGK_GITHUB_OAUTH_CLIENT_ID", ...]
+      "container_env_keys": ["KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID", ...]
     }
 
 Values for the declared keys are resolved via :func:`resolve_dynamic_config`
@@ -43,6 +43,38 @@ logger = logging.getLogger(__name__)
 # Mirrors _CONTAINER_SCOPES in scripts/import_dart_plugins.py.
 _CONTAINER_SCOPES = {"container", "both"}
 _FRONTEND_SCOPES = {"frontend", "both"}
+
+# Every klangk.config key a plugin declares for the container env bridge
+# (scope container/both) must start with this prefix. Server-side settings
+# are all ``KLANGK_<SETTING>`` (no ``FEATURE_`` infix), so the prefix alone
+# guarantees a plugin can never declare a key that collides with a server
+# secret, path, or infra field (``KLANGK_JWT_SECRET``, ``KLANGK_DATA_DIR``, …)
+# — no denylist / reserved-set needed, and nothing to keep in sync between
+# this file and the build emitter (#1662). Non-KLANGK_ environment poison
+# (``PATH``, ``HOME``, ``LD_PRELOAD``, …) is rejected by the same rule.
+# Mirrors _CONTAINER_ENV_KEY_PREFIX in scripts/import_dart_plugins.py.
+_CONTAINER_ENV_KEY_PREFIX = "KLANGK_FEATURE_"
+
+# Features.json is a build artifact shipped in the wheel — not attacker-
+# controlled at runtime — but cap its read size as defense-in-depth against
+# a buggy build emitting a runaway structure (#1662). The real manifest is
+# ~1KB for 7 features; 1MB is a generous ceiling that still rejects any
+# pathological growth.
+_MAX_MANIFEST_BYTES = 1024 * 1024
+
+
+def is_valid_container_env_key(key: str) -> bool:
+    """True if *key* is a safe container-env declaration.
+
+    Must start with :data:`_CONTAINER_ENV_KEY_PREFIX` (``KLANGK_FEATURE_``).
+    That prefix is the feature-config namespace; every server setting is
+    ``KLANGK_<SETTING>`` (no ``FEATURE_`` infix), so the prefix alone keeps
+    plugin-declared container env vars from ever colliding with a server
+    secret / path / infra field — no reserved-set / denylist required (#1662).
+    Used by both the runtime resolver (here) and re-implemented by the build
+    emitter (``import_dart_plugins.py``).
+    """
+    return key.startswith(_CONTAINER_ENV_KEY_PREFIX)
 
 
 class Plugins:
@@ -81,9 +113,24 @@ class Plugins:
 
     def _read_manifest(self) -> dict:
         """Read + parse features.json. Empty dict on any failure (missing
-        file, bad JSON) — callers degrade to empty feature/env lists."""
+        file, bad JSON, oversize). Callers degrade to empty feature/env lists.
+
+        Size-capped at :data:`_MAX_MANIFEST_BYTES` as defense-in-depth against
+        a buggy build emitting a runaway structure (#1662)."""
         path = self._features_path
         try:
+            if (
+                os.path.isfile(path)
+                and os.path.getsize(path) > _MAX_MANIFEST_BYTES
+            ):
+                logger.warning(
+                    "features.json at %s is %d bytes (cap %d) — ignoring "
+                    "manifest, degrading to empty feature/env lists",
+                    path,
+                    os.path.getsize(path),
+                    _MAX_MANIFEST_BYTES,
+                )
+                return {}
             with open(path) as f:
                 data = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError):
@@ -123,10 +170,24 @@ class Plugins:
         for feature secrets). The value source today is the server's env;
         #1659 adds a ``features_config:`` block in ``klangkd.yaml`` as an
         additional source.
+
+        Defense-in-depth (#1662): even though the build layer refuses to
+        emit reserved/non-KLANGK_ keys, this runtime guard skips them too —
+        a stale or older manifest shipping with a newer server must not
+        leak ``KLANGK_JWT_SECRET`` etc. into a container. A skipped key is
+        logged at warning level so a misbuilt manifest is visible.
         """
         result: dict[str, str] = {}
         for key in self._manifest.get("container_env_keys", []):
             if not isinstance(key, str):
+                continue
+            if not is_valid_container_env_key(key):
+                logger.warning(
+                    "features.json container_env_keys lists %r — refusing "
+                    "to resolve (missing KLANGK_FEATURE_ prefix); "
+                    "skipping. Rebuild with a corrected plugin.",
+                    key,
+                )
                 continue
             result[key] = resolve_dynamic_config(key, "") or ""
         return result
@@ -134,8 +195,13 @@ class Plugins:
     def frontend_config(self) -> dict[str, str]:
         """Return config entries for the ``GET /api/config`` response.
 
-        Keys are lowercased for JSON convention (e.g. ``SOLIPLEX_URL`` →
-        ``soliplex_url``). The shape (which keys exist, descriptions,
+        Keys are the lowercased **suffix** after ``KLANGK_FEATURE_``
+        (e.g. ``KLANGK_FEATURE_BOING_SPEED`` → ``boing_speed``). Declared
+        keys that don't carry the ``KLANGK_FEATURE_`` prefix are skipped —
+        the prefix is the plugin-config namespace (#1662): it keeps
+        plugin-declared config from colliding with server settings
+        (``KLANGK_<SETTING>``) and gives the frontend a stable, un-prefixed
+        JSON key shape. The shape (which keys exist, descriptions,
         defaults) is read from the per-feature ``config`` blocks in
         ``features.json``; the values are resolved server-side via
         :func:`resolve_dynamic_config` so the frontend doesn't need access
@@ -154,10 +220,23 @@ class Plugins:
                 scope = spec.get("scope", "container")
                 if scope not in _FRONTEND_SCOPES:
                     continue
+                if not isinstance(key, str) or not key.startswith(
+                    _CONTAINER_ENV_KEY_PREFIX
+                ):
+                    logger.warning(
+                        "features.json frontend-scope config key %r — "
+                        "missing KLANGK_FEATURE_ prefix; skipping. Rebuild "
+                        "with a corrected plugin.",
+                        key,
+                    )
+                    continue
                 default = spec.get("default", "")
-                result[key.lower()] = (
-                    resolve_dynamic_config(key, default) or ""
-                )
+                # Strip the KLANGK_FEATURE_ prefix and lowercase the suffix
+                # for the JSON key (e.g. KLANGK_FEATURE_BOING_SPEED →
+                # boing_speed). The prefix is enforced above; the suffix is
+                # the plugin-owned name, surfaced un-prefixed to the frontend.
+                json_key = key[len(_CONTAINER_ENV_KEY_PREFIX) :].lower()
+                result[json_key] = resolve_dynamic_config(key, default) or ""
         return result
 
     def features_enable(self) -> str | None:

@@ -73,7 +73,7 @@ organization has approved the app.
 
 The device flow only activates when all of these are true:
 
-- `KLANGK_GITHUB_OAUTH_CLIENT_ID` is set in the container environment
+- `KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID` is set in the container environment
 - The git host is `github.com` (or `www.github.com`)
 - A browser tab is connected (the helper needs to show the code)
 
@@ -141,7 +141,7 @@ create a GitHub OAuth App and set one environment variable.
 7. Set the environment variable in your deployment:
 
    ```sh
-   KLANGK_GITHUB_OAUTH_CLIENT_ID=Ov23li...
+   KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID=Ov23li...
    ```
 
 8. Rebuild the workspace image so the variable is injected into
@@ -151,7 +151,7 @@ create a GitHub OAuth App and set one environment variable.
 **Important**: this must be an **OAuth App**, not a GitHub App. The
 device authorization grant is only available on OAuth Apps.
 
-If `KLANGK_GITHUB_OAUTH_CLIENT_ID` is not set, the device flow is
+If `KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID` is not set, the device flow is
 disabled and the PAT dialog is used for all hosts.
 
 ## Credential cache
@@ -201,8 +201,8 @@ HTTPS with PATs or OAuth is the recommended authentication method.
 
 ### Device flow not activating
 
-- Verify `KLANGK_GITHUB_OAUTH_CLIENT_ID` is set in the container
-  environment (check with `echo $KLANGK_GITHUB_OAUTH_CLIENT_ID` in the
+- Verify `KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID` is set in the container
+  environment (check with `echo $KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID` in the
   workspace terminal).
 - Check that the OAuth App has **Enable Device Flow** turned on.
 - The device flow only activates for `github.com` hosts.

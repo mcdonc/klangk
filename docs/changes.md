@@ -583,6 +583,28 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Breaking
 
+- **Plugin-declared config keys must now start with `KLANGK_FEATURE_`**
+  (#1662). The prefix is the plugin-config namespace: every server setting
+  is `KLANGK_<SETTING>` (no `FEATURE_` infix), so the prefix alone guarantees
+  a plugin can never declare a key that collides with a server secret, path,
+  or infra field (`KLANGK_JWT_SECRET`, `KLANGK_DATA_DIR`, …) — no denylist /
+  reserved set needed. Non-`KLANGK_FEATURE_` environment poison (`PATH`,
+  `HOME`, `LD_PRELOAD`, …) is rejected by the same rule. Enforced at both
+  layers: the build emitter (`import_dart_plugins.py`) raises on an
+  unprefixed key, and the runtime resolver (`klangk.plugins`) skips one in
+  a stale manifest with a warning. **Existing plugins must rename their
+  declared keys:** `KLANGK_GITHUB_OAUTH_CLIENT_ID` →
+  `KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID` (git-credential),
+  `KLANGK_BOING_SPEED` → `KLANGK_FEATURE_BOING_SPEED` (boingball). The
+  container env var keeps the full prefixed name
+  (`KLANGK_FEATURE_*=<value>`); the frontend `/api/config` key is the
+  lowercased suffix after the prefix (e.g. `boing_speed=2.5`, not
+  `klangk_feature_boing_speed=2.5`). Operators who set the renamed env
+  vars must update their config. **Blocked on #1686:** the remote soliplex
+  v0.4 plugin still declares the unprefixed `SOLIPLEX_URL`; this change
+  must land together with (or after) #1686, which vendors + renames
+  soliplex.
+
 - **`KLANGK_PLUGINS_DIR` retires as a runtime setting (#1655).** The
   runtime no longer scans `$KLANGK_PLUGINS_DIR/*/package.json` for plugin
   config — that presumed materialized source trees on the klangkd host,
