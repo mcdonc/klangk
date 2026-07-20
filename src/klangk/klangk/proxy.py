@@ -38,6 +38,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 logger = logging.getLogger(__name__)
@@ -409,11 +410,36 @@ class ProxyRenderer:
           on hosts with no IPv6 egress, attempting the AAAA address produces
           ``connect() ... failed (Network is unreachable)`` noise (and a
           failed first attempt before the A fallback) (#1682).
+
+        The location regex ``^/llm-proxy/(.*)$`` matches against ``$uri``
+        (path only), so ``$1`` is the path the container user requested —
+        the incoming request's query string never reaches ``$1``. The
+        load-bearing reason the user query is dropped, though, is that
+        ``proxy_pass`` with a *variable* argument (``$llm_backend``) does
+        not auto-append ``$args`` — a fixed ``proxy_pass`` would. The
+        regex capture being path-only is necessary but not sufficient.
+        Together they implement the trust-boundary rule: the base URL is
+        operator config and is the only source of upstream query params
+        (#1687). A base query (Gemini-style ``?key=...`` auth, documented
+        but discouraged by Google; the OpenAI Python client also preserves
+        hardcoded query params on ``base_url`` — openai/openai-python@73ea2f7)
+        is reassembled AFTER ``$1`` so the final upstream URL is
+        ``{scheme}://{host}{path}/$1?{query}``.
         """
         base_url = self._app.state.settings.llm_base_url
         if not base_url:
             return ""
         api_key = self._app.state.settings.llm_api_key
+        # Reassemble so a base query (if any) lands AFTER $1 rather than
+        # being strung into the path. ``urlsplit(base_url).geturl()`` would
+        # round-trip the query mid-URL; instead, strip the query here and
+        # append it explicitly after ``$1``.
+        parts = urlsplit(base_url)
+        base_without_query = parts._replace(query="").geturl()
+        if parts.query:
+            set_value = f"{base_without_query}/$1?{parts.query}"
+        else:
+            set_value = f"{base_without_query}/$1"
         return (
             f"    location ~ ^/llm-proxy/(.*)$ {{\n"
             f"{acl}\n"
@@ -421,7 +447,7 @@ class ProxyRenderer:
             "      auth_request_set $auth_token_error $upstream_http_x_token_error;\n"
             "      error_page 401 = @token_auth_failed;\n"
             f"      resolver {resolvers} valid=30s ipv6=off;\n"
-            f"      set $llm_backend {base_url}/$1;\n"
+            f"      set $llm_backend {set_value};\n"
             "      proxy_pass $llm_backend;\n"
             f'      proxy_set_header Authorization "Bearer {api_key}";\n'
             "      proxy_set_header Host $proxy_host;\n"

@@ -346,13 +346,14 @@ class CaddyRenderer:
         if not base_url:
             return ""
         api_key = self.app.state.settings.llm_api_key
-        # Split scheme://host[:port] from any path component. trailing slash
-        # is stripped so concatenation with {uri} (which begins with /)
-        # doesn't double it: base_path "" + {uri} "/x" -> "/x"; base_path
-        # "/v4" + {uri} "/chat" -> "/v4/chat".
+        # Split scheme://host[:port] from path and query. Trailing slash is
+        # stripped from the path so concatenation with {http.request.uri.path}
+        # (which begins with /) doesn't double it: base_path "" + path "/x"
+        # -> "/x"; base_path "/v4" + path "/chat" -> "/v4/chat".
         parts = urlsplit(base_url)
         upstream_url = f"{parts.scheme}://{parts.netloc}"
         base_path = parts.path.rstrip("/")
+        base_query = parts.query
         # ``handle_path /llm-proxy/*`` is the caddy directive that both
         # matches the path AND strips the prefix atomically before any
         # subsequent directive in the same block reads {uri}. A plain
@@ -361,12 +362,28 @@ class CaddyRenderer:
         # handlers, so the rewrite sees the un-stripped {uri} and emits
         # /api/coding/paas/v4/llm-proxy/chat. nginx's regex capture
         # (``location ~ ^/llm-proxy/(.*)$``) does strip+substitute in one
-        # directive; handle_path is the caddy equivalent. With no base
-        # path, handle_path's strip alone leaves {uri} as the upstream
-        # path and no rewrite is needed.
-        path_fix = (
-            f"		rewrite * {base_path}{{uri}}\n" if base_path else ""
-        )
+        # directive; handle_path is the caddy equivalent.
+        #
+        # The rewrite uses {http.request.uri.path} (path only), NOT {uri}
+        # (path + query) — the base URL is trusted operator config and is
+        # the only source of upstream query params; the container user's
+        # per-request query is untrusted and is dropped (#1687). The base
+        # query, if present, is re-attached after the path (Gemini-style
+        # ?key=... auth, documented but discouraged by Google on security
+        # grounds; the OpenAI Python client also preserves hardcoded
+        # query params on base_url, openai/openai-python@73ea2f7).
+        #
+        # CRITICAL: the rewrite target MUST carry a query component
+        # (even an empty one) so caddy treats it as query-REPLACING rather
+        # than query-PRESERVING. A bare ``rewrite * {path}`` with no ``?``
+        # leaves the incoming request's query intact — verifiable live:
+        # POST /llm-proxy/chat?user=evil with a no-base-query config
+        # forwards ``/chat?user=evil`` to the upstream, leaking the
+        # container user's query. Appending ``?{base_query}`` (which
+        # expands to ``?`` when base_query is empty) drops the user query
+        # in both cases. (Discovered in review of #1696.)
+        target = f"{base_path}{{http.request.uri.path}}?{base_query}"
+        path_fix = f"		rewrite * {target}\n"
         return (
             "	handle_path /llm-proxy/* {\n"
             f"{guard}"
