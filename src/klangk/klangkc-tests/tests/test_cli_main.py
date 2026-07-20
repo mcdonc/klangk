@@ -336,6 +336,130 @@ class TestMainCLI:
             ".local/state/klangkd/klangk.sock"
         )
 
+        # An explicit plain absolute KLANGK_SOCKET is honored verbatim —
+        # the server binds exactly there and skips the state_dir default.
+        monkeypatch.setenv("KLANGK_SOCKET", "/run/klangk.sock")
+        assert main._default_server_uds_path() == "/run/klangk.sock"
+
+        # file:/cmd: indirections can't be resolved client-side and must
+        # fall through to the state_dir-derived default.
+        for indirect in ("file:/etc/klangk/socket", "cmd:cat /etc/socket"):
+            monkeypatch.setenv("KLANGK_SOCKET", indirect)
+            assert main._default_server_uds_path().endswith(
+                ".local/state/klangkd/klangk.sock"
+            )
+        monkeypatch.delenv("KLANGK_SOCKET", raising=False)
+
+    def test_server_url_falls_back_to_klangk_socket(
+        self, tmp_path, monkeypatch
+    ):
+        """A plain absolute KLANGK_SOCKET is used when it exists (#1676)."""
+        import socket as _socket
+
+        from klangk.cli import main
+
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        config_path.write_text("")
+        CLIState().save()
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))  # ensure default
+        # path is absent so only KLANGK_SOCKET could resolve
+        sock_path = tmp_path / "relocated.sock"
+        srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        srv.bind(str(sock_path))
+        monkeypatch.setenv("KLANGK_SOCKET", str(sock_path))
+        try:
+            assert main.server_url() == str(sock_path)
+        finally:
+            srv.close()
+
+    def test_server_url_active_server_beats_default_uds(
+        self, tmp_path, monkeypatch
+    ):
+        """active-server wins even when the default UDS exists."""
+        import socket as _socket
+
+        from klangk.cli import main
+
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        config_path.write_text("")
+        # Bind a default UDS so the fallback *would* fire …
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        sock_dir = tmp_path / "klangkd"
+        sock_dir.mkdir()
+        srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        srv.bind(str(sock_dir / "klangk.sock"))
+        # … but an active-server is set and must win.
+        CLIState(active_server="http://elsewhere:8995").save()
+        try:
+            assert main.server_url() == "http://elsewhere:8995"
+        finally:
+            srv.close()
+
+    def test_server_url_override_beats_default_uds(
+        self, tmp_path, monkeypatch
+    ):
+        """--server override wins even when the default UDS exists."""
+        import socket as _socket
+
+        from klangk.cli import main
+
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        config_path.write_text("")
+        CLIState().save()
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        sock_dir = tmp_path / "klangkd"
+        sock_dir.mkdir()
+        srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        srv.bind(str(sock_dir / "klangk.sock"))
+        main._server_override = "http://override:9999"
+        try:
+            assert main.server_url() == "http://override:9999"
+        finally:
+            srv.close()
+
+    def test_require_auth_stale_uds_says_unreachable(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """An unreachable UDS reports a connect error, not 'Not logged in'
+        (#1676 — stale default socket left by a crashed klangkd)."""
+        import typer
+
+        from klangk.cli import main
+        from klangk.cli.auth import _UNREACHABLE
+
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        config_path.write_text("")
+        CLIState().save()  # no token
+        # Resolve to a UDS path without relying on disk existence: the
+        # --server override bypasses server_url()'s exists() gate.
+        stale = str(tmp_path / "stale.sock")
+        main._server_override = stale
+        monkeypatch.setattr(
+            "klangk.cli.main.fetch_config", lambda url: _UNREACHABLE
+        )
+
+        with pytest.raises(typer.Exit):
+            main.require_auth()
+        err = capsys.readouterr().err
+        assert "Cannot connect to klangkd" in err
+        assert "is it running" in err
+        assert "Not logged in" not in err
+        # Rich wraps the stderr line at the capture width, so normalize
+        # newlines before checking the path is rendered.
+        assert stale in err.replace("\n", "")
+
     def test_app_callback_resolves_server_alias(self, tmp_path, monkeypatch):
         from klangk.cli import main
 

@@ -35,6 +35,7 @@ from .auth import (
     login,
     logout as do_logout,
     refresh_token,
+    _UNREACHABLE,
 )
 from .client import (
     AuthError,
@@ -51,7 +52,7 @@ from .client import (
     reset_terminal,
     _server_mode_is_none,
 )
-from .config import CLIConfig, CLIState, seed_config
+from .config import CLIConfig, CLIState, seed_config, _xdg_state_home
 from .mount import validate_mount_spec
 from .transport import ws_connect
 from .sandbox import (
@@ -88,6 +89,15 @@ def _state() -> CLIState:
 
 _server_override: str | None = None
 
+# Server-side XDG subdir + socket filename, mirrored from
+# ``settings.py`` (``_XDG_SUBDIR = "klangkd"``; socket =
+# ``<state_dir>/klangk.sock``) so the CLI can locate a co-located
+# ``klangkd``'s default UDS without importing from the server package
+# (``klangk.cli`` isolation rule). Named constants make the mirroring
+# grep-able if the server renames either.
+_SERVER_XDG_SUBDIR = "klangkd"
+_SOCKET_NAME = "klangk.sock"
+
 
 @app.callback()
 def app_callback(
@@ -104,23 +114,33 @@ def _default_server_uds_path() -> str:
     """Return the UDS path a co-located ``klangkd`` binds by default.
 
     Mirrors the server's derivation so a single-host ``klangkd`` +
-    ``klangk`` works with no ``klangk login`` step (#1676): the backend
-    derives ``state_dir`` from ``KLANGK_STATE_DIR`` (env) or
-    ``$XDG_STATE_HOME/klangkd`` (→ ``~/.local/state/klangkd``) and binds
-    ``<state_dir>/klangk.sock`` (``settings._resolve_socket_and_ports``).
-    Replicated here — not imported — because ``klangk.cli`` runs in a
-    different environment than the server and must not import from the
-    server package. The ``file:``/``cmd:`` ``KLANGK_SOCKET`` indirection
-    case is not reproduced; operators who relocate the socket that way
-    still need a one-time ``klangk login``.
+    ``klangk`` works with no ``klangk login`` step (#1676). Resolution
+    order, matching the server:
+
+    1. ``KLANGK_SOCKET`` — if an explicit *plain absolute* path (not a
+       ``file:``/``cmd:`` indirection, which the server resolves by
+       running a cmd / reading a file and the CLI can't reproduce), the
+       server binds exactly there, so return it directly. This covers the
+       natural way to relocate a socket (``KLANGK_SOCKET=/run/klangk.sock``).
+    2. ``KLANGK_STATE_DIR/klangk.sock`` when ``KLANGK_STATE_DIR`` is set.
+    3. ``$XDG_STATE_HOME/klangkd/klangk.sock`` (→ ``~/.local/state/klangkd/…``).
+
+    Replicated in ``klangk.cli`` — not imported — because the CLI runs in
+    a different environment than the server (``klangk.cli`` isolation
+    rule) and reuses ``config._xdg_state_home`` for the XDG fallback so
+    the two derivations can't drift. The ``file:``/``cmd:``
+    ``KLANGK_SOCKET`` indirection case is not reproduced; operators who
+    relocate the socket that way still need a one-time ``klangk login``.
     """
+    explicit = os.environ.get("KLANGK_SOCKET")
+    if explicit and explicit.startswith("/"):
+        # An absolute value is a plain path the server binds verbatim;
+        # file:/cmd: indirections don't start with "/" and fall through.
+        return explicit
     state_dir = os.environ.get("KLANGK_STATE_DIR")
     if not state_dir:
-        xdg_state = os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
-            "~/.local/state"
-        )
-        state_dir = os.path.join(xdg_state, "klangkd")
-    return os.path.join(state_dir, "klangk.sock")
+        state_dir = os.path.join(str(_xdg_state_home()), _SERVER_XDG_SUBDIR)
+    return os.path.join(state_dir, _SOCKET_NAME)
 
 
 def server_url() -> str:
@@ -132,7 +152,11 @@ def server_url() -> str:
     # Single-host convenience (#1676): if a co-located klangkd has bound
     # its default UDS, talk to it without forcing a `klangk login` step.
     # Gated on existence so a host with no klangkd keeps the helpful
-    # "not configured" error instead of a spurious connection-refused.
+    # "not configured" error. Note this is ``exists()``, not a connect
+    # probe: a *stale* socket left behind by a crashed klangkd still
+    # passes, and the unreachable connect is then surfaced by
+    # ``require_auth`` as a clear "Cannot connect to klangkd" message
+    # rather than a misleading "Not logged in".
     default_uds = _default_server_uds_path()
     if Path(default_uds).exists():
         return default_uds
@@ -170,25 +194,41 @@ def require_auth() -> None:
     url = server_url()
     if state.get_token(url):
         return
-    if _maybe_none_login(state, url):
+    config = fetch_config(url)
+    if _maybe_none_login(state, url, config):
         return
+    # A UDS server that's down (e.g. a stale default socket left behind
+    # by a crashed klangkd, #1676) must not be reported as "not logged
+    # in" — running `klangk login` against it would just fail to connect
+    # the same way. Tell the user the server is unreachable instead.
+    # (TCP servers keep the existing "Not logged in" path; a reachability
+    # hint for them is a separate UX change.)
+    if config == _UNREACHABLE and url.startswith("/"):
+        _err.print(
+            f"[red]Cannot connect to klangkd[/red] at {url} — is it running?"
+        )
+        raise typer.Exit(code=1)
     _err.print(
         "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
     )
     raise typer.Exit(code=1)
 
 
-def _maybe_none_login(state: CLIState, url: str) -> bool:
+def _maybe_none_login(
+    state: CLIState, url: str, config: dict | str | None = None
+) -> bool:
     """If the server is in ``none`` mode, fetch a free token and store it.
 
     Returns True on success (token stored, ``require_auth`` proceeds).
     Returns False if the server is not in ``none`` mode or unreachable,
     leaving the caller to emit the normal "Not logged in" error. The
-    mode is probed live via /config on every call (no cache) — cheap for
-    a single command entry point, and the only way to stay correct across
-    a mode switch.
+    mode is probed live via /config (no cache) — cheap for a single
+    command entry point, and the only way to stay correct across a mode
+    switch. ``require_auth`` passes the config it already fetched so we
+    don't probe twice; a caller without one pays the single fetch here.
     """
-    config = fetch_config(url)
+    if config is None:
+        config = fetch_config(url)
     if not isinstance(config, dict):
         return False
     if config.get("auth_modes") != "none":
