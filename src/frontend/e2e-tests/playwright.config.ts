@@ -133,5 +133,16 @@ export default defineConfig({
       ],
       use: chromiumUse,
     },
+    {
+      // Dist smoke test (#1611) — release.yml's dist-smoke-test job runs
+      // ONLY this project, against a klangkd started from an installed
+      // wheel (KLANGK_TEST_URL points Playwright at it; global-setup
+      // short-circuits its own server startup in that mode). One test,
+      // one browser: proves the frontend shipped in the wheel boots and
+      // renders the login page through nginx → UDS → uvicorn.
+      name: "dist-smoke",
+      testMatch: ["dist-smoke.spec.ts"],
+      use: chromiumUse,
+    },
   ],
 });

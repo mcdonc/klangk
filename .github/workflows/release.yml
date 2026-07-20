@@ -10,9 +10,57 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Smoke test the installed wheel before pushing images or cutting the
+  # GitHub Release (#1611). Builds nothing of its own — downloads the wheel
+  # artifact from build-wheel, installs it into an isolated venv (not
+  # editable — catches packaging bugs an editable install would hide),
+  # starts the real klangkd entrypoint (uvicorn on UDS + nginx child), and
+  # runs the one-file dist-smoke Playwright spec against it. If this fails,
+  # build-and-release (image push + GH release) is skipped — broken
+  # frontend packaging / nginx config / UDS proxy is caught before users do.
+  dist-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-wheel
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/devenv-setup
+        with:
+          # No build-tasks — the wheel is pre-built by build-wheel and
+          # downloaded below. We only need devenv for: nginx on PATH
+          # (klangkd forks it as a child), python3 (for the venv), and
+          # the nix-bundled Playwright Chromium (PLAYWRIGHT_BROWSERS_PATH
+          # is set by devenv.nix).
+          build-tasks: ""
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: klangk-wheel
+          path: wheel-cache
+
+      - name: Run dist-smoke test
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- bash scripts/dist-smoke-test.sh "$(echo wheel-cache/*.whl)"
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-smoke-logs
+          retention-days: 7
+          path: |
+            /tmp/klangk-smoke-state/
+            /tmp/klangk-smoke-data/
+            src/frontend/e2e-tests/test-results/
+            src/frontend/e2e-tests/logs/
+
   build-and-release:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: dist-smoke-test
     permissions:
       packages: write
       contents: write
