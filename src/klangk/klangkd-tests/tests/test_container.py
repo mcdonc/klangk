@@ -1140,21 +1140,22 @@ class TestStartContainer:
         self, workspace, monkeypatch, app_state
     ):
         # container_env() reads the build-emitted container_env_keys list and
-        # resolves each from the server env (#1655). Patch the parsed manifest
-        # so the test doesn't need a real features.json on disk.
+        # resolves each from the server env (#1655). Plugin-declared keys
+        # must carry the KLANGK_FEATURE_ prefix (#1662). Patch the parsed
+        # manifest so the test doesn't need a real features.json on disk.
         monkeypatch.setattr(
             self.registry.app.state.plugins,
             "_manifest",
-            {"container_env_keys": ["PLUGIN_VAR"]},
+            {"container_env_keys": ["KLANGK_FEATURE_PLUGIN_VAR"]},
         )
-        monkeypatch.setenv("PLUGIN_VAR", "plugin-val")
+        monkeypatch.setenv("KLANGK_FEATURE_PLUGIN_VAR", "plugin-val")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         env_list = p.create_container.call_args.kwargs["env"]
         env_dict = dict(e.split("=", 1) for e in env_list)
-        assert env_dict["PLUGIN_VAR"] == "plugin-val"
+        assert env_dict["KLANGK_FEATURE_PLUGIN_VAR"] == "plugin-val"
 
 
 class TestStartContainerPortConflict:

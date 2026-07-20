@@ -17,7 +17,7 @@ because the same hook sets `git config --system credential.helper klangk`.
 
 Git invokes the helper with one of three operations:
 
-- **`get`** — git needs credentials. If `KLANGK_GITHUB_OAUTH_CLIENT_ID`
+- **`get`** — git needs credentials. If `KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID`
   is set and the host is `github.com`, the helper runs the GitHub device
   flow: it requests a code from GitHub, sends it to the browser for
   display, and polls GitHub for the token. If the device flow is not
@@ -63,7 +63,7 @@ at image build time so git finds the helper without per-user configuration.
 ```text
 git push (to github.com)
   → git calls: git-credential-klangk get
-    → KLANGK_GITHUB_OAUTH_CLIENT_ID is set, host is github.com
+    → KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID is set, host is github.com
     → POST https://github.com/login/device/code (from container)
     → GitHub returns device_code, user_code, verification_uri
     → POST /api/v1/browser-delegate { operation: "device_flow_show",
@@ -109,7 +109,7 @@ plugin removes any cached credentials for that host.
 
 The plugin declares one config variable in `package.json`:
 
-- **`KLANGK_GITHUB_OAUTH_CLIENT_ID`** (scope: `container`) — GitHub
+- **`KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID`** (scope: `container`) — GitHub
   OAuth App client ID. When set, the device flow activates for
   `github.com` hosts. No client secret needed.
 

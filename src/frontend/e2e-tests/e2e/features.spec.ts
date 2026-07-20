@@ -69,23 +69,27 @@ test.describe("feature artifacts visible to the frontend", () => {
     expect(resp.ok()).toBeTruthy();
     const config = await resp.json();
 
-    // boingball declares KLANGK_BOING_SPEED with scope: frontend — the server
-    // lowercases the key (KLANGK_ prefix included) and resolves the value.
-    // The key's *presence* is what matters: it proves the server read
+    // boingball declares KLANGK_FEATURE_BOING_SPEED with scope: frontend —
+    // the server strips the KLANGK_FEATURE_ prefix and lowercases the suffix
+    // to produce the /api/config key (so the JSON key is `boing_speed`, not
+    // `klangk_feature_boing_speed`). The prefix is the plugin-config
+    // namespace from #1662; the suffix is the plugin-owned name. The key's
+    // *presence* is what matters here: it proves the server read
     // features.json and bridged the frontend-scope config block through to
-    // /api/config. The plugin reads exactly this lowercased name
+    // /api/config. The plugin reads exactly this stripped-lowercased name
     // (plugins/boingball/klangk/lib/plugin.dart), so a drift here breaks
     // the runtime contract between server and plugin.
     expect(
       config,
-      "klangk_boing_speed missing — server didn't bridge boingball's frontend config",
-    ).toHaveProperty("klangk_boing_speed");
+      "boing_speed missing — server didn't bridge boingball's frontend config",
+    ).toHaveProperty("boing_speed");
 
-    // git-credential's KLANGK_GITHUB_OAUTH_CLIENT_ID has scope: container, so
-    // it must NOT appear in /api/config (frontend-scope only). Guards against
-    // a scope-classification regression leaking container env into the
-    // browser. Lowercased form — the server lowercases all config keys.
-    expect(config).not.toHaveProperty("klangk_github_oauth_client_id");
+    // git-credential's KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID has scope:
+    // container, so it must NOT appear in /api/config (frontend-scope only).
+    // Guards against a scope-classification regression leaking container
+    // env into the browser. Stripped-lowercased form — the server strips
+    // KLANGK_FEATURE_ and lowercases the suffix for /api/config keys.
+    expect(config).not.toHaveProperty("github_oauth_client_id");
   });
 
   test("/api/v1/config omits features_enable when KLANGK_FEATURES_ENABLE unset", async ({

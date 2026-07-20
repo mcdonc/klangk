@@ -79,8 +79,11 @@ EXPECTED_DART_PLUGINS = {
 EXPECTED_DART_FEATURE_NAMES = set(EXPECTED_DART_PLUGINS)
 
 # Config keys declared across all plugin package.json files, by scope.
-EXPECTED_CONTAINER_ENV_KEYS = ["KLANGK_GITHUB_OAUTH_CLIENT_ID"]
-EXPECTED_FRONTEND_CONFIG_KEYS = ["KLANGK_BOING_SPEED"]
+# Both carry the KLANGK_FEATURE_ prefix (the plugin-config namespace, #1662):
+# server settings are KLANGK_<SETTING> (no FEATURE_ infix), so the prefix
+# alone keeps plugin keys from colliding with server secrets/paths/infra.
+EXPECTED_CONTAINER_ENV_KEYS = ["KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID"]
+EXPECTED_FRONTEND_CONFIG_KEYS = ["KLANGK_FEATURE_BOING_SPEED"]
 
 
 def _run_codegen(payload_dir, tmp_path, monkeypatch):
@@ -280,8 +283,8 @@ class TestManifestContract:
                 all_keys[key] = spec["scope"]
         # Spot-check the two keys actually declared today.
         assert all_keys == {
-            "KLANGK_BOING_SPEED": "frontend",
-            "KLANGK_GITHUB_OAUTH_CLIENT_ID": "container",
+            "KLANGK_FEATURE_BOING_SPEED": "frontend",
+            "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": "container",
         }
 
     def test_defaults_are_default_features_constant(self, tmp_path, monkeypatch):
@@ -376,14 +379,15 @@ class TestRemotePluginCodegen:
             '{"name": "@soliplex/klangk-plugin-soliplex", '
             '"version": "0.2.0", '
             '"description": "Soliplex KB plugin", '
-            '"klangk": {"config": {"SOLIPLEX_URL": '
+            '"klangk": {"config": {"KLANGK_FEATURE_SOLIPLEX_URL": '
             '{"description": "Soliplex RAG API endpoint URL", '
             '"default": "", "scope": "frontend"}}}}'
         )
 
     def test_remote_plugin_appears_in_features(self, tmp_path, monkeypatch):
         """A materialized remote plugin lands in features.json::features[] with
-        its declared config keys (the SOLIPLEX_URL frontend-scope key)."""
+        its declared config keys (the KLANGK_FEATURE_SOLIPLEX_URL frontend-scope
+        key — the prefix is the plugin-config namespace, #1662/#1686)."""
         payload = tmp_path / "payload"
         payload.mkdir()
         # Local plugins materialized normally (no network).
@@ -404,10 +408,11 @@ class TestRemotePluginCodegen:
         )
         # Its config key is carried through with the frontend scope.
         soliplex_config = features["soliplex"]["config"]
-        assert "SOLIPLEX_URL" in soliplex_config, (
-            f"SOLIPLEX_URL missing from soliplex config: {soliplex_config}"
+        assert "KLANGK_FEATURE_SOLIPLEX_URL" in soliplex_config, (
+            f"KLANGK_FEATURE_SOLIPLEX_URL missing from soliplex config: "
+            f"{soliplex_config}"
         )
-        assert soliplex_config["SOLIPLEX_URL"]["scope"] == "frontend"
+        assert soliplex_config["KLANGK_FEATURE_SOLIPLEX_URL"]["scope"] == "frontend"
 
     def test_remote_plugin_is_dormant(self, tmp_path, monkeypatch):
         """Soliplex is compiled-in but NOT in defaults — the dormant pattern.

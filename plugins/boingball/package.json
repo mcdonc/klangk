@@ -9,7 +9,7 @@
   },
   "klangk": {
     "config": {
-      "KLANGK_BOING_SPEED": {
+      "KLANGK_FEATURE_BOING_SPEED": {
         "description": "Animation speed multiplier (1.0 = normal, 2.0 = double speed)",
         "default": "1.0",
         "scope": "frontend"

@@ -107,6 +107,52 @@ def find_plugins(plugins_dir):
 # not into the container env.
 _CONTAINER_SCOPES = {"container", "both"}
 
+# Every klangk.config key a plugin declares — regardless of scope — must
+# start with this prefix. Server-side settings are all ``KLANGK_<SETTING>``
+# (no ``FEATURE_`` infix), so the prefix alone guarantees a plugin can never
+# declare a key that collides with a server secret, path, or infra field
+# (``KLANGK_JWT_SECRET``, ``KLANGK_DATA_DIR``, …) — no denylist / reserved
+# set needed, and nothing to keep in sync between this file and the runtime
+# resolver (#1662). Non-KLANGK_ environment poison (``PATH``, ``HOME``,
+# ``LD_PRELOAD``, …) is rejected by the same rule. Mirrors
+# ``_CONTAINER_ENV_KEY_PREFIX`` in ``src/klangk/klangk/plugins.py``.
+_CONTAINER_ENV_KEY_PREFIX = "KLANGK_FEATURE_"
+
+
+class InvalidFeatureConfigKey(RuntimeError):
+    """A plugin declared a klangk.config key without the KLANGK_FEATURE_ prefix.
+
+    Raised at build time to abort the emit — distinct from the
+    ``except (JSONDecodeError, ValueError, OSError)`` around the per-plugin
+    ``package.json`` read (which swallows a malformed plugin's parse errors
+    and continues the build). A prefix violation is a deliberate "stop the
+    build, fix the declaration" condition, so this exception is a
+    ``RuntimeError`` (not a ``ValueError`` subclass) and propagates.
+    """
+
+
+def _validate_feature_config_key(key, plugin_name):
+    """Reject a klangk.config key that lacks the KLANGK_FEATURE_ prefix.
+
+    The prefix is the plugin-config namespace (#1662): every server setting
+    is ``KLANGK_<SETTING>`` (no ``FEATURE_`` infix), so the prefix alone keeps
+    plugin-declared keys from ever colliding with a server secret / path /
+    infra field — no reserved-set / denylist required. Applies to every scope
+    (container, frontend, both): the declaration-side rule is uniform; how
+    the value is surfaced to consumers differs (container env keeps the full
+    ``KLANGK_FEATURE_*`` env var name; the frontend ``/api/config`` key is the
+    lowercased suffix). Raises :class:`InvalidFeatureConfigKey` naming the
+    plugin + key so the plugin author fixes the declaration before ship.
+    """
+    if not key.startswith(_CONTAINER_ENV_KEY_PREFIX):
+        raise InvalidFeatureConfigKey(
+            f"plugin {plugin_name!r} declares config key {key!r} — "
+            f"must start with {_CONTAINER_ENV_KEY_PREFIX!r} "
+            f"(the plugin-config namespace; server settings are "
+            f"KLANGK_<SETTING> with no FEATURE_ infix, so the prefix alone "
+            f"prevents collisions with server secrets/paths/infra)."
+        )
+
 
 def collect_feature_metadata(dart_plugins, plugins_dir):
     """Build the per-feature metadata + container_env_keys from package.json.
@@ -143,6 +189,12 @@ def collect_feature_metadata(dart_plugins, plugins_dir):
                     for key, spec in cfg.items():
                         if not isinstance(spec, dict):
                             continue
+                        # Every declared key must carry the KLANGK_FEATURE_
+                        # prefix, regardless of scope (#1662). Validate before
+                        # emitting anything so a bad declaration aborts the
+                        # build rather than shipping a manifest the runtime
+                        # would silently skip.
+                        _validate_feature_config_key(key, name)
                         scope = spec.get("scope", "container")
                         if scope not in {"container", "frontend", "both"}:
                             scope = "container"
