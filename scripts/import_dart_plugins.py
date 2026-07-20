@@ -38,15 +38,16 @@ FEATURES_JSON = os.path.join(ROOT, "src", "frontend", "build", "web", "features.
 # The default-on set: features a bare install gets when KLANGK_FEATURES_ENABLE
 # is unset (canonical activation — see #1655). This is the runtime default-on
 # list; the build-time fetch list is the checked-in ``plugins.yaml`` at the
-# repo root. The two are equal today; they're allowed to differ when a feature
-# ships dormant (compiled in but not in defaults, e.g. a single-client feature).
+# repo root. The two are allowed to differ: a feature can ship dormant
+# (compiled in but not in defaults). Today ``word-count`` is a local dormant
+# plugin and ``soliplex`` a remote one (#1664) — both compiled in, neither
+# surfaced unless an operator opts in via KLANGK_FEATURES_ENABLE (#1700).
 DEFAULT_FEATURES = [
-    "celebrate",
     "beep",
-    "pig-latin",
-    "word-count",
-    "browser-fetch",
+    "bobdobbs",
     "boingball",
+    "browser-fetch",
+    "celebrate",
     "git-credential",
 ]
 

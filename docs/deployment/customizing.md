@@ -273,7 +273,7 @@ To pull upstream klangk improvements into your custom build, `git pull upstream 
 
 ### Plugins
 
-Edit the checked-in `plugins.yaml` to add or remove plugins. The default build compiles in the built-in plugins declared there: celebrate, beep, pig-latin, word-count, browser-fetch, boingball, git-credential (soliplex ships compiled-in but dormant — activate it with `KLANGK_FEATURES_ENABLE`, #1664).
+Edit the checked-in `plugins.yaml` to add or remove plugins. The default build compiles in the built-in plugins declared there: celebrate, beep, bobdobbs, word-count, browser-fetch, boingball, git-credential (`word-count` and `soliplex` ship compiled-in but dormant — activate with `KLANGK_FEATURES_ENABLE`).
 
 To add an external plugin:
 

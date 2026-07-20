@@ -10,18 +10,20 @@
 #
 # The two lists are allowed to differ: a feature can be compiled-in but not in
 # `DEFAULT_FEATURES` (scripts/import_dart_plugins.py) — "dormant". Soliplex
-# (#1664) is the canonical case: it ships in the wheel so Soliplex operators
-# opt in with `KLANGK_FEATURES_ENABLE=soliplex`, but a bare install doesn't
-# surface it. To add a local plugin: drop its tree under plugins/<name>/ and
-# append a `path:` entry here. To add a remote plugin: append a `git:`/`ref:`
-# entry.
+# (#1664) is the canonical remote case (opt in with
+# `KLANGK_FEATURES_ENABLE=soliplex`); `word-count` is a local dormant plugin
+# (#1700). A bare install doesn't surface dormant features. To add a local
+# plugin: drop its tree under plugins/<name>/ and append a `path:` entry here.
+# To add a remote plugin: append a `git:`/`ref:` entry.
 plugins:
   - name: celebrate
     path: plugins/celebrate
   - name: beep
     path: plugins/beep
-  - name: pig-latin
-    path: plugins/pig-latin
+  - name: bobdobbs
+    path: plugins/bobdobbs
+  # Local dormant plugin (#1700): compiled in but NOT in DEFAULT_FEATURES —
+  # activate with KLANGK_FEATURES_ENABLE=word-count.
   - name: word-count
     path: plugins/word-count
   - name: browser-fetch
