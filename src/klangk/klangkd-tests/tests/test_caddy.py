@@ -330,6 +330,57 @@ class TestLlmBlock:
         assert 'Authorization "Bearer sekret"' in b
         assert "respond @notContainerSrc 403" in b
 
+    def test_path_bearing_url_split_into_upstream_and_rewrite(self):
+        """Path-bearing ``llm_base_url`` values (z.ai, OpenRouter, most
+        providers) must not be passed verbatim to ``reverse_proxy`` — caddy
+        rejects upstream URLs with a path component (``URLs for proxy
+        upstreams only support scheme, host, and port components``), which
+        crashed the whole LLM block for any non-host-root base URL. Split
+        the host off into ``reverse_proxy`` and re-attach the path via
+        ``rewrite`` so the final upstream path is preserved (#1681)."""
+        s = make_settings(
+            env={
+                "KLANGK_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
+                "KLANGK_LLM_API_KEY": "k",
+            }
+        )
+        b = _renderer(s)._build_llm_block("upstream", "")
+        # host-only upstream — no path component
+        assert "reverse_proxy https://api.z.ai" in b
+        assert "reverse_proxy https://api.z.ai/api/coding/paas/v4" not in b
+        # handle_path strips /llm-proxy atomically before the rewrite reads
+        # {uri}; the rewrite then prepends the base path so the final
+        # upstream path is /api/coding/paas/v4/chat/completions.
+        assert "handle_path /llm-proxy/*" in b
+        assert "rewrite * /api/coding/paas/v4{uri}" in b
+
+    def test_path_bearing_url_trailing_slash_not_doubled(self):
+        """A trailing slash on the base path must not double up: base_path
+        "/v4/" stripped to "/v4" so concatenation with {uri} "/chat" yields
+        "/v4/chat" rather than "/v4//chat"."""
+        s = make_settings(
+            env={
+                "KLANGK_LLM_BASE_URL": "http://proxy.local/v1/",
+                "KLANGK_LLM_API_KEY": "k",
+            }
+        )
+        b = _renderer(s)._build_llm_block("upstream", "")
+        assert "rewrite * /v1{uri}" in b
+        assert "//{uri}" not in b
+
+    def test_no_rewrite_for_host_only_url(self):
+        """A bare host (no path) emits no rewrite — handle_path's strip
+        alone leaves {uri} as the correct upstream path."""
+        s = make_settings(
+            env={
+                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGK_LLM_API_KEY": "k",
+            }
+        )
+        b = _renderer(s)._build_llm_block("upstream", "")
+        assert "handle_path /llm-proxy/*" in b
+        assert "rewrite " not in b
+
 
 class TestHostedBlock:
     def test_disabled_when_zero(self):
@@ -513,8 +564,13 @@ class TestRenderConfig:
     def test_llm_proxy_strips_prefix(self):
         """The /llm-proxy/ prefix is stripped before proxying — nginx rewrites
         ``/llm-proxy/(.*)`` → ``{base_url}/$1``; Caddy mirrors with
-        ``uri strip_prefix /llm-proxy``. Without it, the path forwards
-        verbatim and 404s at every provider (regression, found in review)."""
+        ``handle_path /llm-proxy/*``, which atomically matches the path AND
+        strips the prefix before any subsequent directive in the same block
+        reads {uri}. (A plain ``uri strip_prefix`` followed by ``rewrite``
+        does NOT work — caddy's adapter reorders the two rewrite-family
+        handlers, so the rewrite sees the un-stripped {uri}.) Without the
+        strip, the path forwards verbatim and 404s at every provider
+        (regression, found in review)."""
         s = make_settings(
             env={
                 "KLANGK_PORT": "8997",
@@ -523,11 +579,7 @@ class TestRenderConfig:
             }
         )
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
-        assert "uri strip_prefix /llm-proxy" in cf
-        # the strip precedes the reverse_proxy in the handle block
-        strip_pos = cf.index("uri strip_prefix /llm-proxy")
-        rp_pos = cf.index("reverse_proxy http://127.0.0.1:11434")
-        assert strip_pos < rp_pos
+        assert "handle_path /llm-proxy/*" in cf
 
     def test_llm_absent_without_url(self):
         s = make_settings({"KLANGK_PORT": "8997"})
