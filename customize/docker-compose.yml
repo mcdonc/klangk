@@ -1,13 +1,12 @@
 # Example runtime-customized Klangk deployment.
 #
-# Uses a custom image built with plugins (see build/build.sh). Most runtime
-# customization — branding, legal links, email templates, CA certs, OIDC login
-# hooks — is done via env vars and bind mounts (no rebuild). The only thing
-# that needs a rebuild is plugins.
+# Uses the stock image with runtime customization (branding, legal links,
+# email templates, CA certs, OIDC login hooks — no rebuild). The only thing
+# that needs a rebuild is plugins; for a plugin build, fork the repo and edit
+# the checked-in plugins.yaml (see docs/deployment/customizing.md).
 #
 # Before first run:
-#   1. Build the image:  ./build/build.sh
-#   2. Ensure data/ and mount/ are writable by the container. Both ship
+#   1. Ensure data/ and mount/ are writable by the container. Both ship
 #      empty via .gitkeep, but compose mounts them with
 #      create_host_path: false, so they must already exist AND be owned by
 #      UID/GID 1000:1000 (the `klangk` container user):
@@ -15,7 +14,10 @@
 
 services:
   klangk:
-    image: ghcr.io/mcdonc/klangk/klangk-host-custom:latest
+    # Stock host image — runtime customization only (no rebuild).
+    # If you fork the repo and build a plugin image, point this at your
+    # image (e.g. ghcr.io/<your-org>/klangk-host:latest).
+    image: ghcr.io/mcdonc/klangk/klangk-host:latest
     ports:
       - "8997:8997"
     devices:

@@ -37,7 +37,7 @@ operators or integrators to act when upgrading.
   no prior `klangk login`; hosts with no `klangkd` running keep the
   existing "No server configured" error, and a _stale_ socket (a `klangkd`
   that crashed without unlinking it) now reports "Cannot connect to
-  klangkd at <path>" instead of the misleading "Not logged in".
+  klangkd at `<path>` instead of the misleading "Not logged in".
   Operators who relocate the socket via a `file:`/`cmd:` `KLANGK_SOCKET`
   indirection still need a one-time `klangk login` (the CLI can't run the
   cmd / read the file client-side).
@@ -350,8 +350,7 @@ invitations send` stay email-only (a deliverable address is required);
   `plugins.yaml` template-creation bootstrap is removed; the file is
   source-controlled. Operators who overrode `KLANGK_PLUGINS_DIR` to point
   at a custom declaration should instead edit the checked-in `plugins.yaml`
-  (or, for `customize/build/build.sh`, the build script overwrites the
-  clone's `plugins.yaml` with `customize/build/plugins.yaml`).
+  (in their fork — see #1663).
 
 - **`KLANGK_STATE_DIR` now defaults to `$XDG_STATE_HOME/klangk` (#1644).**
   The runtime-state directory (UDS socket, rendered proxy config, pid file,
@@ -443,6 +442,21 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
   recognized.
 
 ### Removed
+
+- **The `customize/build/` directory is gone — fork the repo to add custom
+  plugins (#1663).** With the plugin declaration list now checked in as
+  `plugins.yaml` at the repo root (#1660), the `customize/build/build.sh`
+  workflow (clone klangk, overlay `customize/build/plugins.yaml`, build) is
+  redundant. The simpler, standard path is to fork klangk and edit the
+  checked-in `plugins.yaml` directly, then run `scripts/build-host-image.sh`.
+  `customize/build/build.sh` and `customize/build/plugins.yaml` are removed;
+  everything else under `customize/` (`custom/`, `data/`, `mount/`,
+  `docker-compose.yml`, `README.md`) stays — those are runtime-config
+  concerns. The example `docker-compose.yml` now references the stock
+  `klangk-host` image (override the `image:` line with your fork's build).
+  `KLANGK_REF` / `KLANGK_REPO` (formerly consumed by `build.sh`) are gone;
+  set `KLANGK_VARIANT` / `KLANGK_HOST_IMAGE` in the environment when running
+  `scripts/build-host-image.sh`.
 
 - **The `@demigodmode/pi-web-agent` Pi extension is no longer installed
   in the workspace image (#1689).** The workspace Dockerfile previously ran
