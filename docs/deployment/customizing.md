@@ -256,21 +256,24 @@ cd klangk
 #    entries).
 $EDITOR plugins.yaml
 
-# 3. Build the host image from source.
-bash scripts/build-host-image.sh
+# 3. Build the host image from source (inside the devenv shell — the
+#    wrapped `build-host-image` script is on PATH there).
+devenv shell -- build-host-image
 
-# Tag the build with a variant identity (surfaced in version.json + debug pane):
-KLANGK_VARIANT="Acme 1.0.0" bash scripts/build-host-image.sh
+# Tag the build with a variant identity (surfaced in version.json + debug pane).
+# NOTE: KLANGK_VARIANT is captured at devenv-shell entry (generate-version.sh
+# runs in enterShell), so set it *before* `devenv shell`:
+KLANGK_VARIANT="Acme 1.0.0" devenv shell -- build-host-image
 
-# Publish elsewhere than the default tag:
-KLANGK_HOST_IMAGE=ghcr.io/<your-org>/klangk-host bash scripts/build-host-image.sh
+# Publish elsewhere than the default local tag (klangk-host):
+KLANGK_HOST_IMAGE=ghcr.io/<your-org>/klangk-host devenv shell -- build-host-image
 ```
 
 To pull upstream klangk improvements into your custom build, `git pull upstream main` (or `origin main`, depending on how you cloned) from the fork — the plugin declaration and plugin trees merge like any other source file.
 
 ### Plugins
 
-Edit the checked-in `plugins.yaml` to add or remove plugins. The default set includes the built-in plugins: celebrate, beep, pig-latin, word-count, browser-fetch, bobdobbs.
+Edit the checked-in `plugins.yaml` to add or remove plugins. The default build compiles in the built-in plugins declared there: celebrate, beep, pig-latin, word-count, browser-fetch, boingball, git-credential (soliplex ships compiled-in but dormant — activate it with `KLANGK_FEATURES_ENABLE`, #1664).
 
 To add an external plugin:
 
@@ -285,17 +288,17 @@ See the [Creating Plugins](../development/creating-plugins.md) reference for plu
 
 ### How the Build Works
 
-`scripts/build-host-image.sh` (run in a `devenv shell`) is a single source build: it embeds the Flutter web build, the workspace tarball, **and** the plugin directories declared in `plugins.yaml` — so one build produces the final image with plugins baked in. There is no separate overlay, `Dockerfile`, or base-image pass.
+`scripts/build-host-image.sh` is a single source build: it embeds the Flutter web build, the workspace tarball, **and** the plugin directories declared in `plugins.yaml` — so one build produces the final image with plugins baked in. There is no separate overlay, `Dockerfile`, or base-image pass. Run it via the devenv-wrapped `build-host-image` script (`devenv shell -- build-host-image`); `KLANGK_VARIANT` is captured by `scripts/generate-version.sh` in devenv's `enterShell` hook, so set it (and `KLANGK_HOST_IMAGE`) **before** entering the shell, not on the build command.
 
 ### Build Options
 
 The build reads these from the environment (`KLANGK_HOST_IMAGE` / `KLANGK_PLATFORM` by `scripts/build-host-image.sh`; `KLANGK_VARIANT` by `scripts/generate-version.sh` during the build):
 
-| Variable            | Default                             | Description                                                                           |
-| ------------------- | ----------------------------------- | ------------------------------------------------------------------------------------- |
-| `KLANGK_HOST_IMAGE` | `ghcr.io/mcdonc/klangk/klangk-host` | Output image name (override to publish to your own registry)                          |
-| `KLANGK_VARIANT`    | _unset_                             | Build identity string written to `version.json` (see [Build Variant](#build-variant)) |
-| `KLANGK_PLATFORM`   | `linux/amd64`                       | Target platform                                                                       |
+| Variable            | Default       | Description                                                                               |
+| ------------------- | ------------- | ----------------------------------------------------------------------------------------- |
+| `KLANGK_HOST_IMAGE` | `klangk-host` | Output image name — a local tag by default; override with a full registry path to publish |
+| `KLANGK_VARIANT`    | _unset_       | Build identity string written to `version.json` (see [Build Variant](#build-variant))     |
+| `KLANGK_PLATFORM`   | `linux/amd64` | Target platform                                                                           |
 
 ### Build Variant
 
@@ -312,7 +315,8 @@ the klangk release (tag/branch/SHA), while `variant` names _this_ downstream
 build. Set it to your product name and release, e.g. `"Acme 1.0.0"`:
 
 ```bash
-KLANGK_VARIANT="Acme 1.0.0" bash scripts/build-host-image.sh
+# KLANGK_VARIANT is read at devenv-shell entry, so set it before `devenv shell`:
+KLANGK_VARIANT="Acme 1.0.0" devenv shell -- build-host-image
 ```
 
 When empty (or unset), the `variant` field is **omitted entirely** from

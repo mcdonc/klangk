@@ -55,7 +55,7 @@ fails a run — so reviewers check the Actions tab rather than gating CI.
 workspace, workspace base) is pushed only with an explicit version
 tag. This prevents confusion when stable branches would otherwise
 overwrite `:latest` with an older version. Consumers always reference
-a specific version via `KLANGK_REF` or build locally.
+a specific version (by checking out the tag in their fork) or build locally.
 
 Locally, `build-workspace-image` tags `klangk-workspace:latest`
 (used by the backend at runtime with pull policy `never`) and a
