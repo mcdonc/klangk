@@ -140,10 +140,13 @@ at container entrypoint) is a follow-up, not part of #1664.
 **Build-time note:** soliplex's source is vendored locally
 (`plugins/soliplex/`, [#1686](https://github.com/mcdonc/klangk/issues/1686))
 — the build no longer fetches it over the network. (It was previously a
-remote `git:` plugin whose transitive `ag_ui` dep hit an upstream LFS-object
-gap that broke every default build,
-[#1691](https://github.com/mcdonc/klangk/issues/1691); vendoring plus the
-upstream fix both closed that.) The build scripts
+remote `git:` plugin whose transitive `ag_ui` git dep carries an LFS-tracked
+fixture (`apps/dojo/e2e/fixtures/test-image.png`) that unauthenticated CI
+can't fetch — the root cause of
+[#1691](https://github.com/mcdonc/klangk/issues/1691), still live for
+unauthenticated runners. The build now exports `GIT_LFS_SKIP_SMUDGE=1` so
+the dep resolves without the LFS object — only its Dart source is needed.)
+The build scripts
 (`scripts/flutterbuildweb.sh`, `scripts/build-workspace-image.sh`) still
 skip git-sourced plugins by default (`update_plugins.py --local-only`,
 override with `KLANGK_BUILD_INCLUDE_REMOTE=1`) as a generic remote-plugin
