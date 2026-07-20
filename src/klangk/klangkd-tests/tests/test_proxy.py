@@ -242,6 +242,29 @@ class TestRenderConfig:
         assert 'Authorization "Bearer resolved-key"' in conf
         assert "cmd:" not in conf
 
+    def test_llm_block_preserves_path_bearing_base_url(self):
+        """Regression: path-bearing ``llm_base_url`` (z.ai
+        ``https://api.z.ai/api/coding/paas/v4``, OpenRouter
+        ``https://openrouter.ai/api/v1``, etc.) must round-trip intact —
+        the runtime ``set $llm_backend {base_url}/$1`` resolves at request
+        time and never structural-validates the URL, so the path survives
+        without splitting. Pinning this so a refactor toward the caddy-style
+        split (upstream + rewrite) keeps nginx's permissive behavior (#1681)."""
+        s = make_settings(
+            env={
+                "KLANGK_PORT": "8997",
+                "KLANGK_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
+                "KLANGK_LLM_API_KEY": "k",
+            }
+        )
+        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
+        # The full base URL survives in the runtime variable assignment.
+        # A client POST to /llm-proxy/chat/completions -> $1="chat/completions"
+        # -> upstream https://api.z.ai/api/coding/paas/v4/chat/completions.
+        assert (
+            "set $llm_backend https://api.z.ai/api/coding/paas/v4/$1;" in conf
+        )
+
     def test_auth_local_loopback_acl(self):
         s = make_settings({"KLANGK_PORT": "8997"})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))

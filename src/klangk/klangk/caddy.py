@@ -312,25 +312,68 @@ class CaddyRenderer:
         by the settings layer (Python's resolver) before rendering, so the
         key lands here already resolved — and because the config never touches
         disk (admin API payload), the secret stays in memory only.
+
+        Path-bearing ``llm_base_url`` values (e.g. z.ai's
+        ``https://api.z.ai/api/coding/paas/v4``, OpenRouter's
+        ``https://openrouter.ai/api/v1``) are split into a host-only upstream
+        for ``reverse_proxy`` plus a ``rewrite`` that re-attaches the path:
+        caddy rejects upstream URLs that include a path (``for now, URLs for
+        proxy upstreams only support scheme, host, and port components``),
+        which crashed the LLM block for every provider whose base URL isn't
+        host-root — the regression surfaced when caddy became the default
+        engine in #1643 (#1681). nginx's ``proxy_pass $llm_backend`` resolves
+        at request time and never structural-validates the URL, so the same
+        base_url works there without splitting.
+
+        No explicit ``header_up Host`` is emitted: caddy ≥2.8 auto-sets
+        ``Host: {upstream_hostport}`` when the transport has TLS
+        (caddyserver/caddy#7454), which covers every HTTPS LLM provider
+        (z.ai, OpenRouter, OpenAI, Anthropic, …). For a plain-HTTP upstream
+        (e.g. local Ollama ``http://127.0.0.1:11434``) caddy passes the
+        original request's Host through — the upstream sees ``Host:
+        host.containers.internal:8995`` rather than ``127.0.0.1:11434``.
+        This is a real but narrow parity gap with nginx (which sets ``Host
+        $proxy_host`` for both schemes); most HTTP upstreams ignore Host, so
+        it's left as-is rather than complicating the block with scheme
+        detection. An earlier attempt to set ``header_up Host
+        {upstream.hostport}`` unconditionally reintroduced the ``http2:
+        invalid Host header`` 502 against HTTPS upstreams — caddy's
+        placeholder substitution in the header context isn't reliable enough
+        to override what it would auto-set. See review of #1681.
         """
+        from urllib.parse import urlsplit
+
         base_url = self.app.state.settings.llm_base_url
         if not base_url:
             return ""
         api_key = self.app.state.settings.llm_api_key
+        # Split scheme://host[:port] from any path component. trailing slash
+        # is stripped so concatenation with {uri} (which begins with /)
+        # doesn't double it: base_path "" + {uri} "/x" -> "/x"; base_path
+        # "/v4" + {uri} "/chat" -> "/v4/chat".
+        parts = urlsplit(base_url)
+        upstream_url = f"{parts.scheme}://{parts.netloc}"
+        base_path = parts.path.rstrip("/")
+        # ``handle_path /llm-proxy/*`` is the caddy directive that both
+        # matches the path AND strips the prefix atomically before any
+        # subsequent directive in the same block reads {uri}. A plain
+        # ``uri strip_prefix`` followed by ``rewrite`` does NOT work —
+        # caddy's Caddyfile adapter reorders the two rewrite-family
+        # handlers, so the rewrite sees the un-stripped {uri} and emits
+        # /api/coding/paas/v4/llm-proxy/chat. nginx's regex capture
+        # (``location ~ ^/llm-proxy/(.*)$``) does strip+substitute in one
+        # directive; handle_path is the caddy equivalent. With no base
+        # path, handle_path's strip alone leaves {uri} as the upstream
+        # path and no rewrite is needed.
+        path_fix = (
+            f"		rewrite * {base_path}{{uri}}\n" if base_path else ""
+        )
         return (
-            "	@llm path /llm-proxy/*\n"
-            "	handle @llm {\n"
+            "	handle_path /llm-proxy/* {\n"
             f"{guard}"
-            # Strip the /llm-proxy prefix before proxying, matching
-            # nginx's regex capture (proxy.py: /llm-proxy/(.*) ->
-            # {base_url}/$1). Caddy's reverse_proxy preserves the
-            # request URI by default, so without this a request to
-            # /llm-proxy/v1/chat hits {base_url}/llm-proxy/v1/chat
-            # and 404s at every provider.
-            "		uri strip_prefix /llm-proxy\n"
-            f"		reverse_proxy {base_url} {{\n"
+            f"{path_fix}"
+            f"		reverse_proxy {upstream_url} {{\n"
             f'			header_up Authorization "Bearer {api_key}"\n'
-            "			header_up Host {upstream.hostport}\n"
             "		}\n"
             "	}\n"
         )
