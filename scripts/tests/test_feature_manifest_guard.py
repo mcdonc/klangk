@@ -204,10 +204,11 @@ class TestPrefixConstantDrift:
     doesn't import klangk, #1666), so this test is the drift detector."""
 
     def test_prefix_constants_match(self):
-        # Import the runtime copy. The klangk package is installed in the
-        # pytest venv that runs the scripts/tests suite (CI runs this after
-        # the package wheel is built), so this import is safe here even
-        # though import_dart_plugins itself must not take it.
+        # importorskip so a scripts-only test matrix (or a contributor running
+        # just scripts/tests/ in a venv without klangk installed) gets a clean
+        # skip instead of an ImportError. CI's backend-tests job installs
+        # klangk before running scripts/tests/, so the test runs there.
+        pytest.importorskip("klangk")
         from klangk.plugins import _CONTAINER_ENV_KEY_PREFIX
 
         assert (

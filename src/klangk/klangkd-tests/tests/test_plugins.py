@@ -347,6 +347,56 @@ class TestPrefixHelper:
         assert not is_valid_container_env_key(key)
 
 
+class TestSettingsCollisionInvariant:
+    """The prefix rule is the whole security boundary, and it rests on a
+    convention: no ``KlangkSettings`` field's env-var form starts with
+    ``KLANGK_FEATURE_`` (server settings are all ``KLANGK_<SETTING>`` with no
+    ``FEATURE_`` infix, so the plugin-config namespace ``KLANGK_FEATURE_*``
+    can't collide with one). True today, but nothing pins it — a future
+    ``feature_default_set`` field (env ``KLANGK_FEATURE_DEFAULT_SET``) would
+    silently invert the protection: a plugin declaring the same name would
+    resolve the server setting's value. This test locks the convention so
+    the regression fails here, not in a container-env leak months later.
+    (#1662 adversarial review.)"""
+
+    def test_no_settings_field_collides_with_plugin_namespace(self):
+        from klangk.plugins import _CONTAINER_ENV_KEY_PREFIX
+        from klangk.settings import KlangkSettings
+
+        # KlangkSettings uses env_prefix="KLANGK_" with no per-field aliasing
+        # (verified: no field has alias or validation_alias). So every field's
+        # env-var name is KLANGK_ + field_name.upper(). If any starts with the
+        # plugin-config prefix, the prefix rule's collision-free guarantee
+        # breaks — either rename the field or revisit the prefix choice.
+        colliding = sorted(
+            f"KLANGK_{name.upper()}"
+            for name in KlangkSettings.model_fields
+            if (f"KLANGK_{name.upper()}").startswith(_CONTAINER_ENV_KEY_PREFIX)
+            and f"KLANGK_{name.upper()}" != _CONTAINER_ENV_KEY_PREFIX
+        )
+        # Note the plural: KLANGK_FEATURES_ENABLE (features_enable field) is
+        # a near-miss but does NOT start with KLANGK_FEATURE_ — "feature" vs
+        # "features". If that ever flips, this assertion catches it.
+        assert colliding == [], (
+            f"KlangkSettings has fields whose env-var form starts with "
+            f"{_CONTAINER_ENV_KEY_PREFIX!r}: {colliding}. The plugin-config "
+            f"prefix rule assumes no server setting lives under "
+            f"{_CONTAINER_ENV_KEY_PREFIX!r} — either rename the field(s) or "
+            f"revisit the prefix."
+        )
+
+    def test_features_enable_does_not_collide(self):
+        # The activation knob (features_enable → KLANGK_FEATURES_ENABLE, plural)
+        # is the closest near-miss. Pin it explicitly: a future rename to
+        # feature_enable (singular) would collide with KLANGK_FEATURE_.
+        from klangk.plugins import is_valid_container_env_key
+        from klangk.settings import KlangkSettings
+
+        assert "features_enable" in KlangkSettings.model_fields
+        # The activation env var must NOT pass the plugin-key validity check.
+        assert not is_valid_container_env_key("KLANGK_FEATURES_ENABLE")
+
+
 class TestFrontendConfig:
     """frontend_config() resolves frontend/both-scope values from the
     per-feature config blocks (shape from the manifest, values from the env).
