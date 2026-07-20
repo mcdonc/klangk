@@ -265,6 +265,32 @@ class TestRenderConfig:
             "set $llm_backend https://api.z.ai/api/coding/paas/v4/$1;" in conf
         )
 
+    def test_llm_block_streams_request_body_and_disables_ipv6(self):
+        """Regression for #1682: the /llm-proxy/ location must stream the
+        request body (``proxy_request_buffering off``) so a body larger than
+        ``client_body_buffer_size`` never spills to ``client_body_temp_path``
+        (EACCES under keep-id userns → 500), and must disable IPv6 upstream
+        resolution (``resolver ... ipv6=off``) so hosts without IPv6 egress
+        don't log ``Network is unreachable`` per request. Asserted in both
+        the headless and full renders."""
+        env = {
+            "KLANGK_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
+            "KLANGK_LLM_API_KEY": "k",
+        }
+        # Headless (no KLANGK_PORT).
+        s_headless = make_settings(env=env)
+        headless = _renderer(s_headless).render_config(
+            tcp_upstream("127.0.0.1", "8997")
+        )
+        # Full/browser mode (KLANGK_PORT set).
+        s_full = make_settings(env={**env, "KLANGK_PORT": "8997"})
+        full = _renderer(s_full).render_config(
+            tcp_upstream("127.0.0.1", "8997")
+        )
+        for label, conf in (("headless", headless), ("full", full)):
+            assert "proxy_request_buffering off;" in conf, label
+            assert "resolver" in conf and "ipv6=off" in conf, label
+
     def test_auth_local_loopback_acl(self):
         s = make_settings({"KLANGK_PORT": "8997"})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))

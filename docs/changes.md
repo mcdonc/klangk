@@ -680,6 +680,18 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **The nginx proxy engine no longer returns 500 for `/llm-proxy/*`
+  requests with a body larger than ~8 KB (#1682).** The `/llm-proxy/`
+  location now sets `proxy_request_buffering off`, streaming the request
+  body straight to the upstream instead of spilling it to
+  `client_body_temp_path` — a directory that, under the keep-id user
+  namespace, is owned by a different uid than the nginx worker, so any
+  spill raised EACCES → 500. (Caddy's `reverse_proxy` already streams
+  requests, which is why only nginx was affected.) This also cuts
+  first-token latency for LLM traffic. The LLM block's `resolver` now
+  also sets `ipv6=off`, so hosts without IPv6 egress stop logging
+  `Network is unreachable` per request.
+
 - **Default builds skip the soliplex remote plugin (CI unblock, #1691).**
   Every PR triggering `klangk:flutter-build` was failing during
   `flutter pub get`: the soliplex plugin (#1683) pulls `soliplex_client` /
