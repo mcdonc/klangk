@@ -663,6 +663,94 @@ class TestLogLevelValidator:
         assert "DEBUG" in msg  # valid levels listed in the message
 
 
+class TestLlmBaseUrlValidator:
+    """KLANGK_LLM_BASE_URL with a fragment is rejected at construction (#1687);
+    query strings are accepted (both renderers re-attach the base query and
+    drop the incoming request's query, so a Gemini-style ``?key=...`` set
+    by the operator is preserved while container-user query params are not)."""
+
+    def test_unset_accepted(self):
+        s = make_settings({})
+        assert s.llm_base_url is None
+
+    def test_empty_string_accepted(self):
+        s = make_settings({"KLANGK_LLM_BASE_URL": ""})
+        assert s.llm_base_url == ""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.0.0.1:11434",  # host-only, no path
+            "https://api.z.ai/api/coding/paas/v4",  # path-bearing (#1681)
+            "https://host.example/",  # bare trailing slash, no query
+            "http://[::1]:8443/v4",  # IPv6 literal
+            # Query strings are preserved by the renderers — Gemini-style
+            # ?key=... auth (documented but discouraged by Google) and
+            # OpenAI-client hardcoded query params (openai/openai-python@73ea2f7)
+            # both rely on the base URL carrying a query.
+            "https://generativelanguage.googleapis.com/v1beta?key=AIzaSy-example",
+            "https://host/v4?foo=bar&baz=qux",
+        ],
+    )
+    def test_query_less_and_query_bearing_urls_accepted(self, url):
+        assert make_settings({"KLANGK_LLM_BASE_URL": url}).llm_base_url == url
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://host/v4#section",
+            "https://host/v4?key=secret#section",  # fragment alongside query
+            "https://host#anchor",
+        ],
+    )
+    def test_fragment_rejected_at_construction(self, url):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            make_settings({"KLANGK_LLM_BASE_URL": url})
+        msg = str(exc_info.value)
+        # The message names the field and the failure mode. It deliberately
+        # does NOT echo the URL value (it may contain a secret in a query).
+        assert "KLANGK_LLM_BASE_URL" in msg
+        assert "fragment" in msg
+
+    def test_value_not_echoed_in_error_message(self):
+        """The URL value must NOT appear in the error message — it may
+        contain a secret in a query string (``?key=sk-...``). Mirrors the
+        ``_resolve_indirections`` posture of never logging secret-derived
+        data."""
+        from pydantic import ValidationError
+
+        secret_url = "https://host/v4?key=sk-not-a-real-key-but-still#frag"
+        with pytest.raises(ValidationError) as exc_info:
+            make_settings({"KLANGK_LLM_BASE_URL": secret_url})
+        msg = str(exc_info.value)
+        assert "sk-not-a-real-key-but-still" not in msg
+        assert "key=sk" not in msg
+
+    def test_cmd_resolved_url_with_fragment_rejected(self, tmp_path):
+        """A ``cmd:`` prefix whose output contains a fragment is also
+        rejected — the validator runs after ``_resolve_indirections``, so
+        the resolved value is checked, not the literal ``cmd:...`` string."""
+        from pydantic import ValidationError
+
+        script = tmp_path / "emit-url"
+        script.write_text("#!/bin/sh\nprintf 'https://host/v4#leaked'\n")
+        script.chmod(0o755)
+        with pytest.raises(ValidationError):
+            make_settings({"KLANGK_LLM_BASE_URL": f"cmd:{script}"})
+
+    def test_file_resolved_url_with_fragment_rejected(self, tmp_path):
+        """A ``file:`` prefix whose contents contain a fragment is also
+        rejected — same reason as the ``cmd:`` case."""
+        from pydantic import ValidationError
+
+        url_file = tmp_path / "url"
+        url_file.write_text("https://host/v4#anchor\n")
+        with pytest.raises(ValidationError):
+            make_settings({"KLANGK_LLM_BASE_URL": f"file:{url_file}"})
+
+
 class TestResolveIndirectionsValidator:
     """The ``_resolve_indirections`` model validator runs once at construction
     (#1461): every string field with a ``file:``/``cmd:`` prefix is resolved

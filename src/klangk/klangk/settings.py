@@ -34,6 +34,7 @@ import os
 import subprocess
 from pathlib import Path
 from typing import Any, ClassVar, Mapping
+from urllib.parse import urlsplit
 
 import getpass
 
@@ -708,6 +709,47 @@ class KlangkSettings(BaseSettings):
                         f"file:/cmd: reference failed. See logs for detail."
                     )
                 setattr(self, name, resolved)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_llm_base_url(self) -> "KlangkSettings":
+        """Reject ``KLANGK_LLM_BASE_URL`` values containing a fragment (#1687).
+
+        Fragments are client-side only — every HTTP client strips them
+        before the request goes on the wire — so a fragment on the base
+        URL would be silently dropped by the proxy and never reach the
+        upstream. That's almost always operator error (someone pasted a
+        browser URL with ``#section``), so fail fast at boot with a clear
+        message.
+
+        Query strings (``?key=...``) ARE preserved by both renderers
+        (caddy and nginx): the base URL's query is re-attached after the
+        path rewrite, and the incoming request's query is dropped. Some
+        providers support query-string auth (Gemini's ``?key=`` —
+        documented but discouraged by Google on security grounds), and
+        the OpenAI Python client explicitly preserves hardcoded query
+        params on ``base_url`` (openai/openai-python@73ea2f7), so an
+        operator pointing klangk at a proxy that requires a query-param
+        secret must be able to set one. The container user's per-request
+        query is untrusted by comparison and is dropped to prevent
+        injecting arbitrary upstream params.
+
+        Runs after ``_resolve_indirections`` so a ``cmd:``/``file:`` prefix
+        is already resolved — a ``cmd:cat /etc/llm-url`` whose output
+        contains a ``#`` is caught here too. ``None``/empty (LLM proxy
+        disabled) is left alone.
+        """
+        v = self.llm_base_url
+        if not v:
+            return self
+        parts = urlsplit(v)
+        if parts.fragment:
+            raise ValueError(
+                "KLANGK_LLM_BASE_URL has a fragment ('#...') suffix that "
+                "HTTP clients strip before the wire — the proxy would "
+                "silently drop it. Remove the fragment. (The URL value is "
+                "intentionally not echoed here; it may contain a secret.)"
+            )
         return self
 
     @model_validator(mode="after")

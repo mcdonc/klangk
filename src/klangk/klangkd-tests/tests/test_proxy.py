@@ -246,7 +246,7 @@ class TestRenderConfig:
         """Regression: path-bearing ``llm_base_url`` (z.ai
         ``https://api.z.ai/api/coding/paas/v4``, OpenRouter
         ``https://openrouter.ai/api/v1``, etc.) must round-trip intact —
-        the runtime ``set $llm_backend {base_url}/$1`` resolves at request
+        the runtime ``set $llm_backend {base}/$1`` resolves at request
         time and never structural-validates the URL, so the path survives
         without splitting. Pinning this so a refactor toward the caddy-style
         split (upstream + rewrite) keeps nginx's permissive behavior (#1681)."""
@@ -308,6 +308,38 @@ class TestRenderConfig:
                 mm = re.search(loc_pattern, conf, re.DOTALL)
                 assert mm, f"{label}: {loc_pattern} block not found"
                 assert "proxy_request_buffering off;" in mm.group(1), label
+
+    def test_llm_block_preserves_base_query_after_path(self):
+        """A base URL with a query string (Gemini-style ?key=..., documented
+        but discouraged by Google on security grounds; the OpenAI Python
+        client also preserves hardcoded query params on base_url —
+        openai/openai-python@73ea2f7) is reassembled AFTER ``$1`` so the
+        final upstream URL is ``{scheme}://{host}{path}/$1?{query}``.
+        Without the reassembly, ``{base_url}/$1`` would interleave the
+        query mid-URL (``{base}/v4?key=secret/$1``) and produce a
+        malformed upstream. The container user's per-request query is
+        dropped by the location regex (``$1`` captures path-only from
+        ``$uri``), so only operator-configured query params reach the
+        upstream (#1687)."""
+        s = make_settings(
+            env={
+                "KLANGK_PORT": "8997",
+                "KLANGK_LLM_BASE_URL": (
+                    "https://generativelanguage.googleapis.com/v1beta"
+                    "?key=AIzaSy-example"
+                ),
+                "KLANGK_LLM_API_KEY": "k",
+            }
+        )
+        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
+        # The base query is appended after $1, not interleaved mid-URL.
+        assert (
+            "set $llm_backend "
+            "https://generativelanguage.googleapis.com/v1beta/$1"
+            "?key=AIzaSy-example;" in conf
+        )
+        # And the malformed form (query before $1) is NOT present.
+        assert "?key=AIzaSy-example/$1" not in conf
 
     def test_auth_local_loopback_acl(self):
         s = make_settings({"KLANGK_PORT": "8997"})
