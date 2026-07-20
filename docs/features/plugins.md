@@ -98,19 +98,21 @@ defaults" pattern from
 a strict superset of `DEFAULT_FEATURES` (the 6: beep, bobdobbs, boingball,
 browser-fetch, celebrate, git-credential).
 
-| Feature    | Source                                                                                                                                                                                                     | Activate                                   |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `soliplex` | Remote: [`soliplex/klangk-plugin-soliplex`](https://github.com/soliplex/klangk-plugin-soliplex) (`git:` entry in `plugins.yaml`, pinned at `v0.4` — [#1664](https://github.com/mcdonc/klangk/issues/1664)) | add `soliplex` to `KLANGK_FEATURES_ENABLE` |
+| Feature    | Source                                                                                                                                                                                                                                                              | Activate                                   |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `soliplex` | Local: `plugins/soliplex` (vendored from [`soliplex/klangk-plugin-soliplex`](https://github.com/soliplex/klangk-plugin-soliplex) `v0.4` — [#1664](https://github.com/mcdonc/klangk/issues/1664), vendored in [#1686](https://github.com/mcdonc/klangk/issues/1686)) | add `soliplex` to `KLANGK_FEATURES_ENABLE` |
 
 Soliplex is the Soliplex org's knowledge-base plugin (list/query/reply,
-multi-turn RAG). It ships compiled-in so an operator running a Soliplex
-server can activate it with one env var instead of forking klangk,
-vendoring the plugin, and rebuilding the frontend. It's dormant by default
-because it requires a running Soliplex server to be useful — defaulting it
-on would surface a dead tool to every install. Its one config key
-(`SOLIPLEX_URL`, scope `frontend`) is bridged to the UI via
-`GET /api/v1/config` when active; no `container_env_keys` entry (it's a
-browser-side feature, nothing to inject into workspace containers).
+multi-turn RAG). Its source is vendored into this repo under
+`plugins/soliplex/` ([#1686](https://github.com/mcdonc/klangk/issues/1686)),
+so an operator running a Soliplex server can activate it with one env var
+instead of forking klangk and maintaining a custom build. It's dormant by
+default because it requires a running Soliplex server to be useful —
+defaulting it on would surface a dead tool to every install. Its one config
+key (`KLANGK_FEATURE_SOLIPLEX_URL`, scope `frontend`) is bridged to the UI
+via `GET /api/v1/config` (key `soliplex_url`) when active; no
+`container_env_keys` entry (it's a browser-side feature, nothing to inject
+into workspace containers).
 
 To activate, compose it with the stock set (canonical activation semantics —
 an explicit `KLANGK_FEATURES_ENABLE` is the **exact** active list, not
@@ -135,15 +137,18 @@ harmless on a non-Soliplex install — but they do appear in the tool list.
 Workspace-side gating (filtering extensions per `KLANGK_FEATURES_ENABLE`
 at container entrypoint) is a follow-up, not part of #1664.
 
-**Build-time note (#1691):** soliplex is a remote (`git:`) plugin, and its
-transitive `ag_ui` dep is currently pulled from a git repo with an
-upstream LFS-object gap that breaks every default build. To keep CI green,
-the build scripts (`scripts/flutterbuildweb.sh`,
-`scripts/build-workspace-image.sh`) skip git-sourced plugins by default
-(`update_plugins.py --local-only`). A bare `pip install klangk` therefore
-ships **without soliplex compiled in** until the upstream LFS issue is
-fixed; set `KLANGK_BUILD_INCLUDE_REMOTE=1` at build time to fetch soliplex
-(and other remote plugins) into the bundle.
+**Build-time note:** soliplex's source is vendored locally
+(`plugins/soliplex/`, [#1686](https://github.com/mcdonc/klangk/issues/1686))
+— the build no longer fetches it over the network. (It was previously a
+remote `git:` plugin whose transitive `ag_ui` dep hit an upstream LFS-object
+gap that broke every default build,
+[#1691](https://github.com/mcdonc/klangk/issues/1691); vendoring plus the
+upstream fix both closed that.) The build scripts
+(`scripts/flutterbuildweb.sh`, `scripts/build-workspace-image.sh`) still
+skip git-sourced plugins by default (`update_plugins.py --local-only`,
+override with `KLANGK_BUILD_INCLUDE_REMOTE=1`) as a generic remote-plugin
+policy — but no plugin in `plugins.yaml` is git-sourced today, so the skip
+is a no-op.
 
 ## Additional plugins
 

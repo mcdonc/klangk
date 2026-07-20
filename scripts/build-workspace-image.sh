@@ -42,12 +42,11 @@ fi
 # is checked in at plugins.yaml; the payload (symlinked trees + plugins.lock)
 # is ephemeral. Cleaned up on exit.
 #
-# Remote (git-sourced) plugins are skipped by default — set
-# KLANGK_BUILD_INCLUDE_REMOTE=1 to fetch them. The only remote plugin today
-# is soliplex, whose transitive ag_ui git dep has an upstream LFS-object gap
-# (#1691) that breaks every CI build. Skipping soliplex drops the workspace
-# image back to the pre-#1683 local set. Release/single-client builds that
-# need soliplex's extension.ts bundled set KLANGK_BUILD_INCLUDE_REMOTE=1.
+# Git-sourced plugins are skipped by default — set KLANGK_BUILD_INCLUDE_REMOTE=1
+# to fetch them. Keeps CI off the network and resilient to upstream failures
+# (the policy dates to #1691). Every plugin is a local path entry today
+# (soliplex was vendored in #1686), so the skip is currently a no-op; the gate
+# stays as the generic remote-plugin policy for any future git entry.
 PAYLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/klangk-plugins-XXXXXX")"
 trap 'rm -rf "$PAYLOAD_DIR"' EXIT
 UPDATE_FLAGS=(--payload-dir "$PAYLOAD_DIR")

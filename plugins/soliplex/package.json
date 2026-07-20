@@ -1,0 +1,19 @@
+{
+  "name": "@soliplex/klangk-plugin-soliplex",
+  "version": "0.2.0",
+  "description": "Soliplex knowledge-base Pi extension (list/query/reply, multi-turn) for Klangk",
+  "pi": {
+    "extensions": [
+      "./extension.ts"
+    ]
+  },
+  "klangk": {
+    "config": {
+      "KLANGK_FEATURE_SOLIPLEX_URL": {
+        "description": "Soliplex RAG API endpoint URL",
+        "default": "",
+        "scope": "frontend"
+      }
+    }
+  }
+}
