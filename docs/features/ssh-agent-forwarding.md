@@ -100,24 +100,3 @@ same path, so existing shells continue to work.
 - Reconnect with `-A` to restart the relay. The socket path does
   not change, so existing terminal tabs will work once the relay is
   re-established.
-
-### Debugging
-
-Set `KLANGKC_DEBUG_SSH_AGENT=1` to enable verbose logging of the SSH
-agent relay. On the backend, messages go to the server log. On the
-CLI, messages are written to `~/.local/state/klangk/klangk-ssh-agent.log`
-(under XDG_STATE_HOME; #1646) to avoid corrupting the terminal display.
-
-```bash
-# Backend side (in .env or environment)
-KLANGKC_DEBUG_SSH_AGENT=1
-
-# CLI side
-export KLANGKC_DEBUG_SSH_AGENT=1
-klangk shell -A my-workspace
-# In another terminal:
-tail -f ~/.local/state/klangk/klangk-ssh-agent.log
-```
-
-Log messages are prefixed with `[ssh-agent]` and show data flow
-through each stage of the relay.

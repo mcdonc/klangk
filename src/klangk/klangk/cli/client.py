@@ -27,7 +27,6 @@ import websockets
 from .auth import fetch_config as _fetch_config
 from .auth import local_login as _local_login
 from .auth import refresh_token as _refresh_token
-from .config import _xdg_state_home
 from .transport import http_request, http_stream, ws_connect
 
 
@@ -781,29 +780,11 @@ async def ws_shell(
         # 2a. Start SSH agent forwarding if requested and available.
         ssh_agent_active = False
         local_agent_sock = os.environ.get("SSH_AUTH_SOCK")
-        _debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
-        if _debug_agent:  # pragma: no cover
-            # The ssh-agent debug log lives under XDG_STATE_HOME/klangk/ —
-            # not in $HOME (state, not config; #1646).
-            _agent_log_dir = _xdg_state_home() / "klangk"
-            _agent_log_dir.mkdir(parents=True, exist_ok=True)
-            _agent_log = _agent_log_dir / "klangk-ssh-agent.log"
-            _fh = logging.FileHandler(_agent_log, mode="w")
-            _fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
-            logger.addHandler(_fh)
-            logger.setLevel(logging.DEBUG)
-            logger.info(
-                "[ssh-agent] forward_agent=%s, SSH_AUTH_SOCK=%s",
-                forward_agent,
-                local_agent_sock,
-            )
         if (
             forward_agent
             and local_agent_sock
             and os.path.exists(local_agent_sock)
         ):
-            if _debug_agent:  # pragma: no cover
-                logger.info("[ssh-agent] sending ssh_agent_start")
             await ws.send(json.dumps({"cmd": "ssh_agent_start"}))
             # Wait for confirmation before starting the terminal so
             # SSH_AUTH_SOCK is included in the shell environment.
@@ -815,27 +796,12 @@ async def ws_shell(
                         break
                     raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
                     msg = json.loads(raw)
-                    if _debug_agent:  # pragma: no cover
-                        logger.info(
-                            "[ssh-agent] during wait: %s", msg.get("type")
-                        )
                     if msg.get("type") == "ssh_agent_started":
                         ssh_agent_active = True
-                        if _debug_agent:  # pragma: no cover
-                            logger.info(
-                                "[ssh-agent] started, socket=%s",
-                                msg.get("socket"),
-                            )
                         break
                     if msg.get("type") == "error":
-                        if _debug_agent:  # pragma: no cover
-                            logger.info(
-                                "[ssh-agent] error: %s", msg.get("message")
-                            )
                         break
             except asyncio.TimeoutError:
-                if _debug_agent:  # pragma: no cover
-                    logger.info("[ssh-agent] timed out waiting for start")
                 pass  # proceed without agent forwarding
 
         # 2b. Run pre-shell hook (sandbox setup) after agent forwarding
@@ -1040,7 +1006,6 @@ class _ShellSession:
         self.ssh_agent_sock = ssh_agent_sock
         self.stop = asyncio.Event()
         self.agent_queue: asyncio.Queue[bytes] = asyncio.Queue()
-        self._debug_agent = os.environ.get("KLANGKC_DEBUG_SSH_AGENT", "")
 
     async def heartbeat_loop(self) -> None:  # pragma: no cover
         """Send a heartbeat every 60 s until stopped."""
@@ -1057,8 +1022,6 @@ class _ShellSession:
         """Enqueue an ssh_agent_response message for the relay loop."""
         raw = base64.b64decode(data.get("data", ""))
         if raw:
-            if self._debug_agent:  # pragma: no cover
-                logger.info("[ssh-agent] got %d bytes from backend", len(raw))
             self.agent_queue.put_nowait(raw)
 
     async def ssh_agent_relay_loop(self) -> None:
@@ -1070,11 +1033,6 @@ class _ShellSession:
         """
         if not self.ssh_agent_sock:
             return
-        if self._debug_agent:  # pragma: no cover
-            logger.info(
-                "[ssh-agent] relay loop started, local sock=%s",
-                self.ssh_agent_sock,
-            )
         while not self.stop.is_set():
             try:
                 data = await asyncio.wait_for(
@@ -1082,22 +1040,12 @@ class _ShellSession:
                 )
             except asyncio.TimeoutError:
                 continue
-            if self._debug_agent:  # pragma: no cover
-                logger.info(
-                    "[ssh-agent] relay: got %d bytes from queue", len(data)
-                )
             try:
                 loop = asyncio.get_event_loop()
                 response = await loop.run_in_executor(
                     None, _query_local_ssh_agent, self.ssh_agent_sock, data
                 )
                 if response is not None:
-                    if self._debug_agent:  # pragma: no cover
-                        logger.info(
-                            "[ssh-agent] relay: sending %d bytes back "
-                            "to backend",
-                            len(response),
-                        )
                     await self.ws.send(
                         json.dumps(
                             {
@@ -1108,8 +1056,6 @@ class _ShellSession:
                             }
                         )
                     )
-                elif self._debug_agent:  # pragma: no cover
-                    logger.info("[ssh-agent] relay: no response from agent")
             except (OSError, ConnectionError) as e:
                 logger.warning("SSH agent relay: %s", e)
 
