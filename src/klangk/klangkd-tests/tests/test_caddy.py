@@ -752,9 +752,21 @@ class TestLlmBlockCaddyQueryDrop:
         block = CaddyRenderer(
             types.SimpleNamespace(state=types.SimpleNamespace(settings=s))
         )._build_llm_block("upstream", "")
+        # Strip the Authorization header line before writing to disk — the
+        # api_key ("k") is not a real secret, but the rendered Caddyfile
+        # would contain ``Authorization "Bearer k"`` and CodeQL flags any
+        # write of api_key-derived data as clear-text storage of sensitive
+        # information. The trust-boundary property under test (rewrite
+        # drops the user's query) is independent of the Authorization
+        # header, so stripping the line doesn't weaken the test.
+        block_sanitized = "\n".join(
+            line
+            for line in block.splitlines()
+            if not line.strip().startswith("header_up Authorization")
+        )
         cf = (
             "{\n\tadmin off\n}\n"
-            f":{proxy_port} {{\n{block}\n}}\n"
+            f":{proxy_port} {{\n{block_sanitized}\n}}\n"
         )
         cf_path = str(tmp_path / "Caddyfile")
         with open(cf_path, "w") as f:
