@@ -27,6 +27,23 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Soliplex ships as a compiled-in (dormant) feature of the default wheel
+  (#1664).** The Soliplex knowledge-base plugin
+  (`soliplex/klangk-plugin-soliplex`, maintained by the Soliplex org) is now
+  declared in the checked-in `plugins.yaml` as a remote `git:` entry pinned at
+  `v0.4` (`f9ad398`). A bare install compiles it in — the Dart UI + the TS
+  extension land in the bundle — but it's **not** in `DEFAULT_FEATURES`, so
+  `KLANGK_FEATURES_ENABLE` unset leaves it inactive. Operators running a
+  Soliplex server opt in with `KLANGK_FEATURES_ENABLE=soliplex` instead of
+  forking the repo and rebuilding. This is the first real exercise of the
+  "compiled-in ⊋ defaults" design from #1655 (compiled-in = 8, defaults = 7).
+  Its one config key (`SOLIPLEX_URL`, scope `frontend`) is bridged via
+  `/api/config` when active; no `container_env_keys` (browser-side feature).
+  `update_plugins.py` gained a `--local-only` flag so CI can verify the
+  local-plugin contract without hitting the network — the soliplex git fetch
+  is exercised by the real build (`flutterbuildweb.sh`) and by a synthetic
+  codegen test.
+
 - **First-run config generation: a bare `klangkd` boots with no config
   file (#1645).** When `klangkd` is invoked with no `--config` and no
   `klangkd.yaml` exists at the resolved path (`$KLANGK_CONFIG_DIR/klangkd.yaml`,

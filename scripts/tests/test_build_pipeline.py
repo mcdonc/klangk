@@ -53,6 +53,13 @@ EXPECTED_FEATURE_NAMES = {
     "git-credential",
 }
 
+# Remote (git-sourced) plugins declared in plugins.yaml. These are compiled-in
+# features too, but they're fetched over the network at build time — tests use
+# `--local-only` to avoid the network, and a separate test synthesizes a
+# soliplex-shaped tree to verify codegen picks remote plugins up correctly
+# (#1664: the first compiled-in-but-dormant feature).
+REMOTE_FEATURE_NAMES = {"soliplex"}
+
 # Plugins with a klangk/ Dart package → class names emitted into the
 # generated aggregator. Plugins without klangk/ (pig-latin, word-count,
 # browser-fetch) are TS-only and must NOT appear in the Dart aggregator.
@@ -95,8 +102,15 @@ def _run_codegen(payload_dir, tmp_path, monkeypatch):
 
 
 def _materialize(payload_dir):
-    """Run update_plugins.main() against the real checked-in plugins.yaml."""
-    rc = update_plugins.main(["--payload-dir", str(payload_dir)])
+    """Run update_plugins.main() against the real checked-in plugins.yaml.
+
+    Uses ``--local-only`` so the test doesn't hit the network for the
+    soliplex git entry — remote plugins are covered by a separate synthetic
+    test (see ``TestRemotePluginCodegen``) that verifies codegen picks them
+    up, and by the real build (``flutterbuildweb.sh``) which fetches them
+    (#1664).
+    """
+    rc = update_plugins.main(["--payload-dir", str(payload_dir), "--local-only"])
     assert rc == 0, "update_plugins.py failed against the real plugins.yaml"
 
 
@@ -111,27 +125,42 @@ class TestPipelineRuns:
     def test_update_plugins_materializes_all_declared(self, tmp_path):
         payload = tmp_path / "payload"
         payload.mkdir()
-        rc = update_plugins.main(["--payload-dir", str(payload)])
+        # --local-only: skip git entries (soliplex) so the test doesn't hit
+        # the network. The remote-plugin codegen path is exercised separately.
+        rc = update_plugins.main(["--payload-dir", str(payload), "--local-only"])
         assert rc == 0
 
-        # Every declared plugin is symlinked into the payload dir. Filter to
-        # directories — plugins.lock (a file) also lives there.
+        # Every LOCAL plugin is symlinked into the payload dir. Git entries
+        # (soliplex) are skipped without materializing — they appear only in
+        # plugins.lock with sha: 'skipped'. Filter to directories —
+        # plugins.lock (a file) also lives there.
         materialized = {
             p
             for p in os.listdir(payload)
             if (payload / p).is_dir() and not p.startswith(".")
         }
         assert materialized == EXPECTED_FEATURE_NAMES, (
-            f"materialized set != declared set — drift in plugins.yaml or "
-            f"plugins/. materialized={sorted(materialized)}"
+            f"materialized set != declared local set — drift in plugins.yaml "
+            f"or plugins/. materialized={sorted(materialized)}"
         )
 
-        # plugins.lock is written and lists every plugin.
+        # plugins.lock lists EVERY declared plugin (local + remote-skipped).
         import yaml
 
         lock = yaml.safe_load((payload / "plugins.lock").read_text())
         lock_names = {e["name"] for e in lock["plugins"]}
-        assert lock_names == EXPECTED_FEATURE_NAMES
+        assert lock_names == EXPECTED_FEATURE_NAMES | REMOTE_FEATURE_NAMES, (
+            f"plugins.lock names != all declared: {sorted(lock_names)}"
+        )
+        # Remote entries are recorded as skipped (not fetched).
+        remote_entries = {
+            e["name"]: e for e in lock["plugins"] if e["name"] in REMOTE_FEATURE_NAMES
+        }
+        for name, entry in remote_entries.items():
+            assert entry.get("sha") == "skipped", (
+                f"{name} should be sha='skipped' under --local-only, got "
+                f"{entry.get('sha')!r}"
+            )
 
     def test_import_dart_plugins_generates_aggregator(self, tmp_path, monkeypatch):
         payload = tmp_path / "payload"
@@ -264,16 +293,28 @@ class TestManifestContract:
         manifest = self._build_manifest(tmp_path, monkeypatch)
         assert manifest["defaults"] == list(import_dart_plugins.DEFAULT_FEATURES)
 
-    def test_every_dart_feature_is_default_on(self, tmp_path, monkeypatch):
-        """Every Dart-compiled feature is in the defaults list today — none
-        ships dormant. When #1664 (soliplex dormant) lands, this assertion
-        will need loosening to `defaults ⊇ Dart features that are default-on`."""
+    def test_dart_defaults_relationship(self, tmp_path, monkeypatch):
+        """The defaults list is a SUPERSET of the default-on Dart features
+        and excludes dormant ones.
+
+        Today every stock Dart feature is default-on. Soliplex (#1664) is the
+        first exception: it's compiled-in (appears in features[]) but dormant
+        (NOT in defaults) — operators opt in with KLANGK_FEATURES_ENABLE.
+        This is the canonical "compiled-in ⊋ defaults" case from #1655."""
         manifest = self._build_manifest(tmp_path, monkeypatch)
         feature_names = {f["name"] for f in manifest["features"]}
         defaults = set(manifest["defaults"])
-        assert feature_names <= defaults, (
-            f"Dart features not in defaults (would be inactive on a bare install): "
-            f"{feature_names - defaults}"
+        dormant = feature_names - defaults
+        # Every Dart feature is either default-on or explicitly dormant.
+        assert dormant <= REMOTE_FEATURE_NAMES, (
+            f"Unexpected dormant features (not in defaults and not declared "
+            f"dormant): {dormant - REMOTE_FEATURE_NAMES}"
+        )
+        # The default-on Dart features are exactly the stock set (the 4 local
+        # Dart plugins — celebrate, beep, boingball, git-credential).
+        default_on_dart = feature_names & defaults
+        assert default_on_dart == set(EXPECTED_DART_PLUGINS), (
+            f"Default-on Dart features drifted: {sorted(default_on_dart)}"
         )
 
     def test_container_env_keys_are_declared_container_scope(
@@ -293,3 +334,124 @@ class TestManifestContract:
         )
         # Spot-check the one key actually declared today.
         assert manifest["container_env_keys"] == EXPECTED_CONTAINER_ENV_KEYS
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Remote (git-sourced) plugin codegen — #1664.
+#
+# update_plugins.py materializes a git-sourced plugin (soliplex) by cloning +
+# copying its tree into the payload dir, stripping .git. The codegen step
+# (import_dart_plugins.py) then discovers it exactly like a local plugin:
+# `find_plugins()` scans <payload>/<name>/klangk/lib/plugin.dart.
+#
+# We don't hit the network here. Instead we synthesize a minimal soliplex-
+# shaped tree (pubspec.yaml + plugin.dart + package.json) in the payload dir
+# — the same shape `fetch_plugin()` would have produced — and verify codegen
+# picks it up. This proves the materialize → codegen handoff works for
+# remote plugins without coupling CI to the soliplex repo's availability.
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class TestRemotePluginCodegen:
+    """A materialized remote plugin is picked up by codegen (#1664)."""
+
+    def _synthesize_soliplex(self, payload_dir):
+        """Write a minimal soliplex-shaped tree into the payload dir.
+
+        Mirrors what `update_plugins.py::fetch_plugin()` produces for a real
+        clone: <payload>/soliplex/{package.json, klangk/{pubspec.yaml,
+        lib/plugin.dart}}. The Dart class name + the package.json's klangk.config
+        key match what the real soliplex v0.4 plugin declares.
+        """
+        plugin_dir = payload_dir / "soliplex"
+        dart_dir = plugin_dir / "klangk"
+        (dart_dir / "lib").mkdir(parents=True)
+        (dart_dir / "lib" / "plugin.dart").write_text(
+            "import 'package:klangk_plugin_api/klangk_plugin_api.dart';\n"
+            "class SoliplexPlugin extends ToolPlugin {}\n"
+        )
+        (dart_dir / "pubspec.yaml").write_text("name: klangk_plugin_soliplex\n")
+        (plugin_dir / "package.json").write_text(
+            '{"name": "@soliplex/klangk-plugin-soliplex", '
+            '"version": "0.2.0", '
+            '"description": "Soliplex KB plugin", '
+            '"klangk": {"config": {"SOLIPLEX_URL": '
+            '{"description": "Soliplex RAG API endpoint URL", '
+            '"default": "", "scope": "frontend"}}}}'
+        )
+
+    def test_remote_plugin_appears_in_features(self, tmp_path, monkeypatch):
+        """A materialized remote plugin lands in features.json::features[] with
+        its declared config keys (the SOLIPLEX_URL frontend-scope key)."""
+        payload = tmp_path / "payload"
+        payload.mkdir()
+        # Local plugins materialized normally (no network).
+        update_plugins.main(["--payload-dir", str(payload), "--local-only"])
+        # Soliplex synthesized in the shape fetch_plugin would have produced.
+        self._synthesize_soliplex(payload)
+
+        features_json = _run_codegen(payload, tmp_path, monkeypatch)
+        import json
+
+        manifest = json.loads(features_json.read_text())
+        features = {f["name"]: f for f in manifest["features"]}
+
+        # Soliplex is compiled in.
+        assert "soliplex" in features, (
+            f"soliplex missing from features[] — codegen didn't pick up the "
+            f"synthesized remote-plugin tree. features={sorted(features)}"
+        )
+        # Its config key is carried through with the frontend scope.
+        soliplex_config = features["soliplex"]["config"]
+        assert "SOLIPLEX_URL" in soliplex_config, (
+            f"SOLIPLEX_URL missing from soliplex config: {soliplex_config}"
+        )
+        assert soliplex_config["SOLIPLEX_URL"]["scope"] == "frontend"
+
+    def test_remote_plugin_is_dormant(self, tmp_path, monkeypatch):
+        """Soliplex is compiled-in but NOT in defaults — the dormant pattern.
+
+        This is the canonical acceptance criterion from #1664: a bare install
+        compiles soliplex in (so an operator can opt in) but doesn't surface
+        it. KLANGK_FEATURES_ENABLE=soliplex activates it at runtime."""
+        payload = tmp_path / "payload"
+        payload.mkdir()
+        update_plugins.main(["--payload-dir", str(payload), "--local-only"])
+        self._synthesize_soliplex(payload)
+
+        features_json = _run_codegen(payload, tmp_path, monkeypatch)
+        import json
+
+        manifest = json.loads(features_json.read_text())
+        assert "soliplex" not in manifest["defaults"], (
+            f"soliplex leaked into defaults — a bare install would surface a "
+            f"feature that needs a Soliplex server to be useful. "
+            f"defaults={manifest['defaults']}"
+        )
+        # Defaults stay at the stock 7.
+        assert set(manifest["defaults"]) == EXPECTED_FEATURE_NAMES
+
+    def test_remote_plugin_dart_aggregator_record(self, tmp_path, monkeypatch):
+        """createAllNamedPlugins() emits a (name, plugin) record for soliplex.
+
+        The runtime's active-set filter (main.dart) gates on the `name` field
+        matching KLANGK_FEATURES_ENABLE; the record must exist for the filter
+        to find it when an operator opts in."""
+        payload = tmp_path / "payload"
+        payload.mkdir()
+        update_plugins.main(["--payload-dir", str(payload), "--local-only"])
+        self._synthesize_soliplex(payload)
+
+        _run_codegen(payload, tmp_path, monkeypatch)
+        dart_file = payload / ".dart" / "lib" / "klangk_plugins.dart"
+        source = dart_file.read_text()
+
+        # The aggregator imports the synthesized package + instantiates the
+        # class, and emits the (name: 'soliplex', plugin: SoliplexPlugin())
+        # record the runtime filter depends on.
+        assert "import 'package:klangk_plugin_soliplex/plugin.dart';" in source
+        assert "(name: 'soliplex', plugin: SoliplexPlugin())," in source, (
+            f"soliplex record missing from createAllNamedPlugins — the "
+            f"runtime active-set filter won't find it when an operator sets "
+            f"KLANGK_FEATURES_ENABLE=soliplex. source:\n{source}"
+        )

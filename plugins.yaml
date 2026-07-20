@@ -1,14 +1,20 @@
 # Default plugin declaration list — the canonical set a bare install builds.
 #
-# Each entry is a *local path* (no git fetch): the plugin source trees live
-# in this repo under plugins/<name>/, so the build symlinks them straight in
-# rather than cloning. This file is the source of truth for which features a
-# fresh build compiles; KLANGK_FEATURES_ENABLE (runtime) decides which of the
-# compiled-in features are active at boot (#1655). See docs/features/plugins.md.
+# Each entry is either a *local path* (the plugin source tree lives in this
+# repo under plugins/<name>/, and the build symlinks it straight in) or a
+# *remote git ref* (`git:` + `ref:`, which `update_plugins.py` clones and
+# SHA-pins into `plugins.lock`). This file is the source of truth for which
+# features a fresh build compiles; `KLANGK_FEATURES_ENABLE` (runtime) decides
+# which of the compiled-in features are active at boot (#1655). See
+# docs/features/plugins.md.
 #
-# To add a plugin: drop its tree under plugins/<name>/ and append an entry
-# here. To fetch a remote plugin instead, use a `git:`/`ref:` entry (see
-# scripts/update_plugins.py).
+# The two lists are allowed to differ: a feature can be compiled-in but not in
+# `DEFAULT_FEATURES` (scripts/import_dart_plugins.py) — "dormant". Soliplex
+# (#1664) is the canonical case: it ships in the wheel so Soliplex operators
+# opt in with `KLANGK_FEATURES_ENABLE=soliplex`, but a bare install doesn't
+# surface it. To add a local plugin: drop its tree under plugins/<name>/ and
+# append a `path:` entry here. To add a remote plugin: append a `git:`/`ref:`
+# entry.
 plugins:
   - name: celebrate
     path: plugins/celebrate
@@ -24,3 +30,9 @@ plugins:
     path: plugins/boingball
   - name: git-credential
     path: plugins/git-credential
+  # Remote (compiled-in, dormant — #1664). NOT in DEFAULT_FEATURES; activate
+  # with KLANGK_FEATURES_ENABLE=soliplex. Nested Dart deps (soliplex_client,
+  # soliplex_agent, klangk_plugin_api) resolve at `flutter pub get` time.
+  - name: soliplex
+    git: https://github.com/soliplex/klangk-plugin-soliplex.git
+    ref: v0.4
