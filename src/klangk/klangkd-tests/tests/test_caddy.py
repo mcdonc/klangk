@@ -9,6 +9,7 @@ caddy, so nothing here shells out to it).
 """
 
 import asyncio
+import os
 import signal
 import types
 from unittest.mock import AsyncMock, Mock
@@ -396,6 +397,139 @@ class TestHostedBlock:
         assert "redir {uri}/ 308" in b
         assert "path_regexp hosted" in b
         assert "reverse_proxy 127.0.0.1:{re.hosted.1}" in b
+
+
+# ---------------------------------------------------------------------------
+# CaddyRenderer — render_config compiles via `caddy adapt` (smoke)
+# ---------------------------------------------------------------------------
+
+
+class TestLlmBlockCaddyAdapt:
+    """Smoke-test the rendered Caddyfile by adapting it through a real caddy.
+
+    The string assertions in ``TestLlmBlock`` are brittle: a future edit that
+    emits valid-looking-but-broken Caddyfile for the path-bearing case would
+    pass them. This class compiles the rendered config with ``caddy adapt``
+    and (for path-bearing URLs) inspects the adapted JSON to prove the
+    rewrite runs after ``handle_path``'s prefix strip — i.e. the final
+    upstream path is the intended one.
+
+    CI's plain-pip unit job has no ``caddy`` binary, so every test skips
+    when ``caddy`` is absent (the runtime e2e suite covers it under devenv
+    where caddy is present). Locally with devenv, these run.
+    """
+
+    @staticmethod
+    def _has_caddy() -> bool:
+        import shutil
+
+        return shutil.which("caddy") is not None
+
+    @pytest.fixture(autouse=True)
+    def _skip_without_caddy(self):
+        if not self._has_caddy():
+            pytest.skip("no `caddy` binary on PATH (run under devenv)")
+
+    @staticmethod
+    def _adapt(cf: str) -> dict:
+        """Run `caddy adapt --adapter caddyfile` on a rendered config; return JSON."""
+        import json
+        import subprocess
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".Caddyfile", delete=False) as f:
+            f.write(cf)
+            path = f.name
+        try:
+            r = subprocess.run(
+                ["caddy", "adapt", "--config", path, "--adapter", "caddyfile"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        finally:
+            os.unlink(path)
+        assert r.returncode == 0, f"caddy adapt failed:\n{r.stderr}"
+        return json.loads(r.stdout)
+
+    @staticmethod
+    def _find_llm_subroute(adapted: dict) -> list:
+        """Walk the adapted config; return the routes inside the /llm-proxy handle_path block."""
+        routes_out = []
+        for server in adapted.get("apps", {}).get("http", {}).get("servers", {}).values():
+            for route in server.get("routes", []):
+                match = route.get("match", [])
+                if not any("/llm-proxy" in str(m) for m in match):
+                    continue
+                # The match-all handle wraps a subroute; descend into it.
+                for h in route.get("handle", []):
+                    for sub in h.get("routes", []):
+                        routes_out.append(sub)
+        return routes_out
+
+    def test_path_bearing_url_compiles_and_routes_correctly(self):
+        """End-to-end render + caddy adapt for a path-bearing llm_base_url.
+
+        Asserts the property the substring tests can't: the rewrite that
+        re-attaches the base path runs AFTER handle_path's strip_prefix,
+        so a request to /llm-proxy/chat/completions lands at
+        /api/coding/paas/v4/chat/completions on the upstream. This is the
+        headline fix of #1681; without a compile-level test a future edit
+        that broke the strip+rewrite ordering (e.g. by switching back to
+        ``uri strip_prefix`` + ``rewrite``, which caddy reorders) would
+        silently ship broken.
+        """
+        s = make_settings(
+            env={
+                "KLANGK_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
+                "KLANGK_LLM_API_KEY": "k",
+            }
+        )
+        cf = _renderer(s).render_config("unix//s", "/d/caddy-admin.sock")
+        adapted = self._adapt(cf)
+
+        routes = self._find_llm_subroute(adapted)
+        assert routes, "no /llm-proxy route in adapted config"
+
+        # The strip_path_prefix handler must come before the rewrite handler.
+        handlers = []
+        for r in routes:
+            for h in r.get("handle", []):
+                if "strip_path_prefix" in h:
+                    handlers.append("strip")
+                elif "uri" in h and "rewrite" == h.get("handler"):
+                    handlers.append("rewrite")
+        assert "strip" in handlers, "handle_path's strip_prefix missing"
+        assert "rewrite" in handlers, "base-path rewrite missing"
+        assert handlers.index("strip") < handlers.index("rewrite"), (
+            "strip must run before rewrite; otherwise the rewrite sees the "
+            "un-stripped {uri} and the upstream path is wrong (regression of #1680)"
+        )
+
+        # And the rewrite target is the base path + {uri} (so a /chat request
+        # lands at /api/coding/paas/v4/chat).
+        rewrite_uris = [
+            h["uri"]
+            for r in routes
+            for h in r.get("handle", [])
+            if h.get("handler") == "rewrite" and "uri" in h
+        ]
+        assert any(
+            "/api/coding/paas/v4" in u for u in rewrite_uris
+        ), f"base path not in rewrite target: {rewrite_uris}"
+
+    def test_host_only_url_compiles(self):
+        """Sanity: a host-only URL (no path) still compiles — regression guard
+        that the path-split refactor didn't break the simple case."""
+        s = make_settings(
+            env={
+                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGK_LLM_API_KEY": "k",
+            }
+        )
+        cf = _renderer(s).render_config("unix//s", "/d/caddy-admin.sock")
+        # Smoke: just confirm caddy accepts it. No path assertions needed.
+        self._adapt(cf)
 
 
 # ---------------------------------------------------------------------------

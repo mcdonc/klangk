@@ -324,6 +324,22 @@ class CaddyRenderer:
         engine in #1643 (#1681). nginx's ``proxy_pass $llm_backend`` resolves
         at request time and never structural-validates the URL, so the same
         base_url works there without splitting.
+
+        No explicit ``header_up Host`` is emitted: caddy ≥2.8 auto-sets
+        ``Host: {upstream_hostport}`` when the transport has TLS
+        (caddyserver/caddy#7454), which covers every HTTPS LLM provider
+        (z.ai, OpenRouter, OpenAI, Anthropic, …). For a plain-HTTP upstream
+        (e.g. local Ollama ``http://127.0.0.1:11434``) caddy passes the
+        original request's Host through — the upstream sees ``Host:
+        host.containers.internal:8995`` rather than ``127.0.0.1:11434``.
+        This is a real but narrow parity gap with nginx (which sets ``Host
+        $proxy_host`` for both schemes); most HTTP upstreams ignore Host, so
+        it's left as-is rather than complicating the block with scheme
+        detection. An earlier attempt to set ``header_up Host
+        {upstream.hostport}`` unconditionally reintroduced the ``http2:
+        invalid Host header`` 502 against HTTPS upstreams — caddy's
+        placeholder substitution in the header context isn't reliable enough
+        to override what it would auto-set. See review of #1681.
         """
         from urllib.parse import urlsplit
 
