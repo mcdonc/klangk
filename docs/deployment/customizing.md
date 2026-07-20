@@ -323,15 +323,6 @@ byte-identical to upstream. Set it only if you want to distinguish your build.
 > separate name + version fields is a non-goal for now — keep them together in
 > one human-readable string.
 
-### Migrating from the removed `customize/build/` workflow
-
-Previously a `customize/build/build.sh` cloned klangk, overlaid
-`customize/build/plugins.yaml`, and built. That indirection is gone (#1663):
-
-1. Move any plugin entries from `customize/build/plugins.yaml` into the checked-in `plugins.yaml` in your fork (same format — copy wholesale if you like).
-2. Drop plugin source trees under `plugins/<name>/` in the fork (or keep them as `git:`/`ref:` entries pointing at their original repos).
-3. Set `KLANGK_VARIANT` / `KLANGK_HOST_IMAGE` directly in the environment when running `scripts/build-host-image.sh` (these were previously exported inside `build.sh`'s `devenv shell` invocation).
-
 ## Running
 
 Use the stock image with runtime customization (no plugins):
