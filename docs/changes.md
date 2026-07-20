@@ -681,16 +681,21 @@ set-password <email>` (set a known password for the default user — whose
 ### Fixed
 
 - **The nginx proxy engine no longer returns 500 for `/llm-proxy/*`
-  requests with a body larger than ~8 KB (#1682).** The `/llm-proxy/`
-  location now sets `proxy_request_buffering off`, streaming the request
-  body straight to the upstream instead of spilling it to
+  requests (or the other container-egress POST endpoints) with a body
+  larger than the in-memory buffer (#1682).** With the default
+  `proxy_request_buffering on`, nginx spills an oversize request body to
   `client_body_temp_path` — a directory that, under the keep-id user
   namespace, is owned by a different uid than the nginx worker, so any
-  spill raised EACCES → 500. (Caddy's `reverse_proxy` already streams
-  requests, which is why only nginx was affected.) This also cuts
-  first-token latency for LLM traffic. The LLM block's `resolver` now
-  also sets `ipv6=off`, so hosts without IPv6 egress stop logging
-  `Network is unreachable` per request.
+  spill raised EACCES → 500. The container-egress locations
+  (`/llm-proxy/`, `/api/v1/browser-delegate`,
+  `/api/v1/workspaces/post-chat-message`) now set
+  `proxy_request_buffering off`, streaming the request body straight to
+  the upstream (sidestepping the temp dir entirely — matching caddy's
+  `reverse_proxy`, which is why only nginx was affected). The LLM
+  block's `resolver` now also sets `ipv6=off`, which changes upstream
+  resolution for `/llm-proxy/` to IPv4-only (AAAA records suppressed) so
+  hosts without IPv6 egress stop logging `Network is unreachable` per
+  request; IPv6-only LLM upstreams would need a future setting.
 
 - **Default builds skip the soliplex remote plugin (CI unblock, #1691).**
   Every PR triggering `klangk:flutter-build` was failing during

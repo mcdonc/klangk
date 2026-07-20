@@ -393,14 +393,17 @@ class ProxyRenderer:
         - ``proxy_request_buffering off`` (#1682): stream the request body
           straight to the upstream instead of spilling it to
           ``client_body_temp_path``. With the default ``on``, any body larger
-          than ``client_body_buffer_size`` (~8 KB) is written to that temp dir,
-          which in the keep-id userns is owned by a different uid than the nginx
-          worker → EACCES → 500. Streaming sidesteps the temp dir entirely
-          (matching caddy's ``reverse_proxy``, which never buffers requests to
-          disk) and also cuts first-token latency. Safe with ``auth_request``:
-          the token-check subrequest runs in the preaccess phase, before
-          ``proxy_pass`` reads the body, so a 401 short-circuits with nothing
-          streamed.
+          than ``client_body_buffer_size`` (nginx's compiled default — 16 KB on
+          64-bit, 8 KB on 32-bit) is written to that temp dir, which in the
+          keep-id userns is owned by a different uid than the nginx worker →
+          EACCES → 500. Streaming sidesteps the temp dir entirely (matching
+          caddy's ``reverse_proxy``, which never buffers requests to disk) and
+          lets the upstream begin processing as the body arrives. Safe with
+          ``auth_request``: the token-check subrequest runs in the preaccess
+          phase, before ``proxy_pass`` reads the body, so a 401 short-circuits
+          with nothing streamed. The same directive is on the other
+          container-egress locations (``browser-delegate``, ``post-chat-message``)
+          for the same reason — see ``_egress_locations``.
         - ``resolver ... ipv6=off``: don't resolve AAAA records for the
           upstream. LLM providers are dual-stack with IPv4 always available;
           on hosts with no IPv6 egress, attempting the AAAA address produces
@@ -541,6 +544,10 @@ class ProxyRenderer:
             f"{common_headers}"
             "      proxy_read_timeout 920s;\n"
             "      proxy_send_timeout 920s;\n"
+            "      # Stream the request body (#1682): a delegated action can carry\n"
+            "      # a payload over client_body_buffer_size, which would otherwise\n"
+            "      # spill to client_body_temp_path (EACCES under keep-id userns).\n"
+            "      proxy_request_buffering off;\n"
             "      proxy_buffering off;\n"
             "    }\n"
         )
@@ -553,6 +560,10 @@ class ProxyRenderer:
             "      error_page 401 = @token_auth_failed;\n"
             f"      proxy_pass {upstream}/api/v1/workspaces/post-chat-message;\n"
             f"{common_headers}"
+            "      # Stream the request body (#1682): a chat message with a large\n"
+            "      # tool result can exceed client_body_buffer_size; without this\n"
+            "      # it spills to client_body_temp_path (EACCES under keep-id userns).\n"
+            "      proxy_request_buffering off;\n"
             "    }\n"
         )
         return f"{llm_block}{delegate}{post_chat}{_egress_auth_locations(upstream)}"

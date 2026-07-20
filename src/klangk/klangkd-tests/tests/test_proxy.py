@@ -266,13 +266,15 @@ class TestRenderConfig:
         )
 
     def test_llm_block_streams_request_body_and_disables_ipv6(self):
-        """Regression for #1682: the /llm-proxy/ location must stream the
+        """Regression for #1682: the container-egress locations must stream the
         request body (``proxy_request_buffering off``) so a body larger than
         ``client_body_buffer_size`` never spills to ``client_body_temp_path``
-        (EACCES under keep-id userns → 500), and must disable IPv6 upstream
-        resolution (``resolver ... ipv6=off``) so hosts without IPv6 egress
-        don't log ``Network is unreachable`` per request. Asserted in both
-        the headless and full renders."""
+        (EACCES under keep-id userns → 500), and the /llm-proxy/ resolver must
+        disable IPv6 upstream resolution (``ipv6=off``). Asserted by extracting
+        each location block (not a global substring) so a directive drifting
+        out of its block is caught. Both headless and full renders."""
+        import re
+
         env = {
             "KLANGK_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
             "KLANGK_LLM_API_KEY": "k",
@@ -288,8 +290,24 @@ class TestRenderConfig:
             tcp_upstream("127.0.0.1", "8997")
         )
         for label, conf in (("headless", headless), ("full", full)):
-            assert "proxy_request_buffering off;" in conf, label
-            assert "resolver" in conf and "ipv6=off" in conf, label
+            # /llm-proxy/ location: request streaming + IPv6-off resolver.
+            m = re.search(
+                r"location ~ \^/llm-proxy/\(\.\*\)\$ \{(.*?)\}",
+                conf,
+                re.DOTALL,
+            )
+            assert m, f"{label}: /llm-proxy/ block not found"
+            llm = m.group(1)
+            assert "proxy_request_buffering off;" in llm, label
+            assert "ipv6=off" in llm, label
+            # The other container-egress POST locations stream too.
+            for loc_pattern in (
+                r"location /api/v1/browser-delegate \{(.*?)\}",
+                r"location = /api/v1/workspaces/post-chat-message \{(.*?)\}",
+            ):
+                mm = re.search(loc_pattern, conf, re.DOTALL)
+                assert mm, f"{label}: {loc_pattern} block not found"
+                assert "proxy_request_buffering off;" in mm.group(1), label
 
     def test_auth_local_loopback_acl(self):
         s = make_settings({"KLANGK_PORT": "8997"})
