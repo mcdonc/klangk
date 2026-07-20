@@ -429,6 +429,14 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
 
 ### Removed
 
+- **The `@demigodmode/pi-web-agent` Pi extension is no longer installed
+  in the workspace image (#1689).** The workspace Dockerfile previously ran
+  `pi install npm:@demigodmode/pi-web-agent@1.5.0` alongside the global
+  `@earendil-works/pi-coding-agent` install; that step is gone, and the
+  extension is no longer listed among the pre-installed Pi extensions in
+  the docs. `@earendil-works/pi-coding-agent` is unchanged. Users who want
+  the web-agent UI can still `pi install` it at runtime.
+
 - **`instance_metadata` DB table / DB-stored instance ID:** the instance
   ID is now a single line of text in `<data_dir>/instance-id`, not a row in
   SQLite. The file lives in `data_dir` (next to `klangk.db`) because it

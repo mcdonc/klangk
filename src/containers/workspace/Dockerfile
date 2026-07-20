@@ -1,12 +1,10 @@
 ARG WORKSPACE_BASE_IMAGE=ghcr.io/mcdonc/klangk/klangk-workspace-base:2026.07.03-7a5caf9
 FROM $WORKSPACE_BASE_IMAGE
 
-# Install Pi coding agent and npm-based extensions globally.
-# This layer is expensive (~30s) and rarely changes, so it goes first.
-# Records packages in settings.json for Pi to discover at runtime.
+# Install Pi coding agent globally. This layer is expensive (~30s) and
+# rarely changes, so it goes first.
 RUN npm install -g @earendil-works/pi-coding-agent@0.79.9 \
-    && mkdir -p /opt/klangk/pi-agent/extensions /opt/klangk/pi-agent/skills \
-    && PI_CODING_AGENT_DIR=/opt/klangk/pi-agent pi install npm:@demigodmode/pi-web-agent@1.5.0
+    && mkdir -p /opt/klangk/pi-agent/extensions /opt/klangk/pi-agent/skills
 
 # Copy full plugin repos and symlink discoverable pieces into central dirs.
 # Extensions get <plugin>.ts, skills get <plugin>-<skill>/, prompts get

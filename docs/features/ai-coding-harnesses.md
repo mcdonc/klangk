@@ -68,7 +68,6 @@ follow-up conversations and interjections.
 
 The workspace image ships with several Pi extensions pre-installed:
 
-- **pi-web-agent** — web-based agent UI
 - **llm-proxy-models** — dynamically fetches available models from the
   LLM proxy
 - **minimax-thinking-tags** — strips `<think>` tags from models that
