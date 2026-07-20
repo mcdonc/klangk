@@ -242,7 +242,12 @@ class _PasswordSectionState extends State<_PasswordSection> {
             obscureText: _obscureNew,
             validator: (v) {
               if (v == null || v.isEmpty) return 'Required';
-              if (v.length < 8) return 'Min 8 characters';
+              // Read the server-configured minimum (KLANGK_MIN_PASSWORD_LENGTH,
+              // surfaced by AuthService from /api/v1/config) instead of
+              // hardcoding 8 — otherwise the client passes a password the
+              // server rejects when the deploy raised the floor (#1350).
+              final min = context.read<AuthService>().minPasswordLength;
+              if (v.length < min) return 'Min $min characters';
               return null;
             },
           ),
