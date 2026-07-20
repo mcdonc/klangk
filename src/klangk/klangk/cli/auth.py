@@ -309,7 +309,7 @@ def login(
 def refresh_token(server_url: str, token: str) -> str | None:
     """Exchange *token* for a fresh one via the server's refresh endpoint.
 
-    On success the new token is persisted to state.yaml and returned.
+    On success the new token is persisted to klangk-state.yaml and returned.
     Returns ``None`` on any failure (expired, revoked, network error).
     """
     try:

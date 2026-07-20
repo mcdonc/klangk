@@ -13,7 +13,7 @@ is discoverability (``this is where your config lives``) + a quick-reference
 for the mode transitions, not carrying any seeded identity.
 
 The resolved config-file path lives under ``KLANGK_CONFIG_DIR`` (default
-``$XDG_CONFIG_HOME/klangk``, #1649). ``KLANGK_CONFIG_DIR`` is read from the
+``$XDG_CONFIG_HOME/klangkd``, #1649, #1646). ``KLANGK_CONFIG_DIR`` is read from the
 env **before** any ``KlangkSettings`` construction — it can't come from
 ``klangkd.yaml`` because ``klangkd.yaml`` is what we're locating (the
 bootstrap rule from #1649).
@@ -50,8 +50,10 @@ def default_config_path() -> str:
     """Return the config-file path a bare ``klangkd`` resolves to.
 
     ``$KLANGK_CONFIG_DIR/klangkd.yaml`` when the env var is set (the
-    operator's explicit override), else ``$XDG_CONFIG_HOME/klangk/klangkd.yaml``
+    operator's explicit override), else ``$XDG_CONFIG_HOME/klangkd/klangkd.yaml``
     (XDG fallback to ``~/.config`` — Linux *and* macOS, per #1607).
+    The server's XDG subdir is ``klangkd`` (the binary name); the CLI uses
+    ``klangk`` — different audiences, different trees (#1646).
 
     Resolved purely from the env (no ``KlangkSettings`` construction) per
     #1649's bootstrap rule: ``klangkd.yaml`` can't relocate the config tree
@@ -77,7 +79,7 @@ def _render_config() -> str:
     return f"""# klangkd configuration — generated on first run ({timestamp}).
 #
 # This file was auto-created because no klangkd.yaml was found at its
-# expected location (${{KLANGK_CONFIG_DIR:-$XDG_CONFIG_HOME/klangk}}/klangkd.yaml,
+# expected location (${{KLANGK_CONFIG_DIR:-$XDG_CONFIG_HOME/klangkd}}/klangkd.yaml,
 # overridable via KLANGK_CONFIG_DIR). Edit it to customize your deployment.
 #
 # By default klangkd runs in solo mode: headless (UDS, no browser listener),

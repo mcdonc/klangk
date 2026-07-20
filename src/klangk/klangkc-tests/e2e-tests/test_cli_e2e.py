@@ -98,13 +98,13 @@ def cli_config(server, tmp_path_factory):
     """Create a CLI config pointing at the test server."""
     config_dir = tmp_path_factory.mktemp("klangk-cli-config")
     env = clean_env(HOME=str(config_dir))
-    # The CLI reads from ~/.config/klangk/cli.yaml
+    # The CLI reads from ~/.config/klangk/klangk.yaml
     klangk_config_dir = config_dir / ".config" / "klangk"
     klangk_config_dir.mkdir(parents=True)
     return {
         "env": env,
         "config_dir": klangk_config_dir,
-        "config_file": klangk_config_dir / "cli.yaml",
+        "config_file": klangk_config_dir / "klangk.yaml",
         "server_url": server["url"],
     }
 
@@ -1972,10 +1972,15 @@ def short_token_cli_config(short_token_server, tmp_path_factory):
 
 
 def _read_state_token(home_dir, server_url):
-    """Read the stored token from state.yaml under *home_dir*."""
+    """Read the stored token from klangk-state.yaml under *home_dir*.
+
+    State lives under ``$XDG_STATE_HOME/klangk/`` (not the config tree) —
+    #1646 split the CLI's config (``~/.config/klangk/``) from its state
+    (``~/.local/state/klangk/``).
+    """
     import yaml
 
-    state_path = home_dir / ".config" / "klangk" / "state.yaml"
+    state_path = home_dir / ".local" / "state" / "klangk" / "klangk-state.yaml"
     if not state_path.exists():
         return None
     data = yaml.safe_load(state_path.read_text()) or {}
@@ -2078,7 +2083,7 @@ class TestTokenRefresh:
     def test_token_persisted_after_refresh(
         self, short_token_server, short_token_cli_config
     ):
-        """After a successful refresh, state.yaml has the new token."""
+        """After a successful refresh, klangk-state.yaml has the new token."""
         self._login(short_token_cli_config)
         original_token = _read_state_token(
             Path(short_token_cli_config["env"]["HOME"]),

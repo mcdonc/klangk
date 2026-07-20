@@ -1001,7 +1001,7 @@ class TestAuthLines:
     def test_logout_network_error_propagates(self, tmp_path, monkeypatch):
         from klangk.cli import auth
 
-        state_path = tmp_path / "state.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials("http://localhost:8995", "x@y.com", "tok")

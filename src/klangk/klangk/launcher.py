@@ -15,7 +15,7 @@ Usage::
 Config-file resolution (three states, no implicit escape):
 
 1. Bare ``klangkd`` → resolves ``$KLANGK_CONFIG_DIR/klangkd.yaml`` (default
-   ``~/.config/klangk/klangkd.yaml``, #1649). If the file is missing it is
+   ``~/.config/klangkd/klangkd.yaml``, #1649, #1646). If the file is missing it is
    **generated** as a near-empty template pointing at the docs (#1645) —
    no admin identity or password is emitted. The admin row is seeded at
    runtime: ``default_user`` defaults to ``<unixuser>@example.com`` with
@@ -61,7 +61,7 @@ def _resolve_config_path(config: str | None) -> str:
 
     - ``None`` (bare ``klangkd``, no ``--config``) → resolve the default path
       at ``<KLANGK_CONFIG_DIR>/klangkd.yaml`` (default
-      ``~/.config/klangk/klangkd.yaml``). **Generate on first run** if the
+      ``~/.config/klangkd/klangkd.yaml``). **Generate on first run** if the
       file doesn't exist (#1645): writes a near-empty template pointing at
       the docs. No admin identity or password is emitted — the admin row
       is seeded at runtime (``default_user`` defaults to
@@ -107,7 +107,7 @@ def main(  # pragma: no cover
         help=(
             "Path to a YAML config file. Bare ``klangkd`` (no --config) "
             "resolves ``$KLANGK_CONFIG_DIR/klangkd.yaml`` "
-            "(default ``~/.config/klangk/klangkd.yaml``) and generates it "
+            "(default ``~/.config/klangkd/klangkd.yaml``) and generates it "
             "on first run (#1645). Use 'none' to run from env vars only "
             "(no config file)."
         ),

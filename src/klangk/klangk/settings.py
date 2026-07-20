@@ -56,11 +56,14 @@ logger = logging.getLogger(__name__)
 # freely issues an admin token). See the ``auth_modes`` field validator below.
 _VALID_AUTH_MODES = frozenset({"password", "oidc", "both", "none"})
 
-# The XDG "klangk" subdir used by the default-roots (state + config). Both
-# trees use the same subdir name so config and state sit side-by-side and are
-# easy to find; matching the CLI's existing ``~/.config/klangk/`` (the CLI is
-# folded into the klangkd wheel, #1606). See #1607 / #1644.
-_XDG_SUBDIR = "klangk"
+# The XDG "klangkd" subdir used by the default-roots (state + config). The
+# server's tree is ``klangkd`` (the binary name) — distinct from the CLI's
+# ``klangk`` tree. Different audiences, different shapes: server state is
+# GB-scale operator-owned DBs + UDS; CLI state is a few hundred bytes of
+# user tokens. Splitting at the filesystem level mirrors the code-level
+# isolation rule (``klangk.cli`` must not import from the server). See
+# #1607 / #1644 / #1646.
+_XDG_SUBDIR = "klangkd"
 
 
 def _xdg_config_home() -> str:
@@ -270,7 +273,7 @@ class _KebabYamlConfigSettingsSource(YamlConfigSettingsSource):
 
     The config file is documented in snake_case (matching the field names),
     but klangk's wider config-file style is kebab-case (e.g. the CLI's
-    ``cli.yaml`` and the OIDC provider dicts).  pydantic-settings matches
+    ``klangk.yaml`` and the OIDC provider dicts).  pydantic-settings matches
     config keys against snake_case field names only, so a bare
     ``YamlConfigSettingsSource`` silently ignores hyphenated keys.  This
     subclass normalizes top-level hyphenated keys (``proxy-port`` →
@@ -520,8 +523,8 @@ class KlangkSettings(BaseSettings):
     # The nginx engine never reads this field.
     caddy_admin_socket: str | None = None
     # state_dir: runtime state (the UDS when listen is a socket path, rendered
-    # proxy config, pid). Defaults to ``$XDG_STATE_HOME/klangk`` (→
-    # ``~/.local/state/klangk`` when the var is unset, incl. macOS) when no
+    # proxy config, pid). Defaults to ``$XDG_STATE_HOME/klangkd`` (→
+    # ``~/.local/state/klangkd`` when the var is unset, incl. macOS) when no
     # explicit value is supplied (#1644); explicit ``KLANGK_STATE_DIR`` /
     # config-file values still win (devenv pins it to ``$DEVENV_STATE/klangk``
     # via devenv.nix; the host container sets ``/tmp/klangk-state``). If
@@ -578,8 +581,8 @@ class KlangkSettings(BaseSettings):
     data_dir: str | None = None
     # config_dir: the config-tree root for user-edited, durable intent
     # (branding, email templates) — the config-tree analogue of
-    # ``state_dir`` (#1649). Defaults to ``$XDG_CONFIG_HOME/klangk`` (→
-    # ``~/.config/klangk``, read-with-fallback) when unset; ``customize_dir``
+    # ``state_dir`` (#1649). Defaults to ``$XDG_CONFIG_HOME/klangkd`` (→
+    # ``~/.config/klangkd``, read-with-fallback) when unset; ``customize_dir``
     # derives from the resolved ``config_dir`` (like ``data_dir`` derives
     # from ``state_dir``). An explicit ``KLANGK_CONFIG_DIR`` wins; per-sub-dir
     # env vars still win over the derivation. Read at boot and on SIGHUP
@@ -587,7 +590,7 @@ class KlangkSettings(BaseSettings):
     config_dir: str | None = None
     # customize_dir: branding + email templates — user-edited, durable
     # intent, so it's **config**, not state. Defaults to
-    # ``<config_dir>/custom`` (→ ``~/.config/klangk/custom``) when unset,
+    # ``<config_dir>/custom`` (→ ``~/.config/klangkd/custom``) when unset,
     # deriving from the resolved ``config_dir`` (#1644, #1649); no longer
     # under ``state_dir``. Explicit ``KLANGK_CUSTOMIZE_DIR`` still wins.
     customize_dir: str | None = None
@@ -711,8 +714,8 @@ class KlangkSettings(BaseSettings):
     def _require_dirs(self) -> "KlangkSettings":
         """Default ``state_dir``; derive ``data_dir``, ``customize_dir``, ``config_dir``.
 
-        ``state_dir`` defaults to ``$XDG_STATE_HOME/klangk`` (→
-        ``~/.local/state/klangk`` when the var is unset, incl. macOS) when no
+        ``state_dir`` defaults to ``$XDG_STATE_HOME/klangkd`` (→
+        ``~/.local/state/klangkd`` when the var is unset, incl. macOS) when no
         explicit value is supplied (#1644). This does **not** undo #1461's
         intent — that decision was about rejecting a ``None`` path so a
         dereference fails fast at boot rather than at first use; a concrete
@@ -727,7 +730,7 @@ class KlangkSettings(BaseSettings):
         ``data_dir`` still derives from ``state_dir`` (the SQLite DB +
         workspace volumes are runtime state too), so one default populates
         the state tree. ``config_dir`` defaults to
-        ``$XDG_CONFIG_HOME/klangk`` (the config-tree root, #1649) and
+        ``$XDG_CONFIG_HOME/klangkd`` (the config-tree root, #1649) and
         ``customize_dir`` derives from it (user-edited, durable config).
         ``plugins_dir`` is gone from settings entirely (#1655): the runtime
         reads the build-emitted ``features.json`` from ``frontend_dir``. The

@@ -1,4 +1,15 @@
-"""CLI configuration and state (~/.config/klangk/)."""
+"""CLI configuration and state.
+
+The CLI's config and state live under the XDG config / state trees, in a
+``klangk`` subdir (distinct from the server's ``klangkd`` tree — different
+audiences, different shapes; the CLI's state is a few hundred bytes of
+user tokens, the server's is GB-scale DBs + UDS). See #1646.
+
+- ``$XDG_CONFIG_HOME/klangk/klangk.yaml`` — user-edited config (servers,
+  preferences). Read with the XDG fallback (~/.config).
+- ``$XDG_STATE_HOME/klangk/klangk-state.yaml`` — disposable app-managed state
+  (login tokens + active server). Read with the XDG fallback (~/.local/state).
+"""
 
 from __future__ import annotations
 
@@ -9,9 +20,36 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
-_CONFIG_DIR = Path.home() / ".config" / "klangk"
-_CONFIG_PATH = _CONFIG_DIR / "cli.yaml"
-_STATE_PATH = _CONFIG_DIR / "state.yaml"
+
+def _xdg_config_home() -> Path:
+    """Return ``$XDG_CONFIG_HOME`` with the documented unset fallback.
+
+    Per the XDG base-dir spec, an unset ``XDG_CONFIG_HOME`` resolves to
+    ``~/.config``. Applies on Linux *and* macOS (no ~/Library special-case,
+    matching the server's #1607 cross-platform note).
+    """
+    return Path(
+        os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    )
+
+
+def _xdg_state_home() -> Path:
+    """Return ``$XDG_STATE_HOME`` with the documented unset fallback.
+
+    Per the XDG base-dir spec, an unset ``XDG_STATE_HOME`` resolves to
+    ``~/.local/state``. Linux *and* macOS.
+    """
+    return Path(
+        os.environ.get("XDG_STATE_HOME")
+        or os.path.expanduser("~/.local/state")
+    )
+
+
+# The CLI's XDG subdir (the binary name ``klangk``).
+_CLI_SUBDIR = "klangk"
+
+_CONFIG_PATH = _xdg_config_home() / _CLI_SUBDIR / "klangk.yaml"
+_STATE_PATH = _xdg_state_home() / _CLI_SUBDIR / "klangk-state.yaml"
 
 
 _DEFAULT_WS_MAX_SIZE = 2**24  # 16 MB
@@ -19,7 +57,7 @@ _DEFAULT_WS_MAX_SIZE = 2**24  # 16 MB
 
 @dataclass
 class ServerEntry:
-    """A named server in cli.yaml."""
+    """A named server in klangk.yaml."""
 
     url: str
     user: str | None = None
@@ -29,7 +67,7 @@ class ServerEntry:
 
 @dataclass
 class CLIConfig:
-    """Parsed cli.yaml — user-edited, never written by the CLI."""
+    """Parsed klangk.yaml — user-edited, never written by the CLI."""
 
     forward_agent: bool | None = None
     ws_max_size: int | None = None
@@ -86,7 +124,7 @@ class CLIConfig:
 
 
 def seed_config(server_url: str, user: str | None = None) -> None:
-    """Create cli.yaml with an initial server entry if it doesn't exist."""
+    """Create klangk.yaml with an initial server entry if it doesn't exist."""
     if _CONFIG_PATH.exists():
         return
     parsed = urlparse(server_url)
@@ -101,14 +139,14 @@ def seed_config(server_url: str, user: str | None = None) -> None:
 
 @dataclass
 class UserEntry:
-    """Per-user credentials within a server in state.yaml."""
+    """Per-user credentials within a server in klangk-state.yaml."""
 
     token: str | None = None
 
 
 @dataclass
 class ServerState:
-    """Per-server state in state.yaml."""
+    """Per-server state in klangk-state.yaml."""
 
     active_user: str | None = None
     users: dict[str, UserEntry] = field(default_factory=dict)
@@ -116,7 +154,7 @@ class ServerState:
 
 @dataclass
 class CLIState:
-    """Parsed state.yaml — auto-managed by the CLI."""
+    """Parsed klangk-state.yaml — auto-managed by the CLI."""
 
     active_server: str | None = None
     servers: dict[str, ServerState] = field(default_factory=dict)

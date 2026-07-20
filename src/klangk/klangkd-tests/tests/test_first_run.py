@@ -30,7 +30,7 @@ class TestDefaultConfigPath:
         monkeypatch.delenv("KLANGK_CONFIG_DIR", raising=False)
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         assert first_run.default_config_path() == str(
-            tmp_path / "klangk" / "klangkd.yaml"
+            tmp_path / "klangkd" / "klangkd.yaml"
         )
 
     def test_falls_back_to_home_when_xdg_unset(self, tmp_path, monkeypatch):
@@ -38,7 +38,7 @@ class TestDefaultConfigPath:
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         monkeypatch.setenv("HOME", str(tmp_path))
         assert first_run.default_config_path() == str(
-            tmp_path / ".config" / "klangk" / "klangkd.yaml"
+            tmp_path / ".config" / "klangkd" / "klangkd.yaml"
         )
 
     def test_klangk_config_dir_wins_over_xdg(self, tmp_path, monkeypatch):

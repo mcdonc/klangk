@@ -30,7 +30,7 @@ operators or integrators to act when upgrading.
 - **First-run config generation: a bare `klangkd` boots with no config
   file (#1645).** When `klangkd` is invoked with no `--config` and no
   `klangkd.yaml` exists at the resolved path (`$KLANGK_CONFIG_DIR/klangkd.yaml`,
-  default `~/.config/klangk/klangkd.yaml`), a near-empty template is generated
+  default `~/.config/klangkd/klangkd.yaml`), a near-empty template is generated
   pointing at the solo docs (#1629) with commented examples for the mode
   transitions. No admin identity or password is emitted — the admin row is
   seeded at runtime: `default_user` defaults to `<unixuser>@example.com`
@@ -256,6 +256,32 @@ invitations send` stay email-only (a deliverable address is required);
   set (#1558).
 
 ### Changed
+
+- **CLI config/state files renamed + relocated onto the XDG trees; server's
+  XDG subdir is now `klangkd` (#1646).** The CLI's two files move:
+  `cli.yaml` → `~/.config/klangk/klangk.yaml` (read via the `XDG_CONFIG_HOME`
+  var with the documented fallback, was hardcoded) and `state.yaml` →
+  `~/.local/state/klangk/klangk-state.yaml` (state, not config — was jammed
+  into the config tree). The `~/.klangk-ssh-agent.log` debug log moves to
+  `~/.local/state/klangk/klangk-ssh-agent.log` (no longer pollutes `$HOME`).
+  The server's XDG subdir changed from `klangk` to `klangkd` (the binary
+  name) — distinct from the CLI's `klangk` tree. Different audiences,
+  different shapes: the server's state is GB-scale DBs + UDS, the CLI's is
+  a few hundred bytes of user tokens; splitting at the filesystem level
+  mirrors the code-level isolation rule. New default paths:
+  server `~/.config/klangkd/klangkd.yaml` + `~/.local/state/klangkd/`;
+  CLI `~/.config/klangk/klangk.yaml` + `~/.local/state/klangk/klangk-state.yaml`.
+  **Breaking** (no migration shim): this lands before there's a deployed
+  user base with on-disk state worth preserving (#1656 wheel publish just
+  landed; #1670 first-run generation is the first time a config file even
+  exists). Existing dev installs need manual relocation:
+  - CLI config: rename `~/.config/klangk/cli.yaml` → `klangk.yaml`.
+  - CLI state: move `~/.config/klangk/state.yaml` → `~/.local/state/klangk/klangk-state.yaml`
+    (cached tokens; or just `klangk login` again).
+  - Server DB: move `~/.local/state/klangk/data/` → `~/.local/state/klangkd/data/`
+    (if running the server outside devenv / the host container, which pin
+    `KLANGK_STATE_DIR` explicitly and are unaffected).
+    CI doesn't set either env var and runs hermetically, so it's unaffected.
 
 - **The pytest toolchain is now an optional `test` extra, not a runtime
   dependency (#1673).** `src/klangk/pyproject.toml` moves `pytest`,

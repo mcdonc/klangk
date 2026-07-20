@@ -165,7 +165,7 @@ class TestCustomizeDir:
         monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/xcfg")
         u = _util({"KLANGK_STATE_DIR": "/tmp/state"})
         assert u.customize_dir() == os.path.join(
-            "/tmp/xcfg", "klangk", "custom"
+            "/tmp/xcfg", "klangkd", "custom"
         )
 
 

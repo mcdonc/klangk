@@ -21,13 +21,13 @@ from klangk.cli.client import Workspace
 @pytest.fixture
 def logged_in_cfg(tmp_path, monkeypatch):
     """Config + state with a valid token and email pre-loaded."""
-    config_path = tmp_path / "cli.yaml"
-    state_path = tmp_path / "state.yaml"
+    config_path = tmp_path / "klangk.yaml"
+    state_path = tmp_path / "klangk-state.yaml"
     monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
     monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
-    # Write a minimal cli.yaml (no servers needed for most tests)
+    # Write a minimal klangk.yaml (no servers needed for most tests)
     config_path.write_text("")
-    # Write state.yaml with active server and credentials
+    # Write klangk-state.yaml with active server and credentials
     state = CLIState()
     state.set_credentials(
         "http://localhost:8995", "test@example.com", "test-token"
@@ -71,8 +71,8 @@ class TestMainCLI:
     def test_login_cmd_stores_token(self, tmp_path, monkeypatch):
         from klangk.cli.main import login_cmd
 
-        config_path = tmp_path / "cli.yaml"
-        state_path = tmp_path / "state.yaml"
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
@@ -98,8 +98,8 @@ class TestMainCLI:
     def test_login_cmd_with_password_file(self, tmp_path, monkeypatch):
         from klangk.cli.main import login_cmd
 
-        config_path = tmp_path / "cli.yaml"
-        state_path = tmp_path / "state.yaml"
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
@@ -122,8 +122,8 @@ class TestMainCLI:
     def test_login_cmd_with_password_stdin(self, tmp_path, monkeypatch):
         from klangk.cli.main import login_cmd
 
-        config_path = tmp_path / "cli.yaml"
-        state_path = tmp_path / "state.yaml"
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
@@ -146,8 +146,8 @@ class TestMainCLI:
     def test_login_cmd_resolves_alias(self, tmp_path, monkeypatch):
         from klangk.cli.main import login_cmd
 
-        config_path = tmp_path / "cli.yaml"
-        state_path = tmp_path / "state.yaml"
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text(
@@ -175,8 +175,8 @@ class TestMainCLI:
     def test_login_cmd_uses_config_default_user(self, tmp_path, monkeypatch):
         from klangk.cli.main import login_cmd
 
-        config_path = tmp_path / "cli.yaml"
-        state_path = tmp_path / "state.yaml"
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text(
@@ -209,8 +209,8 @@ class TestMainCLI:
         import typer
         from klangk.cli import main
 
-        config_path = tmp_path / "cli.yaml"
-        state_path = tmp_path / "state.yaml"
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
@@ -237,8 +237,8 @@ class TestMainCLI:
         """server_url() exits when no active server and no --server."""
         from klangk.cli import main
 
-        config_path = tmp_path / "cli.yaml"
-        state_path = tmp_path / "state.yaml"
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
@@ -261,8 +261,8 @@ class TestMainCLI:
     def test_app_callback_resolves_server_alias(self, tmp_path, monkeypatch):
         from klangk.cli import main
 
-        config_path = tmp_path / "cli.yaml"
-        state_path = tmp_path / "state.yaml"
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text(
@@ -774,8 +774,8 @@ class TestMainCLI:
         import typer
         from klangk.cli import main
 
-        config_path = tmp_path / "cli.yaml"
-        state_path = tmp_path / "state.yaml"
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
@@ -789,8 +789,8 @@ class TestMainCLI:
     def test_status_not_logged_in(self, tmp_path, monkeypatch, capsys):
         from klangk.cli import main
 
-        config_path = tmp_path / "cli.yaml"
-        state_path = tmp_path / "state.yaml"
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
@@ -835,8 +835,8 @@ class TestMainCLI:
 
         from klangk.cli import main
 
-        config_path = tmp_path / "cli.yaml"
-        state_path = tmp_path / "state.yaml"
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
@@ -865,8 +865,8 @@ class TestMainCLI:
     def test_status_plain_not_logged_in(self, tmp_path, monkeypatch, capsys):
         from klangk.cli import main
 
-        config_path = tmp_path / "cli.yaml"
-        state_path = tmp_path / "state.yaml"
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
@@ -904,8 +904,8 @@ class TestMainCLI:
     def test_logout_no_active_server_exits(self, tmp_path, monkeypatch):
         from klangk.cli import main
 
-        config_path = tmp_path / "cli.yaml"
-        state_path = tmp_path / "state.yaml"
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
         config_path.write_text("")
