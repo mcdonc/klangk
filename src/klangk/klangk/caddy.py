@@ -42,6 +42,7 @@ import logging
 import os
 import shutil
 import signal
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -341,8 +342,6 @@ class CaddyRenderer:
         placeholder substitution in the header context isn't reliable enough
         to override what it would auto-set. See review of #1681.
         """
-        from urllib.parse import urlsplit
-
         base_url = self.app.state.settings.llm_base_url
         if not base_url:
             return ""
@@ -733,7 +732,6 @@ class CaddyWatchdog:
             self._proc = await asyncio.create_subprocess_exec(
                 bin_path,
                 "run",
-                "--environ",
                 # Pin the initial config to /dev/null so an accidental
                 # Caddyfile in CWD can't override the "no on-disk source of
                 # truth" guarantee — the real config arrives via POST /load.
