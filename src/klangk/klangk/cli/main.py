@@ -100,12 +100,42 @@ def app_callback(
         _server_override = _cfg().resolve_server(server)
 
 
+def _default_server_uds_path() -> str:
+    """Return the UDS path a co-located ``klangkd`` binds by default.
+
+    Mirrors the server's derivation so a single-host ``klangkd`` +
+    ``klangk`` works with no ``klangk login`` step (#1676): the backend
+    derives ``state_dir`` from ``KLANGK_STATE_DIR`` (env) or
+    ``$XDG_STATE_HOME/klangkd`` (→ ``~/.local/state/klangkd``) and binds
+    ``<state_dir>/klangk.sock`` (``settings._resolve_socket_and_ports``).
+    Replicated here — not imported — because ``klangk.cli`` runs in a
+    different environment than the server and must not import from the
+    server package. The ``file:``/``cmd:`` ``KLANGK_SOCKET`` indirection
+    case is not reproduced; operators who relocate the socket that way
+    still need a one-time ``klangk login``.
+    """
+    state_dir = os.environ.get("KLANGK_STATE_DIR")
+    if not state_dir:
+        xdg_state = os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
+            "~/.local/state"
+        )
+        state_dir = os.path.join(xdg_state, "klangkd")
+    return os.path.join(state_dir, "klangk.sock")
+
+
 def server_url() -> str:
     if _server_override is not None:
         return _server_override
     active = _state().active_server
     if active is not None:
         return active
+    # Single-host convenience (#1676): if a co-located klangkd has bound
+    # its default UDS, talk to it without forcing a `klangk login` step.
+    # Gated on existence so a host with no klangkd keeps the helpful
+    # "not configured" error instead of a spurious connection-refused.
+    default_uds = _default_server_uds_path()
+    if Path(default_uds).exists():
+        return default_uds
     _err.print(
         "[red]No server configured[/red] — run"
         " [bold]klangk login <server>[/bold] first,"

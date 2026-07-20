@@ -27,6 +27,18 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **The CLI now defaults to a co-located `klangkd`'s UDS when no server is
+  configured (#1676).** When neither `--server` nor an `active-server` in
+  CLI state is set, `klangk` falls back to the default Unix socket a
+  same-host `klangkd` binds (`$KLANGK_STATE_DIR/klangk.sock`, or
+  `$XDG_STATE_HOME/klangkd/klangk.sock` → typically
+  `~/.local/state/klangkd/klangk.sock`) — but only if that socket exists.
+  A single-host `klangkd` + `klangk` now "just works" with no prior
+  `klangk login`; hosts with no `klangkd` running keep the existing "No
+  server configured" error. Operators who relocate the socket via a
+  `file:`/`cmd:` `KLANGK_SOCKET` indirection still need a one-time
+  `klangk login`.
+
 - **Soliplex ships as a compiled-in (dormant) feature of the default wheel
   (#1664).** The Soliplex knowledge-base plugin
   (`soliplex/klangk-plugin-soliplex`, maintained by the Soliplex org) is now
