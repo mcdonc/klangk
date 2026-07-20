@@ -42,6 +42,12 @@ FLUTTER="${KLANGK_WEB_FLUTTER:-flutter}"
 # (a benign "Wasm dry run succeeded" warning is expected in JS-only mode.)
 cd src/frontend
 "$FLUTTER" --disable-analytics
+# Skip git-lfs smudge for transitive git deps. soliplex pulls ag_ui from
+# ag-ui-protocol/ag-ui.git, whose apps/dojo/e2e/fixtures/test-image.png is
+# LFS-tracked with an object unauthenticated CI can't fetch (#1691-class).
+# We only need ag_ui's Dart source, not its binary fixtures, so skipping the
+# LFS download is correct and harmless.
+export GIT_LFS_SKIP_SMUDGE=1
 "$FLUTTER" pub get
 
 # Guard against a stale web plugin registrant. Flutter's incremental web build

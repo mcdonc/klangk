@@ -303,9 +303,11 @@ invitations send` stay email-only (a deliverable address is required);
   `soliplex/klangk-plugin-soliplex` pinned at `v0.4` (#1664); the build
   materializes it by symlink like the other plugins, with no network fetch.
   A side effect of retiring the remote fetch: a default build now compiles
-  soliplex **in** again — it had been skipped by default since #1691 (an
-  upstream `ag_ui` LFS-object gap that broke every build; now fixed
-  upstream). Soliplex is still dormant (not in `DEFAULT_FEATURES`); opt in
+  soliplex **in** again — it had been skipped by default since #1691 (the
+  plugin's transitive `ag_ui` git dep carries an LFS-tracked fixture,
+  `apps/dojo/e2e/fixtures/test-image.png`, that unauthenticated CI can't
+  fetch). The build now exports `GIT_LFS_SKIP_SMUDGE=1` so the dep resolves
+  without the LFS object — only its Dart source is needed. Soliplex is still dormant (not in `DEFAULT_FEATURES`); opt in
   with `KLANGK_FEATURES_ENABLE=soliplex`. The git-sourced-plugin ability is
   unchanged — `update_plugins.py` still handles `git:`/`ref:` entries, and
   the build scripts' `KLANGK_BUILD_INCLUDE_REMOTE` gate stays as the generic

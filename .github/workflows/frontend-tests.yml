@@ -57,6 +57,11 @@ jobs:
       - name: Run plugin Dart tests
         if: steps.filter.outputs.frontend == 'true'
         run: |
+          # Skip git-lfs smudge for transitive git deps — soliplex pulls ag_ui
+          # from ag-ui-protocol/ag-ui.git, whose apps/dojo/e2e/fixtures/test-image.png
+          # is LFS-tracked with an object unauthenticated CI can't fetch
+          # (#1691-class). We only need ag_ui's Dart source, not its fixtures.
+          export GIT_LFS_SKIP_SMUDGE=1
           for pubspec in plugins/*/klangk/pubspec.yaml; do
             dir=$(dirname "$pubspec")
             if [ -d "$dir/test" ]; then
