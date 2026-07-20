@@ -41,9 +41,20 @@ fi
 # Materialize plugins into a build-owned tempdir (#1660): the declaration
 # is checked in at plugins.yaml; the payload (symlinked trees + plugins.lock)
 # is ephemeral. Cleaned up on exit.
+#
+# Remote (git-sourced) plugins are skipped by default — set
+# KLANGK_BUILD_INCLUDE_REMOTE=1 to fetch them. The only remote plugin today
+# is soliplex, whose transitive ag_ui git dep has an upstream LFS-object gap
+# (#1691) that breaks every CI build. Skipping soliplex drops the workspace
+# image back to the pre-#1683 local set. Release/single-client builds that
+# need soliplex's extension.ts bundled set KLANGK_BUILD_INCLUDE_REMOTE=1.
 PAYLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/klangk-plugins-XXXXXX")"
 trap 'rm -rf "$PAYLOAD_DIR"' EXIT
-python3 scripts/update_plugins.py --payload-dir "$PAYLOAD_DIR"
+UPDATE_FLAGS=(--payload-dir "$PAYLOAD_DIR")
+if [ "${KLANGK_BUILD_INCLUDE_REMOTE:-0}" != "1" ]; then
+  UPDATE_FLAGS+=(--local-only)
+fi
+python3 scripts/update_plugins.py "${UPDATE_FLAGS[@]}"
 
 # Stage full plugin directories outside the source tree
 STAGING="$PAYLOAD_DIR/.docker"

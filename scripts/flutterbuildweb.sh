@@ -15,7 +15,19 @@ trap 'rm -rf "$PAYLOAD_DIR"' EXIT
 
 # Fetch/symlink plugins into the payload dir, then generate the Dart
 # aggregator + features.json from those trees.
-python3 scripts/update_plugins.py --payload-dir "$PAYLOAD_DIR"
+#
+# Remote (git-sourced) plugins are skipped by default — set
+# KLANGK_BUILD_INCLUDE_REMOTE=1 to fetch them. Today the only remote plugin
+# is soliplex, whose transitive ag_ui git dep has an upstream LFS-object
+# gap (#1691) that breaks every CI build. Skipping remote plugins drops the
+# build back to the pre-#1683 local set (soliplex is dormant by default
+# anyway, so CI builds don't need it). Release/single-client builds that
+# need soliplex compiled in set KLANGK_BUILD_INCLUDE_REMOTE=1.
+UPDATE_FLAGS=(--payload-dir "$PAYLOAD_DIR")
+if [ "${KLANGK_BUILD_INCLUDE_REMOTE:-0}" != "1" ]; then
+  UPDATE_FLAGS+=(--local-only)
+fi
+python3 scripts/update_plugins.py "${UPDATE_FLAGS[@]}"
 python3 scripts/import_dart_plugins.py --payload-dir "$PAYLOAD_DIR"
 
 # flterm is forked (github.com/runyaga/flterm) to build on the nix Flutter
