@@ -27,6 +27,31 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Soliplex ships as a compiled-in (dormant) feature of the default wheel
+  (#1664).** The Soliplex knowledge-base plugin
+  (`soliplex/klangk-plugin-soliplex`, maintained by the Soliplex org) is now
+  declared in the checked-in `plugins.yaml` as a remote `git:` entry pinned at
+  `v0.4` (`f9ad398`). A bare install compiles it in — the Dart UI + the TS
+  extension land in the bundle — but it's **not** in `DEFAULT_FEATURES`, so
+  on the **frontend** `KLANGK_FEATURES_ENABLE` unset leaves it inactive.
+  Operators running a Soliplex server opt in by adding `soliplex` to
+  `KLANGK_FEATURES_ENABLE` (composed with the stock set — the canonical
+  activation semantics make an explicit value the **exact** active list, not
+  additive) instead of forking the repo and rebuilding. This is the first
+  real exercise of the "compiled-in ⊋ defaults" design from #1655
+  (compiled-in = 8, defaults = 7). Its one config key (`SOLIPLEX_URL`, scope
+  `frontend`) is bridged via `/api/v1/config` when active; no
+  `container_env_keys` (browser-side feature). `update_plugins.py` gained a
+  `--local-only` flag for the scripts test suite (which doesn't have network
+  access) to verify the local-plugin contract without cloning — the real
+  build (`flutterbuildweb.sh`, `build-workspace-image.sh`) still fetches
+  soliplex normally. **Known limitation:** dormancy governs the frontend only;
+  the workspace container bundles every compiled-in plugin's `extension.ts`
+  and Pi loads them unconditionally, so soliplex's `soliplex_*` tools appear
+  in every workspace pi's tool list regardless of `KLANGK_FEATURES_ENABLE`
+  (they self-no-op when no Soliplex server is reachable). Workspace-side
+  gating is a follow-up.
+
 - **First-run config generation: a bare `klangkd` boots with no config
   file (#1645).** When `klangkd` is invoked with no `--config` and no
   `klangkd.yaml` exists at the resolved path (`$KLANGK_CONFIG_DIR/klangkd.yaml`,

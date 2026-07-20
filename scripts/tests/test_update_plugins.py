@@ -259,3 +259,169 @@ class TestMainPayloadDir:
         assert os.path.isfile(os.path.join(payload_path, "plugins.lock"))
         # Reap now so the test is tidy; unregister so atexit doesn't touch it.
         shutil.rmtree(payload_path, ignore_errors=True)
+
+
+class TestLocalOnlyFlag:
+    """--local-only skips git-sourced plugins without hitting the network (#1664).
+
+    Tests use this to verify the local-plugin contract without cloning remote
+    repos. Git entries land in plugins.lock with sha: 'skipped' so the lock
+    shape stays consistent (every declared plugin appears).
+    """
+
+    def _setup_repo(self, tmp_path, monkeypatch):
+        """A repo with one local + one git plugin declared."""
+        fake_repo = tmp_path / "repo"
+        fake_repo.mkdir()
+        (fake_repo / "plugins.yaml").write_text(
+            "plugins:\n"
+            "  - name: local-one\n"
+            "    path: plugins/local-one\n"
+            "  - name: remote-one\n"
+            "    git: https://example.invalid/owner/repo.git\n"
+            "    ref: v1.0\n"
+        )
+        local = fake_repo / "plugins" / "local-one"
+        local.mkdir(parents=True)
+        (local / "extension.ts").write_text("// hi")
+        monkeypatch.setattr(update_plugins, "ROOT", str(fake_repo))
+        monkeypatch.setattr(
+            update_plugins, "YAML_PATH", str(fake_repo / "plugins.yaml")
+        )
+        return fake_repo
+
+    def test_skips_git_entries(self, tmp_path, monkeypatch):
+        """Git entries are skipped (not fetched) under --local-only."""
+        self._setup_repo(tmp_path, monkeypatch)
+        payload = tmp_path / "payload"
+        payload.mkdir()
+
+        # Would normally try to clone example.invalid; --local-only skips it.
+        rc = update_plugins.main(["--payload-dir", str(payload), "--local-only"])
+        assert rc == 0
+
+        # Only the local plugin is materialized as a directory.
+        materialized = {p for p in os.listdir(payload) if (payload / p).is_dir()}
+        assert materialized == {"local-one"}, (
+            f"--local-only should skip remote-one; materialized={materialized}"
+        )
+
+    def test_git_entries_recorded_as_skipped_in_lock(self, tmp_path, monkeypatch):
+        """Skipped git entries still appear in plugins.lock with sha='skipped'.
+
+        The lock shape stays consistent (every declared plugin appears) so a
+        downstream consumer doesn't see plugins vanishing from the lock when
+        the build runs --local-only."""
+        self._setup_repo(tmp_path, monkeypatch)
+        payload = tmp_path / "payload"
+        payload.mkdir()
+
+        update_plugins.main(["--payload-dir", str(payload), "--local-only"])
+
+        import yaml
+
+        lock = yaml.safe_load((payload / "plugins.lock").read_text())
+        entries = {e["name"]: e for e in lock["plugins"]}
+        assert set(entries) == {"local-one", "remote-one"}, (
+            f"lock should list both plugins; got {sorted(entries)}"
+        )
+        assert entries["remote-one"]["sha"] == "skipped", (
+            f"remote-one should be sha='skipped'; got {entries['remote-one']!r}"
+        )
+        # The git URL + ref are preserved in the lock for traceability.
+        assert entries["remote-one"]["git"].endswith("/repo.git")
+        assert entries["remote-one"]["ref"] == "v1.0"
+
+    def test_local_only_off_by_default(self, tmp_path, monkeypatch):
+        """Without --local-only, a git entry with an unresolvable ref fails
+        (the script never silently degrades to skipping)."""
+        self._setup_repo(tmp_path, monkeypatch)
+        payload = tmp_path / "payload"
+        payload.mkdir()
+
+        # No --local-only: the bogus git URL is attempted. fetch_plugin prints
+        # an ERROR and returns None; the plugin is dropped from the lock
+        # (the silent-fallback-to-default-branch guard from #1660). Use a
+        # file:// URL so the test doesn't hit DNS (no network access in the
+        # scripts test suite).
+        fake_repo = tmp_path / "repo"
+        # Override the git URL to a file:// path that doesn't exist.
+        (fake_repo / "plugins.yaml").write_text(
+            "plugins:\n"
+            "  - name: local-one\n"
+            "    path: plugins/local-one\n"
+            "  - name: remote-one\n"
+            "    git: file:///nonexistent/path/repo.git\n"
+            "    ref: v1.0\n"
+        )
+
+        rc = update_plugins.main(["--payload-dir", str(payload)])
+        assert rc == 0  # main() doesn't exit nonzero on a failed fetch
+
+        import yaml
+
+        lock = yaml.safe_load((payload / "plugins.lock").read_text())
+        names = {e["name"] for e in lock["plugins"]}
+        # remote-one was attempted, failed, and dropped — only local-one lands.
+        assert names == {"local-one"}, (
+            f"failed-fetch plugin should be dropped; lock has {sorted(names)}"
+        )
+
+    def test_local_only_preserves_prior_real_sha(self, tmp_path, monkeypatch):
+        """A pre-existing real SHA in plugins.lock is preserved under
+        --local-only.
+
+        Covers the interleaved-workflow case: `update_plugins <remote-name>`
+        resolves + pins the real SHA, then a later `update_plugins
+        --local-only` (e.g. a test run that reuses the payload dir) skips the
+        fetch but keeps the resolved SHA rather than clobbering it with
+        'skipped'. Without this, an interleaved --local-only run silently
+        loses the pin a prior fetch established (#1664 review finding)."""
+        self._setup_repo(tmp_path, monkeypatch)
+        payload = tmp_path / "payload"
+        payload.mkdir()
+
+        # Seed the lock with a real-looking prior SHA (as if a prior fetch
+        # had resolved remote-one to a specific commit).
+        import yaml
+
+        prior_lock = {
+            "plugins": [
+                {
+                    "name": "remote-one",
+                    "git": "https://example.invalid/owner/repo.git",
+                    "path": "",
+                    "ref": "v1.0",
+                    "sha": "abc123def456",  # a real-looking resolved SHA
+                }
+            ]
+        }
+        (payload / "plugins.lock").write_text(yaml.dump(prior_lock))
+
+        update_plugins.main(["--payload-dir", str(payload), "--local-only"])
+
+        lock = yaml.safe_load((payload / "plugins.lock").read_text())
+        entries = {e["name"]: e for e in lock["plugins"]}
+        assert entries["remote-one"]["sha"] == "abc123def456", (
+            f"--local-only should preserve a prior real SHA; got "
+            f"{entries['remote-one']['sha']!r}"
+        )
+
+    def test_local_only_writes_skipped_when_no_prior_sha(self, tmp_path, monkeypatch):
+        """With no prior lock, --local-only writes sha='skipped' for git
+        entries (the baseline case — no prior fetch to preserve)."""
+        self._setup_repo(tmp_path, monkeypatch)
+        payload = tmp_path / "payload"
+        payload.mkdir()
+        # No prior plugins.lock.
+
+        update_plugins.main(["--payload-dir", str(payload), "--local-only"])
+
+        import yaml
+
+        lock = yaml.safe_load((payload / "plugins.lock").read_text())
+        entries = {e["name"]: e for e in lock["plugins"]}
+        assert entries["remote-one"]["sha"] == "skipped", (
+            f"--local-only with no prior lock should write sha='skipped'; "
+            f"got {entries['remote-one']['sha']!r}"
+        )

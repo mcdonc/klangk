@@ -297,6 +297,18 @@ def main(argv=None):
             "scripts always pass this explicitly (#1660)."
         ),
     )
+    parser.add_argument(
+        "--local-only",
+        action="store_true",
+        help=(
+            "Skip git-sourced plugins (only materialize local-path entries). "
+            "For tests/CI that want to verify the local-plugin contract "
+            "without network access — remote plugins are exercised by the "
+            "real build (scripts/flutterbuildweb.sh) instead. Git entries "
+            "are noted in plugins.lock with sha: 'skipped' so the lock "
+            "shape stays consistent (#1664)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if not os.path.isfile(YAML_PATH):
@@ -338,6 +350,28 @@ def main(argv=None):
 
     for plugin in plugins:
         if "git" in plugin:
+            if args.local_only:
+                print(
+                    f"  SKIP: {plugin['name']} (git entry, --local-only)",
+                    file=sys.stderr,
+                )
+                # Record the skip in the lock so its shape stays consistent
+                # (every declared plugin appears) without fetching. Preserve
+                # a real SHA from the prior lock if one exists (an interleaved
+                # `update_plugins <name>` may have already resolved it) — only
+                # write sha='skipped' when there's nothing better to keep.
+                prior = lock_map.get(plugin["name"])
+                prior_sha = prior.get("sha") if prior else None
+                lock_map[plugin["name"]] = {
+                    "name": plugin["name"],
+                    "git": plugin["git"],
+                    "path": plugin.get("path", ""),
+                    "ref": plugin.get("ref", "main"),
+                    "sha": prior_sha
+                    if prior_sha and prior_sha != "skipped"
+                    else "skipped",
+                }
+                continue
             entry = fetch_plugin(plugin, payload_dir)
         elif "path" in plugin:
             entry = link_plugin(plugin, payload_dir)
