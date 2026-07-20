@@ -356,13 +356,20 @@ def main(argv=None):
                     file=sys.stderr,
                 )
                 # Record the skip in the lock so its shape stays consistent
-                # (every declared plugin appears) without fetching.
+                # (every declared plugin appears) without fetching. Preserve
+                # a real SHA from the prior lock if one exists (an interleaved
+                # `update_plugins <name>` may have already resolved it) — only
+                # write sha='skipped' when there's nothing better to keep.
+                prior = lock_map.get(plugin["name"])
+                prior_sha = prior.get("sha") if prior else None
                 lock_map[plugin["name"]] = {
                     "name": plugin["name"],
                     "git": plugin["git"],
                     "path": plugin.get("path", ""),
                     "ref": plugin.get("ref", "main"),
-                    "sha": "skipped",
+                    "sha": prior_sha
+                    if prior_sha and prior_sha != "skipped"
+                    else "skipped",
                 }
                 continue
             entry = fetch_plugin(plugin, payload_dir)
