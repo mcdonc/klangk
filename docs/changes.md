@@ -772,19 +772,24 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
-- **The Caddy proxy engine's child no longer binds `127.0.0.1:2019` at
-  bootstrap — it binds its admin UDS from the first moment, on any Caddy
-  version (#1709).** The watchdog previously spawned `caddy run --config
-  /dev/null` relying on the `CADDY_ADMIN` env var to set the admin address,
-  but `CADDY_ADMIN` only lands in Caddy ≥ 2.7 (caddy#5317); klangkd runs the
-  host's system Caddy (`shutil.which("caddy")`), so on older Caddy the env
-  var was ignored, the empty config fell back to the default
-  `localhost:2019`, and klangkd crash-looped polling a UDS that never
-  appeared — failing on any host that also runs Caddy for something else
-  (a system `caddy.service`, a sibling reverse proxy, another klangkd). The
-  spawn now passes a minimal initial Caddyfile (`{ admin unix//<sock>|0600 }`)
-  via `--config`; the `admin` global option has been honored since Caddy v2.0,
-  so klangkd coexists with any other Caddy on the host regardless of version.
+- **The Caddy proxy engine's child coexists with any other Caddy on the host
+  and binds its admin UDS from the first moment, on any Caddy version
+  (#1709).** Two version-robustness bugs were fixed. (1) The watchdog spawned
+  `caddy run --config /dev/null` relying on the `CADDY_ADMIN` env var to set
+  the admin address, but `CADDY_ADMIN` only lands in Caddy >= 2.7
+  (caddy#5317) and klangkd runs the host's system Caddy
+  (`shutil.which("caddy")`), so on older Caddy the env var was ignored, the
+  empty config fell back to the default `localhost:2019`, and klangkd
+  crash-looped polling a UDS that never appeared — failing on any host that
+  also runs Caddy (a system `caddy.service`, a sibling reverse proxy, another
+  klangkd). The spawn now passes a minimal initial Caddyfile (`{ admin
+  unix//<sock> }`) via `--config`; the `admin` global option has been honored
+  since Caddy v2.0. (2) The admin address no longer carries a `|0600` mode
+  suffix — that syntax is only honored on Caddy >= 2.8 and on older Caddy is
+  folded into the socket *path* (creating `caddy-admin.sock|0600` instead of
+  `caddy-admin.sock`), which broke the admin poll on the older system Caddy
+  the dist-smoke gate installs. The owner-only mode (#1559) is now enforced
+  by the watchdog via `os.chmod` after the bind (version-independent).
 
 - **The nginx proxy engine no longer returns 500 for `/llm-proxy/*`
   requests (or the other container-egress POST endpoints) with a body

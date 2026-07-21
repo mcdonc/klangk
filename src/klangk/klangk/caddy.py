@@ -21,8 +21,9 @@ issue #1559):
   can't override it), so the only way to reach the admin API is via a
   process that can open that owner-only socket — i.e. ``klangkd`` and its
   children. No auth token / mTLS / loopback-TCP surface. The rendered
-  Caddyfile re-declares ``admin unix//...|0600`` in its global options so
-  the binding (and the owner-only mode) survive reloads.
+  Caddyfile re-declares ``admin unix//...`` in its global options so the
+  binding survives reloads; the owner-only mode is enforced by the watchdog
+  via ``os.chmod`` (Caddy's ``|0600`` address suffix is version-fragile, #1709).
 
 The renderer is a pure function of the merged config (settings + the same
 host-IP auto-detection probe the nginx renderer uses). It takes the upstream
@@ -263,9 +264,13 @@ class CaddyRenderer:
           immediate peer — matching nginx with no realip directives.
         """
         lines = [
-            # |0600 so Caddy creates the socket owner-only (its default
-            # UDS mode is group-readable; #1559 requires 0600).
-            "	admin unix//" + admin_socket + "|0600",
+            # No |0600 mode suffix — only honored on Caddy >= 2.8; on older
+            # Caddy it's folded into the socket path, breaking the bind
+            # (#1709). Owner-only mode is enforced by the watchdog via
+            # os.chmod (see CaddyWatchdog._wait_for_admin); Caddy doesn't
+            # re-bind the admin on /load with an unchanged address, so one
+            # chmod per bind persists across reloads.
+            "	admin unix//" + admin_socket,
             "	auto_https off",
             "	persist_config off",
         ]
@@ -294,8 +299,9 @@ class CaddyRenderer:
         deliberately absent — they arrive later via ``POST /load``, exactly
         as before; this only establishes the admin endpoint.
         """
-        # Same admin-line shape as _global_block (unix//<sock>|0600).
-        return "{\n\tadmin unix//" + admin_socket + "|0600\n}\n"
+        # Same admin-line shape as _global_block (plain unix//<sock>, no
+        # mode suffix — see _global_block).
+        return "{\n\tadmin unix//" + admin_socket + "\n}\n"
 
     # -- shared reverse_proxy header bundle --------------------------------
 
@@ -685,25 +691,24 @@ class CaddyWatchdog:
         Read live from ``settings.caddy_admin_socket`` (default
         ``<state_dir>/caddy-admin.sock``, overridable via
         ``KLANGK_CADDY_ADMIN_SOCKET`` for environments where the default would
-        overflow the AF_UNIX sun_path bound, #1636). Caddy's *bind* address
-        (:attr:`admin_bind_address`) appends a ``|0600`` mode suffix so the
-        socket is created owner-only; the httpx dial uses this bare path (the
-        suffix is a bind-side directive only).
+        overflow the AF_UNIX sun_path bound, #1636). The httpx dial uses this
+        bare path; the owner-only mode is enforced by the watchdog via
+        ``os.chmod`` (see :attr:`admin_bind_address` — no ``|0600`` suffix).
         """
         return self.app.state.settings.caddy_admin_socket
 
     @property
     def admin_bind_address(self) -> str:
-        """The Caddy bind address for the admin UDS: ``unix//<path>|0600``.
+        """The Caddy bind address for the admin UDS: ``unix//<path>``.
 
-        The ``|0600`` suffix tells Caddy to create the socket with mode
-        ``0600`` (owner read/write only). Without it Caddy's default UDS mode
-        is group-readable, which widens the admin-API surface beyond the
-        ``klangkd``-only trust boundary issue #1559's locked decision requires
-        (any same-group process could drive the admin API, which accepts a
-        full config replace including arbitrary upstreams).
+        No ``|0600`` mode suffix — that syntax is only honored on Caddy >= 2.8;
+        on older Caddy it's folded into the socket *path*, breaking the bind
+        (#1709). The owner-only mode is enforced by :meth:`_wait_for_admin`
+        via ``os.chmod`` (version-independent). The admin API accepts a full
+        config replace including arbitrary upstreams, so the UDS must stay
+        owner-only (#1559).
         """
-        return f"unix//{self.admin_socket}|0600"
+        return f"unix//{self.admin_socket}"
 
     def _render_caddyfile(self) -> str:
         """Render the full Caddyfile (global + sites), UDS backend upstream."""
@@ -743,6 +748,22 @@ class CaddyWatchdog:
                 transport = httpx.AsyncHTTPTransport(uds=self.admin_socket)
                 async with httpx.AsyncClient(transport=transport) as c:
                     await c.get("http://localhost/config/")
+                # Enforce owner-only mode on the admin UDS (#1559). We do NOT
+                # use Caddy's |0600 address suffix for this — it's only honored
+                # on Caddy >= 2.8, and on older Caddy it's folded into the
+                # socket path, breaking the bind (#1709). os.chmod is
+                # version-independent, and Caddy doesn't re-bind the admin on
+                # /load with an unchanged address, so this one chmod per bind
+                # persists across reloads. There's a brief window between
+                # Caddy creating the socket (default permissive mode) and this
+                # chmod (~one poll interval), acceptable for #1559's same-host
+                # threat model.
+                try:
+                    os.chmod(self.admin_socket, 0o600)
+                except OSError:
+                    # Socket vanished (race) or a mocked test path with no
+                    # real socket — don't let it mask the successful connect.
+                    pass
                 return True
             except (httpx.ConnectError, OSError):
                 await asyncio.sleep(0.2)
