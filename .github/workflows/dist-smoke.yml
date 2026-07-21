@@ -1,0 +1,142 @@
+name: Dist Smoke Test
+
+on:
+  # Manual trigger only — this is a release-engineering tool, not a per-PR
+  # gate. A maintainer runs it against a release-candidate branch to verify
+  # the wheel that will be published actually serves a working login page
+  # through the real klangkd → caddy → UDS → uvicorn path before tagging
+  # (#1611). Trigger via the Actions UI or `gh workflow run dist-smoke.yml
+  # --ref <branch>`.
+  workflow_dispatch:
+
+concurrency:
+  group: dist-smoke
+  cancel-in-progress: false
+
+jobs:
+  # Build the wheel (#1656). No publish here — this is a release-candidate
+  # validation workflow, not a release; the wheel is uploaded as a workflow
+  # artifact for dist-smoke-test to install + exercise. release.yml owns
+  # the actual PyPI publish.
+  #
+  # The distribution name is ``klangk`` (one unified wheel ships the klangkd
+  # server + klangk CLI, #1606); hatch-vcs derives the version from git
+  # history (hence the fetch-depth: 0 below).
+  build-wheel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # hatch-vcs needs full history to derive the version
+
+      - uses: ./.github/actions/devenv-setup
+        with:
+          # Build the frontend with the default plugin set (checked-in
+          # plugins.yaml, #1660) so the wheel's klangk/frontend/ carries
+          # the compiled UI + features.json. The hatch build hook
+          # (hatch_build_frontend.py) force-includes it and *requires* it
+          # for non-editable wheel builds (#1600).
+          build-tasks: klangk:flutter-build
+
+      - name: Build wheel
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          # scripts/build_wheel.sh installs python-build transiently (uv-sync
+          # at shell entry would wipe it; the script installs + builds in one
+          # process). Requires the frontend artifact from klangk:flutter-build
+          # above — the hatch build hook force-includes it and requires it for
+          # non-editable wheel builds (#1600).
+          devenv shell -- bash scripts/build_wheel.sh
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: klangk-wheel
+          path: src/klangk/dist/*.whl
+          retention-days: 7
+
+  # Smoke test the installed wheel OUTSIDE devenv (#1611). The whole point
+  # is to prove a bare `pip install klangk && klangkd` works on a stock
+  # Ubuntu runner with no devenv/nix in the loop — that's the audience
+  # the #1607 / #1645 first-run story targets. Runs apt-get install for
+  # caddy (klangkd forks it as a child via shutil.which) + the Playwright
+  # Chromium browser deps; pip-installs the wheel into an isolated venv;
+  # starts real klangkd (caddy engine, UDS upstream, Flutter Web frontend
+  # served from the wheel's bundled klangk/frontend/); runs the one-file
+  # dist-smoke Playwright spec against it.
+  #
+  # What this catches:
+  #   - Frontend not included in wheel → 404 / blank page
+  #   - _DEFAULT_FRONTEND_DIR resolves wrong post-install
+  #   - Flutter build broken / incomplete → flutter-view never attaches
+  #   - main.dart.js missing or corrupt → engine doesn't boot
+  #   - klangkd entrypoint registration broken → server never starts
+  #   - caddy binary not found → engine refuses to start
+  #   - Caddyfile render broken → caddy rejects the config
+  #   - UDS upstream misconfigured → caddy 502s
+  #   - Missing transitive dep in pyproject.toml → import fails fast
+  #
+  # NOTE: currently expected to FAIL until #1709 (klangkd's caddy child
+  # can't coexist with another caddy on the host / bootstrap binds 2019
+  # instead of the UDS) is fixed. The dist-smoke gate is intentionally
+  # decoupled from release.yml — release.yml publishes without waiting
+  # on this workflow so the release pipeline isn't held hostage to the
+  # smoke being green. A maintainer runs this against a release-candidate
+  # branch before tagging; if it fails on a non-#1709 cause, that's a
+  # real release-blocker worth investigating before tagging.
+  dist-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-wheel
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install caddy + Python via apt
+        # Stock Ubuntu packages — no devenv, no nix. Caddy is klangkd's
+        # default proxy engine child (KLANGK_PROXY_BIN overrides if needed,
+        # but the default shutil.which("caddy") → /usr/bin/caddy path is
+        # exactly what apt installs). The Playwright browser runtime libs
+        # (libnss3, libgbm1, libasound2t64, …) are NOT installed here —
+        # scripts/dist-smoke-test.sh runs `npx playwright install --with-deps
+        # chromium`, which resolves the correct package names per-OS. Hand-
+        # maintaining the lib list broke on the Ubuntu 24.04 t64 transition
+        # (libasound2 → libasound2t64, libatk1.0-0 → libatk1.0-0t64, …).
+        #
+        # MASK caddy.service: the Debian/Ubuntu caddy package ships a systemd
+        # unit that autostarts on install and binds the default admin port
+        # 127.0.0.1:2019. klangkd owns its own caddy child process
+        # (CADDY_ADMIN=unix//<sock>), but caddy's initial config-load still
+        # tries to bind 2019 before applying the new admin address — so the
+        # system service sitting on 2019 makes every klangkd-managed caddy
+        # fail to start ("bind: address already in use"). Mask the unit so
+        # the apt-installed caddy is just a binary on PATH, which is what
+        # klangkd's contract expects. (This is the #1709 mode-1 workaround;
+        # mode-2 still fails and is the open bug.)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y caddy curl python3 python3-venv
+          sudo systemctl stop caddy.service 2>/dev/null || true
+          sudo systemctl disable caddy.service 2>/dev/null || true
+          sudo systemctl mask caddy.service
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: klangk-wheel
+          path: wheel-cache
+
+      - name: Run dist-smoke test
+        run: bash scripts/dist-smoke-test.sh "$(echo wheel-cache/*.whl)"
+
+      - name: Upload smoke logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-smoke-logs
+          retention-days: 7
+          path: |
+            /tmp/klangk-smoke-state/
+            /tmp/klangk-smoke-data/
+            src/frontend/e2e-tests/test-results/
+            src/frontend/e2e-tests/logs/
