@@ -789,7 +789,15 @@ set-password <email>` (set a known password for the default user — whose
   folded into the socket *path* (creating `caddy-admin.sock|0600` instead of
   `caddy-admin.sock`), which broke the admin poll on the older system Caddy
   the dist-smoke gate installs. The owner-only mode (#1559) is now enforced
-  by the watchdog via `os.chmod` after the bind (version-independent).
+  by the watchdog via `os.chmod` after the bind (version-independent). (3)
+  The admin directive now sets `origins localhost` explicitly — older Caddy
+  (<2.11) defaults the unix-socket admin's allowed origins to empty and 403s
+  the `Host: localhost` klangkd sends, breaking `POST /load`. (4)
+  `trusted_proxies_strict` (right-to-left XFF parsing, anti-spoofing, 2.8+) is
+  now emitted only when the detected Caddy is >= 2.8; older system Caddy
+  rejects it outright, refusing the whole config. klangkd now runs on both
+  the devenv's current Caddy and the older system Caddy a stock CI runner
+  apt-installs.
 
 - **The nginx proxy engine no longer returns 500 for `/llm-proxy/*`
   requests (or the other container-egress POST endpoints) with a body
