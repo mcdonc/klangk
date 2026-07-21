@@ -253,19 +253,26 @@ class TestGlobalBlock:
     def test_admin_uds_autohttps_persist(self):
         s = make_settings({"KLANGK_PORT": "8997"})
         g = _renderer(s)._global_block("/d/caddy-admin.sock")
-        assert "admin unix///d/caddy-admin.sock|0600" in g
+        assert "admin unix///d/caddy-admin.sock" in g
+        assert "|0600" not in g  # mode enforced via os.chmod, not the address (#1709)
         assert "auto_https off" in g
         assert "persist_config off" in g
 
-    def test_admin_uds_mode_suffix_is_0600(self):
-        """The admin socket is created owner-only (#1559 locked decision: 0600,
-        not Caddy's group-readable default). Regression for the perms review
-        finding."""
-        s = make_settings({"KLANGK_PORT": "8997"})
-        g = _renderer(s)._global_block("/d/caddy-admin.sock")
-        assert "|0600" in g
+    def test_admin_address_has_no_mode_suffix(self):
+        """The admin address carries NO |<mode> suffix: that syntax is only
+        honored on Caddy >= 2.8, and on older Caddy it's folded into the
+        socket path, breaking the bind (#1709). Owner-only mode (0600) is
+        enforced by the watchdog via os.chmod instead (see CaddyWatchdog.
+        _wait_for_admin); #1559's locked decision stands, just not via the
+        address. Regression guard against re-adding the version-fragile
+        suffix."""
+        g = _renderer(make_settings({"KLANGK_PORT": "8997"}))._global_block(
+            "/d/caddy-admin.sock"
+        )
+        assert "|0600" not in g
         assert "|0660" not in g
         assert "|0644" not in g
+        assert "admin unix///d/caddy-admin.sock" in g
 
     def test_bootstrap_block_is_admin_only(self):
         """The initial --config carries only the admin global option, so Caddy
@@ -276,8 +283,10 @@ class TestGlobalBlock:
         b = _renderer(make_settings({"KLANGK_PORT": "8997"}))._bootstrap_block(
             "/d/caddy-admin.sock"
         )
-        # Establishes the admin endpoint at mode 0600.
-        assert "admin unix///d/caddy-admin.sock|0600" in b
+        # Establishes the admin endpoint (no |0600 suffix — see
+        # test_admin_address_has_no_mode_suffix; mode is chmod'd at runtime).
+        assert "admin unix///d/caddy-admin.sock" in b
+        assert "|0600" not in b
         assert b.startswith("{\n") and b.rstrip().endswith("}")
         # Site/global knobs are absent — they come via /load, not the bootstrap.
         assert "auto_https" not in b
@@ -1063,16 +1072,16 @@ class TestWatchdogPaths:
         )
         wd = _wd(s)
         assert wd.admin_socket == "/short/caddy-admin.sock"
-        assert wd.admin_bind_address == "unix///short/caddy-admin.sock|0600"
+        assert wd.admin_bind_address == "unix///short/caddy-admin.sock"
 
-    def test_admin_bind_address_has_0600_suffix(self, tmp_path):
-        """The Caddy bind address carries |0600 (owner-only socket creation);
-        the bare path (admin_socket) is what httpx dials."""
+    def test_admin_bind_address_has_no_mode_suffix(self, tmp_path):
+        """The Caddy bind address is the bare unix//<path> with NO |0600 mode
+        suffix (that's version-fragile — #1709; mode enforced via os.chmod).
+        The bare path (admin_socket) is what httpx dials."""
         s = make_settings({"KLANGK_STATE_DIR": str(tmp_path)})
         wd = _wd(s)
-        assert (
-            wd.admin_bind_address == f"unix//{tmp_path}/caddy-admin.sock|0600"
-        )
+        assert wd.admin_bind_address == f"unix//{tmp_path}/caddy-admin.sock"
+        assert "|0600" not in wd.admin_bind_address
         assert wd.admin_socket == str(tmp_path / "caddy-admin.sock")
 
     def test_find_proxy_bin_delegates_to_renderer(self, monkeypatch):
