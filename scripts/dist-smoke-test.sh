@@ -1,32 +1,47 @@
 #!/usr/bin/env bash
 # Run the dist-smoke Playwright spec against a klangkd started from an
-# installed wheel (#1611).
+# installed wheel — OUTSIDE any devenv / nix shell (#1611).
+#
+# The whole point: prove a bare `pip install klangk && klangkd` works on a
+# stock Ubuntu runner. caddy is apt-installed (klangkd forks it as a child
+# via shutil.which); python3 + venv come from the runner; npm + Playwright
+# install their own Chromium. Nothing from devenv. This is the audience the
+# #1607 / #1645 first-run story targets — if the wheel doesn't serve a
+# working login page in this environment, the release is broken.
 #
 # The wheel is built separately (release.yml's build-wheel job). This script:
 #   1. Installs the wheel into an isolated venv (not editable — catches
 #      packaging bugs an editable install would hide).
-#   2. Starts the real klangkd entrypoint (uvicorn on UDS + nginx child)
-#      with KLANGK_PORT=18997 so nginx renders the full browser listener.
-#   3. Polls /health on http://127.0.0.1:18997 until nginx + uvicorn are
-#      ready.
-#   4. Runs `npx playwright test --project=dist-smoke` against that URL.
-#   5. Tears klangkd down on exit (trap).
+#   2. Imports klangk.main.build_app as a sanity check — surfaces a
+#      ModuleNotFoundError fast if a transitive dep is missing from
+#      pyproject.toml (klangkd --help is too shallow; Typer exits before
+#      main() runs and build_app is imported lazily inside it).
+#   3. Starts the real klangkd entrypoint (caddy engine on UDS upstream +
+#      Flutter Web frontend served from the wheel's bundled klangk/frontend/
+#      — KLANGK_FRONTEND_DIR is unset so settings falls back to
+#      _DEFAULT_FRONTEND_DIR, NOT inherited from any dev shell).
+#   4. Polls /health until caddy + uvicorn are ready.
+#   5. Installs the e2e npm deps + Playwright Chromium, then runs
+#      `npx playwright test --project=dist-smoke` against that URL.
+#   6. Tears klangkd down on exit (trap).
 #
-# What this catches (before images are pushed + the GitHub release is cut):
+# What this catches (before anything publishes):
 #   - Frontend not included in wheel → 404 / blank page
 #   - _DEFAULT_FRONTEND_DIR resolves wrong post-install → same
 #   - Flutter build broken / incomplete → flutter-view never attaches
 #   - main.dart.js missing or corrupt → engine doesn't boot
 #   - klangkd entrypoint registration broken → server never starts
-#   - nginx not found or config render broken → nginx refuses to start
-#   - UDS proxy_pass misconfigured → nginx 502s
-#   - location / missing in full template → static files not served
+#   - caddy binary not found → engine refuses to start
+#   - Caddyfile render broken → caddy rejects the config
+#   - UDS upstream misconfigured → caddy 502s
+#   - Missing transitive dep in pyproject.toml → import fails fast
 #
 # Usage:
 #   scripts/dist-smoke-test.sh <path/to/klangk-*.whl>
 #
-# Requires: nginx on PATH (klangkd renders the config + forks nginx as a
-# child). In CI this comes from devenv; locally, run inside `devenv shell`.
+# Requires on PATH (apt-installable on Ubuntu): caddy, curl, python3,
+# python3-venv, npm, node. release.yml's dist-smoke-test job apt-installs
+# the first set; npm/node come from the GitHub Actions runner image.
 set -euo pipefail
 
 PORT="${KLANGK_PORT:-18997}"
@@ -51,12 +66,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WHEEL="$(cd "$(dirname "$WHEEL")" && pwd)/$(basename "$WHEEL")"
 
-echo "=== dist-smoke-test ==="
+echo "=== dist-smoke-test (no devenv) ==="
 echo "  wheel:       $WHEEL"
 echo "  port:        $PORT"
 echo "  venv:        $VENV_DIR"
 echo "  data_dir:    $DATA_DIR"
 echo "  state_dir:   $STATE_DIR"
+echo "  caddy:       $(command -v caddy || echo '(NOT FOUND — apt install caddy')"
 echo
 
 # 1. Fresh isolated venv + install the wheel (with deps — this is the real
@@ -70,13 +86,12 @@ python3 -m venv "$VENV_DIR"
 echo "=== installing wheel into venv (this is the 'pip install klangk' test) ==="
 "$VENV_DIR/bin/pip" install --quiet "$WHEEL"
 
-# Sanity: the entry point shipped in the wheel is importable end-to-end.
-# `klangkd --help` is NOT enough — Typer handles --help and exits before
-# main() runs, and build_app is imported lazily inside main(), so --help
-# proves only the entry-point registration, not that the wheel's deps are
-# complete. Importing build_app directly surfaces a ModuleNotFoundError with
-# a real traceback if a transitive dep is missing from pyproject.toml.
-# (#1705 review, I4.)
+# Sanity: klangk imports end-to-end. `klangkd --help` is NOT enough — Typer
+# handles --help and exits before main() runs, and build_app is imported
+# lazily inside main(), so --help proves only the entry-point registration,
+# not that the wheel's deps are complete. Importing build_app directly
+# surfaces a ModuleNotFoundError with a real traceback if a transitive dep
+# is missing from pyproject.toml. (#1705 review, I4.)
 if ! "$VENV_DIR/bin/python" -c 'from klangk.main import build_app' >/dev/null 2>&1; then
   echo "error: klangk imports fail from the installed wheel — missing dep?" >&2
   "$VENV_DIR/bin/python" -c 'from klangk.main import build_app'
@@ -100,21 +115,18 @@ echo "=== starting klangkd from installed wheel ==="
 # --config=none opts out of the config file (post-#1607 / #1645 first-run
 # generation) so the server runs from env + defaults alone.
 #
-# UNSET KLANGK_FRONTEND_DIR — devenv.nix exports it pointing at the repo's
-# src/frontend/build/web (the dev tree), which would leak through
-# `devenv shell` and make klangkd serve the dev frontend instead of the
-# one bundled in the installed wheel. That defeats the entire smoke test:
-# a wheel with no frontend would pass as long as the dev tree has a build.
-# Empty string does NOT work — pydantic-settings accepts the empty string
-# literally and Path("").exists() is False, so the UI mount is skipped
-# with a warning. Unsetting the variable makes pydantic fall back to
-# _DEFAULT_FRONTEND_DIR = <site-packages>/klangk/frontend — the wheel's
-# bundled copy. (#1705 review, B1.)
+# UNSET KLANGK_FRONTEND_DIR — if a parent shell (e.g. a dev's devenv shell)
+# exports it pointing at src/frontend/build/web, klangkd would serve the dev
+# tree instead of the wheel-bundled frontend, defeating the smoke. Empty
+# string does NOT work — pydantic-settings accepts the empty string literally
+# and Path("").exists() is False, so the UI mount is skipped with a warning.
+# `env -u` actually removes the var so settings falls back to
+# _DEFAULT_FRONTEND_DIR = <site-packages>/klangk/frontend — the wheel's copy.
+# (#1705 review, B1.)
 #
-# Redirect stdio to $STATE_DIR/server.log so the GH Actions failure artifact
-# (release.yml uploads /tmp/klangk-smoke-state/) captures klangkd's output —
-# a backgrounded process's inherited stdio would otherwise land only in the
-# step log, not the uploaded artifact. Mirrors the e2e harness's
+# Redirect stdio to $STATE_DIR/server.log so a failure artifact contains
+# klangkd's output (a backgrounded process's inherited stdio would otherwise
+# land only in the GH Actions step log). Mirrors the e2e harness's
 # global-setup.ts openSync(logFd) pattern. (#1705 review, I3.)
 LOG_PATH="$STATE_DIR/server.log"
 env -u KLANGK_FRONTEND_DIR \
@@ -132,7 +144,9 @@ env -u KLANGK_FRONTEND_DIR \
 KLANGKD_PID=$!
 echo "klangkd pid=$KLANGKD_PID, log=$LOG_PATH"
 
-# 3. Poll /health. Bail early if klangkd dies during startup.
+# 3. Poll /health. Bail early if klangkd dies during startup, and dump the
+#    log tail so the actual error reaches the step output (not just the
+#    uploaded artifact).
 echo "=== polling http://127.0.0.1:$PORT/health ==="
 READY=0
 for i in $(seq 1 120); do
@@ -156,12 +170,15 @@ if [ "$READY" -ne 1 ]; then
   exit 1
 fi
 
-# 4. Install the e2e deps + run the smoke spec. KLANGK_TEST_URL makes
+# 4. Install the e2e deps + Playwright's own Chromium (no devenv-bundled
+#    browser — `npx playwright install chromium` fetches the one pinned by
+#    @playwright/test 1.59.1 in package.json). KLANGK_TEST_URL makes
 #    global-setup short-circuit its own server startup (it just polls
 #    /health on this URL and returns).
-echo "=== installing playwright deps ==="
+echo "=== installing playwright deps + chromium ==="
 cd "$REPO_ROOT/src/frontend/e2e-tests"
 npm install --silent
+npx playwright install --with-deps chromium
 
 echo "=== running dist-smoke spec ==="
 KLANGK_TEST_URL="http://127.0.0.1:$PORT" \

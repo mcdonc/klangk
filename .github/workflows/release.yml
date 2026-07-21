@@ -57,17 +57,26 @@ jobs:
           path: src/klangk/dist/*.whl
           retention-days: 30
 
-  # Smoke test the installed wheel before anything publishes (#1611).
-  # Downloads the wheel artifact from build-wheel, installs it into an
-  # isolated venv (not editable — catches packaging bugs an editable install
-  # would hide), starts the real klangkd entrypoint (uvicorn on UDS + nginx
-  # child) with KLANGK_FRONTEND_DIR cleared so it serves the wheel-bundled
-  # frontend (not the dev tree — without this the gate would be defeated;
-  # see scripts/dist-smoke-test.sh), and runs the one-file dist-smoke
-  # Playwright spec against it. If this fails, publish-and-release (PyPI +
-  # images + GH release) is skipped — broken frontend packaging / nginx
-  # config / UDS proxy / missing transitive dep is caught before any
-  # artifact reaches a user. No yank ever needed.
+  # Smoke test the installed wheel OUTSIDE devenv (#1611). The whole point
+  # is to prove a bare `pip install klangk && klangkd` works on a stock
+  # Ubuntu runner with no devenv/nix in the loop — that's the audience
+  # the #1607 / #1645 first-run story targets. Runs apt-get install for
+  # caddy (klangkd forks it as a child via shutil.which) and the Playwright
+  # Chromium browser; pip-installs the wheel into an isolated venv; starts
+  # real klangkd (caddy engine, UDS upstream, Flutter Web frontend served
+  # from the wheel's bundled klangk/frontend/); runs the one-file dist-smoke
+  # Playwright spec against it.
+  #
+  # What this catches before anything publishes:
+  #   - Frontend not included in wheel → 404 / blank page
+  #   - _DEFAULT_FRONTEND_DIR resolves wrong post-install
+  #   - Flutter build broken / incomplete → flutter-view never attaches
+  #   - main.dart.js missing or corrupt → engine doesn't boot
+  #   - klangkd entrypoint registration broken → server never starts
+  #   - caddy binary not found → engine refuses to start
+  #   - Caddyfile render broken → caddy rejects the config
+  #   - UDS upstream misconfigured → caddy 502s
+  #   - Missing transitive dep in pyproject.toml → import fails fast
   dist-smoke-test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -75,14 +84,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: ./.github/actions/devenv-setup
-        with:
-          # No build-tasks — the wheel is pre-built by build-wheel and
-          # downloaded below. We only need devenv for: nginx on PATH
-          # (klangkd forks it as a child), python3 (for the venv), and
-          # the nix-bundled Playwright Chromium (PLAYWRIGHT_BROWSERS_PATH
-          # is set by devenv.nix).
-          build-tasks: ""
+      - name: Install caddy + Playwright deps via apt
+        # Stock Ubuntu packages — no devenv, no nix. Caddy is klangkd's
+        # default proxy engine child (KLANGK_PROXY_BIN overrides if needed,
+        # but the default shutil.which("caddy") → /usr/bin/caddy path is
+        # exactly what apt installs). The Playwright libs are what
+        # `npx playwright install-deps` would install; we install them
+        # directly so the spec run doesn't need to.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y caddy curl python3 python3-venv \
+            libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+            libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
+            libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2
 
       - name: Download wheel artifact
         uses: actions/download-artifact@v7
@@ -91,9 +105,7 @@ jobs:
           path: wheel-cache
 
       - name: Run dist-smoke test
-        run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- bash scripts/dist-smoke-test.sh "$(echo wheel-cache/*.whl)"
+        run: bash scripts/dist-smoke-test.sh "$(echo wheel-cache/*.whl)"
 
       - name: Upload smoke logs on failure
         if: failure()
