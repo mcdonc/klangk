@@ -42,6 +42,7 @@ import logging
 import os
 import shutil
 import signal
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
@@ -275,6 +276,26 @@ class CaddyRenderer:
             lines.append("		trusted_proxies_strict")
             lines.append("	}")
         return "{\n" + "\n".join(lines) + "\n}\n"
+
+    def _bootstrap_block(self, admin_socket: str) -> str:
+        """Admin-only global block used as the child's initial ``--config``.
+
+        The watchdog spawns Caddy with this as its ``--config`` (instead of
+        ``/dev/null``) so Caddy binds the admin UDS at mode ``0600`` from the
+        very first moment, on **any** Caddy version. With an empty config
+        Caddy falls back to its default ``localhost:2019`` admin address, and
+        ``CADDY_ADMIN`` only overrides that on Caddy >= 2.7 (it landed in
+        caddy#5317) — but the watchdog runs the host's *system* Caddy
+        (``shutil.which("caddy")``), which may be older, so the env var alone
+        is unreliable and the child ends up on 2019, colliding with any other
+        Caddy on the host and never serving the UDS the watchdog polls
+        (#1709). The ``admin`` global option has been honored since Caddy
+        v2.0, so a real bootstrap config is version-robust. Site blocks are
+        deliberately absent — they arrive later via ``POST /load``, exactly
+        as before; this only establishes the admin endpoint.
+        """
+        # Same admin-line shape as _global_block (unix//<sock>|0600).
+        return "{\n\tadmin unix//" + admin_socket + "|0600\n}\n"
 
     # -- shared reverse_proxy header bundle --------------------------------
 
@@ -739,7 +760,21 @@ class CaddyWatchdog:
         """
         backoff = 1.0
         env = dict(os.environ)
+        # Belt-and-suspenders: honored on Caddy >= 2.7 (caddy#5317). The
+        # bootstrap Caddyfile below is the authoritative source and works on
+        # all versions — see CaddyRenderer._bootstrap_block (#1709).
         env["CADDY_ADMIN"] = self.admin_bind_address
+        # Minimal initial config carrying only the admin global option, so
+        # Caddy binds the admin UDS at bootstrap on ANY version — NOT
+        # /dev/null, which falls back to localhost:2019 on Caddy < 2.7 (where
+        # CADDY_ADMIN is unsupported) and collides with any other Caddy on
+        # the host. An explicit --config also preserves the "no on-disk
+        # source of truth" guarantee; the real config still arrives via
+        # POST /load.
+        bootstrap_cfg = (
+            Path(self.app.state.settings.state_dir) / "caddy-bootstrap.Caddyfile"
+        )
+        bootstrap_cfg.write_text(self._renderer._bootstrap_block(self.admin_socket))
         while not self._stopping:
             # A stale socket from a prior run blocks the bind.
             try:
@@ -749,11 +784,10 @@ class CaddyWatchdog:
             self._proc = await asyncio.create_subprocess_exec(
                 bin_path,
                 "run",
-                # Pin the initial config to /dev/null so an accidental
-                # Caddyfile in CWD can't override the "no on-disk source of
-                # truth" guarantee — the real config arrives via POST /load.
                 "--config",
-                "/dev/null",
+                str(bootstrap_cfg),
+                "--adapter",
+                "caddyfile",
                 stdout=None,
                 stderr=None,
                 env=env,
