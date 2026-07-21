@@ -249,6 +249,52 @@ class TestContainerSourceLists:
 # ---------------------------------------------------------------------------
 
 
+class TestCaddyVersion:
+    """_caddy_version gates version-sensitive Caddyfile features (#1709)."""
+
+    def test_parses_major_minor(self, monkeypatch):
+        from klangk import caddy as caddy_mod
+
+        class _R:
+            stdout = "v2.6.4 h1:w0NymbG2m9PcvKWsrXO6EEkY9Ru4FJK8uQbYcev1p3A="
+
+        monkeypatch.setattr(
+            caddy_mod.subprocess, "run", lambda *a, **k: _R()
+        )
+        assert caddy_mod._caddy_version("/usr/bin/caddy") == (2, 6)
+
+    def test_parses_two_digit_minor(self, monkeypatch):
+        from klangk import caddy as caddy_mod
+
+        class _R:
+            stdout = "v2.11.4 h1:..."
+
+        monkeypatch.setattr(
+            caddy_mod.subprocess, "run", lambda *a, **k: _R()
+        )
+        assert caddy_mod._caddy_version("/x/caddy") == (2, 11)
+
+    def test_none_on_subprocess_failure(self, monkeypatch):
+        from klangk import caddy as caddy_mod
+
+        def _boom(*a, **k):
+            raise OSError("no such binary")
+
+        monkeypatch.setattr(caddy_mod.subprocess, "run", _boom)
+        assert caddy_mod._caddy_version("/nope") is None
+
+    def test_none_on_unparseable_output(self, monkeypatch):
+        from klangk import caddy as caddy_mod
+
+        class _R:
+            stdout = "garbage, no version here"
+
+        monkeypatch.setattr(
+            caddy_mod.subprocess, "run", lambda *a, **k: _R()
+        )
+        assert caddy_mod._caddy_version("/x/caddy") is None
+
+
 class TestGlobalBlock:
     def test_admin_uds_autohttps_persist(self):
         s = make_settings({"KLANGK_PORT": "8997"})
@@ -304,6 +350,18 @@ class TestGlobalBlock:
         g = _renderer(s)._global_block("/d/sock")
         assert "trusted_proxies static 10.0.0.0/8 127.0.0.1" in g
         assert "trusted_proxies_strict" in g
+
+    def test_trusted_proxies_strict_omitted_when_strict_xff_false(self):
+        """trusted_proxies_strict is 2.8+; older system caddy rejects the
+        whole config if present (#1709). When the detected caddy is < 2.8
+        (strict_xff=False) the servers block is still emitted (with
+        trusted_proxies static) but WITHOUT strict -- caddy then uses its
+        default left-to-right XFF parsing.
+        """
+        s = make_settings({"KLANGK_PORT": "8997"})
+        g = _renderer(s)._global_block("/d/sock", strict_xff=False)
+        assert "trusted_proxies static" in g  # servers block still present
+        assert "trusted_proxies_strict" not in g
 
     def test_trusted_proxies_suppressed_when_reject(self):
         s = make_settings(

@@ -41,8 +41,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shutil
 import signal
+import subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -245,7 +247,7 @@ class CaddyRenderer:
 
     # -- global options ----------------------------------------------------
 
-    def _global_block(self, admin_socket: str) -> str:
+    def _global_block(self, admin_socket: str, *, strict_xff: bool = True) -> str:
         """The global options block: admin UDS, no HTTPS, no on-disk persistence.
 
         - ``admin unix//...`` re-declares the admin endpoint on the
@@ -270,7 +272,13 @@ class CaddyRenderer:
             # os.chmod (see CaddyWatchdog._wait_for_admin); Caddy doesn't
             # re-bind the admin on /load with an unchanged address, so one
             # chmod per bind persists across reloads.
-            "	admin unix//" + admin_socket,
+            # origins localhost: explicitly allowlist the Host klangkd sends
+            # over the UDS. Older Caddy (<2.11) defaults unix-socket admin
+            # origins to [""] and rejects Host: localhost with 403, breaking
+            # POST /load (#1709). Newer Caddy allows it by default — harmless.
+            "	admin unix//" + admin_socket + " {",
+            "		origins localhost",
+            "	}",
             "	auto_https off",
             "	persist_config off",
         ]
@@ -278,7 +286,13 @@ class CaddyRenderer:
             cidrs = " ".join(self._trusted_proxy_cidrs())
             lines.append("	servers {")
             lines.append(f"		trusted_proxies static {cidrs}")
-            lines.append("		trusted_proxies_strict")
+            # trusted_proxies_strict (right-to-left XFF parsing, anti-spoofing)
+            # is 2.8+; older system caddy rejects the config outright (#1709).
+            # Emit only when the detected caddy supports it (see
+            # CaddyWatchdog.start). Without it caddy uses left-to-right XFF
+            # parsing (its default) — the lesser evil vs. refusing to load.
+            if strict_xff:
+                lines.append("		trusted_proxies_strict")
             lines.append("	}")
         return "{\n" + "\n".join(lines) + "\n}\n"
 
@@ -299,9 +313,15 @@ class CaddyRenderer:
         deliberately absent — they arrive later via ``POST /load``, exactly
         as before; this only establishes the admin endpoint.
         """
-        # Same admin-line shape as _global_block (plain unix//<sock>, no
-        # mode suffix — see _global_block).
-        return "{\n\tadmin unix//" + admin_socket + "\n}\n"
+        # Same admin directive as _global_block (unix//<sock> with origins
+        # localhost — see _global_block); no mode suffix, no site blocks.
+        return (
+            "{\n"
+            "	admin unix//" + admin_socket + " {\n"
+            "		origins localhost\n"
+            "	}\n"
+            "}\n"
+        )
 
     # -- shared reverse_proxy header bundle --------------------------------
 
@@ -568,7 +588,9 @@ class CaddyRenderer:
 
     # -- main renderer -----------------------------------------------------
 
-    def render_config(self, upstream: str, admin_socket: str) -> str:
+    def render_config(
+        self, upstream: str, admin_socket: str, *, strict_xff: bool = True
+    ) -> str:
         """Render the Caddyfile as a string.
 
         ``upstream`` is the Caddy ``reverse_proxy`` dial target for the
@@ -581,7 +603,7 @@ class CaddyRenderer:
         plus the host-IP auto-detection probe.
         """
         acl_entries, deny_entries = self._container_source_entries()
-        global_block = self._global_block(admin_socket)
+        global_block = self._global_block(admin_socket, strict_xff=strict_xff)
         egress = self._egress_site(upstream, " ".join(acl_entries))
         if self.app.state.settings.port is None:
             return global_block + egress
@@ -615,6 +637,28 @@ class CaddyRenderer:
 from klangk.proxy import _proxy_preexec as _caddy_preexec  # noqa: E402
 
 
+def _caddy_version(bin_path: str) -> tuple[int, int] | None:
+    """Detect the caddy binary's (major, minor) version, or ``None`` on failure.
+
+    Gates Caddyfile features that are version-sensitive — e.g.
+    ``trusted_proxies_strict`` (right-to-left X-Forwarded-For parsing,
+    anti-spoofing) and the ``|0600`` unix-socket mode suffix both landed in
+    2.8. klangkd must run on both the devenv's current caddy and the older
+    system caddy a stock CI runner apt-installs (#1709), so features above the
+    detected version's floor are omitted at render time.
+    """
+    try:
+        out = subprocess.run(
+            [bin_path, "version"], capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"v(\d+)\.(\d+)", out.stdout)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
 class CaddyWatchdog:
     """Owns the Caddy child process and pushes config over its admin API (#1559).
 
@@ -641,6 +685,10 @@ class CaddyWatchdog:
         self._proc: asyncio.subprocess.Process | None = None
         self._task: asyncio.Task | None = None
         self._stopping = False
+        # Whether to emit `trusted_proxies_strict` (caddy >= 2.8). Detected in
+        # start() from the binary; defaults to True (security-preserving) until
+        # then / if detection fails. See _caddy_version (#1709).
+        self._strict_xff: bool = True
         # Flagged by reconfigure() on a SIGHUP settings swap; applied
         # async by apply_pending_reload() (POST /load can't run in the
         # sync reconfigure loop). #1559 Phase 1: a settings change is a
@@ -714,7 +762,7 @@ class CaddyWatchdog:
         """Render the full Caddyfile (global + sites), UDS backend upstream."""
         uds_path = self.app.state.settings.socket
         return self._renderer.render_config(
-            uds_upstream(uds_path), self.admin_socket
+            uds_upstream(uds_path), self.admin_socket, strict_xff=self._strict_xff
         )
 
     def find_proxy_bin(self) -> str:
@@ -861,6 +909,11 @@ class CaddyWatchdog:
         if os.environ.get("_KLANGK_DISABLE_PROXY"):
             return
         bin_path = self.find_proxy_bin()
+        # Detect whether the caddy binary supports version-sensitive Caddyfile
+        # features (e.g. trusted_proxies_strict, 2.8+). klangkd must run on both
+        # the devenv's current caddy and older system caddies (#1709).
+        ver = _caddy_version(bin_path)
+        self._strict_xff = ver is None or ver >= (2, 8)
         self._stopping = False
         self._task = asyncio.create_task(self._watch(bin_path))
 
