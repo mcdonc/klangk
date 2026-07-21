@@ -165,11 +165,12 @@ class Plugins:
         The build emits ``container_env_keys`` (every klangk.config key
         declared with scope ``container`` or ``both`` across all compiled-in
         features) into ``features.json``; the server reads that list and
-        resolves each key from its environment via
-        :func:`resolve_dynamic_config` (so ``file:``/``cmd:`` prefixes work
-        for feature secrets). The value source today is the server's env;
-        #1659 adds a ``features_config:`` block in ``klangkd.yaml`` as an
-        additional source.
+        resolves each key via :func:`resolve_dynamic_config` (so
+        ``file:``/``cmd:`` prefixes work for feature secrets). Value
+        sources, in descending precedence (#1659): the server's env, then
+        the ``features_config:`` block of ``klangkd.yaml`` (long-lived
+        deploy config like OAuth client IDs), then the plugin-declared
+        default. Env remains the escape hatch for per-invocation overrides.
 
         Defense-in-depth (#1662): even though the build layer refuses to
         emit reserved/non-KLANGK_ keys, this runtime guard skips them too —
@@ -178,6 +179,7 @@ class Plugins:
         logged at warning level so a misbuilt manifest is visible.
         """
         result: dict[str, str] = {}
+        features_config = self.app.state.settings.features_config
         for key in self._manifest.get("container_env_keys", []):
             if not isinstance(key, str):
                 continue
@@ -189,7 +191,12 @@ class Plugins:
                     key,
                 )
                 continue
-            result[key] = resolve_dynamic_config(key, "") or ""
+            result[key] = (
+                resolve_dynamic_config(
+                    key, "", features_config=features_config
+                )
+                or ""
+            )
         return result
 
     def frontend_config(self) -> dict[str, str]:
@@ -205,9 +212,12 @@ class Plugins:
         defaults) is read from the per-feature ``config`` blocks in
         ``features.json``; the values are resolved server-side via
         :func:`resolve_dynamic_config` so the frontend doesn't need access
-        to klangkd's environment (today's only value source).
+        to klangkd's environment. Value sources, in descending precedence
+        (#1659): the server's env, then the ``features_config:`` block of
+        ``klangkd.yaml``, then the plugin-declared default.
         """
         result: dict[str, str] = {}
+        features_config = self.app.state.settings.features_config
         for feature in self._manifest.get("features", []):
             if not isinstance(feature, dict):
                 continue
@@ -236,7 +246,12 @@ class Plugins:
                 # boing_speed). The prefix is enforced above; the suffix is
                 # the plugin-owned name, surfaced un-prefixed to the frontend.
                 json_key = key[len(_CONTAINER_ENV_KEY_PREFIX) :].lower()
-                result[json_key] = resolve_dynamic_config(key, default) or ""
+                result[json_key] = (
+                    resolve_dynamic_config(
+                        key, default, features_config=features_config
+                    )
+                    or ""
+                )
         return result
 
     def features_enable(self) -> str | None:

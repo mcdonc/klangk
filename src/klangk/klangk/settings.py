@@ -679,6 +679,20 @@ class KlangkSettings(BaseSettings):
     # --- File upload ---
     file_upload_size_max: str | None = "524288000"
 
+    # --- Plugin / feature config (#1659) ---
+    # A config-file source for plugin-declared dynamic keys (the keys the
+    # build emits into features.json's container_env_keys + the per-feature
+    # config blocks). Values here are the "tomorrow" answer to "where does
+    # the operator set a plugin value?" — today that's env only; this block
+    # lets long-lived deploy config (OAuth client IDs, RAG endpoints) live
+    # in the committed klangkd.yaml instead. Precedence when a plugin key is
+    # resolved via resolve_dynamic_config: env > features_config: > plugin
+    # default. Values keep their raw file:/cmd: prefixes here (the
+    # _resolve_indirections validator only processes top-level str fields,
+    # so a dict is left untouched) — resolve_dynamic_config derefs them at
+    # call time, consistent with how it treats env values.
+    features_config: dict[str, str] | None = None
+
     @model_validator(mode="after")
     def _resolve_indirections(self) -> "KlangkSettings":
         """Resolve ``file:``/``cmd:`` prefixes once, at construction (#1461).
@@ -1001,7 +1015,11 @@ class KlangkSettings(BaseSettings):
 # ---------------------------------------------------------------------------
 
 
-def resolve_dynamic_config(key: str, default: str | None = None) -> str | None:
+def resolve_dynamic_config(
+    key: str,
+    default: str | None = None,
+    features_config: Mapping[str, str] | None = None,
+) -> str | None:
     """Resolve a plugin-declared dynamic config key.
 
     Plugin config keys (discovered from each plugin's ``package.json``) are
@@ -1010,9 +1028,37 @@ def resolve_dynamic_config(key: str, default: str | None = None) -> str | None:
     reads ``os.environ`` directly and applies :func:`_resolve_indirection`
     so plugin config honors ``file:``/``cmd:`` prefixes (a plugin-declared
     key may itself be a secret, e.g. an API token).
+
+    Precedence (highest first, #1659):
+
+    1. **env** — ``os.environ[key]`` (the global precedence rule: env wins
+       over file over defaults).
+    2. **``features_config:``** — the YAML block from ``klangkd.yaml``, passed
+       in by the caller (``Plugins.container_env`` / ``frontend_config`` read
+       it off ``settings.features_config``). Lets long-lived deploy config
+       (OAuth client IDs, RAG endpoints) live in the committed config file
+       instead of env. ``file:``/``cmd:`` prefixes on these values are
+       honored too — consistent with the env path and the rest of this
+       resolver. A bad ``file:``/``cmd:`` ref here does NOT abort boot (the
+       values can't be resolved at construction); it logs and falls through
+       to *default*, mirroring how a bad env ref behaves.
+    3. **plugin default** — the *default* argument (the plugin-declared
+       default from ``features.json``).
+
+    *features_config* defaults to ``None`` (env-only, the pre-#1659
+    behavior), so direct callers (e.g. tests) don't need to supply it.
     """
     raw = os.environ.get(key)
-    if raw is None:
-        return default
-    resolved = _resolve_indirection(raw, key)
-    return resolved if resolved is not None else default
+    if raw is not None:
+        resolved = _resolve_indirection(raw, key)
+        return resolved if resolved is not None else default
+    if features_config is not None:
+        fc_raw = features_config.get(key)
+        if fc_raw is not None:
+            resolved = _resolve_indirection(fc_raw, key)
+            if resolved is not None:
+                return resolved
+            # A bad file:/cmd: ref in the YAML value: _resolve_indirection
+            # already logged it; fall through to the plugin default rather
+            # than silently treating the broken ref as the value.
+    return default
