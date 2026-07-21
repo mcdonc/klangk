@@ -267,6 +267,24 @@ class TestGlobalBlock:
         assert "|0660" not in g
         assert "|0644" not in g
 
+    def test_bootstrap_block_is_admin_only(self):
+        """The initial --config carries only the admin global option, so Caddy
+        binds the admin UDS at bootstrap on any version — not /dev/null (which
+        falls back to localhost:2019 on Caddy < 2.7, #1709). Site config arrives
+        later via POST /load, so auto_https / persist_config / trusted_proxies
+        are deliberately absent here."""
+        b = _renderer(make_settings({"KLANGK_PORT": "8997"}))._bootstrap_block(
+            "/d/caddy-admin.sock"
+        )
+        # Establishes the admin endpoint at mode 0600.
+        assert "admin unix///d/caddy-admin.sock|0600" in b
+        assert b.startswith("{\n") and b.rstrip().endswith("}")
+        # Site/global knobs are absent — they come via /load, not the bootstrap.
+        assert "auto_https" not in b
+        assert "persist_config" not in b
+        assert "trusted_proxies" not in b
+        assert "reverse_proxy" not in b
+
     def test_trusted_proxies_present_by_default(self):
         s = make_settings(
             {
