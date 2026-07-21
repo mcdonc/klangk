@@ -4,27 +4,183 @@ on:
   push:
     tags:
       - "v[0-9]*"
+  # Manual trigger for running the dist-smoke test against a wheel built
+  # from the current branch WITHOUT publishing anything (#1611). Dispatch
+  # runs build-wheel → dist-smoke-test; publish-and-release is gated on
+  # `github.event_name == 'push'` so a manual run stops at the smoke gate.
+  # Use this to validate a release candidate before tagging — `gh workflow
+  # run release.yml` from the branch, or the Actions UI.
+  workflow_dispatch:
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  build-and-release:
+  # Build the klangk wheel (#1656). No publish here — the wheel is uploaded
+  # as a workflow artifact for dist-smoke-test to install + exercise, and
+  # PyPI publish is gated on the smoke test passing (publish-and-release
+  # below). Pre-#1705 the wheel built + published in one job in parallel
+  # with the image build; the smoke gate serializes that and holds PyPI
+  # until the smoke passes so a broken wheel never reaches the index —
+  # no yank ever needed.
+  #
+  # The distribution name is ``klangk`` (one unified wheel ships the klangkd
+  # server + klangk CLI, #1606); the tag is ``vX.Y.Z``; hatch-vcs derives
+  # the version from it.
+  build-wheel:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     permissions:
-      packages: write
-      contents: write
+      id-token: write # unused here; kept for symmetry with publish-and-release
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # hatch-vcs needs full history to derive the version
+
+      - uses: ./.github/actions/devenv-setup
+        with:
+          # Build the frontend with the default plugin set (checked-in
+          # plugins.yaml, #1660) so the wheel's klangk/frontend/ carries
+          # the compiled UI + features.json. The hatch build hook
+          # (hatch_build_frontend.py) force-includes it and *requires* it
+          # for non-editable wheel builds (#1600).
+          build-tasks: klangk:flutter-build
+
+      - name: Build wheel
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          # scripts/build_wheel.sh installs python-build transiently (uv-sync
+          # at shell entry would wipe it; the script installs + builds in one
+          # process). Requires the frontend artifact from klangk:flutter-build
+          # above — the hatch build hook force-includes it and requires it for
+          # non-editable wheel builds (#1600).
+          devenv shell -- bash scripts/build_wheel.sh
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: klangk-wheel
+          path: src/klangk/dist/*.whl
+          retention-days: 30
+
+  # Smoke test the installed wheel OUTSIDE devenv (#1611). The whole point
+  # is to prove a bare `pip install klangk && klangkd` works on a stock
+  # Ubuntu runner with no devenv/nix in the loop — that's the audience
+  # the #1607 / #1645 first-run story targets. Runs apt-get install for
+  # caddy (klangkd forks it as a child via shutil.which) and the Playwright
+  # Chromium browser; pip-installs the wheel into an isolated venv; starts
+  # real klangkd (caddy engine, UDS upstream, Flutter Web frontend served
+  # from the wheel's bundled klangk/frontend/); runs the one-file dist-smoke
+  # Playwright spec against it.
+  #
+  # What this catches before anything publishes:
+  #   - Frontend not included in wheel → 404 / blank page
+  #   - _DEFAULT_FRONTEND_DIR resolves wrong post-install
+  #   - Flutter build broken / incomplete → flutter-view never attaches
+  #   - main.dart.js missing or corrupt → engine doesn't boot
+  #   - klangkd entrypoint registration broken → server never starts
+  #   - caddy binary not found → engine refuses to start
+  #   - Caddyfile render broken → caddy rejects the config
+  #   - UDS upstream misconfigured → caddy 502s
+  #   - Missing transitive dep in pyproject.toml → import fails fast
+  dist-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-wheel
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install caddy + Playwright deps via apt
+        # Stock Ubuntu packages — no devenv, no nix. Caddy is klangkd's
+        # default proxy engine child (KLANGK_PROXY_BIN overrides if needed,
+        # but the default shutil.which("caddy") → /usr/bin/caddy path is
+        # exactly what apt installs). The Playwright libs are what
+        # `npx playwright install-deps` would install; we install them
+        # directly so the spec run doesn't need to.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y caddy curl python3 python3-venv \
+            libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+            libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
+            libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: klangk-wheel
+          path: wheel-cache
+
+      - name: Run dist-smoke test
+        run: bash scripts/dist-smoke-test.sh "$(echo wheel-cache/*.whl)"
+
+      - name: Upload smoke logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-smoke-logs
+          retention-days: 7
+          path: |
+            /tmp/klangk-smoke-state/
+            /tmp/klangk-smoke-data/
+            src/frontend/e2e-tests/test-results/
+            src/frontend/e2e-tests/logs/
+
+  # Publish + release. Runs only after dist-smoke-test passes: PyPI publish,
+  # GHCR image push, and the GitHub Release all happen here. Gating PyPI on
+  # the smoke (vs. publishing in parallel and yanking on failure) means a
+  # broken wheel never reaches the index — there is no yank path and no need
+  # for one. The host image build (the slow step, ~25-30 min) runs in this
+  # same job, before the pushes; it can't easily be split into a parallel
+  # job because GitHub Actions jobs run on separate runners and the built
+  # images can't transfer without an explicit save/load step that costs
+  # roughly the time the parallelism would save (the host image embeds the
+  # workspace tarball, multi-GB). Tag-push-only frequency makes the serial
+  # SLO acceptable.
+  publish-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: dist-smoke-test
+    # Skip on workflow_dispatch — a manual run is for validating the smoke
+    # gate, not for actually publishing. Only a v* tag push runs the full
+    # release. Lets a maintainer run `gh workflow run release.yml` from a
+    # release-candidate branch to verify build-wheel + dist-smoke pass
+    # before tagging.
+    if: github.event_name == 'push'
+    environment: pypi # PyPI trusted publisher binds to this environment name
+    permissions:
+      packages: write
+      contents: write
+      id-token: write # OIDC attestation for trusted PyPI publishing
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # hatch-vcs / changelog extraction both need history
+
       - uses: ./.github/actions/devenv-setup
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: klangk-wheel
+          path: wheel-dist
 
       - name: Build host image
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
           devenv shell -- build-host-image
+
+      - name: Publish wheel to PyPI
+        # Trusted publishing (OIDC) — no API token. pypa/gh-action-pypi-publish
+        # negotiates an OIDC token from GitHub Actions and presents it to
+        # PyPI, which validates it against the trusted-publisher config on
+        # the `klangk` project (environment: pypi, workflow: release.yml).
+        # Runs after the smoke test has passed, so a broken wheel never
+        # reaches PyPI — no yank path exists.
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: wheel-dist
+          skip-existing: true # idempotent on re-runs of the same tag
 
       - name: Push images to GHCR
         run: |
@@ -76,64 +232,3 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Build + publish the klangk wheel to PyPI via trusted publishing (OIDC,
-  # no API token — same shape as the deleted cli-publish.yml pre-#1606).
-  # Runs in parallel with the image build — the wheel doesn't need
-  # podman/docker, and pip/uv users (the #1607 / #1645 first-run audience)
-  # get an installable artifact via `pip install klangk==<tag>`. The
-  # distribution name is ``klangk`` (one unified wheel ships the klangkd
-  # server + klangk CLI, #1606); the tag is ``vX.Y.Z``; hatch-vcs derives
-  # the version from it.
-  #
-  # Trusted-publishing prereq (PyPI side, one-time): the `klangk` PyPI
-  # project must have a trusted publisher configured for this repo +
-  # workflow + environment (mcdonc/klangk, .github/workflows/release.yml,
-  # environment name: pypi). With that in place PyPI validates the OIDC
-  # token from GitHub Actions and publishes with no secret on our side.
-  build-wheel:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    environment: pypi # PyPI trusted publisher binds to this environment name
-    permissions:
-      id-token: write # OIDC attestation — the only permission trusted publishing needs
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0 # hatch-vcs needs full history to derive the version
-
-      - uses: ./.github/actions/devenv-setup
-        with:
-          # Build the frontend with the default plugin set (checked-in
-          # plugins.yaml, #1660) so the wheel's klangk/frontend/ carries
-          # the compiled UI + features.json. The hatch build hook
-          # (hatch_build_frontend.py) force-includes it and *requires* it
-          # for non-editable wheel builds (#1600).
-          build-tasks: klangk:flutter-build
-
-      - name: Build wheel
-        run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          # scripts/build_wheel.sh installs python-build transiently (uv-sync
-          # at shell entry would wipe it; the script installs + builds in one
-          # process). Requires the frontend artifact from klangk:flutter-build
-          # above — the hatch build hook force-includes it and requires it for
-          # non-editable wheel builds (#1600).
-          devenv shell -- bash scripts/build_wheel.sh
-
-      - name: Upload wheel artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: klangk-wheel
-          path: src/klangk/dist/*.whl
-          retention-days: 30
-
-      - name: Publish to PyPI
-        # Trusted publishing (OIDC) — no API token. pypa/gh-action-pypi-publish
-        # negotiates an OIDC token from GitHub Actions and presents it to
-        # PyPI, which validates it against the trusted-publisher config on
-        # the `klangk` project (environment: pypi, workflow: release.yml).
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: src/klangk/dist
-          skip-existing: true # idempotent on re-runs of the same tag
