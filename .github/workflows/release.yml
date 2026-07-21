@@ -101,9 +101,22 @@ jobs:
         # chromium`, which resolves the correct package names per-OS. Hand-
         # maintaining the lib list broke on the Ubuntu 24.04 t64 transition
         # (libasound2 → libasound2t64, libatk1.0-0 → libatk1.0-0t64, …).
+        #
+        # MASK caddy.service: the Debian/Ubuntu caddy package ships a systemd
+        # unit that autostarts on install and binds the default admin port
+        # 127.0.0.1:2019. klangkd owns its own caddy child process
+        # (CADDY_ADMIN=unix//<sock>), but caddy's initial config-load still
+        # tries to bind 2019 before applying the new admin address — so the
+        # system service sitting on 2019 makes every klangkd-managed caddy
+        # fail to start ("bind: address already in use"). Mask the unit so
+        # the apt-installed caddy is just a binary on PATH, which is what
+        # klangkd's contract expects.
         run: |
           sudo apt-get update
           sudo apt-get install -y caddy curl python3 python3-venv
+          sudo systemctl stop caddy.service 2>/dev/null || true
+          sudo systemctl disable caddy.service 2>/dev/null || true
+          sudo systemctl mask caddy.service
 
       - name: Download wheel artifact
         uses: actions/download-artifact@v7
