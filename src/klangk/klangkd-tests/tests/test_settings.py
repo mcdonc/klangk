@@ -160,6 +160,48 @@ class TestConfigFile:
         s = make_settings({}, config_file=str(cfg))
         assert s.jwt_secret == "yaml-secret"
 
+    def test_features_config_block_loaded_from_yaml(self, tmp_path):
+        """The features_config: block populates the field verbatim (#1659).
+
+        Values are kept raw (file:/cmd: prefixes intact) — they are resolved
+        per-key by resolve_dynamic_config at use time, not at construction
+        (the _resolve_indirections validator only processes top-level str
+        fields, so a dict is left untouched). This mirrors how env values
+        reach resolve_dynamic_config.
+        """
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "features_config:\n"
+            '  KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID: "abc123"\n'
+            '  KLANGK_FEATURE_SOLIPLEX_URL: "https://rag.example.com"\n'
+        )
+        s = make_settings({}, config_file=str(cfg))
+        assert s.features_config == {
+            "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc123",
+            "KLANGK_FEATURE_SOLIPLEX_URL": "https://rag.example.com",
+        }
+
+    def test_features_config_keeps_file_cmd_prefixes_raw(self, tmp_path):
+        """file:/cmd: inside features_config values are NOT resolved at
+        construction — they stay raw so resolve_dynamic_config can deref
+        them per-key (consistent with the env path, which is also
+        non-fail-fast)."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "features_config:\n"
+            '  KLANGK_FEATURE_TOKEN: "file:/run/secrets/token"\n'
+        )
+        s = make_settings({}, config_file=str(cfg))
+        assert s.features_config == {
+            "KLANGK_FEATURE_TOKEN": "file:/run/secrets/token"
+        }
+
+    def test_features_config_defaults_none(self):
+        # No block in the file (or no file) → None, and resolve_dynamic_config
+        # sees no second source.
+        s = make_settings({}, config_file="none")
+        assert s.features_config is None
+
 
 # ---------------------------------------------------------------------------
 # Dual-form keys: kebab-case *and* snake_case (config-file style, #1538)
@@ -1009,6 +1051,30 @@ class TestReload:
         s2 = s.reload()
         assert s2.agent_handle == "new"
         assert s.agent_handle == "old"
+
+    def test_reload_picks_up_features_config_block(self, tmp_path):
+        # The changelog/user-facing docs claim features_config: is read at
+        # boot AND on SIGHUP (reloadable). reload() re-reads the same
+        # config file captured at construction, so editing the block between
+        # constructions must surface on the reloaded instance. Verify the
+        # claim directly rather than relying on the generic mechanism.
+        cfg = tmp_path / "klangkd.yaml"
+        cfg.write_text('features_config:\n  KLANGK_FEATURE_X: "old"\n')
+        s = make_settings({}, config_file=str(cfg))
+        assert s.features_config == {"KLANGK_FEATURE_X": "old"}
+        # Operator edits the block (SIGHUP path).
+        cfg.write_text(
+            "features_config:\n"
+            '  KLANGK_FEATURE_X: "new"\n'
+            '  KLANGK_FEATURE_Y: "added"\n'
+        )
+        s2 = s.reload()
+        assert s2.features_config == {
+            "KLANGK_FEATURE_X": "new",
+            "KLANGK_FEATURE_Y": "added",
+        }
+        # The pre-reload instance is unchanged (reload returns a fresh obj).
+        assert s.features_config == {"KLANGK_FEATURE_X": "old"}
 
     def test_reload_raises_on_invalid_config(self):
         s = make_settings({})

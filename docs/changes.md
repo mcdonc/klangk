@@ -27,6 +27,23 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Plugin-declared config values are now resolvable from `klangkd.yaml`
+  (#1659).** A new `features_config:` block supplies values for the keys
+  the build emits into `features.json` (`container_env_keys` + the
+  per-feature `config` blocks) — a second source alongside the server's
+  environment, so long-lived deploy config (OAuth client IDs, RAG
+  endpoints) can live in the committed config file instead of env.
+  Precedence per key: **env** > **`features_config:`** > **plugin-declared
+  default**; env stays the per-invocation override, the block carries the
+  durable value, the plugin default is the floor. `file:`/`cmd:` prefixes
+  are honored on values in the block too (consistent with how the resolver
+  treats env values); unlike top-level `KLANGK_*` fields, a bad reference
+  here does not abort boot — it logs and falls through to the default
+  (same as a broken env ref). The block is read at boot and on `SIGHUP`
+  (reloadable). Builds on #1655's key-set bridge with no change to the
+  bridge itself — only `resolve_dynamic_config`'s source set widened.
+  See [Configuration File](docs/reference/klangkd-config.md).
+
 - **The CLI now defaults to a co-located `klangkd`'s UDS when no server is
   configured (#1676).** When neither `--server` nor an `active-server` in
   CLI state is set, `klangk` falls back to the default Unix socket a

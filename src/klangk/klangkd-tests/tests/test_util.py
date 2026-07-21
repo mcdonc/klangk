@@ -135,6 +135,137 @@ class TestResolveDynamicConfig:
         assert resolve_dynamic_config("TEST_SECRET") is None
 
 
+class TestResolveDynamicConfigFeaturesConfig:
+    """The features_config: block of klangkd.yaml is a second value source
+    for plugin-declared keys (#1659). Precedence: env > features_config: >
+    plugin default. file:/cmd: prefixes on the YAML values are honored too
+    (consistent with the env path)."""
+
+    def test_features_config_plain_value_when_env_unset(self, monkeypatch):
+        monkeypatch.delenv("TEST_SECRET", raising=False)
+        fc = {"TEST_SECRET": "from-yaml"}
+        assert (
+            resolve_dynamic_config("TEST_SECRET", features_config=fc)
+            == "from-yaml"
+        )
+
+    def test_env_wins_over_features_config(self, monkeypatch):
+        monkeypatch.setenv("TEST_SECRET", "from-env")
+        fc = {"TEST_SECRET": "from-yaml"}
+        assert (
+            resolve_dynamic_config("TEST_SECRET", features_config=fc)
+            == "from-env"
+        )
+
+    def test_features_config_wins_over_default(self, monkeypatch):
+        monkeypatch.delenv("TEST_SECRET", raising=False)
+        fc = {"TEST_SECRET": "from-yaml"}
+        assert (
+            resolve_dynamic_config(
+                "TEST_SECRET", "fallback", features_config=fc
+            )
+            == "from-yaml"
+        )
+
+    def test_default_used_when_key_in_neither_env_nor_features_config(
+        self, monkeypatch
+    ):
+        monkeypatch.delenv("TEST_SECRET", raising=False)
+        assert (
+            resolve_dynamic_config(
+                "TEST_SECRET", "fallback", features_config={"OTHER": "x"}
+            )
+            == "fallback"
+        )
+
+    def test_none_used_when_no_default_and_no_source(self, monkeypatch):
+        monkeypatch.delenv("TEST_SECRET", raising=False)
+        assert (
+            resolve_dynamic_config(
+                "TEST_SECRET", features_config={"OTHER": "x"}
+            )
+            is None
+        )
+
+    def test_file_prefix_in_features_config_value(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("TEST_SECRET", raising=False)
+        secret_file = tmp_path / "secret.txt"
+        secret_file.write_text("from-file\n")
+        fc = {"TEST_SECRET": f"file:{secret_file}"}
+        assert (
+            resolve_dynamic_config("TEST_SECRET", features_config=fc)
+            == "from-file"
+        )
+
+    def test_cmd_prefix_in_features_config_value(self, monkeypatch):
+        monkeypatch.delenv("TEST_SECRET", raising=False)
+        fc = {"TEST_SECRET": "cmd:printf from-yaml-cmd"}
+        assert (
+            resolve_dynamic_config("TEST_SECRET", features_config=fc)
+            == "from-yaml-cmd"
+        )
+
+    def test_bad_file_ref_falls_through_to_default(self, monkeypatch):
+        # A broken file:/cmd: ref in a YAML value does NOT abort boot (the
+        # values aren't resolvable at construction); it logs and falls
+        # through to the plugin default — mirroring the env path's behavior.
+        monkeypatch.delenv("TEST_SECRET", raising=False)
+        fc = {"TEST_SECRET": "file:/no/such/file"}
+        assert (
+            resolve_dynamic_config(
+                "TEST_SECRET", "fallback", features_config=fc
+            )
+            == "fallback"
+        )
+
+    def test_bad_cmd_ref_falls_through_to_default(self, monkeypatch):
+        monkeypatch.delenv("TEST_SECRET", raising=False)
+        fc = {"TEST_SECRET": "cmd:false"}
+        assert (
+            resolve_dynamic_config(
+                "TEST_SECRET", "fallback", features_config=fc
+            )
+            == "fallback"
+        )
+
+    def test_features_config_none_preserves_env_only_behavior(
+        self, monkeypatch
+    ):
+        # Direct callers (tests, legacy paths) that don't pass the block get
+        # the pre-#1659 env-only resolution.
+        monkeypatch.delenv("TEST_SECRET", raising=False)
+        assert resolve_dynamic_config("TEST_SECRET", "fallback") == "fallback"
+
+    def test_empty_string_features_config_value_returned_as_is(
+        self, monkeypatch
+    ):
+        # A YAML value of "" is a deliberate empty (not "unset"), so it wins
+        # over the default — matching how the env path treats "".
+        monkeypatch.delenv("TEST_SECRET", raising=False)
+        fc = {"TEST_SECRET": ""}
+        assert (
+            resolve_dynamic_config(
+                "TEST_SECRET", "fallback", features_config=fc
+            )
+            == ""
+        )
+
+    def test_empty_string_env_wins_over_features_config(self, monkeypatch):
+        # env is consulted first and wins even when set to the empty string —
+        # an operator who clears KLANGK_FEATURE_X="" to blank it for a run
+        # gets "", not the durable features_config value. This matches the
+        # pre-#1659 env-only behavior (empty env is still "set"); locked in
+        # so a future "treat empty as unset" change is deliberate, not drift.
+        monkeypatch.setenv("TEST_SECRET", "")
+        fc = {"TEST_SECRET": "from-yaml"}
+        assert (
+            resolve_dynamic_config(
+                "TEST_SECRET", "fallback", features_config=fc
+            )
+            == ""
+        )
+
+
 class TestResolveFileValue:
     def test_plain_value(self):
         assert resolve_file_value("plain") == "plain"

@@ -693,6 +693,247 @@ class TestFrontendConfig:
         )
 
 
+class TestFeaturesConfigSource:
+    """container_env() and frontend_config() resolve plugin-declared keys
+    from the features_config: block of klangkd.yaml when env is unset — the
+    "tomorrow" value source #1659 adds. Precedence: env > features_config: >
+    plugin default; file:/cmd: prefixes on the YAML values are honored."""
+
+    def _plugins_with_fc(self, frontend_dir, features_config):
+        """Build Plugins whose settings carry a features_config: block."""
+        import json
+
+        cfg = frontend_dir / "klangkd.yaml"
+        # Emit the block as a JSON-inline mapping (valid YAML) so values with
+        # special chars (file:, cmd:, slashes) survive unquoted-and-safe.
+        items = "\n".join(
+            f"  {k}: {json.dumps(v)}" for k, v in features_config.items()
+        )
+        cfg.write_text(f"features_config:\n{items}\n")
+        settings = make_settings(
+            {"KLANGK_FRONTEND_DIR": str(frontend_dir)},
+            config_file=str(cfg),
+        )
+        app_state = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=settings)
+        )
+        return plugins.Plugins(app_state)
+
+    def test_container_env_resolves_from_features_config(self, tmp_path):
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [],
+                "defaults": [],
+                "container_env_keys": [
+                    "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID"
+                ],
+            },
+        )
+        p = self._plugins_with_fc(
+            tmp_path,
+            {"KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc123"},
+        )
+        assert p.container_env() == {
+            "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc123"
+        }
+
+    def test_container_env_env_wins_over_features_config(
+        self, tmp_path, monkeypatch
+    ):
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [],
+                "defaults": [],
+                "container_env_keys": ["KLANGK_FEATURE_OAUTH_ID"],
+            },
+        )
+        monkeypatch.setenv("KLANGK_FEATURE_OAUTH_ID", "from-env")
+        p = self._plugins_with_fc(
+            tmp_path, {"KLANGK_FEATURE_OAUTH_ID": "from-yaml"}
+        )
+        assert p.container_env() == {"KLANGK_FEATURE_OAUTH_ID": "from-env"}
+
+    def test_container_env_features_config_wins_over_empty_default(
+        self, tmp_path
+    ):
+        # container_env's per-key default is "" (empty), so a features_config
+        # value must win over it — otherwise the block would be useless for
+        # container-scope keys.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [],
+                "defaults": [],
+                "container_env_keys": ["KLANGK_FEATURE_TOKEN"],
+            },
+        )
+        p = self._plugins_with_fc(
+            tmp_path, {"KLANGK_FEATURE_TOKEN": "token-value"}
+        )
+        assert p.container_env() == {"KLANGK_FEATURE_TOKEN": "token-value"}
+
+    def test_container_env_file_prefix_in_features_config(self, tmp_path):
+        secret = tmp_path / "oauth-secret"
+        secret.write_text("file-secret\n")
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [],
+                "defaults": [],
+                "container_env_keys": ["KLANGK_FEATURE_OAUTH_ID"],
+            },
+        )
+        p = self._plugins_with_fc(
+            tmp_path, {"KLANGK_FEATURE_OAUTH_ID": f"file:{secret}"}
+        )
+        assert p.container_env() == {"KLANGK_FEATURE_OAUTH_ID": "file-secret"}
+
+    def test_frontend_config_resolves_from_features_config(self, tmp_path):
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {
+                        "name": "soliplex",
+                        "version": "1.0.0",
+                        "description": "",
+                        "config": {
+                            "KLANGK_FEATURE_SOLIPLEX_URL": {
+                                "description": "RAG endpoint",
+                                "default": "",
+                                "scope": "frontend",
+                            }
+                        },
+                    }
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        p = self._plugins_with_fc(
+            tmp_path,
+            {"KLANGK_FEATURE_SOLIPLEX_URL": "https://rag.example.com"},
+        )
+        assert p.frontend_config() == {
+            "soliplex_url": "https://rag.example.com"
+        }
+
+    def test_frontend_config_features_config_wins_over_plugin_default(
+        self, tmp_path
+    ):
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {
+                        "name": "boingball",
+                        "version": "1.0.0",
+                        "description": "",
+                        "config": {
+                            "KLANGK_FEATURE_BOING_SPEED": {
+                                "description": "speed",
+                                "default": "1.0",
+                                "scope": "frontend",
+                            }
+                        },
+                    }
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        p = self._plugins_with_fc(
+            tmp_path, {"KLANGK_FEATURE_BOING_SPEED": "2.5"}
+        )
+        assert p.frontend_config() == {"boing_speed": "2.5"}
+
+    def test_frontend_config_env_wins_over_features_config(
+        self, tmp_path, monkeypatch
+    ):
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {
+                        "name": "soliplex",
+                        "version": "1.0.0",
+                        "description": "",
+                        "config": {
+                            "KLANGK_FEATURE_SOLIPLEX_URL": {
+                                "description": "",
+                                "default": "",
+                                "scope": "frontend",
+                            }
+                        },
+                    }
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        monkeypatch.setenv(
+            "KLANGK_FEATURE_SOLIPLEX_URL", "https://from-env.example.com"
+        )
+        p = self._plugins_with_fc(
+            tmp_path,
+            {"KLANGK_FEATURE_SOLIPLEX_URL": "https://from-yaml.example.com"},
+        )
+        assert p.frontend_config() == {
+            "soliplex_url": "https://from-env.example.com"
+        }
+
+    def test_no_features_config_block_preserves_env_only_behavior(
+        self, tmp_path, monkeypatch
+    ):
+        # No block → settings.features_config is None → resolve_dynamic_config
+        # gets no second source → pre-#1659 behavior.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [],
+                "defaults": [],
+                "container_env_keys": ["KLANGK_FEATURE_X"],
+            },
+        )
+        monkeypatch.delenv("KLANGK_FEATURE_X", raising=False)
+        p = _plugins(tmp_path)
+        assert p.app.state.settings.features_config is None
+        assert p.container_env() == {"KLANGK_FEATURE_X": ""}
+
+    def test_reserved_key_in_features_config_not_injected_into_container(
+        self, tmp_path, monkeypatch
+    ):
+        # Security regression: the KLANGK_FEATURE_ prefix guard runs BEFORE
+        # resolution, so a reserved/non-prefixed key sitting inside a
+        # features_config: block must never reach a workspace container —
+        # even if the manifest (or a misbuilt one) listed it. The guard is
+        # structural today (container_env iterates manifest keys, not
+        # features_config.items()), but lock the property in so a future
+        # refactor that injected features_config directly can't silently
+        # reintroduce the leak (#1662 defense-in-depth).
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [],
+                "defaults": [],
+                "container_env_keys": ["KLANGK_JWT_SECRET"],
+            },
+        )
+        monkeypatch.delenv("KLANGK_JWT_SECRET", raising=False)
+        p = self._plugins_with_fc(
+            tmp_path, {"KLANGK_JWT_SECRET": "pwned-by-config"}
+        )
+        # The block DID load the value onto settings.features_config...
+        assert p.app.state.settings.features_config == {
+            "KLANGK_JWT_SECRET": "pwned-by-config"
+        }
+        # ...but container_env refuses to resolve it (prefix guard), so it
+        # never reaches the container env dict.
+        assert "KLANGK_JWT_SECRET" not in p.container_env()
+
+
 class TestFeaturesEnable:
     """features_enable() forwards the KLANGK_FEATURES_ENABLE setting verbatim
     (the deploy's chosen active-feature list — canonical semantics, #1655)."""

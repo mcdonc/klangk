@@ -76,6 +76,24 @@ oidc_providers:
 
 If `KLANGK_OIDC_CONFIG` is also set (as an env var), the separate file wins — consistent with the global precedence rule (env vars override config-file values). When `KLANGK_OIDC_CONFIG` is unset, the inline `oidc_providers` list is used. See [OIDC Configuration](oidc.md) for provider field details.
 
+## Plugin / feature config (`features_config:`)
+
+Plugin-declared config keys (the ones the build emits into `features.json` — the `container_env_keys` list plus the per-feature `config` blocks) are outside the `KLANGK_` settings model: their names aren't known at settings construction, so they're resolved per-key at use time by `resolve_dynamic_config`. That resolver had **one** value source — the server's environment. `features_config:` ([#1659](https://github.com/mcdonc/klangk/issues/1659)) adds a second source so long-lived deploy config (OAuth client IDs, RAG endpoints) can live in the committed `klangkd.yaml` instead of an env var:
+
+```yaml
+features_config:
+  KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID: "abc123"
+  KLANGK_FEATURE_SOLIPLEX_URL: "https://rag.example.com"
+```
+
+Each key in the block is the full, declared plugin-config name (the same string that appears in `features.json` — e.g. `KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID`, not the un-prefixed form). **Precedence** when a plugin key is resolved: **env** > **`features_config:`** > **plugin-declared default**. Env stays the escape hatch for per-invocation overrides; the block carries the durable deploy values; the plugin default is the floor.
+
+`file:` / `cmd:` prefixes work on values in this block too — they're honored per-key at resolution time, consistent with how the same resolver treats env values. Unlike top-level `KLANGK_*` fields, a bad `file:`/`cmd:` reference here does **not** fail at boot (the values can't be resolved at construction); it logs and falls through to the plugin default — the same behavior a broken env ref already has.
+
+This block is read at boot and on `SIGHUP` (reloadable, like the rest of the file). It supplies values only; it does **not** change which features are compiled in (build-time, [#1655](https://github.com/mcdonc/klangk/issues/1655)) or which are turned on (`KLANGK_FEATURES_ENABLE`, deploy-time).
+
+> **Quote non-string values.** The block's values are strings, so quote numerics and booleans the way you would for any other config-file field — `KLANGK_FEATURE_PORT: "8080"`, not `8080` (the unquoted form is parsed as an int and rejected at construction). This matches the rest of `klangkd.yaml` (the complete example quotes every numeric).
+
 ## Complete example
 
 A production-ready config file covering all common settings:
@@ -349,3 +367,11 @@ port: "8997"
 | Key                    | Default     | Env var                       |
 | ---------------------- | ----------- | ----------------------------- |
 | `file_upload_size_max` | `524288000` | `KLANGK_FILE_UPLOAD_SIZE_MAX` |
+
+### Plugin / feature config
+
+The `features_config` block supplies values for plugin-declared keys (the ones the build emits into `features.json`) from the config file — a second source alongside env. See the [dedicated section](#plugin--feature-config-features_config) above for the precedence rule and `file:`/`cmd:` handling. There is no `KLANGK_*` env var for the whole block (env still wins **per key** — set the individual `KLANGK_FEATURE_*` var to override a single value); the block is the config-file substrate for durable deploy values.
+
+| Key               | Default   | Env var                                                                     |
+| ----------------- | --------- | --------------------------------------------------------------------------- |
+| `features_config` | _(unset)_ | _(none — per-key `KLANGK_FEATURE_\*` env vars are the per-value override)\_ |
