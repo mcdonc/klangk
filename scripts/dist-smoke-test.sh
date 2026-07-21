@@ -50,9 +50,10 @@
 #   devenv shell -- bash scripts/flutterbuildweb.sh   # produce the frontend
 #   devenv shell -- bash scripts/build_wheel.sh       # produce the wheel
 #   bash scripts/dist-smoke-test.sh src/klangk/dist/klangk-*.whl
-# Or via CI without tagging: `gh workflow run release.yml` from your branch
-# (release.yml's workflow_dispatch runs build-wheel + dist-smoke-test only;
-# publish-and-release is gated on `github.event_name == 'push'`).
+# Or via CI without tagging: `gh workflow run dist-smoke.yml --ref <branch>`
+# (.github/workflows/dist-smoke.yml is the standalone smoke workflow —
+# build-wheel + dist-smoke-test, no publish. release.yml no longer runs
+# the smoke; it publishes without waiting on it.)
 set -euo pipefail
 
 PORT="${KLANGK_PORT:-18997}"
