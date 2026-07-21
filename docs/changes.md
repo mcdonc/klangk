@@ -297,6 +297,22 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **The Soliplex knowledge-base plugin is now vendored into the repo
+  under `plugins/soliplex/` (#1686).** `plugins.yaml` declares it via a local
+  `path:` entry instead of the remote `git:`/`ref:` fetch from
+  `soliplex/klangk-plugin-soliplex` pinned at `v0.4` (#1664); the build
+  materializes it by symlink like the other plugins, with no network fetch.
+  A side effect of retiring the remote fetch: a default build now compiles
+  soliplex **in** again — it had been skipped by default since #1691 (the
+  plugin's transitive `ag_ui` git dep carries an LFS-tracked fixture,
+  `apps/dojo/e2e/fixtures/test-image.png`, that unauthenticated CI can't
+  fetch). The build now exports `GIT_LFS_SKIP_SMUDGE=1` so the dep resolves
+  without the LFS object — only its Dart source is needed. Soliplex is still dormant (not in `DEFAULT_FEATURES`); opt in
+  with `KLANGK_FEATURES_ENABLE=soliplex`. The git-sourced-plugin ability is
+  unchanged — `update_plugins.py` still handles `git:`/`ref:` entries, and
+  the build scripts' `KLANGK_BUILD_INCLUDE_REMOTE` gate stays as the generic
+  remote-plugin policy (a no-op now that no plugin is git-sourced).
+
 - **Default active-feature set is now `beep, bobdobbs, boingball,
 browser-fetch, celebrate, git-credential` (#1700).** `DEFAULT_FEATURES`
   (`scripts/import_dart_plugins.py`) now ships `bobdobbs` (a compiled-in Dart
@@ -582,6 +598,18 @@ set-password <email>` (set a known password for the default user — whose
   (`KLANGKC_` is the CLI prefix, but the backend read it too).
 
 ### Breaking
+
+- **The Soliplex plugin's config key is renamed `SOLIPLEX_URL` →
+  `KLANGK_FEATURE_SOLIPLEX_URL` (#1686).** Same `KLANGK_FEATURE_` namespace
+  as the other plugin keys (#1662); the rename was deferred from #1702
+  because soliplex was a remote plugin skipped by the build guard. Now that
+  it's vendored local, the build guard would reject the unprefixed
+  `SOLIPLEX_URL`, so the rename lands here. Operators who set `SOLIPLEX_URL`
+  (only reachable on installs that built soliplex in via
+  `KLANGK_BUILD_INCLUDE_REMOTE=1` and activated it) must set
+  `KLANGK_FEATURE_SOLIPLEX_URL` instead. The frontend `/api/config` key is
+  unchanged at `soliplex_url` (strip prefix + lowercase suffix), so Dart/UI
+  consumers need no change.
 
 - **Plugin-declared config keys must now start with `KLANGK_FEATURE_`**
   (#1662). The prefix is the plugin-config namespace: every server setting

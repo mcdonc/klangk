@@ -16,13 +16,12 @@ trap 'rm -rf "$PAYLOAD_DIR"' EXIT
 # Fetch/symlink plugins into the payload dir, then generate the Dart
 # aggregator + features.json from those trees.
 #
-# Remote (git-sourced) plugins are skipped by default — set
-# KLANGK_BUILD_INCLUDE_REMOTE=1 to fetch them. Today the only remote plugin
-# is soliplex, whose transitive ag_ui git dep has an upstream LFS-object
-# gap (#1691) that breaks every CI build. Skipping remote plugins drops the
-# build back to the pre-#1683 local set (soliplex is dormant by default
-# anyway, so CI builds don't need it). Release/single-client builds that
-# need soliplex compiled in set KLANGK_BUILD_INCLUDE_REMOTE=1.
+# Git-sourced plugins are skipped by default (update_plugins.py --local-only)
+# — set KLANGK_BUILD_INCLUDE_REMOTE=1 to fetch them. Keeps CI off the network
+# and resilient to upstream failures (the policy dates to #1691). Every
+# plugin in plugins.yaml is a local path entry today (soliplex was vendored
+# in #1686), so the skip is currently a no-op; the gate stays as the generic
+# remote-plugin policy for any future git entry.
 UPDATE_FLAGS=(--payload-dir "$PAYLOAD_DIR")
 if [ "${KLANGK_BUILD_INCLUDE_REMOTE:-0}" != "1" ]; then
   UPDATE_FLAGS+=(--local-only)
@@ -43,6 +42,12 @@ FLUTTER="${KLANGK_WEB_FLUTTER:-flutter}"
 # (a benign "Wasm dry run succeeded" warning is expected in JS-only mode.)
 cd src/frontend
 "$FLUTTER" --disable-analytics
+# Skip git-lfs smudge for transitive git deps. soliplex pulls ag_ui from
+# ag-ui-protocol/ag-ui.git, whose apps/dojo/e2e/fixtures/test-image.png is
+# LFS-tracked with an object unauthenticated CI can't fetch (#1691-class).
+# We only need ag_ui's Dart source, not its binary fixtures, so skipping the
+# LFS download is correct and harmless.
+export GIT_LFS_SKIP_SMUDGE=1
 "$FLUTTER" pub get
 
 # Guard against a stale web plugin registrant. Flutter's incremental web build

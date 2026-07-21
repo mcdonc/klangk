@@ -39,9 +39,9 @@ FEATURES_JSON = os.path.join(ROOT, "src", "frontend", "build", "web", "features.
 # is unset (canonical activation — see #1655). This is the runtime default-on
 # list; the build-time fetch list is the checked-in ``plugins.yaml`` at the
 # repo root. The two are allowed to differ: a feature can ship dormant
-# (compiled in but not in defaults). Today ``word-count`` is a local dormant
-# plugin and ``soliplex`` a remote one (#1664) — both compiled in, neither
-# surfaced unless an operator opts in via KLANGK_FEATURES_ENABLE (#1700).
+# (compiled in but not in defaults). Today ``word-count`` and ``soliplex``
+# (#1664, vendored local in #1686) are both compiled-in dormant local plugins
+# — neither surfaced unless an operator opts in via KLANGK_FEATURES_ENABLE (#1700).
 DEFAULT_FEATURES = [
     "beep",
     "bobdobbs",
