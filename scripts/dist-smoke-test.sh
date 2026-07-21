@@ -42,6 +42,17 @@
 # Requires on PATH (apt-installable on Ubuntu): caddy, curl, python3,
 # python3-venv, npm, node. release.yml's dist-smoke-test job apt-installs
 # the first set; npm/node come from the GitHub Actions runner image.
+#
+# Running locally without cutting a release: build the wheel from your
+# current branch, then run the script directly (the script itself makes
+# zero release.yml assumptions). On a stock NixOS/devenv host caddy is
+# already on PATH:
+#   devenv shell -- bash scripts/flutterbuildweb.sh   # produce the frontend
+#   devenv shell -- bash scripts/build_wheel.sh       # produce the wheel
+#   bash scripts/dist-smoke-test.sh src/klangk/dist/klangk-*.whl
+# Or via CI without tagging: `gh workflow run release.yml` from your branch
+# (release.yml's workflow_dispatch runs build-wheel + dist-smoke-test only;
+# publish-and-release is gated on `github.event_name == 'push'`).
 set -euo pipefail
 
 PORT="${KLANGK_PORT:-18997}"

@@ -4,6 +4,13 @@ on:
   push:
     tags:
       - "v[0-9]*"
+  # Manual trigger for running the dist-smoke test against a wheel built
+  # from the current branch WITHOUT publishing anything (#1611). Dispatch
+  # runs build-wheel → dist-smoke-test; publish-and-release is gated on
+  # `github.event_name == 'push'` so a manual run stops at the smoke gate.
+  # Use this to validate a release candidate before tagging — `gh workflow
+  # run release.yml` from the branch, or the Actions UI.
+  workflow_dispatch:
 
 concurrency:
   group: release
@@ -134,6 +141,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: dist-smoke-test
+    # Skip on workflow_dispatch — a manual run is for validating the smoke
+    # gate, not for actually publishing. Only a v* tag push runs the full
+    # release. Lets a maintainer run `gh workflow run release.yml` from a
+    # release-candidate branch to verify build-wheel + dist-smoke pass
+    # before tagging.
+    if: github.event_name == 'push'
     environment: pypi # PyPI trusted publisher binds to this environment name
     permissions:
       packages: write
