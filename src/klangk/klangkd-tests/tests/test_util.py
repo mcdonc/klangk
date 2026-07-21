@@ -250,6 +250,21 @@ class TestResolveDynamicConfigFeaturesConfig:
             == ""
         )
 
+    def test_empty_string_env_wins_over_features_config(self, monkeypatch):
+        # env is consulted first and wins even when set to the empty string —
+        # an operator who clears KLANGK_FEATURE_X="" to blank it for a run
+        # gets "", not the durable features_config value. This matches the
+        # pre-#1659 env-only behavior (empty env is still "set"); locked in
+        # so a future "treat empty as unset" change is deliberate, not drift.
+        monkeypatch.setenv("TEST_SECRET", "")
+        fc = {"TEST_SECRET": "from-yaml"}
+        assert (
+            resolve_dynamic_config(
+                "TEST_SECRET", "fallback", features_config=fc
+            )
+            == ""
+        )
+
 
 class TestResolveFileValue:
     def test_plain_value(self):

@@ -92,6 +92,8 @@ Each key in the block is the full, declared plugin-config name (the same string 
 
 This block is read at boot and on `SIGHUP` (reloadable, like the rest of the file). It supplies values only; it does **not** change which features are compiled in (build-time, [#1655](https://github.com/mcdonc/klangk/issues/1655)) or which are turned on (`KLANGK_FEATURES_ENABLE`, deploy-time).
 
+> **Quote non-string values.** The block's values are strings, so quote numerics and booleans the way you would for any other config-file field — `KLANGK_FEATURE_PORT: "8080"`, not `8080` (the unquoted form is parsed as an int and rejected at construction). This matches the rest of `klangkd.yaml` (the complete example quotes every numeric).
+
 ## Complete example
 
 A production-ready config file covering all common settings:

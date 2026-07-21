@@ -1052,6 +1052,30 @@ class TestReload:
         assert s2.agent_handle == "new"
         assert s.agent_handle == "old"
 
+    def test_reload_picks_up_features_config_block(self, tmp_path):
+        # The changelog/user-facing docs claim features_config: is read at
+        # boot AND on SIGHUP (reloadable). reload() re-reads the same
+        # config file captured at construction, so editing the block between
+        # constructions must surface on the reloaded instance. Verify the
+        # claim directly rather than relying on the generic mechanism.
+        cfg = tmp_path / "klangkd.yaml"
+        cfg.write_text('features_config:\n  KLANGK_FEATURE_X: "old"\n')
+        s = make_settings({}, config_file=str(cfg))
+        assert s.features_config == {"KLANGK_FEATURE_X": "old"}
+        # Operator edits the block (SIGHUP path).
+        cfg.write_text(
+            "features_config:\n"
+            '  KLANGK_FEATURE_X: "new"\n'
+            '  KLANGK_FEATURE_Y: "added"\n'
+        )
+        s2 = s.reload()
+        assert s2.features_config == {
+            "KLANGK_FEATURE_X": "new",
+            "KLANGK_FEATURE_Y": "added",
+        }
+        # The pre-reload instance is unchanged (reload returns a fresh obj).
+        assert s.features_config == {"KLANGK_FEATURE_X": "old"}
+
     def test_reload_raises_on_invalid_config(self):
         s = make_settings({})
         with pytest.raises(Exception):

@@ -1047,6 +1047,12 @@ def resolve_dynamic_config(
 
     *features_config* defaults to ``None`` (env-only, the pre-#1659
     behavior), so direct callers (e.g. tests) don't need to supply it.
+
+    Note: env is consulted *first* and wins even on a broken ``file:``/``cmd:``
+    ref — a bad env value returns *default* (the pre-#1659 behavior), not the
+    ``features_config`` value. The block is a fallback for *unset* keys, not a
+    recovery path for *broken* env values. This matches the global precedence
+    rule (env is authoritative when set, regardless of whether it resolves).
     """
     raw = os.environ.get(key)
     if raw is not None:

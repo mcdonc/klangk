@@ -902,6 +902,37 @@ class TestFeaturesConfigSource:
         assert p.app.state.settings.features_config is None
         assert p.container_env() == {"KLANGK_FEATURE_X": ""}
 
+    def test_reserved_key_in_features_config_not_injected_into_container(
+        self, tmp_path, monkeypatch
+    ):
+        # Security regression: the KLANGK_FEATURE_ prefix guard runs BEFORE
+        # resolution, so a reserved/non-prefixed key sitting inside a
+        # features_config: block must never reach a workspace container —
+        # even if the manifest (or a misbuilt one) listed it. The guard is
+        # structural today (container_env iterates manifest keys, not
+        # features_config.items()), but lock the property in so a future
+        # refactor that injected features_config directly can't silently
+        # reintroduce the leak (#1662 defense-in-depth).
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [],
+                "defaults": [],
+                "container_env_keys": ["KLANGK_JWT_SECRET"],
+            },
+        )
+        monkeypatch.delenv("KLANGK_JWT_SECRET", raising=False)
+        p = self._plugins_with_fc(
+            tmp_path, {"KLANGK_JWT_SECRET": "pwned-by-config"}
+        )
+        # The block DID load the value onto settings.features_config...
+        assert p.app.state.settings.features_config == {
+            "KLANGK_JWT_SECRET": "pwned-by-config"
+        }
+        # ...but container_env refuses to resolve it (prefix guard), so it
+        # never reaches the container env dict.
+        assert "KLANGK_JWT_SECRET" not in p.container_env()
+
 
 class TestFeaturesEnable:
     """features_enable() forwards the KLANGK_FEATURES_ENABLE setting verbatim
