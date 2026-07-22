@@ -200,4 +200,4 @@ value at runtime and bridges it to where the feature needs it
 
 For the operator-facing config rows see
 [Environment Variables](../reference/environment.md) and
-[Configuration File](../reference/klangkd-config.md#feature-and-feature-config-features_config).
+[Configuration File](../reference/klangkd-config.md#feature-configuration-features_config).

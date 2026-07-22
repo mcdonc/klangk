@@ -76,7 +76,7 @@ oidc_providers:
 
 If `KLANGK_OIDC_CONFIG` is also set (as an env var), the separate file wins — consistent with the global precedence rule (env vars override config-file values). When `KLANGK_OIDC_CONFIG` is unset, the inline `oidc_providers` list is used. See [OIDC Configuration](oidc.md) for provider field details.
 
-## Feature and feature config (`features_config:`)
+## Feature configuration (`features_config:`)
 
 Feature-declared config keys (the ones the build emits into `features.json` — the `container_env_keys` list plus the per-feature `config` blocks) are outside the `KLANGK_` settings model: their names aren't known at settings construction, so they're resolved per-key at use time by `resolve_dynamic_config`. That resolver had **one** value source — the server's environment. `features_config:` ([#1659](https://github.com/mcdonc/klangk/issues/1659)) adds a second source so long-lived deploy config (OAuth client IDs, RAG endpoints) can live in the committed `klangkd.yaml` instead of an env var:
 
@@ -368,9 +368,9 @@ port: "8997"
 | ---------------------- | ----------- | ----------------------------- |
 | `file_upload_size_max` | `524288000` | `KLANGK_FILE_UPLOAD_SIZE_MAX` |
 
-### Feature / feature config
+### Feature configuration
 
-The `features_config` block supplies values for feature-declared keys (the ones the build emits into `features.json`) from the config file — a second source alongside env. See the [dedicated section](#feature-and-feature-config-features_config) above for the precedence rule and `file:`/`cmd:` handling. There is no `KLANGK_*` env var for the whole block (env still wins **per key** — set the individual `KLANGK_FEATURE_*` var to override a single value); the block is the config-file substrate for durable deploy values.
+The `features_config` block supplies values for feature-declared keys (the ones the build emits into `features.json`) from the config file — a second source alongside env. See the [dedicated section](#feature-configuration-features_config) above for the precedence rule and `file:`/`cmd:` handling. There is no `KLANGK_*` env var for the whole block (env still wins **per key** — set the individual `KLANGK_FEATURE_*` var to override a single value); the block is the config-file substrate for durable deploy values.
 
 | Key               | Default   | Env var                                                                     |
 | ----------------- | --------- | --------------------------------------------------------------------------- |

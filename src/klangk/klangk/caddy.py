@@ -31,7 +31,7 @@ dial target as a parameter so tests can pass a TCP address while production
 passes a ``unix//<socket>`` address. The pure host-IP / loopback helpers are
 imported from :mod:`klangk.proxy` rather than duplicated.
 
-Out of scope here (tracked in #1559): the ``caddy-l4`` layer-4 feature
+Out of scope here (tracked in #1559): the ``caddy-l4`` layer-4 plugin
 (everything klangk proxies is HTTP), and per-route live JSON mutations on
 ``/config/.../routes`` (Phase 3 — Phase 1 uses full-config ``POST /load``).
 """
