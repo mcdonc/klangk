@@ -496,6 +496,82 @@ class TestSendError:
 # --- handle_steer ---
 
 
+class TestReadOnlyInputWhitelist:
+    """Direct coverage for the read-only terminal-input whitelist (#1716).
+
+    Only terminal-protocol RESPONSES tmux needs to initialize may pass;
+    user typing and arbitrary escape sequences (notably OSC 52) are
+    dropped.
+    """
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            # DA1/DA2/DA3 device-attribute responses.
+            "\x1b[?6c",
+            "\x1b[?1;2c",
+            "\x1b[?64;1;2;4;6;9;15;16;17;18;21;22c",
+            "\x1b[>41;0;33c",
+            "\x1b[=123c",
+            # DSR cursor-position report.
+            "\x1b[1;1R",
+            "\x1b[24;80R",
+            # OSC color reports (palette + default fg/bg/cursor),
+            # terminated by either BEL or ESC '\'.
+            "\x1b]11;rgb:0000/0000/0000\x07",
+            "\x1b]10;rgb:aaaa/bbbb/cccc\x1b\\",
+            "\x1b]12;rgb:ff/ff/ff\x07",
+            "\x1b]4;0;rgb:00/00/00\x1b\\",
+            # OSC color value forms beyond rgb: (#rrggbb / rgbi:).
+            "\x1b]11;#ff00ff\x07",
+            "\x1b]11;#aabbccddeeff\x1b\\",
+            "\x1b]11;rgbi:255/0/255\x07",
+            "\x1b]11;rgbi:0.5/0.0/1.0\x07",
+            # XTVERSION response: DCS > | <name SP version> ST.
+            "\x1bP>|xterm.js 5.5.0\x1b\\",
+            "\x1bP>|tmux 3.4\x07",
+            # XTGETTCAP response: DCS (0|1) + r <hex>=<hex> ST.
+            "\x1bP1+r5443=787465726d\x1b\\",
+            "\x1bP0+r\x1b\\",  # capability-not-found failure reply
+            # Multiple responses batched in one message.
+            "\x1b[?6c\x1b]11;rgb:0000/0000/0000\x07",
+            "\x1b[?6c\x1bP>|xterm.js 5.5.0\x1b\\",
+        ],
+    )
+    def test_allows_init_responses(self, data):
+        assert _ws_controllers._is_allowed_read_only_input(data)
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            # User typing.
+            "ls",
+            "",
+            # OSC 52 clipboard read/write — the headline threat.
+            "\x1b]52;c;Zm9v\x07",  # write
+            "\x1b]52;c;?\x07",  # read
+            # Other OSC: title set, color reset.
+            "\x1b]0;title\x07",
+            "\x1b]104\x07",
+            # CSI queries / commands (not responses).
+            "\x1b[18t",  # report terminal size
+            "\x1b[19t",
+            "\x1b[6n",  # DSR cursor query
+            "\x1b[2J",  # clear screen
+            "\x1b[H",  # cursor home
+            "\x1b[c",  # bare DA query
+            # DCS passthrough (arbitrary tmux commands).
+            "\x1bPtmux;evil\x1b\\",
+            # Smuggling: text or OSC 52 around a valid response.
+            "ls\x1b[?6c",
+            "\x1b[?6cls",
+            "\x1b[?6c\x1b]52;c;Zm9v\x07",
+        ],
+    )
+    def test_blocks_everything_else(self, data):
+        assert not _ws_controllers._is_allowed_read_only_input(data)
+
+
 class TestHandleTerminalInput:
     async def test_writes_data(self, app_state):
         app_state = _make_app_state()
@@ -550,6 +626,25 @@ class TestHandleTerminalInput:
         # DA response: ESC [ ? 6 c
         await conn.handle_terminal_input({"data": "\x1b[?6c"})
         t.write.assert_awaited_once_with("\x1b[?6c")
+        registry.states.pop("ws", None)
+
+    async def test_read_only_blocks_osc52_clipboard(self, app_state):
+        """OSC 52 clipboard read/write is dropped for spectators (#1716)."""
+        app_state = _make_app_state()
+        registry = app_state.state.container_registry
+        t = _mock_terminal()
+        t.read_only = True
+        conn = _base_conn(app_state=app_state)
+        conn.terminal_session = t
+        conn.container_id = "cid"
+        registry.track_activity("cid", "ws")
+
+        for data in (
+            "\x1b]52;c;Zm9v\x07",  # clipboard write
+            "\x1b]52;c;?\x07",  # clipboard read
+        ):
+            await conn.handle_terminal_input({"data": data})
+        t.write.assert_not_awaited()
         registry.states.pop("ws", None)
 
     async def test_oversized_input_dropped(self, app_state):
@@ -5636,7 +5731,8 @@ class TestTerminalController:
         await ctrl.input({"data": "ls"})
         session.write.assert_not_awaited()
 
-    async def test_input_read_only_allows_escape_sequences(self, app_state):
+    async def test_input_read_only_allows_da_response(self, app_state):
+        """DA1/DA2/DA3 device-attribute responses pass (#1716)."""
         app_state = _make_app_state()
         registry = app_state.state.container_registry
         ctrl, _, _ = self._controller(app_state=app_state)
@@ -5645,8 +5741,83 @@ class TestTerminalController:
         session.read_only = True
         ctrl.session = session
         with patch.object(registry, "record_activity"):
-            await ctrl.input({"data": "\x1b[6n"})
-        session.write.assert_awaited_once_with("\x1b[6n")
+            await ctrl.input({"data": "\x1b[?1;2c"})
+        session.write.assert_awaited_once_with("\x1b[?1;2c")
+
+    async def test_input_read_only_allows_color_report(self):
+        """OSC 10/11/12/4 color reports pass; ST may be BEL or ESC \\\
+        (#1716)."""
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        session.is_alive = True
+        session.read_only = True
+        ctrl.session = session
+        for data in (
+            "\x1b]11;rgb:0000/0000/0000\x07",
+            "\x1b]10;rgb:aaaa/bbbb/cccc\x1b\\",
+            "\x1b]4;0;rgb:ff/00/00\x07",
+            # Color value forms beyond rgb: (#rrggbb / rgbi:).
+            "\x1b]11;#ff00ff\x07",
+            "\x1b]11;#aabbccddeeff\x1b\\",
+            "\x1b]11;rgbi:255/0/255\x07",
+        ):
+            session.write.reset_mock()
+            await ctrl.input({"data": data})
+            session.write.assert_awaited_once_with(data)
+
+    async def test_input_read_only_allows_dcs_capability_reports(self):
+        """XTVERSION and XTGETTCAP responses pass (#1716)."""
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        session.is_alive = True
+        session.read_only = True
+        ctrl.session = session
+        for data in (
+            "\x1bP>|xterm.js 5.5.0\x1b\\",  # XTVERSION
+            "\x1bP>|tmux 3.4\x07",
+            "\x1bP1+r5443=787465726d\x1b\\",  # XTGETTCAP success
+            "\x1bP0+r\x1b\\",  # XTGETTCAP not-found
+        ):
+            session.write.reset_mock()
+            await ctrl.input({"data": data})
+            session.write.assert_awaited_once_with(data)
+
+    async def test_input_read_only_blocks_osc52_clipboard(self):
+        """OSC 52 clipboard read/write is dropped for spectators (#1716)."""
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        session.is_alive = True
+        session.read_only = True
+        ctrl.session = session
+        for data in (
+            "\x1b]52;c;Zm9v\x07",  # clipboard write (base64 "foo")
+            "\x1b]52;c;?\x07",  # clipboard read
+        ):
+            session.write.reset_mock()
+            await ctrl.input({"data": data})
+            session.write.assert_not_awaited()
+
+    async def test_input_read_only_blocks_arbitrary_escapes(self):
+        """Title sets, size reports, clear, DSR query, DCS passthrough
+        are all dropped (#1716)."""
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        session.is_alive = True
+        session.read_only = True
+        ctrl.session = session
+        for data in (
+            "\x1b]0;title\x07",  # OSC 0 title set
+            "\x1b[18t",  # report terminal size
+            "\x1b[2J",  # clear screen
+            "\x1b[6n",  # DSR cursor query (not a response)
+            "\x1bPtmux;evil\x1b\\",  # DCS tmux passthrough
+            "\x1b[c",  # bare DA query
+            "ls\x1b[?6c",  # text smuggled before a valid response
+            "\x1b[?6c\x1b]52;c;Zm9v\x07",  # OSC 52 chained after DA
+        ):
+            session.write.reset_mock()
+            await ctrl.input({"data": data})
+            session.write.assert_not_awaited()
 
     async def test_input_oversized_dropped(self):
         ctrl, _, _ = self._controller()
@@ -5655,6 +5826,24 @@ class TestTerminalController:
         session.read_only = False
         ctrl.session = session
         await ctrl.input({"data": "x" * (_ws_constants.MAX_INPUT_SIZE + 1)})
+        session.write.assert_not_awaited()
+
+    async def test_input_oversized_read_only_dropped_before_regex(self):
+        """Oversized read-only input hits the size guard before the
+        whitelist regex (#1716) — the cheap O(1) check protects the
+        linear scan, restoring the prior cost profile."""
+        ctrl, _, _ = self._controller()
+        session = AsyncMock()
+        session.is_alive = True
+        session.read_only = True
+        ctrl.session = session
+        big = "\x1b[?6c" + "x" * (_ws_constants.MAX_INPUT_SIZE + 1)
+        with patch(
+            "klangk.wshandler.controllers._is_allowed_read_only_input"
+        ) as allow:
+            await ctrl.input({"data": big})
+        # Size guard returned early, so the whitelist was never consulted.
+        allow.assert_not_called()
         session.write.assert_not_awaited()
 
     async def test_input_writes_and_records_activity(self, app_state):

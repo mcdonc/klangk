@@ -884,6 +884,20 @@ extra 'all'`** (#1679). The declaration was `typer[all]>=0.12.0`, but the
 
 ### Security
 
+- **Read-only ("spectate") terminal input is now a strict whitelist of
+  the protocol responses tmux needs to initialize, instead of "any ESC
+  byte" (#1716).** The old gate let a read-only joiner pass any string
+  beginning with `ESC`, so a spectator could inject arbitrary CSI/DCS/OSC
+  sequences into the shared terminal — including **OSC 52 clipboard
+  read/write**, which can exfiltrate or overwrite the owner's clipboard in
+  terminals that support it. Only the terminal-protocol responses tmux's
+  attach handshake needs now pass: DA1/DA2/DA3 device-attribute responses,
+  the DSR cursor-position report, OSC 10/11/12/4 color reports, XTVERSION,
+  and XTGETTCAP; user typing and every other escape sequence (title sets,
+  size queries, DCS/tmux passthrough) is dropped. The size guard also now
+  runs before the whitelist check, so an oversized read-only message is
+  rejected without scanning it.
+
 - **Bumped `pyasn1` 0.6.3 → 0.6.4 to fix CVE-2026-59886 / GHSA-hm4w-wwcw-mr6r
   (#1730, dependabot #4 / #3).** "Uncontrolled resource consumption when
   converting decoded REAL values" — a denial-of-service via crafted ASN.1

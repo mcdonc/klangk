@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -27,6 +28,86 @@ if TYPE_CHECKING:
     from .session import WorkspaceSession  # noqa: allow-deferred-import
 
 logger = logging.getLogger(__name__)
+
+# Read-only ("spectate") terminal-input whitelist (issue #1716).
+#
+# A read-only joiner may only send the terminal-protocol RESPONSES that
+# tmux needs to complete client initialization: it queries the joining
+# terminal for its capabilities/colors and expects replies.  Anything
+# else — user typing AND arbitrary escape sequences such as OSC 52
+# clipboard read/write, title sets, size reports, or DCS passthrough —
+# is dropped.  The previous gate ("starts with ESC") let any ESC byte
+# through, so a spectator could inject OSC 52 and exfiltrate the
+# owner's clipboard.
+#
+# The whitelist mirrors what the terminal emulators on the read-only
+# path (xterm.js via container_terminal.dart and flterm via
+# ghostty_terminal.dart) actually reply with during tmux's attach
+# handshake: device attributes (DA1/DA2/DA3), cursor-position report,
+# color reports (OSC 10/11/12 default fg/bg/cursor + OSC 4 palette),
+# XTVERSION, and XTGETTCAP.  Each of these reply types is matched with
+# a tight, bounded pattern; OSC 52 (clipboard) and every other OSC/
+# CSI/DCS sequence fall through to the drop.
+#
+# Atomicity assumption: each terminal_input WebSocket message contains
+# one or more WHOLE responses, never a fragment of one.  This holds
+# because the frontend forwards each onOutput/onData callback as a
+# single terminal_input (ws_client.sendTerminalInput) and VT parsers
+# emit a generated response as a complete byte string in one callback.
+# The match below is a fullmatch — a mid-response split across two
+# messages would be dropped.  If a future terminal library ever
+# fragments responses, the fix is a per-connection reassembly buffer
+# here, not loosening the gate.
+#
+# ST (string terminator) is ESC '\\' or BEL ('\x07').
+_ST = r"(?:\x1b\\|\x07)"
+# DA1/DA2/DA3 responses: CSI [?>=] <params> c
+_READ_ONLY_DA = r"\x1b\[[?>=][\d;]*c"
+# DSR cursor-position report: CSI <row> ; <col> R
+_READ_ONLY_DSR_CURSOR = r"\x1b\[\d+;\d+R"
+# OSC color reports (default fg/bg/cursor via 10/11/12, palette via 4;<n>).
+# The value may be an X11 `rgb:R/G/B` (1-4 hex/channel), an xterm-style
+# `#rrggbb`/`#rrrrggggbbbb`, or an intensity `rgbi:r/g/b`.
+_READ_ONLY_COLOR_VALUE = (
+    r"rgb:[0-9A-Fa-f]{1,4}/[0-9A-Fa-f]{1,4}/[0-9A-Fa-f]{1,4}"
+    r"|#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{6})?"
+    r"|rgbi:\d+(?:\.\d+)?/\d+(?:\.\d+)?/\d+(?:\.\d+)?"
+)
+_READ_ONLY_OSC_COLOR = (
+    r"\x1b\](?:4;\d+|10|11|12);(?:" + _READ_ONLY_COLOR_VALUE + r")" + _ST
+)
+# XTVERSION response: DCS > | <name SP version> ST (printable payload
+# only — no nested escape possible since ESC is excluded).
+_READ_ONLY_XTVERSION = r"\x1bP>\|[\x20-\x7e]*" + _ST
+# XTGETTCAP response: DCS (0|1) + r <hex>=<hex>(;<hex>=<hex>)* ST.
+# 1+r is success, 0+r is failure; payload is hex + '=' + ';'.
+_READ_ONLY_XTGETTCAP = r"\x1bP[01]\+r[0-9A-Fa-f=;]*" + _ST
+_READ_ONLY_INPUT = re.compile(
+    r"(?:"
+    + r"|".join(
+        (
+            _READ_ONLY_DA,
+            _READ_ONLY_DSR_CURSOR,
+            _READ_ONLY_OSC_COLOR,
+            _READ_ONLY_XTVERSION,
+            _READ_ONLY_XTGETTCAP,
+        )
+    )
+    + r")+"
+)
+
+
+def _is_allowed_read_only_input(data: str) -> bool:
+    """True only for the terminal-protocol responses a read-only client
+    may legitimately send during tmux initialization.
+
+    Strict whitelist (issue #1716): user input and arbitrary escape
+    sequences — notably OSC 52 clipboard read/write — are rejected.
+    The whole payload must be one or more whitelisted responses; any
+    extra byte (typed text, a different OSC/CSI/DCS) fails the match
+    and the message is dropped.
+    """
+    return _READ_ONLY_INPUT.fullmatch(data) is not None
 
 
 class SshAgentForwarder:
@@ -617,16 +698,17 @@ class TerminalController:
             logger.warning("terminal_input: no session or not alive")
             return
         data = msg.get("data", "")
-        if session.read_only:
-            # Allow terminal protocol responses (DA queries, color
-            # reports) through so tmux can complete initialization.
-            # Block user-typed input.
-            if not data.startswith("\x1b"):
-                return
         if len(data) > MAX_INPUT_SIZE:
             logger.warning(
                 "terminal_input too large (%d bytes), dropping", len(data)
             )
+            return
+        if session.read_only and not _is_allowed_read_only_input(data):
+            # Read-only spectators may only send the terminal-protocol
+            # responses tmux needs to complete initialization (DA,
+            # color, cursor-position, XTVERSION, XTGETTCAP reports).
+            # User typing and arbitrary escape sequences — notably OSC
+            # 52 clipboard read/write — are dropped (#1716).
             return
         self._conn.app.state.container_registry.record_activity(
             self._conn.container_id
