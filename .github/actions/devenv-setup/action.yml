@@ -9,9 +9,9 @@ inputs:
   max-attempts:
     description: >-
       Retry count for the flaky steps (Bootstrap/Prepare/Build). 1 = no retry
-      (surfaces raw failures for #1720 reproduction). Callers can pass
-      `${{ vars.DEVENV_SETUP_MAX_ATTEMPTS || '3' }}` from the workflow level
-      (composite actions can't read the vars context directly).
+      (surfaces raw failures for #1720 reproduction). Workflow callers may pass
+      their own repo-variable value here; the composite action itself cannot
+      read the vars context.
     required: false
     default: "3"
 
