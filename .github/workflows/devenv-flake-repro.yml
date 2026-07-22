@@ -1,0 +1,59 @@
+name: devenv-setup flake repro
+
+# #1720 reproduction harness — NOT a gating workflow. Runs the devenv-setup
+# composite action many times (matrix) on fresh GitHub runners, which is the
+# only place the #1420/#1720 "path not valid" flake (a bad NAR substituted
+# from cache.nixos.org on a cold store) actually fires. Tune `max-attempts`:
+#   - 1  = no retry -> a hit surfaces as a real devenv-setup FAILURE (raw repro)
+#   - 3+ = the instrumented retry recovers -> a hit shows "prepare=OK (2 attempts)"
+# Either outcome proves the flake; the latter also proves the fix.
+on:
+  workflow_dispatch:
+    inputs:
+      max-attempts:
+        description: "devenv-setup max-attempts (1 = surface raw failures)"
+        required: false
+        default: "1"
+      matrix-size:
+        description: "number of concurrent devenv-setup invocations"
+        required: false
+        default: "6"
+      build-tasks:
+        description: "devenv tasks to run (empty = just Bootstrap+Prepare)"
+        required: false
+        default: "klangk:build-workspace-image"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.mk.outputs.matrix }}
+    steps:
+      - id: mk
+        shell: bash
+        run: |
+          n=$(( ${{ inputs.matrix-size }} ))
+          [ "$n" -lt 1 ] && n=1
+          [ "$n" -gt 20 ] && n=20
+          out="["
+          for i in $(seq 0 $((n-1))); do out="$out\"i$i\","; done
+          out="${out%,}]"
+          echo "matrix=$out" >> "$GITHUB_OUTPUT"
+
+  repro:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        instance: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/devenv-setup
+        with:
+          build-tasks: ${{ inputs.build-tasks }}
+          max-attempts: ${{ inputs.max-attempts }}
+      - name: result marker
+        if: always()
+        shell: bash
+        run: echo "REPRO_RESULT instance=${{ matrix.instance }} conclusion=${{ job.status }}"

@@ -6,6 +6,11 @@ inputs:
     description: "Space-separated devenv tasks to run (e.g. 'klangk:build-workspace-image klangk:flutter-build'). Empty to skip."
     required: false
     default: ""
+  max-attempts:
+    description: "Retry count for the flaky steps (Bootstrap/Prepare/Build). 1 = no retry (surfaces raw failures for #1720 reproduction). Defaults to repo var DEVENV_SETUP_MAX_ATTEMPTS or 3."
+    required: false
+    default: ""
+
 runs:
   using: composite
   steps:
@@ -25,6 +30,11 @@ runs:
         # cache.nixos.org. The bootstrap step's `cachix use` later appends
         # devenv.cachix.org via `extra-substituters`. Result: paths come
         # only from the two reliable caches — no Determinate store caching.
+        #
+        # NOTE: this lowers the *rate* of the #1420-class flake but does not
+        # eliminate it — cache.nixos.org itself occasionally serves a bad
+        # NAR. The retry+repair logic in the steps below (#1720) recovers
+        # from the residual cases instead of failing the job.
         echo 'substituters = https://cache.nixos.org/' \
           | sudo tee -a /etc/nix/nix.conf
         sudo systemctl restart nix-daemon
@@ -43,19 +53,151 @@ runs:
           /usr/local/powershell /usr/local/.ghcup \
           /usr/local/julia* &
 
+    # ------------------------------------------------------------------
+    # devenv-setup instrumentation (#1720)
+    #
+    # The three steps below (Bootstrap / Prepare / Build) are the ones that
+    # intermittently flake in CI. Each now runs through a retry loop that, on
+    # failure, (a) captures diagnostics, (b) attempts a targeted repair of the
+    # offending nix store path — the #1420 "path '...' is not valid" failure
+    # where a substituter delivered a corrupt/partial NAR — and (c) retries.
+    # Per-step status is written to /tmp/devenv-setup/<step>.status so the
+    # final summary step can emit one greppable DEVENV_SETUP_SUMMARY line.
+    # ------------------------------------------------------------------
+    - name: devenv-setup env snapshot
+      shell: bash
+      run: |
+        mkdir -p /tmp/devenv-setup
+        {
+          echo "=== devenv-setup env snapshot (#1720) ==="
+          echo "runner=${RUNNER_NAME:-local} os=${RUNNER_OS:-} arch=${RUNNER_ARCH:-} image=${ImageOS:-}${ImageVersion:+-}$ImageVersion"
+          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          uname -a
+          echo "--- disk ---"; df -h / /nix 2>/dev/null || df -h /
+          echo "--- mem ---"; free -h 2>/dev/null | head -2 || true
+          echo "--- nix ---"; nix --version 2>/dev/null || true
+          nix show-config 2>/dev/null | grep -E '^(substituters|extra-substituters|system) =' || true
+        } | tee -a "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
     - name: Bootstrap
       shell: bash
-      run: ./bootstrap --unattended --cachix-version v1.11.1
+      env:
+        DEVENV_SETUP_MAX_ATTEMPTS: ${{ inputs.max-attempts || vars.DEVENV_SETUP_MAX_ATTEMPTS || '3' }}
+      run: |
+        set -uo pipefail
+        ok=0
+        for attempt in $(seq 1 "${DEVENV_SETUP_MAX_ATTEMPTS}"); do
+          echo "::notice::devenv-setup: Bootstrap attempt ${attempt}/${DEVENV_SETUP_MAX_ATTEMPTS}"
+          if ./bootstrap --unattended --cachix-version v1.11.1 \
+               2>&1 | tee /tmp/devenv-setup/bootstrap-attempt-${attempt}.log; then
+            ok=1; break
+          fi
+          echo "::warning::devenv-setup: Bootstrap failed (attempt ${attempt})"
+          df -h / 2>/dev/null | tail -2
+          # Installer/network failures are usually transient (a failed fetch
+          # of nix/devenv/cachix). Back off and retry before giving up.
+          [ "$attempt" -lt "${DEVENV_SETUP_MAX_ATTEMPTS}" ] && sleep $((attempt * 5))
+        done
+        if [ "$ok" = 1 ]; then
+          echo "OK" > /tmp/devenv-setup/bootstrap.status
+        else
+          echo "FAIL after ${DEVENV_SETUP_MAX_ATTEMPTS} attempts" > /tmp/devenv-setup/bootstrap.status
+          echo "::error::devenv-setup: Bootstrap failed after ${DEVENV_SETUP_MAX_ATTEMPTS} attempts"
+          exit 1
+        fi
 
     - name: Prepare klangk devenv
       shell: bash
+      env:
+        DEVENV_SETUP_MAX_ATTEMPTS: ${{ inputs.max-attempts || vars.DEVENV_SETUP_MAX_ATTEMPTS || '3' }}
       run: |
+        set -uo pipefail
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-        devenv shell -- true
+        attempts_used=0
+        ok=0
+        for attempt in $(seq 1 "${DEVENV_SETUP_MAX_ATTEMPTS}"); do
+          attempts_used=$attempt
+          echo "::notice::devenv-setup: Prepare (devenv shell -- true) attempt ${attempt}/${DEVENV_SETUP_MAX_ATTEMPTS}"
+          if devenv shell -- true \
+               2>&1 | tee /tmp/devenv-setup/prepare-attempt-${attempt}.log; then
+            ok=1; break
+          fi
+          echo "::warning::devenv-setup: Prepare failed (attempt ${attempt}); diagnosing"
+          df -h / /nix 2>/dev/null | tail -3
+          free -h 2>/dev/null | head -2 || true
+          # #1420-class failure: a store path is registered but its contents
+          # are missing/corrupt ("error: path '...' is not valid"). Repair
+          # each cited path so the next attempt re-fetches a clean copy.
+          grep -oE "/nix/store/[0-9a-z]{32}-[^\"' )]+" \
+            /tmp/devenv-setup/prepare-attempt-${attempt}.log 2>/dev/null \
+            | sort -u | while read -r p; do
+              echo "::notice::devenv-setup: nix path not valid -> nix-store --repair-path $p"
+              nix-store --repair-path "$p" 2>&1 | tail -3 || true
+            done
+          # Fallback: repair any invalid-but-reachable paths in the store.
+          echo "::notice::devenv-setup: broad nix-store --verify --repair (scoped to reachable closure)"
+          nix-store --verify --repair --no-derivations 2>&1 | tail -3 || true
+          [ "$attempt" -lt "${DEVENV_SETUP_MAX_ATTEMPTS}" ] && sleep $((attempt * 5))
+        done
+        if [ "$ok" = 1 ]; then
+          echo "OK (${attempts_used} attempt$([ "$attempts_used" -gt 1 ] && echo s))" \
+            > /tmp/devenv-setup/prepare.status
+        else
+          echo "FAIL after ${DEVENV_SETUP_MAX_ATTEMPTS} attempts" > /tmp/devenv-setup/prepare.status
+          echo "::error::devenv-setup: Prepare klangk devenv failed after ${DEVENV_SETUP_MAX_ATTEMPTS} attempts"
+          tail -40 /tmp/devenv-setup/prepare-attempt-${DEVENV_SETUP_MAX_ATTEMPTS}.log 2>/dev/null || true
+          exit 1
+        fi
 
     - name: Build
       if: inputs.build-tasks != ''
       shell: bash
+      env:
+        DEVENV_SETUP_MAX_ATTEMPTS: ${{ inputs.max-attempts || vars.DEVENV_SETUP_MAX_ATTEMPTS || '3' }}
       run: |
+        set -uo pipefail
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-        devenv tasks run ${{ inputs.build-tasks }}
+        attempts_used=0
+        ok=0
+        for attempt in $(seq 1 "${DEVENV_SETUP_MAX_ATTEMPTS}"); do
+          attempts_used=$attempt
+          echo "::notice::devenv-setup: Build (devenv tasks run ${{ inputs.build-tasks }}) attempt ${attempt}/${DEVENV_SETUP_MAX_ATTEMPTS}"
+          if devenv tasks run ${{ inputs.build-tasks }} \
+               2>&1 | tee /tmp/devenv-setup/build-attempt-${attempt}.log; then
+            ok=1; break
+          fi
+          echo "::warning::devenv-setup: Build failed (attempt ${attempt}); diagnosing"
+          df -h / /nix 2>/dev/null | tail -3
+          # Surface which task(s) failed (mago prints "✖ Running <task> in Ns (failed)").
+          grep -E "✖|Some tasks failed|Error:|error:" \
+            /tmp/devenv-setup/build-attempt-${attempt}.log 2>/dev/null | tail -15 || true
+          # Re-running re-executes only tasks whose execIfModified gate has
+          # tripped; the rest are cached, so the retry is cheap.
+          [ "$attempt" -lt "${DEVENV_SETUP_MAX_ATTEMPTS}" ] && sleep $((attempt * 5))
+        done
+        if [ "$ok" = 1 ]; then
+          echo "OK (${attempts_used} attempt$([ "$attempts_used" -gt 1 ] && echo s))" \
+            > /tmp/devenv-setup/build.status
+        else
+          echo "FAIL after ${DEVENV_SETUP_MAX_ATTEMPTS} attempts" > /tmp/devenv-setup/build.status
+          echo "::error::devenv-setup: Build failed after ${DEVENV_SETUP_MAX_ATTEMPTS} attempts"
+          tail -40 /tmp/devenv-setup/build-attempt-${DEVENV_SETUP_MAX_ATTEMPTS}.log 2>/dev/null || true
+          exit 1
+        fi
+
+    - name: devenv-setup summary
+      if: always()
+      shell: bash
+      run: |
+        bs="$(cat /tmp/devenv-setup/bootstrap.status 2>/dev/null || echo skipped)"
+        ps="$(cat /tmp/devenv-setup/prepare.status 2>/dev/null || echo skipped)"
+        bl="$(cat /tmp/devenv-setup/build.status 2>/dev/null || echo skipped)"
+        summary="DEVENV_SETUP_SUMMARY: bootstrap=${bs} prepare=${ps} build=${bl}"
+        echo "$summary"
+        echo "$summary" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+        # Fail loudly if any required step didn't record OK (guards against a
+        # silent skip masking a real failure).
+        case "$bs $ps" in
+          OK*OK*) : ;;
+          *) echo "::error::devenv-setup: required step did not complete OK ($summary)"; exit 1 ;;
+        esac
