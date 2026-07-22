@@ -249,50 +249,38 @@ class TestContainerSourceLists:
 # ---------------------------------------------------------------------------
 
 
-class TestCaddyVersion:
-    """_caddy_version gates version-sensitive Caddyfile features (#1709)."""
+class TestCaddySupportsFullGlobalBlock:
+    """_caddy_supports_full_global_block probes the binary so klangkd's config
+    loads on both the devenv's current caddy and the older system caddy a stock
+    CI runner apt-installs (Ubuntu 24.04 -> 2.6.2; #1709)."""
 
-    def test_parses_major_minor(self, monkeypatch):
+    def test_true_when_adapt_succeeds(self, monkeypatch):
         from klangk import caddy as caddy_mod
 
         class _R:
-            stdout = "v2.6.4 h1:w0NymbG2m9PcvKWsrXO6EEkY9Ru4FJK8uQbYcev1p3A="
+            returncode = 0
 
-        monkeypatch.setattr(
-            caddy_mod.subprocess, "run", lambda *a, **k: _R()
-        )
-        assert caddy_mod._caddy_version("/usr/bin/caddy") == (2, 6)
+        monkeypatch.setattr(caddy_mod.subprocess, "run", lambda *a, **k: _R())
+        assert caddy_mod._caddy_supports_full_global_block("/x/caddy") is True
 
-    def test_parses_two_digit_minor(self, monkeypatch):
+    def test_false_when_adapt_rejects_the_probe(self, monkeypatch):
         from klangk import caddy as caddy_mod
 
         class _R:
-            stdout = "v2.11.4 h1:..."
+            returncode = 1  # e.g. 2.6.2: "unrecognized global option: persist_config"
 
-        monkeypatch.setattr(
-            caddy_mod.subprocess, "run", lambda *a, **k: _R()
-        )
-        assert caddy_mod._caddy_version("/x/caddy") == (2, 11)
+        monkeypatch.setattr(caddy_mod.subprocess, "run", lambda *a, **k: _R())
+        assert caddy_mod._caddy_supports_full_global_block("/x/caddy") is False
 
-    def test_none_on_subprocess_failure(self, monkeypatch):
+    def test_true_when_probe_cannot_run(self, monkeypatch):
         from klangk import caddy as caddy_mod
 
         def _boom(*a, **k):
             raise OSError("no such binary")
 
         monkeypatch.setattr(caddy_mod.subprocess, "run", _boom)
-        assert caddy_mod._caddy_version("/nope") is None
-
-    def test_none_on_unparseable_output(self, monkeypatch):
-        from klangk import caddy as caddy_mod
-
-        class _R:
-            stdout = "garbage, no version here"
-
-        monkeypatch.setattr(
-            caddy_mod.subprocess, "run", lambda *a, **k: _R()
-        )
-        assert caddy_mod._caddy_version("/x/caddy") is None
+        # conservative default: assume supported (rare; preserves features)
+        assert caddy_mod._caddy_supports_full_global_block("/nope") is True
 
 
 class TestGlobalBlock:
@@ -351,17 +339,19 @@ class TestGlobalBlock:
         assert "trusted_proxies static 10.0.0.0/8 127.0.0.1" in g
         assert "trusted_proxies_strict" in g
 
-    def test_trusted_proxies_strict_omitted_when_strict_xff_false(self):
-        """trusted_proxies_strict is 2.8+; older system caddy rejects the
-        whole config if present (#1709). When the detected caddy is < 2.8
-        (strict_xff=False) the servers block is still emitted (with
-        trusted_proxies static) but WITHOUT strict -- caddy then uses its
-        default left-to-right XFF parsing.
-        """
+    def test_minimal_global_block_when_full_global_false(self):
+        """On older system caddy (post-2.6.2 lacks persist_config and
+        servers/trusted_proxies; e.g. Ubuntu 24.04's apt caddy 2.6.2), the full
+        global block is rejected outright (#1709). When full_global=False the
+        block degrades to admin + auto_https only -- no persist_config, no
+        servers/trusted_proxies/strict. CaddyWatchdog.start's probe decides
+        which path."""
         s = make_settings({"KLANGK_PORT": "8997"})
-        g = _renderer(s)._global_block("/d/sock", strict_xff=False)
-        assert "trusted_proxies static" in g  # servers block still present
-        assert "trusted_proxies_strict" not in g
+        g = _renderer(s)._global_block("/d/sock", full_global=False)
+        assert "auto_https off" in g
+        assert "persist_config" not in g
+        assert "trusted_proxies" not in g
+        assert "servers" not in g
 
     def test_trusted_proxies_suppressed_when_reject(self):
         s = make_settings(

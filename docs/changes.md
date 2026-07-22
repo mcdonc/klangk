@@ -792,12 +792,17 @@ set-password <email>` (set a known password for the default user — whose
   by the watchdog via `os.chmod` after the bind (version-independent). (3)
   The admin directive now sets `origins localhost` explicitly — older Caddy
   (<2.11) defaults the unix-socket admin's allowed origins to empty and 403s
-  the `Host: localhost` klangkd sends, breaking `POST /load`. (4)
-  `trusted_proxies_strict` (right-to-left XFF parsing, anti-spoofing, 2.8+) is
-  now emitted only when the detected Caddy is >= 2.8; older system Caddy
-  rejects it outright, refusing the whole config. klangkd now runs on both
-  the devenv's current Caddy and the older system Caddy a stock CI runner
-  apt-installs.
+  the `Host: localhost` klangkd sends, breaking `POST /load`. (4) The full
+  global block (`persist_config off` + the `servers { trusted_proxies ... }`
+  option + `trusted_proxies_strict`) is emitted only when the caddy binary
+  actually supports it — klangkd probes the binary at startup (`caddy adapt`
+  on a representative block) rather than trusting a version map. Ubuntu 24.04's
+  apt caddy (2.6.2) predates `persist_config` and `servers/trusted_proxies`
+  and would reject the whole config; on such older caddy klangkd falls back to
+  a minimal global block (admin + auto_https only — caddy autosaves harmlessly
+  and `{client_ip}` resolves the immediate peer, fine without an outer proxy).
+  klangkd now runs on both the devenv's current caddy and that older system
+  caddy.
 
 - **The nginx proxy engine no longer returns 500 for `/llm-proxy/*`
   requests (or the other container-egress POST endpoints) with a body
