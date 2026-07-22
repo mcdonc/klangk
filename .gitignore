@@ -22,8 +22,8 @@ src/frontend/build/
 # Feature build artifacts
 features/**/klangk/.dart_tool/
 features/**/klangk/build/
-src/frontend/.flutter-features
-src/frontend/.flutter-features-dependencies
+src/frontend/.flutter-plugins
+src/frontend/.flutter-plugins-dependencies
 src/frontend/pubspec_overrides.yaml
 src/frontend/coverage/
 src/frontend/pubspec.lock

@@ -50,20 +50,20 @@ cd src/frontend
 export GIT_LFS_SKIP_SMUDGE=1
 "$FLUTTER" pub get
 
-# Guard against a stale web feature registrant. Flutter's incremental web build
-# does not reliably re-run the web_feature_registrant target when the feature set
-# changes, so a newly-added web feature (e.g. video_player_web, url_launcher_web)
+# Guard against a stale web plugin registrant. Flutter's incremental web build
+# does not reliably re-run the web_plugin_registrant target when the plugin set
+# changes, so a newly-added web plugin (e.g. video_player_web, url_launcher_web)
 # can compile into the bundle *unregistered* -> "UnimplementedError: init() has
 # not been implemented" at runtime. `flutter pub get` (above) rewrites
-# .flutter-features-dependencies; when its contents change vs the last build, drop
-# the build cache so the registrant is regenerated from the current feature set.
-# Incremental builds are preserved while the feature set is unchanged.
-FEATURES_DEPS=.flutter-features-dependencies
-FEATURES_MARKER=.dart_tool/.klangk-web-features.sha256
-if [ -f "$FEATURES_DEPS" ]; then
-  NEW_FEATURES_HASH="$(sha256sum "$FEATURES_DEPS" | cut -d' ' -f1)"
-  if [ "$(cat "$FEATURES_MARKER" 2>/dev/null || true)" != "$NEW_FEATURES_HASH" ]; then
-    echo "Feature set changed -> clearing build cache to regenerate web feature registrant"
+# .flutter-plugins-dependencies; when its contents change vs the last build, drop
+# the build cache so the registrant is regenerated from the current plugin set.
+# Incremental builds are preserved while the plugin set is unchanged.
+PLUGINS_DEPS=.flutter-plugins-dependencies
+PLUGINS_MARKER=.dart_tool/.klangk-web-plugins.sha256
+if [ -f "$PLUGINS_DEPS" ]; then
+  NEW_PLUGINS_HASH="$(sha256sum "$PLUGINS_DEPS" | cut -d' ' -f1)"
+  if [ "$(cat "$PLUGINS_MARKER" 2>/dev/null || true)" != "$NEW_PLUGINS_HASH" ]; then
+    echo "Plugin set changed -> clearing build cache to regenerate web plugin registrant"
     rm -rf .dart_tool/flutter_build
   fi
 fi

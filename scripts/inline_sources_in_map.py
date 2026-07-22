@@ -64,7 +64,7 @@ def resolve(uri: str, flutter_sdk: Path, map_dir: Path) -> Path | None:
             if cand.is_file():
                 return cand
         # Bare filename fallback: dart2js emits `main.dart` and
-        # `web_feature_registrant.dart` without a directory prefix. Search the
+        # `web_plugin_registrant.dart` without a directory prefix. Search the
         # Flutter project (map_dir's grandparent) for the first match.
         if "/" not in stripped:
             project = map_dir.parent.parent

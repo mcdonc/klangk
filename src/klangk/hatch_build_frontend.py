@@ -26,7 +26,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from hatchling.builders.hooks.feature.interface import BuildHookInterface
+from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 # The built UI lands at <repo>/src/frontend/build/web. ``self.root`` is the
 # project directory (``src/klangk``), so two levels up is the repo root.
@@ -36,7 +36,7 @@ _WHEEL_DEST = "klangk/frontend"
 class FrontendArtifactHook(BuildHookInterface):
     """Force-include the Flutter web build into the wheel (#1600)."""
 
-    FEATURE_NAME = "frontend-artifact"
+    PLUGIN_NAME = "frontend-artifact"
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         # Only the wheel ships the frontend; sdist is source-only.
