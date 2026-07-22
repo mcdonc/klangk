@@ -23,12 +23,12 @@ if [ -n "${KLANGK_TERMINAL_BANNER:-}" ]; then
   printf '\033[33m%s\033[0m\n' "$KLANGK_TERMINAL_BANNER"
 fi
 
-# Run plugin on-shell-init hooks (alphabetical by plugin name).
+# Run feature on-shell-init hooks (alphabetical by feature name).
 # These run as the klangk user on every shell open.
-for f in /opt/klangk/plugins/*/on-shell-init.sh; do
+for f in /opt/klangk/features/*/on-shell-init.sh; do
   [ -x "$f" ] || continue
-  plugin=$(basename "$(dirname "$f")")
-  label=" $plugin (on-shell-init) "
+  feature=$(basename "$(dirname "$f")")
+  label=" $feature (on-shell-init) "
   pad=$(( (60 - ${#label}) / 2 ))
   line=$(printf '%*s' "$pad" '' | tr ' ' '-')
   printf '\033[33m%s%s%s\033[0m\n' "$line" "$label" "$line"

@@ -3,9 +3,9 @@ import 'package:klangk_frontend/app_guards.dart';
 import 'package:klangk_frontend/auth/pending_redirect.dart';
 
 /// The full public-route set as the router builds it (publicRoutes
-/// constant plus a couple of plugin paths used in the tests below).
-Set<String> _routesWithPlugins(Set<String> pluginPaths) =>
-    {...publicRoutes, ...pluginPaths};
+/// constant plus a couple of feature paths used in the tests below).
+Set<String> _routesWithFeatures(Set<String> featurePaths) =>
+    {...publicRoutes, ...featurePaths};
 
 void main() {
   // guardAuth mutates the top-level pendingRedirect global; reset it
@@ -112,8 +112,8 @@ void main() {
   });
 
   group('guardLoggedInPublicRoute', () {
-    final pluginPaths = {'/celebrate'};
-    final routes = _routesWithPlugins(pluginPaths);
+    final featurePaths = {'/celebrate'};
+    final routes = _routesWithFeatures(featurePaths);
 
     test('bounces logged-in users on public routes to pendingRedirect', () {
       pendingRedirect = '/workspace/abc';
@@ -122,7 +122,7 @@ void main() {
           isLoggedIn: true,
           loc: '/login',
           publicRoutes: routes,
-          pluginPaths: pluginPaths,
+          featurePaths: featurePaths,
         ),
         '/workspace/abc',
       );
@@ -134,19 +134,19 @@ void main() {
           isLoggedIn: true,
           loc: '/login',
           publicRoutes: routes,
-          pluginPaths: pluginPaths,
+          featurePaths: featurePaths,
         ),
         '/workspaces',
       );
     });
 
-    test('does not bounce for plugin routes (public but legitimate)', () {
+    test('does not bounce for feature routes (public but legitimate)', () {
       expect(
         guardLoggedInPublicRoute(
           isLoggedIn: true,
           loc: '/celebrate',
           publicRoutes: routes,
-          pluginPaths: pluginPaths,
+          featurePaths: featurePaths,
         ),
         isNull,
       );
@@ -158,7 +158,7 @@ void main() {
           isLoggedIn: true,
           loc: '/workspaces',
           publicRoutes: routes,
-          pluginPaths: pluginPaths,
+          featurePaths: featurePaths,
         ),
         isNull,
       );
@@ -170,7 +170,7 @@ void main() {
           isLoggedIn: false,
           loc: '/login',
           publicRoutes: routes,
-          pluginPaths: pluginPaths,
+          featurePaths: featurePaths,
         ),
         isNull,
       );
@@ -192,8 +192,8 @@ void main() {
   });
 
   group('evaluateGuards precedence', () {
-    final pluginPaths = {'/celebrate'};
-    final routes = _routesWithPlugins(pluginPaths);
+    final featurePaths = {'/celebrate'};
+    final routes = _routesWithFeatures(featurePaths);
 
     test('banner takes precedence over everything', () {
       // Logged-out user on a protected route, but banner required ->
@@ -205,7 +205,7 @@ void main() {
           loc: '/workspaces',
           currentUri: '/workspaces',
           publicRoutes: routes,
-          pluginPaths: pluginPaths,
+          featurePaths: featurePaths,
         ),
         '/consent',
       );
@@ -220,7 +220,7 @@ void main() {
           loc: '/workspace/abc',
           currentUri: '/workspace/abc?x=1',
           publicRoutes: routes,
-          pluginPaths: pluginPaths,
+          featurePaths: featurePaths,
         ),
         '/login',
       );
@@ -236,7 +236,7 @@ void main() {
           loc: '/login',
           currentUri: '/login',
           publicRoutes: routes,
-          pluginPaths: pluginPaths,
+          featurePaths: featurePaths,
         ),
         '/workspace/zzz',
       );
@@ -252,7 +252,7 @@ void main() {
           loc: '/',
           currentUri: '/',
           publicRoutes: routes,
-          pluginPaths: pluginPaths,
+          featurePaths: featurePaths,
         ),
         '/workspaces',
       );
@@ -266,13 +266,13 @@ void main() {
           loc: '/workspaces',
           currentUri: '/workspaces',
           publicRoutes: routes,
-          pluginPaths: pluginPaths,
+          featurePaths: featurePaths,
         ),
         isNull,
       );
     });
 
-    test('logged-in on plugin route -> allowed (null)', () {
+    test('logged-in on feature route -> allowed (null)', () {
       expect(
         evaluateGuards(
           isLoggedIn: true,
@@ -280,7 +280,7 @@ void main() {
           loc: '/celebrate',
           currentUri: '/celebrate',
           publicRoutes: routes,
-          pluginPaths: pluginPaths,
+          featurePaths: featurePaths,
         ),
         isNull,
       );
@@ -294,7 +294,7 @@ void main() {
           loc: '/consent',
           currentUri: '/consent',
           publicRoutes: routes,
-          pluginPaths: pluginPaths,
+          featurePaths: featurePaths,
         ),
         '/login',
       );

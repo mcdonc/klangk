@@ -97,7 +97,7 @@ class _SaveProbeState extends State<_SaveProbe> {
 }
 
 /// A ToolPlugin that also contributes file renderers.
-class _BothPlugin extends ToolPlugin implements FileRendererPlugin {
+class _BothFeature extends ToolPlugin implements FileRendererPlugin {
   @override
   Map<String, ToolHandler> get handlers => {};
   @override
@@ -105,7 +105,7 @@ class _BothPlugin extends ToolPlugin implements FileRendererPlugin {
 }
 
 /// A plain ToolPlugin with no renderers.
-class _ToolOnlyPlugin extends ToolPlugin {
+class _ToolOnlyFeature extends ToolPlugin {
   @override
   Map<String, ToolHandler> get handlers => {};
 }
@@ -264,8 +264,8 @@ void main() {
   group('buildFileRendererRegistry', () {
     test('registers builtins plus FileRendererPlugin renderers', () {
       final registry = buildFileRendererRegistry([
-        _ToolOnlyPlugin(),
-        _BothPlugin(),
+        _ToolOnlyFeature(),
+        _BothFeature(),
       ]);
       final md = RenderableFile(
         path: 'x.md',
@@ -276,13 +276,13 @@ void main() {
         downloadUrl: '',
       );
       final ids = registry.renderersFor(md).map((r) => r.id).toList();
-      // The plugin's renderer is registered alongside the builtins, and the
+      // The feature's renderer is registered alongside the builtins, and the
       // raw fallback remains available.
       expect(ids, contains('bytesview'));
       expect(ids, contains('raw'));
     });
 
-    test('with no plugins, offers only builtins', () {
+    test('with no features, offers only builtins', () {
       final registry = buildFileRendererRegistry([]);
       final txt = RenderableFile(
         path: 'x.txt',

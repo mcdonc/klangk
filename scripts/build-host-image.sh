@@ -23,9 +23,9 @@ cp "$KLANGK_VERSION_FILE" version.json
 WORKSPACE_IMAGE="${KLANGK_IMAGE_NAME:-klangk-workspace}"
 PODMAN="${KLANGK_PODMAN_BIN:-podman}"
 # Export workspace image so it can be embedded in the host image. The host
-# image no longer stages plugin trees (#1660/#1665) — the runtime reads
+# image no longer stages feature trees (#1660/#1665) — the runtime reads
 # features.json from the frontend bundle, and the workspace image (built
-# above) already bakes plugin trees in for Pi — so there's no separate
+# above) already bakes feature trees in for Pi — so there's no separate
 # staging tempdir here anymore, just the workspace tarball.
 WORKSPACE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/klangk-workspace-XXXXXX")
 trap 'rm -rf "$WORKSPACE_DIR"' EXIT

@@ -2,8 +2,8 @@
 #
 # Uses the stock image with runtime customization (branding, legal links,
 # email templates, CA certs, OIDC login hooks — no rebuild). The only thing
-# that needs a rebuild is plugins; for a plugin build, fork the repo and edit
-# the checked-in plugins.yaml (see docs/deployment/customizing.md).
+# that needs a rebuild is features; for a feature build, fork the repo and edit
+# the checked-in features.yaml (see docs/deployment/customizing.md).
 #
 # Before first run:
 #   1. Ensure data/ and mount/ are writable by the container. Both ship
@@ -15,7 +15,7 @@
 services:
   klangk:
     # Stock host image — runtime customization only (no rebuild).
-    # If you fork the repo and build a plugin image, point this at your
+    # If you fork the repo and build a feature image, point this at your
     # image (e.g. ghcr.io/<your-org>/klangk-host:latest).
     image: ghcr.io/mcdonc/klangk/klangk-host:latest
     ports:

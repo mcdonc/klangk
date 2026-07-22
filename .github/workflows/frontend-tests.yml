@@ -25,7 +25,7 @@ jobs:
               - 'src/frontend/lib/**'
               - 'src/frontend/test/**'
               - 'src/frontend/pubspec.yaml'
-              - 'plugins/**/klangk/**'
+              - 'features/**/klangk/**'
               - 'scripts/lcov-report.py'
               - '.github/workflows/frontend-tests.yml'
 
@@ -35,17 +35,17 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Create stub klangk_plugins package
+      - name: Create stub klangk_features package
         if: steps.filter.outputs.frontend == 'true'
-        run: bash scripts/stub_dart_plugins.sh
+        run: bash scripts/stub_dart_features.sh
 
       - name: Install dependencies
         if: steps.filter.outputs.frontend == 'true'
         working-directory: src/frontend
-        # Safe without GIT_LFS_SKIP_SMUDGE: stub_dart_plugins.sh (above)
-        # replaced the real plugins — incl. soliplex's ag_ui git dep — with
+        # Safe without GIT_LFS_SKIP_SMUDGE: stub_dart_features.sh (above)
+        # replaced the real features — incl. soliplex's ag_ui git dep — with
         # a stub, so this pub get doesn't touch soliplex's dep tree. The
-        # per-plugin "Run plugin Dart tests" step below sets the skip for its
+        # per-feature "Run feature Dart tests" step below sets the skip for its
         # own real pub gets.
         run: flutter pub get
 
@@ -59,7 +59,7 @@ jobs:
         working-directory: src/frontend
         run: python3 ../../scripts/lcov-report.py coverage/lcov.info
 
-      - name: Run plugin Dart tests
+      - name: Run feature Dart tests
         if: steps.filter.outputs.frontend == 'true'
         run: |
           # Skip git-lfs smudge for transitive git deps — soliplex pulls ag_ui
@@ -67,7 +67,7 @@ jobs:
           # is LFS-tracked with an object unauthenticated CI can't fetch
           # (#1691-class). We only need ag_ui's Dart source, not its fixtures.
           export GIT_LFS_SKIP_SMUDGE=1
-          for pubspec in plugins/*/klangk/pubspec.yaml; do
+          for pubspec in features/*/klangk/pubspec.yaml; do
             dir=$(dirname "$pubspec")
             if [ -d "$dir/test" ]; then
               echo "=== Testing $dir ==="

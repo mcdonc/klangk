@@ -82,7 +82,7 @@ with `pi install`.
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is
 Anthropic's CLI coding agent. It is not compiled in by default — enable
-it by adding `claude-code` to your `plugins.yaml` and rebuilding the
+it by adding `claude-code` to your `features.yaml` and rebuilding the
 image. See [Feature Activation](features.md) for details.
 
 ### Using Claude Code from the terminal

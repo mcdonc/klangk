@@ -39,7 +39,7 @@ nginx/Postgres convention):
 2. **Apply reloadable settings.** The new `KlangkSettings` instance is
    swapped onto `app.state.settings`; all subsystems read it live. The
    OIDC discovery/JWKS caches are cleared and providers re-initialized,
-   plugins are re-scanned, SSL trust is re-applied, and the agent user
+   features are re-scanned, SSL trust is re-applied, and the agent user
    is re-seeded (so `KLANGK_AGENT_EMAIL`/`_HANDLE` changes take effect
    in the DB). CORS origins (`KLANGK_CORS_ORIGINS`) are picked up
    automatically by the live CORS middleware; `KLANGK_FRONTEND_DIR` is
@@ -62,7 +62,7 @@ sessions are, and those reconnect on their own.
 - You changed `KLANGK_*` env vars or the YAML config file and want them
   applied without a full process restart.
 - You changed OIDC provider configuration, auth modes, the agent handle,
-  plugin config, or SSL trust certificates.
+  feature config, or SSL trust certificates.
 - You changed a workspace's auto-start or sandbox configuration and want
   it picked up without bouncing the whole server.
 - You want to force every workspace container to be recreated (e.g. after

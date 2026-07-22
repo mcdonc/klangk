@@ -16,7 +16,7 @@ The workflow runs two jobs in parallel:
   **with that version's section from [the changelog](../changes.md)
   prepended**, when one exists. No `:latest` tag is pushed — all images are
   referenced by explicit version.
-- **`build-wheel`** — builds the `klangk` wheel (with the default-plugin-set
+- **`build-wheel`** — builds the `klangk` wheel (with the default-feature-set
   frontend baked in) and publishes it to PyPI, so `pip install klangk==<tag>`
   yields a working `klangkd` with the UI served from the in-wheel
   `klangk/frontend/` (#1656).
@@ -49,7 +49,7 @@ venv) and runs `python3 -m build --wheel` from `src/klangk/`. The hatch
 build hook (`src/klangk/hatch_build_frontend.py`) force-includes the Flutter
 web build at `klangk/frontend/` and **requires** it for non-editable wheel
 builds — so the `build-wheel` job runs `klangk:flutter-build` first (which
-runs `flutterbuildweb.sh` against the checked-in `plugins.yaml`, #1660).
+runs `flutterbuildweb.sh` against the checked-in `features.yaml`, #1660).
 
 To build a wheel locally for testing (after running `flutterbuildweb.sh`):
 

@@ -75,7 +75,7 @@ String getLocationSearch() => web.window.location.search;
 String getUserAgent() => web.window.navigator.userAgent;
 
 /// Query params captured from the page URL at startup, before GoRouter
-/// navigation clears them. Plugin callback routes read from this.
+/// navigation clears them. Feature callback routes read from this.
 Map<String, String> capturedPageQuery = {};
 
 /// Call once from main() to snapshot the page-level query params.

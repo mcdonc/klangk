@@ -13,9 +13,9 @@ or commit). Only the version tag is pushed to GHCR — `:latest` is
 never pushed to the registry. The version is baked into
 `/home/klangk/version.json` and served at `GET /api/v1/version`.
 
-## Custom Image with Plugins
+## Custom Image with Features
 
-To build a host image with plugins, CA certificates, or OIDC hooks
+To build a host image with features, CA certificates, or OIDC hooks
 baked in, see [Customizing a Deployment](../deployment/customizing.md).
 
 ## Scanning

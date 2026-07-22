@@ -1,5 +1,5 @@
 # shellcheck shell=sh
-# Klangk plugin tools on PATH.
+# Klangk feature tools on PATH.
 #
 # Why this lives in /etc/profile.d and not /etc/bash.bashrc (issue #1093):
 # /etc/profile resets PATH to a fixed system default for login shells,

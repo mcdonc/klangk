@@ -93,7 +93,7 @@ class TestRunCmdValue:
 
 
 class TestResolveDynamicConfig:
-    """resolve_dynamic_config resolves plugin-declared dynamic keys (outside
+    """resolve_dynamic_config resolves feature-declared dynamic keys (outside
     the KLANGK_ settings model) with file:/cmd: deref."""
 
     def test_plain_value(self, monkeypatch):
@@ -137,8 +137,8 @@ class TestResolveDynamicConfig:
 
 class TestResolveDynamicConfigFeaturesConfig:
     """The features_config: block of klangkd.yaml is a second value source
-    for plugin-declared keys (#1659). Precedence: env > features_config: >
-    plugin default. file:/cmd: prefixes on the YAML values are honored too
+    for feature-declared keys (#1659). Precedence: env > features_config: >
+    feature default. file:/cmd: prefixes on the YAML values are honored too
     (consistent with the env path)."""
 
     def test_features_config_plain_value_when_env_unset(self, monkeypatch):
@@ -208,7 +208,7 @@ class TestResolveDynamicConfigFeaturesConfig:
     def test_bad_file_ref_falls_through_to_default(self, monkeypatch):
         # A broken file:/cmd: ref in a YAML value does NOT abort boot (the
         # values aren't resolvable at construction); it logs and falls
-        # through to the plugin default — mirroring the env path's behavior.
+        # through to the feature default — mirroring the env path's behavior.
         monkeypatch.delenv("TEST_SECRET", raising=False)
         fc = {"TEST_SECRET": "file:/no/such/file"}
         assert (

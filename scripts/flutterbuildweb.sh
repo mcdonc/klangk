@@ -3,31 +3,31 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 
-# Materialized plugin payload lives in a build-owned tempdir (#1660): the
-# declaration is the checked-in plugins.yaml at the repo root, the payload
-# (symlinked trees + plugins.lock + generated .dart package) is ephemeral.
+# Materialized feature payload lives in a build-owned tempdir (#1660): the
+# declaration is the checked-in features.yaml at the repo root, the payload
+# (symlinked trees + features.lock + generated .dart package) is ephemeral.
 # Cleaned up on exit. flutterbuildweb also shares this dir with the workspace/
 # host image builds when they chain off it via build-host-image.sh — but each
 # top-level build driver owns its own tempdir, so a single EXIT trap per
 # driver is enough.
-PAYLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/klangk-plugins-XXXXXX")"
+PAYLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/klangk-features-XXXXXX")"
 trap 'rm -rf "$PAYLOAD_DIR"' EXIT
 
-# Fetch/symlink plugins into the payload dir, then generate the Dart
+# Fetch/symlink features into the payload dir, then generate the Dart
 # aggregator + features.json from those trees.
 #
-# Git-sourced plugins are skipped by default (update_plugins.py --local-only)
+# Git-sourced features are skipped by default (update_features.py --local-only)
 # — set KLANGK_BUILD_INCLUDE_REMOTE=1 to fetch them. Keeps CI off the network
 # and resilient to upstream failures (the policy dates to #1691). Every
-# plugin in plugins.yaml is a local path entry today (soliplex was vendored
+# feature in features.yaml is a local path entry today (soliplex was vendored
 # in #1686), so the skip is currently a no-op; the gate stays as the generic
-# remote-plugin policy for any future git entry.
+# remote-feature policy for any future git entry.
 UPDATE_FLAGS=(--payload-dir "$PAYLOAD_DIR")
 if [ "${KLANGK_BUILD_INCLUDE_REMOTE:-0}" != "1" ]; then
   UPDATE_FLAGS+=(--local-only)
 fi
-python3 scripts/update_plugins.py "${UPDATE_FLAGS[@]}"
-python3 scripts/import_dart_plugins.py --payload-dir "$PAYLOAD_DIR"
+python3 scripts/update_features.py "${UPDATE_FLAGS[@]}"
+python3 scripts/import_dart_features.py --payload-dir "$PAYLOAD_DIR"
 
 # flterm is forked (github.com/runyaga/flterm) to build on the nix Flutter
 # (3.41 / Dart 3.11) -- upstream 0.0.3 needs Dart 3.12 for private-named
@@ -50,28 +50,28 @@ cd src/frontend
 export GIT_LFS_SKIP_SMUDGE=1
 "$FLUTTER" pub get
 
-# Guard against a stale web plugin registrant. Flutter's incremental web build
-# does not reliably re-run the web_plugin_registrant target when the plugin set
-# changes, so a newly-added web plugin (e.g. video_player_web, url_launcher_web)
+# Guard against a stale web feature registrant. Flutter's incremental web build
+# does not reliably re-run the web_feature_registrant target when the feature set
+# changes, so a newly-added web feature (e.g. video_player_web, url_launcher_web)
 # can compile into the bundle *unregistered* -> "UnimplementedError: init() has
 # not been implemented" at runtime. `flutter pub get` (above) rewrites
-# .flutter-plugins-dependencies; when its contents change vs the last build, drop
-# the build cache so the registrant is regenerated from the current plugin set.
-# Incremental builds are preserved while the plugin set is unchanged.
-PLUGINS_DEPS=.flutter-plugins-dependencies
-PLUGINS_MARKER=.dart_tool/.klangk-web-plugins.sha256
-if [ -f "$PLUGINS_DEPS" ]; then
-  NEW_PLUGINS_HASH="$(sha256sum "$PLUGINS_DEPS" | cut -d' ' -f1)"
-  if [ "$(cat "$PLUGINS_MARKER" 2>/dev/null || true)" != "$NEW_PLUGINS_HASH" ]; then
-    echo "Plugin set changed -> clearing build cache to regenerate web plugin registrant"
+# .flutter-features-dependencies; when its contents change vs the last build, drop
+# the build cache so the registrant is regenerated from the current feature set.
+# Incremental builds are preserved while the feature set is unchanged.
+FEATURES_DEPS=.flutter-features-dependencies
+FEATURES_MARKER=.dart_tool/.klangk-web-features.sha256
+if [ -f "$FEATURES_DEPS" ]; then
+  NEW_FEATURES_HASH="$(sha256sum "$FEATURES_DEPS" | cut -d' ' -f1)"
+  if [ "$(cat "$FEATURES_MARKER" 2>/dev/null || true)" != "$NEW_FEATURES_HASH" ]; then
+    echo "Feature set changed -> clearing build cache to regenerate web feature registrant"
     rm -rf .dart_tool/flutter_build
   fi
 fi
 
 "$FLUTTER" build web --release --no-wasm-dry-run --base-href=/ --no-web-resources-cdn --source-maps --no-minify-js --no-pub
 
-# Record the plugin-set hash so the next build only clears the cache on change.
-[ -f "$PLUGINS_DEPS" ] && sha256sum "$PLUGINS_DEPS" | cut -d' ' -f1 >"$PLUGINS_MARKER"
+# Record the feature-set hash so the next build only clears the cache on change.
+[ -f "$FEATURES_DEPS" ] && sha256sum "$FEATURES_DEPS" | cut -d' ' -f1 >"$FEATURES_MARKER"
 
 rm -f build/web/flutter_service_worker.js
 
@@ -112,7 +112,7 @@ echo "Cache-bust: v=$HASH"
 
 # Re-emit features.json AFTER the Flutter build (#1655). flutter build web
 # may regenerate build/web/ and wipe a manifest written before it, so the
-# pre-build emit in import_dart_plugins.py is followed by this post-build
+# pre-build emit in import_dart_features.py is followed by this post-build
 # re-emit. The manifest is a frontend sibling file (read by the frontend at
 # boot + one field by klangkd for container-env bridging) and must survive
 # the Flutter build. Invoke via $SCRIPT_DIR (absolute) because CWD is
@@ -120,4 +120,4 @@ echo "Cache-bust: v=$HASH"
 # from __file__ so it lands the manifest correctly regardless of CWD. The
 # payload dir is the same one populated above — still populated, still
 # readable (the trap fires only on exit).
-python3 "$SCRIPT_DIR/import_dart_plugins.py" --payload-dir "$PAYLOAD_DIR" --features-only
+python3 "$SCRIPT_DIR/import_dart_features.py" --payload-dir "$PAYLOAD_DIR" --features-only

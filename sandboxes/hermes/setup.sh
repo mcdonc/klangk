@@ -3,7 +3,7 @@
 # (per-workspace) and configures it to route inference through klangk's
 # llm-proxy. Mirrors sandboxes/openclaw/setup.sh.
 #
-# Why a sandbox and not a plugin (#1109): hermes's installer spawns
+# Why a sandbox and not a feature (#1109): hermes's installer spawns
 # `bash -i` ONLY in its root/FHS-layout branch to probe PATH. A sandbox runs
 # setup as the non-root klangk user, so that branch is never taken -- which
 # makes the /tmp/.klangk-image-build bailout in bash.bashrc dead code (deleted

@@ -31,7 +31,7 @@ dial target as a parameter so tests can pass a TCP address while production
 passes a ``unix//<socket>`` address. The pure host-IP / loopback helpers are
 imported from :mod:`klangk.proxy` rather than duplicated.
 
-Out of scope here (tracked in #1559): the ``caddy-l4`` layer-4 plugin
+Out of scope here (tracked in #1559): the ``caddy-l4`` layer-4 feature
 (everything klangk proxies is HTTP), and per-route live JSON mutations on
 ``/config/.../routes`` (Phase 3 — Phase 1 uses full-config ``POST /load``).
 """
@@ -248,7 +248,9 @@ class CaddyRenderer:
 
     # -- global options ----------------------------------------------------
 
-    def _global_block(self, admin_socket: str, *, full_global: bool = True) -> str:
+    def _global_block(
+        self, admin_socket: str, *, full_global: bool = True
+    ) -> str:
         """The global options block: admin UDS, no HTTPS, no on-disk persistence.
 
         - ``admin unix//...`` re-declares the admin endpoint on the
@@ -612,7 +614,9 @@ class CaddyRenderer:
         plus the host-IP auto-detection probe.
         """
         acl_entries, deny_entries = self._container_source_entries()
-        global_block = self._global_block(admin_socket, full_global=full_global)
+        global_block = self._global_block(
+            admin_socket, full_global=full_global
+        )
         egress = self._egress_site(upstream, " ".join(acl_entries))
         if self.app.state.settings.port is None:
             return global_block + egress
@@ -682,7 +686,14 @@ def _caddy_supports_full_global_block(bin_path: str) -> bool:
             f.write(probe)
             probe_path = f.name
         r = subprocess.run(
-            [bin_path, "adapt", "--adapter", "caddyfile", "--config", probe_path],
+            [
+                bin_path,
+                "adapt",
+                "--adapter",
+                "caddyfile",
+                "--config",
+                probe_path,
+            ],
             capture_output=True,
             text=True,
             timeout=5,
@@ -800,7 +811,9 @@ class CaddyWatchdog:
         """Render the full Caddyfile (global + sites), UDS backend upstream."""
         uds_path = self.app.state.settings.socket
         return self._renderer.render_config(
-            uds_upstream(uds_path), self.admin_socket, full_global=self._full_global
+            uds_upstream(uds_path),
+            self.admin_socket,
+            full_global=self._full_global,
         )
 
     def find_proxy_bin(self) -> str:
@@ -879,9 +892,12 @@ class CaddyWatchdog:
         # source of truth" guarantee; the real config still arrives via
         # POST /load.
         bootstrap_cfg = (
-            Path(self.app.state.settings.state_dir) / "caddy-bootstrap.Caddyfile"
+            Path(self.app.state.settings.state_dir)
+            / "caddy-bootstrap.Caddyfile"
         )
-        bootstrap_cfg.write_text(self._renderer._bootstrap_block(self.admin_socket))
+        bootstrap_cfg.write_text(
+            self._renderer._bootstrap_block(self.admin_socket)
+        )
         while not self._stopping:
             # A stale socket from a prior run blocks the bind.
             try:

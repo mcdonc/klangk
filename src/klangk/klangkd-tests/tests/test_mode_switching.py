@@ -23,7 +23,7 @@ from klangk import (
     util as util_mod,
     main,
     oidc as oidc_mod,
-    plugins as plugins_mod,
+    features as features_mod,
 )
 from _helpers import make_settings
 from klangk.main import register_exception_handlers
@@ -94,7 +94,7 @@ async def mode_server(db, monkeypatch, app_state):
         {"KLANGK_AUTH_MODES": "none", "KLANGK_DEFAULT_USER": DEFAULT_EMAIL}
     )
     app.state.oidc = oidc_mod.OIDC(app)
-    app.state.plugins = plugins_mod.Plugins(app)
+    app.state.features = features_mod.Features(app)
     app.state.email = emailsvc_mod.EmailService(app)
     app.state.util = util_mod.Util(app)
 

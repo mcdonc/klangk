@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
-import 'package:klangk_plugins/klangk_plugins.dart';
+import 'package:klangk_features/klangk_features.dart';
 import 'package:provider/provider.dart';
 import 'app.dart';
 import 'auth/auth_service.dart';
@@ -15,7 +15,7 @@ import 'utils/web_helpers_stub.dart'
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Register plugins early so their routes are available when GoRouter
+  // Register features early so their routes are available when GoRouter
   // is created (before any workspace page is opened). Active-set filter
   // (#1655): the deploy's chosen features are resolved against the sibling
   // features.json + the features_enable knob from /api/config, and only the
@@ -26,9 +26,9 @@ Future<void> main() async {
   final registry = ToolPluginRegistry();
   // activeFeatureNames is a Set<String>, so .contains() is exact-name
   // equality (not substring) — "git" does NOT activate "git-credential".
-  for (final entry in createAllNamedPlugins()) {
+  for (final entry in createAllNamedFeatures()) {
     if (activeFeatureNames.contains(entry.name)) {
-      registry.register(entry.plugin);
+      registry.register(entry.feature);
     }
   }
 
@@ -44,7 +44,7 @@ Future<void> main() async {
   // them. The Soliplex OAuth callback lands as ?token=...#/soliplex-auth-callback
   // — GoRouter navigates on the hash, which clears the page-level query
   // params from window.location.search. Capture them here and pass to the
-  // app so plugin callback routes can read them.
+  // app so feature callback routes can read them.
   final hash = getLocationHash();
   capturePageQuery();
   final initialLocation = (hash.length > 1) ? hash.substring(1) : '/';
@@ -71,7 +71,7 @@ Future<void> main() async {
 /// - Neither available (pre-build, or a wheel without the manifest) → every
 ///   compiled-in feature stays active (no filtering — back-compat).
 ///
-/// Runs once at boot before plugin registration. A feature shipped but not
+/// Runs once at boot before feature registration. A feature shipped but not
 /// active never registers — its app-bar icon, overlay, routes, and dispatched
 /// tools are all gated on registration. See #1655 for the full rationale
 /// (single-client features ship dormant and opt in per-deploy).
@@ -115,5 +115,5 @@ Future<Set<String>> _resolveActiveFeatures() async {
   }
 
   // 3. No manifest, no knob — every compiled-in feature active (back-compat).
-  return createAllNamedPlugins().map((e) => e.name).toSet();
+  return createAllNamedFeatures().map((e) => e.name).toSet();
 }

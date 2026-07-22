@@ -5,12 +5,14 @@ customizations that extend workspaces. A feature can add a browser UI widget
 (confetti, beeps), a Pi agent tool (file stats, authenticated fetch), a CLI
 agent baked into the image (Claude Code), or git/system configuration.
 
-> **Two words for one thing.** Developers **author a plugin** — a directory
-> under `plugins/<name>/` containing Dart `ToolPlugin` code, a Pi
-> `extension.ts`, lifecycle hooks, etc. At build time those plugins are
-> compiled into the image; at deploy time, what an operator turns on or off is
-> a **feature**. This page covers the activation surface; for per-user,
-> per-workspace runtime additions that need no rebuild, see
+> **Same unit, two audiences.** A **feature** is authored as a directory
+> under `features/<name>/` (Dart `ToolPlugin` code, a Pi `extension.ts`,
+> lifecycle hooks, etc.). At build time features are compiled into the image;
+> at deploy time, `KLANGK_FEATURES_ENABLE` controls which compiled-in features
+> are turned on. (The `ToolPlugin` base class and the `klangk_plugin_api`
+> package keep their names — they live in an external package — but everywhere
+> else the unit is a "feature".) This page covers the activation surface; for
+> per-user, per-workspace runtime additions that need no rebuild, see
 > [Sandboxes](sandbox.md).
 
 ## Compiled-in vs. activated
@@ -19,8 +21,8 @@ There are two lists, and they are allowed to differ
 ([#1655](https://github.com/mcdonc/klangk/issues/1655)):
 
 - **Compiled-in** — what a build bakes into the image. The source of truth is
-  the checked-in [`plugins.yaml`](../../plugins.yaml) at the repo root; the
-  build (`update_plugins.py`) materializes each declared plugin into a
+  the checked-in [`features.yaml`](../../features.yaml) at the repo root; the
+  build (`update_features.py`) materializes each declared feature into a
   throwaway payload dir and compiles it into the frontend + workspace image. The
   build also emits a `features.json` manifest (next to the frontend's
   `index.html`) carrying each compiled-in feature's metadata, a `defaults`
@@ -35,7 +37,7 @@ There are two lists, and they are allowed to differ
 Compiled-in is a strict superset of the default-on set: a feature can ship
 **dormant** (compiled in, but not turned on by default) and be opted into per
 deploy _without a rebuild_. Adding a brand-new feature, by contrast, is a
-build-time change (declare it in `plugins.yaml` and rebuild).
+build-time change (declare it in `features.yaml` and rebuild).
 
 > **Features vs. sandboxes.** Features are compiled into the workspace image at
 > build time, so what they add is available across the whole deployment and is
@@ -96,8 +98,8 @@ bare install does not surface them. Opt in by adding them to
 
 ### `soliplex`
 
-The Soliplex org's knowledge-base plugin (list/query/reply, multi-turn RAG),
-vendored into this repo under `plugins/soliplex/`
+The Soliplex org's knowledge-base feature (list/query/reply, multi-turn RAG),
+vendored into this repo under `features/soliplex/`
 ([#1686](https://github.com/mcdonc/klangk/issues/1686); upstream
 [`soliplex/klangk-plugin-soliplex`](https://github.com/soliplex/klangk-plugin-soliplex)
 `v0.4`). It is dormant by default because it needs a running Soliplex server to
@@ -108,7 +110,7 @@ when the feature is active; nothing is injected into workspace containers (it
 is a browser-side feature).
 
 **Workspace-side caveat:** dormancy governs the **frontend** (the Dart UI and
-its tools). The workspace container bundles every compiled-in plugin's
+its tools). The workspace container bundles every compiled-in feature's
 `extension.ts` into `/opt/klangk/pi-agent/extensions/`, and Pi loads that
 directory unconditionally — so a workspace pi agent registers soliplex's
 `soliplex_*` tools regardless of `KLANGK_FEATURES_ENABLE`. They self-no-op when
@@ -118,61 +120,61 @@ is a follow-up, not part of the current model.
 
 ## Additional features (not compiled in by default)
 
-These ship in the repo under `plugins/` but are **not** declared in the default
-`plugins.yaml`, so a stock build does not compile them in. To use one, add it
-to `plugins.yaml` and rebuild the image:
+These ship in the repo under `features/` but are **not** declared in the default
+`features.yaml`, so a stock build does not compile them in. To use one, add it
+to `features.yaml` and rebuild the image:
 
-| Plugin        | What it does                                                                       |
+| Feature       | What it does                                                                       |
 | ------------- | ---------------------------------------------------------------------------------- |
 | `claude-code` | Installs the Claude Code CLI agent at image build time                             |
 | `herdr`       | Installs herdr (terminal-based agent runtime) and sets up its per-shell API socket |
 | `pig-latin`   | Text-to-Pig-Latin converter for Pi                                                 |
 
 ```yaml
-# plugins.yaml — append to compile an additional feature in
-plugins:
+# features.yaml — append to compile an additional feature in
+features:
   - name: claude-code
-    path: plugins/claude-code
+    path: features/claude-code
 ```
 
-## Declaring plugins at build time
+## Declaring features at build time
 
-[![Running update-plugins](../assets/update-plugins.png)](../assets/update-plugins.png)
+[![Running update-features](../assets/update-features.png)](../assets/update-features.png)
 
-The checked-in [`plugins.yaml`](../../plugins.yaml) at the repo root is the
+The checked-in [`features.yaml`](../../features.yaml) at the repo root is the
 source of truth for what a build compiles. Each entry is either a _local path_
-(the plugin tree lives in this repo under `plugins/<name>/`, symlinked straight
-in) or a _remote git ref_ (`git:` + `ref:`, which `update-plugins` clones and
-SHA-pins into `plugins.lock`):
+(the feature tree lives in this repo under `features/<name>/`, symlinked straight
+in) or a _remote git ref_ (`git:` + `ref:`, which `update-features` clones and
+SHA-pins into `features.lock`):
 
 ```yaml
-plugins:
+features:
   - name: celebrate # local, in-tree
-    path: plugins/celebrate
-  - name: my-plugin # local, arbitrary path
-    path: /home/user/projects/my-plugin
+    path: features/celebrate
+  - name: my-feature # local, arbitrary path
+    path: /home/user/projects/my-feature
   - name: third-party # remote
-    git: https://github.com/org/klangk-plugin-third-party.git
+    git: https://github.com/org/klangk-feature-third-party.git
     ref: main
 ```
 
 Paths support `~` and `$ENV_VAR` expansion; relative paths resolve from the
-repo root (where `plugins.yaml` lives). The build materializes the payload into
+repo root (where `features.yaml` lives). The build materializes the payload into
 a throwaway, build-owned dir ([#1660](https://github.com/mcdonc/klangk/issues/1660))
 — not next to the source tree — then compiles it into the frontend + workspace
 image and emits `features.json`.
 
-- `update-plugins` — fetches every plugin in `plugins.yaml`, resolves git refs
-  to commit SHAs, writes `plugins.lock`.
-- `update-plugins <name>` — fetch/update a single plugin by name.
-- `plugins.lock` — records resolved commit SHAs for reproducible builds.
-- Under `devenv`, `klangk:update-plugins` re-materializes the payload when the
-  checked-in `plugins.yaml` or anything under `plugins/**/` changes.
+- `update-features` — fetches every feature in `features.yaml`, resolves git refs
+  to commit SHAs, writes `features.lock`.
+- `update-features <name>` — fetch/update a single feature by name.
+- `features.lock` — records resolved commit SHAs for reproducible builds.
+- Under `devenv`, `klangk:update-features` re-materializes the payload when the
+  checked-in `features.yaml` or anything under `features/**/` changes.
 
-> **Remote plugins are off by default in CI/builds.** The build scripts run
-> `update_plugins.py --local-only`, so git-sourced plugins are skipped unless
-> you set `KLANGK_BUILD_INCLUDE_REMOTE=1`. No plugin in the default
-> `plugins.yaml` is git-sourced today, so this is a no-op for stock builds.
+> **Remote features are off by default in CI/builds.** The build scripts run
+> `update_features.py --local-only`, so git-sourced features are skipped unless
+> you set `KLANGK_BUILD_INCLUDE_REMOTE=1`. No feature in the default
+> `features.yaml` is git-sourced today, so this is a no-op for stock builds.
 
 ## Feature configuration
 
@@ -198,4 +200,4 @@ value at runtime and bridges it to where the feature needs it
 
 For the operator-facing config rows see
 [Environment Variables](../reference/environment.md) and
-[Configuration File](../reference/klangkd-config.md#plugin-and-feature-config-features_config).
+[Configuration File](../reference/klangkd-config.md#feature-and-feature-config-features_config).

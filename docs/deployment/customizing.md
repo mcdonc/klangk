@@ -2,7 +2,7 @@
 
 Most Klangk customization is done at **runtime** via environment variables and bind mounts — no image rebuild required. The stock [`klangk-host`](https://github.com/mcdonc/klangk/pkgs/container/klangk%2Fklangk-host) image supports branding, legal links, email templates, CA certificates, and OIDC login hooks out of the box.
 
-**The only reason to build a custom host image is plugins** (Dart UI plugins require a Flutter web rebuild; TypeScript workspace plugins require a workspace image rebuild). See [Building a Custom Image (Plugins)](#building-a-custom-image-plugins) below.
+**The only reason to build a custom host image is features** (Dart UI features require a Flutter web rebuild; TypeScript workspace features require a workspace image rebuild). See [Building a Custom Image (Features)](#building-a-custom-image-features) below.
 
 The [`customize/`](https://github.com/mcdonc/klangk/tree/main/customize) directory in the Klangk repo provides a working example: a `docker-compose.yml` showcasing runtime configuration, and example runtime-customization files under `custom/`. Copy it and adapt to your needs.
 
@@ -231,17 +231,17 @@ local-dev / customer-locked / team mapping.
 > Locally (devenv, or running the binary on your own machine) `none` works
 > out of the box.
 
-## Building a Custom Image (Plugins)
+## Building a Custom Image (Features)
 
-A custom image build is needed **only for plugins**. If you don't need plugins, use the stock `klangk-host` image with the runtime customization above.
+A custom image build is needed **only for features**. If you don't need features, use the stock `klangk-host` image with the runtime customization above.
 
-The plugin declaration list is the checked-in [`plugins.yaml`](https://github.com/mcdonc/klangk/blob/main/plugins.yaml) at the repository root — the build-time source of truth. To ship a different plugin set than stock, **fork the repo and edit that file directly** (the same model `package.json`/`Cargo.toml`/`go.mod` use). There is no separate overlay or build script to maintain.
+The feature declaration list is the checked-in [`features.yaml`](https://github.com/mcdonc/klangk/blob/main/features.yaml) at the repository root — the build-time source of truth. To ship a different feature set than stock, **fork the repo and edit that file directly** (the same model `package.json`/`Cargo.toml`/`go.mod` use). There is no separate overlay or build script to maintain.
 
 ### Prerequisites
 
 - [Nix](https://nixos.org/download/) with [devenv](https://devenv.sh/)
 - Docker
-- SSH key with access to the git repos listed in `plugins.yaml`
+- SSH key with access to the git repos listed in `features.yaml`
 
 ### Fork-and-build workflow
 
@@ -250,11 +250,11 @@ The plugin declaration list is the checked-in [`plugins.yaml`](https://github.co
 git clone https://github.com/<your-org>/klangk.git
 cd klangk
 
-# 2. Add plugin source trees under plugins/<name>/ (for local plugins) and
-#    declare every plugin you want compiled in via the checked-in plugins.yaml
+# 2. Add feature source trees under features/<name>/ (for local features) and
+#    declare every feature you want compiled in via the checked-in features.yaml
 #    at the repo root — same format (local `path:` or remote `git:`/`ref:`
 #    entries).
-$EDITOR plugins.yaml
+$EDITOR features.yaml
 
 # 3. Build the host image from source (inside the devenv shell — the
 #    wrapped `build-host-image` script is on PATH there).
@@ -269,24 +269,24 @@ KLANGK_VARIANT="Acme 1.0.0" devenv shell -- build-host-image
 KLANGK_HOST_IMAGE=ghcr.io/<your-org>/klangk-host devenv shell -- build-host-image
 ```
 
-To pull upstream klangk improvements into your custom build, `git pull upstream main` (or `origin main`, depending on how you cloned) from the fork — the plugin declaration and plugin trees merge like any other source file.
+To pull upstream klangk improvements into your custom build, `git pull upstream main` (or `origin main`, depending on how you cloned) from the fork — the feature declaration and feature trees merge like any other source file.
 
-### Plugins
+### Features
 
-Edit the checked-in `plugins.yaml` to add or remove plugins. The default build compiles in the built-in plugins declared there: celebrate, beep, bobdobbs, word-count, browser-fetch, boingball, git-credential (`word-count` and `soliplex` ship compiled-in but dormant — activate with `KLANGK_FEATURES_ENABLE`).
+Edit the checked-in `features.yaml` to add or remove features. The default build compiles in the built-in features declared there: celebrate, beep, bobdobbs, word-count, browser-fetch, boingball, git-credential (`word-count` and `soliplex` ship compiled-in but dormant — activate with `KLANGK_FEATURES_ENABLE`).
 
-To add an external plugin:
+To add an external feature:
 
 ```yaml
-plugins:
-  - name: my-plugin
-    git: https://github.com/myorg/my-klangk-plugin.git
+features:
+  - name: my-feature
+    git: https://github.com/myorg/my-klangk-feature.git
     ref: main
 ```
 
 ### How the Build Works
 
-`scripts/build-host-image.sh` is a single source build: it embeds the Flutter web build, the workspace tarball, **and** the plugin directories declared in `plugins.yaml` — so one build produces the final image with plugins baked in. There is no separate overlay, `Dockerfile`, or base-image pass. Run it via the devenv-wrapped `build-host-image` script (`devenv shell -- build-host-image`); `KLANGK_VARIANT` is captured by `scripts/generate-version.sh` in devenv's `enterShell` hook, so set it (and `KLANGK_HOST_IMAGE`) **before** entering the shell, not on the build command.
+`scripts/build-host-image.sh` is a single source build: it embeds the Flutter web build, the workspace tarball, **and** the feature directories declared in `features.yaml` — so one build produces the final image with features baked in. There is no separate overlay, `Dockerfile`, or base-image pass. Run it via the devenv-wrapped `build-host-image` script (`devenv shell -- build-host-image`); `KLANGK_VARIANT` is captured by `scripts/generate-version.sh` in devenv's `enterShell` hook, so set it (and `KLANGK_HOST_IMAGE`) **before** entering the shell, not on the build command.
 
 ### Build Options
 
@@ -327,7 +327,7 @@ byte-identical to upstream. Set it only if you want to distinguish your build.
 
 ## Running
 
-Use the stock image with runtime customization (no plugins):
+Use the stock image with runtime customization (no features):
 
 ```bash
 docker run -d \

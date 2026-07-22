@@ -64,8 +64,8 @@ so common development tasks work out of the box.
 - **Pi** (`@earendil-works/pi-coding-agent`) — terminal-based coding
   agent; see [AI Coding Harnesses](ai-coding-harnesses.md)
 - **Claude Code** (`@anthropic-ai/claude-code`) — available via the
-  `claude-code` plugin (not included by default; add it to your
-  `plugins.yaml` to enable)
+  `claude-code` feature (not included by default; add it to your
+  `features.yaml` to enable)
 - **Herdr** — terminal agent runtime for persistent sessions and pane
   management
 

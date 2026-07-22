@@ -51,7 +51,7 @@ class FileViewerPanel extends StatefulWidget {
   final String? userHome;
 
   /// Registry of file renderers. When null, the built-in renderers are used.
-  /// `workspace_page` builds one (builtins + plugin renderers) and passes it
+  /// `workspace_page` builds one (builtins + feature renderers) and passes it
   /// in; tests inject custom registries to exercise the mode switcher.
   final FileRendererRegistry? registry;
 

@@ -48,4 +48,4 @@ jobs:
 
       - name: Skip notice
         if: steps.filter.outputs.e2e != 'true'
-        run: echo "No backend/docker/plugin changes — skipping backend E2E tests"
+        run: echo "No backend/docker/feature changes — skipping backend E2E tests"

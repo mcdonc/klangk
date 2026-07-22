@@ -49,7 +49,7 @@ Inside `devenv shell`, these commands are available:
 | `trivy-host`             | Scan host image for vulnerabilities         |
 | `trivy-workspace`        | Scan workspace image for vulnerabilities    |
 | `trivy-workspace-report` | Scan + report no-fix CVEs (or render JSON)  |
-| `update-plugins`         | Fetch plugins from plugins.yaml             |
+| `update-features`        | Fetch features from features.yaml           |
 | `kill-containers`        | Stop and remove all klangk containers       |
 | `restart`                | Rebuild images and restart devenv processes |
 | `rebuild`                | Rebuild workspace image and Flutter web     |

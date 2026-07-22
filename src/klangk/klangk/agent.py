@@ -7,7 +7,7 @@ stdin/stdout of a ``podman exec`` session.
 #1486: the module-level ``_agents`` dict, ``_agents_lock``, and
 ``get_workspace_session`` callback have been promoted to an
 ``Agents(app_state)`` instance on ``app.state.agents``, following
-the same pattern as ``ContainerRegistry``, ``OIDC``, ``Plugins``,
+the same pattern as ``ContainerRegistry``, ``OIDC``, ``Features``,
 etc.
 """
 

@@ -20,7 +20,7 @@ LLM calls tool → Pi extension execute()
   → Extension returns result to LLM
 ```
 
-Built-in actions: `fetch` (HTTP request with browser cookies). All other actions are dispatched to the `ToolPluginRegistry` which routes to Dart plugin handlers registered by `klangk/` subdirectories.
+Built-in actions: `fetch` (HTTP request with browser cookies). All other actions are dispatched to the `ToolFeatureRegistry` which routes to Dart feature handlers registered by `klangk/` subdirectories.
 
 ## Browser ID
 
@@ -121,11 +121,11 @@ def get_browser_id():
     return ""
 ```
 
-## Current Client-Side Plugins
+## Current Client-Side Features
 
-- **celebrate** (`plugins/celebrate/`): Triggers confetti animation in the browser
-- **beep** (`plugins/beep/`): Plays a beep sound in the browser
-- **bobdobbs** (`plugins/bobdobbs/`): Bob "J.R." Dobbs quote generator
-- **browser-fetch** (`plugins/browser-fetch/`): HTTP fetch using the browser's cookies/session
-- **boingball** (`plugins/boingball/`): Bouncing Boing Ball animation overlay
-- **git-credential** (`plugins/git-credential/`): Git credential helper that prompts for PAT in the browser
+- **celebrate** (`features/celebrate/`): Triggers confetti animation in the browser
+- **beep** (`features/beep/`): Plays a beep sound in the browser
+- **bobdobbs** (`features/bobdobbs/`): Bob "J.R." Dobbs quote generator
+- **browser-fetch** (`features/browser-fetch/`): HTTP fetch using the browser's cookies/session
+- **boingball** (`features/boingball/`): Bouncing Boing Ball animation overlay
+- **git-credential** (`features/git-credential/`): Git credential helper that prompts for PAT in the browser

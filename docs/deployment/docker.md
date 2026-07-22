@@ -123,9 +123,9 @@ docker rm klangk
 # Run the same docker run command with the new version tag
 ```
 
-## Adding plugins
+## Adding features
 
-To add plugins beyond what ships with the image, you need to build a
+To add features beyond what ships with the image, you need to build a
 custom image — see [Customizing a Deployment](customizing.md) for
 instructions.
 
