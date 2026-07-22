@@ -8,9 +8,19 @@ const BROWSERS = process.env.PLAYWRIGHT_BROWSERS_PATH || "";
 
 const chromiumUse = {
   launchOptions: {
+    // In devenv/NixOS, PLAYWRIGHT_BROWSERS_PATH points at the nix-bundled
+    // browsers and we pin the exact nix build (chromium-1223) — @playwright/test
+    // 1.59.1's default revision differs, so the pin is required there (#1193).
+    // When PLAYWRIGHT_BROWSERS_PATH is UNSET (e.g. the dist-smoke, which
+    // `npx playwright install`s its own browser on a stock runner), fall back
+    // to undefined so Playwright uses its default (the just-installed) browser
+    // instead of a non-existent /chromium-1223/... path. CHROME_PATH overrides
+    // both for local runs.
     executablePath:
       process.env.CHROME_PATH ||
-      `${BROWSERS}/chromium-1223/chrome-linux64/chrome`,
+      (BROWSERS
+        ? `${BROWSERS}/chromium-1223/chrome-linux64/chrome`
+        : undefined),
     args: ["--enable-unsafe-swiftshader"],
   },
 };
@@ -22,7 +32,8 @@ const firefoxUse = {
     // runs (e.g. macOS, where the binary is firefox/Nightly.app/...), mirroring
     // CHROME_PATH above.
     executablePath:
-      process.env.FIREFOX_PATH || `${BROWSERS}/firefox-1522/firefox/firefox`,
+      process.env.FIREFOX_PATH ||
+      (BROWSERS ? `${BROWSERS}/firefox-1522/firefox/firefox` : undefined),
     // Allow navigator.clipboard read/write in automation without a prompt, so
     // the paste e2e can seed the clipboard. (The fix's own read path uses the
     // native `paste` event and needs no permission.)
@@ -43,7 +54,8 @@ const webkitUse = {
     // npm-version-derived revision. WEBKIT_PATH mirrors CHROME/FIREFOX_PATH
     // for local overrides. See #1193.
     executablePath:
-      process.env.WEBKIT_PATH || `${BROWSERS}/webkit-2287/pw_run.sh`,
+      process.env.WEBKIT_PATH ||
+      (BROWSERS ? `${BROWSERS}/webkit-2287/pw_run.sh` : undefined),
   },
 };
 
