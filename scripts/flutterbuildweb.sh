@@ -70,8 +70,8 @@ fi
 
 "$FLUTTER" build web --release --no-wasm-dry-run --base-href=/ --no-web-resources-cdn --source-maps --no-minify-js --no-pub
 
-# Record the feature-set hash so the next build only clears the cache on change.
-[ -f "$FEATURES_DEPS" ] && sha256sum "$FEATURES_DEPS" | cut -d' ' -f1 >"$FEATURES_MARKER"
+# Record the plugin-set hash so the next build only clears the cache on change.
+[ -f "$PLUGINS_DEPS" ] && sha256sum "$PLUGINS_DEPS" | cut -d' ' -f1 >"$PLUGINS_MARKER"
 
 rm -f build/web/flutter_service_worker.js
 
