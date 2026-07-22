@@ -6,7 +6,9 @@ is covered by the e2e suite (``test_proxy_acl_e2e.py``).
 """
 
 import asyncio
+import os
 import re
+import socket
 from unittest.mock import Mock
 
 import pytest
@@ -16,6 +18,7 @@ import types
 from klangk.proxy import (
     ProxyRenderer,
     detect_host_ipv4s,
+    stdout_is_reopenable,
     tcp_upstream,
     uds_upstream,
 )
@@ -63,6 +66,124 @@ class TestClientMaxBodySize:
     def test_garbage_falls_back(self):
         s = make_settings({"KLANGK_FILE_UPLOAD_SIZE_MAX": "not-a-number"})
         assert _renderer(s).compute_client_max_body_size() == "500m"
+
+
+class TestStdoutIsReopenable:
+    """The fd-1-type probe behind the #1550 ``access_log`` destination.
+
+    nginx ``open(2)``s ``/dev/stdout`` → ``/proc/self/fd/1``; that fails with
+    ``ENXIO`` only when fd 1 is a socket (systemd journald). We mirror nginx's
+    view by ``fstat``-ing our own fd 1 (klangkd's nginx child inherits it).
+    """
+
+    @staticmethod
+    def _probe_with_fd1(fd) -> bool:
+        """Run ``stdout_is_reopenable()`` with *fd* dup2'd onto fd 1."""
+        saved = os.dup(1)
+        try:
+            os.dup2(fd, 1)
+            return stdout_is_reopenable()
+        finally:
+            os.dup2(saved, 1)
+            os.close(saved)
+
+    def test_pipe_is_reopenable(self):
+        # devenv / interactive / pipe-to-file / pytest capture.
+        r, w = os.pipe()
+        try:
+            assert self._probe_with_fd1(w) is True
+        finally:
+            os.close(r)
+            os.close(w)
+
+    def test_regular_file_is_reopenable(self, tmp_path):
+        f = tmp_path / "log"
+        f.write_text("")
+        with open(f, "w") as fh:
+            assert self._probe_with_fd1(fh.fileno()) is True
+
+    def test_socket_is_not_reopenable(self):
+        # The systemd-journald case: fd 1 is an AF_UNIX socket.
+        a, b = socket.socketpair()
+        try:
+            assert self._probe_with_fd1(a.fileno()) is False
+        finally:
+            a.close()
+            b.close()
+
+    def test_fstat_failure_assumes_reopenable(self, monkeypatch):
+        # If fd 1 can't be fstat'd (e.g. closed), assume reopenable so we
+        # preserve legacy behavior rather than guessing socket.
+        def _boom(_fd):
+            raise OSError("bad fd")
+
+        monkeypatch.setattr("klangk.proxy.os.fstat", _boom)
+        assert stdout_is_reopenable() is True
+
+
+class TestAccessLogDest:
+    """``access_log`` destination picked for systemd-safety (#1550).
+
+    The converged systemd answer is ``syslog:server=unix:/dev/log``: it works
+    on NixOS and Ubuntu 24.04+ alike because ``/dev/log`` is created and
+    serviced by the core ``systemd-journald-dev-log.socket`` unit (not
+    rsyslog). ``/dev/stdout`` is kept only where fd 1 is reopenable.
+    """
+
+    def test_reopenable_stdout_keeps_dev_stdout(self, monkeypatch):
+        # devenv / interactive / pipe: fd 1 reopenable → legacy behavior.
+        monkeypatch.setattr("klangk.proxy.stdout_is_reopenable", lambda: True)
+        s = make_settings({})
+        assert _renderer(s).access_log_dest() == "access_log /dev/stdout;"
+
+    def test_systemd_journal_uses_syslog_dev_log(self, monkeypatch):
+        # fd 1 is a journald socket; /dev/log present → converged syslog route.
+        monkeypatch.setattr("klangk.proxy.stdout_is_reopenable", lambda: False)
+        monkeypatch.setattr("os.path.exists", lambda p: p == "/dev/log")
+        s = make_settings({})
+        assert _renderer(s).access_log_dest() == (
+            "access_log syslog:server=unix:/dev/log;"
+        )
+
+    def test_socket_stdout_no_dev_log_falls_back_to_state_dir_file(
+        self, monkeypatch, tmp_path
+    ):
+        # Rare case: fd 1 a socket but no /dev/log (e.g. a non-systemd
+        # container whose stdout was wired to a socket). Must still produce
+        # an openable destination or nginx fails config parse.
+        monkeypatch.setattr("klangk.proxy.stdout_is_reopenable", lambda: False)
+        monkeypatch.setattr("os.path.exists", lambda p: False)
+        s = make_settings({"KLANGK_STATE_DIR": str(tmp_path)})
+        assert _renderer(s).access_log_dest() == (
+            f"access_log {tmp_path}/nginx-access.log;"
+        )
+
+    def test_default_env_keeps_dev_stdout_in_rendered_config(self):
+        # Under pytest fd 1 is a pipe → reopenable → legacy /dev/stdout is
+        # preserved (no regression for dev / e2e / pipe-to-file).
+        s = make_settings({})  # port unset ⇒ headless
+        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
+        assert "access_log /dev/stdout;" in conf
+        assert "error_log stderr;" in conf
+
+    def test_systemd_choice_lands_in_headless_config(self, monkeypatch):
+        monkeypatch.setattr("klangk.proxy.stdout_is_reopenable", lambda: False)
+        monkeypatch.setattr("os.path.exists", lambda p: p == "/dev/log")
+        s = make_settings({})  # port unset ⇒ headless
+        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
+        assert "access_log syslog:server=unix:/dev/log;" in conf
+        assert "/dev/stdout" not in conf
+        # error_log stderr is unchanged (nginx special-cases the stderr
+        # token to inherited fd 2; always systemd-safe).
+        assert "error_log stderr;" in conf
+
+    def test_systemd_choice_lands_in_full_config(self, monkeypatch):
+        monkeypatch.setattr("klangk.proxy.stdout_is_reopenable", lambda: False)
+        monkeypatch.setattr("os.path.exists", lambda p: p == "/dev/log")
+        s = make_settings({"KLANGK_PORT": "8997"})  # port set ⇒ full/browser
+        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
+        assert "access_log syslog:server=unix:/dev/log;" in conf
+        assert "/dev/stdout" not in conf
 
 
 class TestContainerAcls:

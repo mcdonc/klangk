@@ -35,6 +35,7 @@ import logging
 import os
 import signal
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -110,6 +111,33 @@ def detect_host_ipv4s() -> list[str]:
             ip = token.split("/")[0]
             addrs.append(ip)
     return addrs
+
+
+def stdout_is_reopenable() -> bool:
+    """True if nginx can re-``open()`` ``/dev/stdout`` by path here (#1550).
+
+    nginx's ``access_log`` directive has no ``stdout`` keyword: it always
+    ``open(2)``s its destination by path, and ``/dev/stdout`` resolves to
+    ``/proc/self/fd/1``. That re-open succeeds when fd 1 is a regular file,
+    pipe, or PTY (devenv, interactive, pipe-to-file), but fails with
+    ``ENXIO`` when fd 1 is a Unix socket — which is exactly what systemd
+    gives every service: stdout is a socket to journald
+    (``ls /proc/<pid>/fd/1`` → ``socket:[N]``); a socket can be written but
+    not re-opened by path, so nginx exits at config parse.
+
+    ``error_log stderr;`` is unaffected — nginx special-cases the bare
+    ``stderr`` token to write straight to inherited fd 2 and never re-opens
+    it — so only ``access_log`` needs this check.
+
+    We mirror nginx's view by ``fstat(2)``-ing our own fd 1: klangkd's nginx
+    child inherits this exact fd, so its reopenability matches ours.
+    """
+    try:
+        st = os.fstat(1)
+    except OSError:
+        # fd 1 unusable — assume reopenable to preserve legacy behavior.
+        return True
+    return not stat.S_ISSOCK(st.st_mode)
 
 
 # Fallback subnets when auto-detection yields nothing (mirrors nginx.sh):
@@ -330,6 +358,39 @@ class ProxyRenderer:
             bytes_ = 524288000
         mb = max(1, bytes_ // 1048576)
         return f"{mb}m"
+
+    def access_log_dest(self) -> str:
+        """The ``access_log`` directive line, systemd-safe (#1550).
+
+        nginx always ``open(2)``s the ``access_log`` path; ``/dev/stdout``
+        re-opens our inherited fd 1, which under systemd is a journald
+        socket that can't be re-opened → ``ENXIO`` → nginx exits at config
+        parse. Pick a destination openable *here*:
+
+        - fd 1 reopenable (devenv / interactive / pipe-to-file — the
+          non-journald case): ``access_log /dev/stdout;`` (legacy behavior;
+          access logs ride klangkd's stdout).
+        - fd 1 a socket (systemd journal): ``access_log
+          syslog:server=unix:/dev/log;`` — the converged journald route on
+          every systemd host. ``/dev/log`` is created and serviced by the
+          core ``systemd-journald-dev-log.socket`` unit (not rsyslog), so it
+          is present and journald-native on NixOS, Ubuntu 24.04+, RHEL,
+          Debian, Arch, … without any extra daemon, and access logs land in
+          the journal next to klangkd's own logs (``journalctl`` / ``--grep``
+          on the host). The final ``state_dir`` file branch only fires in the
+          rare socket-stdout-but-no-``/dev/log`` case (e.g. a non-systemd
+          container whose stdout was wired to a socket).
+
+        ``error_log stderr;`` is emitted unchanged by both renderers — nginx
+        special-cases the bare ``stderr`` token to inherited fd 2 and never
+        re-opens it, so it is systemd-safe already.
+        """
+        if stdout_is_reopenable():
+            return "access_log /dev/stdout;"
+        if os.path.exists("/dev/log"):
+            return "access_log syslog:server=unix:/dev/log;"
+        state_dir = self._app.state.settings.state_dir
+        return f"access_log {state_dir}/nginx-access.log;"
 
     # -- Section builders --------------------------------------------------
 
@@ -610,6 +671,7 @@ class ProxyRenderer:
         client_max_body_size = self.compute_client_max_body_size()
         resolvers = self.detect_dns_resolvers()
         acl, _ = self.compute_container_acls()
+        access_log = self.access_log_dest()
         egress_locations = self._egress_locations(upstream, acl, resolvers)
         realip = self._realip_block()
         return f"""daemon off;
@@ -617,7 +679,7 @@ pid /tmp/nginx.pid;
 error_log stderr;
 events {{ worker_connections 1024; }}
 http {{
-  access_log /dev/stdout;
+  {access_log}
   client_body_temp_path /tmp/nginx_client_body;
   proxy_temp_path /tmp/nginx_proxy;
   fastcgi_temp_path /tmp/nginx_fastcgi;
@@ -654,6 +716,7 @@ http {{
         client_max_body_size = self.compute_client_max_body_size()
         resolvers = self.detect_dns_resolvers()
         acl, deny = self.compute_container_acls()
+        access_log = self.access_log_dest()
 
         hosted_block = self._build_hosted_block()
         egress_locations = self._egress_locations(upstream, acl, resolvers)
@@ -689,7 +752,7 @@ pid /tmp/nginx.pid;
 error_log stderr;
 events {{ worker_connections 1024; }}
 http {{
-  access_log /dev/stdout;
+  {access_log}
   client_body_temp_path /tmp/nginx_client_body;
   proxy_temp_path /tmp/nginx_proxy;
   fastcgi_temp_path /tmp/nginx_fastcgi;
