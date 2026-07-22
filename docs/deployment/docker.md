@@ -133,4 +133,4 @@ instructions.
 
 - [Environment Variables](../reference/environment.md) — all
   configuration options
-- [Using Plugins](../features/plugins.md) — what the default plugins do
+- [Feature Activation](../features/features.md) — the default features and how to turn them on

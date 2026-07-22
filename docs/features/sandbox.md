@@ -21,15 +21,15 @@ This feature is most useful when run with the Klangk server on your own
 machine. It requires the `klangk` client program. It is not a feature of the
 web UI.
 
-> **Sandboxes vs. plugins.** Sandboxes are a _runtime_ feature: they
+> **Sandboxes vs. features.** Sandboxes are a _runtime_ addition: they
 > install software and apply configuration scoped to a _particular
 > user within a particular workspace_ — not to the workspace image as
 > a whole — when the workspace is created, without rebuilding anything.
-> By contrast, [plugins](plugins.md) are a _compile-time_ feature that
-> bakes software into the workspace image at build time so it needn't
-> be installed later — the features they add are available to any user
-> in any workspace, but adding or changing a plugin requires rebuilding
-> the Klangk image.
+> By contrast, [features](features.md) are compiled into the workspace
+> image at build time, so what they add is available across the whole
+> deployment and switched on/off deploy-wide via `KLANGK_FEATURES_ENABLE`
+> — adding a brand-new feature requires a rebuild, but activating an
+> already-compiled-in one does not.
 
 ## Quick start
 
@@ -368,7 +368,7 @@ Klangk ships working sandbox configurations, documented in
   and a `health-check`.
 - **[Hermes](../sandboxes/hermes.md)** — the NousResearch Hermes Agent,
   installed per-workspace and routed through the Klangk LLM proxy. Hermes was
-  previously a compile-time [plugin](plugins.md); it moved to a runtime
+  previously a compile-time [feature](features.md); it moved to a runtime
   sandbox so each workspace can configure it independently (and so its
   installer's `bash -i` PATH probe no longer needs an image-build bailout).
 

@@ -2,7 +2,7 @@
 
 Workspace containers ship with **Pi** pre-installed. **Claude Code**
 is available via the `claude-code`
-[plugin](plugins.md). Pi can connect to your LLM backend through the
+[feature](features.md). Pi can connect to your LLM backend through the
 [LLM proxy](../architecture/llm-proxy.md) so no API keys are exposed
 inside containers.
 
@@ -81,9 +81,9 @@ with `pi install`.
 ## Claude Code
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is
-Anthropic's CLI coding agent. It is not pre-installed — enable it by
-adding the `claude-code` plugin to your `plugins.yaml`. See
-[Plugins](plugins.md) for details.
+Anthropic's CLI coding agent. It is not compiled in by default — enable
+it by adding `claude-code` to your `plugins.yaml` and rebuilding the
+image. See [Feature Activation](features.md) for details.
 
 ### Using Claude Code from the terminal
 

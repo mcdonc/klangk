@@ -1,5 +1,13 @@
 # Creating Plugins
 
+> **Plugin vs. feature.** This guide is about **authoring a plugin** — the
+> developer artifact (Dart `ToolPlugin` code, a Pi `extension.ts`, lifecycle
+> hooks) that lives under `plugins/<name>/`. Once compiled into the image, a
+> plugin becomes a **feature** an operator turns on or off deploy-wide with
+> `KLANGK_FEATURES_ENABLE`; see [Feature Activation](../features/features.md)
+> for that surface. The Flutter `ToolPlugin` / `klangk_plugin_api` contract
+> this guide describes is unchanged by that rename.
+
 All plugins live in `plugins/<name>/` directories at the repo root, declared in the checked-in [`plugins.yaml`](../../plugins.yaml). A plugin can contain any combination of:
 
 - `extension.ts` — Pi extension with `pi.registerTool()`. Symlinked as `<plugin-name>.ts` into the workspace image at build time.
