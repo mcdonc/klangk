@@ -1,5 +1,0 @@
-{
-  "name": "@klangk/herdr",
-  "version": "1.0.0",
-  "description": "Herdr — terminal-based agent runtime (persistent sessions, pane API)"
-}

@@ -3,7 +3,7 @@
 Klangk ships a set of **features** — tools, UI widgets, and container
 customizations that extend workspaces. A feature can add a browser UI widget
 (confetti, beeps), a Pi agent tool (file stats, authenticated fetch), a CLI
-agent baked into the image (Claude Code), or git/system configuration.
+or git/system configuration.
 
 > **Same unit, two audiences.** A **feature** is authored as a directory
 > under `features/<name>/` (Dart `ToolPlugin` code, a Pi `extension.ts`,
@@ -124,17 +124,15 @@ These ship in the repo under `features/` but are **not** declared in the default
 `features.yaml`, so a stock build does not compile them in. To use one, add it
 to `features.yaml` and rebuild the image:
 
-| Feature       | What it does                                                                       |
-| ------------- | ---------------------------------------------------------------------------------- |
-| `claude-code` | Installs the Claude Code CLI agent at image build time                             |
-| `herdr`       | Installs herdr (terminal-based agent runtime) and sets up its per-shell API socket |
-| `pig-latin`   | Text-to-Pig-Latin converter for Pi                                                 |
+| Feature     | What it does                       |
+| ----------- | ---------------------------------- |
+| `pig-latin` | Text-to-Pig-Latin converter for Pi |
 
 ```yaml
 # features.yaml — append to compile an additional feature in
 features:
-  - name: claude-code
-    path: features/claude-code
+  - name: pig-latin
+    path: features/pig-latin
 ```
 
 ## Declaring features at build time

@@ -614,6 +614,12 @@ set-password <email>` (set a known password for the default user — whose
   unchanged; only the debug scaffolding is removed. The name was also wrong
   (`KLANGKC_` is the CLI prefix, but the backend read it too).
 
+- **The `claude-code` and `herdr` features have been removed.** The
+  `features/claude-code/` and `features/herdr/` trees (and their docs /
+  mentions) are gone. Neither was declared in the default `features.yaml`,
+  so a stock build is unaffected; deployments that opted into either via a
+  custom `features.yaml` entry should drop the entry. (#1658)
+
 ### Breaking
 
 - **The term "plugin" is retired in favor of "feature" across the codebase,

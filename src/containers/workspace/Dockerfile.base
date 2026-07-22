@@ -47,7 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chown -R root:root /var/log/apt
 
 # Generate UTF-8 locale — required for tmux to handle unicode/wide
-# characters correctly (e.g. Claude Code's ASCII art).
+# characters correctly (e.g. tools that emit ASCII art / box-drawing).
 # Uncomment en_US.UTF-8 in locale.gen (Debian slim ships all locales commented out)
 RUN sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && locale-gen
 ENV LANG=en_US.UTF-8

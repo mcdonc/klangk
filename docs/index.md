@@ -4,7 +4,7 @@
 
 ## Why Klangk?
 
-**For solo developers:** AI agents like Pi and Claude Code are powerful
+**For solo developers:** AI agents like Pi are powerful
 but intentionally given wide permissions — they read, write, and
 execute code on your behalf. Klangk keeps them safely isolated: each
 workspace is its own container where an agent can work freely without
@@ -33,7 +33,7 @@ run agents, and tear it down when you're done.
 
 ### AI Agent Integration
 
-Harnesses like Pi and Claude Code can run inside workspace containers
+Harnesses like Pi can run inside workspace containers
 with full terminal access. The built-in chat agent ([clanker](features/chat.md)) can
 answer questions, run commands, and edit files, confined to the workspace.
 

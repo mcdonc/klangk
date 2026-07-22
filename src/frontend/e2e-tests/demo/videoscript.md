@@ -152,7 +152,7 @@ klangk rm openclaw        # only if you want a truly fresh sandbox/service scene
 
 Hey everyone. Today I'm going to show you Klangk — an open-source platform for running AI coding agents in sandboxed containers.
 
-I'm sure if you're a programmer or programmer adjacent, you know things are getting a little scary. AI harnesses like Claude Code and Codex are incredibly productive, but they need broad permissions — they read and write your files, and run shell commands. Most harnesses pretend to have "safety" modes but nothing is really safe about them.
+I'm sure if you're a programmer or programmer adjacent, you know things are getting a little scary. AI coding harnesses are incredibly productive, but they need broad permissions — they read and write your files, and run shell commands. Most harnesses pretend to have "safety" modes but nothing is really safe about them.
 
 Klangk lets you quickly give every project its own isolated Linux container without a lot of ceremony — agents can do whatever they need in there without touching your host system.
 
@@ -199,7 +199,7 @@ See? My keys are here — forwarded from my host, never copied into the containe
 
 _[Type: git clone git@github.com:mcdonc/klangk.git]_
 
-I can also use harnesses like Pi and claude-code inside the container.
+I can also use harnesses like Pi inside the container.
 
 _[Type: cd klangk, then: pi -p "In two sentences, what does this codebase do?"]_
 
@@ -644,7 +644,7 @@ Klangk has a feature system. Features are git repos that can install system pack
 
 _[Browser: in the demo workspace, type pi and wait for the pi interactive tool to come up. type boingball! into pi → a bouncing ball animates over the UI (pi called the boingball tool the feature registered). Hold on the animation for ~30 seconds]_
 
-For example, the "boingball" feature lets Pi trigger a bouncing ball amimation. The "git-credential" feature adds a browser-based Git authentication dialog. "claude-code" installs Anthropic's Claude Code agent alongside Pi. The "celebrate" feature shows confetti.
+For example, the "boingball" feature lets Pi trigger a bouncing ball amimation. The "git-credential" feature adds a browser-based Git authentication dialog. The "celebrate" feature shows confetti.
 
 Features are declared in a YAML file and fetched automatically.
 
