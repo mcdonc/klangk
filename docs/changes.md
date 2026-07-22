@@ -772,6 +772,25 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **The nginx proxy engine stays up under a plain `systemctl start` with no
+  operator log workaround (#1550).** nginx's `access_log` directive has no
+  `stdout` keyword, so it always `open(2)`s its destination by path; under
+  systemd fd 1 is a Unix socket to journald (`ls /proc/<pid>/fd/1` →
+  `socket:[N]`) that can't be re-opened, so the legacy `access_log
+/dev/stdout;` failed with `ENXIO` and nginx exited at config parse.
+  `ProxyRenderer` now probes fd 1: when it's reopenable (devenv, interactive,
+  pipe-to-file, containers without journald) it keeps `access_log
+/dev/stdout;`; when it's a socket (systemd journal) it emits `access_log
+syslog:server=unix:/dev/log;` — the converged journald route that works on
+  NixOS, Ubuntu 24.04+, and every other systemd host, since `/dev/log` is
+  created and serviced by the core `systemd-journald-dev-log.socket` unit (no
+  rsyslog needed), so access logs land in the journal next to klangkd's own.
+  A `state_dir` file is the last-resort fallback for the rare
+  socket-stdout-but-no-`/dev/log` case. `error_log stderr;` is unchanged
+  (nginx special-cases the bare `stderr` token to inherited fd 2). This
+  makes a default `StandardOutput=journal` unit work, retiring the
+  `StandardOutput=append:...` workaround from #1546.
+
 - **The Caddy proxy engine's child coexists with any other Caddy on the host
   and binds its admin UDS from the first moment, on any Caddy version
   (#1709).** Two version-robustness bugs were fixed. (1) The watchdog spawned
@@ -783,10 +802,10 @@ set-password <email>` (set a known password for the default user — whose
   crash-looped polling a UDS that never appeared — failing on any host that
   also runs Caddy (a system `caddy.service`, a sibling reverse proxy, another
   klangkd). The spawn now passes a minimal initial Caddyfile (`{ admin
-  unix//<sock> }`) via `--config`; the `admin` global option has been honored
+unix//<sock> }`) via `--config`; the `admin` global option has been honored
   since Caddy v2.0. (2) The admin address no longer carries a `|0600` mode
   suffix — that syntax is only honored on Caddy >= 2.8 and on older Caddy is
-  folded into the socket *path* (creating `caddy-admin.sock|0600` instead of
+  folded into the socket _path_ (creating `caddy-admin.sock|0600` instead of
   `caddy-admin.sock`), which broke the admin poll on the older system Caddy
   the dist-smoke gate installs. The owner-only mode (#1559) is now enforced
   by the watchdog via `os.chmod` after the bind (version-independent). (3)
