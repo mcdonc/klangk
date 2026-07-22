@@ -1,0 +1,16 @@
+# Mark binary assets so git treats them as opaque in diff/merge and skips
+# line-ending normalization. These files MUST NOT pass through a text / UTF-8
+# round-trip (e.g. a find-and-replace that opens files with errors='replace'):
+# that collapses non-UTF-8 bytes to U+FFFD (EF BF BD) and destroys the file
+# (#1734). scripts/check_binary_integrity.py (pre-commit guard) catches such
+# rewrites; this attribute is defense-in-depth and keeps diffs readable.
+src/frontend/assets/**/*.ttf binary
+src/frontend/assets/**/*.wasm binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.ico   binary
+*.gif   binary
+*.icns  binary
+*.woff  binary
+*.woff2 binary

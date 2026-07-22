@@ -491,6 +491,21 @@ in
       language = "system";
       pass_filenames = true;
     };
+    # Guard against UTF-8-lossy rewrites that corrupt binary assets (#1734):
+    # a text-mode find-and-replace (errors='replace') collapses invalid bytes
+    # to U+FFFD and destroys wasm/font/image files (the bundled libghostty
+    # wasm + a font were mangled by the "plugin"->"feature" sweep, crashing
+    # WebAssembly.instantiate at app boot and hanging every e2e test). Runs on
+    # every commit (always_run) and inspects staged-vs-HEAD itself, so it sets
+    # pass_filenames=false and ignores the files/types filters.
+    binary-integrity = {
+      enable = true;
+      name = "binary-integrity";
+      entry = "python3 scripts/check_binary_integrity.py";
+      language = "system";
+      pass_filenames = false;
+      always_run = true;
+    };
   };
 
   enterShell = ''
