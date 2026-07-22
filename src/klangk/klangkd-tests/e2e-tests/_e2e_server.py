@@ -188,7 +188,15 @@ def start_server(
         if tcp_port is None:
             tcp_port = str(free_port())
             overrides["KLANGK_PORT"] = tcp_port
-        overrides.setdefault("KLANGK_EGRESS_PORT", str(free_port()))
+        # Two independent free_port() draws can return the same port on a
+        # busy runner (the OS reuses the just-released ephemeral port).
+        # KLANGK_EGRESS_PORT must differ from KLANGK_PORT or the settings
+        # validator rejects it and klangkd exits early — redraw until
+        # distinct so the proxy's two listeners never collide.
+        egress_port = str(free_port())
+        while egress_port == tcp_port:
+            egress_port = str(free_port())
+        overrides.setdefault("KLANGK_EGRESS_PORT", egress_port)
         uds_path = None
         url = f"http://localhost:{tcp_port}"
 
