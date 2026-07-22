@@ -256,7 +256,10 @@ No request body.
 
 ### GET `/api/v1/auth/me`
 
-Get the current authenticated user's profile.
+Get the current authenticated user's profile: their `id`, `email`, and
+display `handle`. This resolves the bearer token's identity into a stable
+user record; the frontend calls it to read the current user's identity
+(e.g. the Settings page populates its handle field from the response).
 
 **Auth:** JWT required.
 
@@ -265,6 +268,11 @@ No request body.
 ```json
 { "id": "uuid", "email": "user@example.com", "handle": "myhandle" }
 ```
+
+The response carries identity fields only — it does **not** include
+roles, groups, or per-resource permissions. For those, call
+`GET /api/v1/my-permissions`, which returns the user's groups and their
+effective permissions across resources.
 
 ---
 
