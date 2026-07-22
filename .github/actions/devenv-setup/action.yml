@@ -7,9 +7,13 @@ inputs:
     required: false
     default: ""
   max-attempts:
-    description: "Retry count for the flaky steps (Bootstrap/Prepare/Build). 1 = no retry (surfaces raw failures for #1720 reproduction). Defaults to repo var DEVENV_SETUP_MAX_ATTEMPTS or 3."
+    description: >-
+      Retry count for the flaky steps (Bootstrap/Prepare/Build). 1 = no retry
+      (surfaces raw failures for #1720 reproduction). Callers can pass
+      `${{ vars.DEVENV_SETUP_MAX_ATTEMPTS || '3' }}` from the workflow level
+      (composite actions can't read the vars context directly).
     required: false
-    default: ""
+    default: "3"
 
 runs:
   using: composite
@@ -82,7 +86,7 @@ runs:
     - name: Bootstrap
       shell: bash
       env:
-        DEVENV_SETUP_MAX_ATTEMPTS: ${{ inputs.max-attempts || vars.DEVENV_SETUP_MAX_ATTEMPTS || '3' }}
+        DEVENV_SETUP_MAX_ATTEMPTS: ${{ inputs.max-attempts }}
       run: |
         set -uo pipefail
         ok=0
@@ -109,7 +113,7 @@ runs:
     - name: Prepare klangk devenv
       shell: bash
       env:
-        DEVENV_SETUP_MAX_ATTEMPTS: ${{ inputs.max-attempts || vars.DEVENV_SETUP_MAX_ATTEMPTS || '3' }}
+        DEVENV_SETUP_MAX_ATTEMPTS: ${{ inputs.max-attempts }}
       run: |
         set -uo pipefail
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
@@ -153,7 +157,7 @@ runs:
       if: inputs.build-tasks != ''
       shell: bash
       env:
-        DEVENV_SETUP_MAX_ATTEMPTS: ${{ inputs.max-attempts || vars.DEVENV_SETUP_MAX_ATTEMPTS || '3' }}
+        DEVENV_SETUP_MAX_ATTEMPTS: ${{ inputs.max-attempts }}
       run: |
         set -uo pipefail
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
