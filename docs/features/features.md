@@ -7,12 +7,11 @@ agent baked into the image (Claude Code), or git/system configuration.
 
 > **Two words for one thing.** Developers **author a plugin** — a directory
 > under `plugins/<name>/` containing Dart `ToolPlugin` code, a Pi
-> `extension.ts`, lifecycle hooks, etc. (see
-> [Creating Plugins](../development/creating-plugins.md)). At build time those
-> plugins are compiled into the image; at deploy time, what an operator turns
-> on or off is a **feature**. This page covers the activation surface. For the
-> authoring contract see the dev guide; for per-user, per-workspace runtime
-> additions that need no rebuild, see [Sandboxes](sandbox.md).
+> `extension.ts`, lifecycle hooks, etc. At build time those plugins are
+> compiled into the image; at deploy time, what an operator turns on or off is
+> a **feature**. This page covers the activation surface; for per-user,
+> per-workspace runtime additions that need no rebuild, see
+> [Sandboxes](sandbox.md).
 
 ## Compiled-in vs. activated
 
@@ -197,8 +196,6 @@ value at runtime and bridges it to where the feature needs it
   feature-declared default. Env stays the escape hatch for per-invocation
   overrides.
 
-For declaring keys in your own plugin and reading them from Dart/Pi, see
-[Creating Plugins](../development/creating-plugins.md#plugin-configuration);
-for the operator-facing config rows see
+For the operator-facing config rows see
 [Environment Variables](../reference/environment.md) and
 [Configuration File](../reference/klangkd-config.md#plugin-and-feature-config-features_config).

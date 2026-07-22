@@ -63,7 +63,6 @@ nav = [
     { "Pre-commit Hooks" = "development/pre-commit.md" },
     { "Releasing" = "development/releasing.md" },
     { "Building Images" = "development/building-images.md" },
-    { "Creating Plugins" = "development/creating-plugins.md" },
     { "Stable Branches" = "development/stable-branches.md" },
   ]},
   { "Changelog" = "changes.md" },

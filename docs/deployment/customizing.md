@@ -284,8 +284,6 @@ plugins:
     ref: main
 ```
 
-See the [Creating Plugins](../development/creating-plugins.md) reference for plugin structure details.
-
 ### How the Build Works
 
 `scripts/build-host-image.sh` is a single source build: it embeds the Flutter web build, the workspace tarball, **and** the plugin directories declared in `plugins.yaml` — so one build produces the final image with plugins baked in. There is no separate overlay, `Dockerfile`, or base-image pass. Run it via the devenv-wrapped `build-host-image` script (`devenv shell -- build-host-image`); `KLANGK_VARIANT` is captured by `scripts/generate-version.sh` in devenv's `enterShell` hook, so set it (and `KLANGK_HOST_IMAGE`) **before** entering the shell, not on the build command.
