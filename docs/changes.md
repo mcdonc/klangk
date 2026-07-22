@@ -884,6 +884,15 @@ extra 'all'`** (#1679). The declaration was `typer[all]>=0.12.0`, but the
 
 ### Security
 
+- **Bumped `pyasn1` 0.6.3 → 0.6.4 to fix CVE-2026-59886 / GHSA-hm4w-wwcw-mr6r
+  (#1730, dependabot #4 / #3).** "Uncontrolled resource consumption when
+  converting decoded REAL values" — a denial-of-service via crafted ASN.1
+  REAL values. `pyasn1` is reached at runtime through `python-jose` and
+  `rsa`, both on the JWT/OIDC auth path (`auth.py`, `oidc.py`), i.e. an
+  attacker-reachable surface. It is a purely transitive dependency with no
+  direct pin in `pyproject.toml`, so the lock bump alone closes both
+  dependabot alerts with no code change.
+
 - **Admin seeding is first-boot-only: config can no longer mint or
   reset admins once an admin exists (#1622).** Previously
   `seed_default_user` ran on every boot and created a fresh admin from
