@@ -63,6 +63,7 @@ void main() {
     String defaultImage = 'klangk-pi',
     List<String>? allowedImages,
     bool allowAutostart = false,
+    List<String> defaultAllowedDomains = const [],
   }) {
     final a = auth ?? AuthService();
     return MaterialApp(
@@ -78,6 +79,7 @@ void main() {
                   defaultImage: defaultImage,
                   allowedImages: allowedImages ?? [defaultImage, 'klangk-full'],
                   allowAutostart: allowAutostart,
+                  defaultAllowedDomains: defaultAllowedDomains,
                 ),
               );
             });
@@ -425,6 +427,90 @@ void main() {
       await tester.pump();
 
       expect(postedBody!['allowed_domains'], ['github.com:443']);
+    });
+
+    testWidgets('pre-fills allowed domains from the deploy default',
+        (tester) async {
+      // #1365: the editor inherits KLANGKD_NETFILTER_DEFAULT_DOMAINS so a
+      // new workspace starts from the deployer's floor. The creator's
+      // edits replace (not merge with) the default.
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'x', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog(
+        defaultAllowedDomains: ['github.com:443', 'pypi.org'],
+      ));
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      // Both defaults render as chips (SelectableText, not the input's
+      // hintText which also carries 'github.com:443').
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is SelectableText && (w.data ?? '') == 'github.com:443',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('pypi.org'), findsOneWidget);
+
+      // Submitting without edits sends the inherited default as the
+      // workspace's own allowed_domains.
+      await tester.enterText(_nameField(), 'Inherited');
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody!['allowed_domains'], ['github.com:443', 'pypi.org']);
+    });
+
+    testWidgets('creator edits replace the inherited default', (tester) async {
+      // Removing a chip and adding a new one produces exactly the edited
+      // set — the default is not unioned back in.
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'x', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog(
+        defaultAllowedDomains: ['github.com:443', 'pypi.org'],
+      ));
+      await tester.pump();
+      await tester.pump();
+
+      // Remove pypi.org (the second chip's close button).
+      await tester.tap(find.byIcon(Icons.close).at(1));
+      await tester.pump();
+      expect(find.text('pypi.org'), findsNothing);
+
+      // Add a new domain.
+      final input = find.widgetWithText(TextField, 'github.com:443');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'added.io');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      await tester.enterText(_nameField(), 'Edited');
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      // The default's pypi.org is gone; the added domain is present; the
+      // unedited default entry survives. Pure override, no merge.
+      expect(postedBody!['allowed_domains'], ['github.com:443', 'added.io']);
     });
 
     testWidgets('rejects an invalid allowed domain spec', (tester) async {

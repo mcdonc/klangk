@@ -218,6 +218,14 @@ async def get_config(app=Depends(get_app_dep)):
         "aup_url": s.aup_url,
         "support_url": s.support_url,
         "support_email": s.support_email,
+        # #1365: deploy-wide netfilter allow-list + whether the feature is
+        # armed. The create-workspace UI pre-fills its allowed-domains
+        # editor from this default so a new workspace inherits the
+        # deployer's floor; the creator's edits replace it (stored on the
+        # workspace). netfilter_enabled lets the UI show the editor only
+        # when the deploy can actually enforce it.
+        "netfilter_default_domains": app.state.netfilter.default_domains(),
+        "netfilter_enabled": app.state.netfilter.enabled(),
     }
     config.update(app.state.features.frontend_config())
     # KLANGKD_FEATURES_ENABLE: the deploy's chosen active-feature list,

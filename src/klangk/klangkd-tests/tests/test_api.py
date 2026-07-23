@@ -416,6 +416,18 @@ class TestConfig:
         assert "login_banner" in data
         assert "instance_id" in data
 
+    async def test_get_config_exposes_netfilter_default_domains(
+        self, client, app
+    ):
+        # #1365: the create-workspace UI pre-fills its allowed-domains editor
+        # from the deploy-wide default (which a workspace overrides, not
+        # unions). netfilter_enabled gates showing the editor at all.
+        app.state.settings.netfilter_default_domains = ["github.com:443"]
+        resp = await client.get("/api/v1/config")
+        assert resp.json()["netfilter_default_domains"] == ["github.com:443"]
+        # hooks dir unset in the test fixture → disabled.
+        assert resp.json()["netfilter_enabled"] is False
+
     async def test_get_config_includes_features(
         self, client, app, tmp_path, monkeypatch
     ):

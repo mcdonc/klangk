@@ -236,6 +236,20 @@ class NetFilter:
     def _raw_hooks_dir(self) -> str | None:
         return self.app.state.settings.netfilter_hooks_dir
 
+    def default_domains(self) -> list[str]:
+        """The deploy-wide default allow-list (#1365), already validated +
+        de-duped at settings construction (a bad spec aborts boot).
+
+        A workspace with no ``allowed_domains`` of its own inherits this.
+        Returns a copy so callers can't mutate the cached settings list.
+        """
+        raw = self.app.state.settings.netfilter_default_domains
+        return list(raw) if raw else []
+
+    def enabled(self) -> bool:
+        """Whether netfilter is armed on this deploy (hooks dir configured)."""
+        return self.hooks_dir() is not None
+
     def hooks_dir(self) -> str | None:
         """Return the configured hooks dir (validated to exist), else ``None``.
 
@@ -297,26 +311,33 @@ class NetFilter:
     ) -> tuple[dict[str, str] | None, str | None]:
         """Build ``(annotations, hooks_dir)`` for a workspace's container.
 
-        ``(None, None)`` when the workspace is unrestricted: no
-        ``allowed_domains`` (unrestricted by config), or netfilter is
-        disabled (the deployer did not configure a hooks dir). When
-        ``allowed_domains`` is set but netfilter is disabled, a loud
-        warning is logged — the workspace starts unrestricted and the
-        operator must enable netfilter to enforce the policy.
+        Resolution (#1365): a workspace's non-empty ``allowed_domains``
+        **overrides** the deploy-wide default; otherwise the default applies.
+        ``(None, None)`` — unrestricted — only when both are empty, or when
+        netfilter is disabled (no hooks dir). When an effective list exists
+        but netfilter is disabled, a loud warning is logged: the container
+        starts unrestricted and the operator must enable netfilter to
+        enforce the policy.
         """
-        if not allowed_domains:
+        # Workspace overrides the deploy default; empty/None inherits it.
+        domains = (
+            list(allowed_domains)
+            if allowed_domains
+            else self.default_domains()
+        )
+        if not domains:
             return None, None
         path = self.hooks_dir()
         if path is None:
             logger.warning(
-                "Workspace declares allowed_domains=%s but netfilter is "
+                "Effective allowed_domains=%s but netfilter is "
                 "disabled (KLANGKD_NETFILTER_HOOKS_DIR is unset or "
                 "unwritable); the workspace will start with UNRESTRICTED "
                 "egress. Configure KLANGKD_NETFILTER_HOOKS_DIR and ensure "
                 "iptables is available where the OCI runtime executes to "
                 "enforce the filter (#1365).",
-                allowed_domains,
+                domains,
             )
             return None, None
-        annotation = {ANNOTATION_KEY: render_rules_annotation(allowed_domains)}
+        annotation = {ANNOTATION_KEY: render_rules_annotation(domains)}
         return annotation, path

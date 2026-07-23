@@ -151,6 +151,42 @@ class TestConfigFile:
         s = make_settings({}, config_file="none")
         assert s.egress_port == "8995"  # built-in default
 
+    def test_netfilter_default_domains_from_env_comma_string(self):
+        """Env delivers a comma-separated string; coerced to a validated,
+        de-duped list (#1365)."""
+        s = make_settings(
+            {"KLANGKD_NETFILTER_DEFAULT_DOMAINS": "b.io, a.com:443 ,b.io"}
+        )
+        assert s.netfilter_default_domains == ["b.io", "a.com:443"]
+
+    def test_netfilter_default_domains_from_yaml_list(self, tmp_path):
+        """YAML delivers a native list (#1365)."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "netfilter_default_domains:\n  - github.com:443\n  - pypi.org\n"
+        )
+        s = make_settings({}, config_file=str(cfg))
+        assert s.netfilter_default_domains == ["github.com:443", "pypi.org"]
+
+    def test_netfilter_default_domains_empty_is_none(self):
+        """Empty / unset → None (no deploy default; workspaces unrestricted)."""
+        assert make_settings({}).netfilter_default_domains is None
+        assert (
+            make_settings(
+                {"KLANGKD_NETFILTER_DEFAULT_DOMAINS": "  , "}
+            ).netfilter_default_domains
+            is None
+        )
+
+    def test_netfilter_default_domains_invalid_aborts_boot(self):
+        """A bad spec fails fast at construction, not silently at use."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            make_settings(
+                {"KLANGKD_NETFILTER_DEFAULT_DOMAINS": "good.com,bad spec"}
+            )
+
     def test_file_cmd_resolution_from_yaml(self, tmp_path):
         """file:/cmd: values in YAML resolve at construction (#1461)."""
         secret = tmp_path / "jwt.txt"

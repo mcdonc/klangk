@@ -19,12 +19,20 @@ class CreateWorkspaceDialog extends StatefulWidget {
   /// from AuthService.allowAutostart (server's KLANGKD_ALLOW_AUTOSTART).
   final bool allowAutostart;
 
+  /// #1365: deploy-wide netfilter default allow-list, surfaced via
+  /// /api/v1/config (KLANGKD_NETFILTER_DEFAULT_DOMAINS). The editor is
+  /// pre-filled with this so a new workspace inherits the deployer's floor;
+  /// the creator's edits replace it (stored as the workspace's own
+  /// allowed_domains). Empty when netfilter is unset/disabled on the server.
+  final List<String> defaultAllowedDomains;
+
   const CreateWorkspaceDialog({
     super.key,
     required this.auth,
     required this.defaultImage,
     required this.allowedImages,
     this.allowAutostart = false,
+    this.defaultAllowedDomains = const [],
   });
 
   @override
@@ -57,6 +65,10 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   void initState() {
     super.initState();
     _selectedImage = widget.defaultImage;
+    // #1365: pre-fill the editor with the deploy-wide default so a new
+    // workspace inherits it; the creator's edits replace (not merge with)
+    // the default and are submitted as the workspace's allowed_domains.
+    _allowedDomains.addAll(widget.defaultAllowedDomains);
   }
 
   @override

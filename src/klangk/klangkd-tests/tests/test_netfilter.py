@@ -11,10 +11,12 @@ from klangk import netfilter as nf
 from _helpers import make_settings
 
 
-def _app(hooks_dir=None, tmp_path=None):
+def _app(hooks_dir=None, default_domains=None, tmp_path=None):
     settings = make_settings({})
     if hooks_dir is not None:
         settings.netfilter_hooks_dir = hooks_dir
+    if default_domains is not None:
+        settings.netfilter_default_domains = default_domains
     return types.SimpleNamespace(
         state=types.SimpleNamespace(settings=settings)
     )
@@ -186,3 +188,65 @@ class TestNetFilterCreateKwargs:
         )
         assert ann == {nf.ANNOTATION_KEY: "github.com:443,pypi.org"}
         assert hooks == os.path.realpath(path)
+
+    def test_workspace_overrides_deploy_default(self, tmp_path):
+        # A non-empty workspace list replaces the default (no merge).
+        path = str(tmp_path / "hooks")
+        ann, _ = nf.NetFilter(
+            _app(hooks_dir=path, default_domains=["default.com", "a.io"])
+        ).create_kwargs(["ws.com:443"])
+        assert ann == {nf.ANNOTATION_KEY: "ws.com:443"}
+
+    def test_empty_workspace_inherits_deploy_default(self, tmp_path):
+        path = str(tmp_path / "hooks")
+        ann, hooks = nf.NetFilter(
+            _app(hooks_dir=path, default_domains=["default.com", "a.io"])
+        ).create_kwargs(None)
+        assert ann == {nf.ANNOTATION_KEY: "default.com,a.io"}
+        assert hooks == os.path.realpath(path)
+
+        # Same for an explicit empty list (None and [] both inherit).
+        ann2, _ = nf.NetFilter(
+            _app(hooks_dir=path, default_domains=["default.com", "a.io"])
+        ).create_kwargs([])
+        assert ann2 == {nf.ANNOTATION_KEY: "default.com,a.io"}
+
+    def test_default_present_but_netfilter_disabled_warns(self, caplog):
+        app = _app(default_domains=["default.com"])  # no hooks dir
+        with caplog.at_level("WARNING"):
+            result = nf.NetFilter(app).create_kwargs(None)
+        assert result == (None, None)
+        assert any("UNRESTRICTED" in r.message for r in caplog.records)
+
+
+class TestNetFilterDefaultDomains:
+    def test_unset_returns_empty(self):
+        assert nf.NetFilter(_app()).default_domains() == []
+
+    def test_returns_settings_list(self):
+        # The field is already validated + de-duped at construction; this
+        # just surfaces it (and returns a copy so callers can't mutate it).
+        nf_obj = nf.NetFilter(_app(default_domains=["b.io", "a.com:443"]))
+        assert nf_obj.default_domains() == ["b.io", "a.com:443"]
+        # Mutating the returned list does not leak into settings.
+        got = nf_obj.default_domains()
+        got.append("evil.io")
+        assert nf_obj.default_domains() == ["b.io", "a.com:443"]
+
+    def test_reflects_reloaded_settings(self):
+        # reconfigure() points at a new app/state; the next read sees the
+        # new settings (no stale cache).
+        nf_obj = nf.NetFilter(_app(default_domains=["a.com"]))
+        assert nf_obj.default_domains() == ["a.com"]
+        nf_obj.reconfigure(_app(default_domains=["b.com"]))
+        assert nf_obj.default_domains() == ["b.com"]
+
+
+class TestNetFilterEnabled:
+    def test_disabled_when_hooks_dir_unset(self):
+        assert nf.NetFilter(_app()).enabled() is False
+
+    def test_enabled_when_hooks_dir_set(self, tmp_path):
+        assert (
+            nf.NetFilter(_app(hooks_dir=str(tmp_path / "h"))).enabled() is True
+        )

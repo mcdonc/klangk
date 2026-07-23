@@ -46,6 +46,10 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 from pydantic import PrivateAttr, field_validator, model_validator
+
+# netfilter.py is pure-stdlib (no settings import), so this top-level import
+# is cycle-safe. Used by the netfilter_default_domains field validator below.
+from klangk.netfilter import parse_allowed_domains
 from pydantic_settings.sources.providers.env import parse_env_vars
 
 logger = logging.getLogger(__name__)
@@ -628,6 +632,16 @@ class KlangkSettings(BaseSettings):
     # resolvable where the OCI runtime executes (the host or DinD outer
     # container; for podman-machine it must be inside the CoreOS VM).
     netfilter_hooks_dir: str | None = None
+    # netfilter_default_domains: a deploy-wide allow-list applied to every
+    # workspace that doesn't declare its own (#1365). A workspace with a
+    # non-empty allowed_domains *overrides* (replaces) this default; a
+    # workspace with none inherits it. Unset (default) preserves the
+    # original per-workspace-only behavior (empty = unrestricted).
+    #
+    # Accepts either a comma-separated string (env var) or a real list
+    # (YAML config file), normalized + validated at construction by
+    # _coerce_netfilter_default_domains so a typo fails fast at boot.
+    netfilter_default_domains: list[str] | None = None
     test_mode: str | None = None
     version_file: str | None = None
 
@@ -988,6 +1002,36 @@ class KlangkSettings(BaseSettings):
                 "→ defaults to 'none')."
             )
         return v
+
+    @field_validator("netfilter_default_domains", mode="before")
+    @classmethod
+    def _coerce_netfilter_default_domains(cls, v):
+        """Accept either a comma-separated string (env var) or a real list
+        (YAML config file), then validate + de-dupe via
+        :func:`klangk.netfilter.parse_allowed_domains` (#1365).
+
+        Env vars deliver a single string (``a.com,b.com``); the YAML source
+        delivers a native list. Both are normalized to a validated, de-duped
+        ``list[str]`` of ``host[:port]`` specs. ``None`` / empty → ``None``
+        (no deploy default; workspaces unrestricted unless they declare their
+        own). An invalid spec aborts boot — a typo in the deploy-wide floor
+        should fail loudly, not silently degrade the security posture.
+        """
+        if v is None:
+            return None
+        if isinstance(v, str):
+            parts = [s.strip() for s in v.split(",")]
+            items = [p for p in parts if p]
+        elif isinstance(v, list):
+            items = [str(s).strip() for s in v if str(s).strip()]
+        else:
+            raise ValueError(
+                "KLANGKD_NETFILTER_DEFAULT_DOMAINS must be a list or a "
+                f"comma-separated string, got {type(v).__name__}"
+            )
+        if not items:
+            return None
+        return parse_allowed_domains(items)
 
     @model_validator(mode="after")
     def _warn_on_deprecated_proxy_engine(self) -> "KlangkSettings":

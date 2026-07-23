@@ -25,6 +25,12 @@ class AuthService extends ChangeNotifier {
   int _minPasswordLength = 8;
   String _instanceId = 'default';
   bool _allowAutostart = false;
+  // #1365: deploy-wide netfilter default allow-list + whether the feature
+  // is armed. Surfaced via /api/v1/config so the create-workspace UI can
+  // pre-fill its allowed-domains editor from the default (a workspace
+  // overrides, not unions) and gate the editor on netfilter_enabled.
+  List<String> _netfilterDefaultDomains = const [];
+  bool _netfilterEnabled = false;
   Timer? _permissionTimer;
   Timer? _refreshTimer;
 
@@ -55,6 +61,17 @@ class AuthService extends ChangeNotifier {
   /// on this — setting auto_start on a server that rejects it would
   /// 400 (#1115).
   bool get allowAutostart => _allowAutostart;
+
+  /// #1365: the deploy-wide netfilter default allow-list
+  /// (KLANGKD_NETFILTER_DEFAULT_DOMAINS). The create-workspace dialog
+  /// pre-fills its editor from this; a workspace's own list overrides
+  /// (replaces) it.
+  List<String> get netfilterDefaultDomains => _netfilterDefaultDomains;
+
+  /// #1365: whether netfilter is armed on the server (hooks dir configured).
+  /// The UI shows the allowed-domains editor only when the deploy can
+  /// actually enforce it.
+  bool get netfilterEnabled => _netfilterEnabled;
 
   /// Decode the JWT payload.
   Map<String, dynamic>? get _payload {
@@ -114,6 +131,10 @@ class AuthService extends ChangeNotifier {
             (data['login_banner_every_visit'] as bool?) ?? false;
         _instanceId = (data['instance_id'] as String?) ?? 'default';
         _allowAutostart = (data['allow_autostart'] as bool?) ?? false;
+        _netfilterDefaultDomains =
+            (data['netfilter_default_domains'] as List?)?.cast<String>() ??
+                const [];
+        _netfilterEnabled = (data['netfilter_enabled'] as bool?) ?? false;
         _minPasswordLength =
             (data['min_password_length'] as num?)?.toInt() ?? 8;
         // White-label values — mirrored into the Branding helper so widgets
