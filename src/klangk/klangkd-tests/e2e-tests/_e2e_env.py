@@ -81,7 +81,7 @@ def clean_env(**overrides: str) -> dict[str, str]:
         for k, v in os.environ.items()
         if not k.upper().startswith(_STRIP_PREFIXES)
     }
-    # Forward the build-infra vars (image / plugins / version stamp) so the
+    # Forward the build-infra vars (image / features / version stamp) so the
     # server subprocess finds the artifacts devenv built. See _INFRA_VARS.
     for name in _INFRA_VARS:
         val = os.environ.get(name)

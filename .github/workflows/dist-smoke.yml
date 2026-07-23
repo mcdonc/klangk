@@ -32,8 +32,8 @@ jobs:
 
       - uses: ./.github/actions/devenv-setup
         with:
-          # Build the frontend with the default plugin set (checked-in
-          # plugins.yaml, #1660) so the wheel's klangk/frontend/ carries
+          # Build the frontend with the default feature set (checked-in
+          # features.yaml, #1660) so the wheel's klangk/frontend/ carries
           # the compiled UI + features.json. The hatch build hook
           # (hatch_build_frontend.py) force-includes it and *requires* it
           # for non-editable wheel builds (#1600).

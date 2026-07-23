@@ -19,7 +19,7 @@ http.Client _mockClient({int versionStatus = 200}) {
           'version': '1.2.3',
           'commit': 'abc1234',
           'built_at': '2026-01-01T00:00:00Z',
-          'plugins': [
+          'features': [
             {
               'name': 'celebrate',
               'version': '0.1.0',
@@ -62,7 +62,7 @@ void main() {
     testAuthHttpClientOverride = null;
   });
 
-  testWidgets('shows version info and plugins', (tester) async {
+  testWidgets('shows version info and features', (tester) async {
     testAuthHttpClientOverride = _mockClient();
     SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
     final auth = AuthService();
@@ -141,7 +141,7 @@ void main() {
     expect(find.text('Failed to connect'), findsOneWidget);
   });
 
-  testWidgets('shows no plugins loaded when list is empty', (tester) async {
+  testWidgets('shows no features loaded when list is empty', (tester) async {
     testAuthHttpClientOverride = MockClient((request) async {
       if (request.url.path == '/api/v1/version') {
         return http.Response(
@@ -149,7 +149,7 @@ void main() {
             'version': 'dev',
             'commit': 'unknown',
             'built_at': null,
-            'plugins': <dynamic>[],
+            'features': <dynamic>[],
           }),
           200,
         );
@@ -186,6 +186,6 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('No plugins loaded'), findsOneWidget);
+    expect(find.text('No features loaded'), findsOneWidget);
   });
 }

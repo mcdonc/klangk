@@ -8,17 +8,17 @@ source "$SCRIPT_DIR/_podman_common.sh"
 
 STAMP="$DEVENV_STATE/klangk/.backend-image-hash"
 
-# Compute a hash of all files that affect the workspace image. The plugin
+# Compute a hash of all files that affect the workspace image. The feature
 # payload is a build-owned tempdir now (#1660), so hash the *source* — the
-# checked-in declaration (plugins.yaml) + the plugin trees under plugins/ —
-# rather than the ephemeral materialized dir. Use -print0 / -0 so plugin
+# checked-in declaration (features.yaml) + the feature trees under features/ —
+# rather than the ephemeral materialized dir. Use -print0 / -0 so feature
 # names with spaces don't corrupt the hash (silently landing on a malformed
 # value that never matches the stamp → needless rebuilds).
 CURRENT_HASH=$(find \
   scripts/build-workspace-image.sh \
   src/containers/workspace/ \
-  plugins.yaml \
-  plugins/ \
+  features.yaml \
+  features/ \
   -type f -print0 2>/dev/null |
   sort -z |
   xargs -0 sha256sum 2>/dev/null |
@@ -38,31 +38,31 @@ if ! $FORCE_BUILD && "$PODMAN" image exists "${KLANGK_IMAGE_NAME}" 2>/dev/null &
   fi
 fi
 
-# Materialize plugins into a build-owned tempdir (#1660): the declaration
-# is checked in at plugins.yaml; the payload (symlinked trees + plugins.lock)
+# Materialize features into a build-owned tempdir (#1660): the declaration
+# is checked in at features.yaml; the payload (symlinked trees + features.lock)
 # is ephemeral. Cleaned up on exit.
 #
-# Git-sourced plugins are skipped by default — set KLANGK_BUILD_INCLUDE_REMOTE=1
+# Git-sourced features are skipped by default — set KLANGK_BUILD_INCLUDE_REMOTE=1
 # to fetch them. Keeps CI off the network and resilient to upstream failures
-# (the policy dates to #1691). Every plugin is a local path entry today
+# (the policy dates to #1691). Every feature is a local path entry today
 # (soliplex was vendored in #1686), so the skip is currently a no-op; the gate
-# stays as the generic remote-plugin policy for any future git entry.
-PAYLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/klangk-plugins-XXXXXX")"
+# stays as the generic remote-feature policy for any future git entry.
+PAYLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/klangk-features-XXXXXX")"
 trap 'rm -rf "$PAYLOAD_DIR"' EXIT
 UPDATE_FLAGS=(--payload-dir "$PAYLOAD_DIR")
 if [ "${KLANGK_BUILD_INCLUDE_REMOTE:-0}" != "1" ]; then
   UPDATE_FLAGS+=(--local-only)
 fi
-python3 scripts/update_plugins.py "${UPDATE_FLAGS[@]}"
+python3 scripts/update_features.py "${UPDATE_FLAGS[@]}"
 
-# Stage full plugin directories outside the source tree
+# Stage full feature directories outside the source tree
 STAGING="$PAYLOAD_DIR/.docker"
 rm -rf "$STAGING"
-mkdir -p "$STAGING/plugins"
+mkdir -p "$STAGING/features"
 for d in "$PAYLOAD_DIR"/*/; do
   [ -d "$d" ] || continue
   name=$(basename "$d")
-  cp -r "$d" "$STAGING/plugins/$name"
+  cp -r "$d" "$STAGING/features/$name"
 done
 
 # Build workspace image on top of the base.
@@ -83,7 +83,7 @@ done
   "${SIG_POLICY_ARGS[@]}" \
   --pull=newer \
   --platform "${KLANGK_PLATFORM:-linux/amd64}" \
-  --build-context plugins="$STAGING/plugins" \
+  --build-context features="$STAGING/features" \
   -t "${KLANGK_IMAGE_NAME}:latest" \
   -t "${KLANGK_IMAGE_NAME}:${VERSION}" \
   "$@" src/containers/workspace/

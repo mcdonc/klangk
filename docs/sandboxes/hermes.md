@@ -79,9 +79,9 @@ set `API_SERVER_HOST=0.0.0.0`, set a strong `API_SERVER_KEY` (it is mandatory
 — the server grants full agent tool access, including the terminal), and
 arrange a Klangk port mapping. None of this is done by the sandbox.
 
-## Why a sandbox, not a plugin
+## Why a sandbox, not a feature
 
-Hermes was previously a compile-time [plugin](../features/plugins.md)
+Hermes was previously a compile-time [feature](../features/features.md)
 baked into the image. Its installer spawns an interactive `bash -i` to probe
 `PATH` — but only in the root/FHS-layout branch, which a sandbox (running
 setup as the non-root `klangk` user) never takes. Converting it to a runtime

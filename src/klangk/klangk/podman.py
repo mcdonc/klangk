@@ -313,7 +313,7 @@ class Podman:
         ``podman start`` returns the moment the container reaches "running"
         state — i.e. the entrypoint has *begun*, not finished. The entrypoint
         creates ``/tmp/.klangk-ready`` once its one-time setup (on-entrypoint
-        plugin hooks) is done, so this blocks until that sentinel exists and
+        feature hooks) is done, so this blocks until that sentinel exists and
         callers can treat the container as fully ready, not just started.
 
         Implemented as a single ``podman exec`` that spins on the sentinel

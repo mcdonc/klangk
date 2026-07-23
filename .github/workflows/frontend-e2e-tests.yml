@@ -46,7 +46,7 @@ jobs:
               - 'src/klangk/**'
               - 'src/frontend/**'
               - 'src/containers/workspace/**'
-              - 'plugins/**'
+              - 'features/**'
               - 'devenv.nix'
               - 'devenv.yaml'
               - '.github/workflows/frontend-e2e-tests.yml'

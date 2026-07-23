@@ -13,19 +13,19 @@ need to paste tokens into the terminal.
 
 ## Setup
 
-The `git-credential` plugin must be included in your plugins list. If
-you're using the default plugin set, it's already there. Otherwise, add
-it to your `plugins.yaml`:
+The `git-credential` feature must be included in your features list. If
+you're using the default feature set, it's already there. Otherwise, add
+it to your `features.yaml`:
 
 ```yaml
-plugins:
+features:
   - name: git-credential
     git: https://github.com/mcdonc/klangk.git
-    path: plugins/git-credential
+    path: features/git-credential
     ref: main
 ```
 
-Then run `update-plugins` to fetch the plugin, then rebuild the workspace
+Then run `update-features` to fetch the feature, then rebuild the workspace
 image (e.g. `devenv up`, which rebuilds automatically).
 
 ## Sign in with GitHub (recommended)
@@ -158,9 +158,9 @@ disabled and the PAT dialog is used for all hosts.
 
 The PAT cache is **per-tab** and **in-memory only**:
 
-- Each browser tab has its own `GitCredentialPlugin` instance with its
+- Each browser tab has its own `GitCredentialFeature` instance with its
   own cache. Credentials entered in tab A are not available in tab B.
-- Refreshing the page clears the cache (new plugin instance).
+- Refreshing the page clears the cache (new feature instance).
 - Closing the tab clears the cache.
 - The cache is keyed by `protocol://host` (e.g. `https://github.com`).
 
@@ -193,7 +193,7 @@ HTTPS with PATs or OAuth is the recommended authentication method.
 
 ### Dialog doesn't appear
 
-- Make sure the `git-credential` plugin is installed (run
+- Make sure the `git-credential` feature is installed (run
   `git config --system credential.helper` in the container — it should
   print `klangk`).
 - Verify the browser tab has a WebSocket connection (check for

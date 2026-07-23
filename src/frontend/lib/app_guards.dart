@@ -13,8 +13,8 @@ import 'auth/pending_redirect.dart';
 
 /// Set of routes reachable without being logged in.
 ///
-/// Plugin paths are appended by the caller, since they depend on the
-/// installed plugins and are not known at compile time.
+/// Feature paths are appended by the caller, since they depend on the
+/// installed features and are not known at compile time.
 const Set<String> publicRoutes = {
   '/login',
   '/verify',
@@ -71,7 +71,7 @@ String? guardAuth({
 ///
 /// A logged-in user landing on a public route (e.g. `/login` after a
 /// refresh) is bounced to their pending redirect, or `/workspaces`.
-/// Plugin routes are excluded: they are public but a logged-in user may
+/// Feature routes are excluded: they are public but a logged-in user may
 /// legitimately navigate to them.
 ///
 /// Returns the redirect target, or null to allow.
@@ -79,9 +79,9 @@ String? guardLoggedInPublicRoute({
   required bool isLoggedIn,
   required String loc,
   required Set<String> publicRoutes,
-  required Set<String> pluginPaths,
+  required Set<String> featurePaths,
 }) {
-  if (isLoggedIn && publicRoutes.contains(loc) && !pluginPaths.contains(loc)) {
+  if (isLoggedIn && publicRoutes.contains(loc) && !featurePaths.contains(loc)) {
     return pendingRedirect ?? '/workspaces';
   }
   return null;
@@ -98,7 +98,7 @@ String? guardRoot({required bool isLoggedIn, required String loc}) {
 /// Run the redirect guards in precedence order and return the first
 /// non-null redirect target, or null if all guards allow.
 ///
-/// [publicRoutes] should already include the plugin paths; [pluginPaths]
+/// [publicRoutes] should already include the feature paths; [featurePaths]
 /// is passed separately so [guardLoggedInPublicRoute] can exclude them.
 String? evaluateGuards({
   required bool isLoggedIn,
@@ -106,7 +106,7 @@ String? evaluateGuards({
   required String loc,
   required String currentUri,
   required Set<String> publicRoutes,
-  required Set<String> pluginPaths,
+  required Set<String> featurePaths,
 }) {
   return guardBanner(bannerRequired: bannerRequired, loc: loc) ??
       guardAuth(
@@ -119,7 +119,7 @@ String? evaluateGuards({
         isLoggedIn: isLoggedIn,
         loc: loc,
         publicRoutes: publicRoutes,
-        pluginPaths: pluginPaths,
+        featurePaths: featurePaths,
       ) ??
       guardRoot(isLoggedIn: isLoggedIn, loc: loc);
 }

@@ -152,7 +152,7 @@ klangk rm openclaw        # only if you want a truly fresh sandbox/service scene
 
 Hey everyone. Today I'm going to show you Klangk — an open-source platform for running AI coding agents in sandboxed containers.
 
-I'm sure if you're a programmer or programmer adjacent, you know things are getting a little scary. AI harnesses like Claude Code and Codex are incredibly productive, but they need broad permissions — they read and write your files, and run shell commands. Most harnesses pretend to have "safety" modes but nothing is really safe about them.
+I'm sure if you're a programmer or programmer adjacent, you know things are getting a little scary. AI coding harnesses are incredibly productive, but they need broad permissions — they read and write your files, and run shell commands. Most harnesses pretend to have "safety" modes but nothing is really safe about them.
 
 Klangk lets you quickly give every project its own isolated Linux container without a lot of ceremony — agents can do whatever they need in there without touching your host system.
 
@@ -199,7 +199,7 @@ See? My keys are here — forwarded from my host, never copied into the containe
 
 _[Type: git clone git@github.com:mcdonc/klangk.git]_
 
-I can also use harnesses like Pi and claude-code inside the container.
+I can also use harnesses like Pi inside the container.
 
 _[Type: cd klangk, then: pi -p "In two sentences, what does this codebase do?"]_
 
@@ -638,25 +638,25 @@ So I'm pair-programming with the owner and talking to the team and the AI — al
 > own reply — fine, you only keep one side's clanker beat in the cut); keep the
 > conversation text and cadence identical to Sc 7 so the intercut lines up.
 
-## Scene 8 — Plugins (45 seconds)
+## Scene 8 — Features (45 seconds)
 
-Klangk has a plugin system. Plugins are git repos that can install system packages at image build time, add CLI tools to the container, extend Pi with new tools, or inject UI widgets into the browser. Plugins can also extend the Flutter/Dart app that composes Klangk itself.
+Klangk has a feature system. Features are git repos that can install system packages at image build time, add CLI tools to the container, extend Pi with new tools, or inject UI widgets into the browser. Features can also extend the Flutter/Dart app that composes Klangk itself.
 
-_[Browser: in the demo workspace, type pi and wait for the pi interactive tool to come up. type boingball! into pi → a bouncing ball animates over the UI (pi called the boingball tool the plugin registered). Hold on the animation for ~30 seconds]_
+_[Browser: in the demo workspace, type pi and wait for the pi interactive tool to come up. type boingball! into pi → a bouncing ball animates over the UI (pi called the boingball tool the feature registered). Hold on the animation for ~30 seconds]_
 
-For example, the "boingball" plugin lets Pi trigger a bouncing ball amimation. The "git-credential" plugin adds a browser-based Git authentication dialog. "claude-code" installs Anthropic's Claude Code agent alongside Pi. The "celebrate" plugin shows confetti.
+For example, the "boingball" feature lets Pi trigger a bouncing ball amimation. The "git-credential" feature adds a browser-based Git authentication dialog. The "celebrate" feature shows confetti.
 
-Plugins are declared in a YAML file and fetched automatically.
+Features are declared in a YAML file and fetched automatically.
 
-How do plugins differ from the `klangk sandbox` setup scripts we saw earlier? They're both ways to customize a workspace, but they make a different trade-off.
+How do features differ from the `klangk sandbox` setup scripts we saw earlier? They're both ways to customize a workspace, but they make a different trade-off.
 
-The downside of plugins is that they require Klangk itself to be recompiled to pick them up — you can't just add one on the fly. But the payoff is that there's **no startup cost**: a plugin is baked into the image at build time, so every workspace that uses that image is ready to go instantly, with no setup script to run on first creation. The feature is available to all workspaces instantly.
+The downside of features is that they require Klangk itself to be recompiled to pick them up — you can't just add one on the fly. But the payoff is that there's **no startup cost**: a feature is baked into the image at build time, so every workspace that uses that image is ready to go instantly, with no setup script to run on first creation. The feature is available to all workspaces instantly.
 
-> **Production —** _on screen:_ plugins config + browser. _pre-roll:_ image built
-> with a visual plugin — **boingball** is the easy payoff;
-> `customize/plugins.yaml` declares it (plus beep, pig-latin, etc.); confirm the
+> **Production —** _on screen:_ features config + browser. _pre-roll:_ image built
+> with a visual feature — **boingball** is the easy payoff;
+> `customize/features.yaml` declares it (plus beep, pig-latin, etc.); confirm the
 > image was rebuilt so `boingball`'s Pi tool is live. _reset:_ re-trigger boingball.
-> _gotchas:_ plugins are **compile-time** (image rebuild) — you can't add one
+> _gotchas:_ features are **compile-time** (image rebuild) — you can't add one
 > live; build it in ahead of time.
 
 ## Scene 9 — Administration (30 seconds)

@@ -6,12 +6,12 @@
 # klangk — no root privileges needed.
 set -e
 
-# Run plugin on-entrypoint hooks (alphabetical by plugin name).
+# Run feature on-entrypoint hooks (alphabetical by feature name).
 # These run once per container start, as root (inside userns).
-for f in /opt/klangk/plugins/*/on-entrypoint.sh; do
+for f in /opt/klangk/features/*/on-entrypoint.sh; do
   [ -x "$f" ] || continue
-  plugin=$(basename "$(dirname "$f")")
-  label=" $plugin (on-entrypoint) "
+  feature=$(basename "$(dirname "$f")")
+  label=" $feature (on-entrypoint) "
   pad=$(((60 - ${#label}) / 2))
   line=$(printf '%*s' "$pad" '' | tr ' ' '-')
   printf '\033[33m%s%s%s\033[0m\n' "$line" "$label" "$line"

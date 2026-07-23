@@ -8,11 +8,11 @@ Most klangk customization — branding, legal links, email templates, CA certs,
 OIDC login hooks — happens at **runtime** via env vars and bind mounts, using
 the stock image with no rebuild.
 
-**The only reason to build a custom image is plugins** (Dart UI plugins need a
-Flutter web rebuild; TypeScript workspace plugins need a workspace image
-rebuild). For that, **fork the repo and edit the checked-in `plugins.yaml`** at
+**The only reason to build a custom image is features** (Dart UI features need a
+Flutter web rebuild; TypeScript workspace features need a workspace image
+rebuild). For that, **fork the repo and edit the checked-in `features.yaml`** at
 the repository root — see
-[Building a Custom Image (Plugins)](https://mcdonc.github.io/klangk/deployment/customizing/#building-a-custom-image-plugins)
+[Building a Custom Image (Features)](https://mcdonc.github.io/klangk/deployment/customizing/#building-a-custom-image-features)
 in the deployment docs.
 
 See the [Customizing a Deployment](https://mcdonc.github.io/klangk/deployment/customizing/)

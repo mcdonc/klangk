@@ -3,7 +3,7 @@
 Covers:
 - file: / cmd: indirection resolution (success + error paths)
 - make_settings(...) constructor + config_file= param
-- resolve_dynamic_config (plugin-declared dynamic keys)
+- resolve_dynamic_config (feature-declared dynamic keys)
 """
 
 import os
@@ -22,7 +22,7 @@ class TestResolveIndirection:
     """The private ``_resolve_indirection`` is the core ``file:``/``cmd:``
     resolver — shared by the ``_resolve_indirections`` model validator on
     ``KlangkSettings`` (construction-time, #1461) and
-    ``resolve_dynamic_config`` (plugin-declared dynamic keys)."""
+    ``resolve_dynamic_config`` (feature-declared dynamic keys)."""
 
     def test_none_returns_none(self):
         assert _resolve_indirection(None) is None
@@ -63,31 +63,31 @@ class TestResolveIndirection:
 
 
 class TestResolveDynamicConfig:
-    """``resolve_dynamic_config`` resolves plugin-declared dynamic keys
+    """``resolve_dynamic_config`` resolves feature-declared dynamic keys
     (outside the ``KLANGK_`` settings model) with ``file:``/``cmd:``
     deref (#1518)."""
 
     def test_plain_value(self, monkeypatch):
-        monkeypatch.setenv("MY_PLUGIN_TOKEN", "abc123")
-        assert resolve_dynamic_config("MY_PLUGIN_TOKEN") == "abc123"
+        monkeypatch.setenv("MY_FEATURE_TOKEN", "abc123")
+        assert resolve_dynamic_config("MY_FEATURE_TOKEN") == "abc123"
 
     def test_default_when_unset(self):
-        assert resolve_dynamic_config("UNSET_PLUGIN_VAR", "fallback") == (
+        assert resolve_dynamic_config("UNSET_FEATURE_VAR", "fallback") == (
             "fallback"
         )
 
     def test_unset_no_default(self):
-        assert resolve_dynamic_config("UNSET_PLUGIN_VAR") is None
+        assert resolve_dynamic_config("UNSET_FEATURE_VAR") is None
 
     def test_file_resolution(self, monkeypatch, tmp_path):
         secret = tmp_path / "token"
         secret.write_text("file-secret\n")
-        monkeypatch.setenv("MY_PLUGIN_TOKEN", f"file:{secret}")
-        assert resolve_dynamic_config("MY_PLUGIN_TOKEN") == "file-secret"
+        monkeypatch.setenv("MY_FEATURE_TOKEN", f"file:{secret}")
+        assert resolve_dynamic_config("MY_FEATURE_TOKEN") == "file-secret"
 
     def test_cmd_resolution(self, monkeypatch):
-        monkeypatch.setenv("MY_PLUGIN_TOKEN", "cmd:echo cmd-secret")
-        assert resolve_dynamic_config("MY_PLUGIN_TOKEN") == "cmd-secret"
+        monkeypatch.setenv("MY_FEATURE_TOKEN", "cmd:echo cmd-secret")
+        assert resolve_dynamic_config("MY_FEATURE_TOKEN") == "cmd-secret"
 
 
 class TestSettingsModel:
@@ -912,7 +912,7 @@ class TestRequireDirsValidator:
     def test_plugins_dir_removed_from_settings(self):
         # plugins_dir is gone from KlangkSettings entirely (#1655) — the
         # runtime reads the build-emitted features.json from frontend_dir.
-        # The build materializes plugins into a tempdir (#1660); there is no
+        # The build materializes features into a tempdir (#1660); there is no
         # KLANGK_PLUGINS_DIR env var at any layer.
         s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
         assert not hasattr(s, "plugins_dir")

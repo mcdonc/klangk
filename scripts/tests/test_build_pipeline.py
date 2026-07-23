@@ -1,27 +1,27 @@
 """Build-pipeline integration test (#1666).
 
-Exercises the real build pipeline — ``update_plugins.py`` →
-``import_dart_plugins.py`` — against the **real** checked-in ``plugins.yaml``
-and the real ``plugins/`` source trees, then asserts on the outputs. This is
+Exercises the real build pipeline — ``update_features.py`` →
+``import_dart_features.py`` — against the **real** checked-in ``features.yaml``
+and the real ``features/`` source trees, then asserts on the outputs. This is
 the test the #1665 adversarial review flagged as missing: the runtime side
-(``Plugins`` reading ``features.json``) is well-covered by ``test_plugins.py``,
+(``Features`` reading ``features.json``) is well-covered by ``test_features.py``,
 but the build side — the code #1660/#1665 changed — had only isolated unit
 tests per script.
 
 What this catches that the per-script unit tests don't:
 
-- A ``path:`` entry in ``plugins.yaml`` pointing at a missing dir.
-- A plugin whose ``klangk/lib/plugin.dart`` lost its ``ToolPlugin`` subclass.
-- Drift between the checked-in declaration and the plugin source trees.
+- A ``path:`` entry in ``features.yaml`` pointing at a missing dir.
+- A feature whose ``klangk/lib/feature.dart`` lost its ``ToolPlugin`` subclass.
+- Drift between the checked-in declaration and the feature source trees.
 - A generated Dart aggregator that references a class that doesn't exist.
-- A ``features.json`` whose shape the runtime ``Plugins._read_manifest()``
+- A ``features.json`` whose shape the runtime ``Features._read_manifest()``
   would reject (the manifest contract — see ``test_manifest_contract`` below).
-- A plugin accidentally shipping without (or gaining) a ``klangk/`` Dart dir
-  — the on-disk-vs-Dart-plugin asymmetry flipping silently.
+- A feature accidentally shipping without (or gaining) a ``klangk/`` Dart dir
+  — the on-disk-vs-Dart-feature asymmetry flipping silently.
 
 Runs in ~1s (no flutter, no docker). The scripts tests are standalone — no
 ``klangk`` import — so this file mirrors the manifest shape contract inline
-rather than importing ``klangk.plugins``; ``test_plugins.py`` covers the
+rather than importing ``klangk.features``; ``test_features.py`` covers the
 runtime side with synthetic manifests, this file covers the build side with
 the real one.
 """
@@ -33,14 +33,14 @@ import sys
 # Make sure the scripts directory is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import import_dart_plugins
-import update_plugins
+import import_dart_features
+import update_features
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# The contract: what the checked-in declaration + plugin source trees should
+# The contract: what the checked-in declaration + feature source trees should
 # produce today. Hard-coded so a drift is loud. Update these when you
-# intentionally add/remove a plugin or change which ones ship Dart packages.
+# intentionally add/remove a feature or change which ones ship Dart packages.
 # ────────────────────────────────────────────────────────────────────────────
 
 EXPECTED_FEATURE_NAMES = {
@@ -59,36 +59,36 @@ EXPECTED_FEATURE_NAMES = {
 # local in #1686) is the canonical "compiled-in ⊋ defaults" case.
 DORMANT_FEATURE_NAMES = {"soliplex"}
 
-# Plugins with a klangk/ Dart package → class names emitted into the
-# generated aggregator. Plugins without klangk/ (word-count, browser-fetch)
+# Features with a klangk/ Dart package → class names emitted into the
+# generated aggregator. Features without klangk/ (word-count, browser-fetch)
 # are TS-only and must NOT appear in the Dart aggregator.
-EXPECTED_DART_PLUGINS = {
-    "celebrate": "CelebratePlugin",
-    "beep": "BeepPlugin",
-    "bobdobbs": "BobDobbsPlugin",
-    "boingball": "BoingBallPlugin",
-    "git-credential": "GitCredentialPlugin",
-    "soliplex": "SoliplexPlugin",
+EXPECTED_DART_FEATURES = {
+    "celebrate": "CelebrateFeature",
+    "beep": "BeepFeature",
+    "bobdobbs": "BobDobbsFeature",
+    "boingball": "BoingBallFeature",
+    "git-credential": "GitCredentialFeature",
+    "soliplex": "SoliplexFeature",
 }
 
-# The subset that appears in features.json's features[] list. import_dart_plugins
+# The subset that appears in features.json's features[] list. import_dart_features
 # only carries features with a klangk/ Dart package (the frontend-activatable
-# set). TS-only plugins (word-count, browser-fetch) are baked into
+# set). TS-only features (word-count, browser-fetch) are baked into
 # the workspace image and always-on — they never appear in features.json.
 # This is the wheel/workspace activation asymmetry from #1655.
-EXPECTED_DART_FEATURE_NAMES = set(EXPECTED_DART_PLUGINS)
+EXPECTED_DART_FEATURE_NAMES = set(EXPECTED_DART_FEATURES)
 
-# Config keys declared across all plugin package.json files, by scope.
-# All carry the KLANGK_FEATURE_ prefix (the plugin-config namespace, #1662):
+# Config keys declared across all feature package.json files, by scope.
+# All carry the KLANGK_FEATURE_ prefix (the feature-config namespace, #1662):
 # server settings are KLANGK_<SETTING> (no FEATURE_ infix), so the prefix
-# alone keeps plugin keys from colliding with server secrets/paths/infra.
+# alone keeps feature keys from colliding with server secrets/paths/infra.
 # Soliplex's KLANGK_FEATURE_SOLIPLEX_URL was renamed from SOLIPLEX_URL when it
 # was vendored (#1686) — the build guard from #1662 requires the prefix.
 EXPECTED_CONTAINER_ENV_KEYS = ["KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID"]
 
 
 def _run_codegen(payload_dir, tmp_path, monkeypatch):
-    """Run import_dart_plugins.main() with outputs redirected into tmp_path.
+    """Run import_dart_features.main() with outputs redirected into tmp_path.
 
     Both ``FEATURES_JSON`` (pre-computed at module load) and ``ROOT`` (used
     by ``write_overrides_and_symlink`` to locate ``src/frontend/``) are
@@ -100,22 +100,22 @@ def _run_codegen(payload_dir, tmp_path, monkeypatch):
     fake_frontend = tmp_path / "src" / "frontend"
     fake_frontend.mkdir(parents=True, exist_ok=True)
     features_json = fake_frontend / "build" / "web" / "features.json"
-    monkeypatch.setattr(import_dart_plugins, "FEATURES_JSON", str(features_json))
-    monkeypatch.setattr(import_dart_plugins, "ROOT", str(tmp_path))
-    import_dart_plugins.main(["--payload-dir", str(payload_dir)])
+    monkeypatch.setattr(import_dart_features, "FEATURES_JSON", str(features_json))
+    monkeypatch.setattr(import_dart_features, "ROOT", str(tmp_path))
+    import_dart_features.main(["--payload-dir", str(payload_dir)])
     return features_json
 
 
 def _materialize(payload_dir):
-    """Run update_plugins.main() against the real checked-in plugins.yaml.
+    """Run update_features.main() against the real checked-in features.yaml.
 
-    ``--local-only`` skips any git-sourced plugin so the test never hits the
+    ``--local-only`` skips any git-sourced feature so the test never hits the
     network — there are none declared today (soliplex was vendored local in
     #1686), so the flag is a no-op safety net. The git-skip path itself is
-    covered by ``test_update_plugins.py::TestLocalOnlyFlag``.
+    covered by ``test_update_features.py::TestLocalOnlyFlag``.
     """
-    rc = update_plugins.main(["--payload-dir", str(payload_dir), "--local-only"])
-    assert rc == 0, "update_plugins.py failed against the real plugins.yaml"
+    rc = update_features.main(["--payload-dir", str(payload_dir), "--local-only"])
+    assert rc == 0, "update_features.py failed against the real features.yaml"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -124,97 +124,97 @@ def _materialize(payload_dir):
 
 
 class TestPipelineRuns:
-    """update_plugins + import_dart_plugins succeed against the real repo."""
+    """update_features + import_dart_features succeed against the real repo."""
 
-    def test_update_plugins_materializes_all_declared(self, tmp_path):
+    def test_update_features_materializes_all_declared(self, tmp_path):
         payload = tmp_path / "payload"
         payload.mkdir()
-        # --local-only skips any git-sourced plugin so the test doesn't hit
+        # --local-only skips any git-sourced feature so the test doesn't hit
         # the network. No git entries are declared today (soliplex was
-        # vendored local in #1686), so every declared plugin materializes.
-        rc = update_plugins.main(["--payload-dir", str(payload), "--local-only"])
+        # vendored local in #1686), so every declared feature materializes.
+        rc = update_features.main(["--payload-dir", str(payload), "--local-only"])
         assert rc == 0
 
-        # Every declared plugin is symlinked into the payload dir. Filter to
-        # directories — plugins.lock (a file) also lives there.
+        # Every declared feature is symlinked into the payload dir. Filter to
+        # directories — features.lock (a file) also lives there.
         materialized = {
             p
             for p in os.listdir(payload)
             if (payload / p).is_dir() and not p.startswith(".")
         }
         assert materialized == EXPECTED_FEATURE_NAMES, (
-            f"materialized set != declared set — drift in plugins.yaml "
-            f"or plugins/. materialized={sorted(materialized)}"
+            f"materialized set != declared set — drift in features.yaml "
+            f"or features/. materialized={sorted(materialized)}"
         )
 
-        # plugins.lock lists EVERY declared plugin.
+        # features.lock lists EVERY declared feature.
         import yaml
 
-        lock = yaml.safe_load((payload / "plugins.lock").read_text())
-        lock_names = {e["name"] for e in lock["plugins"]}
+        lock = yaml.safe_load((payload / "features.lock").read_text())
+        lock_names = {e["name"] for e in lock["features"]}
         assert lock_names == EXPECTED_FEATURE_NAMES, (
-            f"plugins.lock names != all declared: {sorted(lock_names)}"
+            f"features.lock names != all declared: {sorted(lock_names)}"
         )
 
-    def test_import_dart_plugins_generates_aggregator(self, tmp_path, monkeypatch):
+    def test_import_dart_features_generates_aggregator(self, tmp_path, monkeypatch):
         payload = tmp_path / "payload"
         payload.mkdir()
         _materialize(payload)
         _run_codegen(payload, tmp_path, monkeypatch)
 
-        # The aggregator is at <payload>/.dart/lib/klangk_plugins.dart.
-        dart_file = payload / ".dart" / "lib" / "klangk_plugins.dart"
-        assert dart_file.is_file(), "klangk_plugins.dart was not generated"
+        # The aggregator is at <payload>/.dart/lib/klangk_features.dart.
+        dart_file = payload / ".dart" / "lib" / "klangk_features.dart"
+        assert dart_file.is_file(), "klangk_features.dart was not generated"
         source = dart_file.read_text()
 
-        # Every Dart-bearing plugin's class is imported + instantiated.
-        for name, cls in EXPECTED_DART_PLUGINS.items():
-            pkg = f"klangk_plugin_{name.replace('-', '_')}"
-            assert f"import 'package:{pkg}/plugin.dart';" in source, (
+        # Every Dart-bearing feature's class is imported + instantiated.
+        for name, cls in EXPECTED_DART_FEATURES.items():
+            pkg = f"klangk_feature_{name.replace('-', '_')}"
+            assert f"import 'package:{pkg}/feature.dart';" in source, (
                 f"{pkg} not imported by the aggregator"
             )
             assert f"{cls}()" in source, (
-                f"{cls}() not instantiated in createAllPlugins/createAllNamedPlugins"
+                f"{cls}() not instantiated in createAllFeatures/createAllNamedFeatures"
             )
 
-        # Plugins WITHOUT a klangk/ dir must not appear in the Dart aggregator.
-        non_dart = EXPECTED_FEATURE_NAMES - set(EXPECTED_DART_PLUGINS)
+        # Features WITHOUT a klangk/ dir must not appear in the Dart aggregator.
+        non_dart = EXPECTED_FEATURE_NAMES - set(EXPECTED_DART_FEATURES)
         for name in non_dart:
-            pkg = f"klangk_plugin_{name.replace('-', '_')}"
+            pkg = f"klangk_feature_{name.replace('-', '_')}"
             assert f"import 'package:{pkg}/" not in source, (
                 f"{name} has no klangk/ dir but leaked into the Dart aggregator"
             )
 
     def test_named_aggregator_names_match_feature_names(self, tmp_path, monkeypatch):
-        """createAllNamedPlugins() emits records whose `name` matches the
-        feature name in plugins.yaml — the link the runtime's active-set
+        """createAllNamedFeatures() emits records whose `name` matches the
+        feature name in features.yaml — the link the runtime's active-set
         filter in main.dart depends on (#1655)."""
         payload = tmp_path / "payload"
         payload.mkdir()
         _materialize(payload)
         _run_codegen(payload, tmp_path, monkeypatch)
 
-        dart_file = payload / ".dart" / "lib" / "klangk_plugins.dart"
+        dart_file = payload / ".dart" / "lib" / "klangk_features.dart"
         source = dart_file.read_text()
 
-        # Extract (name: '...', plugin: ...) records from createAllNamedPlugins.
-        # The generator emits lines like:    (name: 'celebrate', plugin: CelebratePlugin()),
-        named = re.findall(r"\(name:\s*'([^']+)',\s*plugin:\s*(\w+)\(\)\)", source)
+        # Extract (name: '...', feature: ...) records from createAllNamedFeatures.
+        # The generator emits lines like:    (name: 'celebrate', feature: CelebrateFeature()),
+        named = re.findall(r"\(name:\s*'([^']+)',\s*feature:\s*(\w+)\(\)\)", source)
         named_map = dict(named)
 
-        # Every Dart-bearing plugin appears with the exact feature name.
-        assert set(named_map) == set(EXPECTED_DART_PLUGINS), (
-            f"named-plugin names don't match Dart plugin set: {sorted(named_map)}"
+        # Every Dart-bearing feature appears with the exact feature name.
+        assert set(named_map) == set(EXPECTED_DART_FEATURES), (
+            f"named-feature names don't match Dart feature set: {sorted(named_map)}"
         )
-        for name, cls in EXPECTED_DART_PLUGINS.items():
+        for name, cls in EXPECTED_DART_FEATURES.items():
             assert named_map[name] == cls
 
 
 # ────────────────────────────────────────────────────────────────────────────
 # Test 2: the manifest contract — features.json has the shape the runtime
-# Plugins._read_manifest() expects. Mirrors the validation in
-# src/klangk/klangk/plugins.py; if the runtime's expectations change, both
-# this test (real manifest) and test_plugins.py (synthetic) must update.
+# Features._read_manifest() expects. Mirrors the validation in
+# src/klangk/klangk/features.py; if the runtime's expectations change, both
+# this test (real manifest) and test_features.py (synthetic) must update.
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -246,10 +246,10 @@ class TestManifestContract:
             assert isinstance(f["description"], str)
             assert isinstance(f["config"], dict)
             feature_names.add(f["name"])
-        # features[] carries only Dart plugins — TS-only plugins are absent
+        # features[] carries only Dart features — TS-only features are absent
         # (wheel/workspace activation asymmetry, #1655).
         assert feature_names == EXPECTED_DART_FEATURE_NAMES, (
-            f"features[] names drifted from the Dart plugin set: "
+            f"features[] names drifted from the Dart feature set: "
             f"{sorted(feature_names)}"
         )
 
@@ -280,13 +280,13 @@ class TestManifestContract:
 
     def test_defaults_are_default_features_constant(self, tmp_path, monkeypatch):
         """The manifest's defaults list == DEFAULT_FEATURES in
-        import_dart_plugins.py — the build-time constant. This is the full
+        import_dart_features.py — the build-time constant. This is the full
         conceptual default-on set (6 today), a SUPERSET of the default-on Dart
         features (5): the extra name is the TS-only browser-fetch, always-on in
         the workspace image and harmlessly ignored by the frontend's Dart-only
         active-set filter (#1655 asymmetry)."""
         manifest = self._build_manifest(tmp_path, monkeypatch)
-        assert manifest["defaults"] == list(import_dart_plugins.DEFAULT_FEATURES)
+        assert manifest["defaults"] == list(import_dart_features.DEFAULT_FEATURES)
 
     def test_dart_defaults_relationship(self, tmp_path, monkeypatch):
         """The defaults list is a SUPERSET of the default-on Dart features
@@ -308,7 +308,7 @@ class TestManifestContract:
         )
         # The default-on Dart features are the stock set minus the dormant one.
         default_on_dart = feature_names & defaults
-        assert default_on_dart == set(EXPECTED_DART_PLUGINS) - DORMANT_FEATURE_NAMES, (
+        assert default_on_dart == set(EXPECTED_DART_FEATURES) - DORMANT_FEATURE_NAMES, (
             f"Default-on Dart features drifted: {sorted(default_on_dart)}"
         )
 
@@ -316,7 +316,7 @@ class TestManifestContract:
         self, tmp_path, monkeypatch
     ):
         """Every container_env_key is declared in some feature's config with
-        scope container/both — the bridge Plugins.container_env() depends on."""
+        scope container/both — the bridge Features.container_env() depends on."""
         manifest = self._build_manifest(tmp_path, monkeypatch)
         declared_container_keys = set()
         for f in manifest["features"]:

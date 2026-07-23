@@ -24,7 +24,7 @@ from klangk import (
     main,
     model,
     oidc,
-    plugins,
+    features,
     workspaces,
 )
 from klangk.container import ContainerRegistry
@@ -53,7 +53,7 @@ def _make_app_state(settings=None):
 
     app_state.state.podman = Podman(app_state)
     app_state.state.oidc = oidc.OIDC(app_state)
-    app_state.state.plugins = plugins.Plugins(app_state)
+    app_state.state.features = features.Features(app_state)
     app_state.state.workspaces = workspaces.Workspaces(app_state)
     app_state.state.files = files_mod.Files(app_state)
     # #1520: the lifespan binds app.state.db as the active DB for its context;
@@ -504,7 +504,7 @@ def _bind_safety_app_state(
         state=types.SimpleNamespace(settings=settings)
     )
     app_state.state.oidc = oidc.OIDC(app_state)
-    app_state.state.plugins = plugins.Plugins(app_state)
+    app_state.state.features = features.Features(app_state)
     app_state.state.workspaces = workspaces.Workspaces(app_state)
     return app_state
 
@@ -791,7 +791,7 @@ class TestLifespan:
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
         app.state.oidc = oidc.OIDC(app)
-        app.state.plugins = plugins.Plugins(app)
+        app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
         app.state.agents = agent_mod.Agents(app)
         app.state.email = emailsvc_mod.EmailService(app)
@@ -839,7 +839,7 @@ class TestLifespan:
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
         app.state.oidc = oidc.OIDC(app)
-        app.state.plugins = plugins.Plugins(app)
+        app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
         app.state.agents = agent_mod.Agents(app)
         app.state.email = emailsvc_mod.EmailService(app)
@@ -1121,7 +1121,7 @@ class TestStartupShutdownRestart:
             "proxy_watchdog",
             "terminal",
             "oidc",
-            "plugins",
+            "features",
             "workspaces",
             "files",
             "db",
@@ -1151,7 +1151,7 @@ class TestStartupShutdownRestart:
         assert app_state.state.settings is not old_settings
         assert "ssl_trust" in called
         assert "oidc" in called
-        assert "plugins" in called
+        assert "features" in called
         assert len(called) == 18
         mock_reseed.assert_awaited_once()
 
@@ -1318,7 +1318,7 @@ class TestStartupShutdownRestart:
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
         app.state.oidc = oidc.OIDC(app)
-        app.state.plugins = plugins.Plugins(app)
+        app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
         app.state.agents = agent_mod.Agents(app)
         app.state.email = emailsvc_mod.EmailService(app)

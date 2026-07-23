@@ -15,7 +15,7 @@ import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 class WorkspaceConnector {
   final WsClient wsClient;
   final String workspaceId;
-  final ToolPluginRegistry pluginRegistry;
+  final ToolPluginRegistry featureRegistry;
 
   /// Called when the connector finishes (successfully or not).
   final void Function({required bool connected, String? error}) onConnected;
@@ -38,7 +38,7 @@ class WorkspaceConnector {
   WorkspaceConnector({
     required this.wsClient,
     required this.workspaceId,
-    required this.pluginRegistry,
+    required this.featureRegistry,
     required this.onConnected,
     required this.onContainerEvent,
     required this.onSharedTerminalDeleted,
@@ -107,7 +107,7 @@ class WorkspaceConnector {
     wsClient.connectWorkspace(workspaceId);
 
     // Start browser delegate for bridge requests
-    _browserDelegate = BrowserDelegate(wsClient, registry: pluginRegistry);
+    _browserDelegate = BrowserDelegate(wsClient, registry: featureRegistry);
     _browserDelegate!.start();
 
     // Listen for container lifecycle events

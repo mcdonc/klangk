@@ -330,7 +330,7 @@ On failure: 401 with `X-Token-Error` header (`missing`, `expired`, or `invalid`)
 ### GET `/api/v1/config`
 
 Get public instance configuration: whether registration and invitations
-are enabled, available OIDC providers, login banner text, and plugin
+are enabled, available OIDC providers, login banner text, and feature
 frontend config.
 
 **Auth:** None.
@@ -446,7 +446,7 @@ No request body.
 ### GET `/api/v1/version`
 
 Get the build version, git commit, build timestamp, and list of
-installed plugins.
+installed features.
 
 **Auth:** None.
 
@@ -457,7 +457,7 @@ No request body.
   "version": "1.2.3",
   "commit": "abc1234",
   "built_at": "2026-06-21T00:00:00Z",
-  "plugins": []
+  "features": []
 }
 ```
 

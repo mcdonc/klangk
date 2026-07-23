@@ -21,7 +21,7 @@
  * fold and must be scrolled into view. After scrolling ~200px the PDF sits at
  * screen-Y ≈379.
  *
- * Recording order: before Sc 8 (plugins) — this scene doesn't touch the
+ * Recording order: before Sc 8 (features) — this scene doesn't touch the
  * terminal. Deterministic.
  */
 import { test } from "@playwright/test";

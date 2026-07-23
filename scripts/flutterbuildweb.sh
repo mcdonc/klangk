@@ -3,31 +3,31 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 
-# Materialized plugin payload lives in a build-owned tempdir (#1660): the
-# declaration is the checked-in plugins.yaml at the repo root, the payload
-# (symlinked trees + plugins.lock + generated .dart package) is ephemeral.
+# Materialized feature payload lives in a build-owned tempdir (#1660): the
+# declaration is the checked-in features.yaml at the repo root, the payload
+# (symlinked trees + features.lock + generated .dart package) is ephemeral.
 # Cleaned up on exit. flutterbuildweb also shares this dir with the workspace/
 # host image builds when they chain off it via build-host-image.sh — but each
 # top-level build driver owns its own tempdir, so a single EXIT trap per
 # driver is enough.
-PAYLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/klangk-plugins-XXXXXX")"
+PAYLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/klangk-features-XXXXXX")"
 trap 'rm -rf "$PAYLOAD_DIR"' EXIT
 
-# Fetch/symlink plugins into the payload dir, then generate the Dart
+# Fetch/symlink features into the payload dir, then generate the Dart
 # aggregator + features.json from those trees.
 #
-# Git-sourced plugins are skipped by default (update_plugins.py --local-only)
+# Git-sourced features are skipped by default (update_features.py --local-only)
 # — set KLANGK_BUILD_INCLUDE_REMOTE=1 to fetch them. Keeps CI off the network
 # and resilient to upstream failures (the policy dates to #1691). Every
-# plugin in plugins.yaml is a local path entry today (soliplex was vendored
+# feature in features.yaml is a local path entry today (soliplex was vendored
 # in #1686), so the skip is currently a no-op; the gate stays as the generic
-# remote-plugin policy for any future git entry.
+# remote-feature policy for any future git entry.
 UPDATE_FLAGS=(--payload-dir "$PAYLOAD_DIR")
 if [ "${KLANGK_BUILD_INCLUDE_REMOTE:-0}" != "1" ]; then
   UPDATE_FLAGS+=(--local-only)
 fi
-python3 scripts/update_plugins.py "${UPDATE_FLAGS[@]}"
-python3 scripts/import_dart_plugins.py --payload-dir "$PAYLOAD_DIR"
+python3 scripts/update_features.py "${UPDATE_FLAGS[@]}"
+python3 scripts/import_dart_features.py --payload-dir "$PAYLOAD_DIR"
 
 # flterm is forked (github.com/runyaga/flterm) to build on the nix Flutter
 # (3.41 / Dart 3.11) -- upstream 0.0.3 needs Dart 3.12 for private-named
@@ -112,7 +112,7 @@ echo "Cache-bust: v=$HASH"
 
 # Re-emit features.json AFTER the Flutter build (#1655). flutter build web
 # may regenerate build/web/ and wipe a manifest written before it, so the
-# pre-build emit in import_dart_plugins.py is followed by this post-build
+# pre-build emit in import_dart_features.py is followed by this post-build
 # re-emit. The manifest is a frontend sibling file (read by the frontend at
 # boot + one field by klangkd for container-env bridging) and must survive
 # the Flutter build. Invoke via $SCRIPT_DIR (absolute) because CWD is
@@ -120,4 +120,4 @@ echo "Cache-bust: v=$HASH"
 # from __file__ so it lands the manifest correctly regardless of CWD. The
 # payload dir is the same one populated above — still populated, still
 # readable (the trap fires only on exit).
-python3 "$SCRIPT_DIR/import_dart_plugins.py" --payload-dir "$PAYLOAD_DIR" --features-only
+python3 "$SCRIPT_DIR/import_dart_features.py" --payload-dir "$PAYLOAD_DIR" --features-only

@@ -10,7 +10,7 @@ set up the environment before your personal `~/.bashrc` runs:
   exception — it runs as a non-login `bash -c` and sources nothing; see
   [Health Check](health-check.md).)
 - `/etc/bash.bashrc` — interactive-shell setup: waits for container
-  readiness, runs `on-shell-init` plugin hooks, and (via the default
+  readiness, runs `on-shell-init` feature hooks, and (via the default
   command) launches the workspace's configured service.
 
 Your `~/.bashrc` persists across container restarts (it lives on the
@@ -139,6 +139,6 @@ if [ -x /usr/bin/zsh ] && [ -z "$ZSH_STARTED" ]; then
 fi
 ```
 
-This lets the bash startup complete normally (plugin hooks, default
+This lets the bash startup complete normally (feature hooks, default
 command handling), then replaces bash with zsh. The `ZSH_STARTED` guard
 prevents infinite loops. Your `~/.zshrc` will be sourced as usual.

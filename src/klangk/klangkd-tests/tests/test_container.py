@@ -28,7 +28,7 @@ def _make_app_state(registry=None, sockets=None):
 
     settings = make_settings({})
     # Two-phase: build the namespace shell first so the owned instances
-    # (sockets, registry, terminal, plugins) can take app_state at
+    # (sockets, registry, terminal, features) can take app_state at
     # construction and reach collaborators via self.app_state (#1426).
     app_state = types.SimpleNamespace(
         state=types.SimpleNamespace(settings=settings)
@@ -43,10 +43,10 @@ def _make_app_state(registry=None, sockets=None):
     app_state.state.container_registry = registry
     # #1480: container.py reaches set_workspace_token via app_state.state.terminal.
     from klangk.terminal import Terminal
-    from klangk import plugins as plugins_mod
+    from klangk import features as features_mod
 
     app_state.state.terminal = Terminal(app_state)
-    app_state.state.plugins = plugins_mod.Plugins(app_state)
+    app_state.state.features = features_mod.Features(app_state)
     from klangk.workspaces import Workspaces
 
     app_state.state.workspaces = Workspaces(app_state)
@@ -1136,26 +1136,26 @@ class TestStartContainer:
         assert env_dict["MY_VAR"] == "hello"
         assert env_dict["FOO"] == "bar"
 
-    async def test_plugins_env_injected(
+    async def test_features_env_injected(
         self, workspace, monkeypatch, app_state
     ):
         # container_env() reads the build-emitted container_env_keys list and
-        # resolves each from the server env (#1655). Plugin-declared keys
+        # resolves each from the server env (#1655). Feature-declared keys
         # must carry the KLANGK_FEATURE_ prefix (#1662). Patch the parsed
         # manifest so the test doesn't need a real features.json on disk.
         monkeypatch.setattr(
-            self.registry.app.state.plugins,
+            self.registry.app.state.features,
             "_manifest",
-            {"container_env_keys": ["KLANGK_FEATURE_PLUGIN_VAR"]},
+            {"container_env_keys": ["KLANGK_FEATURE_TEST_VAR"]},
         )
-        monkeypatch.setenv("KLANGK_FEATURE_PLUGIN_VAR", "plugin-val")
+        monkeypatch.setenv("KLANGK_FEATURE_TEST_VAR", "feature-val")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         env_list = p.create_container.call_args.kwargs["env"]
         env_dict = dict(e.split("=", 1) for e in env_list)
-        assert env_dict["KLANGK_FEATURE_PLUGIN_VAR"] == "plugin-val"
+        assert env_dict["KLANGK_FEATURE_TEST_VAR"] == "feature-val"
 
 
 class TestStartContainerPortConflict:

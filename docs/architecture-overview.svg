@@ -134,7 +134,7 @@
   <text x="275" y="636" fill="#58A6FF" font-size="11">🤖 AI Coding Agent</text>
   <text x="430" y="636" fill="#58A6FF" font-size="11">👥 Multi-User Collab</text>
   <text x="600" y="636" fill="#58A6FF" font-size="11">🔒 Sandboxed Containers</text>
-  <text x="770" y="636" fill="#58A6FF" font-size="11">🔌 Plugins</text>
+  <text x="770" y="636" fill="#58A6FF" font-size="11">🔌 Features</text>
   <text x="120" y="654" fill="#8B949E" font-size="9">Per-resource access control</text>
   <text x="275" y="654" fill="#8B949E" font-size="9">Pi agent with tool calling</text>
   <text x="430" y="654" fill="#8B949E" font-size="9">Chat, presence, sharing</text>

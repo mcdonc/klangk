@@ -69,23 +69,23 @@ class _KlangkAppState extends State<KlangkApp> {
   }
 
   GoRouter _createRouter(AuthService auth, String initialLocation) {
-    // Collect routes contributed by plugins.
-    final pluginRoutes = ToolPluginRegistry().routes;
-    final pluginPaths = pluginRoutes.map((r) => r.path).toSet();
+    // Collect routes contributed by features.
+    final featureRoutes = ToolPluginRegistry().routes;
+    final featurePaths = featureRoutes.map((r) => r.path).toSet();
 
     return GoRouter(
       initialLocation: initialLocation,
       refreshListenable: auth,
       redirect: (context, state) {
         final loc = state.matchedLocation;
-        final routes = {...publicRoutes, ...pluginPaths};
+        final routes = {...publicRoutes, ...featurePaths};
         return evaluateGuards(
           isLoggedIn: auth.isLoggedIn,
           bannerRequired: auth.bannerRequired,
           loc: loc,
           currentUri: state.uri.toString(),
           publicRoutes: routes,
-          pluginPaths: pluginPaths,
+          featurePaths: featurePaths,
         );
       },
       routes: [
@@ -153,7 +153,7 @@ class _KlangkAppState extends State<KlangkApp> {
           path: '/admin/users',
           builder: (context, state) => const AdminUsersPage(),
         ),
-        for (final route in pluginRoutes)
+        for (final route in featureRoutes)
           GoRoute(
             path: route.path,
             builder: (context, state) => route.builder(

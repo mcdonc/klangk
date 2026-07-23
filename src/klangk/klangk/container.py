@@ -1250,11 +1250,11 @@ class ContainerRegistry:
 
         # Runtime SSL/CA trust (#1181): point OpenSSL/Python/curl/Node
         # at the bundle the entrypoint builds from the mounted certs.
-        # Appended before plugin/extra env so a deployer can override if
+        # Appended before feature/extra env so a deployer can override if
         # ever needed. Emitted only when a trustable cert dir is present.
         env_vars.extend(ssl_env_vars(ssl_dir))
 
-        for k, v in self.app.state.plugins.container_env().items():
+        for k, v in self.app.state.features.container_env().items():
             env_vars.append(f"{k}={v}")
 
         if extra_env:

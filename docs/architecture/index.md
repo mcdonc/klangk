@@ -5,7 +5,7 @@
 ```text
 Browser (Flutter Web + Terminal + Files + Chat)
     ├── WebSocket (authenticated): terminal I/O, exec, browser bridge, chat, presence, lifecycle events
-    ├── Browser delegate: handles bridge requests from Pi extensions (fetch, plugin actions)
+    ├── Browser delegate: handles bridge requests from Pi extensions (fetch, feature actions)
     ├── Auto-reconnect with exponential backoff on disconnect
 reverse proxy (nginx; browser port 8997 = UI + API + hosted app proxy; egress port 8995 = container→host endpoints)
     ↕ LLM proxy: container → host.containers.internal:8995/llm-proxy/ → ${KLANGK_LLM_BASE_URL}
@@ -20,7 +20,7 @@ Python/FastAPI backend (UDS, serves API + frontend static files)
     ├── Terminal/exec session management
     ↕ podman exec subprocess
 Pi container per workspace (interactive terminal mode)
-    ├── Pi extensions (from plugins/*/extension.ts in the repo, baked into the workspace image)
+    ├── Pi extensions (from features/*/extension.ts in the repo, baked into the workspace image)
     ├── AGENTS.md (dynamically generated on container start)
     ├── /tmp/klangk/workspace-token (per-workspace JWT, auto-renewed)
     ↕ bind mount

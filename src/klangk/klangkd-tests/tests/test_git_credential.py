@@ -13,7 +13,7 @@ import pytest
 
 SCRIPT = (
     Path(__file__).resolve().parents[4]
-    / "plugins"
+    / "features"
     / "git-credential"
     / "tools"
     / "git-credential-klangk"
@@ -171,7 +171,7 @@ class TestGetOperation:
         assert req["browser_id"] == "test-browser-id"
 
     def test_unwraps_bridge_result(self, bridge_server, fake_browser_id):
-        """Bridge wraps plugin response in {"status":"ok","result":"..."}."""
+        """Bridge wraps feature response in {"status":"ok","result":"..."}."""
         server, port = bridge_server
         inner = json.dumps({"username": "octocat", "password": "ghp_xyz"})
         _BridgeHandler.response_body = json.dumps(

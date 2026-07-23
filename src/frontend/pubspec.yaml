@@ -39,8 +39,8 @@ dependencies:
     git:
       url: https://github.com/mcdonc/klangk-plugin-api.git
       ref: v0.2.0
-  # Path set by import_plugins.py — do not edit this line
-  klangk_plugins:
+  # Path set by import_dart_features.py — do not edit this line
+  klangk_features:
     path: PLACEHOLDER
   code_forge_web: ^2.10.0
   pdfrx: ^2.4.3

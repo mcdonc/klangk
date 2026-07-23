@@ -1,10 +1,8 @@
 # AI Coding Harnesses
 
-Workspace containers ship with **Pi** pre-installed. **Claude Code**
-is available via the `claude-code`
-[plugin](plugins.md). Pi can connect to your LLM backend through the
-[LLM proxy](../architecture/llm-proxy.md) so no API keys are exposed
-inside containers.
+Workspace containers ship with **Pi** pre-installed. Pi can connect to
+your LLM backend through the [LLM proxy](../architecture/llm-proxy.md)
+so no API keys are exposed inside containers.
 
 ## Prerequisites
 
@@ -77,26 +75,6 @@ Extensions are installed at image build time into
 `/opt/klangk/pi-agent/extensions/` and symlinked into the user's
 `~/.pi/agent/` at first login. Users can install additional extensions
 with `pi install`.
-
-## Claude Code
-
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code) is
-Anthropic's CLI coding agent. It is not pre-installed — enable it by
-adding the `claude-code` plugin to your `plugins.yaml`. See
-[Plugins](plugins.md) for details.
-
-### Using Claude Code from the terminal
-
-Open a terminal tab and run:
-
-```text
-claude
-```
-
-Claude Code connects directly to the Anthropic API — it does not use
-the LLM proxy. On first run, Claude Code prompts you to authenticate
-via a browser-based flow: it displays a URL, you open it in your
-browser, and paste the resulting API key back into the terminal.
 
 ## System prompt
 

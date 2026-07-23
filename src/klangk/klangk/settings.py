@@ -16,7 +16,7 @@ Design (see #1392, #1394):
   (#1461). Every ``settings.field`` read thereafter returns the already-
   resolved value — no caller wraps in ``resolve_indirection``. The private
   ``_resolve_indirection`` survives for two callers: that validator, and the
-  non-``KLANGK_`` path of :func:`resolve_env_value` (plugin-declared dynamic
+  non-``KLANGK_`` path of :func:`resolve_env_value` (feature-declared dynamic
   keys discovered from ``package.json``, which are not settings fields and so
   cannot be resolved at construction).
 - **Env-change-detection cache** (:func:`get_settings`): cache-free —
@@ -117,7 +117,7 @@ def _safe_getuser() -> str:
 # NOT exported: ``file:``/``cmd:`` resolution now happens once, inside
 # ``KlangkSettings`` at construction (#1461).  The private ``_resolve_indirection``
 # is shared by the model validator and the non-KLANGK path of
-# ``resolve_env_value`` (plugin-declared dynamic keys).
+# ``resolve_env_value`` (feature-declared dynamic keys).
 __all__ = [
     "KlangkSettings",
     "resolve_dynamic_config",
@@ -193,7 +193,7 @@ def _resolve_indirection(value: str | None, key: str = "") -> str | None:
     Private: ``file:``/``cmd:`` resolution for ``KlangkSettings`` fields
     happens once at construction via the ``_resolve_indirections`` model
     validator (#1461).  This helper survives for two callers: that
-    validator, and the non-KLANGK path of ``resolve_env_value`` (plugin-
+    validator, and the non-KLANGK path of ``resolve_env_value`` (feature-
     declared dynamic keys discovered from ``package.json``, which are not
     settings fields and so cannot be resolved at construction).
     """
@@ -595,7 +595,7 @@ class KlangkSettings(BaseSettings):
     # deriving from the resolved ``config_dir`` (#1644, #1649); no longer
     # under ``state_dir``. Explicit ``KLANGK_CUSTOMIZE_DIR`` still wins.
     customize_dir: str | None = None
-    # features_enable: which compiled-in features (plugins) are turned on for
+    # features_enable: which compiled-in features (features) are turned on for
     # this deploy. Canonical semantics (#1655): unset → the manifest's
     # ``defaults`` list (the stock set, backwards-compatible); any explicit
     # value → exactly that comma-separated list, nothing implied (no `*`
@@ -679,14 +679,14 @@ class KlangkSettings(BaseSettings):
     # --- File upload ---
     file_upload_size_max: str | None = "524288000"
 
-    # --- Plugin / feature config (#1659) ---
-    # A config-file source for plugin-declared dynamic keys (the keys the
+    # --- Feature / feature config (#1659) ---
+    # A config-file source for feature-declared dynamic keys (the keys the
     # build emits into features.json's container_env_keys + the per-feature
     # config blocks). Values here are the "tomorrow" answer to "where does
-    # the operator set a plugin value?" — today that's env only; this block
+    # the operator set a feature value?" — today that's env only; this block
     # lets long-lived deploy config (OAuth client IDs, RAG endpoints) live
-    # in the committed klangkd.yaml instead. Precedence when a plugin key is
-    # resolved via resolve_dynamic_config: env > features_config: > plugin
+    # in the committed klangkd.yaml instead. Precedence when a feature key is
+    # resolved via resolve_dynamic_config: env > features_config: > feature
     # default. Values keep their raw file:/cmd: prefixes here (the
     # _resolve_indirections validator only processes top-level str fields,
     # so a dict is left untouched) — resolve_dynamic_config derefs them at
@@ -706,7 +706,7 @@ class KlangkSettings(BaseSettings):
         Resolution is idempotent: a plain (non-``file:``/``cmd:``) value passes
         through unchanged, so re-resolving an already-resolved value is a
         no-op. This keeps the legacy ``resolve_env_value`` path (still used by
-        plugin-declared dynamic keys and not-yet-migrated modules) correct —
+        feature-declared dynamic keys and not-yet-migrated modules) correct —
         it reads the already-resolved field and the redundant
         ``_resolve_indirection`` call it makes is a harmless no-op.
 
@@ -790,8 +790,8 @@ class KlangkSettings(BaseSettings):
         ``customize_dir`` derives from it (user-edited, durable config).
         ``plugins_dir`` is gone from settings entirely (#1655): the runtime
         reads the build-emitted ``features.json`` from ``frontend_dir``. The
-        build reads the checked-in ``plugins.yaml`` at the repo root and
-        materializes plugin trees into a throwaway tempdir (#1660) — no
+        build reads the checked-in ``features.yaml`` at the repo root and
+        materializes feature trees into a throwaway tempdir (#1660) — no
         ``KLANGK_PLUGINS_DIR`` env var exists at any layer.
         """
         if not self.state_dir:
@@ -1011,7 +1011,7 @@ class KlangkSettings(BaseSettings):
 
 
 # ---------------------------------------------------------------------------
-# Plugin dynamic-key resolver (the only remaining file:/cmd: deref path)
+# Feature dynamic-key resolver (the only remaining file:/cmd: deref path)
 # ---------------------------------------------------------------------------
 
 
@@ -1020,13 +1020,13 @@ def resolve_dynamic_config(
     default: str | None = None,
     features_config: Mapping[str, str] | None = None,
 ) -> str | None:
-    """Resolve a plugin-declared dynamic config key.
+    """Resolve a feature-declared dynamic config key.
 
-    Plugin config keys (discovered from each plugin's ``package.json``) are
+    Feature config keys (discovered from each feature's ``package.json``) are
     outside the ``KLANGK_`` settings model — they are not known at settings
     construction, so they can't be resolved by the model validator. This
     reads ``os.environ`` directly and applies :func:`_resolve_indirection`
-    so plugin config honors ``file:``/``cmd:`` prefixes (a plugin-declared
+    so feature config honors ``file:``/``cmd:`` prefixes (a feature-declared
     key may itself be a secret, e.g. an API token).
 
     Precedence (highest first, #1659):
@@ -1034,7 +1034,7 @@ def resolve_dynamic_config(
     1. **env** — ``os.environ[key]`` (the global precedence rule: env wins
        over file over defaults).
     2. **``features_config:``** — the YAML block from ``klangkd.yaml``, passed
-       in by the caller (``Plugins.container_env`` / ``frontend_config`` read
+       in by the caller (``Features.container_env`` / ``frontend_config`` read
        it off ``settings.features_config``). Lets long-lived deploy config
        (OAuth client IDs, RAG endpoints) live in the committed config file
        instead of env. ``file:``/``cmd:`` prefixes on these values are
@@ -1042,7 +1042,7 @@ def resolve_dynamic_config(
        resolver. A bad ``file:``/``cmd:`` ref here does NOT abort boot (the
        values can't be resolved at construction); it logs and falls through
        to *default*, mirroring how a bad env ref behaves.
-    3. **plugin default** — the *default* argument (the plugin-declared
+    3. **feature default** — the *default* argument (the feature-declared
        default from ``features.json``).
 
     *features_config* defaults to ``None`` (env-only, the pre-#1659
@@ -1065,6 +1065,6 @@ def resolve_dynamic_config(
             if resolved is not None:
                 return resolved
             # A bad file:/cmd: ref in the YAML value: _resolve_indirection
-            # already logged it; fall through to the plugin default rather
+            # already logged it; fall through to the feature default rather
             # than silently treating the broken ref as the value.
     return default

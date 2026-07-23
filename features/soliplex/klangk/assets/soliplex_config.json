@@ -1,0 +1,4 @@
+{
+  "_comment": "Default Soliplex server baked into the feature build. The feature owns its server config; klangk holds none. Additional servers are added at runtime via the Flutter overlay or the soliplex_add_server agent tool and persisted client-side. Swap default_url here (or post-build in build/web/assets) to retarget the default without touching klangk.",
+  "default_url": ""
+}

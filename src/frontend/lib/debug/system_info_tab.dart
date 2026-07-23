@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../auth/auth_service.dart';
 
-/// Tab showing server version, commit, build timestamp, and loaded plugins.
+/// Tab showing server version, commit, build timestamp, and loaded features.
 class SystemInfoTab extends StatefulWidget {
   final AuthService auth;
   const SystemInfoTab({super.key, required this.auth});
@@ -68,7 +68,7 @@ class _SystemInfoTabState extends State<SystemInfoTab> {
       );
     }
     final info = _info!;
-    final plugins = (info['plugins'] as List<dynamic>?) ?? [];
+    final features = (info['features'] as List<dynamic>?) ?? [];
     final variant = info['variant']?.toString() ?? '';
 
     return ListView(
@@ -80,7 +80,7 @@ class _SystemInfoTabState extends State<SystemInfoTab> {
         _row('Built', info['built_at'] ?? 'n/a'),
         const SizedBox(height: 12),
         const Text(
-          'Plugins',
+          'Features',
           style: TextStyle(
             color: Color(0xFF888888),
             fontSize: 10,
@@ -88,13 +88,13 @@ class _SystemInfoTabState extends State<SystemInfoTab> {
           ),
         ),
         const SizedBox(height: 4),
-        if (plugins.isEmpty)
+        if (features.isEmpty)
           const Text(
-            'No plugins loaded',
+            'No features loaded',
             style: TextStyle(color: Color(0xFF666666), fontSize: 10),
           )
         else
-          for (final p in plugins)
+          for (final p in features)
             Padding(
               padding: const EdgeInsets.only(bottom: 2),
               child: Text(

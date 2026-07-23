@@ -6,16 +6,16 @@ FROM $WORKSPACE_BASE_IMAGE
 RUN npm install -g @earendil-works/pi-coding-agent@0.79.9 \
     && mkdir -p /opt/klangk/pi-agent/extensions /opt/klangk/pi-agent/skills
 
-# Copy full plugin repos and symlink discoverable pieces into central dirs.
-# Extensions get <plugin>.ts, skills get <plugin>-<skill>/, prompts get
-# <plugin>-<file>.md.  Plugins reference their own files directly via
-# /opt/klangk/plugins/<name>/ (no tools symlinking).
-COPY --from=plugins / /opt/klangk/plugins/
+# Copy full feature repos and symlink discoverable pieces into central dirs.
+# Extensions get <feature>.ts, skills get <feature>-<skill>/, prompts get
+# <feature>-<file>.md.  Features reference their own files directly via
+# /opt/klangk/features/<name>/ (no tools symlinking).
+COPY --from=features / /opt/klangk/features/
 ENV PATH="/opt/klangk/bin:${PATH}"
 RUN mkdir -p /opt/klangk/bin /opt/klangk/pi-agent/extensions \
              /opt/klangk/pi-agent/skills /opt/klangk/pi-agent/prompts \
     && echo 'PATH="/opt/klangk/bin:${PATH}"' >> /etc/environment \
-    && for d in /opt/klangk/plugins/*/; do \
+    && for d in /opt/klangk/features/*/; do \
          [ -d "$d" ] || continue; \
          name=$(basename "$d"); \
          [ -f "$d/extension.ts" ] && ln -sf "$d/extension.ts" /opt/klangk/pi-agent/extensions/"$name.ts"; \
@@ -70,15 +70,15 @@ COPY profile.d/ /etc/profile.d/
 COPY bash.bashrc /etc/bash.bashrc
 COPY tmux.conf /etc/tmux.conf
 
-# Run plugin on-image-build hooks (alphabetical by plugin name).
+# Run feature on-image-build hooks (alphabetical by feature name).
 # These run as root at image build time for system-level config. No klangk
-# plugin installer spawns an interactive `bash -i` (hermes, the only one that
+# feature installer spawns an interactive `bash -i` (hermes, the only one that
 # did, is now a runtime sandbox -- #1109), so bash.bashrc's body never runs
 # during image build and no build-time bailout is needed.
-RUN for f in /opt/klangk/plugins/*/on-image-build.sh; do \
+RUN for f in /opt/klangk/features/*/on-image-build.sh; do \
       [ -x "$f" ] || continue; \
-      plugin=$(basename "$(dirname "$f")"); \
-      label=" $plugin (on-image-build) "; \
+      feature=$(basename "$(dirname "$f")"); \
+      label=" $feature (on-image-build) "; \
       pad=$(( (60 - ${#label}) / 2 )); \
       line=$(printf '%*s' "$pad" '' | tr ' ' '-'); \
       printf '\033[33m%s%s%s\033[0m\n' "$line" "$label" "$line"; \

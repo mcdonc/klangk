@@ -24,7 +24,7 @@ Constraints:
   absence (the caller checks; the ``open("x")`` mode also refuses a race).
 - **Never emit a ``config_dir:`` key** — it would be ignored with a warning
   per #1649 (``klangkd.yaml`` can't relocate the config tree it lives in).
-- **No plugin seeding** — the runtime reads a shipped manifest (#1655) and
+- **No feature seeding** — the runtime reads a shipped manifest (#1655) and
   the wheel bakes the default set's UIs (#1656); no runtime declaration
   needed.
 - **#1622 admin-seeding gate unchanged** — ``seed_default_user`` still

@@ -40,7 +40,7 @@ class _FakeSink extends Fake implements WebSocketSink {
   Future close([int? closeCode, String? closeReason]) async {}
 }
 
-class _TestPlugin extends ToolPlugin {
+class _TestFeature extends ToolPlugin {
   int callCount = 0;
   String lastAction = '';
 
@@ -70,11 +70,11 @@ class _TestPlugin extends ToolPlugin {
       };
 }
 
-class _ThrowingPlugin extends ToolPlugin {
+class _ThrowingFeature extends ToolPlugin {
   @override
   Map<String, ToolHandler> get handlers => {
         'throw_action': (request) async {
-          throw Exception('plugin boom');
+          throw Exception('feature boom');
         },
       };
 }
@@ -125,7 +125,7 @@ void main() {
     late BrowserDelegate delegate;
     late MockClient mockHttp;
     late ToolPluginRegistry registry;
-    late _TestPlugin testPlugin;
+    late _TestFeature testFeature;
 
     setUp(() {
       client = WsClient();
@@ -135,8 +135,8 @@ void main() {
         return http.Response('mock-body', 200);
       });
       registry = ToolPluginRegistry();
-      testPlugin = _TestPlugin();
-      registry.register(testPlugin);
+      testFeature = _TestFeature();
+      registry.register(testFeature);
       delegate =
           BrowserDelegate(client, httpClient: mockHttp, registry: registry);
       delegate.start();
@@ -148,7 +148,7 @@ void main() {
       client.dispose();
     });
 
-    test('dispatches celebrate to plugin', () async {
+    test('dispatches celebrate to feature', () async {
       channel.serverSend({
         'type': 'browser_request',
         'id': 'req-1',
@@ -156,8 +156,8 @@ void main() {
       });
       await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(testPlugin.callCount, 1);
-      expect(testPlugin.lastAction, 'celebrate');
+      expect(testFeature.callCount, 1);
+      expect(testFeature.lastAction, 'celebrate');
       final responses = _browserResponses(channel);
       expect(responses.length, 1);
       expect(responses[0]['id'], 'req-1');
@@ -184,7 +184,7 @@ void main() {
       expect(responses[0]['result'], 'Hello');
     });
 
-    test('dispatches beep to plugin', () async {
+    test('dispatches beep to feature', () async {
       channel.serverSend({
         'type': 'browser_request',
         'id': 'req-2',
@@ -192,7 +192,7 @@ void main() {
       });
       await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(testPlugin.callCount, 1);
+      expect(testFeature.callCount, 1);
       final responses = _browserResponses(channel);
       expect(responses.length, 1);
       expect(responses[0]['status'], 'ok');
@@ -235,9 +235,9 @@ void main() {
       expect(_browserResponses(channel), isEmpty);
     });
 
-    test('plugin exception returns error', () async {
+    test('feature exception returns error', () async {
       final throwRegistry = ToolPluginRegistry();
-      throwRegistry.register(_ThrowingPlugin());
+      throwRegistry.register(_ThrowingFeature());
       delegate.stop();
       delegate = BrowserDelegate(client,
           httpClient: mockHttp, registry: throwRegistry);

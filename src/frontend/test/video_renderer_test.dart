@@ -10,7 +10,7 @@ import 'package:klangk_frontend/file_viewer/renderers/builtin_file_renderers.dar
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 /// A tiny fake of the video platform so the real [VideoPlayerController] code
-/// path runs on the Dart VM (which has no native video plugin). It reports a
+/// path runs on the Dart VM (which has no native video feature). It reports a
 /// fixed size/duration so `initialize()` completes and the player UI builds.
 class _FakeVideoPlayerPlatform extends VideoPlayerPlatform
     with MockPlatformInterfaceMixin {
@@ -189,7 +189,8 @@ void main() {
     testWidgets('shows an error message when the read fails', (tester) async {
       await pumpRenderer(
         tester,
-        Builder(builder: (c) => VideoRenderer().build(c, videoFile(fail: true))),
+        Builder(
+            builder: (c) => VideoRenderer().build(c, videoFile(fail: true))),
       );
       await settle(tester);
       expect(find.textContaining('Failed to load video'), findsOneWidget);

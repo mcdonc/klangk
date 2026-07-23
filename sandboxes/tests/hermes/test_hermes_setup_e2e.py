@@ -21,7 +21,7 @@ Covers two invariants (#1109):
   platforms configured the gateway idles for cron job execution rather than
   exiting, so it reports healthy even without Telegram/Discord tokens.
 
-Hermes was previously a compile-time plugin; converting it to a runtime
+Hermes was previously a compile-time feature; converting it to a runtime
 sandbox is what made the ``/tmp/.klangk-image-build`` bailout in
 ``bash.bashrc`` dead code (the installer's ``bash -i`` PATH probe only runs
 in the root/FHS branch, which a non-root sandbox never takes).

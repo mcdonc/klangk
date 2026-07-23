@@ -3,7 +3,7 @@
 ///
 /// Extracted from `WorkspacePage.build` into standalone, parameterised
 /// builders so they can be tested directly without mounting the full
-/// `WorkspacePage` (which depends on klangk_plugins / dart:js_interop and a
+/// `WorkspacePage` (which depends on klangk_features / dart:js_interop and a
 /// live WsClient/AuthService). Previously the test suite duplicated these
 /// widgets as standalone copies — testing the copies, not the real code.
 import 'package:flutter/material.dart';

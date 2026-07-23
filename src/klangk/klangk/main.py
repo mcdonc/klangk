@@ -25,7 +25,7 @@ from . import (
     proxy as proxy_mod,
     caddy as caddy_mod,
     oidc,
-    plugins,
+    features,
     podman,
     ssl_trust,
     terminal,
@@ -394,7 +394,7 @@ class Lifecycle:
         restart is **denied** -- the running runtime is left untouched on
         its last-known-good config rather than torn down against a broken
         one.  On a valid reload the settings are **swapped** onto
-        ``app.state.settings`` and the OIDC/plugins/SSL-trust/agent-user
+        ``app.state.settings`` and the OIDC/features/SSL-trust/agent-user
         steps are re-run, then the runtime recycles.  All subsystems read
         settings live via ``self.app.state.settings`` (#1608), so the swap
         propagates automatically with no per-subsystem ``reconfigure()``.
@@ -441,7 +441,7 @@ class Lifecycle:
         All subsystems read ``self.app.state.settings`` live (#1608), so
         swapping the instance propagates automatically.  Each subsystem's
         ``reconfigure(app_state)`` handles any cached runtime state that
-        needs refreshing (OIDC caches, plugin declarations, SSL trust,
+        needs refreshing (OIDC caches, feature declarations, SSL trust,
         proxy renderer, email templates).  Most are no-ops.  Each call is
         best-effort: a failure is logged at warning level and skipped so
         one bad step can't leave the runtime half-reconfigured.
@@ -467,7 +467,7 @@ class Lifecycle:
             "proxy_watchdog",
             "terminal",
             "oidc",
-            "plugins",
+            "features",
             "workspaces",
             "files",
             "db",
@@ -667,8 +667,8 @@ async def lifespan(app: FastAPI):
     setup_logfire(app)
 
     app.state.auth.require_secure_jwt_secret()
-    # Plugins reads the build-emitted features.json at construction
-    # (Plugins(app) in build_app); no separate load() step (#1655).
+    # Features reads the build-emitted features.json at construction
+    # (Features(app) in build_app); no separate load() step (#1655).
     app.state.oidc.init_providers()
     enforce_no_auth_bind_safety(app)
     app.state.oidc.load_login_hook()
@@ -893,10 +893,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # caches, and login-hook state (previously module globals). Reaches
     # config through self.settings.
     app.state.oidc = oidc.OIDC(app)
-    # #1451: Plugins(app_state) owns the plugins dir (computed from
+    # #1451: Features(app_state) owns the features dir (computed from
     # settings, not frozen at import), declarations, and resolved values
     # (previously module globals).
-    app.state.plugins = plugins.Plugins(app)
+    app.state.features = features.Features(app)
     # #1484: Workspaces(app_state) owns the workspace root (computed from
     # settings.data_dir at construction, not frozen at import) + CRUD/path
     # helpers.

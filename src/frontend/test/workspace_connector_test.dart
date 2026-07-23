@@ -75,7 +75,7 @@ void main() {
       final connector = WorkspaceConnector(
         wsClient: ws,
         workspaceId: 'ws-123',
-        pluginRegistry: ToolPluginRegistry(),
+        featureRegistry: ToolPluginRegistry(),
         onConnected: ({required connected, error}) {
           calledBack = true;
           expect(connected, isTrue);
@@ -105,7 +105,7 @@ void main() {
       final connector = WorkspaceConnector(
         wsClient: ws,
         workspaceId: 'ws-123',
-        pluginRegistry: ToolPluginRegistry(),
+        featureRegistry: ToolPluginRegistry(),
         onConnected: ({required connected, error}) {
           if (!connected) errorMsg = error;
         },
@@ -131,7 +131,7 @@ void main() {
       final connector = WorkspaceConnector(
         wsClient: ws,
         workspaceId: 'ws-456',
-        pluginRegistry: ToolPluginRegistry(),
+        featureRegistry: ToolPluginRegistry(),
         onConnected: ({required connected, error}) {
           calledBack = true;
           expect(connected, isTrue);
@@ -159,7 +159,7 @@ void main() {
       final connector = WorkspaceConnector(
         wsClient: ws,
         workspaceId: 'ws-1',
-        pluginRegistry: ToolPluginRegistry(),
+        featureRegistry: ToolPluginRegistry(),
         onConnected: ({required connected, error}) {},
         onContainerEvent: (name, value) => events.add(name),
         onSharedTerminalDeleted: (_) {},
@@ -189,7 +189,7 @@ void main() {
       final connector = WorkspaceConnector(
         wsClient: ws,
         workspaceId: 'ws-1',
-        pluginRegistry: ToolPluginRegistry(),
+        featureRegistry: ToolPluginRegistry(),
         onConnected: ({required connected, error}) {},
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (msg) => deletions.add(msg),
@@ -219,7 +219,7 @@ void main() {
       final connector = WorkspaceConnector(
         wsClient: ws,
         workspaceId: 'ws-1',
-        pluginRegistry: ToolPluginRegistry(),
+        featureRegistry: ToolPluginRegistry(),
         onConnected: ({required connected, error}) {},
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (_) {},
@@ -250,7 +250,7 @@ void main() {
       final connector = WorkspaceConnector(
         wsClient: ws,
         workspaceId: 'ws-1',
-        pluginRegistry: ToolPluginRegistry(),
+        featureRegistry: ToolPluginRegistry(),
         onConnected: ({required connected, error}) {
           if (connected) connectedCount++;
         },
@@ -285,7 +285,7 @@ void main() {
       final connector = WorkspaceConnector(
         wsClient: ws,
         workspaceId: 'ws-1',
-        pluginRegistry: ToolPluginRegistry(),
+        featureRegistry: ToolPluginRegistry(),
         onConnected: ({required connected, error}) {
           if (connected) connectedCount++;
         },
@@ -313,7 +313,7 @@ void main() {
       final connector = WorkspaceConnector(
         wsClient: ws,
         workspaceId: 'ws-1',
-        pluginRegistry: ToolPluginRegistry(),
+        featureRegistry: ToolPluginRegistry(),
         onConnected: ({required connected, error}) {
           if (connected) connectedCount++;
         },
@@ -345,7 +345,7 @@ void main() {
       final connector = WorkspaceConnector(
         wsClient: ws,
         workspaceId: 'ws-1',
-        pluginRegistry: ToolPluginRegistry(),
+        featureRegistry: ToolPluginRegistry(),
         onConnected: ({required connected, error}) {},
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (_) {},

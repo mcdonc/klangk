@@ -74,8 +74,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
   String? _selectedOwnWindowId;
   String _stopReason = '';
   List<String> _workspacePermissions = [];
-  late final ToolPluginRegistry _pluginRegistry;
-  late final List<ToolPlugin> _plugins;
+  late final ToolPluginRegistry _featureRegistry;
+  late final List<ToolPlugin> _features;
   late final FileRendererRegistry _fileRenderers;
   WorkspaceConnector? _connector;
 
@@ -123,10 +123,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
   @override
   void initState() {
     super.initState();
-    _pluginRegistry = ToolPluginRegistry();
-    // Plugins are registered once in main() — reuse them here.
-    _plugins = _pluginRegistry.plugins.toList();
-    _fileRenderers = buildFileRendererRegistry(_plugins);
+    _featureRegistry = ToolPluginRegistry();
+    // Features are registered once in main() — reuse them here.
+    _features = _featureRegistry.plugins.toList();
+    _fileRenderers = buildFileRendererRegistry(_features);
     _fetchWorkspaceName();
     WidgetsBinding.instance.addPostFrameCallback((_) => _connectToWorkspace());
   }
@@ -134,8 +134,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   Future<void> _fetchWorkspaceName() async {
     final auth = context.read<AuthService>();
     try {
-      final name =
-          await _findWorkspaceName(auth, '/api/v1/workspaces') ??
+      final name = await _findWorkspaceName(auth, '/api/v1/workspaces') ??
           await _findWorkspaceName(auth, '/api/v1/workspaces/shared');
       if (name != null && mounted) {
         setState(() => _workspaceName = name);
@@ -187,7 +186,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     _connector = WorkspaceConnector(
       wsClient: wsClient,
       workspaceId: widget.workspaceId,
-      pluginRegistry: _pluginRegistry,
+      featureRegistry: _featureRegistry,
       onConnected: ({required bool connected, String? error}) {
         if (!mounted) return;
         if (!connected) {
@@ -221,8 +220,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
         final deletedUserId = msg['user_id'] as String? ?? '';
         final deletedWindow = msg['window_name'] as String? ?? '';
         final deletedWid = msg['window_id'] as String? ?? '';
-        final wasViewing =
-            _activeSharedTerminal != null &&
+        final wasViewing = _activeSharedTerminal != null &&
             _activeSharedTerminal!['user_id'] == deletedUserId &&
             _activeSharedTerminal!['window_id'] == deletedWid;
         if (wasViewing) {
@@ -301,9 +299,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
       // Track selected own-window: initialize on first message, or
       // reset if the selected window was closed.
       if (wsClient.terminalWindows.isNotEmpty) {
-        final ids = wsClient.terminalWindows
-            .map((w) => w['id'] as String?)
-            .toSet();
+        final ids =
+            wsClient.terminalWindows.map((w) => w['id'] as String?).toSet();
         if (_selectedOwnWindowId == null) {
           // First load — select window 0 (grouped sessions start there).
           _selectedOwnWindowId = wsClient.terminalWindows[0]['id'] as String?;
@@ -386,8 +383,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   @override
   void dispose() {
-    for (final plugin in _plugins) {
-      plugin.dispose();
+    for (final feature in _features) {
+      feature.dispose();
     }
     super.dispose();
   }
@@ -406,18 +403,18 @@ class _WorkspacePageState extends State<WorkspacePage> {
           title: _workspaceName.isNotEmpty ? _workspaceName : 'Workspace',
         ),
         actions: [
-          for (final plugin in _plugins)
-            if (plugin.buildAppBarAction(context) != null)
-              plugin.buildAppBarAction(context)!,
+          for (final feature in _features)
+            if (feature.buildAppBarAction(context) != null)
+              feature.buildAppBarAction(context)!,
           const AppBarActions(),
         ],
       ),
       body: Stack(
         children: [
           _buildIdeLayout(wsClient, authToken),
-          for (final plugin in _plugins)
-            if (plugin.buildOverlay(context) != null)
-              plugin.buildOverlay(context)!,
+          for (final feature in _features)
+            if (feature.buildOverlay(context) != null)
+              feature.buildOverlay(context)!,
           if (_containerStopped)
             buildContainerStoppedOverlay(
               restarting: _restarting,

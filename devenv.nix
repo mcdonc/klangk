@@ -12,7 +12,7 @@ let
   backendCmd = ''
     python3 -m klangk.launcher --config="$DEVENV_ROOT/klangkd.yaml"
   '';
-  pluginsDir = config.devenv.root + "/.devenv/state/klangk/plugins";
+  featuresDir = config.devenv.root + "/.devenv/state/klangk/features";
   dataDir = config.devenv.root + "/.devenv/state/klangk/data";
   versionFile = config.devenv.state + "/klangk/version.json";
   stateDir = config.devenv.state + "/klangk";
@@ -128,15 +128,15 @@ in
         "src/frontend/web/**"
         "src/frontend/pubspec.yaml"
         "src/frontend/pubspec.lock"
-        # Key on plugin *source* (checked-in), not the materialized payload —
+        # Key on feature *source* (checked-in), not the materialized payload —
         # flutterbuildweb.sh materializes into its own tempdir (#1660).
-        "plugins/**/*.dart"
-        "plugins.yaml"
+        "features/**/*.dart"
+        "features.yaml"
       ];
     };
     "klangk:build-workspace-image" = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/build-workspace-image.sh"'';
-      after = [ "klangk:update-plugins" ];
+      after = [ "klangk:update-features" ];
       showOutput = true;
     };
     "klangk:kill-port-holders" = {
@@ -148,21 +148,21 @@ in
         fi
       '';
     };
-    "klangk:update-plugins" = {
+    "klangk:update-features" = {
       exec = ''
         cd $DEVENV_ROOT
-        bash scripts/stub_dart_plugins.sh
-        exec python3 scripts/update_plugins.py --payload-dir "${pluginsDir}"
+        bash scripts/stub_dart_features.sh
+        exec python3 scripts/update_features.py --payload-dir "${featuresDir}"
       '';
       before = [ "klangk:flutter-build" ];
       showOutput = true;
       execIfModified = [
         # The declaration lives at the repo root now (#1660); the materialized
-        # payload under ``pluginsDir`` is derived from it + plugins/*/.
-        "plugins.yaml"
-        "plugins/**/*.dart"
-        "plugins/*/package.json"
-        "plugins/*/klangk/pubspec.yaml"
+        # payload under ``featuresDir`` is derived from it + features/*/.
+        "features.yaml"
+        "features/**/*.dart"
+        "features/*/package.json"
+        "features/*/klangk/pubspec.yaml"
       ];
     };
   };
@@ -240,9 +240,9 @@ in
     fi
     exec python3 "$DEVENV_ROOT/scripts/trivy-report-nofix.py" "$@"'';
 
-  scripts.update-plugins.exec = ''
+  scripts.update-features.exec = ''
     cd $DEVENV_ROOT
-    python3 scripts/update_plugins.py "$@"
+    python3 scripts/update_features.py "$@"
   '';
 
   # -n auto: run tests in parallel across CPUs (pytest-xdist)
@@ -491,6 +491,21 @@ in
       language = "system";
       pass_filenames = true;
     };
+    # Guard against UTF-8-lossy rewrites that corrupt binary assets (#1734):
+    # a text-mode find-and-replace (errors='replace') collapses invalid bytes
+    # to U+FFFD and destroys wasm/font/image files (the bundled libghostty
+    # wasm + a font were mangled by the "plugin"->"feature" sweep, crashing
+    # WebAssembly.instantiate at app boot and hanging every e2e test). Runs on
+    # every commit (always_run) and inspects staged-vs-HEAD itself, so it sets
+    # pass_filenames=false and ignores the files/types filters.
+    binary-integrity = {
+      enable = true;
+      name = "binary-integrity";
+      entry = "python3 scripts/check_binary_integrity.py";
+      language = "system";
+      pass_filenames = false;
+      always_run = true;
+    };
   };
 
   enterShell = ''
@@ -501,7 +516,7 @@ in
 
     mkdir -p "${dataDir}"
 
-    # Generate version file (used by update_plugins.py and /version endpoint)
+    # Generate version file (used by update_features.py and /version endpoint)
     mkdir -p "$(dirname "${versionFile}")"
     bash "$DEVENV_ROOT/scripts/generate-version.sh" > "${versionFile}"
 
@@ -528,10 +543,10 @@ in
     fi
 
 
-    # Ensure klangk_plugins stub exists so flutter commands work immediately
+    # Ensure klangk_features stub exists so flutter commands work immediately
     # in any shell session (not just after devenv up). The script is idempotent
     # and skips if pubspec_overrides.yaml already exists.
-    bash "$DEVENV_ROOT/scripts/stub_dart_plugins.sh"
+    bash "$DEVENV_ROOT/scripts/stub_dart_features.sh"
 
     # Generate prettierignore (not committed)
     cat > "$DEVENV_ROOT/.prettierignore" <<'PRETTIER'

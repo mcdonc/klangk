@@ -614,7 +614,28 @@ set-password <email>` (set a known password for the default user — whose
   unchanged; only the debug scaffolding is removed. The name was also wrong
   (`KLANGKC_` is the CLI prefix, but the backend read it too).
 
+- **The `claude-code` and `herdr` features have been removed.** The
+  `features/claude-code/` and `features/herdr/` trees (and their docs /
+  mentions) are gone. Neither was declared in the default `features.yaml`,
+  so a stock build is unaffected; deployments that opted into either via a
+  custom `features.yaml` entry should drop the entry. (#1658)
+
 ### Breaking
+
+- **The term "plugin" is retired in favor of "feature" across the codebase,
+  build, and docs (#1658).** The activation unit is now "feature" everywhere
+  except the external `klangk_plugin_api` package and `ToolPlugin` base class
+  (kept — external package). Operator/integrator-visible: `plugins.yaml` →
+  `features.yaml`, `plugins/` → `features/`, `update-plugins` →
+  `update-features` (and codegen scripts `*_plugins.*` → `*_features.*`),
+  workspace image path `/opt/klangk/plugins/` → `/opt/klangk/features/`,
+  `GET /api/v1/version` field `"plugins"` → `"features"`, generated Dart
+  package `klangk_plugins` → `klangk_features` (`createAllPlugins` →
+  `createAllFeatures`) and each feature's package `klangk_plugin_<name>` →
+  `klangk_feature_<name>`. `KLANGK_FEATURES_ENABLE`/`features.json` are
+  unchanged (already "feature" by #1655); the retired `KLANGK_PLUGINS_DIR`
+  stays retired under its historical name; the env-var prefix remains
+  `KLANGK_*` (the `KLANGK_*` → `KLANGKD_*` rename is #1653, not yet landed).
 
 - **The Soliplex plugin's config key is renamed `SOLIPLEX_URL` →
   `KLANGK_FEATURE_SOLIPLEX_URL` (#1686).** Same `KLANGK_FEATURE_` namespace

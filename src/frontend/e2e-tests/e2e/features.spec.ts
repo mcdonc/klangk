@@ -14,13 +14,13 @@
 // and lives elsewhere; this is the artifact-visibility gate.
 //
 // Keep EXPECTED_FEATURES in sync with scripts/tests/test_build_pipeline.py
-// and the checked-in plugins.yaml.
+// and the checked-in features.yaml.
 
 import { test, expect } from "@playwright/test";
 import { API_BASE } from "./helpers";
 
-// The four plugins with a klangk/ Dart package — the set that appears in
-// features.json's features[] list (TS-only plugins are absent from the
+// The four features with a klangk/ Dart package — the set that appears in
+// features.json's features[] list (TS-only features are absent from the
 // manifest; they're baked into the workspace image and always-on, #1655).
 const EXPECTED_FEATURES = ["celebrate", "beep", "boingball", "git-credential"];
 
@@ -35,7 +35,7 @@ test.describe("feature artifacts visible to the frontend", () => {
     ).toBeTruthy();
     const manifest = await resp.json();
 
-    // Top-level shape — the runtime Plugins._read_manifest() contract.
+    // Top-level shape — the runtime Features._read_manifest() contract.
     expect(manifest).toHaveProperty("features");
     expect(manifest).toHaveProperty("defaults");
     expect(manifest).toHaveProperty("container_env_keys");
@@ -72,13 +72,13 @@ test.describe("feature artifacts visible to the frontend", () => {
     // boingball declares KLANGK_FEATURE_BOING_SPEED with scope: frontend —
     // the server strips the KLANGK_FEATURE_ prefix and lowercases the suffix
     // to produce the /api/config key (so the JSON key is `boing_speed`, not
-    // `klangk_feature_boing_speed`). The prefix is the plugin-config
-    // namespace from #1662; the suffix is the plugin-owned name. The key's
+    // `klangk_feature_boing_speed`). The prefix is the feature-config
+    // namespace from #1662; the suffix is the feature-owned name. The key's
     // *presence* is what matters here: it proves the server read
     // features.json and bridged the frontend-scope config block through to
-    // /api/config. The plugin reads exactly this stripped-lowercased name
-    // (plugins/boingball/klangk/lib/plugin.dart), so a drift here breaks
-    // the runtime contract between server and plugin.
+    // /api/config. The feature reads exactly this stripped-lowercased name
+    // (features/boingball/klangk/lib/feature.dart), so a drift here breaks
+    // the runtime contract between server and feature.
     expect(
       config,
       "boing_speed missing — server didn't bridge boingball's frontend config",

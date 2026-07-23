@@ -25,7 +25,7 @@ from klangk.container import ContainerRegistry
 from klangk import emailsvc as emailsvc_mod
 from klangk import util as util_mod
 from klangk import oidc as oidc_mod
-from klangk import plugins as plugins_mod
+from klangk import features as features_mod
 from _helpers import make_settings
 from klangk.wshandler.session import WebSocketState
 import types
@@ -73,7 +73,7 @@ async def app(db, temp_data_dir):
     registry = ContainerRegistry(app)
     app.state.container_registry = registry
     app.state.oidc = oidc_mod.OIDC(app)
-    app.state.plugins = plugins_mod.Plugins(app)
+    app.state.features = features_mod.Features(app)
     app.state.workspaces = ws_mod.Workspaces(app)
     app.state.files = files_mod.Files(app)
     app.state.agents = agent.Agents(app)
@@ -300,7 +300,7 @@ class TestVersion:
         assert data["version"] == "2026.01.01+abc1234"
         assert data["commit"] == "abc1234"
         assert data["built_at"] == "2026-01-01T00:00:00Z"
-        assert "plugins" in data
+        assert "features" in data
 
     async def test_version_no_file(self, client, app, monkeypatch):
         monkeypatch.setattr(app.state.settings, "version_file", None)
@@ -310,14 +310,14 @@ class TestVersion:
         assert data["version"] == "dev"
         assert data["commit"] == "unknown"
         assert data["built_at"] is None
-        assert "plugins" in data
+        assert "features" in data
 
-    async def test_version_includes_plugins(
+    async def test_version_includes_features(
         self, client, app, tmp_path, monkeypatch
     ):
         monkeypatch.setattr(app.state.settings, "version_file", None)
         # The feature manifest is a single features.json at frontend_dir
-        # (#1655) — no per-plugin package.json scan.
+        # (#1655) — no per-feature package.json scan.
         import json as json_mod
 
         frontend_dir = tmp_path / "frontend"
@@ -327,9 +327,9 @@ class TestVersion:
                 {
                     "features": [
                         {
-                            "name": "myplugin",
+                            "name": "myfeature",
                             "version": "1.2.3",
-                            "description": "A test plugin",
+                            "description": "A test feature",
                             "config": {},
                         }
                     ],
@@ -338,10 +338,10 @@ class TestVersion:
                 }
             )
         )
-        # Rebuild the Plugins instance pointing at the tmp frontend dir
+        # Rebuild the Features instance pointing at the tmp frontend dir
         import types as types_mod
 
-        app.state.plugins = app.state.plugins.__class__(
+        app.state.features = app.state.features.__class__(
             types_mod.SimpleNamespace(
                 state=types_mod.SimpleNamespace(
                     settings=make_settings(
@@ -352,11 +352,11 @@ class TestVersion:
         )
         resp = await client.get("/api/v1/version")
         assert resp.status_code == 200
-        plugins = resp.json()["plugins"]
-        assert len(plugins) == 1
-        assert plugins[0]["name"] == "myplugin"
-        assert plugins[0]["version"] == "1.2.3"
-        assert plugins[0]["description"] == "A test plugin"
+        features = resp.json()["features"]
+        assert len(features) == 1
+        assert features[0]["name"] == "myfeature"
+        assert features[0]["version"] == "1.2.3"
+        assert features[0]["description"] == "A test feature"
 
     async def test_version_includes_variant_when_present(
         self, client, app, tmp_path, monkeypatch
@@ -412,7 +412,7 @@ class TestConfig:
         assert "login_banner" in data
         assert "instance_id" in data
 
-    async def test_get_config_includes_plugins(
+    async def test_get_config_includes_features(
         self, client, app, tmp_path, monkeypatch
     ):
         # frontend_config() resolves frontend-scope values from the per-feature
@@ -430,7 +430,7 @@ class TestConfig:
                             "version": "1.0.0",
                             "description": "",
                             "config": {
-                                "KLANGK_FEATURE_MY_PLUGIN_VAR": {
+                                "KLANGK_FEATURE_MY_FEATURE_VAR": {
                                     "description": "",
                                     "default": "",
                                     "scope": "frontend",
@@ -445,7 +445,7 @@ class TestConfig:
         )
         import types as types_mod
 
-        app.state.plugins = app.state.plugins.__class__(
+        app.state.features = app.state.features.__class__(
             types_mod.SimpleNamespace(
                 state=types_mod.SimpleNamespace(
                     settings=make_settings(
@@ -454,13 +454,13 @@ class TestConfig:
                 )
             )
         )
-        monkeypatch.setenv("KLANGK_FEATURE_MY_PLUGIN_VAR", "test-value")
+        monkeypatch.setenv("KLANGK_FEATURE_MY_FEATURE_VAR", "test-value")
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
-        # KLANGK_FEATURE_MY_PLUGIN_VAR → lowercased suffix `my_plugin_var`
+        # KLANGK_FEATURE_MY_FEATURE_VAR → lowercased suffix `my_feature_var`
         # (#1662: strip prefix + lowercase suffix for /api/config keys).
-        assert data["my_plugin_var"] == "test-value"
+        assert data["my_feature_var"] == "test-value"
 
     async def test_get_config_includes_features_enable_when_set(
         self, client, app, monkeypatch

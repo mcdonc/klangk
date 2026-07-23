@@ -36,7 +36,7 @@ scenes/
   scene-06-files.ts                   # Sc 6: file browser + PDF inline render
   scene-07-collaboration.ts           # Sc 7: collaboration (owner's view)
   scene-07b-collaboration-teammate.ts # Sc 7b: collaboration (teammate's view)
-  scene-08-plugins.ts                 # Sc 8: plugins
+  scene-08-features.ts                 # Sc 8: features
   scene-09-admin.ts                   # Sc 9: admin panel tour
 
 # CLI harness (tmux + ffmpeg)
@@ -310,6 +310,6 @@ and `ws` resolve without a separate install.)
       Scene 7's collaborators are the seeded cast (teammate/designer/reviewer),
       not throwaway users.
 - [ ] scene 5b — debug-with-Pi terminal scene (drives `pi` in a tab; agent-driven)
-- [ ] scene 09 — Plugins
+- [ ] scene 09 — Features
 - [ ] scene 4 hosted-app beat — open openclaw's Service tab → proxied web UI
       (requires CLI scenes 3/3b to have run first so openclaw's gateway is live)
