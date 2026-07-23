@@ -82,17 +82,17 @@ Feature-declared config keys (the ones the build emits into `features.json` — 
 
 ```yaml
 features_config:
-  KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID: "abc123"
-  KLANGK_FEATURE_SOLIPLEX_URL: "https://rag.example.com"
+  github_oauth_client_id: "abc123"
+  soliplex_url: "https://rag.example.com"
 ```
 
-Each key in the block is the full, declared feature-config name (the same string that appears in `features.json` — e.g. `KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID`, not the un-prefixed form). **Precedence** when a feature key is resolved: **env** > **`features_config:`** > **feature-declared default**. Env stays the escape hatch for per-invocation overrides; the block carries the durable deploy values; the feature default is the floor.
+Each key may be written as the **stripped, lowercased short form** — e.g. `soliplex_url`, the same key the frontend receives via `GET /api/v1/config` — or the full declared name (`KLANGK_FEATURE_SOLIPLEX_URL`, the same string that appears in `features.json`). The short form is preferred ([#1737](https://github.com/mcdonc/klangk/issues/1737)); both resolve identically. **Precedence** when a feature key is resolved: **env** > **`features_config:`** > **feature-declared default**. Env stays the escape hatch for per-invocation overrides; the block carries the durable deploy values; the feature default is the floor.
 
 `file:` / `cmd:` prefixes work on values in this block too — they're honored per-key at resolution time, consistent with how the same resolver treats env values. Unlike top-level `KLANGK_*` fields, a bad `file:`/`cmd:` reference here does **not** fail at boot (the values can't be resolved at construction); it logs and falls through to the feature default — the same behavior a broken env ref already has.
 
 This block is read at boot and on `SIGHUP` (reloadable, like the rest of the file). It supplies values only; it does **not** change which features are compiled in (build-time, [#1655](https://github.com/mcdonc/klangk/issues/1655)) or which are turned on (`KLANGK_FEATURES_ENABLE`, deploy-time).
 
-> **Quote non-string values.** The block's values are strings, so quote numerics and booleans the way you would for any other config-file field — `KLANGK_FEATURE_PORT: "8080"`, not `8080` (the unquoted form is parsed as an int and rejected at construction). This matches the rest of `klangkd.yaml` (the complete example quotes every numeric).
+> **Quote non-string values.** The block's values are strings, so quote numerics and booleans the way you would for any other config-file field — `port: "8080"`, not `8080` (the unquoted form is parsed as an int and rejected at construction). This matches the rest of `klangkd.yaml` (the complete example quotes every numeric).
 
 ## Complete example
 
