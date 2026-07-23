@@ -28,6 +28,11 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   String? _error;
   String? _saveMessage;
   Timer? _saveMessageTimer;
+  // #1365: set when a successful save changed allowed_domains on a
+  // workspace whose container is running — the egress filter is baked at
+  // container create time, so the new ruleset won't take effect until the
+  // container is restarted. Surfaced as a notice under the save message.
+  bool _pendingEgressRestart = false;
 
   @override
   void initState() {
@@ -111,7 +116,20 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     );
     if (!mounted) return;
     if (resp.statusCode == 200) {
-      setState(() => _saveMessage = 'Settings saved');
+      // #1365: the egress filter is applied at container create time (the
+      // OCI hook runs at createContainer), so a change to allowed_domains
+      // only takes effect on the next (re)start. Detect the change before
+      // _loadData() reassigns _workspace, and only nag when a container is
+      // actually running (a stopped workspace picks the new rules up on
+      // its next start — no action needed).
+      final prevDomains = _workspace?['allowed_domains'];
+      final egressChanged =
+          !_domainListsEqual(prevDomains, fields['allowed_domains']);
+      final running = (_workspace?['running'] as bool?) ?? false;
+      setState(() {
+        _saveMessage = 'Settings saved';
+        _pendingEgressRestart = egressChanged && running;
+      });
       _loadData();
       _saveMessageTimer?.cancel();
       _saveMessageTimer = Timer(const Duration(seconds: 2), () {
@@ -143,9 +161,22 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       allowAutostart:
           context.select<AuthService, bool>((a) => a.allowAutostart),
       saveMessage: _saveMessage,
+      pendingEgressRestart: _pendingEgressRestart,
       onSave: _saveSettings,
     );
   }
+}
+
+/// Compare two allowed_domains values (each a ``List?`` of ``String``) for
+/// order-independent equality, so the restart notice fires only on a real
+/// change — not a harmless reorder or the null/empty equivalence (#1365).
+bool _domainListsEqual(Object? a, Object? b) {
+  final la = (a is List ? a.cast<String>() : const <String>[]);
+  final lb = (b is List ? b.cast<String>() : const <String>[]);
+  if (la.length != lb.length) return false;
+  // Order-independent: the server de-dupes + may reorder on round-trip, so
+  // compare as sets to avoid a spurious "changed" on a save that didn't.
+  return <String>{...la}.difference(<String>{...lb}).isEmpty;
 }
 
 class _SettingsForm extends StatefulWidget {
@@ -155,6 +186,7 @@ class _SettingsForm extends StatefulWidget {
   final String defaultImage;
   final bool allowAutostart;
   final String? saveMessage;
+  final bool pendingEgressRestart;
   final Future<void> Function(Map<String, dynamic>) onSave;
 
   const _SettingsForm({
@@ -164,6 +196,7 @@ class _SettingsForm extends StatefulWidget {
     required this.defaultImage,
     required this.allowAutostart,
     required this.saveMessage,
+    required this.pendingEgressRestart,
     required this.onSave,
   });
 
@@ -366,6 +399,10 @@ class _SettingsFormState extends State<_SettingsForm> {
             children: [
               if (widget.saveMessage != null) ...[
                 _buildSaveMessage(),
+                if (widget.pendingEgressRestart) ...[
+                  const SizedBox(height: 8),
+                  _buildEgressRestartNotice(),
+                ],
                 const SizedBox(height: 16),
               ],
               _buildConfigCard(labelStyle),
@@ -392,6 +429,34 @@ class _SettingsFormState extends State<_SettingsForm> {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(widget.saveMessage!),
+    );
+  }
+
+  /// #1365: the egress filter is baked into the container at create time
+  /// (the OCI createContainer hook installs the iptables ruleset before the
+  /// entrypoint runs), so a saved allowed_domains change has no effect on a
+  /// running container until it's restarted. Shown under the save message
+  /// only when the change landed and a container is live.
+  Widget _buildEgressRestartNotice() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: KColors.accentAmber.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.restart_alt, size: 18),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Restart the workspace container to apply the new egress '
+              'filter — the ruleset is set at container create time.',
+            ),
+          ),
+        ],
+      ),
     );
   }
 

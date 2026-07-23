@@ -498,6 +498,88 @@ void main() {
       // Drain the 2s auto-clear timer (see save-success test).
       await tester.pumpAndSettle();
     });
+
+    testWidgets(
+        'allowed_domains change on a running container shows restart notice',
+        (tester) async {
+      // #1365: the egress filter is baked at container create time, so a
+      // saved change only takes effect after a restart. The notice appears
+      // only when a container is running AND allowed_domains changed.
+      // Mounts/env emptied so the only close icon is the domain chip's.
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'mounts': <String>[],
+        'env': <String, String>{},
+        'allowed_domains': <String>['old.example:443'],
+        'running': true,
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Remove the existing domain so the save differs from the loaded ws.
+      await tester.tap(find.byIcon(Icons.close).first);
+      await tester.pump();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(find.textContaining('Restart the workspace container'),
+          findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('no restart notice when allowed_domains unchanged on save',
+        (tester) async {
+      // Saving without touching the filter must not nag.
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'allowed_domains': <String>['stable.example:443'],
+        'running': true,
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(
+          find.textContaining('Restart the workspace container'), findsNothing);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('no restart notice when container is not running',
+        (tester) async {
+      // A stopped workspace picks the new rules up on next start — no
+      // action needed, so no notice even though allowed_domains changed.
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'mounts': <String>[],
+        'env': <String, String>{},
+        'allowed_domains': <String>['old.example:443'],
+        'running': false,
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.close).first);
+      await tester.pump();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(
+          find.textContaining('Restart the workspace container'), findsNothing);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
   });
 
   group('auto start', () {
