@@ -1015,6 +1015,13 @@ class KlangkSettings(BaseSettings):
 # ---------------------------------------------------------------------------
 
 
+# Feature-config namespace prefix (mirrors _CONTAINER_ENV_KEY_PREFIX in
+# features.py / import_dart_features.py). Every feature-declared config key
+# starts with this; the features_config: block accepts either this full form
+# or the stripped, lowercased short form (see resolve_dynamic_config, #1737).
+_FEATURE_CONFIG_PREFIX = "KLANGK_FEATURE_"
+
+
 def resolve_dynamic_config(
     key: str,
     default: str | None = None,
@@ -1042,6 +1049,11 @@ def resolve_dynamic_config(
        resolver. A bad ``file:``/``cmd:`` ref here does NOT abort boot (the
        values can't be resolved at construction); it logs and falls through
        to *default*, mirroring how a bad env ref behaves.
+
+    The block accepts either the full declared name
+    (``KLANGK_FEATURE_SOLIPLEX_URL``) or the stripped, lowercased short form
+    (``soliplex_url`` — the same key surfaced to the frontend via
+    ``/api/v1/config``); env stays full-prefixed (#1737).
     3. **feature default** — the *default* argument (the feature-declared
        default from ``features.json``).
 
@@ -1060,6 +1072,15 @@ def resolve_dynamic_config(
         return resolved if resolved is not None else default
     if features_config is not None:
         fc_raw = features_config.get(key)
+        if fc_raw is None:
+            # #1737: the block may use the short, JSON-style key (e.g.
+            # ``soliplex_url``) instead of the full declared name
+            # (``KLANGK_FEATURE_SOLIPLEX_URL``). Try the stripped, lowercased
+            # form so operators can write either. Env stays full-prefixed —
+            # only the config-file block accepts the short form.
+            fc_raw = features_config.get(
+                key.removeprefix(_FEATURE_CONFIG_PREFIX).lower()
+            )
         if fc_raw is not None:
             resolved = _resolve_indirection(fc_raw, key)
             if resolved is not None:

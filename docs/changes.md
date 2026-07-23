@@ -27,6 +27,13 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **The `features_config:` block now accepts the stripped, lowercased key form
+  (`soliplex_url`) in addition to the full declared name
+  (`KLANGK_FEATURE_SOLIPLEX_URL`) (#1737).** The short form matches the key the
+  frontend receives via `GET /api/v1/config`; the full name still works, and env
+  (`KLANGK_FEATURE_*`) still wins per key — so the YAML reads the way operators
+  naturally write it instead of being silently ignored.
+
 - **Plugin-declared config values are now resolvable from `klangkd.yaml`
   (#1659).** A new `features_config:` block supplies values for the keys
   the build emits into `features.json` (`container_env_keys` + the

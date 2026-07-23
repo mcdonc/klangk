@@ -790,6 +790,43 @@ class TestFeaturesConfigSource:
         )
         assert p.container_env() == {"KLANGK_FEATURE_OAUTH_ID": "file-secret"}
 
+    def test_container_env_resolves_short_form_key(self, tmp_path):
+        # #1737: the features_config: block may use the short, JSON-style key
+        # (github_oauth_client_id) instead of the full declared name
+        # (KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID) — both resolve the same.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [],
+                "defaults": [],
+                "container_env_keys": [
+                    "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID"
+                ],
+            },
+        )
+        p = self._features_with_fc(
+            tmp_path, {"github_oauth_client_id": "abc123"}
+        )
+        assert p.container_env() == {
+            "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc123"
+        }
+
+    def test_container_env_absent_key_falls_to_default(self, tmp_path):
+        # Block present but the manifest key is absent in both full and short
+        # form → the per-key empty default (no leak of an unrelated block key).
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [],
+                "defaults": [],
+                "container_env_keys": ["KLANGK_FEATURE_X"],
+            },
+        )
+        p = self._features_with_fc(
+            tmp_path, {"KLANGK_FEATURE_UNRELATED": "other"}
+        )
+        assert p.container_env() == {"KLANGK_FEATURE_X": ""}
+
     def test_frontend_config_resolves_from_features_config(self, tmp_path):
         _write_manifest(
             tmp_path,
@@ -882,6 +919,37 @@ class TestFeaturesConfigSource:
         )
         assert p.frontend_config() == {
             "soliplex_url": "https://from-env.example.com"
+        }
+
+    def test_frontend_config_resolves_short_form_key(self, tmp_path):
+        # #1737: the block may use soliplex_url (the /api/v1/config JSON key)
+        # instead of the full KLANGK_FEATURE_SOLIPLEX_URL — both resolve.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {
+                        "name": "soliplex",
+                        "version": "1.0.0",
+                        "description": "",
+                        "config": {
+                            "KLANGK_FEATURE_SOLIPLEX_URL": {
+                                "description": "RAG endpoint",
+                                "default": "",
+                                "scope": "frontend",
+                            }
+                        },
+                    }
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        p = self._features_with_fc(
+            tmp_path, {"soliplex_url": "https://rag.example.com"}
+        )
+        assert p.frontend_config() == {
+            "soliplex_url": "https://rag.example.com"
         }
 
     def test_no_features_config_block_preserves_env_only_behavior(
