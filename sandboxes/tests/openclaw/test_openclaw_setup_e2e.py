@@ -17,7 +17,7 @@ Covers three invariants:
 Under the agent-owns-the-service model (#1133/#1158) the service command
 runs in the agent's standalone ``service`` tmux session, whose login shell
 sources the AGENT's ``~/.profile``. So ``setup.sh`` repoints ``HOME`` at
-``$KLANGK_AGENT_HOME`` and writes its exports there (``NVM_DIR`` + nvm
+``$KLANGKWS_AGENT_HOME`` and writes its exports there (``NVM_DIR`` + nvm
 source, ``/openclaw/bin`` on ``PATH``, ``OPENCLAW_HOME``); the owner
 manages openclaw through the Service terminal tab, not their own shell, so
 nothing openclaw-related lives in the owner's home (#1171). The health
@@ -161,31 +161,31 @@ def _start_server(data_dir, extra_env=None):
     """
     log_path = os.path.join(data_dir, "server.log")
     overrides = {
-        "KLANGK_JWT_SECRET": "openclaw-e2e-test-secret",
-        "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
-        "KLANGK_DEFAULT_USER": EMAIL,
-        "KLANGK_DEFAULT_PASSWORD": PASSWORD,
-        "KLANGK_AUTH_MODES": "password",  # these tests use password login
-        "KLANGK_TEST_MODE": "1",
-        "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
+        "KLANGKD_JWT_SECRET": "openclaw-e2e-test-secret",
+        "KLANGKD_PREVENT_INSECURE_JWT_SECRET": "",
+        "KLANGKD_DEFAULT_USER": EMAIL,
+        "KLANGKD_DEFAULT_PASSWORD": PASSWORD,
+        "KLANGKD_AUTH_MODES": "password",  # these tests use password login
+        "KLANGKD_TEST_MODE": "1",
+        "KLANGKD_IDLE_TIMEOUT_SECONDS": "300",
         # Poll health every 3s instead of the 30s default so the
         # #1089 health-check test sees the healthy transition quickly
         # (the gateway takes a few seconds to bind after setup). This
         # is harmless to the other tests: they hold setup_state=pending
         # at the sentinel (health checks are skipped until complete) or
         # have already finished asserting by the time polling starts.
-        "KLANGK_HEALTH_CHECK_INTERVAL": "3",
-        "KLANGK_ALLOW_AUTOSTART": "1",
+        "KLANGKD_HEALTH_CHECK_INTERVAL": "3",
+        "KLANGKD_ALLOW_AUTOSTART": "1",
         "LOGFIRE_TOKEN": "",
         "log_path": log_path,
     }
     # Runner/devenv infra clean_env would otherwise strip (#1526): system
     # podman + the LLM endpoint the openclaw gateway proxies to.
     for _k in (
-        "KLANGK_PODMAN_BIN",
-        "KLANGK_LLM_API_KEY",
-        "KLANGK_LLM_BASE_URL",
-        "KLANGK_LLM_MODEL",
+        "KLANGKD_PODMAN_BIN",
+        "KLANGKD_LLM_API_KEY",
+        "KLANGKD_LLM_BASE_URL",
+        "KLANGKD_LLM_MODEL",
     ):
         _v = os.environ.get(_k)
         if _v is not None:
@@ -525,7 +525,7 @@ class TestOpenclawSetupProfileExports:
             ws3_id = self._await_container(name=WS3)
 
             # Wait for the gateway to come up AND the monitor (polling
-            # every KLANGK_HEALTH_CHECK_INTERVAL=3s in this fixture) to
+            # every KLANGKD_HEALTH_CHECK_INTERVAL=3s in this fixture) to
             # report healthy. Generous timeout: the gateway binds a few
             # seconds after setup, then the first poll lands within one
             # interval.

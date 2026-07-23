@@ -56,7 +56,7 @@ class TestLoadConfig:
         with pytest.raises(ConfigurationError, match="absolute path"):
             _oidc(
                 make_settings(
-                    {"KLANGK_OIDC_CONFIG": str(tmp_path / "nope.json")}
+                    {"KLANGKD_OIDC_CONFIG": str(tmp_path / "nope.json")}
                 )
             ).load_config()
 
@@ -76,7 +76,7 @@ class TestLoadConfig:
             )
         )
         providers = _oidc(
-            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+            make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
         ).load_config()
         assert len(providers) == 1
         assert providers[0].id == "test"
@@ -101,7 +101,7 @@ class TestLoadConfig:
             )
         )
         providers = _oidc(
-            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+            make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
         ).load_config()
         assert providers[0].client_secret == "file-secret"
 
@@ -122,7 +122,7 @@ class TestLoadConfig:
             )
         )
         providers = _oidc(
-            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+            make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
         ).load_config()
         assert providers[0].ca_cert == "/etc/pki/dod-ca.pem"
 
@@ -144,7 +144,7 @@ class TestLoadConfig:
             )
         )
         providers = _oidc(
-            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+            make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
         ).load_config()
         assert providers[0].token_validation_pem == pem
 
@@ -165,7 +165,7 @@ class TestLoadConfig:
             )
         )
         providers = _oidc(
-            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+            make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
         ).load_config()
         expected = str(tmp_path / "certs" / "ca.pem")
         assert providers[0].ca_cert == expected
@@ -186,7 +186,7 @@ class TestLoadConfig:
             )
         )
         providers = _oidc(
-            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+            make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
         ).load_config()
         assert providers[0].ca_cert is None
 
@@ -207,7 +207,7 @@ class TestLoadConfig:
             )
         )
         providers = _oidc(
-            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+            make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
         ).load_config()
         assert providers[0].trust_email is True
 
@@ -227,7 +227,7 @@ class TestLoadConfig:
             )
         )
         providers = _oidc(
-            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+            make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
         ).load_config()
         assert providers[0].trust_email is False
 
@@ -254,7 +254,7 @@ class TestLoadConfig:
             )
         )
         providers = _oidc(
-            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+            make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
         ).load_config()
         assert len(providers) == 2
         assert providers[0].id == "a"
@@ -280,7 +280,7 @@ class TestLoadConfig:
             )
         )
         providers = _oidc(
-            make_settings({"KLANGK_OIDC_CONFIG": str(cfg)})
+            make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
         ).load_config()
         assert len(providers) == 1
         assert providers[0].display_name == "Legacy"
@@ -339,7 +339,7 @@ class TestInlineProviders:
             '    client-secret: "inline"\n'
         )
         settings = make_settings(
-            {"KLANGK_OIDC_CONFIG": str(ext)}, config_file=str(cfg)
+            {"KLANGKD_OIDC_CONFIG": str(ext)}, config_file=str(cfg)
         )
         providers = _oidc(settings).load_config()
         assert len(providers) == 1
@@ -400,7 +400,7 @@ class TestInlineProviders:
             )
         )
         providers = _oidc(
-            make_settings({"KLANGK_OIDC_CONFIG": str(ext)})
+            make_settings({"KLANGKD_OIDC_CONFIG": str(ext)})
         ).load_config()
         assert len(providers) == 1
         assert providers[0].id == "external"
@@ -422,7 +422,7 @@ class TestProviderRegistry:
                 ]
             )
         )
-        o = _oidc(make_settings({"KLANGK_OIDC_CONFIG": str(cfg)}))
+        o = _oidc(make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)}))
         o.init_providers()
         assert o.is_enabled()
         assert o.get_provider("test") is not None
@@ -438,17 +438,17 @@ class TestProviderRegistry:
     def test_init_raises_when_oidc_required_but_no_providers(self):
         with pytest.raises(ConfigurationError, match="no OIDC providers"):
             _oidc(
-                make_settings({"KLANGK_AUTH_MODES": "oidc"})
+                make_settings({"KLANGKD_AUTH_MODES": "oidc"})
             ).init_providers()
 
     def test_init_raises_when_both_required_but_no_providers(self):
         with pytest.raises(ConfigurationError, match="no OIDC providers"):
             _oidc(
-                make_settings({"KLANGK_AUTH_MODES": "both"})
+                make_settings({"KLANGKD_AUTH_MODES": "both"})
             ).init_providers()
 
     def test_init_ok_when_password_only(self):
-        o = _oidc(make_settings({"KLANGK_AUTH_MODES": "password"}))
+        o = _oidc(make_settings({"KLANGKD_AUTH_MODES": "password"}))
         o.init_providers()
         assert not o.is_enabled()
 
@@ -469,35 +469,35 @@ class TestAuthModes:
         assert not o.oidc_login_allowed()
 
     def test_oidc_only(self):
-        o = _oidc(make_settings({"KLANGK_AUTH_MODES": "oidc"}))
+        o = _oidc(make_settings({"KLANGKD_AUTH_MODES": "oidc"}))
         o.providers.append(_provider())
         assert o.auth_modes() == "oidc"
         assert not o.password_login_allowed()
         assert o.oidc_login_allowed()
 
     def test_password_only(self):
-        o = _oidc(make_settings({"KLANGK_AUTH_MODES": "password"}))
+        o = _oidc(make_settings({"KLANGKD_AUTH_MODES": "password"}))
         o.providers.append(_provider())
         assert o.auth_modes() == "password"
         assert o.password_login_allowed()
         assert not o.oidc_login_allowed()
 
     def test_none_mode(self):
-        o = _oidc(make_settings({"KLANGK_AUTH_MODES": "none"}))
+        o = _oidc(make_settings({"KLANGKD_AUTH_MODES": "none"}))
         assert o.auth_modes() == "none"
         assert not o.password_login_allowed()
         assert not o.oidc_login_allowed()
         assert o.local_login_allowed()
 
     def test_none_mode_ignores_oidc_config(self):
-        o = _oidc(make_settings({"KLANGK_AUTH_MODES": "none"}))
+        o = _oidc(make_settings({"KLANGKD_AUTH_MODES": "none"}))
         o.providers.append(_provider())
         assert o.auth_modes() == "none"
         assert o.local_login_allowed()
 
     def test_local_login_false_in_other_modes(self):
         for mode in ("password", "oidc", "both"):
-            o = _oidc(make_settings({"KLANGK_AUTH_MODES": mode}))
+            o = _oidc(make_settings({"KLANGKD_AUTH_MODES": mode}))
             assert not o.local_login_allowed()
 
     # --- AUTH_MODES unset defaults to ``none`` (no amalgamated setting) ---
@@ -811,7 +811,7 @@ class TestLoadLoginHook:
             "def on_login(provider, claims, email, tokens):\n"
             "    return {'testers'}\n"
         )
-        o = _oidc(make_settings({"KLANGK_OIDC_LOGIN_HOOK": str(hook_file)}))
+        o = _oidc(make_settings({"KLANGKD_OIDC_LOGIN_HOOK": str(hook_file)}))
         o.load_login_hook()
         assert o.login_hook is not None
         assert o.login_hook(None, {}, "", {}) == {"testers"}
@@ -823,7 +823,7 @@ class TestLoadLoginHook:
             "    return {'admins'}\n"
         )
         o = _oidc(
-            make_settings({"KLANGK_OIDC_LOGIN_HOOK": f"{hook_file}:check"})
+            make_settings({"KLANGKD_OIDC_LOGIN_HOOK": f"{hook_file}:check"})
         )
         o.load_login_hook()
         assert o.login_hook is not None
@@ -835,7 +835,7 @@ class TestLoadLoginHook:
             "async def on_login(provider, claims, email, tokens):\n"
             "    return None\n"
         )
-        o = _oidc(make_settings({"KLANGK_OIDC_LOGIN_HOOK": str(hook_file)}))
+        o = _oidc(make_settings({"KLANGKD_OIDC_LOGIN_HOOK": str(hook_file)}))
         o.load_login_hook()
         assert o.login_hook_is_async is True
 
@@ -843,7 +843,7 @@ class TestLoadLoginHook:
         with pytest.raises(ConfigurationError, match="file not found"):
             _oidc(
                 make_settings(
-                    {"KLANGK_OIDC_LOGIN_HOOK": "/nonexistent/hook.py"}
+                    {"KLANGKD_OIDC_LOGIN_HOOK": "/nonexistent/hook.py"}
                 )
             ).load_login_hook()
 
@@ -855,7 +855,7 @@ class TestLoadLoginHook:
         ):
             _oidc(
                 make_settings(
-                    {"KLANGK_OIDC_LOGIN_HOOK": f"{hook_file}:missing"}
+                    {"KLANGKD_OIDC_LOGIN_HOOK": f"{hook_file}:missing"}
                 )
             ).load_login_hook()
 
@@ -866,7 +866,7 @@ class TestLoadLoginHook:
             ConfigurationError, match="not found or not callable"
         ):
             _oidc(
-                make_settings({"KLANGK_OIDC_LOGIN_HOOK": str(hook_file)})
+                make_settings({"KLANGKD_OIDC_LOGIN_HOOK": str(hook_file)})
             ).load_login_hook()
 
 

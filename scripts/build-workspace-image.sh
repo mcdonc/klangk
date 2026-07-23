@@ -2,7 +2,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
-PODMAN="${KLANGK_PODMAN_BIN:-podman}"
+PODMAN="${KLANGKD_PODMAN_BIN:-podman}"
 # shellcheck source=_podman_common.sh disable=SC1091
 source "$SCRIPT_DIR/_podman_common.sh"
 
@@ -30,10 +30,10 @@ FORCE_BUILD=false
 for arg in "$@"; do
   case "$arg" in --no-cache | --force) FORCE_BUILD=true ;; esac
 done
-if ! $FORCE_BUILD && "$PODMAN" image exists "${KLANGK_IMAGE_NAME}" 2>/dev/null && [ -f "$STAMP" ]; then
+if ! $FORCE_BUILD && "$PODMAN" image exists "${KLANGKD_IMAGE_NAME}" 2>/dev/null && [ -f "$STAMP" ]; then
   OLD_HASH=$(cat "$STAMP" 2>/dev/null || true)
   if [ "$CURRENT_HASH" = "$OLD_HASH" ]; then
-    echo "Image ${KLANGK_IMAGE_NAME} is up to date, skipping build."
+    echo "Image ${KLANGKD_IMAGE_NAME} is up to date, skipping build."
     exit 0
   fi
 fi
@@ -42,7 +42,7 @@ fi
 # is checked in at features.yaml; the payload (symlinked trees + features.lock)
 # is ephemeral. Cleaned up on exit.
 #
-# Git-sourced features are skipped by default — set KLANGK_BUILD_INCLUDE_REMOTE=1
+# Git-sourced features are skipped by default — set KLANGKBUILD_BUILD_INCLUDE_REMOTE=1
 # to fetch them. Keeps CI off the network and resilient to upstream failures
 # (the policy dates to #1691). Every feature is a local path entry today
 # (soliplex was vendored in #1686), so the skip is currently a no-op; the gate
@@ -50,7 +50,7 @@ fi
 PAYLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/klangk-features-XXXXXX")"
 trap 'rm -rf "$PAYLOAD_DIR"' EXIT
 UPDATE_FLAGS=(--payload-dir "$PAYLOAD_DIR")
-if [ "${KLANGK_BUILD_INCLUDE_REMOTE:-0}" != "1" ]; then
+if [ "${KLANGKBUILD_BUILD_INCLUDE_REMOTE:-0}" != "1" ]; then
   UPDATE_FLAGS+=(--local-only)
 fi
 python3 scripts/update_features.py "${UPDATE_FLAGS[@]}"
@@ -73,19 +73,19 @@ COMMIT="$(git rev-parse --short HEAD)"
 CALVER="$(date -u +%Y.%m.%d)"
 VERSION="${CALVER}-${COMMIT}"
 # Remove old version tags (but not :latest — podman build will update it).
-for old_tag in $("$PODMAN" images --format '{{.Tag}}' --filter "reference=${KLANGK_IMAGE_NAME}" 2>/dev/null || true); do
+for old_tag in $("$PODMAN" images --format '{{.Tag}}' --filter "reference=${KLANGKD_IMAGE_NAME}" 2>/dev/null || true); do
   case "$old_tag" in
   latest | "$VERSION" | "<none>") ;;
-  *) "$PODMAN" untag "${KLANGK_IMAGE_NAME}:${old_tag}" 2>/dev/null || true ;;
+  *) "$PODMAN" untag "${KLANGKD_IMAGE_NAME}:${old_tag}" 2>/dev/null || true ;;
   esac
 done
 "$PODMAN" build \
   "${SIG_POLICY_ARGS[@]}" \
   --pull=newer \
-  --platform "${KLANGK_PLATFORM:-linux/amd64}" \
+  --platform "${KLANGKBUILD_PLATFORM:-linux/amd64}" \
   --build-context features="$STAGING/features" \
-  -t "${KLANGK_IMAGE_NAME}:latest" \
-  -t "${KLANGK_IMAGE_NAME}:${VERSION}" \
+  -t "${KLANGKD_IMAGE_NAME}:latest" \
+  -t "${KLANGKD_IMAGE_NAME}:${VERSION}" \
   "$@" src/containers/workspace/
 
 echo "$CURRENT_HASH" >"$STAMP"

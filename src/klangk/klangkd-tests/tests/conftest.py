@@ -39,18 +39,18 @@ def _disable_proxy(monkeypatch):
     The lifespan's proxy watchdog is unconditional in real runs; tests boot
     the app (often via the lifespan) and never want a real proxy (nginx)
     process.
-    Sets the internal, non-user-facing ``_KLANGK_DISABLE_PROXY`` kill switch.
+    Sets the internal, non-user-facing ``_KLANGKD_DISABLE_PROXY`` kill switch.
     """
-    monkeypatch.setenv("_KLANGK_DISABLE_PROXY", "1")
+    monkeypatch.setenv("_KLANGKD_DISABLE_PROXY", "1")
 
 
 @pytest.fixture(autouse=True)
 def temp_data_dir(tmp_path, monkeypatch):
-    """Point KLANGK_DATA_DIR / KLANGK_STATE_DIR / KLANGK_CUSTOMIZE_DIR at temp dirs per test."""
-    monkeypatch.setenv("KLANGK_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("KLANGK_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("KLANGK_CUSTOMIZE_DIR", str(tmp_path / "customize"))
-    monkeypatch.delenv("KLANGK_IMAGE_PULL_POLICY", raising=False)
+    """Point KLANGKD_DATA_DIR / KLANGKD_STATE_DIR / KLANGKD_CUSTOMIZE_DIR at temp dirs per test."""
+    monkeypatch.setenv("KLANGKD_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("KLANGKD_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("KLANGKD_CUSTOMIZE_DIR", str(tmp_path / "customize"))
+    monkeypatch.delenv("KLANGKD_IMAGE_PULL_POLICY", raising=False)
     # Build the per-test DB from the new env so the engine cache and db_path
     # point at the per-test temp dir (#1452: no import-time globals). Stash it
     # in the per-test holder so the ``app_state`` fixture (and any
@@ -207,10 +207,10 @@ async def app_state(temp_data_dir):
 
     settings = make_settings(
         {
-            "KLANGK_AUTH_MODES": "password",
-            "KLANGK_DATA_DIR": str(temp_data_dir),
-            "KLANGK_STATE_DIR": str(temp_data_dir / "state"),
-            "KLANGK_CUSTOMIZE_DIR": str(temp_data_dir / "customize"),
+            "KLANGKD_AUTH_MODES": "password",
+            "KLANGKD_DATA_DIR": str(temp_data_dir),
+            "KLANGKD_STATE_DIR": str(temp_data_dir / "state"),
+            "KLANGKD_CUSTOMIZE_DIR": str(temp_data_dir / "customize"),
         }
     )
     state = types.SimpleNamespace(settings=settings)

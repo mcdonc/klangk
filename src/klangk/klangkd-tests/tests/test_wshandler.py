@@ -9714,7 +9714,7 @@ class TestBridgeIdleTimeout:
     def test_env_override(self):
         assert (
             _util(
-                {"KLANGK_BRIDGE_TIMEOUT_SECONDS": "45"}
+                {"KLANGKD_BRIDGE_TIMEOUT_SECONDS": "45"}
             ).bridge_idle_timeout()
             == 45.0
         )
@@ -9722,7 +9722,7 @@ class TestBridgeIdleTimeout:
     def test_invalid_env_falls_back(self):
         assert (
             _util(
-                {"KLANGK_BRIDGE_TIMEOUT_SECONDS": "nope"}
+                {"KLANGKD_BRIDGE_TIMEOUT_SECONDS": "nope"}
             ).bridge_idle_timeout()
             == 30.0
         )

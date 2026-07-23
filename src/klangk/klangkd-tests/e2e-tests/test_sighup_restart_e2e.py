@@ -43,17 +43,17 @@ def server():
     """Start a real Klangk server (klangkd over its UDS) with short idle +
     health intervals."""
     server = start_server(
-        KLANGK_JWT_SECRET="sighup-e2e-secret",
-        KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-        KLANGK_DEFAULT_USER="test@example.com",
-        KLANGK_DEFAULT_PASSWORD="testpass",
-        KLANGK_TEST_MODE="1",
-        KLANGK_IDLE_TIMEOUT_SECONDS="300",
-        KLANGK_ALLOW_AUTOSTART="1",
+        KLANGKD_JWT_SECRET="sighup-e2e-secret",
+        KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGKD_DEFAULT_USER="test@example.com",
+        KLANGKD_DEFAULT_PASSWORD="testpass",
+        KLANGKD_TEST_MODE="1",
+        KLANGKD_IDLE_TIMEOUT_SECONDS="300",
+        KLANGKD_ALLOW_AUTOSTART="1",
         LOGFIRE_TOKEN="",
-        KLANGK_LLM_BASE_URL="",
-        KLANGK_LLM_API_KEY="",
-        KLANGK_LLM_MODEL="",
+        KLANGKD_LLM_BASE_URL="",
+        KLANGKD_LLM_API_KEY="",
+        KLANGKD_LLM_MODEL="",
     )
     yield server
     stop_server(server)
@@ -176,7 +176,7 @@ async def test_rapid_double_sighup_is_serialized(server):
 async def test_containers_stopped_then_autostarted(server, auth):
     """#4: SIGHUP stops containers, then auto-start brings them back.
 
-    With KLANGK_ALLOW_AUTOSTART=1, a workspace created with auto-start
+    With KLANGKD_ALLOW_AUTOSTART=1, a workspace created with auto-start
     configured is recreated after the restart.  We track the container
     via the workspace status API: it goes from 'running' (pre-SIGHUP) to
     gone/stopped, then back to 'running' once auto-start completes.
@@ -268,16 +268,16 @@ def test_config_reload_via_sighup():
         data_dir=data_dir,
         state_dir=state_dir,
         config=config_path,
-        KLANGK_JWT_SECRET="reload-e2e-secret",
-        KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-        KLANGK_DEFAULT_USER="test@example.com",
-        KLANGK_DEFAULT_PASSWORD="testpass",
-        KLANGK_TEST_MODE="1",
-        KLANGK_IDLE_TIMEOUT_SECONDS="300",
+        KLANGKD_JWT_SECRET="reload-e2e-secret",
+        KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGKD_DEFAULT_USER="test@example.com",
+        KLANGKD_DEFAULT_PASSWORD="testpass",
+        KLANGKD_TEST_MODE="1",
+        KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         LOGFIRE_TOKEN="",
-        KLANGK_LLM_BASE_URL="",
-        KLANGK_LLM_API_KEY="",
-        KLANGK_LLM_MODEL="",
+        KLANGKD_LLM_BASE_URL="",
+        KLANGKD_LLM_API_KEY="",
+        KLANGKD_LLM_MODEL="",
     )
     client = server["client"]
     try:

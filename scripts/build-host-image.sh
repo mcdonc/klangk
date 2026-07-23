@@ -14,14 +14,14 @@ cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 bash "$SCRIPT_DIR/flutterbuildweb.sh"
 bash "$SCRIPT_DIR/build-workspace-image.sh"
 
-VERSION="$(jq -r .version "$KLANGK_VERSION_FILE")"
-IMAGE="${KLANGK_HOST_IMAGE:-klangk-host}"
+VERSION="$(jq -r .version "$KLANGKD_VERSION_FILE")"
+IMAGE="${KLANGKBUILD_HOST_IMAGE:-klangk-host}"
 
 # Copy version file into build context for Dockerfile COPY
-cp "$KLANGK_VERSION_FILE" version.json
+cp "$KLANGKD_VERSION_FILE" version.json
 
-WORKSPACE_IMAGE="${KLANGK_IMAGE_NAME:-klangk-workspace}"
-PODMAN="${KLANGK_PODMAN_BIN:-podman}"
+WORKSPACE_IMAGE="${KLANGKD_IMAGE_NAME:-klangk-workspace}"
+PODMAN="${KLANGKD_PODMAN_BIN:-podman}"
 # Export workspace image so it can be embedded in the host image. The host
 # image no longer stages feature trees (#1660/#1665) — the runtime reads
 # features.json from the frontend bundle, and the workspace image (built
@@ -35,7 +35,7 @@ echo "Exporting workspace image $WORKSPACE_IMAGE from podman ..."
 echo "Building $IMAGE $VERSION ..."
 
 docker build \
-  --platform "${KLANGK_PLATFORM:-linux/amd64}" \
+  --platform "${KLANGKBUILD_PLATFORM:-linux/amd64}" \
   -f src/containers/host/Dockerfile \
   --build-context "hostvenv=$DEVENV_STATE/venv" \
   --build-context "workspace-image=$WORKSPACE_DIR" \

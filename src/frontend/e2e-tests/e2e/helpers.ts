@@ -5,9 +5,9 @@ import { execSync } from "child_process";
 // tests are fully isolated — logout in one test can't kill another test's
 // containers, and parallel execution is safe because no state is shared.
 
-export const BACKEND_PORT = process.env.KLANGK_E2E_PORT || "18997";
+export const BACKEND_PORT = process.env.KLANGKBUILD_E2E_PORT || "18997";
 export const API_BASE =
-  process.env.KLANGK_TEST_URL || `http://localhost:${BACKEND_PORT}`;
+  process.env.KLANGKBUILD_TEST_URL || `http://localhost:${BACKEND_PORT}`;
 export const TEST_PASSWORD = "testpass";
 
 /** Sleep with exponential backoff + jitter before retrying a request. */
@@ -424,7 +424,7 @@ function podmanEnv(): NodeJS.ProcessEnv {
 }
 
 export function dockerContainersForWorkspace(workspaceId: string): string[] {
-  const podman = process.env.KLANGK_PODMAN_BIN || "podman";
+  const podman = process.env.KLANGKD_PODMAN_BIN || "podman";
   const output = execSync(
     `${podman} ps --filter "label=klangk.workspace-id=${workspaceId}" --format "{{.ID}}"`,
     { encoding: "utf-8", env: podmanEnv() },

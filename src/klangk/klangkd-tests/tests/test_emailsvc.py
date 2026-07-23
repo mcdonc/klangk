@@ -24,7 +24,7 @@ def _email_service(env: dict) -> EmailService:
 
 
 # The Jinja environment is built once and cached per instance, so a
-# KLANGK_EMAIL_TEMPLATES_DIR set in one test would leak into the next.
+# KLANGKD_EMAIL_TEMPLATES_DIR set in one test would leak into the next.
 # Rebuild the service fresh for every case (env-var state itself is
 # handled by rebuilding with a new env dict). See #1165.
 @pytest.fixture(autouse=True)
@@ -36,13 +36,13 @@ def _fresh_email_service():
 
 class TestResolvePassword:
     def test_plain_password(self):
-        svc = _email_service({"KLANGK_SMTP_PASSWORD": "secret123"})
+        svc = _email_service({"KLANGKD_SMTP_PASSWORD": "secret123"})
         assert svc.resolve_password() == "secret123"
 
     def test_file_prefix_reads_file(self, tmp_path):
         pw_file = tmp_path / "smtp_pass"
         pw_file.write_text("file-secret\n")
-        svc = _email_service({"KLANGK_SMTP_PASSWORD": f"file:{pw_file}"})
+        svc = _email_service({"KLANGKD_SMTP_PASSWORD": f"file:{pw_file}"})
         assert svc.resolve_password() == "file-secret"
 
     def test_file_missing_fails_at_construction(self):
@@ -51,7 +51,7 @@ class TestResolvePassword:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            _email_service({"KLANGK_SMTP_PASSWORD": "file:/nonexistent/file"})
+            _email_service({"KLANGKD_SMTP_PASSWORD": "file:/nonexistent/file"})
 
     def test_no_password(self):
         svc = _email_service({})
@@ -60,7 +60,7 @@ class TestResolvePassword:
 
 class TestUseSmtp:
     def test_uses_smtp_when_host_set(self):
-        svc = _email_service({"KLANGK_SMTP_HOST": "mail.example.com"})
+        svc = _email_service({"KLANGKD_SMTP_HOST": "mail.example.com"})
         assert svc.use_smtp() is True
 
     def test_uses_sendmail_when_no_host(self):
@@ -82,11 +82,11 @@ class TestSendViaSmtp:
     async def test_calls_aiosmtplib_send(self):
         svc = _email_service(
             {
-                "KLANGK_SMTP_HOST": "smtp.example.com",
-                "KLANGK_SMTP_PORT": "587",
-                "KLANGK_SMTP_USER": "user",
-                "KLANGK_SMTP_PASSWORD": "pass",
-                "KLANGK_SMTP_USE_TLS": "true",
+                "KLANGKD_SMTP_HOST": "smtp.example.com",
+                "KLANGKD_SMTP_PORT": "587",
+                "KLANGKD_SMTP_USER": "user",
+                "KLANGKD_SMTP_PASSWORD": "pass",
+                "KLANGKD_SMTP_USE_TLS": "true",
             }
         )
         import klangk.emailsvc as emailsvc_mod
@@ -106,9 +106,9 @@ class TestSendViaSmtp:
     async def test_no_auth_when_no_credentials(self):
         svc = _email_service(
             {
-                "KLANGK_SMTP_HOST": "smtp.example.com",
-                "KLANGK_SMTP_PORT": "25",
-                "KLANGK_SMTP_USE_TLS": "false",
+                "KLANGKD_SMTP_HOST": "smtp.example.com",
+                "KLANGKD_SMTP_PORT": "25",
+                "KLANGKD_SMTP_USE_TLS": "false",
             }
         )
         mock_send = AsyncMock()
@@ -140,7 +140,7 @@ class TestSendViaSendmail:
 
     async def test_custom_sendmail_path(self):
         svc = _email_service(
-            {"KLANGK_SENDMAIL_PATH": "/run/current-system/sw/bin/sendmail"}
+            {"KLANGKD_SENDMAIL_PATH": "/run/current-system/sw/bin/sendmail"}
         )
         mock_proc = AsyncMock()
         mock_proc.communicate.return_value = (b"", b"")
@@ -196,9 +196,9 @@ class TestSendVerificationEmail:
     async def test_sends_via_smtp_when_configured(self):
         svc = _email_service(
             {
-                "KLANGK_SMTP_HOST": "smtp.example.com",
-                "KLANGK_SMTP_USER": "user",
-                "KLANGK_SMTP_PASSWORD": "pass",
+                "KLANGKD_SMTP_HOST": "smtp.example.com",
+                "KLANGKD_SMTP_USER": "user",
+                "KLANGKD_SMTP_PASSWORD": "pass",
             }
         )
         mock_smtp = AsyncMock()
@@ -210,7 +210,7 @@ class TestSendVerificationEmail:
         mock_smtp.assert_awaited_once()
 
     async def test_uses_configured_product_name(self):
-        svc = _email_service({"KLANGK_PRODUCT_NAME": "Acme Labs"})
+        svc = _email_service({"KLANGKD_PRODUCT_NAME": "Acme Labs"})
         mock_sendmail = AsyncMock()
         with patch.object(svc, "send_via_sendmail", mock_sendmail):
             await svc.send_verification_email(
@@ -251,9 +251,9 @@ class TestSendPasswordResetEmail:
     async def test_sends_via_smtp_when_configured(self):
         svc = _email_service(
             {
-                "KLANGK_SMTP_HOST": "smtp.example.com",
-                "KLANGK_SMTP_USER": "user",
-                "KLANGK_SMTP_PASSWORD": "pass",
+                "KLANGKD_SMTP_HOST": "smtp.example.com",
+                "KLANGKD_SMTP_USER": "user",
+                "KLANGKD_SMTP_PASSWORD": "pass",
             }
         )
         mock_smtp = AsyncMock()
@@ -293,9 +293,9 @@ class TestSendInvitationEmail:
     async def test_sends_via_smtp_when_configured(self):
         svc = _email_service(
             {
-                "KLANGK_SMTP_HOST": "smtp.example.com",
-                "KLANGK_SMTP_USER": "user",
-                "KLANGK_SMTP_PASSWORD": "pass",
+                "KLANGKD_SMTP_HOST": "smtp.example.com",
+                "KLANGKD_SMTP_USER": "user",
+                "KLANGKD_SMTP_PASSWORD": "pass",
             }
         )
         mock_smtp = AsyncMock()
@@ -367,19 +367,19 @@ class TestRenderEmail:
         assert "1 hours" not in r.text
 
     def test_brand_color_in_badge(self):
-        svc = _email_service({"KLANGK_BRAND_COLOR": "#abcdef"})
+        svc = _email_service({"KLANGKD_BRAND_COLOR": "#abcdef"})
         r = svc.render_email("verify", link="https://x", expiry_hours=72)
         assert "#abcdef" in r.html
 
     def test_logo_url_replaces_badge(self):
-        svc = _email_service({"KLANGK_LOGO_URL": "https://logo/test.png"})
+        svc = _email_service({"KLANGKD_LOGO_URL": "https://logo/test.png"})
         r = svc.render_email("verify", link="https://x", expiry_hours=72)
         assert '<img src="https://logo/test.png"' in r.html
         # The paw badge is hidden when a logo override is set.
         assert "&#128062;" not in r.html
 
     def test_product_name_flows_through(self):
-        svc = _email_service({"KLANGK_PRODUCT_NAME": "Acme Labs"})
+        svc = _email_service({"KLANGKD_PRODUCT_NAME": "Acme Labs"})
         r = svc.render_email("verify", link="https://x", expiry_hours=72)
         assert r.subject == "Verify your Acme Labs account"
         assert "Acme Labs" in r.html
@@ -389,9 +389,9 @@ class TestRenderEmail:
         # The legal footer renders only the configured links, joined.
         svc = _email_service(
             {
-                "KLANGK_TERMS_URL": "https://corp/t",
-                "KLANGK_PRIVACY_URL": "https://corp/p",
-                "KLANGK_AUP_URL": "https://corp/a",
+                "KLANGKD_TERMS_URL": "https://corp/t",
+                "KLANGKD_PRIVACY_URL": "https://corp/p",
+                "KLANGKD_AUP_URL": "https://corp/a",
             }
         )
         r = svc.render_email("verify", link="https://x", expiry_hours=72)
@@ -404,8 +404,8 @@ class TestRenderEmail:
     def test_support_link_and_email_in_footer(self):
         svc = _email_service(
             {
-                "KLANGK_SUPPORT_URL": "https://help",
-                "KLANGK_SUPPORT_EMAIL": "help@corp",
+                "KLANGKD_SUPPORT_URL": "https://help",
+                "KLANGKD_SUPPORT_EMAIL": "help@corp",
             }
         )
         r = svc.render_email("verify", link="https://x", expiry_hours=72)
@@ -428,7 +428,7 @@ class TestTemplateOverlay:
         d = tmp_path / "templates"
         (d / "verify").mkdir(parents=True)
         (d / "verify" / "subject.txt").write_text("CUSTOM VERIFY SUBJECT\n")
-        svc = _email_service({"KLANGK_EMAIL_TEMPLATES_DIR": str(d)})
+        svc = _email_service({"KLANGKD_EMAIL_TEMPLATES_DIR": str(d)})
         r = svc.render_email("verify", link="https://x/v?t=1", expiry_hours=72)
         assert r.subject == "CUSTOM VERIFY SUBJECT"
         # The body was NOT overridden -> built-in still used.
@@ -447,7 +447,7 @@ class TestTemplateOverlay:
             "<div>BRANDED {{ product_name }}</div>"
             "{% block content %}{% endblock %}"
         )
-        svc = _email_service({"KLANGK_EMAIL_TEMPLATES_DIR": str(d)})
+        svc = _email_service({"KLANGKD_EMAIL_TEMPLATES_DIR": str(d)})
         rv = svc.render_email("verify", link="https://x", expiry_hours=72)
         ri = svc.render_email(
             "invite", link="https://x", expiry_hours=72, invited_by="a@b.com"
@@ -458,19 +458,19 @@ class TestTemplateOverlay:
     def test_nonexistent_user_dir_is_ignored(self, tmp_path):
         # A bad path doesn't crash; built-ins are used.
         svc = _email_service(
-            {"KLANGK_EMAIL_TEMPLATES_DIR": str(tmp_path / "does-not-exist")}
+            {"KLANGKD_EMAIL_TEMPLATES_DIR": str(tmp_path / "does-not-exist")}
         )
         r = svc.render_email("verify", link="https://x", expiry_hours=72)
         assert r.subject == "Verify your Klangk account"
 
     def test_customize_dir_email_templates_fallback(self, tmp_path):
-        # When KLANGK_EMAIL_TEMPLATES_DIR is unset but
+        # When KLANGKD_EMAIL_TEMPLATES_DIR is unset but
         # <customize_dir>/email-templates exists, it is used.  See #1360.
         custom = tmp_path / "cust"
         tdir = custom / "email-templates"
         (tdir / "verify").mkdir(parents=True)
         (tdir / "verify" / "subject.txt").write_text("CUSTOM SUBJECT\n")
-        svc = _email_service({"KLANGK_CUSTOMIZE_DIR": str(custom)})
+        svc = _email_service({"KLANGKD_CUSTOMIZE_DIR": str(custom)})
         r = svc.render_email("verify", link="https://x", expiry_hours=72)
         assert r.subject == "CUSTOM SUBJECT"
 
@@ -494,11 +494,11 @@ class TestReplyTo:
         assert svc.reply_to() is None
 
     def test_reply_to_resolved_when_set(self):
-        svc = _email_service({"KLANGK_SMTP_REPLY_TO": "support@example.com"})
+        svc = _email_service({"KLANGKD_SMTP_REPLY_TO": "support@example.com"})
         assert svc.reply_to() == "support@example.com"
 
     async def test_multipart_carries_reply_to(self):
-        svc = _email_service({"KLANGK_SMTP_REPLY_TO": "support@example.com"})
+        svc = _email_service({"KLANGKD_SMTP_REPLY_TO": "support@example.com"})
         rendered = svc.render_email(
             "verify", link="https://x", expiry_hours=72
         )

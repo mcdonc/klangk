@@ -59,16 +59,16 @@ would otherwise skip them). Run them via the `playwright` command defined in
 1. **Demo server running.** Start your real klangk normally (the one with your
    real LLM key). It should answer on `http://localhost:8996`.
    (`run-demo-backend.sh` starts an isolated demo backend on :8996 with
-   `KLANGK_AUTH_MODES=both`, `KLANGK_LISTEN=127.0.0.1`.)
+   `KLANGKD_AUTH_MODES=both`, `KLANGKD_LISTEN=127.0.0.1`.)
 
 2. **Auto-start enabled** (for scene 4, later): `.env` has
-   `KLANGK_ALLOW_AUTOSTART=1` — confirmed.
+   `KLANGKD_ALLOW_AUTOSTART=1` — confirmed.
 
 3. **A working LLM key.** Scenes 6 + 8 invoke clanker live; if the proxy 401s,
    those takes die. Test the key first.
 
 4. **`.env` copied here** (done once): the server reads it; the scripts read
-   `KLANGK_DEFAULT_USER` to find the seeded admin. `.env` is gitignored.
+   `KLANGKD_DEFAULT_USER` to find the seeded admin. `.env` is gitignored.
 
 5. **Seed once:**
 
@@ -78,7 +78,7 @@ would otherwise skip them). Run them via the `playwright` command defined in
 
    Creates the `teammate@example.com` account (and is idempotent — safe to
    re-run). Override the teammate email / password with
-   `KLANGK_DEMO_TEAMMATE_EMAIL` / `KLANGK_DEMO_PASSWORD`.
+   `KLANGKBUILD_DEMO_TEAMMATE_EMAIL` / `KLANGKBUILD_DEMO_PASSWORD`.
 
 6. **e2e node_modules installed** (Playwright + ws): the wrapper needs
    `src/frontend/e2e-tests/node_modules/`. If missing, run
@@ -111,15 +111,15 @@ devenv shell -- playwright test \
 
 Knobs (env vars):
 
-| Var                          | Default                 | Effect                                                           |
-| ---------------------------- | ----------------------- | ---------------------------------------------------------------- |
-| `KLANGK_TEST_URL`            | `http://localhost:8996` | the demo server to point at                                      |
-| `KLANGK_DEMO_HEADLESS`       | unset                   | set `=1` for a quick headless dry check                          |
-| `KLANGK_DEMO_SLOWMO`         | `50`                    | ms slowMo between actions (bump for slower, readable clicks)     |
-| `KLANGK_DEMO_AGENT_WAIT`     | `60000`                 | how long to hold for clanker's live reply before the scene ends  |
-| `KLANGK_DEMO_PASSWORD`       | `demopass123`           | password for freshly-registered demo accounts                    |
-| `KLANGK_DEMO_ADMIN_PASSWORD` | `adminpass`             | the hero admin's password (admin@example.com; seed + all scenes) |
-| `KLANGK_DEMO_TEAMMATE_EMAIL` | `teammate@example.com`  | the collaborator account                                         |
+| Var                               | Default                 | Effect                                                           |
+| --------------------------------- | ----------------------- | ---------------------------------------------------------------- |
+| `KLANGKBUILD_TEST_URL`            | `http://localhost:8996` | the demo server to point at                                      |
+| `KLANGKBUILD_DEMO_HEADLESS`       | unset                   | set `=1` for a quick headless dry check                          |
+| `KLANGKBUILD_DEMO_SLOWMO`         | `50`                    | ms slowMo between actions (bump for slower, readable clicks)     |
+| `KLANGKBUILD_DEMO_AGENT_WAIT`     | `60000`                 | how long to hold for clanker's live reply before the scene ends  |
+| `KLANGKBUILD_DEMO_PASSWORD`       | `demopass123`           | password for freshly-registered demo accounts                    |
+| `KLANGKBUILD_DEMO_ADMIN_PASSWORD` | `adminpass`             | the hero admin's password (admin@example.com; seed + all scenes) |
+| `KLANGKBUILD_DEMO_TEAMMATE_EMAIL` | `teammate@example.com`  | the collaborator account                                         |
 
 ## Output: web-UI video files
 
@@ -264,26 +264,26 @@ need a live server); flesh them out against your demo server.
 
 Camera-readability tips: **typewriter the commands** (`per_char≈0.02–0.04`) but
 let bulky output paste normally; use `--key-delay` (pause after each Enter) to
-avoid a blurred machine-gun look; bump `KLANGK_DEMO_FONT_SIZE` (e.g. `28`) if
+avoid a blurred machine-gun look; bump `KLANGKBUILD_DEMO_FONT_SIZE` (e.g. `28`) if
 text is small; drive flaky/async things (a service coming up) with
 `t.expect(..., timeout=)` so the take doesn't race.
 
 ### CLI recorder knobs (env vars)
 
-| Variable                   | Default                                              | Effect                        |
-| -------------------------- | ---------------------------------------------------- | ----------------------------- |
-| `KLANGK_DEMO_WIDTH`        | `1920`                                               | canvas width (px)             |
-| `KLANGK_DEMO_HEIGHT`       | `1080`                                               | canvas height (px)            |
-| `KLANGK_DEMO_FONT`         | `DejaVu Sans Mono`                                   | xterm font family             |
-| `KLANGK_DEMO_FONT_SIZE`    | `22`                                                 | terminal font size (pt)       |
-| `KLANGK_DEMO_FPS`          | `30`                                                 | capture framerate             |
-| `KLANGK_DEMO_CRF`          | `20`                                                 | x264 quality (lower = better) |
-| `KLANGK_DEMO_DISPLAY`      | `97`                                                 | Xvfb display number           |
-| `KLANGK_DEMO_TMUX_SESSION` | `klangk-demo`                                        | tmux session name             |
-| `KLANGK_DEMO_OUTPUT`       | `src/frontend/e2e-tests/demo/recordings/...<ts>.mp4` | output path                   |
-| `KLANGK_DEMO_PROMPT`       | `klangk$` (colored)                                  | `PS1` for the session shell   |
-| `KLANGK_DEMO_TYPEWRITER`   | `0`                                                  | default per-char delay (s)    |
-| `KLANGK_DEMO_KEY_DELAY`    | `0.4`                                                | default pause after Enter (s) |
+| Variable                        | Default                                              | Effect                        |
+| ------------------------------- | ---------------------------------------------------- | ----------------------------- |
+| `KLANGKBUILD_DEMO_WIDTH`        | `1920`                                               | canvas width (px)             |
+| `KLANGKBUILD_DEMO_HEIGHT`       | `1080`                                               | canvas height (px)            |
+| `KLANGKBUILD_DEMO_FONT`         | `DejaVu Sans Mono`                                   | xterm font family             |
+| `KLANGKBUILD_DEMO_FONT_SIZE`    | `22`                                                 | terminal font size (pt)       |
+| `KLANGKBUILD_DEMO_FPS`          | `30`                                                 | capture framerate             |
+| `KLANGKBUILD_DEMO_CRF`          | `20`                                                 | x264 quality (lower = better) |
+| `KLANGKBUILD_DEMO_DISPLAY`      | `97`                                                 | Xvfb display number           |
+| `KLANGKBUILD_DEMO_TMUX_SESSION` | `klangk-demo`                                        | tmux session name             |
+| `KLANGKBUILD_DEMO_OUTPUT`       | `src/frontend/e2e-tests/demo/recordings/...<ts>.mp4` | output path                   |
+| `KLANGKBUILD_DEMO_PROMPT`       | `klangk$` (colored)                                  | `PS1` for the session shell   |
+| `KLANGKBUILD_DEMO_TYPEWRITER`   | `0`                                                  | default per-char delay (s)    |
+| `KLANGKBUILD_DEMO_KEY_DELAY`    | `0.4`                                                | default pause after Enter (s) |
 
 Requirements (all present on NixOS / via devenv): `Xvfb`, `xterm`, `tmux`,
 `ffmpeg`, `ffprobe`, `xdotool`. The driver needs only `python3` (stdlib).

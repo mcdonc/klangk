@@ -46,7 +46,7 @@ class TestSetupDirs:
 
 class TestWriteSettings:
     def test_creates_settings_with_all_keys(self, fake_home, monkeypatch):
-        monkeypatch.setenv("KLANGK_LLM_MODEL", "test-model")
+        monkeypatch.setenv("KLANGKWS_LLM_MODEL", "test-model")
         agent = fake_home / ".pi" / "agent"
         agent.mkdir(parents=True)
 
@@ -80,7 +80,7 @@ class TestWriteSettings:
         home = tmp_path / "home" / "testuser"
         home.mkdir(parents=True)
         monkeypatch.setenv("HOME", str(home))
-        monkeypatch.setenv("KLANGK_LLM_MODEL", "test-model")
+        monkeypatch.setenv("KLANGKWS_LLM_MODEL", "test-model")
 
         image_dir = tmp_path / "opt" / "klangk" / "pi-agent"
         for d in ("extensions", "skills", "prompts", "npm"):
@@ -142,8 +142,8 @@ class TestEnsureSettingsKeys:
 
 class TestWriteModels:
     def test_creates_models_json(self, fake_home, monkeypatch):
-        monkeypatch.setenv("KLANGK_LLM_PROXY_URL", "http://proxy:8080")
-        monkeypatch.setenv("KLANGK_LLM_MODEL", "test-model")
+        monkeypatch.setenv("KLANGKWS_LLM_PROXY_URL", "http://proxy:8080")
+        monkeypatch.setenv("KLANGKWS_LLM_MODEL", "test-model")
         agent = fake_home / ".pi" / "agent"
         agent.mkdir(parents=True)
 
@@ -155,7 +155,7 @@ class TestWriteModels:
         assert provider["models"][0]["id"] == "test-model"
 
     def test_empty_models_without_env(self, fake_home, monkeypatch):
-        monkeypatch.delenv("KLANGK_LLM_MODEL", raising=False)
+        monkeypatch.delenv("KLANGKWS_LLM_MODEL", raising=False)
         agent = fake_home / ".pi" / "agent"
         agent.mkdir(parents=True)
 
@@ -194,8 +194,8 @@ class TestBuildAgentContext:
 
 class TestMain:
     def test_first_run_creates_everything(self, fake_home, monkeypatch):
-        monkeypatch.setenv("KLANGK_LLM_MODEL", "m")
-        monkeypatch.setenv("KLANGK_LLM_PROXY_URL", "http://x")
+        monkeypatch.setenv("KLANGKWS_LLM_MODEL", "m")
+        monkeypatch.setenv("KLANGKWS_LLM_PROXY_URL", "http://x")
         monkeypatch.setattr("sys.argv", ["setup-pi"])
 
         sc.main()
@@ -208,8 +208,8 @@ class TestMain:
         assert "prompts" in settings
 
     def test_existing_settings_gets_backfill(self, fake_home, monkeypatch):
-        monkeypatch.setenv("KLANGK_LLM_MODEL", "m")
-        monkeypatch.setenv("KLANGK_LLM_PROXY_URL", "http://x")
+        monkeypatch.setenv("KLANGKWS_LLM_MODEL", "m")
+        monkeypatch.setenv("KLANGKWS_LLM_PROXY_URL", "http://x")
         monkeypatch.setattr("sys.argv", ["setup-pi"])
         agent = fake_home / ".pi" / "agent"
         agent.mkdir(parents=True)
@@ -225,8 +225,8 @@ class TestMain:
         assert settings["extensions"] == ["/e"]  # preserved
 
     def test_force_rewrites_settings(self, fake_home, monkeypatch):
-        monkeypatch.setenv("KLANGK_LLM_MODEL", "m")
-        monkeypatch.setenv("KLANGK_LLM_PROXY_URL", "http://x")
+        monkeypatch.setenv("KLANGKWS_LLM_MODEL", "m")
+        monkeypatch.setenv("KLANGKWS_LLM_PROXY_URL", "http://x")
         monkeypatch.setattr("sys.argv", ["setup-pi", "--force"])
         agent = fake_home / ".pi" / "agent"
         agent.mkdir(parents=True)

@@ -4,14 +4,14 @@ import { join } from "path";
 
 async function globalTeardown() {
   // When using an external server, skip all cleanup.
-  if (process.env.KLANGK_TEST_URL) {
+  if (process.env.KLANGKBUILD_TEST_URL) {
     console.log("External server — skipping teardown");
     return;
   }
 
   const projectRoot = join(__dirname, "..", "..", "..");
 
-  const pid = process.env.KLANGK_E2E_PID;
+  const pid = process.env.KLANGKBUILD_E2E_PID;
   if (pid) {
     const numPid = Number(pid);
     console.log(`Stopping E2E server (PID ${numPid})...`);
@@ -47,7 +47,7 @@ async function globalTeardown() {
   }
 
   // Remove any containers that survived shutdown (including stopped ones holding ports)
-  const podman = process.env.KLANGK_PODMAN_BIN || "podman";
+  const podman = process.env.KLANGKD_PODMAN_BIN || "podman";
   // Strip LD_LIBRARY_PATH so system podman on CI doesn't load nix's glibc
   const podmanEnv = { ...process.env };
   delete podmanEnv.LD_LIBRARY_PATH;
@@ -69,7 +69,7 @@ async function globalTeardown() {
   }
 
   // Print backend log location
-  const logPath = process.env.KLANGK_E2E_LOG;
+  const logPath = process.env.KLANGKBUILD_E2E_LOG;
   if (logPath && existsSync(logPath)) {
     console.log(`Backend log: ${logPath}`);
   }
@@ -77,7 +77,7 @@ async function globalTeardown() {
   // Clean up temp data directory. On CI, containers may create root-owned
   // files in bind-mounted workspace dirs, so rmSync fails with EACCES.
   // Use a container to remove them first.
-  const dataDir = process.env.KLANGK_E2E_DATA_DIR;
+  const dataDir = process.env.KLANGKBUILD_E2E_DATA_DIR;
   if (dataDir) {
     console.log(`Cleaning up ${dataDir}`);
     try {

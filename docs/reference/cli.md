@@ -114,7 +114,7 @@ the active user and reuses a cached token if it is still valid.
 
 ### No-auth (single-user) servers
 
-If the server runs with `KLANGK_AUTH_MODES=none` (no-login local-dev mode),
+If the server runs with `KLANGKD_AUTH_MODES=none` (no-login local-dev mode),
 login requires **no password** — `klangk login` calls `/api/v1/auth/local`
 and stores the freely-issued token. See [Auth Modes](../features/auth-modes.md).
 

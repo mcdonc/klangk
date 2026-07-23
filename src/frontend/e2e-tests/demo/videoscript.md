@@ -36,12 +36,12 @@ accumulates shot to shot:
 ### Demo environment
 
 - [ ] Klangk server running locally; reach it at `http://localhost:8995`.
-- [ ] `KLANGK_ALLOW_AUTOSTART=1` set on the server (required for the
+- [ ] `KLANGKD_ALLOW_AUTOSTART=1` set on the server (required for the
       Sc 3/3b service scene).
 - [ ] **Real LLM key configured** for the proxy. The clanker chat scene AND the
       openclaw scene both depend on the LLM proxy actually working. Test it.
 - [ ] `jq` installed locally (for the `klangk monitor | jq .` beat).
-- [ ] For Sc 3b's unhealthy beat: `KLANGK_HEALTH_CHECK_INTERVAL=10` set (snappier
+- [ ] For Sc 3b's unhealthy beat: `KLANGKD_HEALTH_CHECK_INTERVAL=10` set (snappier
       flip on camera; product default is 30s). Needs a **full** backend restart
       (not SIGHUP) — set it off camera, before recording.
 
@@ -85,7 +85,7 @@ script firing synthetic events.
       Sc 7, plus five Potemkin workspaces; idempotent — re-run safely):
 
   ```bash
-  KLANGK_DEMO_ADMIN_EMAIL=admin@example.com \
+  KLANGKBUILD_DEMO_ADMIN_EMAIL=admin@example.com \
   devenv shell -- node --experimental-strip-types \
       src/frontend/e2e-tests/demo/demo-seed.ts
   ```
@@ -119,7 +119,7 @@ script firing synthetic events.
 - [ ] **CLI scenes** are driven by `cli_demo.py` (xterm+tmux+ffmpeg via
       `record-terminal.sh`). Cursor must not blink (`xterm cursorBlink:false` +
       `PROMPT_COMMAND='printf "\033[2 q"'`). Plain `host $` host prompt; venv on
-      PATH for `klangk`. ≥5s pauses between commands (`KLANGK_DEMO_HOLD`,
+      PATH for `klangk`. ≥5s pauses between commands (`KLANGKBUILD_DEMO_HOLD`,
       default 5).
 
 ### Master reset (between full re-runs)
@@ -298,7 +298,7 @@ There it went **unhealthy** — and I can see exactly why. That's the difference
 
 _[Ctrl+C the monitor; close the bottom pane; back to a single terminal]_
 
-Second, **auto-start and recovery**. I've got `KLANGK_ALLOW_AUTOSTART` enabled on the server, so if the server reboots, openclaw's container boots on its own and the gateway is running _before anyone connects_. And the same thing happens any time the container is recreated — the service command re-fires on every fresh container create. So I can show you right now with a per-workspace restart, without taking the whole server down:
+Second, **auto-start and recovery**. I've got `KLANGKD_ALLOW_AUTOSTART` enabled on the server, so if the server reboots, openclaw's container boots on its own and the gateway is running _before anyone connects_. And the same thing happens any time the container is recreated — the service command re-fires on every fresh container create. So I can show you right now with a per-workspace restart, without taking the whole server down:
 
 _[Host terminal: klangk restart openclaw — a per-workspace restart. Then: watch -n 3 klangk ls — openclaw's Status goes starting → healthy again as the service command re-fires on the fresh container]_
 
@@ -308,7 +308,7 @@ So the same sandbox idea — one config file, one command — scales from "my de
 
 > **Production —** _on screen:_ same terminal, continuing — openclaw is up and
 > healthy. _pre-roll:_ carries over from Sc 3 (openclaw pre-warmed, autostart on,
-> `jq` + LLM proxy working); **`KLANGK_HEALTH_CHECK_INTERVAL=10`** set (snappier
+> `jq` + LLM proxy working); **`KLANGKD_HEALTH_CHECK_INTERVAL=10`** set (snappier
 > unhealthy flip; product default 30s; needs a **full** backend restart, off
 > camera). _mechanic (the unhealthy beat):_ two-pane split (horizontal
 > divider) — bottom pane `klangk shell openclaw clanker:service-cmd` (joins the
@@ -472,7 +472,7 @@ open in my browser, all without leaving the sandbox.
 > `rm app.py requirements.txt`, `rm -rf .venv`). _gotchas:_
 > **live/nondeterministic**; pi must not be exited between the build and debug
 > prompts (we tab away to scratch/terminal2 instead); the app must listen on
-> **8000** (the first hosted port — `KLANGK_PORT_MAPPINGS=8000:9065,...`).
+> **8000** (the first hosted port — `KLANGKWS_PORT_MAPPINGS=8000:9065,...`).
 
 ## Scene 6 — File Browser (30 seconds)
 

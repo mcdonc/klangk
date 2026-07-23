@@ -8,7 +8,7 @@ or git/system configuration.
 > **Same unit, two audiences.** A **feature** is authored as a directory
 > under `features/<name>/` (Dart `ToolPlugin` code, a Pi `extension.ts`,
 > lifecycle hooks, etc.). At build time features are compiled into the image;
-> at deploy time, `KLANGK_FEATURES_ENABLE` controls which compiled-in features
+> at deploy time, `KLANGKD_FEATURES_ENABLE` controls which compiled-in features
 > are turned on. (The `ToolPlugin` base class and the `klangk_plugin_api`
 > package keep their names — they live in an external package — but everywhere
 > else the unit is a "feature".) This page covers the activation surface; for
@@ -28,8 +28,8 @@ There are two lists, and they are allowed to differ
   `index.html`) carrying each compiled-in feature's metadata, a `defaults`
   list, and the container-env keys it declares.
 - **Activated** — which compiled-in features are turned **on** for this deploy.
-  Set deploy-wide with `KLANGK_FEATURES_ENABLE`. The frontend reads its sibling
-  `features.json` for metadata + defaults, and `KLANGK_FEATURES_ENABLE`
+  Set deploy-wide with `KLANGKD_FEATURES_ENABLE`. The frontend reads its sibling
+  `features.json` for metadata + defaults, and `KLANGKD_FEATURES_ENABLE`
   (forwarded verbatim via `GET /api/v1/config`) for the deploy's chosen set,
   then filters before registering anything (`main.dart`). The server does no
   activation itself — it owns only the config-value bridge.
@@ -45,7 +45,7 @@ build-time change (declare it in `features.yaml` and rebuild).
 > counterpart: software and configuration scoped to a _particular user within a
 > particular workspace_, applied at workspace-create time with no rebuild.
 
-## Turning features on (`KLANGK_FEATURES_ENABLE`)
+## Turning features on (`KLANGKD_FEATURES_ENABLE`)
 
 Canonical semantics ([#1655](https://github.com/mcdonc/klangk/issues/1655)):
 
@@ -60,7 +60,7 @@ dormant feature in means listing it alongside the defaults you want to keep:
 
 ```bash
 # turn on soliplex while keeping the stock set
-KLANGK_FEATURES_ENABLE=beep,bobdobbs,boingball,browser-fetch,celebrate,git-credential,soliplex
+KLANGKD_FEATURES_ENABLE=beep,bobdobbs,boingball,browser-fetch,celebrate,git-credential,soliplex
 ```
 
 Read at boot and on `SIGHUP` (reloadable). When the upstream `defaults` change,
@@ -89,12 +89,12 @@ list):
 
 These ship compiled into the image but are **not** in the default-on set, so a
 bare install does not surface them. Opt in by adding them to
-`KLANGK_FEATURES_ENABLE` (composed with the stock set, as above).
+`KLANGKD_FEATURES_ENABLE` (composed with the stock set, as above).
 
-| Feature      | What it does                                                                                                    | Activate                                     |
-| ------------ | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `word-count` | File-stats tool for Pi (lines, words, characters, size) ([#1700](https://github.com/mcdonc/klangk/issues/1700)) | add `word-count` to `KLANGK_FEATURES_ENABLE` |
-| `soliplex`   | Soliplex knowledge-base tools (list/query/reply, multi-turn RAG)                                                | add `soliplex` to `KLANGK_FEATURES_ENABLE`   |
+| Feature      | What it does                                                                                                    | Activate                                      |
+| ------------ | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `word-count` | File-stats tool for Pi (lines, words, characters, size) ([#1700](https://github.com/mcdonc/klangk/issues/1700)) | add `word-count` to `KLANGKD_FEATURES_ENABLE` |
+| `soliplex`   | Soliplex knowledge-base tools (list/query/reply, multi-turn RAG)                                                | add `soliplex` to `KLANGKD_FEATURES_ENABLE`   |
 
 ### `soliplex`
 
@@ -104,7 +104,7 @@ vendored into this repo under `features/soliplex/`
 [`soliplex/klangk-plugin-soliplex`](https://github.com/soliplex/klangk-plugin-soliplex)
 `v0.4`). It is dormant by default because it needs a running Soliplex server to
 be useful — defaulting it on would surface a dead tool to every install. Its
-one config key, `KLANGK_FEATURE_SOLIPLEX_URL` (scope `frontend`), is resolved
+one config key, `KLANGKWS_FEATURE_SOLIPLEX_URL` (scope `frontend`), is resolved
 server-side and surfaced to the UI as `soliplex_url` via `GET /api/v1/config`
 when the feature is active; nothing is injected into workspace containers (it
 is a browser-side feature).
@@ -113,7 +113,7 @@ is a browser-side feature).
 its tools). The workspace container bundles every compiled-in feature's
 `extension.ts` into `/opt/klangk/pi-agent/extensions/`, and Pi loads that
 directory unconditionally — so a workspace pi agent registers soliplex's
-`soliplex_*` tools regardless of `KLANGK_FEATURES_ENABLE`. They self-no-op when
+`soliplex_*` tools regardless of `KLANGKD_FEATURES_ENABLE`. They self-no-op when
 no Soliplex server is reachable, so they are harmless on a non-Soliplex
 install, but they do appear in the tool list. Per-feature workspace-side gating
 is a follow-up, not part of the current model.
@@ -171,7 +171,7 @@ image and emits `features.json`.
 
 > **Remote features are off by default in CI/builds.** The build scripts run
 > `update_features.py --local-only`, so git-sourced features are skipped unless
-> you set `KLANGK_BUILD_INCLUDE_REMOTE=1`. No feature in the default
+> you set `KLANGKBUILD_BUILD_INCLUDE_REMOTE=1`. No feature in the default
 > `features.yaml` is git-sourced today, so this is a no-op for stock builds.
 
 ## Feature configuration
@@ -183,12 +183,12 @@ value at runtime and bridges it to where the feature needs it
 ([#1655](https://github.com/mcdonc/klangk/issues/1655),
 [#1662](https://github.com/mcdonc/klangk/issues/1662)):
 
-- Every declared key is namespaced under the `KLANGK_FEATURE_` prefix (e.g.
-  `KLANGK_FEATURE_SOLIPLEX_URL`). The prefix alone keeps feature config from
+- Every declared key is namespaced under the `KLANGKWS_FEATURE_` prefix (e.g.
+  `KLANGKWS_FEATURE_SOLIPLEX_URL`). The prefix alone keeps feature config from
   colliding with server settings (`KLANGK_<SETTING>`) — no reserved set needed.
 - **`scope`** controls where the value lands: `container` → injected as an env
   var into workspace containers; `frontend` → surfaced as a lowercased key in
-  `GET /api/v1/config` (e.g. `KLANGK_FEATURE_SOLIPLEX_URL` → `soliplex_url`);
+  `GET /api/v1/config` (e.g. `KLANGKWS_FEATURE_SOLIPLEX_URL` → `soliplex_url`);
   `both` → both.
 - **Value precedence**, highest to lowest when a key is resolved: the env var,
   then the `features_config:` block in `klangkd.yaml`

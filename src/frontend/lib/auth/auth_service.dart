@@ -37,7 +37,7 @@ class AuthService extends ChangeNotifier {
   bool get bannerAccepted => _bannerAccepted;
 
   /// Whether the consent banner must be re-accepted on every fresh app load
-  /// (KLANGK_LOGIN_BANNER_EVERY_VISIT). When true, acceptance is held in
+  /// (KLANGKD_LOGIN_BANNER_EVERY_VISIT). When true, acceptance is held in
   /// memory for the session only, so the banner re-appears on each app
   /// restart / login. When false, acceptance is cached permanently against
   /// the banner text hash (#1544).
@@ -51,7 +51,7 @@ class AuthService extends ChangeNotifier {
   String get instanceId => _instanceId;
 
   /// Whether the server permits per-workspace auto-start
-  /// (KLANGK_ALLOW_AUTOSTART). The UI gates its "Auto start" checkbox
+  /// (KLANGKD_ALLOW_AUTOSTART). The UI gates its "Auto start" checkbox
   /// on this — setting auto_start on a server that rejects it would
   /// 400 (#1115).
   bool get allowAutostart => _allowAutostart;

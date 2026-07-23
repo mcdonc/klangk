@@ -98,7 +98,7 @@ RUN chgrp root \
       /usr/sbin/unix_chkpwd /var/mail \
     2>/dev/null; true
 
-# Sudo is configured at runtime by the entrypoint based on KLANGK_ALLOW_SUDO.
+# Sudo is configured at runtime by the entrypoint based on KLANGKD_ALLOW_SUDO.
 # No sudoers rule is baked into the image — the entrypoint runs as root
 # (inside the user namespace) and writes or removes /etc/sudoers.d/klangk
 # before dropping to the klangk user via gosu.

@@ -5,19 +5,19 @@
 Klangk supports two ways to log in: email/password accounts and
 single sign-on (SSO) via OIDC providers like Keycloak, Okta, or
 Azure AD. You can use either or both. There is also a no-login
-**local-dev** mode (`KLANGK_AUTH_MODES=none`) that auto-logs you in
+**local-dev** mode (`KLANGKD_AUTH_MODES=none`) that auto-logs you in
 as the seeded default user with no password — see
 [Auth Modes](auth-modes.md).
 
 ## Email and password
 
-With `KLANGK_AUTH_MODES` set to `password` (or `both`), klangk uses
+With `KLANGKD_AUTH_MODES` set to `password` (or `both`), klangk uses
 email/password accounts. New users register with an email address, receive
 a verification link, and set a password. Passwords are hashed with bcrypt.
 
 ### Registration
 
-By default, anyone can register. Set `KLANGK_DISABLE_REGISTRATION`
+By default, anyone can register. Set `KLANGKD_DISABLE_REGISTRATION`
 to block new signups and hide the registration link.
 
 After registering, users must verify their email before they can log
@@ -37,7 +37,7 @@ after 1 hour.
 ### Email delivery
 
 Verification and password-reset emails are sent via SMTP if configured
-(`KLANGK_SMTP_HOST`, `KLANGK_SMTP_PORT`, etc.), or via the local
+(`KLANGKD_SMTP_HOST`, `KLANGKD_SMTP_PORT`, etc.), or via the local
 `sendmail` binary otherwise. See
 [Environment Variables](../reference/environment.md) for the full list
 of SMTP settings.
@@ -47,7 +47,7 @@ of SMTP settings.
 Klangk can authenticate users through one or more OIDC identity
 providers. When configured, the login page shows a button for each
 provider alongside the email/password form (or instead of it, if
-`KLANGK_AUTH_MODES` is set to `oidc`).
+`KLANGKD_AUTH_MODES` is set to `oidc`).
 
 Users are created automatically on their first SSO login — no
 separate registration step. If a user already has an email/password
@@ -61,7 +61,7 @@ See [OIDC Configuration](../reference/oidc.md) for setup instructions.
 ## Sessions
 
 Klangk uses JWT tokens for sessions. Token lifetime defaults to 24
-hours (configurable via `KLANGK_ACCESS_TOKEN_HOURS`). Tokens are
+hours (configurable via `KLANGKD_ACCESS_TOKEN_HOURS`). Tokens are
 automatically refreshed before they expire, so long-running sessions
 stay active without requiring re-login. Logging out blocklists the
 token immediately.
@@ -76,15 +76,15 @@ By default, Klangk locks accounts after repeated failed login
 attempts (5 failures within the counting window). To tune or
 disable it, set:
 
-| Variable                        | Default | Description                              |
-| ------------------------------- | ------- | ---------------------------------------- |
-| `KLANGK_LOGIN_LOCKOUT_FAILURES` | `5`     | Failed attempts before lockout (0 = off) |
-| `KLANGK_LOGIN_LOCKOUT_WINDOW`   | `300`   | Time window in seconds for counting      |
-| `KLANGK_LOGIN_LOCKOUT_DURATION` | `900`   | How long the lockout lasts (seconds)     |
+| Variable                         | Default | Description                              |
+| -------------------------------- | ------- | ---------------------------------------- |
+| `KLANGKD_LOGIN_LOCKOUT_FAILURES` | `5`     | Failed attempts before lockout (0 = off) |
+| `KLANGKD_LOGIN_LOCKOUT_WINDOW`   | `300`   | Time window in seconds for counting      |
+| `KLANGKD_LOGIN_LOCKOUT_DURATION` | `900`   | How long the lockout lasts (seconds)     |
 
 ## Consent banner
 
-If `KLANGK_LOGIN_BANNER` is set, users see a consent page before
+If `KLANGKD_LOGIN_BANNER` is set, users see a consent page before
 the login form. They must accept before proceeding. This is useful
 for legal notices or terms-of-service acknowledgements. See
 [Environment Variables](../reference/environment.md) for details.

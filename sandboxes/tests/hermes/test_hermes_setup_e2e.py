@@ -128,29 +128,29 @@ def _start_server(data_dir, extra_env=None):
     """
     log_path = os.path.join(data_dir, "server.log")
     overrides = {
-        "KLANGK_JWT_SECRET": "hermes-e2e-test-secret",
-        "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
-        "KLANGK_DEFAULT_USER": EMAIL,
-        "KLANGK_DEFAULT_PASSWORD": PASSWORD,
-        "KLANGK_AUTH_MODES": "password",  # these tests use password login
-        "KLANGK_TEST_MODE": "1",
-        "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
+        "KLANGKD_JWT_SECRET": "hermes-e2e-test-secret",
+        "KLANGKD_PREVENT_INSECURE_JWT_SECRET": "",
+        "KLANGKD_DEFAULT_USER": EMAIL,
+        "KLANGKD_DEFAULT_PASSWORD": PASSWORD,
+        "KLANGKD_AUTH_MODES": "password",  # these tests use password login
+        "KLANGKD_TEST_MODE": "1",
+        "KLANGKD_IDLE_TIMEOUT_SECONDS": "300",
         # Poll health every 3s so the health-check test sees the healthy
         # transition quickly (the gateway takes a few seconds to start after
         # setup). Health checks are skipped until setup_state == complete, so
         # this is harmless during the install.
-        "KLANGK_HEALTH_CHECK_INTERVAL": "3",
-        "KLANGK_ALLOW_AUTOSTART": "1",
+        "KLANGKD_HEALTH_CHECK_INTERVAL": "3",
+        "KLANGKD_ALLOW_AUTOSTART": "1",
         "LOGFIRE_TOKEN": "",
         "log_path": log_path,
     }
     # Runner/devenv infra clean_env would otherwise strip (#1526): system
     # podman + the LLM endpoint the hermes gateway proxies to.
     for _k in (
-        "KLANGK_PODMAN_BIN",
-        "KLANGK_LLM_API_KEY",
-        "KLANGK_LLM_BASE_URL",
-        "KLANGK_LLM_MODEL",
+        "KLANGKD_PODMAN_BIN",
+        "KLANGKD_LLM_API_KEY",
+        "KLANGKD_LLM_BASE_URL",
+        "KLANGKD_LLM_MODEL",
     ):
         _v = os.environ.get(_k)
         if _v is not None:
@@ -369,7 +369,7 @@ class TestHermesSetup:
                 "setup.sh did not write /hermes/config.yaml (llm-proxy config)"
             )
             # setup.sh wrote ~/.profile exports up front (into the AGENT's
-            # home: it repoints HOME at $KLANGK_AGENT_HOME, #1171).
+            # home: it repoints HOME at $KLANGKWS_AGENT_HOME, #1171).
             profile_path = _agent_profile(self._data_dir, ws_id)
             assert os.path.exists(profile_path), (
                 f"agent ~/.profile not found at {profile_path}"

@@ -2,7 +2,7 @@
 
 Every E2E suite that launches a subprocess (``runtestserver.py``, ``klangkd``,
 or ``klangk``) must build the child's env from :func:`clean_env`, **not**
-``{**os.environ, ...}``. A stray ``KLANGK_*`` var in the CI runner's env
+``{**os.environ, ...}``. A stray ``KLANGKD_*`` var in the CI runner's env
 (or one leaked by a prior test) silently becomes the child's config and can
 change test results — ``clean_env`` strips all config-affecting prefixes so
 the child sees only what the test explicitly sets.
@@ -52,9 +52,9 @@ _STRIP_PREFIXES = ("KLANGK", "_KLANGK", "KLANGKC", "LOGFIRE")
 # They are not test config — overriding one in a ``clean_env(...)`` call
 # still wins.
 _INFRA_VARS = (
-    "KLANGK_IMAGE_NAME",
-    "KLANGK_VERSION_FILE",
-    "KLANGK_FRONTEND_DIR",
+    "KLANGKD_IMAGE_NAME",
+    "KLANGKD_VERSION_FILE",
+    "KLANGKD_FRONTEND_DIR",
 )
 
 
@@ -62,17 +62,17 @@ def clean_env(**overrides: str) -> dict[str, str]:
     """Return a hermetic env dict for a test subprocess.
 
     Starts from ``os.environ`` with every config-affecting var stripped, then
-    applies ``overrides`` (the test's explicit KLANGK_* / LOGFIRE_* keys).
-    The baseline includes ``_KLANGK_DISABLE_PROXY=1`` and
-    ``KLANGK_AUTH_MODES=password`` (the E2E default — most suites exercise the
-    password auth flow); pass ``KLANGK_AUTH_MODES="none"`` in overrides to
+    applies ``overrides`` (the test's explicit KLANGKD_* / LOGFIRE_* keys).
+    The baseline includes ``_KLANGKD_DISABLE_PROXY=1`` and
+    ``KLANGKD_AUTH_MODES=password`` (the E2E default — most suites exercise the
+    password auth flow); pass ``KLANGKD_AUTH_MODES="none"`` in overrides to
     opt into no-auth mode.
 
     Tests should call::
 
         env = clean_env(
-            KLANGK_PORT=port,
-            KLANGK_DATA_DIR=data_dir,
+            KLANGKD_PORT=port,
+            KLANGKD_DATA_DIR=data_dir,
             ...
         )
     """
@@ -100,7 +100,7 @@ def clean_env(**overrides: str) -> dict[str, str]:
     if "HOME" in overrides and "XDG_STATE_HOME" not in overrides:
         env["XDG_STATE_HOME"] = f"{overrides['HOME']}/.local/state"
     # E2E baseline defaults.
-    env["_KLANGK_DISABLE_PROXY"] = "1"
-    env.setdefault("KLANGK_AUTH_MODES", "password")
+    env["_KLANGKD_DISABLE_PROXY"] = "1"
+    env.setdefault("KLANGKD_AUTH_MODES", "password")
     env.update(overrides)
     return env

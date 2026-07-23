@@ -25,6 +25,6 @@ if (await isBridgeAvailable()) {
 
 ## Environment Variables
 
-- `KLANGK_BRIDGE_URL` — URL of the Klangk backend (via the proxy). Set at container creation time.
+- `KLANGKWS_BRIDGE_URL` — URL of the Klangk backend (via the proxy). Set at container creation time.
 
 The browser ID is read dynamically per-request via `klangk-browser-id` (not from an env var). This means bridge calls work after browser refresh and tab switches — the ID is always current.

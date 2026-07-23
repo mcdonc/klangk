@@ -985,10 +985,10 @@ share one counter.
 ### POST `/api/v1/auth/local`
 
 No-login single-user mode: mint a JWT for the seeded default user with no
-credentials. Only available when `KLANGK_AUTH_MODES=none`; returns **403**
+credentials. Only available when `KLANGKD_AUTH_MODES=none`; returns **403**
 otherwise. See [Auth Modes](../features/auth-modes.md).
 
-**Auth:** None. Reachable only from loopback (the `KLANGK_LISTEN` bind plus an
+**Auth:** None. Reachable only from loopback (the `KLANGKD_LISTEN` bind plus an
 the proxy's `allow 127.0.0.1/::1; deny all` per-location ACL keep it unreachable from
 workspace containers).
 
@@ -1047,7 +1047,7 @@ No request body.
 ### POST `/api/v1/auth/register`
 
 Create a new user account. A verification email is sent unless running
-in test mode. Can be disabled via `KLANGK_DISABLE_REGISTRATION`.
+in test mode. Can be disabled via `KLANGKD_DISABLE_REGISTRATION`.
 
 **Auth:** None.
 
@@ -1680,7 +1680,7 @@ Close codes: 4001 (missing/invalid token), 4002 (expired token).
 
 ## Test-Only Endpoints
 
-Available only when `KLANGK_TEST_MODE` is set. No auth required.
+Available only when `KLANGKD_TEST_MODE` is set. No auth required.
 
 ### GET `/api/v1/test/browsers/{id}`
 
@@ -1726,11 +1726,11 @@ Generate a workspace JWT for testing container-to-host endpoints.
 
 Enabled by default (5 failed attempts → lockout). Configure via environment variables:
 
-- `KLANGK_LOGIN_LOCKOUT_FAILURES` (default `5`) —
+- `KLANGKD_LOGIN_LOCKOUT_FAILURES` (default `5`) —
   attempts before lockout (0 = disabled)
-- `KLANGK_LOGIN_LOCKOUT_DURATION` (default `900`) —
+- `KLANGKD_LOGIN_LOCKOUT_DURATION` (default `900`) —
   lockout period in seconds
-- `KLANGK_LOGIN_LOCKOUT_WINDOW` (default `300`) —
+- `KLANGKD_LOGIN_LOCKOUT_WINDOW` (default `300`) —
   attempt counting window in seconds
 
 ### Email Rate Limiting

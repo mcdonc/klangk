@@ -64,10 +64,10 @@ def _settings(**extra):
     """Build settings with a stable base (both dirs, egress, container set)."""
     d = tempfile.mkdtemp(prefix="klangk-parity-")
     env = {
-        "KLANGK_DATA_DIR": d,
-        "KLANGK_STATE_DIR": d,
-        "KLANGK_EGRESS_PORT": "19999",
-        "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
+        "KLANGKD_DATA_DIR": d,
+        "KLANGKD_STATE_DIR": d,
+        "KLANGKD_EGRESS_PORT": "19999",
+        "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
     }
     env.update(extra)
     return KlangkSettings(env=env)
@@ -101,8 +101,8 @@ class TestStructuralParity:
         ids=["nginx", "caddy"],
     )
     def test_full_mode_two_listeners(self, render, count_fn):
-        """KLANGK_PORT set ⇒ browser + egress = 2 listeners (both engines)."""
-        conf = render(_settings(KLANGK_PORT="19998"))
+        """KLANGKD_PORT set ⇒ browser + egress = 2 listeners (both engines)."""
+        conf = render(_settings(KLANGKD_PORT="19998"))
         assert count_fn(conf) == 2
 
     @pytest.mark.parametrize(
@@ -114,8 +114,8 @@ class TestStructuralParity:
         ids=["nginx", "caddy"],
     )
     def test_headless_mode_one_listener(self, render, count_fn):
-        """KLANGK_PORT unset ⇒ egress only = 1 listener (both engines)."""
-        conf = render(_settings())  # no KLANGK_PORT
+        """KLANGKD_PORT unset ⇒ egress only = 1 listener (both engines)."""
+        conf = render(_settings())  # no KLANGKD_PORT
         assert count_fn(conf) == 1
 
 
@@ -131,8 +131,8 @@ class TestFeatureParity:
     def test_llm_block_present_when_url_set(self, render):
         conf = render(
             _settings(
-                KLANGK_LLM_BASE_URL="http://127.0.0.1:11434",
-                KLANGK_LLM_API_KEY="k",
+                KLANGKD_LLM_BASE_URL="http://127.0.0.1:11434",
+                KLANGKD_LLM_API_KEY="k",
             )
         )
         assert "/llm-proxy/" in conf
@@ -144,17 +144,17 @@ class TestFeatureParity:
 
     @ENGINES
     def test_hosted_block_present_in_full_mode(self, render):
-        conf = render(_settings(KLANGK_PORT="19998"))
+        conf = render(_settings(KLANGKD_PORT="19998"))
         assert "/hosted/" in conf
 
     @ENGINES
     def test_auth_local_block_present_in_full_mode(self, render):
-        conf = render(_settings(KLANGK_PORT="19998"))
+        conf = render(_settings(KLANGKD_PORT="19998"))
         assert "auth/local" in conf
 
     @ENGINES
     def test_body_size_directive_present(self, render):
-        conf = render(_settings(KLANGK_PORT="19998"))
+        conf = render(_settings(KLANGKD_PORT="19998"))
         # nginx: client_max_body_size; Caddy: max_size.
         assert "client_max_body_size" in conf or "max_size" in conf
 
@@ -165,18 +165,18 @@ class TestFeatureParity:
     )
     def test_auth_gate_present(self, render, token):
         """The token-gate directive (auth_request / forward_auth) is present."""
-        conf = render(_settings(KLANGK_PORT="19998"))
+        conf = render(_settings(KLANGKD_PORT="19998"))
         assert token in conf
 
 
 class TestHostedCapParity:
-    """KLANGK_HOSTED_PORTS_PER_WORKSPACE=0 disables /hosted/ in both engines."""
+    """KLANGKD_HOSTED_PORTS_PER_WORKSPACE=0 disables /hosted/ in both engines."""
 
     @ENGINES
     def test_hosted_disabled_when_cap_zero(self, render):
         conf = render(
             _settings(
-                KLANGK_PORT="19998", KLANGK_HOSTED_PORTS_PER_WORKSPACE="0"
+                KLANGKD_PORT="19998", KLANGKD_HOSTED_PORTS_PER_WORKSPACE="0"
             )
         )
         # Both engines collapse /hosted/ to a 404 catch when the cap is 0;

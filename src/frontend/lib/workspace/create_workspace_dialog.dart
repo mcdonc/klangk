@@ -16,7 +16,7 @@ class CreateWorkspaceDialog extends StatefulWidget {
   final List<String> allowedImages;
 
   /// Whether to render the Auto start checkbox. The caller derives this
-  /// from AuthService.allowAutostart (server's KLANGK_ALLOW_AUTOSTART).
+  /// from AuthService.allowAutostart (server's KLANGKD_ALLOW_AUTOSTART).
   final bool allowAutostart;
 
   const CreateWorkspaceDialog({

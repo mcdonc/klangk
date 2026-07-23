@@ -64,7 +64,7 @@ class TestResolveIndirection:
 
 class TestResolveDynamicConfig:
     """``resolve_dynamic_config`` resolves feature-declared dynamic keys
-    (outside the ``KLANGK_`` settings model) with ``file:``/``cmd:``
+    (outside the ``KLANGKD_`` settings model) with ``file:``/``cmd:``
     deref (#1518)."""
 
     def test_plain_value(self, monkeypatch):
@@ -92,8 +92,8 @@ class TestResolveDynamicConfig:
 
 class TestSettingsModel:
     def test_extra_ignored(self, monkeypatch):
-        """Unknown KLANGK_ keys are tolerated (extra='ignore')."""
-        s = make_settings({"KLANGK_BOGUS_KEY": "whatever"})
+        """Unknown KLANGKD_ keys are tolerated (extra='ignore')."""
+        s = make_settings({"KLANGKD_BOGUS_KEY": "whatever"})
         assert not hasattr(s, "bogus_key")
 
     def test_all_klangk_fields_present(self):
@@ -133,7 +133,7 @@ class TestConfigFile:
         cfg = tmp_path / "config.yaml"
         cfg.write_text('brand_color: "#FF0000"\n')
         s = make_settings(
-            env={"KLANGK_BRAND_COLOR": "#00FF00"}, config_file=str(cfg)
+            env={"KLANGKD_BRAND_COLOR": "#00FF00"}, config_file=str(cfg)
         )
         assert s.brand_color == "#00FF00"
 
@@ -142,7 +142,7 @@ class TestConfigFile:
         cfg = tmp_path / "config.yaml"
         cfg.write_text('product_name: "From YAML"\n')
         s = make_settings(
-            env={"KLANGK_PRODUCT_NAME": "From Env"}, config_file=str(cfg)
+            env={"KLANGKD_PRODUCT_NAME": "From Env"}, config_file=str(cfg)
         )
         assert s.product_name == "From Env"
 
@@ -172,13 +172,13 @@ class TestConfigFile:
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             "features_config:\n"
-            '  KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID: "abc123"\n'
-            '  KLANGK_FEATURE_SOLIPLEX_URL: "https://rag.example.com"\n'
+            '  KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID: "abc123"\n'
+            '  KLANGKWS_FEATURE_SOLIPLEX_URL: "https://rag.example.com"\n'
         )
         s = make_settings({}, config_file=str(cfg))
         assert s.features_config == {
-            "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc123",
-            "KLANGK_FEATURE_SOLIPLEX_URL": "https://rag.example.com",
+            "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc123",
+            "KLANGKWS_FEATURE_SOLIPLEX_URL": "https://rag.example.com",
         }
 
     def test_features_config_keeps_file_cmd_prefixes_raw(self, tmp_path):
@@ -189,11 +189,11 @@ class TestConfigFile:
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             "features_config:\n"
-            '  KLANGK_FEATURE_TOKEN: "file:/run/secrets/token"\n'
+            '  KLANGKWS_FEATURE_TOKEN: "file:/run/secrets/token"\n'
         )
         s = make_settings({}, config_file=str(cfg))
         assert s.features_config == {
-            "KLANGK_FEATURE_TOKEN": "file:/run/secrets/token"
+            "KLANGKWS_FEATURE_TOKEN": "file:/run/secrets/token"
         }
 
     def test_features_config_defaults_none(self):
@@ -264,7 +264,7 @@ class TestDualFormKeys:
         # Direct construction: env has no STATE_DIR, so the kebab key in the
         # config file is the sole source (make_settings would inject one).
         s = KlangkSettings(
-            env={"KLANGK_DATA_DIR": str(tmp_path / "data")},
+            env={"KLANGKD_DATA_DIR": str(tmp_path / "data")},
             config_file=str(cfg),
         )
         assert s.state_dir == str(state)
@@ -289,8 +289,8 @@ class TestDualFormKeys:
 # ---------------------------------------------------------------------------
 # _resolve_socket_and_ports validator (listen-shape settings, #1542)
 # ---------------------------------------------------------------------------
-# KLANGK_PORT (unset ⇒ headless, set ⇒ browser), KLANGK_EGRESS_PORT (container
-# egress), KLANGK_SOCKET (backend UDS), and the deprecated KLANGK_PROXY_PORT
+# KLANGKD_PORT (unset ⇒ headless, set ⇒ browser), KLANGKD_EGRESS_PORT (container
+# egress), KLANGKD_SOCKET (backend UDS), and the deprecated KLANGKD_PROXY_PORT
 # alias are resolved once at construction. Callers read ``egress_port`` /
 # ``socket`` only; ``proxy_port`` is a deprecated alias folded into
 # ``egress_port`` (egress-wins) and slated for removal.
@@ -298,66 +298,66 @@ class TestDualFormKeys:
 
 class TestResolveSocketAndPorts:
     def test_socket_defaults_to_state_dir_klangk_sock(self):
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
         assert s.socket == os.path.join("/tmp/state", "klangk.sock")
 
     def test_explicit_socket_wins(self):
         s = KlangkSettings(
             env={
-                "KLANGK_STATE_DIR": "/tmp/state",
-                "KLANGK_SOCKET": "/short/klangk.sock",
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_SOCKET": "/short/klangk.sock",
             }
         )
         assert s.socket == "/short/klangk.sock"
 
     def test_egress_port_defaults_to_8995(self):
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
         assert s.egress_port == "8995"
 
     def test_explicit_egress_port_wins(self):
         s = KlangkSettings(
             env={
-                "KLANGK_STATE_DIR": "/tmp/state",
-                "KLANGK_EGRESS_PORT": "7777",
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_EGRESS_PORT": "7777",
             }
         )
         assert s.egress_port == "7777"
 
     def test_port_defaults_to_none_headless(self):
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
         assert s.port is None
 
     def test_listen_defaults_to_loopback(self):
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
         assert s.listen == "127.0.0.1"
 
     def test_egress_listen_defaults_to_all_interfaces(self):
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
         assert s.egress_listen == "0.0.0.0"
 
     def test_egress_listen_override(self):
         s = KlangkSettings(
             env={
-                "KLANGK_STATE_DIR": "/tmp/state",
-                "KLANGK_EGRESS_LISTEN": "192.168.1.5",
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_EGRESS_LISTEN": "192.168.1.5",
             }
         )
         assert s.egress_listen == "192.168.1.5"
 
     def test_proxy_port_folded_into_egress_with_warning(self, caplog):
-        """KLANGK_PROXY_PORT alone (no egress) is used as egress + a deprecation warning."""
+        """KLANGKD_PROXY_PORT alone (no egress) is used as egress + a deprecation warning."""
         import logging
 
         with caplog.at_level(logging.WARNING):
             s = KlangkSettings(
                 env={
-                    "KLANGK_STATE_DIR": "/tmp/state",
-                    "KLANGK_PROXY_PORT": "9999",
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PROXY_PORT": "9999",
                 }
             )
         assert s.egress_port == "9999"
         assert any(
-            "KLANGK_PROXY_PORT is deprecated" in r.message
+            "KLANGKD_PROXY_PORT is deprecated" in r.message
             for r in caplog.records
         )
 
@@ -368,46 +368,47 @@ class TestResolveSocketAndPorts:
         with caplog.at_level(logging.WARNING):
             s = KlangkSettings(
                 env={
-                    "KLANGK_STATE_DIR": "/tmp/state",
-                    "KLANGK_EGRESS_PORT": "8995",
-                    "KLANGK_PROXY_PORT": "9999",
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_EGRESS_PORT": "8995",
+                    "KLANGKD_PROXY_PORT": "9999",
                 }
             )
         assert s.egress_port == "8995"
         assert any(
-            "KLANGK_PROXY_PORT is ignored" in r.message for r in caplog.records
+            "KLANGKD_PROXY_PORT is ignored" in r.message
+            for r in caplog.records
         )
 
     # --- proxy_engine default + nginx deprecation (#1634) ---
 
     def test_proxy_engine_defaults_to_caddy(self):
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
         assert s.proxy_engine == "caddy"
 
     def test_explicit_caddy_engine(self):
         s = KlangkSettings(
             env={
-                "KLANGK_STATE_DIR": "/tmp/state",
-                "KLANGK_PROXY_ENGINE": "caddy",
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PROXY_ENGINE": "caddy",
             }
         )
         assert s.proxy_engine == "caddy"
 
     def test_nginx_engine_warns_deprecated(self, caplog):
-        """Selecting KLANGK_PROXY_ENGINE=nginx fires a deprecation warning
+        """Selecting KLANGKD_PROXY_ENGINE=nginx fires a deprecation warning
         (nginx is the escape hatch for a Caddy regression, slated for removal)."""
         import logging
 
         with caplog.at_level(logging.WARNING):
             s = KlangkSettings(
                 env={
-                    "KLANGK_STATE_DIR": "/tmp/state",
-                    "KLANGK_PROXY_ENGINE": "nginx",
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PROXY_ENGINE": "nginx",
                 }
             )
         assert s.proxy_engine == "nginx"  # still selectable
         assert any(
-            "KLANGK_PROXY_ENGINE=nginx is deprecated" in r.message
+            "KLANGKD_PROXY_ENGINE=nginx is deprecated" in r.message
             for r in caplog.records
         )
 
@@ -416,7 +417,7 @@ class TestResolveSocketAndPorts:
         import logging
 
         with caplog.at_level(logging.WARNING):
-            KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+            KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
         assert not any("deprecated" in r.message for r in caplog.records)
 
     def test_egress_equals_port_rejected(self):
@@ -425,9 +426,9 @@ class TestResolveSocketAndPorts:
         with pytest.raises(ValidationError):
             KlangkSettings(
                 env={
-                    "KLANGK_STATE_DIR": "/tmp/state",
-                    "KLANGK_PORT": "8995",
-                    "KLANGK_EGRESS_PORT": "8995",
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PORT": "8995",
+                    "KLANGKD_EGRESS_PORT": "8995",
                 }
             )
 
@@ -440,12 +441,12 @@ class TestResolveSocketAndPorts:
         with pytest.raises(ValidationError) as exc_info:
             KlangkSettings(
                 env={
-                    "KLANGK_STATE_DIR": "/tmp/state",
-                    "KLANGK_SOCKET": long_socket,
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_SOCKET": long_socket,
                 }
             )
         msg = str(exc_info.value)
-        assert "KLANGK_SOCKET" in msg
+        assert "KLANGKD_SOCKET" in msg
         assert "#1531" in msg
 
     def test_socket_length_error_directs_to_state_dir_or_socket(self):
@@ -455,13 +456,13 @@ class TestResolveSocketAndPorts:
         with pytest.raises(ValidationError) as exc_info:
             KlangkSettings(
                 env={
-                    "KLANGK_STATE_DIR": "/tmp/state",
-                    "KLANGK_SOCKET": long_socket,
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_SOCKET": long_socket,
                 }
             )
         msg = str(exc_info.value)
-        assert "KLANGK_STATE_DIR" in msg
-        assert "KLANGK_SOCKET" in msg
+        assert "KLANGKD_STATE_DIR" in msg
+        assert "KLANGKD_SOCKET" in msg
 
     # --- Caddy admin socket (#1636) ---
     # Mirrors the backend-socket field's default + override + length guard.
@@ -470,7 +471,7 @@ class TestResolveSocketAndPorts:
     # with a named-var diagnostic instead of cryptically in _wait_for_admin.
 
     def test_caddy_admin_socket_defaults_to_state_dir(self):
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
         assert s.caddy_admin_socket == os.path.join(
             "/tmp/state", "caddy-admin.sock"
         )
@@ -478,8 +479,8 @@ class TestResolveSocketAndPorts:
     def test_explicit_caddy_admin_socket_wins(self):
         s = KlangkSettings(
             env={
-                "KLANGK_STATE_DIR": "/tmp/state",
-                "KLANGK_CADDY_ADMIN_SOCKET": "/short/caddy-admin.sock",
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_CADDY_ADMIN_SOCKET": "/short/caddy-admin.sock",
             }
         )
         assert s.caddy_admin_socket == "/short/caddy-admin.sock"
@@ -492,19 +493,19 @@ class TestResolveSocketAndPorts:
         with pytest.raises(ValidationError) as exc_info:
             KlangkSettings(
                 env={
-                    "KLANGK_STATE_DIR": "/tmp/state",
-                    "KLANGK_CADDY_ADMIN_SOCKET": long_admin,
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_CADDY_ADMIN_SOCKET": long_admin,
                     # Keep the backend socket short so the ONLY failure is the
                     # admin socket — proves the check is per-field.
-                    "KLANGK_SOCKET": "/short/klangk.sock",
+                    "KLANGKD_SOCKET": "/short/klangk.sock",
                 }
             )
         msg = str(exc_info.value)
-        assert "KLANGK_CADDY_ADMIN_SOCKET" in msg
+        assert "KLANGKD_CADDY_ADMIN_SOCKET" in msg
         assert "#1636" in msg
 
     def test_caddy_admin_socket_error_names_the_var(self):
-        """The diagnostic names KLANGK_CADDY_ADMIN_SOCKET (not just state_dir)
+        """The diagnostic names KLANGKD_CADDY_ADMIN_SOCKET (not just state_dir)
         so the operator can fix the right socket when only one is too long."""
         from pydantic import ValidationError
 
@@ -512,13 +513,13 @@ class TestResolveSocketAndPorts:
         with pytest.raises(ValidationError) as exc_info:
             KlangkSettings(
                 env={
-                    "KLANGK_STATE_DIR": "/tmp/state",
-                    "KLANGK_CADDY_ADMIN_SOCKET": long_admin,
-                    "KLANGK_SOCKET": "/short/klangk.sock",
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_CADDY_ADMIN_SOCKET": long_admin,
+                    "KLANGKD_SOCKET": "/short/klangk.sock",
                 }
             )
         msg = str(exc_info.value)
-        assert "KLANGK_CADDY_ADMIN_SOCKET" in msg
+        assert "KLANGKD_CADDY_ADMIN_SOCKET" in msg
 
 
 class TestKlangkdLauncher:
@@ -550,12 +551,12 @@ class TestEnvConstructor:
 
     def test_reads_from_env_dict(self):
         # Explicit env dict is the only source — os.environ is ignored.
-        s = make_settings({"KLANGK_EGRESS_PORT": "4321"})
+        s = make_settings({"KLANGKD_EGRESS_PORT": "4321"})
         assert s.egress_port == "4321"
 
     def test_env_dict_ignores_os_environ(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_EGRESS_PORT", "9999")
-        s = make_settings({"KLANGK_EGRESS_PORT": "1111"})
+        monkeypatch.setenv("KLANGKD_EGRESS_PORT", "9999")
+        s = make_settings({"KLANGKD_EGRESS_PORT": "1111"})
         assert s.egress_port == "1111"
         assert s.egress_port != "9999"
 
@@ -585,15 +586,15 @@ class TestEnvConstructor:
     def test_env_for_sources_reset_after_construction(self):
         # The class-var bridge is cleaned up after construction so it doesn't
         # leak between instances.
-        make_settings({"KLANGK_EGRESS_PORT": "1234"})
+        make_settings({"KLANGKD_EGRESS_PORT": "1234"})
         assert KlangkSettings._env_for_sources is None
 
     def test_env_dict_multiple_fields(self):
         s = make_settings(
             env={
-                "KLANGK_AUTH_MODES": "password",
-                "KLANGK_JWT_SECRET": "secret123",
-                "KLANGK_DEFAULT_USER": "admin@test.com",
+                "KLANGKD_AUTH_MODES": "password",
+                "KLANGKD_JWT_SECRET": "secret123",
+                "KLANGKD_DEFAULT_USER": "admin@test.com",
             }
         )
         assert s.auth_modes == "password"
@@ -612,19 +613,19 @@ class TestEnvConstructor:
         cfg = tmp_path / "config.yaml"
         cfg.write_text("product_name: FromConfigFile\n")
         s = make_settings(
-            env={"KLANGK_PRODUCT_NAME": "FromEnv"}, config_file=str(cfg)
+            env={"KLANGKD_PRODUCT_NAME": "FromEnv"}, config_file=str(cfg)
         )
         assert s.product_name == "FromEnv"
 
 
 class TestAuthModesValidator:
-    """KLANGK_AUTH_MODES is security-sensitive: a typo must fail at
+    """KLANGKD_AUTH_MODES is security-sensitive: a typo must fail at
     construction (boot), not silently downgrade to the no-auth ``none`` mode
     (which freely issues an admin token)."""
 
     @pytest.mark.parametrize("mode", ["password", "oidc", "both", "none"])
     def test_valid_modes_accepted(self, mode):
-        s = make_settings({"KLANGK_AUTH_MODES": mode})
+        s = make_settings({"KLANGKD_AUTH_MODES": mode})
         assert s.auth_modes == mode
 
     def test_unset_allowed_means_none(self):
@@ -641,28 +642,28 @@ class TestAuthModesValidator:
         from pydantic import ValidationError
 
         with _pytest.raises(ValidationError):
-            make_settings({"KLANGK_AUTH_MODES": bad})
+            make_settings({"KLANGKD_AUTH_MODES": bad})
 
     def test_empty_string_treated_as_unset(self):
-        # KLANGK_AUTH_MODES="" (set but blank) is treated as unset → None →
+        # KLANGKD_AUTH_MODES="" (set but blank) is treated as unset → None →
         # "none" at read time, preserving the pre-validator behavior.
         # (Not a security risk: blank is a config mistake, not a typo'd
         # secure-mode name silently degrading.)
-        s = make_settings({"KLANGK_AUTH_MODES": ""})
+        s = make_settings({"KLANGKD_AUTH_MODES": ""})
         assert s.auth_modes is None
 
     def test_typo_error_message_lists_valid_modes(self):
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError) as exc_info:
-            make_settings({"KLANGK_AUTH_MODES": "passdword"})
+            make_settings({"KLANGKD_AUTH_MODES": "passdword"})
         msg = str(exc_info.value)
         assert "passdword" in msg
         assert "password" in msg  # valid modes listed in the message
 
 
 class TestLogLevelValidator:
-    """KLANGK_LOG_LEVEL must be a recognized level or fail fast at boot
+    """KLANGKD_LOG_LEVEL must be a recognized level or fail fast at boot
     (#1467), mirroring the fail-fast posture of the auth_modes validator."""
 
     def test_defaults_to_info(self):
@@ -674,16 +675,16 @@ class TestLogLevelValidator:
     )
     def test_valid_names_accepted_any_case(self, name):
         # lower, upper, mixed all normalize to upper
-        s = make_settings({"KLANGK_LOG_LEVEL": name.lower()})
+        s = make_settings({"KLANGKD_LOG_LEVEL": name.lower()})
         assert s.log_level == name
 
     @pytest.mark.parametrize("num", ["0", "10", "20", "30", "40", "50"])
     def test_numeric_string_accepted(self, num):
-        s = make_settings({"KLANGK_LOG_LEVEL": num})
+        s = make_settings({"KLANGKD_LOG_LEVEL": num})
         assert s.log_level == num
 
     def test_empty_string_defaults_to_info(self):
-        s = make_settings({"KLANGK_LOG_LEVEL": ""})
+        s = make_settings({"KLANGKD_LOG_LEVEL": ""})
         assert s.log_level == "INFO"
 
     @pytest.mark.parametrize(
@@ -693,20 +694,20 @@ class TestLogLevelValidator:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            make_settings({"KLANGK_LOG_LEVEL": bad})
+            make_settings({"KLANGKD_LOG_LEVEL": bad})
 
     def test_error_message_names_valid_levels(self):
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError) as exc_info:
-            make_settings({"KLANGK_LOG_LEVEL": "verbose"})
+            make_settings({"KLANGKD_LOG_LEVEL": "verbose"})
         msg = str(exc_info.value)
         assert "verbose" in msg
         assert "DEBUG" in msg  # valid levels listed in the message
 
 
 class TestLlmBaseUrlValidator:
-    """KLANGK_LLM_BASE_URL with a fragment is rejected at construction (#1687);
+    """KLANGKD_LLM_BASE_URL with a fragment is rejected at construction (#1687);
     query strings are accepted (both renderers re-attach the base query and
     drop the incoming request's query, so a Gemini-style ``?key=...`` set
     by the operator is preserved while container-user query params are not)."""
@@ -716,7 +717,7 @@ class TestLlmBaseUrlValidator:
         assert s.llm_base_url is None
 
     def test_empty_string_accepted(self):
-        s = make_settings({"KLANGK_LLM_BASE_URL": ""})
+        s = make_settings({"KLANGKD_LLM_BASE_URL": ""})
         assert s.llm_base_url == ""
 
     @pytest.mark.parametrize(
@@ -735,7 +736,7 @@ class TestLlmBaseUrlValidator:
         ],
     )
     def test_query_less_and_query_bearing_urls_accepted(self, url):
-        assert make_settings({"KLANGK_LLM_BASE_URL": url}).llm_base_url == url
+        assert make_settings({"KLANGKD_LLM_BASE_URL": url}).llm_base_url == url
 
     @pytest.mark.parametrize(
         "url",
@@ -749,11 +750,11 @@ class TestLlmBaseUrlValidator:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError) as exc_info:
-            make_settings({"KLANGK_LLM_BASE_URL": url})
+            make_settings({"KLANGKD_LLM_BASE_URL": url})
         msg = str(exc_info.value)
         # The message names the field and the failure mode. It deliberately
         # does NOT echo the URL value (it may contain a secret in a query).
-        assert "KLANGK_LLM_BASE_URL" in msg
+        assert "KLANGKD_LLM_BASE_URL" in msg
         assert "fragment" in msg
 
     def test_value_not_echoed_in_error_message(self):
@@ -765,7 +766,7 @@ class TestLlmBaseUrlValidator:
 
         secret_url = "https://host/v4?key=sk-not-a-real-key-but-still#frag"
         with pytest.raises(ValidationError) as exc_info:
-            make_settings({"KLANGK_LLM_BASE_URL": secret_url})
+            make_settings({"KLANGKD_LLM_BASE_URL": secret_url})
         msg = str(exc_info.value)
         assert "sk-not-a-real-key-but-still" not in msg
         assert "key=sk" not in msg
@@ -780,7 +781,7 @@ class TestLlmBaseUrlValidator:
         script.write_text("#!/bin/sh\nprintf 'https://host/v4#leaked'\n")
         script.chmod(0o755)
         with pytest.raises(ValidationError):
-            make_settings({"KLANGK_LLM_BASE_URL": f"cmd:{script}"})
+            make_settings({"KLANGKD_LLM_BASE_URL": f"cmd:{script}"})
 
     def test_file_resolved_url_with_fragment_rejected(self, tmp_path):
         """A ``file:`` prefix whose contents contain a fragment is also
@@ -790,7 +791,7 @@ class TestLlmBaseUrlValidator:
         url_file = tmp_path / "url"
         url_file.write_text("https://host/v4#anchor\n")
         with pytest.raises(ValidationError):
-            make_settings({"KLANGK_LLM_BASE_URL": f"file:{url_file}"})
+            make_settings({"KLANGKD_LLM_BASE_URL": f"file:{url_file}"})
 
 
 class TestResolveIndirectionsValidator:
@@ -803,17 +804,17 @@ class TestResolveIndirectionsValidator:
     def test_file_resolved_at_construction(self, tmp_path):
         secret = tmp_path / "jwt.txt"
         secret.write_text("the-real-secret\n")
-        s = make_settings({"KLANGK_JWT_SECRET": f"file:{secret}"})
+        s = make_settings({"KLANGKD_JWT_SECRET": f"file:{secret}"})
         assert s.jwt_secret == "the-real-secret"
 
     def test_cmd_resolved_at_construction(self):
         s = make_settings(
-            env={"KLANGK_JWT_SECRET": "cmd:printf %s cmd-secret"}
+            env={"KLANGKD_JWT_SECRET": "cmd:printf %s cmd-secret"}
         )
         assert s.jwt_secret == "cmd-secret"
 
     def test_plain_value_passes_through(self):
-        s = make_settings({"KLANGK_JWT_SECRET": "plain-secret"})
+        s = make_settings({"KLANGKD_JWT_SECRET": "plain-secret"})
         assert s.jwt_secret == "plain-secret"
 
     def test_none_field_left_alone(self):
@@ -827,7 +828,7 @@ class TestResolveIndirectionsValidator:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError) as exc_info:
-            make_settings({"KLANGK_JWT_SECRET": "file:/nonexistent/path"})
+            make_settings({"KLANGKD_JWT_SECRET": "file:/nonexistent/path"})
         msg = str(exc_info.value)
         assert "JWT_SECRET" in msg
 
@@ -835,19 +836,19 @@ class TestResolveIndirectionsValidator:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            make_settings({"KLANGK_JWT_SECRET": "cmd:false"})
+            make_settings({"KLANGKD_JWT_SECRET": "cmd:false"})
 
     def test_idempotent_re_resolution(self):
         # A plain (already-resolved) value survives a second pass unchanged —
         # the legacy resolve_env_value path reads the resolved field and its
         # redundant _resolve_indirection call is a no-op.
-        s = make_settings({"KLANGK_EGRESS_PORT": "8995"})
+        s = make_settings({"KLANGKD_EGRESS_PORT": "8995"})
         assert _resolve_indirection(s.egress_port) == "8995"
 
     def test_non_string_field_skipped(self):
         # oidc_providers is list[dict] | None — not a str, skipped by the
         # validator (would crash if isinstance check were missing).
-        s = make_settings({"KLANGK_OIDC_PROVIDERS": '[{"name": "x"}]'})
+        s = make_settings({"KLANGKD_OIDC_PROVIDERS": '[{"name": "x"}]'})
         assert s.oidc_providers == [{"name": "x"}]
 
 
@@ -881,7 +882,7 @@ class TestRequireDirsValidator:
 
     def test_explicit_state_dir_wins_over_default(self, monkeypatch):
         monkeypatch.setenv("XDG_STATE_HOME", "/tmp/xstate")
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/explicit/state"})
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/explicit/state"})
         assert s.state_dir == "/explicit/state"
 
     def test_state_dir_still_required_when_home_unset(self, monkeypatch):
@@ -894,17 +895,17 @@ class TestRequireDirsValidator:
         monkeypatch.delenv("HOME", raising=False)
         with pytest.raises(ValidationError) as exc_info:
             KlangkSettings(env={})
-        assert "KLANGK_STATE_DIR" in str(exc_info.value)
+        assert "KLANGKD_STATE_DIR" in str(exc_info.value)
 
     def test_data_dir_defaults_to_state_dir_data(self):
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
         assert s.data_dir == os.path.join("/tmp/state", "data")
 
     def test_explicit_data_dir_wins(self):
         s = KlangkSettings(
             env={
-                "KLANGK_STATE_DIR": "/tmp/state",
-                "KLANGK_DATA_DIR": "/explicit/data",
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_DATA_DIR": "/explicit/data",
             }
         )
         assert s.data_dir == "/explicit/data"
@@ -913,19 +914,19 @@ class TestRequireDirsValidator:
         # plugins_dir is gone from KlangkSettings entirely (#1655) — the
         # runtime reads the build-emitted features.json from frontend_dir.
         # The build materializes features into a tempdir (#1660); there is no
-        # KLANGK_PLUGINS_DIR env var at any layer.
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        # KLANGKD_PLUGINS_DIR env var at any layer.
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
         assert not hasattr(s, "plugins_dir")
 
     def test_klangk_plugins_dir_env_not_recognized(self):
-        # KLANGK_PLUGINS_DIR does not exist as a concept anywhere (#1660 —
+        # KLANGKD_PLUGINS_DIR does not exist as a concept anywhere (#1660 —
         # dropped from the build too). pydantic-settings ignores unknown env
         # keys (no error), and the resulting settings object has no
         # plugins_dir attribute — the var simply has no effect.
         s = KlangkSettings(
             env={
-                "KLANGK_STATE_DIR": "/tmp/state",
-                "KLANGK_PLUGINS_DIR": "/explicit/plugins",
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PLUGINS_DIR": "/explicit/plugins",
             }
         )
         assert not hasattr(s, "plugins_dir")
@@ -934,7 +935,7 @@ class TestRequireDirsValidator:
 
     def test_customize_dir_defaults_to_xdg_config_home(self, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/xcfg")
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
         assert s.customize_dir == os.path.join(
             "/tmp/xcfg", "klangkd", "custom"
         )
@@ -942,8 +943,8 @@ class TestRequireDirsValidator:
     def test_explicit_customize_dir_wins(self):
         s = KlangkSettings(
             env={
-                "KLANGK_STATE_DIR": "/tmp/state",
-                "KLANGK_CUSTOMIZE_DIR": "/explicit/custom",
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_CUSTOMIZE_DIR": "/explicit/custom",
             }
         )
         assert s.customize_dir == "/explicit/custom"
@@ -968,37 +969,37 @@ class TestRequireDirsValidator:
 
     def test_config_dir_defaults_to_xdg_config_home(self, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/xcfg")
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
         assert s.config_dir == os.path.join("/tmp/xcfg", "klangkd")
 
     def test_config_dir_defaults_to_home_when_xdg_unset(self, monkeypatch):
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         monkeypatch.setenv("HOME", "/tmp/fakehome")
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
         assert s.config_dir == os.path.join(
             "/tmp/fakehome", ".config", "klangkd"
         )
 
     def test_explicit_config_dir_wins_and_propagates(self):
-        # An explicit KLANGK_CONFIG_DIR overrides the XDG default AND
+        # An explicit KLANGKD_CONFIG_DIR overrides the XDG default AND
         # customize_dir derives from it (the single-knob relocation point).
         # plugins_dir is gone (#1655) — nothing to check there.
         s = KlangkSettings(
             env={
-                "KLANGK_STATE_DIR": "/tmp/state",
-                "KLANGK_CONFIG_DIR": "/my/cfg",
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_CONFIG_DIR": "/my/cfg",
             }
         )
         assert s.config_dir == "/my/cfg"
         assert s.customize_dir == os.path.join("/my/cfg", "custom")
 
     def test_customize_override_wins_over_config_dir_derivation(self):
-        # KLANGK_CUSTOMIZE_DIR still wins over the config_dir-derived default.
+        # KLANGKD_CUSTOMIZE_DIR still wins over the config_dir-derived default.
         s = KlangkSettings(
             env={
-                "KLANGK_STATE_DIR": "/tmp/state",
-                "KLANGK_CONFIG_DIR": "/my/cfg",
-                "KLANGK_CUSTOMIZE_DIR": "/explicit/custom",
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_CONFIG_DIR": "/my/cfg",
+                "KLANGKD_CUSTOMIZE_DIR": "/explicit/custom",
             }
         )
         assert s.config_dir == "/my/cfg"
@@ -1007,14 +1008,14 @@ class TestRequireDirsValidator:
     # --- features_enable: per-deploy activation (#1655) ---
 
     def test_features_enable_defaults_to_none(self):
-        s = KlangkSettings(env={"KLANGK_STATE_DIR": "/tmp/state"})
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
         assert s.features_enable is None
 
     def test_features_enable_explicit_list(self):
         s = KlangkSettings(
             env={
-                "KLANGK_STATE_DIR": "/tmp/state",
-                "KLANGK_FEATURES_ENABLE": "celebrate,beep,soliplex",
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_FEATURES_ENABLE": "celebrate,beep,soliplex",
             }
         )
         # Canonical semantics: the value is carried verbatim (no parsing,
@@ -1024,8 +1025,8 @@ class TestRequireDirsValidator:
     def test_features_enable_single_value(self):
         s = KlangkSettings(
             env={
-                "KLANGK_STATE_DIR": "/tmp/state",
-                "KLANGK_FEATURES_ENABLE": "soliplex",
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_FEATURES_ENABLE": "soliplex",
             }
         )
         assert s.features_enable == "soliplex"
@@ -1035,19 +1036,19 @@ class TestReload:
     """KlangkSettings.reload() re-resolves from the same sources (#1587)."""
 
     def test_reload_returns_fresh_instance(self):
-        s = make_settings({"KLANGK_AGENT_HANDLE": "bot1"})
+        s = make_settings({"KLANGKD_AGENT_HANDLE": "bot1"})
         s2 = s.reload()
         assert s2 is not s
         assert s2.agent_handle == "bot1"
 
     def test_reload_picks_up_changed_env(self):
         env = {
-            "KLANGK_DATA_DIR": "/d",
-            "KLANGK_STATE_DIR": "/s",
-            "KLANGK_AGENT_HANDLE": "old",
+            "KLANGKD_DATA_DIR": "/d",
+            "KLANGKD_STATE_DIR": "/s",
+            "KLANGKD_AGENT_HANDLE": "old",
         }
         s = KlangkSettings(env)
-        env["KLANGK_AGENT_HANDLE"] = "new"
+        env["KLANGKD_AGENT_HANDLE"] = "new"
         s2 = s.reload()
         assert s2.agent_handle == "new"
         assert s.agent_handle == "old"
@@ -1059,27 +1060,27 @@ class TestReload:
         # constructions must surface on the reloaded instance. Verify the
         # claim directly rather than relying on the generic mechanism.
         cfg = tmp_path / "klangkd.yaml"
-        cfg.write_text('features_config:\n  KLANGK_FEATURE_X: "old"\n')
+        cfg.write_text('features_config:\n  KLANGKWS_FEATURE_X: "old"\n')
         s = make_settings({}, config_file=str(cfg))
-        assert s.features_config == {"KLANGK_FEATURE_X": "old"}
+        assert s.features_config == {"KLANGKWS_FEATURE_X": "old"}
         # Operator edits the block (SIGHUP path).
         cfg.write_text(
             "features_config:\n"
-            '  KLANGK_FEATURE_X: "new"\n'
-            '  KLANGK_FEATURE_Y: "added"\n'
+            '  KLANGKWS_FEATURE_X: "new"\n'
+            '  KLANGKWS_FEATURE_Y: "added"\n'
         )
         s2 = s.reload()
         assert s2.features_config == {
-            "KLANGK_FEATURE_X": "new",
-            "KLANGK_FEATURE_Y": "added",
+            "KLANGKWS_FEATURE_X": "new",
+            "KLANGKWS_FEATURE_Y": "added",
         }
         # The pre-reload instance is unchanged (reload returns a fresh obj).
-        assert s.features_config == {"KLANGK_FEATURE_X": "old"}
+        assert s.features_config == {"KLANGKWS_FEATURE_X": "old"}
 
     def test_reload_raises_on_invalid_config(self):
         s = make_settings({})
         with pytest.raises(Exception):
             # auth_modes must be a valid value; "bogus" will fail validation.
             env = dict(s._reload_env)
-            env["KLANGK_AUTH_MODES"] = "bogus"
+            env["KLANGKD_AUTH_MODES"] = "bogus"
             KlangkSettings(env)

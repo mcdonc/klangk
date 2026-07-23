@@ -1,6 +1,6 @@
 """Tests for features module (feature-manifest model, #1655).
 
-The runtime no longer scans ``KLANGK_PLUGINS_DIR`` for per-feature
+The runtime no longer scans ``KLANGKD_PLUGINS_DIR`` for per-feature
 ``package.json`` files — that presumed materialized source trees on the
 klangkd host, which pip/uv installs never have. Instead the build emits one
 ``features.json`` into the frontend bundle dir, and ``Features`` reads it at
@@ -26,7 +26,7 @@ def _write_manifest(frontend_dir, manifest):
 
 def _features(frontend_dir, env=None):
     """Build a fresh Features instance whose frontend_dir is *frontend_dir*."""
-    settings_env = {"KLANGK_FRONTEND_DIR": str(frontend_dir)}
+    settings_env = {"KLANGKD_FRONTEND_DIR": str(frontend_dir)}
     if env:
         settings_env.update(env)
     app_state = types.SimpleNamespace(
@@ -135,14 +135,14 @@ class TestContainerEnv:
                 "features": [],
                 "defaults": [],
                 "container_env_keys": [
-                    "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID"
+                    "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID"
                 ],
             },
         )
-        monkeypatch.setenv("KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID", "abc123")
+        monkeypatch.setenv("KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID", "abc123")
         p = _features(tmp_path)
         assert p.container_env() == {
-            "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc123"
+            "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc123"
         }
 
     def test_unset_key_resolves_empty(self, tmp_path, monkeypatch):
@@ -151,13 +151,13 @@ class TestContainerEnv:
             {
                 "features": [],
                 "defaults": [],
-                "container_env_keys": ["KLANGK_FEATURE_UNSET_KEY"],
+                "container_env_keys": ["KLANGKWS_FEATURE_UNSET_KEY"],
             },
         )
-        monkeypatch.delenv("KLANGK_FEATURE_UNSET_KEY", raising=False)
+        monkeypatch.delenv("KLANGKWS_FEATURE_UNSET_KEY", raising=False)
         p = _features(tmp_path)
         # No default carried in the key-list (only the names); unresolved → "".
-        assert p.container_env() == {"KLANGK_FEATURE_UNSET_KEY": ""}
+        assert p.container_env() == {"KLANGKWS_FEATURE_UNSET_KEY": ""}
 
     def test_multiple_keys(self, tmp_path, monkeypatch):
         _write_manifest(
@@ -166,17 +166,17 @@ class TestContainerEnv:
                 "features": [],
                 "defaults": [],
                 "container_env_keys": [
-                    "KLANGK_FEATURE_A_KEY",
-                    "KLANGK_FEATURE_B_KEY",
+                    "KLANGKWS_FEATURE_A_KEY",
+                    "KLANGKWS_FEATURE_B_KEY",
                 ],
             },
         )
-        monkeypatch.setenv("KLANGK_FEATURE_A_KEY", "a-val")
-        monkeypatch.setenv("KLANGK_FEATURE_B_KEY", "b-val")
+        monkeypatch.setenv("KLANGKWS_FEATURE_A_KEY", "a-val")
+        monkeypatch.setenv("KLANGKWS_FEATURE_B_KEY", "b-val")
         p = _features(tmp_path)
         assert p.container_env() == {
-            "KLANGK_FEATURE_A_KEY": "a-val",
-            "KLANGK_FEATURE_B_KEY": "b-val",
+            "KLANGKWS_FEATURE_A_KEY": "a-val",
+            "KLANGKWS_FEATURE_B_KEY": "b-val",
         }
 
     def test_non_string_key_skipped(self, tmp_path, monkeypatch):
@@ -185,24 +185,24 @@ class TestContainerEnv:
             {
                 "features": [],
                 "defaults": [],
-                "container_env_keys": ["KLANGK_FEATURE_OK_KEY", 42, None],
+                "container_env_keys": ["KLANGKWS_FEATURE_OK_KEY", 42, None],
             },
         )
-        monkeypatch.setenv("KLANGK_FEATURE_OK_KEY", "ok")
+        monkeypatch.setenv("KLANGKWS_FEATURE_OK_KEY", "ok")
         p = _features(tmp_path)
-        assert p.container_env() == {"KLANGK_FEATURE_OK_KEY": "ok"}
+        assert p.container_env() == {"KLANGKWS_FEATURE_OK_KEY": "ok"}
 
 
 class TestContainerEnvPrefixGuard:
-    """container_env() refuses to resolve keys without the KLANGK_FEATURE_
+    """container_env() refuses to resolve keys without the KLANGKWS_FEATURE_
     prefix, even if a stale or buggy manifest lists them (#1662). The build
     layer refuses to emit them; this runtime guard is belt-and-suspenders
     against an older manifest shipping with a newer server. The prefix is
-    the whole protection — every server setting is KLANGK_<SETTING> (no
-    FEATURE_ infix), so KLANGK_FEATURE_* can never collide with one."""
+    the whole protection — every server setting is KLANGKD_<SETTING> (no
+    FEATURE_ infix), so KLANGKWS_FEATURE_* can never collide with one."""
 
     def test_server_secret_key_skipped(self, tmp_path, monkeypatch):
-        # KLANGK_JWT_SECRET is the canonical example — a server secret that
+        # KLANGKD_JWT_SECRET is the canonical example — a server secret that
         # lacks the FEATURE_ infix and so must never leak into a container.
         _write_manifest(
             tmp_path,
@@ -210,26 +210,26 @@ class TestContainerEnvPrefixGuard:
                 "features": [],
                 "defaults": [],
                 "container_env_keys": [
-                    "KLANGK_JWT_SECRET",
-                    "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID",
+                    "KLANGKD_JWT_SECRET",
+                    "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID",
                 ],
             },
         )
-        monkeypatch.setenv("KLANGK_JWT_SECRET", "server-secret-do-not-leak")
-        monkeypatch.setenv("KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID", "abc")
+        monkeypatch.setenv("KLANGKD_JWT_SECRET", "server-secret-do-not-leak")
+        monkeypatch.setenv("KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID", "abc")
         p = _features(tmp_path)
         # Unprefixed server key dropped; prefixed-bearing feature key resolves.
         assert p.container_env() == {
-            "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc"
+            "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc"
         }
 
     @pytest.mark.parametrize(
         "key",
         [
-            "KLANGK_JWT_SECRET",  # server secret — no FEATURE_ infix
-            "KLANGK_DATA_DIR",  # server path
-            "KLANGK_SOCKET",  # server infra
-            "KLANGK_BOING_SPEED",  # the OLD pre-FEATURE_ feature name
+            "KLANGKD_JWT_SECRET",  # server secret — no FEATURE_ infix
+            "KLANGKD_DATA_DIR",  # server path
+            "KLANGKD_SOCKET",  # server infra
+            "KLANGKD_BOING_SPEED",  # the OLD pre-FEATURE_ feature name
             "PATH",  # generic env poison
             "HOME",
             "LD_PRELOAD",
@@ -259,15 +259,16 @@ class TestContainerEnvPrefixGuard:
             {
                 "features": [],
                 "defaults": [],
-                "container_env_keys": ["KLANGK_JWT_SECRET"],
+                "container_env_keys": ["KLANGKD_JWT_SECRET"],
             },
         )
-        monkeypatch.setenv("KLANGK_JWT_SECRET", "x")
+        monkeypatch.setenv("KLANGKD_JWT_SECRET", "x")
         p = _features(tmp_path)
         with caplog.at_level("WARNING", logger="klangk.features"):
             assert p.container_env() == {}
         assert any(
-            "KLANGK_JWT_SECRET" in r.message and "KLANGK_FEATURE_" in r.message
+            "KLANGKD_JWT_SECRET" in r.message
+            and "KLANGKWS_FEATURE_" in r.message
             for r in caplog.records
         )
 
@@ -286,7 +287,7 @@ class TestManifestSizeCap:
         manifest = {
             "features": [{"name": "x", "version": "1.0.0", "description": ""}],
             "defaults": [],
-            "container_env_keys": ["KLANGK_FEATURE_X_KEY"],
+            "container_env_keys": ["KLANGKWS_FEATURE_X_KEY"],
         }
         body = json.dumps(manifest)
         padding = "x" * (cap - len(body) + 1024)
@@ -324,17 +325,17 @@ class TestPrefixHelper:
         from klangk.features import is_valid_container_env_key
 
         assert is_valid_container_env_key(
-            "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID"
+            "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID"
         )
-        assert is_valid_container_env_key("KLANGK_FEATURE_BOING_SPEED")
-        assert is_valid_container_env_key("KLANGK_FEATURE_ANY_TOKEN")
+        assert is_valid_container_env_key("KLANGKWS_FEATURE_BOING_SPEED")
+        assert is_valid_container_env_key("KLANGKWS_FEATURE_ANY_TOKEN")
 
     @pytest.mark.parametrize(
         "key",
         [
-            "KLANGK_JWT_SECRET",  # server secret — no FEATURE_ infix
-            "KLANGK_DATA_DIR",  # server path
-            "KLANGK_BOING_SPEED",  # the OLD pre-FEATURE_ feature name
+            "KLANGKD_JWT_SECRET",  # server secret — no FEATURE_ infix
+            "KLANGKD_DATA_DIR",  # server path
+            "KLANGKD_BOING_SPEED",  # the OLD pre-FEATURE_ feature name
             "PATH",  # generic env poison
             "HOME",
             "LD_PRELOAD",
@@ -350,10 +351,10 @@ class TestPrefixHelper:
 class TestSettingsCollisionInvariant:
     """The prefix rule is the whole security boundary, and it rests on a
     convention: no ``KlangkSettings`` field's env-var form starts with
-    ``KLANGK_FEATURE_`` (server settings are all ``KLANGK_<SETTING>`` with no
-    ``FEATURE_`` infix, so the feature-config namespace ``KLANGK_FEATURE_*``
+    ``KLANGKWS_FEATURE_`` (server settings are all ``KLANGKD_<SETTING>`` with no
+    ``FEATURE_`` infix, so the feature-config namespace ``KLANGKWS_FEATURE_*``
     can't collide with one). True today, but nothing pins it — a future
-    ``feature_default_set`` field (env ``KLANGK_FEATURE_DEFAULT_SET``) would
+    ``feature_default_set`` field (env ``KLANGKWS_FEATURE_DEFAULT_SET``) would
     silently invert the protection: a feature declaring the same name would
     resolve the server setting's value. This test locks the convention so
     the regression fails here, not in a container-env leak months later.
@@ -363,19 +364,21 @@ class TestSettingsCollisionInvariant:
         from klangk.features import _CONTAINER_ENV_KEY_PREFIX
         from klangk.settings import KlangkSettings
 
-        # KlangkSettings uses env_prefix="KLANGK_" with no per-field aliasing
+        # KlangkSettings uses env_prefix="KLANGKD_" with no per-field aliasing
         # (verified: no field has alias or validation_alias). So every field's
-        # env-var name is KLANGK_ + field_name.upper(). If any starts with the
+        # env-var name is KLANGKD_ + field_name.upper(). If any starts with the
         # feature-config prefix, the prefix rule's collision-free guarantee
         # breaks — either rename the field or revisit the prefix choice.
         colliding = sorted(
-            f"KLANGK_{name.upper()}"
+            f"KLANGKD_{name.upper()}"
             for name in KlangkSettings.model_fields
-            if (f"KLANGK_{name.upper()}").startswith(_CONTAINER_ENV_KEY_PREFIX)
-            and f"KLANGK_{name.upper()}" != _CONTAINER_ENV_KEY_PREFIX
+            if (f"KLANGKD_{name.upper()}").startswith(
+                _CONTAINER_ENV_KEY_PREFIX
+            )
+            and f"KLANGKD_{name.upper()}" != _CONTAINER_ENV_KEY_PREFIX
         )
-        # Note the plural: KLANGK_FEATURES_ENABLE (features_enable field) is
-        # a near-miss but does NOT start with KLANGK_FEATURE_ — "feature" vs
+        # Note the plural: KLANGKD_FEATURES_ENABLE (features_enable field) is
+        # a near-miss but does NOT start with KLANGKWS_FEATURE_ — "feature" vs
         # "features". If that ever flips, this assertion catches it.
         assert colliding == [], (
             f"KlangkSettings has fields whose env-var form starts with "
@@ -386,23 +389,23 @@ class TestSettingsCollisionInvariant:
         )
 
     def test_features_enable_does_not_collide(self):
-        # The activation knob (features_enable → KLANGK_FEATURES_ENABLE, plural)
+        # The activation knob (features_enable → KLANGKD_FEATURES_ENABLE, plural)
         # is the closest near-miss. Pin it explicitly: a future rename to
-        # feature_enable (singular) would collide with KLANGK_FEATURE_.
+        # feature_enable (singular) would collide with KLANGKWS_FEATURE_.
         from klangk.features import is_valid_container_env_key
         from klangk.settings import KlangkSettings
 
         assert "features_enable" in KlangkSettings.model_fields
         # The activation env var must NOT pass the feature-key validity check.
-        assert not is_valid_container_env_key("KLANGK_FEATURES_ENABLE")
+        assert not is_valid_container_env_key("KLANGKD_FEATURES_ENABLE")
 
 
 class TestFrontendConfig:
     """frontend_config() resolves frontend/both-scope values from the
     per-feature config blocks (shape from the manifest, values from the env).
 
-    JSON keys are the lowercased **suffix** after ``KLANGK_FEATURE_`` —
-    e.g. ``KLANGK_FEATURE_BOING_SPEED`` → ``boing_speed`` (not
+    JSON keys are the lowercased **suffix** after ``KLANGKWS_FEATURE_`` —
+    e.g. ``KLANGKWS_FEATURE_BOING_SPEED`` → ``boing_speed`` (not
     ``klangk_feature_boing_speed``). The prefix is stripped because it's
     the declaration-side namespace, not part of the feature-owned name the
     frontend reads. Keys without the prefix are skipped with a warning
@@ -416,7 +419,7 @@ class TestFrontendConfig:
         self, tmp_path, monkeypatch
     ):
         # The renamed soliplex key (post-#1686 vendoring): the declaration
-        # carries the full KLANGK_FEATURE_SOLIPLEX_URL prefix; /api/config
+        # carries the full KLANGKWS_FEATURE_SOLIPLEX_URL prefix; /api/config
         # exposes the lowercased suffix `soliplex_url`.
         _write_manifest(
             tmp_path,
@@ -427,7 +430,7 @@ class TestFrontendConfig:
                         "version": "1.0.0",
                         "description": "",
                         "config": {
-                            "KLANGK_FEATURE_SOLIPLEX_URL": {
+                            "KLANGKWS_FEATURE_SOLIPLEX_URL": {
                                 "description": "RAG endpoint",
                                 "default": "",
                                 "scope": "frontend",
@@ -440,7 +443,7 @@ class TestFrontendConfig:
             },
         )
         monkeypatch.setenv(
-            "KLANGK_FEATURE_SOLIPLEX_URL", "https://rag.example.com"
+            "KLANGKWS_FEATURE_SOLIPLEX_URL", "https://rag.example.com"
         )
         p = _features(tmp_path)
         assert p.frontend_config() == {
@@ -450,7 +453,7 @@ class TestFrontendConfig:
     def test_boingball_key_stripped_to_boing_speed(
         self, tmp_path, monkeypatch
     ):
-        # The canonical boingball example: KLANGK_FEATURE_BOING_SPEED →
+        # The canonical boingball example: KLANGKWS_FEATURE_BOING_SPEED →
         # `boing_speed` (the lowercased suffix). The Dart feature reads
         # data['boing_speed'] (was data['klangk_boing_speed'] pre-#1662).
         _write_manifest(
@@ -462,7 +465,7 @@ class TestFrontendConfig:
                         "version": "1.0.0",
                         "description": "",
                         "config": {
-                            "KLANGK_FEATURE_BOING_SPEED": {
+                            "KLANGKWS_FEATURE_BOING_SPEED": {
                                 "description": "speed",
                                 "default": "1.0",
                                 "scope": "frontend",
@@ -474,7 +477,7 @@ class TestFrontendConfig:
                 "container_env_keys": [],
             },
         )
-        monkeypatch.setenv("KLANGK_FEATURE_BOING_SPEED", "2.5")
+        monkeypatch.setenv("KLANGKWS_FEATURE_BOING_SPEED", "2.5")
         p = _features(tmp_path)
         assert p.frontend_config() == {"boing_speed": "2.5"}
 
@@ -490,7 +493,7 @@ class TestFrontendConfig:
                         "version": "1.0.0",
                         "description": "",
                         "config": {
-                            "KLANGK_FEATURE_SHARED_URL": {
+                            "KLANGKWS_FEATURE_SHARED_URL": {
                                 "description": "",
                                 "default": "http://default",
                                 "scope": "both",
@@ -502,7 +505,7 @@ class TestFrontendConfig:
                 "container_env_keys": [],
             },
         )
-        monkeypatch.setenv("KLANGK_FEATURE_SHARED_URL", "http://real")
+        monkeypatch.setenv("KLANGKWS_FEATURE_SHARED_URL", "http://real")
         p = _features(tmp_path)
         assert p.frontend_config() == {"shared_url": "http://real"}
 
@@ -518,7 +521,7 @@ class TestFrontendConfig:
                         "version": "1.0.0",
                         "description": "",
                         "config": {
-                            "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": {
+                            "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": {
                                 "description": "",
                                 "default": "",
                                 "scope": "container",
@@ -528,16 +531,16 @@ class TestFrontendConfig:
                 ],
                 "defaults": [],
                 "container_env_keys": [
-                    "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID"
+                    "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID"
                 ],
             },
         )
-        monkeypatch.setenv("KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID", "abc")
+        monkeypatch.setenv("KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID", "abc")
         p = _features(tmp_path)
         # container-only: in container_env, NOT in frontend_config.
         assert p.frontend_config() == {}
         assert p.container_env() == {
-            "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc"
+            "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc"
         }
 
     def test_default_used_when_env_unset(self, tmp_path, monkeypatch):
@@ -550,7 +553,7 @@ class TestFrontendConfig:
                         "version": "1.0.0",
                         "description": "",
                         "config": {
-                            "KLANGK_FEATURE_MY_KEY": {
+                            "KLANGKWS_FEATURE_MY_KEY": {
                                 "description": "",
                                 "default": "fallback",
                                 "scope": "frontend",
@@ -562,7 +565,7 @@ class TestFrontendConfig:
                 "container_env_keys": [],
             },
         )
-        monkeypatch.delenv("KLANGK_FEATURE_MY_KEY", raising=False)
+        monkeypatch.delenv("KLANGKWS_FEATURE_MY_KEY", raising=False)
         p = _features(tmp_path)
         assert p.frontend_config() == {"my_key": "fallback"}
 
@@ -577,7 +580,7 @@ class TestFrontendConfig:
                     {
                         "name": "ok",
                         "config": {
-                            "KLANGK_FEATURE_OK_KEY": {
+                            "KLANGKWS_FEATURE_OK_KEY": {
                                 "default": "v",
                                 "scope": "frontend",
                             }
@@ -600,7 +603,7 @@ class TestFrontendConfig:
                     {
                         "name": "ok",
                         "config": {
-                            "KLANGK_FEATURE_OK_KEY": {
+                            "KLANGKWS_FEATURE_OK_KEY": {
                                 "default": "v",
                                 "scope": "frontend",
                             }
@@ -624,7 +627,7 @@ class TestFrontendConfig:
                 "features": [
                     {
                         "name": "x",
-                        "config": {"KLANGK_FEATURE_BAD_KEY": "not-a-dict"},
+                        "config": {"KLANGKWS_FEATURE_BAD_KEY": "not-a-dict"},
                     }
                 ],
                 "defaults": [],
@@ -644,7 +647,7 @@ class TestFrontendConfig:
                     {
                         "name": "x",
                         "config": {
-                            "KLANGK_FEATURE_X_KEY": {
+                            "KLANGKWS_FEATURE_X_KEY": {
                                 "default": "v",
                                 "scope": "bogus",
                             }
@@ -662,7 +665,7 @@ class TestFrontendConfig:
         self, tmp_path, monkeypatch, caplog
     ):
         # The prefix rule applies to frontend scope too — a stale manifest
-        # declaring e.g. the old SOLIPLEX_URL (no KLANGK_FEATURE_) is skipped
+        # declaring e.g. the old SOLIPLEX_URL (no KLANGKWS_FEATURE_) is skipped
         # at runtime, not surfaced to the frontend. Belt-and-suspenders
         # against an older manifest shipping with a newer server.
         _write_manifest(
@@ -688,7 +691,7 @@ class TestFrontendConfig:
         with caplog.at_level("WARNING", logger="klangk.features"):
             assert p.frontend_config() == {}
         assert any(
-            "SOLIPLEX_URL" in r.message and "KLANGK_FEATURE_" in r.message
+            "SOLIPLEX_URL" in r.message and "KLANGKWS_FEATURE_" in r.message
             for r in caplog.records
         )
 
@@ -711,7 +714,7 @@ class TestFeaturesConfigSource:
         )
         cfg.write_text(f"features_config:\n{items}\n")
         settings = make_settings(
-            {"KLANGK_FRONTEND_DIR": str(frontend_dir)},
+            {"KLANGKD_FRONTEND_DIR": str(frontend_dir)},
             config_file=str(cfg),
         )
         app_state = types.SimpleNamespace(
@@ -726,16 +729,16 @@ class TestFeaturesConfigSource:
                 "features": [],
                 "defaults": [],
                 "container_env_keys": [
-                    "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID"
+                    "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID"
                 ],
             },
         )
         p = self._features_with_fc(
             tmp_path,
-            {"KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc123"},
+            {"KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc123"},
         )
         assert p.container_env() == {
-            "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc123"
+            "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc123"
         }
 
     def test_container_env_env_wins_over_features_config(
@@ -746,14 +749,14 @@ class TestFeaturesConfigSource:
             {
                 "features": [],
                 "defaults": [],
-                "container_env_keys": ["KLANGK_FEATURE_OAUTH_ID"],
+                "container_env_keys": ["KLANGKWS_FEATURE_OAUTH_ID"],
             },
         )
-        monkeypatch.setenv("KLANGK_FEATURE_OAUTH_ID", "from-env")
+        monkeypatch.setenv("KLANGKWS_FEATURE_OAUTH_ID", "from-env")
         p = self._features_with_fc(
-            tmp_path, {"KLANGK_FEATURE_OAUTH_ID": "from-yaml"}
+            tmp_path, {"KLANGKWS_FEATURE_OAUTH_ID": "from-yaml"}
         )
-        assert p.container_env() == {"KLANGK_FEATURE_OAUTH_ID": "from-env"}
+        assert p.container_env() == {"KLANGKWS_FEATURE_OAUTH_ID": "from-env"}
 
     def test_container_env_features_config_wins_over_empty_default(
         self, tmp_path
@@ -766,13 +769,13 @@ class TestFeaturesConfigSource:
             {
                 "features": [],
                 "defaults": [],
-                "container_env_keys": ["KLANGK_FEATURE_TOKEN"],
+                "container_env_keys": ["KLANGKWS_FEATURE_TOKEN"],
             },
         )
         p = self._features_with_fc(
-            tmp_path, {"KLANGK_FEATURE_TOKEN": "token-value"}
+            tmp_path, {"KLANGKWS_FEATURE_TOKEN": "token-value"}
         )
-        assert p.container_env() == {"KLANGK_FEATURE_TOKEN": "token-value"}
+        assert p.container_env() == {"KLANGKWS_FEATURE_TOKEN": "token-value"}
 
     def test_container_env_file_prefix_in_features_config(self, tmp_path):
         secret = tmp_path / "oauth-secret"
@@ -782,25 +785,27 @@ class TestFeaturesConfigSource:
             {
                 "features": [],
                 "defaults": [],
-                "container_env_keys": ["KLANGK_FEATURE_OAUTH_ID"],
+                "container_env_keys": ["KLANGKWS_FEATURE_OAUTH_ID"],
             },
         )
         p = self._features_with_fc(
-            tmp_path, {"KLANGK_FEATURE_OAUTH_ID": f"file:{secret}"}
+            tmp_path, {"KLANGKWS_FEATURE_OAUTH_ID": f"file:{secret}"}
         )
-        assert p.container_env() == {"KLANGK_FEATURE_OAUTH_ID": "file-secret"}
+        assert p.container_env() == {
+            "KLANGKWS_FEATURE_OAUTH_ID": "file-secret"
+        }
 
     def test_container_env_resolves_short_form_key(self, tmp_path):
         # #1737: the features_config: block may use the short, JSON-style key
         # (github_oauth_client_id) instead of the full declared name
-        # (KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID) — both resolve the same.
+        # (KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID) — both resolve the same.
         _write_manifest(
             tmp_path,
             {
                 "features": [],
                 "defaults": [],
                 "container_env_keys": [
-                    "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID"
+                    "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID"
                 ],
             },
         )
@@ -808,7 +813,7 @@ class TestFeaturesConfigSource:
             tmp_path, {"github_oauth_client_id": "abc123"}
         )
         assert p.container_env() == {
-            "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc123"
+            "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "abc123"
         }
 
     def test_container_env_absent_key_falls_to_default(self, tmp_path):
@@ -819,13 +824,13 @@ class TestFeaturesConfigSource:
             {
                 "features": [],
                 "defaults": [],
-                "container_env_keys": ["KLANGK_FEATURE_X"],
+                "container_env_keys": ["KLANGKWS_FEATURE_X"],
             },
         )
         p = self._features_with_fc(
-            tmp_path, {"KLANGK_FEATURE_UNRELATED": "other"}
+            tmp_path, {"KLANGKWS_FEATURE_UNRELATED": "other"}
         )
-        assert p.container_env() == {"KLANGK_FEATURE_X": ""}
+        assert p.container_env() == {"KLANGKWS_FEATURE_X": ""}
 
     def test_frontend_config_resolves_from_features_config(self, tmp_path):
         _write_manifest(
@@ -837,7 +842,7 @@ class TestFeaturesConfigSource:
                         "version": "1.0.0",
                         "description": "",
                         "config": {
-                            "KLANGK_FEATURE_SOLIPLEX_URL": {
+                            "KLANGKWS_FEATURE_SOLIPLEX_URL": {
                                 "description": "RAG endpoint",
                                 "default": "",
                                 "scope": "frontend",
@@ -851,7 +856,7 @@ class TestFeaturesConfigSource:
         )
         p = self._features_with_fc(
             tmp_path,
-            {"KLANGK_FEATURE_SOLIPLEX_URL": "https://rag.example.com"},
+            {"KLANGKWS_FEATURE_SOLIPLEX_URL": "https://rag.example.com"},
         )
         assert p.frontend_config() == {
             "soliplex_url": "https://rag.example.com"
@@ -869,7 +874,7 @@ class TestFeaturesConfigSource:
                         "version": "1.0.0",
                         "description": "",
                         "config": {
-                            "KLANGK_FEATURE_BOING_SPEED": {
+                            "KLANGKWS_FEATURE_BOING_SPEED": {
                                 "description": "speed",
                                 "default": "1.0",
                                 "scope": "frontend",
@@ -882,7 +887,7 @@ class TestFeaturesConfigSource:
             },
         )
         p = self._features_with_fc(
-            tmp_path, {"KLANGK_FEATURE_BOING_SPEED": "2.5"}
+            tmp_path, {"KLANGKWS_FEATURE_BOING_SPEED": "2.5"}
         )
         assert p.frontend_config() == {"boing_speed": "2.5"}
 
@@ -898,7 +903,7 @@ class TestFeaturesConfigSource:
                         "version": "1.0.0",
                         "description": "",
                         "config": {
-                            "KLANGK_FEATURE_SOLIPLEX_URL": {
+                            "KLANGKWS_FEATURE_SOLIPLEX_URL": {
                                 "description": "",
                                 "default": "",
                                 "scope": "frontend",
@@ -911,11 +916,11 @@ class TestFeaturesConfigSource:
             },
         )
         monkeypatch.setenv(
-            "KLANGK_FEATURE_SOLIPLEX_URL", "https://from-env.example.com"
+            "KLANGKWS_FEATURE_SOLIPLEX_URL", "https://from-env.example.com"
         )
         p = self._features_with_fc(
             tmp_path,
-            {"KLANGK_FEATURE_SOLIPLEX_URL": "https://from-yaml.example.com"},
+            {"KLANGKWS_FEATURE_SOLIPLEX_URL": "https://from-yaml.example.com"},
         )
         assert p.frontend_config() == {
             "soliplex_url": "https://from-env.example.com"
@@ -923,7 +928,7 @@ class TestFeaturesConfigSource:
 
     def test_frontend_config_resolves_short_form_key(self, tmp_path):
         # #1737: the block may use soliplex_url (the /api/v1/config JSON key)
-        # instead of the full KLANGK_FEATURE_SOLIPLEX_URL — both resolve.
+        # instead of the full KLANGKWS_FEATURE_SOLIPLEX_URL — both resolve.
         _write_manifest(
             tmp_path,
             {
@@ -933,7 +938,7 @@ class TestFeaturesConfigSource:
                         "version": "1.0.0",
                         "description": "",
                         "config": {
-                            "KLANGK_FEATURE_SOLIPLEX_URL": {
+                            "KLANGKWS_FEATURE_SOLIPLEX_URL": {
                                 "description": "RAG endpoint",
                                 "default": "",
                                 "scope": "frontend",
@@ -962,18 +967,18 @@ class TestFeaturesConfigSource:
             {
                 "features": [],
                 "defaults": [],
-                "container_env_keys": ["KLANGK_FEATURE_X"],
+                "container_env_keys": ["KLANGKWS_FEATURE_X"],
             },
         )
-        monkeypatch.delenv("KLANGK_FEATURE_X", raising=False)
+        monkeypatch.delenv("KLANGKWS_FEATURE_X", raising=False)
         p = _features(tmp_path)
         assert p.app.state.settings.features_config is None
-        assert p.container_env() == {"KLANGK_FEATURE_X": ""}
+        assert p.container_env() == {"KLANGKWS_FEATURE_X": ""}
 
     def test_reserved_key_in_features_config_not_injected_into_container(
         self, tmp_path, monkeypatch
     ):
-        # Security regression: the KLANGK_FEATURE_ prefix guard runs BEFORE
+        # Security regression: the KLANGKWS_FEATURE_ prefix guard runs BEFORE
         # resolution, so a reserved/non-prefixed key sitting inside a
         # features_config: block must never reach a workspace container —
         # even if the manifest (or a misbuilt one) listed it. The guard is
@@ -986,24 +991,24 @@ class TestFeaturesConfigSource:
             {
                 "features": [],
                 "defaults": [],
-                "container_env_keys": ["KLANGK_JWT_SECRET"],
+                "container_env_keys": ["KLANGKD_JWT_SECRET"],
             },
         )
-        monkeypatch.delenv("KLANGK_JWT_SECRET", raising=False)
+        monkeypatch.delenv("KLANGKD_JWT_SECRET", raising=False)
         p = self._features_with_fc(
-            tmp_path, {"KLANGK_JWT_SECRET": "pwned-by-config"}
+            tmp_path, {"KLANGKD_JWT_SECRET": "pwned-by-config"}
         )
         # The block DID load the value onto settings.features_config...
         assert p.app.state.settings.features_config == {
-            "KLANGK_JWT_SECRET": "pwned-by-config"
+            "KLANGKD_JWT_SECRET": "pwned-by-config"
         }
         # ...but container_env refuses to resolve it (prefix guard), so it
         # never reaches the container env dict.
-        assert "KLANGK_JWT_SECRET" not in p.container_env()
+        assert "KLANGKD_JWT_SECRET" not in p.container_env()
 
 
 class TestFeaturesEnable:
-    """features_enable() forwards the KLANGK_FEATURES_ENABLE setting verbatim
+    """features_enable() forwards the KLANGKD_FEATURES_ENABLE setting verbatim
     (the deploy's chosen active-feature list — canonical semantics, #1655)."""
 
     def test_unset_returns_none(self, tmp_path):
@@ -1012,12 +1017,13 @@ class TestFeaturesEnable:
 
     def test_explicit_value_forwarded_verbatim(self, tmp_path):
         p = _features(
-            tmp_path, env={"KLANGK_FEATURES_ENABLE": "celebrate,beep,soliplex"}
+            tmp_path,
+            env={"KLANGKD_FEATURES_ENABLE": "celebrate,beep,soliplex"},
         )
         assert p.features_enable() == "celebrate,beep,soliplex"
 
     def test_single_value(self, tmp_path):
-        p = _features(tmp_path, env={"KLANGK_FEATURES_ENABLE": "soliplex"})
+        p = _features(tmp_path, env={"KLANGKD_FEATURES_ENABLE": "soliplex"})
         assert p.features_enable() == "soliplex"
 
 
@@ -1048,7 +1054,7 @@ class TestReconfigure:
         )
         new_app_state = types.SimpleNamespace(
             state=types.SimpleNamespace(
-                settings=make_settings({"KLANGK_FRONTEND_DIR": str(tmp_path)})
+                settings=make_settings({"KLANGKD_FRONTEND_DIR": str(tmp_path)})
             )
         )
         p.reconfigure(new_app_state)

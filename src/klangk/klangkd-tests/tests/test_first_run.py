@@ -1,10 +1,10 @@
 """Tests for first-run config generation (#1645 / #1607).
 
-Bare ``klangkd`` (no ``--config``) resolves ``<KLANGK_CONFIG_DIR>/klangkd.yaml``
+Bare ``klangkd`` (no ``--config``) resolves ``<KLANGKD_CONFIG_DIR>/klangkd.yaml``
 (default ``~/.config/klangk/klangkd.yaml``) and generates a near-empty template
 on first run. No admin identity or password is emitted — the admin row is
 seeded at runtime (derived from the Unix user; null password in ``none``/``oidc``
-mode, or ``KLANGK_DEFAULT_PASSWORD`` in ``password``/``both`` mode — fail-fast
+mode, or ``KLANGKD_DEFAULT_PASSWORD`` in ``password``/``both`` mode — fail-fast
 if unset). See ``test_main.py::TestSeedDefaultUserAuthModeGating`` for the
 seeding behavior.
 """
@@ -21,20 +21,20 @@ class TestDefaultConfigPath:
     """default_config_path() — the path bare ``klangkd`` resolves to."""
 
     def test_uses_klangk_config_dir_env_when_set(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("KLANGK_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setenv("KLANGKD_CONFIG_DIR", str(tmp_path))
         assert first_run.default_config_path() == str(
             tmp_path / "klangkd.yaml"
         )
 
     def test_falls_back_to_xdg_config_home(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("KLANGK_CONFIG_DIR", raising=False)
+        monkeypatch.delenv("KLANGKD_CONFIG_DIR", raising=False)
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         assert first_run.default_config_path() == str(
             tmp_path / "klangkd" / "klangkd.yaml"
         )
 
     def test_falls_back_to_home_when_xdg_unset(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("KLANGK_CONFIG_DIR", raising=False)
+        monkeypatch.delenv("KLANGKD_CONFIG_DIR", raising=False)
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         monkeypatch.setenv("HOME", str(tmp_path))
         assert first_run.default_config_path() == str(
@@ -44,7 +44,7 @@ class TestDefaultConfigPath:
     def test_klangk_config_dir_wins_over_xdg(self, tmp_path, monkeypatch):
         explicit = tmp_path / "explicit"
         xdg = tmp_path / "xdg"
-        monkeypatch.setenv("KLANGK_CONFIG_DIR", str(explicit))
+        monkeypatch.setenv("KLANGKD_CONFIG_DIR", str(explicit))
         monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
         assert first_run.default_config_path() == str(
             explicit / "klangkd.yaml"
@@ -110,7 +110,7 @@ class TestGenerateDefaultConfig:
         first_run.generate_default_config(path)
         from klangk.settings import KlangkSettings
 
-        monkeypatch.setenv("KLANGK_STATE_DIR", str(tmp_path / "state"))
+        monkeypatch.setenv("KLANGKD_STATE_DIR", str(tmp_path / "state"))
         s = KlangkSettings(os.environ, config_file=path)
         # No active keys → everything is defaults. default_user is the
         # dynamic Unix-user default.
@@ -130,7 +130,7 @@ class TestLauncherIntegration:
     """launcher._resolve_config_path(None) wires first-run generation in."""
 
     def test_none_generates_when_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("KLANGK_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setenv("KLANGKD_CONFIG_DIR", str(tmp_path))
         from klangk.launcher import _resolve_config_path
 
         path = tmp_path / "klangkd.yaml"
@@ -142,7 +142,7 @@ class TestLauncherIntegration:
     def test_none_does_not_regenerate_when_present(
         self, tmp_path, monkeypatch
     ):
-        monkeypatch.setenv("KLANGK_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setenv("KLANGKD_CONFIG_DIR", str(tmp_path))
         path = tmp_path / "klangkd.yaml"
         path.write_text("product_name: already-here\n")
         from klangk.launcher import _resolve_config_path
@@ -156,7 +156,7 @@ class TestLauncherIntegration:
         # open("x"), generate_default_config raises FileExistsError. The
         # launcher must treat that as "the file is there now" and proceed,
         # not crash (a systemd restart overlap shouldn't take down the boot).
-        monkeypatch.setenv("KLANGK_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setenv("KLANGKD_CONFIG_DIR", str(tmp_path))
         # Simulate the race: generate_default_config raises FileExistsError
         # (another process created the file between our isfile check and the
         # open("x") inside the generator).

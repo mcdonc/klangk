@@ -70,7 +70,7 @@ By default the `klangk` user does **not** have root access.
 
 ### With sudo enabled
 
-If the administrator sets `KLANGK_ALLOW_SUDO=1` (see
+If the administrator sets `KLANGKD_ALLOW_SUDO=1` (see
 [Environment Variables](../reference/environment.md)), the `klangk`
 user gets passwordless `sudo`. You can then install packages normally:
 

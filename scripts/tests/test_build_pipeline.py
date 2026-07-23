@@ -55,7 +55,7 @@ EXPECTED_FEATURE_NAMES = {
 }
 
 # Compiled-in Dart features that are NOT in DEFAULT_FEATURES — dormant unless
-# an operator opts in via KLANGK_FEATURES_ENABLE. Soliplex (#1664, vendored
+# an operator opts in via KLANGKD_FEATURES_ENABLE. Soliplex (#1664, vendored
 # local in #1686) is the canonical "compiled-in ⊋ defaults" case.
 DORMANT_FEATURE_NAMES = {"soliplex"}
 
@@ -79,12 +79,12 @@ EXPECTED_DART_FEATURES = {
 EXPECTED_DART_FEATURE_NAMES = set(EXPECTED_DART_FEATURES)
 
 # Config keys declared across all feature package.json files, by scope.
-# All carry the KLANGK_FEATURE_ prefix (the feature-config namespace, #1662):
-# server settings are KLANGK_<SETTING> (no FEATURE_ infix), so the prefix
+# All carry the KLANGKWS_FEATURE_ prefix (the feature-config namespace, #1662):
+# server settings are KLANGKD_<SETTING> (no FEATURE_ infix), so the prefix
 # alone keeps feature keys from colliding with server secrets/paths/infra.
-# Soliplex's KLANGK_FEATURE_SOLIPLEX_URL was renamed from SOLIPLEX_URL when it
+# Soliplex's KLANGKWS_FEATURE_SOLIPLEX_URL was renamed from SOLIPLEX_URL when it
 # was vendored (#1686) — the build guard from #1662 requires the prefix.
-EXPECTED_CONTAINER_ENV_KEYS = ["KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID"]
+EXPECTED_CONTAINER_ENV_KEYS = ["KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID"]
 
 
 def _run_codegen(payload_dir, tmp_path, monkeypatch):
@@ -273,9 +273,9 @@ class TestManifestContract:
                 all_keys[key] = spec["scope"]
         # Spot-check the three keys actually declared today.
         assert all_keys == {
-            "KLANGK_FEATURE_BOING_SPEED": "frontend",
-            "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": "container",
-            "KLANGK_FEATURE_SOLIPLEX_URL": "frontend",
+            "KLANGKWS_FEATURE_BOING_SPEED": "frontend",
+            "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "container",
+            "KLANGKWS_FEATURE_SOLIPLEX_URL": "frontend",
         }
 
     def test_defaults_are_default_features_constant(self, tmp_path, monkeypatch):
@@ -295,7 +295,7 @@ class TestManifestContract:
         Every stock Dart feature is default-on except soliplex (#1664,
         vendored local in #1686): it's compiled-in (appears in features[])
         but dormant (NOT in defaults) — operators opt in with
-        KLANGK_FEATURES_ENABLE. This is the canonical "compiled-in ⊋
+        KLANGKD_FEATURES_ENABLE. This is the canonical "compiled-in ⊋
         defaults" case from #1655."""
         manifest = self._build_manifest(tmp_path, monkeypatch)
         feature_names = {f["name"] for f in manifest["features"]}

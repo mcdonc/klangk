@@ -10,7 +10,7 @@ import { execSync } from "child_process";
 // the connection alive for long RAG + LLM answers, so the old fixed 30s
 // round-trip timeout no longer applies — only the per-chunk idle timeout does.
 
-const BRIDGE_URL = process.env.KLANGK_BRIDGE_URL;
+const BRIDGE_URL = process.env.KLANGKWS_BRIDGE_URL;
 
 /**
  * Read the current browser ID from klangk-browser-id.

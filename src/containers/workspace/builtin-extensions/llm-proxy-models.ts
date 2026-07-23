@@ -59,7 +59,7 @@ async function fetchModels(
 }
 
 export default async function (pi: ExtensionAPI) {
-  const proxyUrl = process.env.KLANGK_LLM_PROXY_URL;
+  const proxyUrl = process.env.KLANGKWS_LLM_PROXY_URL;
   let apiKey = "proxy";
   try {
     apiKey =

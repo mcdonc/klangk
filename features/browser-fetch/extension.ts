@@ -10,7 +10,7 @@ function getBrowserId(): string {
   }
 }
 
-const BRIDGE_URL = process.env.KLANGK_BRIDGE_URL;
+const BRIDGE_URL = process.env.KLANGKWS_BRIDGE_URL;
 function getWorkspaceToken(): string {
   try {
     return execSync("klangk-workspace-token", { encoding: "utf-8" }).trim();

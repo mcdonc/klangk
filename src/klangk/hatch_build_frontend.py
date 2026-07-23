@@ -10,7 +10,7 @@ A plain ``force-include`` in ``pyproject.toml`` would be strict for *every*
 build mode, including editable installs — but editable installs (devenv, CI)
 run against a source tree where the artifact is often absent (CI never builds
 the frontend) and they don't need it in the wheel anyway (they point
-``KLANGK_FRONTEND_DIR`` at the repo build, see ``devenv.nix`` /
+``KLANGKD_FRONTEND_DIR`` at the repo build, see ``devenv.nix`` /
 the host ``Dockerfile``). So instead this hook:
 
 - includes the artifact when present (release wheel built after
@@ -56,7 +56,7 @@ class FrontendArtifactHook(BuildHookInterface):
             return
         # Artifact absent. Editable builds (dev/CI) are allowed to proceed
         # without it — they serve the UI from the repo via
-        # KLANGK_FRONTEND_DIR. A regular wheel build must fail loudly so a
+        # KLANGKD_FRONTEND_DIR. A regular wheel build must fail loudly so a
         # release wheel can't silently ship UI-less (#1600).
         if version == "editable":
             return

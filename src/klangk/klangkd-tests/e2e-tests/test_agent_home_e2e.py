@@ -3,7 +3,7 @@
 #1157 shipped two container-bringup behaviors that the unit suite can
 only *mock*:
 
-1. ``KLANGK_AGENT_HOME=/home/<agent_handle>`` is baked into the
+1. ``KLANGKD_AGENT_HOME=/home/<agent_handle>`` is baked into the
    container env at creation (``_build_env``), so **every** exec
    process inside the container inherits it.  The unit test only proves
    ``_build_env`` emits the string; here we prove podman actually
@@ -48,22 +48,22 @@ AGENT_HOME = f"/home/{AGENT_HANDLE}"
 def server():
     """Start a real Klangk server for the test module.
 
-    KLANGK_ALLOW_AUTOSTART=1 is required so the eager-provisioning test
+    KLANGKD_ALLOW_AUTOSTART=1 is required so the eager-provisioning test
     can create a workspace with auto_start=True (which routes through
     start_workspace -> ensure_agent_home).
     """
     server = start_server(
-        KLANGK_JWT_SECRET="agent-home-e2e-secret",
-        KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-        KLANGK_DEFAULT_USER="test@example.com",
-        KLANGK_DEFAULT_PASSWORD="testpass",
-        KLANGK_TEST_MODE="1",
-        KLANGK_IDLE_TIMEOUT_SECONDS="300",
-        KLANGK_ALLOW_AUTOSTART="1",
+        KLANGKD_JWT_SECRET="agent-home-e2e-secret",
+        KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGKD_DEFAULT_USER="test@example.com",
+        KLANGKD_DEFAULT_PASSWORD="testpass",
+        KLANGKD_TEST_MODE="1",
+        KLANGKD_IDLE_TIMEOUT_SECONDS="300",
+        KLANGKD_ALLOW_AUTOSTART="1",
         LOGFIRE_TOKEN="",
-        KLANGK_LLM_BASE_URL="",
-        KLANGK_LLM_API_KEY="",
-        KLANGK_LLM_MODEL="",
+        KLANGKD_LLM_BASE_URL="",
+        KLANGKD_LLM_API_KEY="",
+        KLANGKD_LLM_MODEL="",
     )
 
     # Fetch auto-generated instance ID from the running server (used by
@@ -230,7 +230,7 @@ async def exec_command(ws, command):
 class TestAgentHomeE2E:
     @pytest.mark.asyncio
     async def test_agent_home_env_present_in_exec(self, server, auth):
-        """KLANGK_AGENT_HOME is baked at container start and inherited by
+        """KLANGKD_AGENT_HOME is baked at container start and inherited by
         every exec process (#1157).  The WS exec path spawns a process
         inside the container via the server's exec machinery (the same
         path terminals use) -- it does *not* pass the var per-call, so
@@ -243,11 +243,11 @@ class TestAgentHomeE2E:
             try:
                 output = await exec_command(
                     ws,
-                    ["bash", "-c", 'echo "$KLANGK_AGENT_HOME"'],
+                    ["bash", "-c", 'echo "$KLANGKD_AGENT_HOME"'],
                 )
                 # Exact value: the default agent handle's home.
                 assert output.strip() == AGENT_HOME, (
-                    f"expected KLANGK_AGENT_HOME={AGENT_HOME!r}, "
+                    f"expected KLANGKD_AGENT_HOME={AGENT_HOME!r}, "
                     f"got {output!r}"
                 )
             finally:

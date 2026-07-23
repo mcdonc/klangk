@@ -69,7 +69,7 @@ very first poll false-flagging a freshly-started service as unhealthy
 is still coming up), Klangk applies a **startup grace window** —
 modelled on Docker's `HEALTHCHECK --start-period`:
 
-- For `KLANGK_HEALTH_CHECK_STARTUP_GRACE` seconds (default 30) after
+- For `KLANGKD_HEALTH_CHECK_STARTUP_GRACE` seconds (default 30) after
   the service command fires, a **failing** check does _not_ transition
   the workspace to unhealthy, broadcast, or log a failure — the blip is
   treated as expected boot-up noise.
@@ -300,11 +300,11 @@ probe.
 The polling interval, the per-check timeout, and the startup grace
 period are configurable via environment variables on the server:
 
-| Variable                            | Default | Description                                                                                   |
-| ----------------------------------- | ------- | --------------------------------------------------------------------------------------------- |
-| `KLANGK_HEALTH_CHECK_INTERVAL`      | `30`    | Seconds between polls for each workspace.                                                     |
-| `KLANGK_HEALTH_CHECK_TIMEOUT`       | `10`    | Seconds before a single `podman exec` check is killed and marked unhealthy.                   |
-| `KLANGK_HEALTH_CHECK_STARTUP_GRACE` | `30`    | Seconds after the service launches during which a failing check is not unhealthy (see below). |
+| Variable                             | Default | Description                                                                                   |
+| ------------------------------------ | ------- | --------------------------------------------------------------------------------------------- |
+| `KLANGKD_HEALTH_CHECK_INTERVAL`      | `30`    | Seconds between polls for each workspace.                                                     |
+| `KLANGKD_HEALTH_CHECK_TIMEOUT`       | `10`    | Seconds before a single `podman exec` check is killed and marked unhealthy.                   |
+| `KLANGKD_HEALTH_CHECK_STARTUP_GRACE` | `30`    | Seconds after the service launches during which a failing check is not unhealthy (see below). |
 
 `podman exec` is a local Unix socket call to the Podman API, not a
 network round-trip, so running a check every 30 seconds per container

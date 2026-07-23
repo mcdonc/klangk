@@ -26,14 +26,14 @@ from _e2e_env import clean_env  # type: ignore[import-not-found]  # noqa: E402
 
 
 def test_clean_env_strips_klangk_prefixed_vars(monkeypatch):
-    """KLANGK_* / _KLANGK_* / KLANGKC_* / LOGFIRE_* are stripped from the baseline."""
-    monkeypatch.setenv("KLANGK_SECRET", "leak")
-    monkeypatch.setenv("_KLANGK_INTERNAL", "leak")
+    """KLANGKD_* / _KLANGKD_* / KLANGKC_* / LOGFIRE_* are stripped from the baseline."""
+    monkeypatch.setenv("KLANGKD_SECRET", "leak")
+    monkeypatch.setenv("_KLANGKD_INTERNAL", "leak")
     monkeypatch.setenv("KLANGKC_DEBUG", "leak")
     monkeypatch.setenv("LOGFIRE_TOKEN", "leak")
     env = clean_env()
-    assert "KLANGK_SECRET" not in env
-    assert "_KLANGK_INTERNAL" not in env
+    assert "KLANGKD_SECRET" not in env
+    assert "_KLANGKD_INTERNAL" not in env
     assert "KLANGKC_DEBUG" not in env
     assert "LOGFIRE_TOKEN" not in env
 
@@ -71,13 +71,13 @@ def test_clean_env_respects_explicit_xdg_override(monkeypatch):
 def test_clean_env_no_home_override_does_not_pin_xdg(monkeypatch):
     """Without a HOME override, the inherited XDG vars pass through unchanged.
 
-    Server e2e tests don't override HOME (they pin KLANGK_STATE_DIR /
-    KLANGK_DATA_DIR explicitly), so they keep the inherited XDG vars — and
-    that's fine because the KLANGK_* override wins in settings.py regardless.
+    Server e2e tests don't override HOME (they pin KLANGKD_STATE_DIR /
+    KLANGKD_DATA_DIR explicitly), so they keep the inherited XDG vars — and
+    that's fine because the KLANGKD_* override wins in settings.py regardless.
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", "/inherited/config")
     monkeypatch.setenv("XDG_STATE_HOME", "/inherited/state")
-    env = clean_env(KLANGK_PORT="12345")
+    env = clean_env(KLANGKD_PORT="12345")
     assert env["XDG_CONFIG_HOME"] == "/inherited/config"
     assert env["XDG_STATE_HOME"] == "/inherited/state"
     assert "XDG_CONFIG_HOME" in env  # not pinned, not stripped
@@ -86,26 +86,26 @@ def test_clean_env_no_home_override_does_not_pin_xdg(monkeypatch):
 def test_clean_env_baseline_defaults_present():
     """The E2E baseline defaults are always set."""
     env = clean_env()
-    assert env["_KLANGK_DISABLE_PROXY"] == "1"
-    assert env["KLANGK_AUTH_MODES"] == "password"
+    assert env["_KLANGKD_DISABLE_PROXY"] == "1"
+    assert env["KLANGKD_AUTH_MODES"] == "password"
 
 
 def test_clean_env_auth_modes_override():
-    """KLANGK_AUTH_MODES override wins over the baseline default."""
-    env = clean_env(KLANGK_AUTH_MODES="none")
-    assert env["KLANGK_AUTH_MODES"] == "none"
+    """KLANGKD_AUTH_MODES override wins over the baseline default."""
+    env = clean_env(KLANGKD_AUTH_MODES="none")
+    assert env["KLANGKD_AUTH_MODES"] == "none"
 
 
 def test_clean_env_strips_env_at_call_time(monkeypatch):
     """The baseline env is snapshotted at call time, not import time.
 
-    Setting a KLANGK_* var after import but before the call still gets
+    Setting a KLANGKD_* var after import but before the call still gets
     stripped; setting a non-stripped var after import still gets included.
     """
-    monkeypatch.setenv("KLANGK_LATE", "late-leak")
+    monkeypatch.setenv("KLANGKD_LATE", "late-leak")
     monkeypatch.setenv("SOME_OTHER_VAR", "kept")
     env = clean_env()
-    assert "KLANGK_LATE" not in env
+    assert "KLANGKD_LATE" not in env
     assert env.get("SOME_OTHER_VAR") == "kept"
 
 

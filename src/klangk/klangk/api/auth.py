@@ -309,8 +309,8 @@ async def local_login(request: Request):
     """No-login single-user mode: mint a token for the seeded default
     user, no credentials accepted (#1374).
 
-    Only available when ``KLANGK_AUTH_MODES=none``. The loopback bind
-    (``KLANGK_LISTEN``) plus the proxy per-location ``allow 127.0.0.1``
+    Only available when ``KLANGKD_AUTH_MODES=none``. The loopback bind
+    (``KLANGKD_LISTEN``) plus the proxy per-location ``allow 127.0.0.1``
     ACL keep this endpoint unreachable from workspace containers; the
     freely-issued Bearer token is kept as belt-and-suspenders CSRF
     defense on every subsequent request.

@@ -126,7 +126,7 @@ class TestJWT:
 
 class TestRegister:
     async def test_register_disabled(self, db):
-        a = _auth({"KLANGK_DISABLE_REGISTRATION": "true"})
+        a = _auth({"KLANGKD_DISABLE_REGISTRATION": "true"})
         with pytest.raises(HTTPException) as exc_info:
             await a.register(
                 auth.RegisterRequest(
@@ -203,7 +203,7 @@ class TestRegister:
     async def test_register_password_length_configurable(self, db):
         """min_password_length is read from settings at construction."""
         # A non-default floor (10): 9 chars fails, 10 succeeds.
-        a = _auth({"KLANGK_MIN_PASSWORD_LENGTH": "10"})
+        a = _auth({"KLANGKD_MIN_PASSWORD_LENGTH": "10"})
         with pytest.raises(HTTPException) as exc_info:
             await a.register(
                 auth.RegisterRequest(
@@ -506,7 +506,7 @@ class TestLoginRateLimit:
 
     async def test_login_lockout_disabled_when_zero(self, db):
         """With login_lockout_failures=0, no rate limiting occurs."""
-        a = _auth({"KLANGK_LOGIN_LOCKOUT_FAILURES": "0"})
+        a = _auth({"KLANGKD_LOGIN_LOCKOUT_FAILURES": "0"})
         for _ in range(20):
             with pytest.raises(HTTPException) as exc_info:
                 await a.login(
@@ -915,7 +915,7 @@ class TestRefreshToken:
 
     def test_configurable_token_expire_hours(self):
         """token_expire_hours reads from settings at construction."""
-        a = _auth({"KLANGK_ACCESS_TOKEN_HOURS": "48"})
+        a = _auth({"KLANGKD_ACCESS_TOKEN_HOURS": "48"})
         assert a.token_expire_hours == 48.0
 
 
@@ -954,13 +954,13 @@ class TestInvitationsEnabled:
         assert _auth().invitations_enabled() is True
 
     def test_disabled(self):
-        a = _auth({"KLANGK_DISABLE_INVITES": "true"})
+        a = _auth({"KLANGKD_DISABLE_INVITES": "true"})
         assert a.invitations_enabled() is False
 
 
 class TestRequireSecureJwtSecret:
     def test_secure_secret_passes(self):
-        a = _auth({"KLANGK_JWT_SECRET": "a-real-strong-secret"})
+        a = _auth({"KLANGKD_JWT_SECRET": "a-real-strong-secret"})
         assert a.jwt_secret_is_secure() is True
         a.require_secure_jwt_secret()  # no raise
 
@@ -976,8 +976,8 @@ class TestRequireSecureJwtSecret:
             a.require_secure_jwt_secret()  # warns but does not raise
 
     def test_default_secret_blocks_with_prevent(self):
-        a = _auth({"KLANGK_PREVENT_INSECURE_JWT_SECRET": "1"})
-        with pytest.raises(ConfigurationError, match="KLANGK_JWT_SECRET"):
+        a = _auth({"KLANGKD_PREVENT_INSECURE_JWT_SECRET": "1"})
+        with pytest.raises(ConfigurationError, match="KLANGKD_JWT_SECRET"):
             a.require_secure_jwt_secret()
 
     def test_empty_secret_blocks_with_prevent(self):
@@ -985,8 +985,8 @@ class TestRequireSecureJwtSecret:
         # empty string is also insecure and blocked when prevent is set.
         a = _auth(
             {
-                "KLANGK_JWT_SECRET": "",
-                "KLANGK_PREVENT_INSECURE_JWT_SECRET": "1",
+                "KLANGKD_JWT_SECRET": "",
+                "KLANGKD_PREVENT_INSECURE_JWT_SECRET": "1",
             }
         )
         assert a.jwt_secret_is_secure() is False

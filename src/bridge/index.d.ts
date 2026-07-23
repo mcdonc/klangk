@@ -20,7 +20,7 @@ export interface BrowserActionResponse {
  * The request is routed through the Klangk backend to the Flutter client,
  * which makes the HTTP request with the browser's cookies and session.
  *
- * Requires KLANGK_BRIDGE_URL (set at container creation) and a browser tab
+ * Requires KLANGKWS_BRIDGE_URL (set at container creation) and a browser tab
  * connected to the workspace.  The browser ID is read dynamically per-request
  * via `klangk-browser-id`.
  */
@@ -41,7 +41,7 @@ export function browserAction(
 
 /**
  * Check whether the browser bridge is available.
- * Returns true if KLANGK_BRIDGE_URL is set, a browser ID is available
+ * Returns true if KLANGKWS_BRIDGE_URL is set, a browser ID is available
  * via `klangk-browser-id`, and the bridge endpoint is reachable.
  */
 export function isBridgeAvailable(): Promise<boolean>;

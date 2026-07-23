@@ -13,7 +13,7 @@
 # Usage (from the worktree root, wrapped in devenv):
 #   devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh -g clanker
 #   devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh          # all scenes
-#   KLANGK_DEMO_WIDTH=1920 KLANGK_DEMO_HEIGHT=1080 \
+#   KLANGKBUILD_DEMO_WIDTH=1920 KLANGKBUILD_DEMO_HEIGHT=1080 \
 #     devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh -g clanker
 #
 # Extra args (after the script name) are forwarded to `playwright test`.
@@ -26,8 +26,8 @@
 # (Playwright always shows chrome — --kiosk is ignored — so cropping is the
 # reliable path; there is no black bar because the full window fills the canvas.)
 #
-# 2x-bigger-but-softer take: set KLANGK_DEMO_VW=960 KLANGK_DEMO_VH=540 (Flutter
-# lays out 2x bigger) and KLANGK_DEMO_OUT_W=1920 KLANGK_DEMO_OUT_H=1080; this
+# 2x-bigger-but-softer take: set KLANGKBUILD_DEMO_VW=960 KLANGKBUILD_DEMO_VH=540 (Flutter
+# lays out 2x bigger) and KLANGKBUILD_DEMO_OUT_W=1920 KLANGKBUILD_DEMO_OUT_H=1080; this
 # script upscales the 960x540 capture to 1920x1080 with lanczos. See
 # playwright.demo.config.ts for why crisp-AND-2x in-browser isn't possible.
 
@@ -43,21 +43,21 @@ mkdir -p "$VIDEO_DIR"
 # never use (the ffmpeg capture above is the keeper). Redirect it to a temp
 # dir and discard it so no stray artifacts are left outside recordings/.
 PW_OUTPUT="$(mktemp -d)"
-export KLANGK_DEMO_PW_OUTPUT="$PW_OUTPUT"
+export KLANGKBUILD_DEMO_PW_OUTPUT="$PW_OUTPUT"
 
 # Recording canvas. The browser renders into this; ffmpeg captures all of it.
 # Recording canvas (Flutter layout size = Xvfb capture width/height). Default
 # 960x540: Flutter lays out 2x-bigger elements, then the recorder upscales to
 # 1920x1080 (OUT_W/H below) with lanczos for a crisp, big-text take. This is
 # the winning config (recording-20260702-135351.mp4). For native 1:1 1920x1080
-# (smaller text, pixel-perfect), set KLANGK_DEMO_VW=1920 KLANGK_DEMO_VH=1080
+# (smaller text, pixel-perfect), set KLANGKBUILD_DEMO_VW=1920 KLANGKBUILD_DEMO_VH=1080
 # and leave OUT_W/H unset.
-WIDTH="${KLANGK_DEMO_VW:-960}"
-HEIGHT="${KLANGK_DEMO_VH:-540}"
+WIDTH="${KLANGKBUILD_DEMO_VW:-960}"
+HEIGHT="${KLANGKBUILD_DEMO_VH:-540}"
 # Output size (after optional upscale). Default = 2x of the 960x540 capture →
 # 1920x1080, YouTube-exact 16:9. Set = WIDTH/HEIGHT to disable upscaling.
-OUT_W="${KLANGK_DEMO_OUT_W:-1920}"
-OUT_H="${KLANGK_DEMO_OUT_H:-1080}"
+OUT_W="${KLANGKBUILD_DEMO_OUT_W:-1920}"
+OUT_H="${KLANGKBUILD_DEMO_OUT_H:-1080}"
 # Browser chrome (tabs + omnibox) height in px. Measured ~86px when matchbox
 # force-fullscreens Chrome (Chrome's chrome is fixed regardless of window size).
 # The Xvfb canvas is padded by this to fit the FULL window (chrome + page); the
@@ -66,15 +66,15 @@ OUT_H="${KLANGK_DEMO_OUT_H:-1080}"
 # dark-background injection (demo-helpers.ts) is a safety net so any sub-px
 # mismatch shows the app color, not white. (--kiosk doesn't work under
 # Playwright; matchbox + crop is the reliable path.)
-CHROME_H="${KLANGK_DEMO_CHROME_H:-86}"
+CHROME_H="${KLANGKBUILD_DEMO_CHROME_H:-86}"
 # Crop the chrome off the top → clean WIDTH x HEIGHT output (default on).
-CROP="${KLANGK_DEMO_CROP:-1}"
+CROP="${KLANGKBUILD_DEMO_CROP:-1}"
 if [ "$CROP" = "1" ]; then
   XVFB_H=$((HEIGHT + CHROME_H))
 else
-  XVFB_H="${KLANGK_DEMO_XVFB_H:-$((HEIGHT + CHROME_H))}"
+  XVFB_H="${KLANGKBUILD_DEMO_XVFB_H:-$((HEIGHT + CHROME_H))}"
 fi
-DISPLAY_NUM="${KLANGK_DEMO_DISPLAY:-99}"
+DISPLAY_NUM="${KLANGKBUILD_DEMO_DISPLAY:-99}"
 export DISPLAY=":${DISPLAY_NUM}"
 
 TS="$(date +%Y%m%d-%H%M%S)"
@@ -180,16 +180,16 @@ fi
 # broken. Default OFF — the visible cursor comes from the in-page DOM overlay
 # (installDemoCursor in demo-helpers.ts), which follows synthetic mousemove
 # events and renders above Flutter's canvas so ffmpeg captures it natively.
-# Set KLANGK_DEMO_DRAW_MOUSE=1 to also draw the (frozen) OS cursor for debugging.
-DRAW_MOUSE="${KLANGK_DEMO_DRAW_MOUSE:-0}"
+# Set KLANGKBUILD_DEMO_DRAW_MOUSE=1 to also draw the (frozen) OS cursor for debugging.
+DRAW_MOUSE="${KLANGKBUILD_DEMO_DRAW_MOUSE:-0}"
 ffmpeg -y -hide_banner -loglevel error \
   -f x11grab -draw_mouse "$DRAW_MOUSE" \
   -video_size "${WIDTH}x${XVFB_H}" \
-  -framerate "${KLANGK_DEMO_FPS:-30}" \
+  -framerate "${KLANGKBUILD_DEMO_FPS:-30}" \
   -i "$DISPLAY+0,0" \
   "${VF_ARGS[@]}" \
-  -c:v libx264 -pix_fmt yuv420p -preset "${KLANGK_DEMO_X264_PRESET:-medium}" \
-  -crf "${KLANGK_DEMO_CRF:-20}" \
+  -c:v libx264 -pix_fmt yuv420p -preset "${KLANGKBUILD_DEMO_X264_PRESET:-medium}" \
+  -crf "${KLANGKBUILD_DEMO_CRF:-20}" \
   "$OUT" &
 FFMPEG_PID=$!
 echo "  ffmpeg recording (pid $FFMPEG_PID)"
@@ -201,9 +201,9 @@ echo
 #
 # FORCE headed: capturing requires Chromium to actually paint into the Xvfb
 # display, which headless mode does NOT do (it renders offscreen, so x11grab
-# records a black screen). Ignore KLANGK_DEMO_HEADLESS here — that flag only
+# records a black screen). Ignore KLANGKBUILD_DEMO_HEADLESS here — that flag only
 # makes sense for a direct `playwright test` dry check, never for recording.
-export KLANGK_DEMO_HEADLESS=0
+export KLANGKBUILD_DEMO_HEADLESS=0
 echo "=== running playwright (args: $*) ==="
 # `set +e` so a failing scene still lets ffmpeg finalize the recording.
 set +e

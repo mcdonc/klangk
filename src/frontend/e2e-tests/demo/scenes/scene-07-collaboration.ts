@@ -12,7 +12,7 @@
  * reset, run, teardown.
  *
  * Iterate the mechanics in FAST mode (headless, ~10s, no live clanker):
- *   KLANGK_DEMO_FAST=1 KLANGK_DEMO_HEADLESS=1 \
+ *   KLANGKBUILD_DEMO_FAST=1 KLANGKBUILD_DEMO_HEADLESS=1 \
  *     devenv shell -- npx playwright test --config=...demo.config.ts \
  *       -g "collaboration owner"
  * Record for real:
@@ -28,7 +28,7 @@ import {
 } from "../collab-choreography";
 
 test("collaboration owner", async ({ page, request }) => {
-  test.setTimeout(process.env.KLANGK_DEMO_FAST ? 120_000 : 300_000);
+  test.setTimeout(process.env.KLANGKBUILD_DEMO_FAST ? 120_000 : 300_000);
 
   const ctx = await setupCollab({ page, request, perspective: "owner" });
   try {

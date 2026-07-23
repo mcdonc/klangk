@@ -8,7 +8,7 @@ the box — no separate frontend build or checkout required (#1600).
 
 `klangkd` resolves the directory it serves the UI from in this order:
 
-1. **`KLANGK_FRONTEND_DIR`**, if set — point it at any built Flutter web
+1. **`KLANGKD_FRONTEND_DIR`**, if set — point it at any built Flutter web
    directory on the filesystem (#1456). Use this to serve a UI you built
    yourself, or to override the default.
 2. **The in-package default** — `<site-packages>/klangk/frontend/`. This is
@@ -40,13 +40,13 @@ wheel.
 
 Not every `klangkd` runs from an installed wheel. The in-package default only
 applies when the package is installed non-editable; source-tree deployments set
-`KLANGK_FRONTEND_DIR` explicitly:
+`KLANGKD_FRONTEND_DIR` explicitly:
 
-| Mode                                | Runs from                    | Frontend dir                                                                                  |
-| ----------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------- |
-| **Packaged** (`pip install klangk`) | installed wheel              | in-package `klangk/frontend/` (default)                                                       |
-| **devenv / checkout**               | editable source tree         | `KLANGK_FRONTEND_DIR` → repo `src/frontend/build/web` (set in `devenv.nix`)                   |
-| **Host container**                  | source tree via `PYTHONPATH` | `KLANGK_FRONTEND_DIR` → `/home/klangk/src/frontend/build/web` (set in the image `Dockerfile`) |
+| Mode                                | Runs from                    | Frontend dir                                                                                   |
+| ----------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Packaged** (`pip install klangk`) | installed wheel              | in-package `klangk/frontend/` (default)                                                        |
+| **devenv / checkout**               | editable source tree         | `KLANGKD_FRONTEND_DIR` → repo `src/frontend/build/web` (set in `devenv.nix`)                   |
+| **Host container**                  | source tree via `PYTHONPATH` | `KLANGKD_FRONTEND_DIR` → `/home/klangk/src/frontend/build/web` (set in the image `Dockerfile`) |
 
 Operators running their own build of the UI (e.g. a custom Flutter build) set
-`KLANGK_FRONTEND_DIR` to that directory in all three modes.
+`KLANGKD_FRONTEND_DIR` to that directory in all three modes.

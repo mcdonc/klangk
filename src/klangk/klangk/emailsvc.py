@@ -46,7 +46,7 @@ class EmailService:
         self.app = app
         # Per-instance cached Jinja environment. Built lazily on first
         # render; reset via reset_template_env() (mainly for tests that
-        # flip KLANGK_EMAIL_TEMPLATES_DIR between cases).
+        # flip KLANGKD_EMAIL_TEMPLATES_DIR between cases).
         self._env: Environment | None = None
 
     def reconfigure(self, app) -> None:
@@ -56,7 +56,7 @@ class EmailService:
     # --- config ---
 
     def resolve_password(self) -> str | None:
-        """Resolve KLANGK_SMTP_PASSWORD.
+        """Resolve KLANGKD_SMTP_PASSWORD.
 
         ``file:``/``cmd:`` prefixes are dereferenced at construction by
         ``KlangkSettings`` (#1461), so ``self.app.state.settings.smtp_password`` is
@@ -65,7 +65,7 @@ class EmailService:
         return self.app.state.settings.smtp_password
 
     def product_name(self) -> str:
-        """Configured product name (KLANGK_PRODUCT_NAME), default 'Klangk'."""
+        """Configured product name (KLANGKD_PRODUCT_NAME), default 'Klangk'."""
         return self.app.state.settings.product_name
 
     def smtp_config(self) -> dict:
@@ -85,7 +85,7 @@ class EmailService:
         return bool(self.app.state.settings.smtp_host)
 
     def reply_to(self) -> str | None:
-        """Configured Reply-To address (KLANGK_SMTP_REPLY_TO), or None.
+        """Configured Reply-To address (KLANGKD_SMTP_REPLY_TO), or None.
 
         Compliance/deliverability knob: orgs want a monitored reply address
         distinct from the envelope From. None -> no header (today's
@@ -146,7 +146,7 @@ class EmailService:
     def reset_template_env(self) -> None:
         """Drop the cached Jinja environment.
 
-        For tests that change KLANGK_EMAIL_TEMPLATES_DIR between cases,
+        For tests that change KLANGKD_EMAIL_TEMPLATES_DIR between cases,
         since the environment is built once and cached.
         """
         self._env = None
@@ -179,7 +179,7 @@ class EmailService:
     def _template_env(self) -> Environment:
         """Build (and cache) the Jinja environment.
 
-        Uses a ChoiceLoader: a deployer directory (KLANGK_EMAIL_TEMPLATES_DIR)
+        Uses a ChoiceLoader: a deployer directory (KLANGKD_EMAIL_TEMPLATES_DIR)
         is tried first so it shadows the built-ins on a per-file basis; the
         built-in package templates (email_templates/) are the fallback. Both
         {% extends %} and {% include %} resolve through the same chain, so

@@ -9,7 +9,7 @@
   },
   "klangk": {
     "config": {
-      "KLANGK_FEATURE_SOLIPLEX_URL": {
+      "KLANGKWS_FEATURE_SOLIPLEX_URL": {
         "description": "Soliplex RAG API endpoint URL",
         "default": "",
         "scope": "frontend"

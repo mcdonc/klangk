@@ -2,8 +2,8 @@
 #
 # Bind-mounted into the container at /home/klangk/oidc/oidc.yaml (see the
 # `./oidc` volume in docker-compose.yml). Edit the placeholders below for your
-# identity provider, then enable OIDC by uncommenting the KLANGK_AUTH_MODES and
-# KLANGK_OIDC_* environment variables in docker-compose.yml.
+# identity provider, then enable OIDC by uncommenting the KLANGKD_AUTH_MODES and
+# KLANGKD_OIDC_* environment variables in docker-compose.yml.
 #
 # Top level is a list of providers; each becomes a "Sign in with <display-name>"
 # button on the login screen. Relative paths (e.g. ca-cert) resolve against
@@ -17,7 +17,7 @@
   scopes: openid email profile
   # Trust a private CA used by this IdP. Relative paths resolve against this
   # file, so ../certs/cacert.pem points at the example cert shipped in certs/.
-  # (Usually unnecessary — the global KLANGK_SSL_CERT_DIR trust in
+  # (Usually unnecessary — the global KLANGKD_SSL_CERT_DIR trust in
   # docker-compose.yml already covers private CAs for all outbound TLS.)
   # ca-cert: ../certs/cacert.pem
   # trust-email: true      # skip the email_verified check for this IdP

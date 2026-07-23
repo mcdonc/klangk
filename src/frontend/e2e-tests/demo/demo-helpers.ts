@@ -9,7 +9,7 @@
  *   - pacing (`pace`) and human-feel typing (`slowType`) for narration room,
  *   - real-password login (`demoLogin`) — the e2e helpers hardcode a test pw,
  *   - API login / register / admin-create-user, so scenes can run against a
- *     REAL demo server (port 8996, real LLM key) via KLANGK_TEST_URL,
+ *     REAL demo server (port 8996, real LLM key) via KLANGKBUILD_TEST_URL,
  *   - tab openers for the 5 workspace tabs,
  *   - a tiny WS client for reliable chat-send / terminal-share when on-screen
  *     typing is flaky.
@@ -30,11 +30,13 @@ import {
 } from "../e2e/helpers";
 import WebSocket from "ws";
 
-/** The demo server. Default is the real klangk port; override with KLANGK_TEST_URL. */
-export const DEMO_URL = process.env.KLANGK_TEST_URL || "http://localhost:8996";
+/** The demo server. Default is the real klangk port; override with KLANGKBUILD_TEST_URL. */
+export const DEMO_URL =
+  process.env.KLANGKBUILD_TEST_URL || "http://localhost:8996";
 
 /** Password for freshly-registered demo accounts (scenes self-register). */
-export const DEMO_PASSWORD = process.env.KLANGK_DEMO_PASSWORD || "demopass123";
+export const DEMO_PASSWORD =
+  process.env.KLANGKBUILD_DEMO_PASSWORD || "demopass123";
 
 /** Seeded admin credentials. The hero is admin@example.com (an admin-role
  *  user), the SAME account the CLI scenes (cli_demo.py) and the seed
@@ -42,14 +44,14 @@ export const DEMO_PASSWORD = process.env.KLANGK_DEMO_PASSWORD || "demopass123";
  *  scenes, operating the same accumulating `demo` workspace, not a parallel
  *  cast of throwaway users.
  *
- *  NOTE: do NOT fall through to KLANGK_DEFAULT_USER / KLANGK_DEFAULT_PASSWORD
+ *  NOTE: do NOT fall through to KLANGKD_DEFAULT_USER / KLANGKD_DEFAULT_PASSWORD
  *  — those are the BOOTSTRAP admin (admin@plope.com / "admin"), a DIFFERENT
  *  account used only by demo-seed.ts for destructive reset. The hero is its
  *  own account: admin@example.com / "adminpass". */
 export const DEMO_ADMIN_EMAIL =
-  process.env.KLANGK_DEMO_ADMIN_EMAIL || "admin@example.com";
+  process.env.KLANGKBUILD_DEMO_ADMIN_EMAIL || "admin@example.com";
 export const DEMO_ADMIN_PASSWORD =
-  process.env.KLANGK_DEMO_ADMIN_PASSWORD || "adminpass";
+  process.env.KLANGKBUILD_DEMO_ADMIN_PASSWORD || "adminpass";
 
 /** The on-camera hero. Alias of the admin credentials above, used everywhere
  *  a scene means "the protagonist" — so scenes read as "the hero logs in" not
@@ -71,11 +73,11 @@ export const SHARED_OPENCLAW = "openclaw";
  *  and are invited into the hero's `demo` workspace — NOT throwaway
  *  demo-collab-* users, so the Users panel and presence bar look lived-in. */
 export const DEMO_TEAMMATE_EMAIL =
-  process.env.KLANGK_DEMO_TEAMMATE_EMAIL || "teammate@example.com";
+  process.env.KLANGKBUILD_DEMO_TEAMMATE_EMAIL || "teammate@example.com";
 export const DEMO_DESIGNER_EMAIL =
-  process.env.KLANGK_DEMO_DESIGNER_EMAIL || "designer@example.com";
+  process.env.KLANGKBUILD_DEMO_DESIGNER_EMAIL || "designer@example.com";
 export const DEMO_REVIEWER_EMAIL =
-  process.env.KLANGK_DEMO_REVIEWER_EMAIL || "reviewer@example.com";
+  process.env.KLANGKBUILD_DEMO_REVIEWER_EMAIL || "reviewer@example.com";
 
 // Re-export the password-agnostic Flutter primitives scenes rely on.
 export {
@@ -196,10 +198,10 @@ const CURSOR_INJECT_SCRIPT = `
 `;
 
 /** Install the fake-cursor overlay on the next (and every) navigation.
- *  Idempotent (the script self-guards). No-op when KLANGK_DEMO_CURSOR=0 (e.g.
+ *  Idempotent (the script self-guards). No-op when KLANGKBUILD_DEMO_CURSOR=0 (e.g.
  *  a quick headless dry check where the overlay is unwanted). */
 export async function installDemoCursor(page: Page) {
-  if (process.env.KLANGK_DEMO_CURSOR === "0") return;
+  if (process.env.KLANGKBUILD_DEMO_CURSOR === "0") return;
   await page.addInitScript(CURSOR_INJECT_SCRIPT);
 }
 
@@ -499,7 +501,7 @@ export async function tripleClick(page: Page, x: number, y: number) {
  *  clean canvas and types via coordinate clicks.
  *
  *  Coords are fractional Y of the login card in `both` auth mode (the demo
- *  server runs KLANGK_AUTH_MODES=both, so the "Log in with Enfold" OIDC
+ *  server runs KLANGKD_AUTH_MODES=both, so the "Log in with Enfold" OIDC
  *  button sits above the fields and shifts them down ~0.07 vs password-only).
  *  Measured from the semantics-DOM bounding boxes at 1920×1080 logical and
  *  confirmed working (click → spinner → Workspaces) at this viewport:
@@ -765,7 +767,7 @@ export async function waitForTerminal(
 import { execFileSync } from "node:child_process";
 
 /** Run `klangk exec <workspace> bash -lc <cmd>` and return stdout. Points at
- *  the demo server (KLANGK_DEMO_SERVER / KLANGK_TEST_URL). Throws on non-zero
+ *  the demo server (KLANGKBUILD_DEMO_SERVER / KLANGKBUILD_TEST_URL). Throws on non-zero
  *  exit so callers fail fast. */
 export function klangkExec(
   workspace: string,
@@ -774,10 +776,10 @@ export function klangkExec(
 ): string {
   // klangkExec uses the UDS (same login token as the CLI scenes) rather than
   // the TCP URL, so browser-scene prep doesn't need a separate TCP login.
-  const stateDir = process.env.KLANGK_DEMO_STATE_DIR || "/tmp/klangk-demo";
+  const stateDir = process.env.KLANGKBUILD_DEMO_STATE_DIR || "/tmp/klangk-demo";
   const server =
-    extraEnv.KLANGK_DEMO_SERVER ||
-    process.env.KLANGK_DEMO_SERVER ||
+    extraEnv.KLANGKBUILD_DEMO_SERVER ||
+    process.env.KLANGKBUILD_DEMO_SERVER ||
     `${stateDir}/klangk.sock`;
   return execFileSync(
     "klangk",

@@ -37,11 +37,11 @@ def run_helper(operation, stdin_text="", env_override=None, extra_path=None):
     """Run the credential helper as a subprocess."""
     env = {
         **os.environ,
-        "KLANGK_BRIDGE_URL": "",
+        "KLANGKWS_BRIDGE_URL": "",
     }
     # Remove stale env vars from the old bridge-token era
-    env.pop("KLANGK_BRIDGE_TOKEN", None)
-    env.pop("KLANGK_BROWSER_ID", None)
+    env.pop("KLANGKD_BRIDGE_TOKEN", None)
+    env.pop("KLANGKWS_BROWSER_ID", None)
     if extra_path:
         env["PATH"] = f"{extra_path}:{env.get('PATH', '')}"
     if env_override:
@@ -73,7 +73,7 @@ class TestNoBridge:
             "get",
             "protocol=https\nhost=github.com\n\n",
             env_override={
-                "KLANGK_BRIDGE_URL": "http://localhost:9999",
+                "KLANGKWS_BRIDGE_URL": "http://localhost:9999",
                 "PATH": "/nonexistent",
             },
         )
@@ -88,7 +88,7 @@ class TestNoBridge:
             "unknown",
             "",
             env_override={
-                "KLANGK_BRIDGE_URL": "http://localhost:9999",
+                "KLANGKWS_BRIDGE_URL": "http://localhost:9999",
             },
             extra_path=str(fake_browser_id),
         )
@@ -142,7 +142,7 @@ class TestGetOperation:
             "get",
             "protocol=https\nhost=github.com\n\n",
             env_override={
-                "KLANGK_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
             },
             extra_path=str(fake_browser_id),
         )
@@ -162,7 +162,7 @@ class TestGetOperation:
             "get",
             "protocol=https\nhost=github.com\n\n",
             env_override={
-                "KLANGK_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
             },
             extra_path=str(fake_browser_id),
         )
@@ -182,7 +182,7 @@ class TestGetOperation:
             "get",
             "protocol=https\nhost=github.com\n\n",
             env_override={
-                "KLANGK_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
             },
             extra_path=str(fake_browser_id),
         )
@@ -199,7 +199,7 @@ class TestGetOperation:
             "get",
             "protocol=https\nhost=github.com\n\n",
             env_override={
-                "KLANGK_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
             },
             extra_path=str(fake_browser_id),
         )
@@ -213,7 +213,7 @@ class TestGetOperation:
             "get",
             "protocol=https\nhost=github.com\n\n",
             env_override={
-                "KLANGK_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
             },
             extra_path=str(fake_browser_id),
         )
@@ -224,7 +224,7 @@ class TestGetOperation:
             "get",
             "protocol=https\nhost=github.com\n\n",
             env_override={
-                "KLANGK_BRIDGE_URL": "http://127.0.0.1:1",
+                "KLANGKWS_BRIDGE_URL": "http://127.0.0.1:1",
             },
             extra_path=str(fake_browser_id),
         )
@@ -240,7 +240,7 @@ class TestGetOperation:
             "get",
             "protocol=https\nhost=github.com\npath=foo/bar.git\n\n",
             env_override={
-                "KLANGK_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
             },
             extra_path=str(fake_browser_id),
         )
@@ -273,7 +273,7 @@ class TestGetOperation:
                 "get",
                 "protocol=https\nhost=github.com\n\n",
                 env_override={
-                    "KLANGK_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                    "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
                 },
                 extra_path=str(fake_browser_id),
             )
@@ -291,7 +291,7 @@ class TestStoreAndErase:
             "store",
             "protocol=https\nhost=github.com\nusername=u\npassword=p\n\n",
             env_override={
-                "KLANGK_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
             },
             extra_path=str(fake_browser_id),
         )
@@ -309,7 +309,7 @@ class TestStoreAndErase:
             "erase",
             "protocol=https\nhost=github.com\n\n",
             env_override={
-                "KLANGK_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
             },
             extra_path=str(fake_browser_id),
         )
@@ -328,7 +328,7 @@ class TestStoreAndErase:
             "store",
             "protocol=https\nhost=github.com\n\n",
             env_override={
-                "KLANGK_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
             },
             extra_path=str(fake_browser_id),
         )

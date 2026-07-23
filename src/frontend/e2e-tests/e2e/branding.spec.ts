@@ -5,10 +5,10 @@ import * as path from "path";
 
 test.describe("Branding", () => {
   test("serves branding asset from customize dir", async ({ request }) => {
-    // The E2E global setup creates <KLANGK_CUSTOMIZE_DIR>/branding/
+    // The E2E global setup creates <KLANGKD_CUSTOMIZE_DIR>/branding/
     // before starting the server, so /branding is mounted.  Drop a
     // file there and verify it's served.  See #1360.
-    const dataDir = process.env.KLANGK_E2E_DATA_DIR;
+    const dataDir = process.env.KLANGKBUILD_E2E_DATA_DIR;
     expect(dataDir).toBeTruthy();
     const brandingDir = path.join(dataDir!, "customize", "branding");
 

@@ -13,10 +13,10 @@ immediately, without waiting for a user to connect.
 ## Enabling auto-start on the server
 
 Auto-start is disabled by default. To allow workspaces to use it,
-set the `KLANGK_ALLOW_AUTOSTART` environment variable:
+set the `KLANGKD_ALLOW_AUTOSTART` environment variable:
 
 ```bash
-KLANGK_ALLOW_AUTOSTART=1
+KLANGKD_ALLOW_AUTOSTART=1
 ```
 
 When this is not set, the auto-start option is hidden in the web

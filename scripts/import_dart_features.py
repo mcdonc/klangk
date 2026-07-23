@@ -35,13 +35,13 @@ import yaml
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FEATURES_JSON = os.path.join(ROOT, "src", "frontend", "build", "web", "features.json")
 
-# The default-on set: features a bare install gets when KLANGK_FEATURES_ENABLE
+# The default-on set: features a bare install gets when KLANGKD_FEATURES_ENABLE
 # is unset (canonical activation — see #1655). This is the runtime default-on
 # list; the build-time fetch list is the checked-in ``features.yaml`` at the
 # repo root. The two are allowed to differ: a feature can ship dormant
 # (compiled in but not in defaults). Today ``word-count`` and ``soliplex``
 # (#1664, vendored local in #1686) are both compiled-in dormant local features
-# — neither surfaced unless an operator opts in via KLANGK_FEATURES_ENABLE (#1700).
+# — neither surfaced unless an operator opts in via KLANGKD_FEATURES_ENABLE (#1700).
 DEFAULT_FEATURES = [
     "beep",
     "bobdobbs",
@@ -108,19 +108,19 @@ def find_features(features_dir):
 _CONTAINER_SCOPES = {"container", "both"}
 
 # Every klangk.config key a feature declares — regardless of scope — must
-# start with this prefix. Server-side settings are all ``KLANGK_<SETTING>``
+# start with this prefix. Server-side settings are all ``KLANGKD_<SETTING>``
 # (no ``FEATURE_`` infix), so the prefix alone guarantees a feature can never
 # declare a key that collides with a server secret, path, or infra field
-# (``KLANGK_JWT_SECRET``, ``KLANGK_DATA_DIR``, …) — no denylist / reserved
+# (``KLANGKD_JWT_SECRET``, ``KLANGKD_DATA_DIR``, …) — no denylist / reserved
 # set needed, and nothing to keep in sync between this file and the runtime
-# resolver (#1662). Non-KLANGK_ environment poison (``PATH``, ``HOME``,
+# resolver (#1662). Non-KLANGKD_ environment poison (``PATH``, ``HOME``,
 # ``LD_PRELOAD``, …) is rejected by the same rule. Mirrors
 # ``_CONTAINER_ENV_KEY_PREFIX`` in ``src/klangk/klangk/features.py``.
-_CONTAINER_ENV_KEY_PREFIX = "KLANGK_FEATURE_"
+_CONTAINER_ENV_KEY_PREFIX = "KLANGKWS_FEATURE_"
 
 
 class InvalidFeatureConfigKey(RuntimeError):
-    """A feature declared a klangk.config key without the KLANGK_FEATURE_ prefix.
+    """A feature declared a klangk.config key without the KLANGKWS_FEATURE_ prefix.
 
     Raised at build time to abort the emit — distinct from the
     ``except (JSONDecodeError, ValueError, OSError)`` around the per-feature
@@ -132,15 +132,15 @@ class InvalidFeatureConfigKey(RuntimeError):
 
 
 def _validate_feature_config_key(key, feature_name):
-    """Reject a klangk.config key that lacks the KLANGK_FEATURE_ prefix.
+    """Reject a klangk.config key that lacks the KLANGKWS_FEATURE_ prefix.
 
     The prefix is the feature-config namespace (#1662): every server setting
-    is ``KLANGK_<SETTING>`` (no ``FEATURE_`` infix), so the prefix alone keeps
+    is ``KLANGKD_<SETTING>`` (no ``FEATURE_`` infix), so the prefix alone keeps
     feature-declared keys from ever colliding with a server secret / path /
     infra field — no reserved-set / denylist required. Applies to every scope
     (container, frontend, both): the declaration-side rule is uniform; how
     the value is surfaced to consumers differs (container env keeps the full
-    ``KLANGK_FEATURE_*`` env var name; the frontend ``/api/config`` key is the
+    ``KLANGKWS_FEATURE_*`` env var name; the frontend ``/api/config`` key is the
     lowercased suffix). Raises :class:`InvalidFeatureConfigKey` naming the
     feature + key so the feature author fixes the declaration before ship.
     """
@@ -149,7 +149,7 @@ def _validate_feature_config_key(key, feature_name):
             f"feature {feature_name!r} declares config key {key!r} — "
             f"must start with {_CONTAINER_ENV_KEY_PREFIX!r} "
             f"(the feature-config namespace; server settings are "
-            f"KLANGK_<SETTING> with no FEATURE_ infix, so the prefix alone "
+            f"KLANGKD_<SETTING> with no FEATURE_ infix, so the prefix alone "
             f"prevents collisions with server secrets/paths/infra)."
         )
 
@@ -189,7 +189,7 @@ def collect_feature_metadata(dart_features, features_dir):
                     for key, spec in cfg.items():
                         if not isinstance(spec, dict):
                             continue
-                        # Every declared key must carry the KLANGK_FEATURE_
+                        # Every declared key must carry the KLANGKWS_FEATURE_
                         # prefix, regardless of scope (#1662). Validate before
                         # emitting anything so a bad declaration aborts the
                         # build rather than shipping a manifest the runtime
@@ -222,7 +222,7 @@ def write_features_json(dart_features, features_dir):
     """Emit features.json next to the frontend's index.html (#1655).
 
     The frontend reads this sibling file for per-feature metadata + the
-    defaults list (canonical KLANGK_FEATURES_ENABLE activation). ``klangkd``
+    defaults list (canonical KLANGKD_FEATURES_ENABLE activation). ``klangkd``
     reads one field — ``container_env_keys`` — to bridge the declared
     container-scope env vars into workspace containers (the server reads no
     on-disk feature trees; the build did the knowing). See #1655.

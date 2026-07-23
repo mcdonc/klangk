@@ -156,7 +156,7 @@ class TestSystemdUserNginx:
     """Run klangkd (nginx engine) under ``systemctl --user`` and assert #1727.
 
     One transient user service is shared across the assertions (class-scoped
-    fixture): it forces ``KLANGK_PROXY_ENGINE=nginx`` (#1634 made caddy the
+    fixture): it forces ``KLANGKD_PROXY_ENGINE=nginx`` (#1634 made caddy the
     default, which would not exercise this path) and launches
     ``python3 -m klangk.launcher`` with the default ``StandardOutput=journal``
     — i.e. deliberately **not** the ``append:`` workaround from #1546 (the
@@ -182,26 +182,26 @@ class TestSystemdUserNginx:
         # journal so assertions read only this run's entries.
         unit = "klangk-1727-" + os.urandom(4).hex()
 
-        # Hermetic env (no ambient KLANGK_* leak, #1526). The proxy is ENABLED
-        # (``_KLANGK_DISABLE_PROXY=""`` clears the test-suppression default) and
-        # the nginx engine is forced explicitly. ``KLANGK_PORT`` set ⇒
+        # Hermetic env (no ambient KLANGKD_* leak, #1526). The proxy is ENABLED
+        # (``_KLANGKD_DISABLE_PROXY=""`` clears the test-suppression default) and
+        # the nginx engine is forced explicitly. ``KLANGKD_PORT`` set ⇒
         # full/browser mode, so there's a browser listener to hit /health on.
         env = clean_env(
-            KLANGK_DATA_DIR=data_dir,
-            KLANGK_STATE_DIR=state_dir,
-            KLANGK_LISTEN="127.0.0.1",
-            KLANGK_PORT=browser_port,
-            KLANGK_EGRESS_PORT=egress_port,
-            KLANGK_PROXY_ENGINE="nginx",
-            KLANGK_JWT_SECRET="systemd-nginx-e2e",
-            KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-            KLANGK_DEFAULT_USER="test@example.com",
-            KLANGK_DEFAULT_PASSWORD="testpass",
-            KLANGK_AUTH_MODES="none",
-            KLANGK_TEST_MODE="1",
-            KLANGK_IDLE_TIMEOUT_SECONDS="300",
-            KLANGK_PORT_RANGE_START=str(free_port()),
-            _KLANGK_DISABLE_PROXY="",
+            KLANGKD_DATA_DIR=data_dir,
+            KLANGKD_STATE_DIR=state_dir,
+            KLANGKD_LISTEN="127.0.0.1",
+            KLANGKD_PORT=browser_port,
+            KLANGKD_EGRESS_PORT=egress_port,
+            KLANGKD_PROXY_ENGINE="nginx",
+            KLANGKD_JWT_SECRET="systemd-nginx-e2e",
+            KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+            KLANGKD_DEFAULT_USER="test@example.com",
+            KLANGKD_DEFAULT_PASSWORD="testpass",
+            KLANGKD_AUTH_MODES="none",
+            KLANGKD_TEST_MODE="1",
+            KLANGKD_IDLE_TIMEOUT_SECONDS="300",
+            KLANGKD_PORT_RANGE_START=str(free_port()),
+            _KLANGKD_DISABLE_PROXY="",
             LOGFIRE_TOKEN="",
         )
 

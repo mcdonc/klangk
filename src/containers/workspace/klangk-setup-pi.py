@@ -63,7 +63,7 @@ def write_settings():
         image_settings = json.loads(image_settings_path.read_text())
     else:
         image_settings = {}
-    model = os.environ.get("KLANGK_LLM_MODEL", "")
+    model = os.environ.get("KLANGKWS_LLM_MODEL", "")
     image_settings["defaultProvider"] = "llm-proxy"
     image_settings["defaultModel"] = model
     # Disable thinking by default — Ctrl+T toggle doesn't work in web
@@ -102,8 +102,8 @@ def ensure_settings_keys():
 def write_models():
     """Write models.json with the llm-proxy provider."""
     agent = _agent_dir()
-    proxy_url = os.environ.get("KLANGK_LLM_PROXY_URL", "")
-    model = os.environ.get("KLANGK_LLM_MODEL", "")
+    proxy_url = os.environ.get("KLANGKWS_LLM_PROXY_URL", "")
+    model = os.environ.get("KLANGKWS_LLM_MODEL", "")
     workspace_token = "!klangk-workspace-token"
 
     models = {

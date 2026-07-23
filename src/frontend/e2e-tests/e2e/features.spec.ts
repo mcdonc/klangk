@@ -53,7 +53,7 @@ test.describe("feature artifacts visible to the frontend", () => {
     }
 
     // defaults is a list of strings (the frontend reads it as the default-on
-    // set when KLANGK_FEATURES_ENABLE is unset).
+    // set when KLANGKD_FEATURES_ENABLE is unset).
     expect(Array.isArray(manifest.defaults)).toBeTruthy();
     for (const d of manifest.defaults as unknown[]) {
       expect(typeof d).toBe("string");
@@ -69,8 +69,8 @@ test.describe("feature artifacts visible to the frontend", () => {
     expect(resp.ok()).toBeTruthy();
     const config = await resp.json();
 
-    // boingball declares KLANGK_FEATURE_BOING_SPEED with scope: frontend —
-    // the server strips the KLANGK_FEATURE_ prefix and lowercases the suffix
+    // boingball declares KLANGKWS_FEATURE_BOING_SPEED with scope: frontend —
+    // the server strips the KLANGKWS_FEATURE_ prefix and lowercases the suffix
     // to produce the /api/config key (so the JSON key is `boing_speed`, not
     // `klangk_feature_boing_speed`). The prefix is the feature-config
     // namespace from #1662; the suffix is the feature-owned name. The key's
@@ -84,18 +84,18 @@ test.describe("feature artifacts visible to the frontend", () => {
       "boing_speed missing — server didn't bridge boingball's frontend config",
     ).toHaveProperty("boing_speed");
 
-    // git-credential's KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID has scope:
+    // git-credential's KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID has scope:
     // container, so it must NOT appear in /api/config (frontend-scope only).
     // Guards against a scope-classification regression leaking container
     // env into the browser. Stripped-lowercased form — the server strips
-    // KLANGK_FEATURE_ and lowercases the suffix for /api/config keys.
+    // KLANGKWS_FEATURE_ and lowercases the suffix for /api/config keys.
     expect(config).not.toHaveProperty("github_oauth_client_id");
   });
 
-  test("/api/v1/config omits features_enable when KLANGK_FEATURES_ENABLE unset", async ({
+  test("/api/v1/config omits features_enable when KLANGKD_FEATURES_ENABLE unset", async ({
     request,
   }) => {
-    // The e2e server is launched without KLANGK_FEATURES_ENABLE, so the
+    // The e2e server is launched without KLANGKD_FEATURES_ENABLE, so the
     // frontend must fall back to the manifest's defaults list. Asserting the
     // key is absent (not just falsy) locks the canonical-semantics contract
     // from #1655: unset → frontend uses defaults; set → exactly that list.

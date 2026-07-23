@@ -591,38 +591,38 @@ def start_server(data_dir: str) -> tuple[subprocess.Popen, TeeReader, str]:
 
     ``klangkd`` is the real server launcher (``--config none`` = env-only);
     it always binds a UDS at ``settings.socket`` (default
-    ``<state_dir>/klangk.sock``, overridable via ``KLANGK_SOCKET`` — #1542)
-    and would normally start the proxy child, so ``_KLANGK_DISABLE_PROXY``
+    ``<state_dir>/klangk.sock``, overridable via ``KLANGKD_SOCKET`` — #1542)
+    and would normally start the proxy child, so ``_KLANGKD_DISABLE_PROXY``
     suppresses it — the fuzzer talks to the backend directly over the
-    socket. ``KLANGK_TEST_MODE`` registers the ``/api/v1/test/*`` routes the
+    socket. ``KLANGKD_TEST_MODE`` registers the ``/api/v1/test/*`` routes the
     fuzzer also exercises.
 
     Returns (process, tee_reader, uds_path) — the tee_reader streams server
     stderr to the terminal in real time and captures it for the report.
     ``uds_path`` is the resolved socket path (read back from settings, not
-    recomputed, so a ``KLANGK_SOCKET`` override is honored).
+    recomputed, so a ``KLANGKD_SOCKET`` override is honored).
     """
     env = {
         **os.environ,
-        "KLANGK_STATE_DIR": data_dir,
-        "KLANGK_DEFAULT_USER": "admin@example.com",
-        "KLANGK_DEFAULT_PASSWORD": "admin",
-        "KLANGK_JWT_SECRET": "fuzz-test-secret",
-        "KLANGK_MIN_PASSWORD_LENGTH": "1",
-        "KLANGK_AUTH_MODES": "password",
-        "KLANGK_TEST_MODE": "1",
+        "KLANGKD_STATE_DIR": data_dir,
+        "KLANGKD_DEFAULT_USER": "admin@example.com",
+        "KLANGKD_DEFAULT_PASSWORD": "admin",
+        "KLANGKD_JWT_SECRET": "fuzz-test-secret",
+        "KLANGKD_MIN_PASSWORD_LENGTH": "1",
+        "KLANGKD_AUTH_MODES": "password",
+        "KLANGKD_TEST_MODE": "1",
         # Suppress proxy spawn (the fuzzer hits the backend UDS directly).
-        "_KLANGK_DISABLE_PROXY": "1",
+        "_KLANGKD_DISABLE_PROXY": "1",
         # Disable features that need external services
-        "KLANGK_IMAGE_PULL_POLICY": "never",
+        "KLANGKD_IMAGE_PULL_POLICY": "never",
     }
     # Resolve the socket path from the same settings the server will use
-    # (honors KLANGK_SOCKET; defaults to <state_dir>/klangk.sock). Imported
+    # (honors KLANGKD_SOCKET; defaults to <state_dir>/klangk.sock). Imported
     # lazily so ``--check`` (which never starts a server) needs no backend.
     from klangk.settings import KlangkSettings
 
     settings = KlangkSettings(
-        {k: v for k, v in env.items() if k.startswith("KLANGK_")},
+        {k: v for k, v in env.items() if k.startswith("KLANGKD_")},
         config_file="none",
     )
     uds_path = settings.socket
@@ -1009,17 +1009,17 @@ def _fuzzed_routes() -> set[tuple[str, str]]:
 
 def _backend_routes() -> set[tuple[str, str]]:
     """The (method, path) set the live router declares, read from the
-    FastAPI OpenAPI schema (``build_app`` with ``KLANGK_TEST_MODE=1`` so
+    FastAPI OpenAPI schema (``build_app`` with ``KLANGKD_TEST_MODE=1`` so
     the ``/api/v1/test/*`` routes are included)."""
     # The test-mode gate in api/__init__.py reads os.environ directly (not
     # the KlangkSettings env dict), so set it on os.environ before build_app
     # imports/registers the test routes.
-    os.environ["KLANGK_TEST_MODE"] = "1"
-    os.environ["_KLANGK_DISABLE_PROXY"] = "1"
+    os.environ["KLANGKD_TEST_MODE"] = "1"
+    os.environ["_KLANGKD_DISABLE_PROXY"] = "1"
     env = {
         **os.environ,
-        "KLANGK_STATE_DIR": tempfile.mkdtemp(prefix="klangk-check-"),
-        "KLANGK_JWT_SECRET": "check-secret",
+        "KLANGKD_STATE_DIR": tempfile.mkdtemp(prefix="klangk-check-"),
+        "KLANGKD_JWT_SECRET": "check-secret",
     }
     from klangk.main import build_app
     from klangk.settings import KlangkSettings

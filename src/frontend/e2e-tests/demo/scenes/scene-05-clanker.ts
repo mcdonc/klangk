@@ -80,8 +80,8 @@ test("clanker chat", async ({ page, request }) => {
   // 6. Hold for clanker to work. The agent is live and nondeterministic; this
   //    pause just keeps the recording rolling so the response lands on tape.
   //    You'll trim the dead air (or narrate over it) in DaVinci. Bump
-  //    KLANGK_DEMO_AGENT_WAIT to give it longer.
-  const waitMs = Number(process.env.KLANGK_DEMO_AGENT_WAIT || 60_000);
+  //    KLANGKBUILD_DEMO_AGENT_WAIT to give it longer.
+  const waitMs = Number(process.env.KLANGKBUILD_DEMO_AGENT_WAIT || 60_000);
   await pace(waitMs);
 
   // 7. Security-model proof: switch to the Terminal nav tab and run `env`.

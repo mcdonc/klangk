@@ -29,23 +29,23 @@ outer nginx (443)
 
 ## Ports
 
-- `KLANGK_PORT` (default unset): **Browser access point** — the proxy serves UI, API, WebSocket, and proxies hosted app URLs directly to container ports. Unset ⇒ headless mode (no browser listener). Suggested `8997` ([#1542](https://github.com/mcdonc/klangk/issues/1542)).
-- `KLANGK_EGRESS_PORT` (default `8995`): Container-egress port — the proxy listener for container→backend traffic (`/llm-proxy`, browser-delegate bridge, chat). Must differ from `KLANGK_PORT`.
-- `KLANGK_PROXY_PORT`: **Deprecated** alias for `KLANGK_EGRESS_PORT`; rename it. (Renamed from `KLANGK_NGINX_PORT`; the old name is no longer recognized.)
+- `KLANGKD_PORT` (default unset): **Browser access point** — the proxy serves UI, API, WebSocket, and proxies hosted app URLs directly to container ports. Unset ⇒ headless mode (no browser listener). Suggested `8997` ([#1542](https://github.com/mcdonc/klangk/issues/1542)).
+- `KLANGKD_EGRESS_PORT` (default `8995`): Container-egress port — the proxy listener for container→backend traffic (`/llm-proxy`, browser-delegate bridge, chat). Must differ from `KLANGKD_PORT`.
+- `KLANGKD_PROXY_PORT`: **Deprecated** alias for `KLANGKD_EGRESS_PORT`; rename it. (Renamed from `KLANGKD_NGINX_PORT`; the old name is no longer recognized.)
 - `9000+`: User app ports (5 per workspace, mapped to container ports 8000-8004)
 
 ## Tailscale and LLM Proxy
 
-If the LLM provider is on a Tailscale host (e.g., a self-hosted Ollama on another machine in the tailnet), `KLANGK_LLM_BASE_URL` **must use the Tailscale IP address**, not a hostname.
+If the LLM provider is on a Tailscale host (e.g., a self-hosted Ollama on another machine in the tailnet), `KLANGKD_LLM_BASE_URL` **must use the Tailscale IP address**, not a hostname.
 
 The proxy's LLM location uses lazy DNS resolution (so the proxy can start even if the LLM host is temporarily unreachable). The proxy is currently nginx, which means nginx sends raw DNS queries to the resolvers from `/etc/resolv.conf`. On a Tailscale host, those resolvers include MagicDNS (`100.100.100.100`), but MagicDNS only resolves tailnet names through the system resolver stack — raw UDP DNS queries from nginx don't go through Tailscale's networking, so both bare hostnames and FQDNs fail to resolve.
 
-Meanwhile, `KLANGK_DNS_SERVERS=100.100.100.100,8.8.8.8` is still needed for workspace containers, because podman configures container DNS with search domains that make MagicDNS work correctly inside containers.
+Meanwhile, `KLANGKD_DNS_SERVERS=100.100.100.100,8.8.8.8` is still needed for workspace containers, because podman configures container DNS with search domains that make MagicDNS work correctly inside containers.
 
 ```bash
 # In .env on a Tailscale host:
-KLANGK_LLM_BASE_URL=http://100.122.115.33:11434/v1   # Tailscale IP, not hostname
-KLANGK_DNS_SERVERS=100.100.100.100,8.8.8.8            # for containers (works fine)
+KLANGKD_LLM_BASE_URL=http://100.122.115.33:11434/v1   # Tailscale IP, not hostname
+KLANGKD_DNS_SERVERS=100.100.100.100,8.8.8.8            # for containers (works fine)
 ```
 
 Tailscale IPs are stable and don't change, so using the IP directly is safe.

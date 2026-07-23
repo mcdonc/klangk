@@ -43,7 +43,7 @@ def _server_mode_is_none(server_url: str) -> bool:
     return isinstance(config, dict) and config.get("auth_modes") == "none"
 
 
-_WS_MAX_SIZE = int(os.environ.get("KLANGK_WS_MSG_SIZE_MAX", 2**24))
+_WS_MAX_SIZE = int(os.environ.get("KLANGK_WEBSOCKET_MSG_SIZE_MAX", 2**24))
 
 logger = logging.getLogger(__name__)
 

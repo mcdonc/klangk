@@ -18,7 +18,7 @@
 #      main() runs and build_app is imported lazily inside it).
 #   3. Starts the real klangkd entrypoint (caddy engine on UDS upstream +
 #      Flutter Web frontend served from the wheel's bundled klangk/frontend/
-#      — KLANGK_FRONTEND_DIR is unset so settings falls back to
+#      — KLANGKD_FRONTEND_DIR is unset so settings falls back to
 #      _DEFAULT_FRONTEND_DIR, NOT inherited from any dev shell).
 #   4. Polls /health until caddy + uvicorn are ready.
 #   5. Installs the e2e npm deps + Playwright Chromium, then runs
@@ -56,11 +56,11 @@
 # the smoke; it publishes without waiting on it.)
 set -euo pipefail
 
-PORT="${KLANGK_PORT:-18997}"
-EGRESS_PORT="${KLANGK_EGRESS_PORT:-18995}"
+PORT="${KLANGKD_PORT:-18997}"
+EGRESS_PORT="${KLANGKD_EGRESS_PORT:-18995}"
 VENV_DIR="${SMOKE_VENV:-/tmp/klangk-smoke-venv}"
-DATA_DIR="${KLANGK_DATA_DIR:-/tmp/klangk-smoke-data}"
-STATE_DIR="${KLANGK_STATE_DIR:-/tmp/klangk-smoke-state}"
+DATA_DIR="${KLANGKD_DATA_DIR:-/tmp/klangk-smoke-data}"
+STATE_DIR="${KLANGKD_STATE_DIR:-/tmp/klangk-smoke-state}"
 
 WHEEL="${1:-}"
 if [ -z "$WHEEL" ]; then
@@ -127,7 +127,7 @@ echo "=== starting klangkd from installed wheel ==="
 # --config=none opts out of the config file (post-#1607 / #1645 first-run
 # generation) so the server runs from env + defaults alone.
 #
-# UNSET KLANGK_FRONTEND_DIR — if a parent shell (e.g. a dev's devenv shell)
+# UNSET KLANGKD_FRONTEND_DIR — if a parent shell (e.g. a dev's devenv shell)
 # exports it pointing at src/frontend/build/web, klangkd would serve the dev
 # tree instead of the wheel-bundled frontend, defeating the smoke. Empty
 # string does NOT work — pydantic-settings accepts the empty string literally
@@ -141,16 +141,16 @@ echo "=== starting klangkd from installed wheel ==="
 # land only in the GH Actions step log). Mirrors the e2e harness's
 # global-setup.ts openSync(logFd) pattern. (#1705 review, I3.)
 LOG_PATH="$STATE_DIR/server.log"
-env -u KLANGK_FRONTEND_DIR \
-  KLANGK_PORT="$PORT" \
-  KLANGK_EGRESS_PORT="$EGRESS_PORT" \
-  KLANGK_DATA_DIR="$DATA_DIR" \
-  KLANGK_STATE_DIR="$STATE_DIR" \
-  KLANGK_AUTH_MODES=password \
-  KLANGK_DEFAULT_USER=admin@example.com \
-  KLANGK_DEFAULT_PASSWORD=admin \
-  KLANGK_JWT_SECRET=smoke-test-secret \
-  KLANGK_TEST_MODE=1 \
+env -u KLANGKD_FRONTEND_DIR \
+  KLANGKD_PORT="$PORT" \
+  KLANGKD_EGRESS_PORT="$EGRESS_PORT" \
+  KLANGKD_DATA_DIR="$DATA_DIR" \
+  KLANGKD_STATE_DIR="$STATE_DIR" \
+  KLANGKD_AUTH_MODES=password \
+  KLANGKD_DEFAULT_USER=admin@example.com \
+  KLANGKD_DEFAULT_PASSWORD=admin \
+  KLANGKD_JWT_SECRET=smoke-test-secret \
+  KLANGKD_TEST_MODE=1 \
   LOGFIRE_TOKEN='' \
   "$VENV_DIR/bin/klangkd" --config=none >"$LOG_PATH" 2>&1 &
 KLANGKD_PID=$!
@@ -184,7 +184,7 @@ fi
 
 # 4. Install the e2e deps + Playwright's own Chromium (no devenv-bundled
 #    browser — `npx playwright install chromium` fetches the one pinned by
-#    @playwright/test 1.59.1 in package.json). KLANGK_TEST_URL makes
+#    @playwright/test 1.59.1 in package.json). KLANGKBUILD_TEST_URL makes
 #    global-setup short-circuit its own server startup (it just polls
 #    /health on this URL and returns).
 echo "=== installing playwright deps + chromium ==="
@@ -193,7 +193,7 @@ npm install --silent
 npx playwright install --with-deps chromium
 
 echo "=== running dist-smoke spec ==="
-KLANGK_TEST_URL="http://127.0.0.1:$PORT" \
+KLANGKBUILD_TEST_URL="http://127.0.0.1:$PORT" \
   npx playwright test --project=dist-smoke --reporter=list
 
 # trap handles klangkd teardown.

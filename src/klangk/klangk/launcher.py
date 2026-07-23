@@ -2,25 +2,25 @@
 
 Loads config (from a YAML file + env vars + built-in defaults, per the
 precedence rules in :mod:`klangk.settings`), binds uvicorn (to a
-UNIX domain socket when ``KLANGK_LISTEN`` is a path, or a TCP host
+UNIX domain socket when ``KLANGKD_LISTEN`` is a path, or a TCP host
 otherwise), and owns the proxy child (currently nginx) that fronts it.
 
 Usage::
 
-    klangkd                          # resolves <KLANGK_CONFIG_DIR>/klangkd.yaml;
+    klangkd                          # resolves <KLANGKD_CONFIG_DIR>/klangkd.yaml;
     #                                # generates it on first run (#1645)
     klangkd --config /path/to/cfg.yaml
     klangkd --config=none            # env-vars-only (the sole opt-out)
 
 Config-file resolution (three states, no implicit escape):
 
-1. Bare ``klangkd`` → resolves ``$KLANGK_CONFIG_DIR/klangkd.yaml`` (default
+1. Bare ``klangkd`` → resolves ``$KLANGKD_CONFIG_DIR/klangkd.yaml`` (default
    ``~/.config/klangkd/klangkd.yaml``, #1649, #1646). If the file is missing it is
    **generated** as a near-empty template pointing at the docs (#1645) —
    no admin identity or password is emitted. The admin row is seeded at
    runtime: ``default_user`` defaults to ``<unixuser>@example.com`` with
    ``password_hash=None`` in ``none``/``oidc`` mode (no password needed);
-   ``password``/``both`` mode requires ``KLANGK_DEFAULT_PASSWORD`` (fail-fast
+   ``password``/``both`` mode requires ``KLANGKD_DEFAULT_PASSWORD`` (fail-fast
    if unset).
 2. ``--config=<path>`` → that path required to exist; missing → error.
    Explicit paths are never auto-generated.
@@ -42,7 +42,7 @@ import uvicorn
 # configuration is active during ``KlangkSettings(...)`` construction
 # (validators + the file:/cmd: indirection resolver log before any app
 # exists). ``build_app``'s ``configure(settings)`` later overrides the
-# level from ``KLANGK_LOG_LEVEL`` (#1467).
+# level from ``KLANGKD_LOG_LEVEL`` (#1467).
 from klangk import logger  # noqa: F401
 from klangk import first_run
 from klangk.settings import KlangkSettings
@@ -60,13 +60,13 @@ def _resolve_config_path(config: str | None) -> str:
     Three cases, no implicit escape (#1392 / #1645):
 
     - ``None`` (bare ``klangkd``, no ``--config``) → resolve the default path
-      at ``<KLANGK_CONFIG_DIR>/klangkd.yaml`` (default
+      at ``<KLANGKD_CONFIG_DIR>/klangkd.yaml`` (default
       ``~/.config/klangkd/klangkd.yaml``). **Generate on first run** if the
       file doesn't exist (#1645): writes a near-empty template pointing at
       the docs. No admin identity or password is emitted — the admin row
       is seeded at runtime (``default_user`` defaults to
       ``<unixuser>@example.com``; null hash in ``none``/``oidc`` mode,
-      ``KLANGK_DEFAULT_PASSWORD`` required in ``password``/``both``).
+      ``KLANGKD_DEFAULT_PASSWORD`` required in ``password``/``both``).
     - ``"none"`` → explicit env-only opt-out (no config file).
     - ``"<path>"`` → that path, required to exist. Missing → ``BadParameter``.
       Explicit paths are never auto-generated — generation only fires for
@@ -106,7 +106,7 @@ def main(  # pragma: no cover
         "-c",
         help=(
             "Path to a YAML config file. Bare ``klangkd`` (no --config) "
-            "resolves ``$KLANGK_CONFIG_DIR/klangkd.yaml`` "
+            "resolves ``$KLANGKD_CONFIG_DIR/klangkd.yaml`` "
             "(default ``~/.config/klangkd/klangkd.yaml``) and generates it "
             "on first run (#1645). Use 'none' to run from env vars only "
             "(no config file)."
@@ -124,16 +124,16 @@ def main(  # pragma: no cover
     settings = KlangkSettings(os.environ, config_file=resolved)
 
     # uvicorn always binds the UDS at ``settings.socket`` (default
-    # ``<state_dir>/klangk.sock``, overridable via ``KLANGK_SOCKET`` — #1542).
-    # ``KLANGK_PORT`` (unset ⇒ headless, set ⇒ full/browser) drives the proxy's
+    # ``<state_dir>/klangk.sock``, overridable via ``KLANGKD_SOCKET`` — #1542).
+    # ``KLANGKD_PORT`` (unset ⇒ headless, set ⇒ full/browser) drives the proxy's
     # rendered template + listen directives; uvicorn never listens on TCP
     # directly.
     state_dir = settings.state_dir
-    os.environ["KLANGK_STATE_DIR"] = state_dir
+    os.environ["KLANGKD_STATE_DIR"] = state_dir
     uds_path = settings.socket
 
     # Read ws_max_size through the typed config (default 16 MiB, #1394/#1395).
-    ws_max_size = int(settings.ws_msg_size_max)
+    ws_max_size = int(settings.websocket_msg_size_max)
 
     # Bind the UDS. A stale socket from a kill -9'd process makes the
     # bind fail with EADDRINUSE — unlink first (the pidfile guard in the
@@ -155,7 +155,7 @@ def main(  # pragma: no cover
     # Arm the UDS trust flag on the Util instance: over a UDS,
     # request.client is None, and a None peer is the trusted reverse
     # proxy (same-uid socket access). Set here, from the bind decision —
-    # not via a config field (#1422 retired KLANGK_UDS_MODE).
+    # not via a config field (#1422 retired KLANGKD_UDS_MODE).
     asgi_app.state.util.set_uds_mode(True)
     uvicorn.run(
         asgi_app,

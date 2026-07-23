@@ -25,31 +25,36 @@
  * re-applied harmlessly.
  *
  * The admin account is NOT created here — it comes from the server's
- * KLANGK_DEFAULT_USER. Override anything with env vars: KLANGK_TEST_URL,
- * KLANGK_DEMO_PASSWORD, KLANGK_DEMO_ADMIN_PASSWORD, KLANGK_DEMO_*_EMAIL.
+ * KLANGKD_DEFAULT_USER. Override anything with env vars: KLANGKBUILD_TEST_URL,
+ * KLANGKBUILD_DEMO_PASSWORD, KLANGKBUILD_DEMO_ADMIN_PASSWORD, KLANGKBUILD_DEMO_*_EMAIL.
  */
-const DEMO_URL = process.env.KLANGK_TEST_URL || "http://localhost:8996";
+const DEMO_URL = process.env.KLANGKBUILD_TEST_URL || "http://localhost:8996";
 
-// Bootstrap admin = the server's KLANGK_DEFAULT_USER. Used for the destructive
+// Bootstrap admin = the server's KLANGKD_DEFAULT_USER. Used for the destructive
 // reset and user/group management. MUST differ from the hero (you can't delete
 // yourself) and holds the `admin` permission to manage users + groups.
-const BOOTSTRAP_EMAIL = process.env.KLANGK_DEFAULT_USER || "admin@plope.com";
-const BOOTSTRAP_PASSWORD = process.env.KLANGK_DEFAULT_PASSWORD || "admin";
+const BOOTSTRAP_EMAIL = process.env.KLANGKD_DEFAULT_USER || "admin@plope.com";
+const BOOTSTRAP_PASSWORD = process.env.KLANGKD_DEFAULT_PASSWORD || "admin";
 
 // Hero = the on-camera admin. Created + promoted to the "admin" group by this
 // seed, so --reset can fully repave (delete -> recreate) for a clean slate.
-const ADMIN_EMAIL = process.env.KLANGK_DEMO_ADMIN_EMAIL || "admin@example.com";
-const ADMIN_PASSWORD = process.env.KLANGK_DEMO_ADMIN_PASSWORD || "adminpass";
+const ADMIN_EMAIL =
+  process.env.KLANGKBUILD_DEMO_ADMIN_EMAIL || "admin@example.com";
+const ADMIN_PASSWORD =
+  process.env.KLANGKBUILD_DEMO_ADMIN_PASSWORD || "adminpass";
 
 // Cast users share one password.
-const DEMO_PASSWORD = process.env.KLANGK_DEMO_PASSWORD || "demopass123";
+const DEMO_PASSWORD = process.env.KLANGKBUILD_DEMO_PASSWORD || "demopass123";
 
 // Virtual users. Each is created via admin (idempotent) and given a personal
 // workspace + membership in shared ones below.
 const USERS = {
-  teammate: process.env.KLANGK_DEMO_TEAMMATE_EMAIL || "teammate@example.com",
-  designer: process.env.KLANGK_DEMO_DESIGNER_EMAIL || "designer@example.com",
-  reviewer: process.env.KLANGK_DEMO_REVIEWER_EMAIL || "reviewer@example.com",
+  teammate:
+    process.env.KLANGKBUILD_DEMO_TEAMMATE_EMAIL || "teammate@example.com",
+  designer:
+    process.env.KLANGKBUILD_DEMO_DESIGNER_EMAIL || "designer@example.com",
+  reviewer:
+    process.env.KLANGKBUILD_DEMO_REVIEWER_EMAIL || "reviewer@example.com",
 };
 
 type Role = "collaborators" | "spectators";

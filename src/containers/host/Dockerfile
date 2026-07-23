@@ -70,22 +70,22 @@ RUN mkdir -p /var/log/nginx /var/lib/nginx && \
 ENV HOME=/home/klangk
 ENV PYTHONPATH=/home/klangk/src/klangk:/home/klangk/venv/lib/python3.13/site-packages
 ENV PATH=/home/klangk/bin:/home/klangk/venv/bin:$PATH
-# klangkd binds a UDS (not TCP). KLANGK_PORT (browser) + KLANGK_EGRESS_PORT
-# (container egress) drive the proxy's listeners. KLANGK_LISTEN is the browser
+# klangkd binds a UDS (not TCP). KLANGKD_PORT (browser) + KLANGKD_EGRESS_PORT
+# (container egress) drive the proxy's listeners. KLANGKD_LISTEN is the browser
 # interface address (#1542).
-ENV KLANGK_PORT=8997
-ENV KLANGK_EGRESS_PORT=8995
-ENV KLANGK_DATA_DIR=/home/klangk/data
-ENV KLANGK_CUSTOMIZE_DIR=/home/klangk/custom
-ENV KLANGK_IMAGE_NAME=klangk-workspace
-ENV KLANGK_VERSION_FILE=/home/klangk/version.json
+ENV KLANGKD_PORT=8997
+ENV KLANGKD_EGRESS_PORT=8995
+ENV KLANGKD_DATA_DIR=/home/klangk/data
+ENV KLANGKD_CUSTOMIZE_DIR=/home/klangk/custom
+ENV KLANGKD_IMAGE_NAME=klangk-workspace
+ENV KLANGKD_VERSION_FILE=/home/klangk/version.json
 # Where klangkd writes the UDS + rendered nginx.conf
-ENV KLANGK_STATE_DIR=/tmp/klangk-state
+ENV KLANGKD_STATE_DIR=/tmp/klangk-state
 # The image runs klangkd from the source tree
 # (PYTHONPATH=/home/klangk/src/klangk), not an installed wheel, so the
 # in-package default (klangk/frontend, #1600) doesn't apply -- point at the
 # Flutter web build copied into the image above.
-ENV KLANGK_FRONTEND_DIR=/home/klangk/src/frontend/build/web
+ENV KLANGKD_FRONTEND_DIR=/home/klangk/src/frontend/build/web
 
 USER klangk
 WORKDIR /home/klangk

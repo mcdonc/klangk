@@ -9,11 +9,11 @@ so no API keys are exposed inside containers.
 Set these environment variables (in `.env` or your deployment config)
 to enable AI features:
 
-| Variable              | Example                     | Purpose                    |
-| --------------------- | --------------------------- | -------------------------- |
-| `KLANGK_LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
-| `KLANGK_LLM_MODEL`    | `gpt-4o`                    | Default model name         |
-| `KLANGK_LLM_API_KEY`  | `sk-...`                    | Provider API key           |
+| Variable               | Example                     | Purpose                    |
+| ---------------------- | --------------------------- | -------------------------- |
+| `KLANGKD_LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
+| `KLANGKD_LLM_MODEL`    | `gpt-4o`                    | Default model name         |
+| `KLANGKD_LLM_API_KEY`  | `sk-...`                    | Provider API key           |
 
 Without these, Pi and the Pi agent via the chat are non-functional. See
 [Environment Variables](../reference/environment.md) for the full
@@ -34,8 +34,8 @@ pi
 ```
 
 By default Pi uses the LLM proxy with the provider and model
-configured via `KLANGK_LLM_BASE_URL`, `KLANGK_LLM_MODEL`, and
-`KLANGK_LLM_API_KEY`. Its config is stored in `~/.pi/agent/` and
+configured via `KLANGKD_LLM_BASE_URL`, `KLANGKD_LLM_MODEL`, and
+`KLANGKD_LLM_API_KEY`. Its config is stored in `~/.pi/agent/` and
 populated automatically at first login by klangk itself.
 
 ### Using Pi from chat
@@ -50,10 +50,10 @@ The agent handle and email are set via environment variables and seeded
 into the database on startup. After initial seeding, the agent identity
 is read from the DB; changing the env vars updates the DB on next restart.
 
-| Variable              | Default               |
-| --------------------- | --------------------- |
-| `KLANGK_AGENT_HANDLE` | `clanker`             |
-| `KLANGK_AGENT_EMAIL`  | `clanker@example.com` |
+| Variable               | Default               |
+| ---------------------- | --------------------- |
+| `KLANGKD_AGENT_HANDLE` | `clanker`             |
+| `KLANGKD_AGENT_EMAIL`  | `clanker@example.com` |
 
 The agent user cannot have a password and cannot log in via credentials.
 
@@ -82,7 +82,7 @@ Agents share a system prompt installed at `~/AGENTS.md` on first
 login. This prompt configures workspace-specific behavior:
 
 - File and project creation conventions
-- Hosted app port mappings (`$KLANGK_PORT_MAPPINGS`)
+- Hosted app port mappings (`$KLANGKWS_PORT_MAPPINGS`)
 - The `get_hosted_url` tool for generating user-facing URLs
 - Guidelines for running servers, handling large files, and web search
 
@@ -93,8 +93,8 @@ in the container.
 
 Pi does not have direct access to your LLM API key. Instead, klangk
 configures Pi to send requests through the reverse proxy on the
-host. The proxy forwards the request to your `KLANGK_LLM_BASE_URL` and
-injects the real `KLANGK_LLM_API_KEY` in the `Authorization` header.
+host. The proxy forwards the request to your `KLANGKD_LLM_BASE_URL` and
+injects the real `KLANGKD_LLM_API_KEY` in the `Authorization` header.
 
 This means your LLM API key never enters the container environment.
 See [LLM Proxy](../architecture/llm-proxy.md) for the full

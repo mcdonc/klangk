@@ -10,7 +10,7 @@
  * Sharing, no Settings). That is correct, not a bug.
  *
  * Iterate in FAST mode:
- *   KLANGK_DEMO_FAST=1 KLANGK_DEMO_HEADLESS=1 \
+ *   KLANGKBUILD_DEMO_FAST=1 KLANGKBUILD_DEMO_HEADLESS=1 \
  *     devenv shell -- npx playwright test --config=...demo.config.ts \
  *       -g "collaboration teammate"
  */
@@ -23,7 +23,7 @@ import {
 } from "../collab-choreography";
 
 test("collaboration teammate", async ({ page, request }) => {
-  test.setTimeout(process.env.KLANGK_DEMO_FAST ? 120_000 : 300_000);
+  test.setTimeout(process.env.KLANGKBUILD_DEMO_FAST ? 120_000 : 300_000);
 
   const ctx = await setupCollab({ page, request, perspective: "teammate" });
   try {

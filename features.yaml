@@ -4,14 +4,14 @@
 # repo under features/<name>/, and the build symlinks it straight in) or a
 # *remote git ref* (`git:` + `ref:`, which `update_features.py` clones and
 # SHA-pins into `features.lock`). This file is the source of truth for which
-# features a fresh build compiles; `KLANGK_FEATURES_ENABLE` (runtime) decides
+# features a fresh build compiles; `KLANGKD_FEATURES_ENABLE` (runtime) decides
 # which of the compiled-in features are active at boot (#1655). See
 # docs/features/features.md.
 #
 # The two lists are allowed to differ: a feature can be compiled-in but not in
 # `DEFAULT_FEATURES` (scripts/import_dart_features.py) — "dormant". Soliplex
 # (#1664) is the canonical remote case (opt in with
-# `KLANGK_FEATURES_ENABLE=soliplex`); `word-count` is a local dormant feature
+# `KLANGKD_FEATURES_ENABLE=soliplex`); `word-count` is a local dormant feature
 # (#1700). A bare install doesn't surface dormant features. To add a local
 # feature: drop its tree under features/<name>/ and append a `path:` entry here.
 # To add a remote feature: append a `git:`/`ref:` entry.
@@ -23,7 +23,7 @@ features:
   - name: bobdobbs
     path: features/bobdobbs
   # Local dormant feature (#1700): compiled in but NOT in DEFAULT_FEATURES —
-  # activate with KLANGK_FEATURES_ENABLE=word-count.
+  # activate with KLANGKD_FEATURES_ENABLE=word-count.
   - name: word-count
     path: features/word-count
   - name: browser-fetch
@@ -33,7 +33,7 @@ features:
   - name: git-credential
     path: features/git-credential
   # Vendored local (compiled-in, dormant — #1664, vendored in #1686). NOT in
-  # DEFAULT_FEATURES; activate with KLANGK_FEATURES_ENABLE=soliplex. Nested
+  # DEFAULT_FEATURES; activate with KLANGKD_FEATURES_ENABLE=soliplex. Nested
   # Dart deps (soliplex_client, soliplex_agent, klangk_plugin_api) resolve at
   # `flutter pub get` time. Source snapshot: soliplex/klangk-plugin-soliplex
   # @ v0.4 (f9ad39834bac).

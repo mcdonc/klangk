@@ -69,7 +69,7 @@ def get_app_dep(request: Request):
 
 
 def autostart_allowed(app) -> bool:
-    """Whether per-workspace auto-start is permitted (KLANGK_ALLOW_AUTOSTART).
+    """Whether per-workspace auto-start is permitted (KLANGKD_ALLOW_AUTOSTART).
 
     Read off the frozen ``app.state.settings`` rather than re-resolving the
     env at call time (#1516).

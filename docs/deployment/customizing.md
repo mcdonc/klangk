@@ -10,10 +10,10 @@ The [`customize/`](https://github.com/mcdonc/klangk/tree/main/customize) directo
 
 ### Customization Directory
 
-Set `KLANGK_CUSTOMIZE_DIR` to a single directory containing all your customization files. Klangk looks for well-known subdirectories under this path:
+Set `KLANGKD_CUSTOMIZE_DIR` to a single directory containing all your customization files. Klangk looks for well-known subdirectories under this path:
 
 ```text
-<KLANGK_CUSTOMIZE_DIR>/
+<KLANGKD_CUSTOMIZE_DIR>/
   certs/           ← CA .pem/.crt files (custom CA certificates)
   branding/        ← logos and other static assets served at /branding
   email-templates/ ← Jinja2 email template overrides
@@ -26,19 +26,19 @@ Default: `~/.klangk/custom` (or `/home/klangk/custom` in the container image).
 ```bash
 docker run -d \
   -v ./my-customization:/home/klangk/custom:ro \
-  -e KLANGK_CUSTOMIZE_DIR=/home/klangk/custom \
+  -e KLANGKD_CUSTOMIZE_DIR=/home/klangk/custom \
   ...
 ```
 
-One env var and one `-v` mount replaces three. The per-feature env vars `KLANGK_SSL_CERT_DIR` and `KLANGK_EMAIL_TEMPLATES_DIR` still work as overrides but are **deprecated** — prefer the unified directory. `KLANGK_BRANDING_DIR` has been removed; branding assets are resolved from `<KLANGK_CUSTOMIZE_DIR>/branding/` or `<KLANGK_DATA_DIR>/branding/`.
+One env var and one `-v` mount replaces three. The per-feature env vars `KLANGKD_SSL_CERT_DIR` and `KLANGKD_EMAIL_TEMPLATES_DIR` still work as overrides but are **deprecated** — prefer the unified directory. `KLANGKD_BRANDING_DIR` has been removed; branding assets are resolved from `<KLANGKD_CUSTOMIZE_DIR>/branding/` or `<KLANGKD_DATA_DIR>/branding/`.
 
 ### Product Name
 
-Set `KLANGK_PRODUCT_NAME` to rename the product across the browser tab title, the app-bar logo wordmark, and all outgoing emails. Defaults to `Klangk`. Supports the `file:`/`cmd:` prefix.
+Set `KLANGKD_PRODUCT_NAME` to rename the product across the browser tab title, the app-bar logo wordmark, and all outgoing emails. Defaults to `Klangk`. Supports the `file:`/`cmd:` prefix.
 
 ```bash
 docker run -d \
-  -e KLANGK_PRODUCT_NAME="Acme Labs" \
+  -e KLANGKD_PRODUCT_NAME="Acme Labs" \
   ...
 ```
 
@@ -46,9 +46,9 @@ The value is published to the frontend through `GET /api/v1/config` (`product_na
 
 ### Logo
 
-Set `KLANGK_LOGO_URL` to an absolute image URL. The value is published to the UI through the unauthenticated `/api/v1/config` endpoint (`logo_url`), so it renders on the login page before login. Supports `file:`/`cmd:` secret resolution.
+Set `KLANGKD_LOGO_URL` to an absolute image URL. The value is published to the UI through the unauthenticated `/api/v1/config` endpoint (`logo_url`), so it renders on the login page before login. Supports `file:`/`cmd:` secret resolution.
 
-To serve a local file without a CDN, drop your logo into `<KLANGK_CUSTOMIZE_DIR>/branding/` and set `KLANGK_LOGO_URL=/branding/logo.png`. Both steps are needed: placing the file makes it servable (Klangk mounts the branding directory at `/branding/`), while `KLANGK_LOGO_URL` tells the frontend which image to render — this could equally be an external CDN URL like `https://cdn.example.com/logo.png`. When `<KLANGK_CUSTOMIZE_DIR>/branding/` doesn't exist, branding falls back to `<KLANGK_DATA_DIR>/branding/`.
+To serve a local file without a CDN, drop your logo into `<KLANGKD_CUSTOMIZE_DIR>/branding/` and set `KLANGKD_LOGO_URL=/branding/logo.png`. Both steps are needed: placing the file makes it servable (Klangk mounts the branding directory at `/branding/`), while `KLANGKD_LOGO_URL` tells the frontend which image to render — this could equally be an external CDN URL like `https://cdn.example.com/logo.png`. When `<KLANGKD_CUSTOMIZE_DIR>/branding/` doesn't exist, branding falls back to `<KLANGKD_DATA_DIR>/branding/`.
 
 When unset (or if the image fails to load), the default `KlangkLogo` widget is rendered. The logo also flows into email headers when emails are rendered through the templating system.
 
@@ -56,17 +56,17 @@ When unset (or if the image fails to load), the default `KlangkLogo` widget is r
 
 These env vars add links to the login/registration screens and email footers. All are plain values (no `file:`/`cmd:` resolution — they are public, shown pre-auth). Empty hides them.
 
-| Variable               | Description                                                           |
-| ---------------------- | --------------------------------------------------------------------- |
-| `KLANGK_TERMS_URL`     | Terms of Service link                                                 |
-| `KLANGK_PRIVACY_URL`   | Privacy Policy link                                                   |
-| `KLANGK_AUP_URL`       | Acceptable Use Policy link                                            |
-| `KLANGK_SUPPORT_URL`   | Support/help link (app bar + auth screens)                            |
-| `KLANGK_SUPPORT_EMAIL` | Support email (`mailto:` fallback when `KLANGK_SUPPORT_URL` is unset) |
+| Variable                | Description                                                            |
+| ----------------------- | ---------------------------------------------------------------------- |
+| `KLANGKD_TERMS_URL`     | Terms of Service link                                                  |
+| `KLANGKD_PRIVACY_URL`   | Privacy Policy link                                                    |
+| `KLANGKD_AUP_URL`       | Acceptable Use Policy link                                             |
+| `KLANGKD_SUPPORT_URL`   | Support/help link (app bar + auth screens)                             |
+| `KLANGKD_SUPPORT_EMAIL` | Support email (`mailto:` fallback when `KLANGKD_SUPPORT_URL` is unset) |
 
 ### Email Templating
 
-Outgoing auth emails (registration verification, password reset, invitation) are rendered from Jinja2 templates. Place your template overrides in `<KLANGK_CUSTOMIZE_DIR>/email-templates/`.
+Outgoing auth emails (registration verification, password reset, invitation) are rendered from Jinja2 templates. Place your template overrides in `<KLANGKD_CUSTOMIZE_DIR>/email-templates/`.
 
 Two approaches:
 
@@ -79,7 +79,7 @@ Overrides resolve per-file: a deployer file shadows the built-in at the same pat
 
 #### Template Variables
 
-**Global** (every email): `product_name` (`KLANGK_PRODUCT_NAME`), `logo_url` (`KLANGK_LOGO_URL`), `brand_color` (`KLANGK_BRAND_COLOR`, default `#E65100`).
+**Global** (every email): `product_name` (`KLANGKD_PRODUCT_NAME`), `logo_url` (`KLANGKD_LOGO_URL`), `brand_color` (`KLANGKD_BRAND_COLOR`, default `#E65100`).
 
 **Per-email**: `link` (the verification/reset/invite URL), `expiry_hours` (real token TTL), and `invited_by` (invitation only).
 
@@ -87,22 +87,22 @@ Overrides resolve per-file: a deployer file shadows the built-in at the same pat
 
 #### Other Email Knobs
 
-- **`KLANGK_SMTP_REPLY_TO`** — adds a `Reply-To` header to every outgoing message. Unset means no header.
+- **`KLANGKD_SMTP_REPLY_TO`** — adds a `Reply-To` header to every outgoing message. Unset means no header.
 - **Footer / legal line** — `base.html` exposes an empty `{% block legal %}` for a compliance footer.
 
 #### Example
 
 ```bash
 docker run -d \
-  -e KLANGK_PRODUCT_NAME="Acme Labs" \
-  -e KLANGK_LOGO_URL="/branding/logo.png" \
-  -e KLANGK_SMTP_REPLY_TO="support@acme.example.com" \
-  -e KLANGK_CUSTOMIZE_DIR=/home/klangk/custom \
+  -e KLANGKD_PRODUCT_NAME="Acme Labs" \
+  -e KLANGKD_LOGO_URL="/branding/logo.png" \
+  -e KLANGKD_SMTP_REPLY_TO="support@acme.example.com" \
+  -e KLANGKD_CUSTOMIZE_DIR=/home/klangk/custom \
   -v ./my-customization:/home/klangk/custom:ro \
   ...
 ```
 
-> **Deprecated:** `KLANGK_EMAIL_TEMPLATES_DIR` still works as an override but prefer using `<KLANGK_CUSTOMIZE_DIR>/email-templates/` instead.
+> **Deprecated:** `KLANGKD_EMAIL_TEMPLATES_DIR` still works as an override but prefer using `<KLANGKD_CUSTOMIZE_DIR>/email-templates/` instead.
 
 ### Consent Banner
 
@@ -114,8 +114,8 @@ Set the banner text (and an optional title) via env vars or the
 
 ```bash
 docker run -d \
-  -e KLANGK_LOGIN_BANNER_TITLE="Notice" \
-  -e KLANGK_LOGIN_BANNER="You must accept the terms to continue." \
+  -e KLANGKD_LOGIN_BANNER_TITLE="Notice" \
+  -e KLANGKD_LOGIN_BANNER="You must accept the terms to continue." \
   ...
 ```
 
@@ -132,8 +132,8 @@ each fresh app load / login), set:
 
 ```bash
 docker run -d \
-  -e KLANGK_LOGIN_BANNER_EVERY_VISIT=true \
-  -e KLANGK_LOGIN_BANNER="..." \
+  -e KLANGKD_LOGIN_BANNER_EVERY_VISIT=true \
+  -e KLANGKD_LOGIN_BANNER="..." \
   ...
 ```
 
@@ -151,15 +151,15 @@ hash-based acceptance). (#1544)
 
 ### Custom CA Certificates
 
-Place your `.pem`/`.crt` CA certificate files in `<KLANGK_CUSTOMIZE_DIR>/certs/` and **restart** workspaces (or the backend). Klangk makes those CAs trusted at startup without rebuilding any image:
+Place your `.pem`/`.crt` CA certificate files in `<KLANGKD_CUSTOMIZE_DIR>/certs/` and **restart** workspaces (or the backend). Klangk makes those CAs trusted at startup without rebuilding any image:
 
 - **Workspace containers** — the directory is bind-mounted read-only into each container, and the entrypoint builds a merged CA bundle (system CAs plus your custom certs) on the writable `/tmp` tmpfs. The toolchain trust env vars (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`) are set to point at it, so OpenSSL, Python, `curl`, and Node all honor your CAs. The bundle is merged with system CAs so public-internet TLS keeps working.
-- **Backend process** — at startup the backend concatenates your certs with its own system bundle into `<KLANGK_STATE_DIR>/ssl/ca-bundle.crt` and sets the same trust env vars, so outbound TLS (OIDC discovery, SMTP relay, LLM proxy) trusts your private CAs too.
+- **Backend process** — at startup the backend concatenates your certs with its own system bundle into `<KLANGKD_STATE_DIR>/ssl/ca-bundle.crt` and sets the same trust env vars, so outbound TLS (OIDC discovery, SMTP relay, LLM proxy) trusts your private CAs too.
 
 ```bash
-# Using KLANGK_CUSTOMIZE_DIR (recommended):
+# Using KLANGKD_CUSTOMIZE_DIR (recommended):
 docker run -d \
-  -e KLANGK_CUSTOMIZE_DIR=/home/klangk/custom \
+  -e KLANGKD_CUSTOMIZE_DIR=/home/klangk/custom \
   -v ./my-customization:/home/klangk/custom:ro \
   ...
 # Place your .pem/.crt files in my-customization/certs/
@@ -167,7 +167,7 @@ docker run -d \
 
 Rotating a cert is just a file change plus a workspace/backend restart — no image rebuild.
 
-> **Deprecated:** `KLANGK_SSL_CERT_DIR` still works as an override but prefer using `<KLANGK_CUSTOMIZE_DIR>/certs/` instead.
+> **Deprecated:** `KLANGKD_SSL_CERT_DIR` still works as an override but prefer using `<KLANGKD_CUSTOMIZE_DIR>/certs/` instead.
 >
 > **Why a merged bundle?** `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE` _replace_ the default trust store rather than add to it. Klangk therefore prepends the system CAs before your custom certs. (`NODE_EXTRA_CA_CERTS` is additive, but pointing it at the same merged bundle is harmless.)
 
@@ -178,7 +178,7 @@ The `customize/custom/oidc/` directory includes a sample `login_hook.py` that re
 ```bash
 docker run -d \
   -v ./oidc/login_hook.py:/etc/klangk/login_hook.py:ro \
-  -e KLANGK_OIDC_LOGIN_HOOK=/etc/klangk/login_hook.py \
+  -e KLANGKD_OIDC_LOGIN_HOOK=/etc/klangk/login_hook.py \
   ...
 ```
 
@@ -200,8 +200,8 @@ To enable OIDC login, create an `oidc.yaml` and mount it at runtime. The `custom
 ```bash
 docker run -d \
   -v ./oidc/oidc.yaml:/home/klangk/oidc/oidc.yaml:ro \
-  -e KLANGK_OIDC_CONFIG=/home/klangk/oidc/oidc.yaml \
-  -e KLANGK_AUTH_MODES=both \
+  -e KLANGKD_OIDC_CONFIG=/home/klangk/oidc/oidc.yaml \
+  -e KLANGKD_AUTH_MODES=both \
   ...
 ```
 
@@ -209,14 +209,14 @@ See the [OIDC documentation](../reference/oidc.md) for the config file format.
 
 ### Deployment profiles (auth modes)
 
-`KLANGK_AUTH_MODES` selects the deployment profile — same binary, different
+`KLANGKD_AUTH_MODES` selects the deployment profile — same binary, different
 config. For a **no-login local-dev** server (single user, your own browser),
 use `none` — it auto-issues a token for the seeded default user and must bind
 loopback:
 
 ```bash
 docker run -d \
-  -e KLANGK_AUTH_MODES=none \
+  -e KLANGKD_AUTH_MODES=none \
   ...
 ```
 
@@ -227,7 +227,7 @@ local-dev / customer-locked / team mapping.
 > `docker run -p` published port isn't loopback — so `none` mode does not
 > yet work with the published host image (the proxy `/auth/local` ACL denies
 > the port-forwarded request). For the Docker image, set
-> `KLANGK_AUTH_MODES=password` (or `oidc`/`both`) until #1391 lands.
+> `KLANGKD_AUTH_MODES=password` (or `oidc`/`both`) until #1391 lands.
 > Locally (devenv, or running the binary on your own machine) `none` works
 > out of the box.
 
@@ -261,19 +261,19 @@ $EDITOR features.yaml
 devenv shell -- build-host-image
 
 # Tag the build with a variant identity (surfaced in version.json + debug pane).
-# NOTE: KLANGK_VARIANT is captured at devenv-shell entry (generate-version.sh
+# NOTE: KLANGKBUILD_VARIANT is captured at devenv-shell entry (generate-version.sh
 # runs in enterShell), so set it *before* `devenv shell`:
-KLANGK_VARIANT="Acme 1.0.0" devenv shell -- build-host-image
+KLANGKBUILD_VARIANT="Acme 1.0.0" devenv shell -- build-host-image
 
 # Publish elsewhere than the default local tag (klangk-host):
-KLANGK_HOST_IMAGE=ghcr.io/<your-org>/klangk-host devenv shell -- build-host-image
+KLANGKBUILD_HOST_IMAGE=ghcr.io/<your-org>/klangk-host devenv shell -- build-host-image
 ```
 
 To pull upstream klangk improvements into your custom build, `git pull upstream main` (or `origin main`, depending on how you cloned) from the fork — the feature declaration and feature trees merge like any other source file.
 
 ### Features
 
-Edit the checked-in `features.yaml` to add or remove features. The default build compiles in the built-in features declared there: celebrate, beep, bobdobbs, word-count, browser-fetch, boingball, git-credential (`word-count` and `soliplex` ship compiled-in but dormant — activate with `KLANGK_FEATURES_ENABLE`).
+Edit the checked-in `features.yaml` to add or remove features. The default build compiles in the built-in features declared there: celebrate, beep, bobdobbs, word-count, browser-fetch, boingball, git-credential (`word-count` and `soliplex` ship compiled-in but dormant — activate with `KLANGKD_FEATURES_ENABLE`).
 
 To add an external feature:
 
@@ -286,21 +286,21 @@ features:
 
 ### How the Build Works
 
-`scripts/build-host-image.sh` is a single source build: it embeds the Flutter web build, the workspace tarball, **and** the feature directories declared in `features.yaml` — so one build produces the final image with features baked in. There is no separate overlay, `Dockerfile`, or base-image pass. Run it via the devenv-wrapped `build-host-image` script (`devenv shell -- build-host-image`); `KLANGK_VARIANT` is captured by `scripts/generate-version.sh` in devenv's `enterShell` hook, so set it (and `KLANGK_HOST_IMAGE`) **before** entering the shell, not on the build command.
+`scripts/build-host-image.sh` is a single source build: it embeds the Flutter web build, the workspace tarball, **and** the feature directories declared in `features.yaml` — so one build produces the final image with features baked in. There is no separate overlay, `Dockerfile`, or base-image pass. Run it via the devenv-wrapped `build-host-image` script (`devenv shell -- build-host-image`); `KLANGKBUILD_VARIANT` is captured by `scripts/generate-version.sh` in devenv's `enterShell` hook, so set it (and `KLANGKBUILD_HOST_IMAGE`) **before** entering the shell, not on the build command.
 
 ### Build Options
 
-The build reads these from the environment (`KLANGK_HOST_IMAGE` / `KLANGK_PLATFORM` by `scripts/build-host-image.sh`; `KLANGK_VARIANT` by `scripts/generate-version.sh` during the build):
+The build reads these from the environment (`KLANGKBUILD_HOST_IMAGE` / `KLANGKBUILD_PLATFORM` by `scripts/build-host-image.sh`; `KLANGKBUILD_VARIANT` by `scripts/generate-version.sh` during the build):
 
-| Variable            | Default       | Description                                                                               |
-| ------------------- | ------------- | ----------------------------------------------------------------------------------------- |
-| `KLANGK_HOST_IMAGE` | `klangk-host` | Output image name — a local tag by default; override with a full registry path to publish |
-| `KLANGK_VARIANT`    | _unset_       | Build identity string written to `version.json` (see [Build Variant](#build-variant))     |
-| `KLANGK_PLATFORM`   | `linux/amd64` | Target platform                                                                           |
+| Variable                 | Default       | Description                                                                               |
+| ------------------------ | ------------- | ----------------------------------------------------------------------------------------- |
+| `KLANGKBUILD_HOST_IMAGE` | `klangk-host` | Output image name — a local tag by default; override with a full registry path to publish |
+| `KLANGKBUILD_VARIANT`    | _unset_       | Build identity string written to `version.json` (see [Build Variant](#build-variant))     |
+| `KLANGKBUILD_PLATFORM`   | `linux/amd64` | Target platform                                                                           |
 
 ### Build Variant
 
-`KLANGK_VARIANT` stamps a **product-identity string** into the built image's
+`KLANGKBUILD_VARIANT` stamps a **product-identity string** into the built image's
 `version.json`. It is surfaced in three places:
 
 - **`GET /api/v1/version`** — a `variant` field (between `version` and `commit`)
@@ -313,8 +313,8 @@ the klangk release (tag/branch/SHA), while `variant` names _this_ downstream
 build. Set it to your product name and release, e.g. `"Acme 1.0.0"`:
 
 ```bash
-# KLANGK_VARIANT is read at devenv-shell entry, so set it before `devenv shell`:
-KLANGK_VARIANT="Acme 1.0.0" devenv shell -- build-host-image
+# KLANGKBUILD_VARIANT is read at devenv-shell entry, so set it before `devenv shell`:
+KLANGKBUILD_VARIANT="Acme 1.0.0" devenv shell -- build-host-image
 ```
 
 When empty (or unset), the `variant` field is **omitted entirely** from
@@ -339,18 +339,18 @@ docker run -d \
   --device /dev/net/tun \
   --security-opt seccomp=unconfined \
   --security-opt systempaths=unconfined \
-  -e KLANGK_EGRESS_PORT=8995 \
-  -e KLANGK_PORT=8997 \
-  -e KLANGK_DEFAULT_USER=admin@example.com \
-  -e KLANGK_DEFAULT_PASSWORD=changeme \
-  -e KLANGK_JWT_SECRET=change-this-to-a-random-secret \
-  -e KLANGK_PREVENT_INSECURE_JWT_SECRET=1 \
-  -e KLANGK_DATA_DIR=/home/klangk/data \
-  -e KLANGK_PRODUCT_NAME="Acme Labs" \
-  -e KLANGK_LOGO_URL="/branding/logo.png" \
-  -e KLANGK_LLM_BASE_URL=https://ollama.com/v1 \
-  -e KLANGK_LLM_API_KEY=your-api-key \
-  -e KLANGK_LLM_MODEL=gemma4:31b \
+  -e KLANGKD_EGRESS_PORT=8995 \
+  -e KLANGKD_PORT=8997 \
+  -e KLANGKD_DEFAULT_USER=admin@example.com \
+  -e KLANGKD_DEFAULT_PASSWORD=changeme \
+  -e KLANGKD_JWT_SECRET=change-this-to-a-random-secret \
+  -e KLANGKD_PREVENT_INSECURE_JWT_SECRET=1 \
+  -e KLANGKD_DATA_DIR=/home/klangk/data \
+  -e KLANGKD_PRODUCT_NAME="Acme Labs" \
+  -e KLANGKD_LOGO_URL="/branding/logo.png" \
+  -e KLANGKD_LLM_BASE_URL=https://ollama.com/v1 \
+  -e KLANGKD_LLM_API_KEY=your-api-key \
+  -e KLANGKD_LLM_MODEL=gemma4:31b \
   ghcr.io/mcdonc/klangk/klangk-host:latest
 ```
 

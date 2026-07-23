@@ -23,7 +23,7 @@ docs for full details.
 ```text
 customize/
   docker-compose.yml   # Runtime config — all the runtime knobs in one place
-  custom/              # Mounted as KLANGK_CUSTOMIZE_DIR at runtime
+  custom/              # Mounted as KLANGKD_CUSTOMIZE_DIR at runtime
     oidc/              # OIDC config + login hook
       oidc.yaml        # ← EDIT THIS: your identity-provider config
       login_hook.py    # Example login hook (restricts logins to invited users)
@@ -43,5 +43,5 @@ docker compose up
 ```
 
 Edit `docker-compose.yml` for branding, product name, CA certs, OIDC, and the
-LLM backend. The `custom/` directory is mounted as `KLANGK_CUSTOMIZE_DIR` and
+LLM backend. The `custom/` directory is mounted as `KLANGKD_CUSTOMIZE_DIR` and
 contains `branding/`, `certs/`, `email-templates/`, and `oidc/`.

@@ -1,6 +1,6 @@
 """Runtime SSL/CA certificate trust, without an image rebuild (#1181).
 
-A deployer drops ``.pem``/``.crt`` CA certificates into ``KLANGK_SSL_CERT_DIR``
+A deployer drops ``.pem``/``.crt`` CA certificates into ``KLANGKD_SSL_CERT_DIR``
 and both trust scopes consume them at runtime:
 
 * **Workspace containers** — :mod:`container` mounts the directory read-only at
@@ -158,8 +158,8 @@ class SSLTrust:
     def ssl_cert_dir(self) -> str | None:
         """Return the deployer SSL cert dir if it should be trusted, else ``None``.
 
-        Resolves ``KLANGK_SSL_CERT_DIR`` first (deprecated, backwards-compat);
-        falls back to ``<KLANGK_CUSTOMIZE_DIR>/certs`` (#1360).  Returns the
+        Resolves ``KLANGKD_SSL_CERT_DIR`` first (deprecated, backwards-compat);
+        falls back to ``<KLANGKD_CUSTOMIZE_DIR>/certs`` (#1360).  Returns the
         absolute path when the directory exists and contains at least one
         ``.pem``/``.crt`` file; ``None`` otherwise (unset, missing, or empty
         of certs).  Never raises — a misconfigured path simply disables
@@ -214,7 +214,7 @@ class SSLTrust:
             logger.warning(
                 "Applying backend SSL trust without a system bundle: the trust "
                 "vars replace the default store, so public-internet TLS endpoints "
-                "may fail. Provide a system CA bundle or unset KLANGK_SSL_CERT_DIR."
+                "may fail. Provide a system CA bundle or unset KLANGKD_SSL_CERT_DIR."
             )
         for name in SSL_TRUST_VARS:
             os.environ[name] = bundle_path

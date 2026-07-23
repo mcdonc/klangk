@@ -19,7 +19,7 @@ This package builds the main ``router`` by including every sub-router
 without a prefix (so route paths are unchanged) and keeps the unprefixed
 ``root_router`` for ``/health`` and ``/empty``.  The few endpoints that do
 not belong to a single domain (version, config, my-permissions, and the
-KLANGK_TEST_MODE-only endpoints) stay here.
+KLANGKD_TEST_MODE-only endpoints) stay here.
 
 It also re-exports the names external callers and tests depend on so
 ``from klangk import api`` keeps working exactly as before:
@@ -114,9 +114,9 @@ async def version(app=Depends(get_app_dep)):
     }
 
 
-# --- Test/debug endpoints (only when KLANGK_TEST_MODE is set) ---
+# --- Test/debug endpoints (only when KLANGKD_TEST_MODE is set) ---
 
-if os.environ.get("KLANGK_TEST_MODE"):  # pragma: no cover
+if os.environ.get("KLANGKD_TEST_MODE"):  # pragma: no cover
 
     @router.get("/test/idle-timeout")
     async def get_idle_timeout(
@@ -189,7 +189,7 @@ async def get_config(app=Depends(get_app_dep)):
     config = {
         "registration_enabled": app.state.auth.registration_enabled(),
         "invitations_enabled": app.state.auth.invitations_enabled(),
-        # White-label product name (KLANGK_PRODUCT_NAME). Surfaced so the
+        # White-label product name (KLANGKD_PRODUCT_NAME). Surfaced so the
         # frontend can rename the product (tab title, app-bar logo) without
         # a rebuild; defaults to "Klangk" for back-compat (#1149).
         "product_name": s.product_name,
@@ -206,7 +206,7 @@ async def get_config(app=Depends(get_app_dep)):
         # Surfaced so the UI can validate password length inline (matches
         # the rule enforced server-side by auth.validate_password_length).
         "min_password_length": app.state.auth.min_password_length,
-        # Deployer logo override (KLANGK_LOGO_URL). Empty when unset, in
+        # Deployer logo override (KLANGKD_LOGO_URL). Empty when unset, in
         # which case the frontend renders the default KlangkLogo widget.
         # Supports file:/cmd: resolution like other secrets. See #1152.
         "logo_url": s.logo_url,
@@ -220,7 +220,7 @@ async def get_config(app=Depends(get_app_dep)):
         "support_email": s.support_email,
     }
     config.update(app.state.features.frontend_config())
-    # KLANGK_FEATURES_ENABLE: the deploy's chosen active-feature list,
+    # KLANGKD_FEATURES_ENABLE: the deploy's chosen active-feature list,
     # forwarded verbatim so the frontend can resolve the active set against
     # its sibling features.json (canonical semantics — see #1655). None when
     # unset (the frontend then uses the manifest's `defaults`).

@@ -4,7 +4,7 @@ Klangk supports OIDC authentication via one or more external Identity Providers 
 
 ## Setup
 
-OIDC providers can be configured in two ways: **inline** in the `klangkd` config file (recommended), or in a **separate file** via `KLANGK_OIDC_CONFIG`.
+OIDC providers can be configured in two ways: **inline** in the `klangkd` config file (recommended), or in a **separate file** via `KLANGKD_OIDC_CONFIG`.
 
 ### Option 1: Inline in the config file (recommended)
 
@@ -33,7 +33,7 @@ oidc_providers:
 
 See [Configuration File](klangkd-config.md) for full config-file documentation.
 
-### Option 2: Separate file via `KLANGK_OIDC_CONFIG`
+### Option 2: Separate file via `KLANGKD_OIDC_CONFIG`
 
 Create a standalone YAML file with the provider list:
 
@@ -54,21 +54,21 @@ Create a standalone YAML file with the provider list:
   client-secret: "file:/run/secrets/corp-secret"
 ```
 
-Set `KLANGK_OIDC_CONFIG` in `.env`:
+Set `KLANGKD_OIDC_CONFIG` in `.env`:
 
 ```bash
-KLANGK_OIDC_CONFIG=/path/to/oidc.yaml
+KLANGKD_OIDC_CONFIG=/path/to/oidc.yaml
 ```
 
-> When both `KLANGK_OIDC_CONFIG` (separate file) and `oidc_providers` (inline) are set, the separate file wins — consistent with the global precedence rule (env vars override config-file values).
+> When both `KLANGKD_OIDC_CONFIG` (separate file) and `oidc_providers` (inline) are set, the separate file wins — consistent with the global precedence rule (env vars override config-file values).
 
-1. Optionally set `KLANGK_AUTH_MODES` to control which login methods are available:
+1. Optionally set `KLANGKD_AUTH_MODES` to control which login methods are available:
    - `both` — SSO buttons + email/password form
    - `oidc` — SSO buttons only, email/password disabled
    - `password` — email/password only
    - `none` — no-login single-user (local-dev) mode; OIDC config is ignored. See [Auth Modes](../features/auth-modes.md).
 
-   The default (when `KLANGK_AUTH_MODES` is unset) is `none`; configuring OIDC no longer implies `both` — set `KLANGK_AUTH_MODES=oidc` (or `both`) to turn OIDC login on (#1419).
+   The default (when `KLANGKD_AUTH_MODES` is unset) is `none`; configuring OIDC no longer implies `both` — set `KLANGKD_AUTH_MODES=oidc` (or `both`) to turn OIDC login on (#1419).
 
 ## Provider Config Fields
 
@@ -106,7 +106,7 @@ This is configured per provider, so a deployment with multiple IdPs can trust so
 
 - **Web**: Login page shows one button per provider. Clicking redirects to the IdP via Authorization Code flow with PKCE. After authentication, the IdP redirects back to Klangk which exchanges the code for tokens, validates the ID token, and issues a Klangk JWT.
 - **CLI**: `klangk login` detects OIDC from the server config, opens a browser for authentication, and receives the token via a temporary localhost callback server.
-- **Login hook**: A Python script (`KLANGK_OIDC_LOGIN_HOOK`) can handle login validation and group mapping. See [OIDC Login Hook](#oidc-login-hook) below.
+- **Login hook**: A Python script (`KLANGKD_OIDC_LOGIN_HOOK`) can handle login validation and group mapping. See [OIDC Login Hook](#oidc-login-hook) below.
 - **User provisioning**: On first OIDC login, a user is created automatically (verified, no password). If a local user with the same email already exists, the OIDC identity is linked to it.
 - **OIDC users** cannot use forgot-password, change-password, or change-email.
 - **Logout**: By default, logout only kills the Klangk session. With `logout-redirect: true`, the user is also redirected to the IdP's logout endpoint to end the SSO session (requires full re-authentication on next login).
@@ -128,13 +128,13 @@ A Python script can handle login validation and group mapping on every OIDC logi
 **Configuration:**
 
 ```bash
-KLANGK_OIDC_LOGIN_HOOK=/etc/klangk/login_hook.py
+KLANGKD_OIDC_LOGIN_HOOK=/etc/klangk/login_hook.py
 ```
 
 The value is a file path to a Python script. The file is loaded directly — it does **not** need to be on `PYTHONPATH`. Optionally append `:func_name` to specify the function; if omitted it defaults to `on_login`:
 
 ```bash
-KLANGK_OIDC_LOGIN_HOOK=/etc/klangk/login_hook.py:require_invitation
+KLANGKD_OIDC_LOGIN_HOOK=/etc/klangk/login_hook.py:require_invitation
 ```
 
 If not set, all OIDC logins that pass the `email_verified` check are accepted with no group sync.

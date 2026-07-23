@@ -152,7 +152,7 @@ def free_port() -> int:
 
     Binds ``127.0.0.1:0`` so the OS assigns an ephemeral port, then
     releases it and returns the number. Used by the E2E harnesses to
-    pick the server port (and to seed ``KLANGK_PORT_RANGE_START``)
+    pick the server port (and to seed ``KLANGKD_PORT_RANGE_START``)
     instead of a hardcoded value, so concurrent runs — xdist workers,
     or several suites on one machine — don't collide (#1393). This
     generalizes the ``_find_free_port`` helper first introduced in
@@ -247,7 +247,7 @@ class Util:
         self.uds_mode = bool(enabled)
 
     def customize_dir(self) -> str:
-        """Root customization directory (``KLANGK_CUSTOMIZE_DIR``).
+        """Root customization directory (``KLANGKD_CUSTOMIZE_DIR``).
 
         Defaults to ``<state_dir>/custom`` (derived in ``_require_dirs``).
         """
@@ -316,7 +316,7 @@ class Util:
     # as the UDS socket (``<state_dir>/klangk.sock``) and rendered nginx.conf,
     # so it lives directly in ``state_dir`` (which the settings validator
     # requires and even documents as the pid-file home). There is no separate
-    # ``runtime_dir()`` fallback chain: ``KLANGK_STATE_DIR`` is required to
+    # ``runtime_dir()`` fallback chain: ``KLANGKD_STATE_DIR`` is required to
     # boot, so it is always present by the time a PID file path is computed.
     # (Earlier releases probed XDG_RUNTIME_DIR / ``/run/user/<uid>`` /
     # ``~/.klangk/run`` — portable-fallback logic from when state_dir was
@@ -390,19 +390,19 @@ class Util:
     # are ignored (so an attacker cannot spoof X-Forwarded-Host to poison
     # verification/reset/OIDC links).
     #
-    # KLANGK_TRUSTED_PROXY_CIDRS: comma-separated CIDRs/IPs to trust
+    # KLANGKD_TRUSTED_PROXY_CIDRS: comma-separated CIDRs/IPs to trust
     # (default "127.0.0.1,::1").
     #
-    # Back-compat: KLANGK_REJECT_PROXY_HEADERS=1 (or true/yes) is honored as
+    # Back-compat: KLANGKD_REJECT_PROXY_HEADERS=1 (or true/yes) is honored as
     # a hard "reject always" override (trust nobody).
 
     def reject_proxy_headers(self) -> bool:
-        """True if KLANGK_REJECT_PROXY_HEADERS is set (hard trust-off)."""
+        """True if KLANGKD_REJECT_PROXY_HEADERS is set (hard trust-off)."""
         raw = self.app.state.settings.reject_proxy_headers
         return bool(raw and raw.strip().lower() in ("1", "true", "yes"))
 
     def trusted_proxy_cidrs(self) -> set[ipaddress._BaseAddress]:
-        """Parse KLANGK_TRUSTED_PROXY_CIDRS into a set of IPs/networks.
+        """Parse KLANGKD_TRUSTED_PROXY_CIDRS into a set of IPs/networks.
 
         The setting is a public CIDR/IP list (not a secret), already resolved
         at construction (#1461). Invalid entries are logged and skipped; if
@@ -424,7 +424,7 @@ class Util:
                     # Log without interpolating the value (CodeQL treats
                     # env-var-derived data as potentially sensitive).
                     logger.warning(
-                        "Ignoring an invalid KLANGK_TRUSTED_PROXY_CIDRS entry"
+                        "Ignoring an invalid KLANGKD_TRUSTED_PROXY_CIDRS entry"
                     )
         if not trusted:
             trusted.add(ipaddress.ip_address("127.0.0.1"))
@@ -463,7 +463,7 @@ class Util:
     ) -> bool:
         """True if the *effective* client of this request is loopback.
 
-        In ``KLANGK_AUTH_MODES=none`` the ``/auth/local`` endpoint freely
+        In ``KLANGKD_AUTH_MODES=none`` the ``/auth/local`` endpoint freely
         issues an admin token, so it must only be reachable from the
         operator's own machine. the proxy's per-location ``allow 127.0.0.1; deny
         all`` ACL is the primary control, but this re-checks as
@@ -503,7 +503,7 @@ class Util:
         """Derive hosting hostname, proto, and base path from env or headers.
 
         Returns (hostname, proto, base_path). Env vars take precedence over
-        headers, so setting ``KLANGK_HOSTING_HOSTNAME`` / ``_PROTO`` /
+        headers, so setting ``KLANGKD_HOSTING_HOSTNAME`` / ``_PROTO`` /
         ``_BASE_PATH`` pins every URL the backend builds — independent of how
         a request arrives. With no env vars, forwarded headers are trusted
         only when the immediate peer is trusted.
@@ -545,14 +545,14 @@ class Util:
     def cors_origins(self) -> list[str]:
         """Build the CORS allowed-origins list.
 
-        Priority: KLANGK_CORS_ORIGINS (comma-separated) > derived from the
+        Priority: KLANGKD_CORS_ORIGINS (comma-separated) > derived from the
         hosting env vars > bare localhost.
 
         Consistent with hosted-app URL construction: the port comes from
-        KLANGK_HOSTING_HOSTNAME (which carries host[:port]); it is never
-        synthesized from KLANGK_EGRESS_PORT (that is internal container
+        KLANGKD_HOSTING_HOSTNAME (which carries host[:port]); it is never
+        synthesized from KLANGKD_EGRESS_PORT (that is internal container
         wiring, not the browser origin). Origins carry no path, so
-        KLANGK_HOSTING_BASE_PATH is ignored here.
+        KLANGKD_HOSTING_BASE_PATH is ignored here.
         """
         explicit = self.app.state.settings.cors_origins
         if explicit:
@@ -565,7 +565,7 @@ class Util:
 
         Bounds the gap between chunks (not the total query duration), so a
         long-but-progressing stream never times out. Override with
-        KLANGK_BRIDGE_TIMEOUT_SECONDS (the settings field is parsed here).
+        KLANGKD_BRIDGE_TIMEOUT_SECONDS (the settings field is parsed here).
         """
         raw = self.app.state.settings.bridge_timeout_seconds
         try:

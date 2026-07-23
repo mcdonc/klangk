@@ -64,7 +64,7 @@ def asker_context_header(
     """Build the ``[Asking user: ...]`` header that resolves "my".
 
     The chat agent has no user identity of its own (it runs as the
-    ``klangk`` service user, with no ``KLANGK_USER_ID``), so "my
+    ``klangk`` service user, with no ``KLANGKWS_USER_ID``), so "my
     history" / "my terminal" is ambiguous in a multi-collaborator
     workspace. Injecting the asking user's identity lets the agent
     target the right per-user tmux session (named after ``user_id``)

@@ -21,7 +21,7 @@ Why not pexpect directly?
 
 Scenes
     Each scene is a function ``scene_<name>(t: Term)``. The driver calls
-    ``tmux send-keys``/``capture-pane`` against ``$KLANGK_DEMO_TMUX_SESSION``
+    ``tmux send-keys``/``capture-pane`` against ``$KLANGKBUILD_DEMO_TMUX_SESSION``
     (set by ``record-terminal.sh``). Run a scene with ``--scene <name>``.
 
     The built-in ``demo`` scene needs **no klangk server** — it's a
@@ -61,7 +61,7 @@ class Term:
         key_delay: float = 0.0,
     ) -> None:
         self.session = session or os.environ.get(
-            "KLANGK_DEMO_TMUX_SESSION", "klangk-demo"
+            "KLANGKBUILD_DEMO_TMUX_SESSION", "klangk-demo"
         )
         # typewriter: per-character delay when type()-ing (a "live typing"
         #   look reads much better on camera than an instant paste).
@@ -189,7 +189,7 @@ class Term:
         The split is a tmux control call, so it never appears as typed text in
         the recording.
         """
-        rcfile = os.environ.get("KLANGK_DEMO_RCFILE", "")
+        rcfile = os.environ.get("KLANGKBUILD_DEMO_RCFILE", "")
         cmd = ["bash"]
         if rcfile:
             cmd += ["--rcfile", rcfile]
@@ -354,19 +354,19 @@ def scene_2(t: Term) -> None:
     klangk server reachable by ``klangk`` (see README).
     """
     # The CLI transport is the UDS (uvicorn's socket, direct). record-cli.sh
-    # sets KLANGK_DEMO_SERVER to the socket path; this default matches for
+    # sets KLANGKBUILD_DEMO_SERVER to the socket path; this default matches for
     # standalone runs. See record-cli.sh for why CLI uses UDS, browser TCP.
     server = os.environ.get(
-        "KLANGK_DEMO_SERVER",
+        "KLANGKBUILD_DEMO_SERVER",
         os.path.join(
-            os.environ.get("KLANGK_DEMO_STATE_DIR", "/tmp/klangk-demo"),
+            os.environ.get("KLANGKBUILD_DEMO_STATE_DIR", "/tmp/klangk-demo"),
             "klangk.sock",
         ),
     )
-    admin = os.environ.get("KLANGK_DEMO_ADMIN_EMAIL", "admin@example.com")
-    password = os.environ.get("KLANGK_DEMO_ADMIN_PASSWORD", "adminpass")
+    admin = os.environ.get("KLANGKBUILD_DEMO_ADMIN_EMAIL", "admin@example.com")
+    password = os.environ.get("KLANGKBUILD_DEMO_ADMIN_PASSWORD", "adminpass")
     # Hold between commands so the voiceover has room to breathe.
-    HOLD = float(os.environ.get("KLANGK_DEMO_HOLD", "5"))
+    HOLD = float(os.environ.get("KLANGKBUILD_DEMO_HOLD", "5"))
 
     # --- opening hold: let the clean host prompt sit for 5s before typing ---
     # Establishes the context (a quiet local terminal) before the action.
@@ -509,13 +509,13 @@ def scene_3(t: Term) -> None:
     the project mounted inside. Services, auto-start, and health checks
     are Scene 3b; this scene stops at "connect."
 
-    Requires a live server with ``KLANGK_ALLOW_AUTOSTART=1``, openclaw
+    Requires a live server with ``KLANGKD_ALLOW_AUTOSTART=1``, openclaw
     **pre-warmed** off-camera (so the on-camera setup.sh is fast — its
     install guards fire because ``/openclaw`` is a mount), and ``jq`` on
     PATH. The recorder starts at the worktree root, so the relative
     sandbox path resolves.
     """
-    HOLD = float(os.environ.get("KLANGK_DEMO_HOLD", "5"))
+    HOLD = float(os.environ.get("KLANGKBUILD_DEMO_HOLD", "5"))
 
     # --- opening hold: let the clean host prompt sit before the action ---
     t.expect("host $")
@@ -576,12 +576,12 @@ def scene_3b(t: Term) -> None:
     container -- #1244/#1246). Narrate over the whole arc.
 
     Carries the same preconditions as Scene 3 (live server, autostart on,
-    openclaw up and healthy). Expects ``KLANGK_HEALTH_CHECK_INTERVAL=10``
+    openclaw up and healthy). Expects ``KLANGKD_HEALTH_CHECK_INTERVAL=10``
     set (snappier unhealthy flip; product default 30s) — the expect
     timeout covers the 30s case too. The recorder runs 3 and 3b
     back-to-back in one terminal.
     """
-    HOLD = float(os.environ.get("KLANGK_DEMO_HOLD", "5"))
+    HOLD = float(os.environ.get("KLANGKBUILD_DEMO_HOLD", "5"))
 
     # --- opening hold: same terminal continuing, prompt at rest ---
     t.expect("host $")
@@ -719,19 +719,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument(
         "--session",
-        default=os.environ.get("KLANGK_DEMO_TMUX_SESSION", "klangk-demo"),
-        help="tmux session to drive (default: $KLANGK_DEMO_TMUX_SESSION)",
+        default=os.environ.get("KLANGKBUILD_DEMO_TMUX_SESSION", "klangk-demo"),
+        help="tmux session to drive (default: $KLANGKBUILD_DEMO_TMUX_SESSION)",
     )
     ap.add_argument(
         "--typewriter",
         type=float,
-        default=float(os.environ.get("KLANGK_DEMO_TYPEWRITER", "0")),
+        default=float(os.environ.get("KLANGKBUILD_DEMO_TYPEWRITER", "0")),
         help="per-character delay (s) for the typewriter effect",
     )
     ap.add_argument(
         "--key-delay",
         type=float,
-        default=float(os.environ.get("KLANGK_DEMO_KEY_DELAY", "0.4")),
+        default=float(os.environ.get("KLANGKBUILD_DEMO_KEY_DELAY", "0.4")),
         help="pause (s) after each Enter",
     )
     args = ap.parse_args(argv)

@@ -20,7 +20,7 @@
  *   - runConversation(ctx, p) — walk CONVERSATION; visible vs sidechannel by p
  *   - teardownCollab(ctx)     — close WS clients
  *
- * FAST mode (KLANGK_DEMO_FAST=1): pace × 0.15, skip the live clanker wait, run
+ * FAST mode (KLANGKBUILD_DEMO_FAST=1): pace × 0.15, skip the live clanker wait, run
  * headless. Verifies every beat (visible + sidechannel) so you can iterate the
  * collaboration mechanics in ~10s without the LLM or a recording.
  */
@@ -208,7 +208,7 @@ export const CONVERSATION: Beat[] = [
     medium: "chat",
     text: "",
     afterPrevMs: 1000,
-    waitMs: Number(process.env.KLANGK_DEMO_AGENT_WAIT || 120_000),
+    waitMs: Number(process.env.KLANGKBUILD_DEMO_AGENT_WAIT || 120_000),
   },
 
   {
@@ -243,7 +243,7 @@ export async function setupCollab({
   request,
   perspective,
 }: SetupOpts): Promise<CollabCtx> {
-  const fast = process.env.KLANGK_DEMO_FAST === "1";
+  const fast = process.env.KLANGKBUILD_DEMO_FAST === "1";
   const scale = fast ? 0.15 : 1;
 
   // --- workspace + roles (idempotent) ---
@@ -793,7 +793,8 @@ async function waitForPaneTextShallow(
       const { execFileSync } = require("node:child_process") as {
         execFileSync: (c: string, a: string[], o: object) => string;
       };
-      const server = process.env.KLANGK_TEST_URL || "http://localhost:8996";
+      const server =
+        process.env.KLANGKBUILD_TEST_URL || "http://localhost:8996";
       const pane = execFileSync(
         "klangk",
         [

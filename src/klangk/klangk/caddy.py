@@ -3,7 +3,7 @@
 This is the Caddy counterpart to :mod:`klangk.proxy` (the nginx engine). It
 implements the same two responsibilities — render the proxy config from the
 merged settings, and supervise the proxy child process — but for **Caddy**
-instead of nginx, selected by ``KLANGK_PROXY_ENGINE=caddy``.
+instead of nginx, selected by ``KLANGKD_PROXY_ENGINE=caddy``.
 
 The two design choices that distinguish this from the nginx renderer (see
 issue #1559):
@@ -215,7 +215,7 @@ class CaddyRenderer:
         return " ".join(deny_entries)
 
     def _max_body_size(self) -> str:
-        """Caddy ``request_body`` ``max_size`` from ``KLANGK_FILE_UPLOAD_SIZE_MAX``.
+        """Caddy ``request_body`` ``max_size`` from ``KLANGKD_FILE_UPLOAD_SIZE_MAX``.
 
         The setting is bytes (default 500 MB); Caddy's ``max_size`` accepts a
         size with a unit (``500MB``). Minimum 1MB.
@@ -229,12 +229,12 @@ class CaddyRenderer:
         return f"{mb}MB"
 
     def _reject_proxy_headers(self) -> bool:
-        """True if KLANGK_REJECT_PROXY_HEADERS is set (hard trust-off)."""
+        """True if KLANGKD_REJECT_PROXY_HEADERS is set (hard trust-off)."""
         raw = self.app.state.settings.reject_proxy_headers
         return bool(raw and str(raw).strip().lower() in ("1", "true", "yes"))
 
     def _trusted_proxy_cidrs(self) -> list[str]:
-        """Validated KLANGK_TRUSTED_PROXY_CIDRS entries (loopback if empty/invalid)."""
+        """Validated KLANGKD_TRUSTED_PROXY_CIDRS entries (loopback if empty/invalid)."""
         raw = self.app.state.settings.trusted_proxy_cidrs
         entries: list[str] = []
         for token in (raw or "").split(","):
@@ -264,7 +264,7 @@ class CaddyRenderer:
           this is what makes ``{client_ip}`` resolve the real client from
           ``X-Forwarded-For`` (#1558), the Caddy equivalent of nginx's
           ``set_real_ip_from`` / ``real_ip_header`` realip directives.
-          Suppressed entirely under ``KLANGK_REJECT_PROXY_HEADERS`` (hard
+          Suppressed entirely under ``KLANGKD_REJECT_PROXY_HEADERS`` (hard
           trust-off), in which case ``{client_ip}`` falls back to the
           immediate peer — matching nginx with no realip directives.
         """
@@ -364,7 +364,7 @@ class CaddyRenderer:
     # -- egress locations --------------------------------------------------
 
     def _build_llm_block(self, upstream: str, guard: str) -> str:
-        """The ``/llm-proxy/*`` location, only when ``KLANGK_LLM_BASE_URL`` is set.
+        """The ``/llm-proxy/*`` location, only when ``KLANGKD_LLM_BASE_URL`` is set.
 
         Containers hit this instead of the real endpoint so they never see the
         API key. ``file:``/``cmd:`` prefixes on the URL and key are resolved
@@ -517,7 +517,7 @@ class CaddyRenderer:
     def _build_hosted_block(self) -> str:
         """The ``/hosted/<ws>/<port>/`` proxy (or nothing when disabled).
 
-        Disabled entirely when ``KLANGK_HOSTED_PORTS_PER_WORKSPACE`` is
+        Disabled entirely when ``KLANGKD_HOSTED_PORTS_PER_WORKSPACE`` is
         exactly 0 (mirrors the backend's ``ports_per_workspace_cap()``,
         #1237): a bare ``respond 404`` catch for ``^/hosted/``.
 
@@ -608,7 +608,7 @@ class CaddyRenderer:
         backend (:func:`uds_upstream` for the production socket,
         :func:`tcp_upstream` for tests); ``admin_socket`` is the path of the
         admin UDS, re-declared in the global block so the binding survives
-        reloads. Template selection keys off ``KLANGK_PORT`` (#1542):
+        reloads. Template selection keys off ``KLANGKD_PORT`` (#1542):
         **unset** ⇒ headless (egress listener only); **set** ⇒ full (browser
         + egress listeners). All other values come from the merged settings
         plus the host-IP auto-detection probe.
@@ -626,9 +626,9 @@ class CaddyRenderer:
     # -- binary location ---------------------------------------------------
 
     def find_proxy_bin(self) -> str:
-        """Locate the caddy binary: KLANGK_PROXY_BIN > PATH > /usr/bin/caddy.
+        """Locate the caddy binary: KLANGKD_PROXY_BIN > PATH > /usr/bin/caddy.
 
-        ``KLANGK_PROXY_BIN`` overrides for both engines; the Caddy fallbacks
+        ``KLANGKD_PROXY_BIN`` overrides for both engines; the Caddy fallbacks
         are caddy-specific (``shutil.which("caddy")`` → ``/usr/bin/caddy``).
         """
         configured = self.app.state.settings.proxy_bin
@@ -723,7 +723,7 @@ class CaddyWatchdog:
     until ``/load`` runs). Constructed with ``app``; settings read live via
     ``self.app.state.settings`` (#1608). Stored on ``app.state.proxy_watchdog``
     (selected in :func:`klangk.main.build_app` when
-    ``KLANGK_PROXY_ENGINE=caddy``); the lifespan calls ``.start()`` /
+    ``KLANGKD_PROXY_ENGINE=caddy``); the lifespan calls ``.start()`` /
     ``.stop()``.
     """
 
@@ -750,7 +750,7 @@ class CaddyWatchdog:
         # The SIGHUP path swapped in new settings; flag that the running
         # Caddy needs a fresh POST /load (applied async after the sync
         # reconfigure loop). No-op when the watchdog never started
-        # (_KLANGK_DISABLE_PROXY) — the flag is just never applied.
+        # (_KLANGKD_DISABLE_PROXY) — the flag is just never applied.
         self._pending_reload = True
 
     async def apply_pending_reload(self) -> None:
@@ -761,7 +761,7 @@ class CaddyWatchdog:
         SIGHUP subsystem loop, not a coroutine), so it flags and this
         async method — called by ``_apply_reloaded_settings`` after the
         loop — does the push. No-op when the watchdog didn't start
-        (``_KLANGK_DISABLE_PROXY``) or nothing flagged. A push failure
+        (``_KLANGKD_DISABLE_PROXY``) or nothing flagged. A push failure
         is logged + swallowed so a broken reload can't abort the wider
         SIGHUP (Caddy keeps its last-known-good config).
         """
@@ -787,7 +787,7 @@ class CaddyWatchdog:
 
         Read live from ``settings.caddy_admin_socket`` (default
         ``<state_dir>/caddy-admin.sock``, overridable via
-        ``KLANGK_CADDY_ADMIN_SOCKET`` for environments where the default would
+        ``KLANGKD_CADDY_ADMIN_SOCKET`` for environments where the default would
         overflow the AF_UNIX sun_path bound, #1636). The httpx dial uses this
         bare path; the owner-only mode is enforced by the watchdog via
         ``os.chmod`` (see :attr:`admin_bind_address` — no ``|0600`` suffix).
@@ -957,10 +957,10 @@ class CaddyWatchdog:
     async def start(self) -> None:
         """Bootstrap Caddy (admin on a UDS, no config) and start the watchdog.
 
-        Gated only by ``_KLANGK_DISABLE_PROXY`` — the same internal,
+        Gated only by ``_KLANGKD_DISABLE_PROXY`` — the same internal,
         non-user-facing test kill switch the nginx watchdog uses.
         """
-        if os.environ.get("_KLANGK_DISABLE_PROXY"):
+        if os.environ.get("_KLANGKD_DISABLE_PROXY"):
             return
         bin_path = self.find_proxy_bin()
         # Probe whether the caddy binary supports the full global block

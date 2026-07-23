@@ -11,12 +11,12 @@ INSTALL_DIR="/openclaw"
 # command (#1133/#1158: the gateway runs in the agent's standalone
 # `service` tmux session). The owner manages openclaw through the Service
 # terminal tab, not their own shell, so nothing openclaw-related belongs in
-# the owner's home (#1171). $KLANGK_AGENT_HOME is injected into the
+# the owner's home (#1171). $KLANGKWS_AGENT_HOME is injected into the
 # container env at bring-up and inherited by every podman exec (including
 # the WS exec that runs this script); the `:-` fallback defends against an
 # unset var. With HOME repointed, the existing ~/.profile appends below
 # land in the agent's ~/.profile unchanged.
-export HOME="${KLANGK_AGENT_HOME:-/home/clanker}"
+export HOME="${KLANGKWS_AGENT_HOME:-/home/clanker}"
 
 # Persist every env export the service_command depends on to ~/.profile
 # UP FRONT, before any long-running install step.
@@ -155,14 +155,14 @@ cfg['models'] = {
                 'id': 'workspace-token'
             },
             'models': [
-                {'id': '\$KLANGK_LLM_MODEL', 'name': '\$KLANGK_LLM_MODEL'}
+                {'id': '\$KLANGKWS_LLM_MODEL', 'name': '\$KLANGKWS_LLM_MODEL'}
             ],
         }
     }
 }
 cfg['agents'] = cfg.get('agents', {})
 cfg['agents']['defaults'] = cfg['agents'].get('defaults', {})
-cfg['agents']['defaults']['model'] = {'primary': 'llm-proxy/\$KLANGK_LLM_MODEL'}
+cfg['agents']['defaults']['model'] = {'primary': 'llm-proxy/\$KLANGKWS_LLM_MODEL'}
 cfg['gateway']['port'] = 8000
 # Allow the gateway to reach the LLM proxy on the host's private
 # network and listen on all interfaces so Klangk's hosted app
@@ -172,8 +172,8 @@ cfg['gateway']['bind'] = 'lan'
 cfg['gateway']['http'] = {'endpoints': {'chatCompletions': {'enabled': True}}}
 # Trust the Klangk reverse proxy and allow the hosted origin for
 # WebSocket connections (required since openclaw v2026.2.26).
-hosting_proto = os.environ.get('KLANGK_HOSTING_PROTO', 'http')
-hosting_hostname = os.environ.get('KLANGK_HOSTING_HOSTNAME', 'localhost:8995')
+hosting_proto = os.environ.get('KLANGKWS_HOSTING_PROTO', 'http')
+hosting_hostname = os.environ.get('KLANGKWS_HOSTING_HOSTNAME', 'localhost:8995')
 hosted_origin = f'{hosting_proto}://{hosting_hostname}'
 cfg['gateway']['controlUi'] = cfg.get('gateway', {}).get('controlUi', {})
 cfg['gateway']['controlUi']['allowedOrigins'] = [
@@ -196,16 +196,16 @@ with open(cfg_path, 'w') as f:
 "
 
 # Derive the hosted app URL from Klangk env vars.
-# Container port 8000 maps to the first host port in KLANGK_PORT_MAPPINGS.
+# Container port 8000 maps to the first host port in KLANGKWS_PORT_MAPPINGS.
 host_port=""
-if [ -n "${KLANGK_PORT_MAPPINGS:-}" ]; then
+if [ -n "${KLANGKWS_PORT_MAPPINGS:-}" ]; then
   # Format: 8000:9000,8001:9001,...
-  host_port=$(echo "$KLANGK_PORT_MAPPINGS" | cut -d, -f1 | cut -d: -f2)
+  host_port=$(echo "$KLANGKWS_PORT_MAPPINGS" | cut -d, -f1 | cut -d: -f2)
 fi
-proto="${KLANGK_HOSTING_PROTO:-http}"
-hostname="${KLANGK_HOSTING_HOSTNAME:-localhost:8995}"
-base_path="${KLANGK_HOSTING_BASE_PATH:-}"
-workspace_id="${KLANGK_WORKSPACE_ID:-}"
+proto="${KLANGKWS_HOSTING_PROTO:-http}"
+hostname="${KLANGKWS_HOSTING_HOSTNAME:-localhost:8995}"
+base_path="${KLANGKWS_HOSTING_BASE_PATH:-}"
+workspace_id="${KLANGKWS_WORKSPACE_ID:-}"
 
 echo ""
 echo "node: $(node -v)"

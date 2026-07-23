@@ -24,7 +24,7 @@ Net effect: a _full_ stop. Workspaces go away; on the next start,
 
 ## SIGHUP — reload configuration + graceful runtime restart (#1212, #1587)
 
-Sent by `kill -HUP $(cat $KLANGK_STATE_DIR/klangk-<instance>.pid)`, or by
+Sent by `kill -HUP $(cat $KLANGKD_STATE_DIR/klangk-<instance>.pid)`, or by
 your service manager's "reload" action.
 
 SIGHUP is **not** a process restart — the HTTP listener and the database
@@ -40,9 +40,9 @@ nginx/Postgres convention):
    swapped onto `app.state.settings`; all subsystems read it live. The
    OIDC discovery/JWKS caches are cleared and providers re-initialized,
    features are re-scanned, SSL trust is re-applied, and the agent user
-   is re-seeded (so `KLANGK_AGENT_EMAIL`/`_HANDLE` changes take effect
-   in the DB). CORS origins (`KLANGK_CORS_ORIGINS`) are picked up
-   automatically by the live CORS middleware; `KLANGK_FRONTEND_DIR` is
+   is re-seeded (so `KLANGKD_AGENT_EMAIL`/`_HANDLE` changes take effect
+   in the DB). CORS origins (`KLANGKD_CORS_ORIGINS`) are picked up
+   automatically by the live CORS middleware; `KLANGKD_FRONTEND_DIR` is
    remounted if it changed (#1610).
 3. **Close every WebSocket client** with close code `1012` ("service
    restarted"). Both the web UI and `klangk monitor` reconnect
@@ -75,12 +75,12 @@ be applied by SIGHUP alone. If one of these changes, SIGHUP logs a
 `WARNING` naming it — the reloadable settings are still applied, but the
 non-reloadable change needs a full `klangkd` restart:
 
-| Setting            | Reason                             |
-| ------------------ | ---------------------------------- |
-| `KLANGK_PORT`      | The HTTP listener is already bound |
-| `KLANGK_LISTEN`    | The HTTP listener is already bound |
-| `KLANGK_DATA_DIR`  | The DB engine is already open      |
-| `KLANGK_STATE_DIR` | Instance state is already on disk  |
+| Setting             | Reason                             |
+| ------------------- | ---------------------------------- |
+| `KLANGKD_PORT`      | The HTTP listener is already bound |
+| `KLANGKD_LISTEN`    | The HTTP listener is already bound |
+| `KLANGKD_DATA_DIR`  | The DB engine is already open      |
+| `KLANGKD_STATE_DIR` | Instance state is already on disk  |
 
 ### What it does _not_ do
 

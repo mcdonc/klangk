@@ -8,7 +8,7 @@ Browser (Flutter Web + Terminal + Files + Chat)
     ├── Browser delegate: handles bridge requests from Pi extensions (fetch, feature actions)
     ├── Auto-reconnect with exponential backoff on disconnect
 reverse proxy (nginx; browser port 8997 = UI + API + hosted app proxy; egress port 8995 = container→host endpoints)
-    ↕ LLM proxy: container → host.containers.internal:8995/llm-proxy/ → ${KLANGK_LLM_BASE_URL}
+    ↕ LLM proxy: container → host.containers.internal:8995/llm-proxy/ → ${KLANGKD_LLM_BASE_URL}
     ↕ auth_request: validates per-workspace JWT on container→host endpoints
     ↕
 Python/FastAPI backend (UDS, serves API + frontend static files)
@@ -24,7 +24,7 @@ Pi container per workspace (interactive terminal mode)
     ├── AGENTS.md (dynamically generated on container start)
     ├── /tmp/klangk/workspace-token (per-workspace JWT, auto-renewed)
     ↕ bind mount
-$KLANGK_DATA_DIR/workspaces/<user-id>/home/<workspace-id>/
+$KLANGKD_DATA_DIR/workspaces/<user-id>/home/<workspace-id>/
 ```
 
 ## Components
@@ -35,7 +35,7 @@ $KLANGK_DATA_DIR/workspaces/<user-id>/home/<workspace-id>/
 
 ## Data
 
-- All data stored in `$KLANGK_DATA_DIR` (defaults to `$DEVENV_STATE/klangk/data`)
+- All data stored in `$KLANGKD_DATA_DIR` (defaults to `$DEVENV_STATE/klangk/data`)
 - SQLite database: `klangk.db` (users, workspaces, groups, ACL entries, port allocations, chat messages, chat mentions, token blocklist, login attempts, invitations)
 - Workspace files: `workspaces/<user-id>/home/<workspace-id>/work/` (inside the `/home/klangk` bind mount)
 - Persistent home: `workspaces/<user-id>/home/<workspace-id>/` (mounted as `/home/klangk` — dotfiles, bash history, Pi sessions)
