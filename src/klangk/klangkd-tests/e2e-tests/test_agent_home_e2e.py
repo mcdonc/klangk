@@ -3,7 +3,7 @@
 #1157 shipped two container-bringup behaviors that the unit suite can
 only *mock*:
 
-1. ``KLANGKD_AGENT_HOME=/home/<agent_handle>`` is baked into the
+1. ``KLANGKWS_AGENT_HOME=/home/<agent_handle>`` is baked into the
    container env at creation (``_build_env``), so **every** exec
    process inside the container inherits it.  The unit test only proves
    ``_build_env`` emits the string; here we prove podman actually
@@ -230,7 +230,7 @@ async def exec_command(ws, command):
 class TestAgentHomeE2E:
     @pytest.mark.asyncio
     async def test_agent_home_env_present_in_exec(self, server, auth):
-        """KLANGKD_AGENT_HOME is baked at container start and inherited by
+        """KLANGKWS_AGENT_HOME is baked at container start and inherited by
         every exec process (#1157).  The WS exec path spawns a process
         inside the container via the server's exec machinery (the same
         path terminals use) -- it does *not* pass the var per-call, so
@@ -243,11 +243,11 @@ class TestAgentHomeE2E:
             try:
                 output = await exec_command(
                     ws,
-                    ["bash", "-c", 'echo "$KLANGKD_AGENT_HOME"'],
+                    ["bash", "-c", 'echo "$KLANGKWS_AGENT_HOME"'],
                 )
                 # Exact value: the default agent handle's home.
                 assert output.strip() == AGENT_HOME, (
-                    f"expected KLANGKD_AGENT_HOME={AGENT_HOME!r}, "
+                    f"expected KLANGKWS_AGENT_HOME={AGENT_HOME!r}, "
                     f"got {output!r}"
                 )
             finally:
