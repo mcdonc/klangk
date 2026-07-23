@@ -330,6 +330,81 @@ void main() {
         findsNothing,
       );
     });
+
+    testWidgets('removes an allowed domain via its close button',
+        (tester) async {
+      // Mounts/env empty so the only close icon on screen belongs to the
+      // allowed-domains chip.
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'mounts': <String>[],
+        'env': <String, String>{},
+        'allowed_domains': <String>['example.com:443'],
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      expect(find.text('example.com:443'), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pump();
+
+      expect(find.text('example.com:443'), findsNothing);
+    });
+
+    testWidgets('reload after save re-reads allowed_domains from server',
+        (tester) async {
+      // A successful save calls _loadData(), which re-fetches the workspace
+      // and rebuilds the form with a fresh map. didUpdateWidget must
+      // re-read allowed_domains (#1365) so the editor tracks server state
+      // instead of holding a stale local copy. The PUT drops the server's
+      // allowed_domains entirely so the null-coalescing fallback in the
+      // refresh path is also exercised.
+      List<String>? domains = ['example.com:443'];
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/workspaces') {
+          final ws = <String, dynamic>{..._workspace};
+          if (domains != null)
+            ws['allowed_domains'] = List<String>.from(domains!);
+          return http.Response(jsonEncode([ws]), 200);
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi', 'other:latest'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          domains = null;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+      expect(find.text('example.com:443'), findsOneWidget);
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // After the post-save reload the server no longer carries
+      // allowed_domains, so didUpdateWidget refreshed _allowedDomains to
+      // empty (the null-coalescing fallback) and the chip is gone.
+      expect(find.text('example.com:443'), findsNothing);
+
+      // Advance past the 2s save-message auto-clear timer so no timer is
+      // pending at dispose (flutter_test fails on pending timers).
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
   });
 
   group('save', () {

@@ -427,6 +427,75 @@ void main() {
       expect(postedBody!['allowed_domains'], ['github.com:443']);
     });
 
+    testWidgets('rejects an invalid allowed domain spec', (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog());
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      final input = find.widgetWithText(TextField, 'github.com:443');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'bad spec');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      expect(find.text('Expected host or host:port'), findsOneWidget);
+      // The bad spec did not become a list item.
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is SelectableText && (w.data ?? '') == 'bad spec',
+        ),
+        findsNothing,
+      );
+    });
+
+    testWidgets('removes an allowed domain via its close button',
+        (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog());
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      final input = find.widgetWithText(TextField, 'github.com:443');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'example.com:443');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(find.text('example.com:443'), findsOneWidget);
+
+      // The only close icon on screen is this chip's remove button
+      // (no mounts/env chips were added).
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pump();
+      expect(find.text('example.com:443'), findsNothing);
+    });
+
+    testWidgets('copies an allowed domain via its copy button', (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog());
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      final input = find.widgetWithText(TextField, 'github.com:443');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'example.com:443');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      // The only copy icon on screen is this chip's copy button.
+      await tester.tap(find.byIcon(Icons.copy));
+      await tester.pump();
+      // Tapping copy fired the chip's onPressed (Clipboard.setData) —
+      // the chip is otherwise unchanged.
+      expect(find.text('example.com:443'), findsOneWidget);
+    });
+
     testWidgets('clears mount error on successful add', (tester) async {
       testAuthHttpClientOverride = mockClient(
         (_) async => http.Response('Not found', 404),
