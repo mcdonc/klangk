@@ -145,6 +145,9 @@ async def init_db(db) -> None:
                 health_check TEXT,
                 mounts TEXT,  -- JSON array of host:container mount specs
                 env TEXT,  -- JSON dict of custom environment variables
+                -- comma-joined host[:port] specs; NULL = unrestricted
+                -- egress (see KLANGKD_NETFILTER_HOOKS_DIR, #1365)
+                allowed_domains TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 UNIQUE(user_id, name),
                 -- (C) the system agent must never own a workspace.
@@ -191,6 +194,13 @@ async def init_db(db) -> None:
             await db.execute("ALTER TABLE workspaces ADD COLUMN mounts TEXT")
         if "env" not in ws_cols:
             await db.execute("ALTER TABLE workspaces ADD COLUMN env TEXT")
+        # Migration: add allowed_domains column (#1365). NULL by default
+        # so existing workspaces keep unrestricted outbound networking;
+        # the filter is opt-in per workspace AND per deploy.
+        if "allowed_domains" not in ws_cols:
+            await db.execute(
+                "ALTER TABLE workspaces ADD COLUMN allowed_domains TEXT"
+            )
         await db.execute("""
             CREATE TABLE IF NOT EXISTS port_allocations (
                 port INTEGER PRIMARY KEY,

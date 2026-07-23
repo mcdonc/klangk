@@ -37,13 +37,16 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _healthCheckController = TextEditingController();
   final _mountController = TextEditingController();
   final _envController = TextEditingController();
+  final _allowedDomainsController = TextEditingController();
   late String _selectedImage;
   final _mounts = <String>[];
   final _envVars = <String, String>{};
+  final _allowedDomains = <String>[];
   bool _autoStart = false;
   String? _errorMessage;
   String? _mountError;
   String? _envError;
+  String? _allowedDomainsError;
 
   final _labelStyle = TextStyle(
     color: KColors.textPrimary,
@@ -63,6 +66,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     _healthCheckController.dispose();
     _mountController.dispose();
     _envController.dispose();
+    _allowedDomainsController.dispose();
     super.dispose();
   }
 
@@ -98,6 +102,22 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     });
   }
 
+  void _tryAddAllowedDomain() {
+    final v = _allowedDomainsController.text.trim();
+    if (v.isEmpty) return;
+    final spec = RegExp(
+        r'^\[[0-9A-Fa-f:.]+\](:[0-9]{1,5})?$|^[A-Za-z0-9][A-Za-z0-9.\-]*(:[0-9]{1,5})?$');
+    if (v.contains(' ') || v.contains('/') || !spec.hasMatch(v)) {
+      setState(() => _allowedDomainsError = 'Expected host or host:port');
+      return;
+    }
+    setState(() {
+      if (!_allowedDomains.contains(v)) _allowedDomains.add(v);
+      _allowedDomainsController.clear();
+      _allowedDomainsError = null;
+    });
+  }
+
   static String? _validateEnvEntry(String input) {
     if (!input.contains('=')) return 'Expected KEY=VALUE format';
     final key = input.substring(0, input.indexOf('='));
@@ -119,6 +139,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     if (_mounts.isNotEmpty) body['mounts'] = List<String>.from(_mounts);
     if (_envVars.isNotEmpty) {
       body['env'] = Map<String, String>.from(_envVars);
+    }
+    if (_allowedDomains.isNotEmpty) {
+      body['allowed_domains'] = List<String>.from(_allowedDomains);
     }
     if (widget.allowAutostart && _autoStart) {
       body['auto_start'] = true;
@@ -181,6 +204,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
               ),
               ..._buildMountsEditor(),
               ..._buildEnvVarsEditor(),
+              ..._buildAllowedDomainsEditor(),
               const SizedBox(height: 16),
               TextField(
                 controller: _cmdController,
@@ -382,6 +406,74 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
           ),
           const SizedBox(width: 8),
           IconButton(icon: const Icon(Icons.add), onPressed: _tryAddEnv),
+        ],
+      ),
+    ];
+  }
+
+  List<Widget> _buildAllowedDomainsEditor() {
+    return [
+      const SizedBox(height: 16),
+      Text('Allowed Domains', style: _labelStyle),
+      const SizedBox(height: 8),
+      ..._allowedDomains.asMap().entries.map(
+            (e) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SelectableText(
+                      e.value,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 16),
+                    tooltip: 'Copy',
+                    onPressed: () =>
+                        Clipboard.setData(ClipboardData(text: e.value)),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () =>
+                        setState(() => _allowedDomains.removeAt(e.key)),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      if (_allowedDomainsError != null) ...[
+        Text(
+          _allowedDomainsError!,
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.error,
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 4),
+      ],
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _allowedDomainsController,
+              decoration: const InputDecoration(
+                hintText: 'github.com:443',
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              style: const TextStyle(fontSize: 13),
+              onSubmitted: (_) => _tryAddAllowedDomain(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+              icon: const Icon(Icons.add), onPressed: _tryAddAllowedDomain),
         ],
       ),
     ];

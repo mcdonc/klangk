@@ -24,6 +24,7 @@ from klangk import (
 from klangk.container import ContainerRegistry
 from klangk import emailsvc as emailsvc_mod
 from klangk import util as util_mod
+from klangk import netfilter as netfilter_mod
 from klangk import oidc as oidc_mod
 from klangk import features as features_mod
 from _helpers import make_settings
@@ -79,6 +80,9 @@ async def app(db, temp_data_dir):
     app.state.agents = agent.Agents(app)
     app.state.email = emailsvc_mod.EmailService(app)
     app.state.util = util_mod.Util(app)
+    # #1365: create/update workspace validation reaches the netfilter
+    # hooks-dir resolver.
+    app.state.netfilter = netfilter_mod.NetFilter(app)
 
     app.state.auth = auth_mod.Auth(app)
     # #1572: wire DB + Model so converted domains (tokens,
@@ -1669,6 +1673,44 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 400
         assert "Invalid mount" in resp.json()["detail"]
 
+    async def test_create_with_allowed_domains_persists(
+        self, client, app, user, caplog
+    ):
+        # netfilter is disabled by default in the test app, so the value
+        # is persisted (fail-open) with a loud warning (#1365).
+        headers = await _auth_headers(client)
+        with caplog.at_level("WARNING"):
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={
+                    "name": "filtered",
+                    "allowed_domains": [
+                        "github.com:443",
+                        "github.com:443",
+                        "pypi.org",
+                    ],
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["allowed_domains"] == [
+            "github.com:443",
+            "pypi.org",
+        ]
+        assert any("UNRESTRICTED" in r.message for r in caplog.records)
+
+    async def test_create_with_invalid_allowed_domains_rejected(
+        self, client, user
+    ):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "bad", "allowed_domains": ["bad spec"]},
+        )
+        assert resp.status_code == 400
+        assert "Invalid allowed_domains" in resp.json()["detail"]
+
     async def test_create_auto_start_rejected_without_env(self, client, user):
         headers = await _auth_headers(client)
         with patch.dict(os.environ, {}, clear=False):
@@ -2065,6 +2107,24 @@ class TestWorkspaceRoutes:
         match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["name"] == "renamed"
         assert match[0]["service_command"] == "pi"
+
+    async def test_update_workspace_allowed_domains(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "dom-ws"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"allowed_domains": ["github.com:443"]},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["allowed_domains"] == ["github.com:443"]
 
     async def test_update_workspace_propagates_to_live_state(
         self, client, app, user, registry
@@ -6335,6 +6395,7 @@ class TestWorkspaceMetadata:
             "mounts": ["/data:/data"],
             "env": {"FOO": "bar"},
             "health_check": None,
+            "allowed_domains": None,
             "num_ports": 3,
         }
 

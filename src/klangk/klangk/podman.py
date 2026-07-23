@@ -263,6 +263,8 @@ class Podman:
         add_hosts: list[str] | None = None,
         dns: list[str] | None = None,
         env: list[str] | None = None,
+        annotations: dict[str, str] | None = None,
+        hooks_dir: str | None = None,
         init: bool = False,
         interactive: bool = False,
         pull: str = "never",
@@ -273,10 +275,17 @@ class Podman:
 
         ``publish`` is a list of ``(host_port, container_port)`` pairs.
         ``replace=True`` removes an existing container with the same name.
+        ``annotations``/``hooks_dir`` carry per-workspace OCI hooks (e.g.
+        the netfilter egress filter, #1365): each annotation becomes a
+        ``--annotation key=value`` flag, and ``hooks_dir`` becomes
+        ``--hooks-dir`` (passed only when set so unrestricted workspaces
+        keep podman's default hooks-dir behavior).
         """
         args = ["create", f"--pull={pull}", "--name", name]
         if replace:
             args.append("--replace")
+        if hooks_dir:
+            args += ["--hooks-dir", hooks_dir]
         if init:
             args.append("--init")
         if interactive:
@@ -285,6 +294,8 @@ class Podman:
             args += ["--userns", userns]
         for key, value in (labels or {}).items():
             args += ["--label", f"{key}={value}"]
+        for key, value in (annotations or {}).items():
+            args += ["--annotation", f"{key}={value}"]
         for bind in binds or []:
             args += ["-v", bind]
         for path, opts in (tmpfs or {}).items():

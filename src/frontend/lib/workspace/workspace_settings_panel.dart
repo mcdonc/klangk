@@ -177,12 +177,15 @@ class _SettingsFormState extends State<_SettingsForm> {
   late TextEditingController _healthCheckCtrl;
   final _mountCtrl = TextEditingController();
   final _envCtrl = TextEditingController();
+  final _allowedDomainsCtrl = TextEditingController();
   late String _selectedImage;
   late List<String> _mounts;
   late Map<String, String> _envVars;
+  late List<String> _allowedDomains;
   bool _autoStart = false;
   String? _mountError;
   String? _envError;
+  String? _allowedDomainsError;
   bool _saving = false;
   bool _exporting = false;
 
@@ -209,6 +212,10 @@ class _SettingsFormState extends State<_SettingsForm> {
     _envVars = Map<String, String>.from(
       (widget.workspace['env'] as Map?)?.cast<String, String>() ??
           <String, String>{},
+    );
+    _allowedDomains = List<String>.from(
+      (widget.workspace['allowed_domains'] as List?)?.cast<String>() ??
+          <String>[],
     );
     _autoStart = (widget.workspace['auto_start'] as bool?) ?? false;
   }
@@ -252,6 +259,13 @@ class _SettingsFormState extends State<_SettingsForm> {
             <String, String>{},
       );
     }
+    if (old.workspace['allowed_domains'] !=
+        widget.workspace['allowed_domains']) {
+      _allowedDomains = List<String>.from(
+        (widget.workspace['allowed_domains'] as List?)?.cast<String>() ??
+            <String>[],
+      );
+    }
   }
 
   @override
@@ -261,6 +275,7 @@ class _SettingsFormState extends State<_SettingsForm> {
     _healthCheckCtrl.dispose();
     _mountCtrl.dispose();
     _envCtrl.dispose();
+    _allowedDomainsCtrl.dispose();
     super.dispose();
   }
 
@@ -276,6 +291,7 @@ class _SettingsFormState extends State<_SettingsForm> {
           : _healthCheckCtrl.text.trim(),
       'mounts': _mounts.isNotEmpty ? _mounts : null,
       'env': _envVars.isNotEmpty ? _envVars : null,
+      'allowed_domains': _allowedDomains.isNotEmpty ? _allowedDomains : null,
       if (widget.allowAutostart) 'auto_start': _autoStart,
     });
     if (mounted) setState(() => _saving = false);
@@ -312,6 +328,24 @@ class _SettingsFormState extends State<_SettingsForm> {
       _envVars[key] = value;
       _envCtrl.clear();
       _envError = null;
+    });
+  }
+
+  void _tryAddAllowedDomain() {
+    final v = _allowedDomainsCtrl.text.trim();
+    if (v.isEmpty) return;
+    // Lightweight client-side check (the server validates definitively):
+    // a spec is a host with an optional :port, no spaces or slashes.
+    final spec = RegExp(
+        r'^\[[0-9A-Fa-f:.]+\](:[0-9]{1,5})?$|^[A-Za-z0-9][A-Za-z0-9.\-]*(:[0-9]{1,5})?$');
+    if (v.contains(' ') || v.contains('/') || !spec.hasMatch(v)) {
+      setState(() => _allowedDomainsError = 'Expected host or host:port');
+      return;
+    }
+    setState(() {
+      if (!_allowedDomains.contains(v)) _allowedDomains.add(v);
+      _allowedDomainsCtrl.clear();
+      _allowedDomainsError = null;
     });
   }
 
@@ -417,6 +451,8 @@ class _SettingsFormState extends State<_SettingsForm> {
         _buildMountsEditor(labelStyle),
         const SizedBox(height: 16),
         _buildEnvVarsEditor(labelStyle),
+        const SizedBox(height: 16),
+        _buildAllowedDomainsEditor(labelStyle),
         const SizedBox(height: 16),
         TextField(
           controller: _cmdCtrl,
@@ -529,6 +565,40 @@ class _SettingsFormState extends State<_SettingsForm> {
               onRemove: () => setState(() => _envVars.remove(e.value.key)),
             ),
           ),
+    );
+  }
+
+  Widget _buildAllowedDomainsEditor(TextStyle labelStyle) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildEditableList(
+          label: 'Allowed Domains',
+          labelStyle: labelStyle,
+          hint: 'github.com:443',
+          controller: _allowedDomainsCtrl,
+          error: _allowedDomainsError,
+          onAdd: _tryAddAllowedDomain,
+          items: _allowedDomains.asMap().entries.map(
+                (e) => _buildEditableListItem(
+                  text: e.value,
+                  onCopy: e.value,
+                  onRemove: () =>
+                      setState(() => _allowedDomains.removeAt(e.key)),
+                ),
+              ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Restricts outbound network to these hosts (host or host:port). '
+          'Requires KLANGKD_NETFILTER_HOOKS_DIR on the server; empty '
+          'means unrestricted.',
+          style: TextStyle(
+            color: KColors.textSecondary,
+            fontSize: 12,
+          ),
+        ),
+      ],
     );
   }
 

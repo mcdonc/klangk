@@ -620,6 +620,14 @@ class KlangkSettings(BaseSettings):
     health_check_startup_grace: str | None = None
     health_check_timeout: str | None = None
     hosted_ports_per_workspace: str = "5"
+    # netfilter_hooks_dir: directory where the per-workspace egress-filter
+    # OCI hook (klangk-netfilter.{json,sh}) is materialized at startup.
+    # Unset (default) disables per-workspace egress filtering — workspaces
+    # have unrestricted outbound networking. Set it to enable opt-in
+    # per-workspace allowed_domains enforcement (#1365). The path must be
+    # resolvable where the OCI runtime executes (the host or DinD outer
+    # container; for podman-machine it must be inside the CoreOS VM).
+    netfilter_hooks_dir: str | None = None
     test_mode: str | None = None
     version_file: str | None = None
 

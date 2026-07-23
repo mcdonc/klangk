@@ -56,6 +56,11 @@ def _make_app_state(registry=None, sockets=None):
     # #1567: ContainerRegistry reaches the cert-dir resolver via
     # app_state.state.ssl_trust (the settings-dependent SSL trust surface).
     app_state.state.ssl_trust = ssl_trust.SSLTrust(app_state)
+    # #1365: ContainerRegistry reaches the egress-filter builder via
+    # app_state.state.netfilter (the settings-dependent netfilter surface).
+    from klangk import netfilter as netfilter_mod
+
+    app_state.state.netfilter = netfilter_mod.NetFilter(app_state)
 
     app_state.state.auth = auth_mod.Auth(app_state)
     # #1572: ContainerRegistry reaches app_state.state.model.ports; Auth reaches
@@ -564,6 +569,60 @@ class TestStartContainer:
         assert status == "created"
         p.start_container.assert_awaited_once_with("new-cid")
         assert workspace["id"] in self.registry.states
+
+    async def test_egress_filter_no_domains_is_noop(self, workspace):
+        # No allowed_domains -> no annotation or hooks-dir; the container
+        # keeps podman's default hooks-dir behavior (unrestricted). #1365
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert "annotations" not in kwargs
+        assert "hooks_dir" not in kwargs
+
+    async def test_egress_filter_disabled_fail_opens(self, workspace, caplog):
+        # allowed_domains set but netfilter disabled (no hooks dir) ->
+        # unrestricted with a loud warning (fail open). #1365
+        with patch_podman(self.registry), caplog.at_level("WARNING"):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                allowed_domains=["github.com:443"],
+            )
+        assert any("UNRESTRICTED" in r.message for r in caplog.records)
+
+    async def test_egress_filter_enabled_passes_annotation_and_hooks_dir(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "netfilter_hooks_dir",
+            str(tmp_path / "hooks"),
+        )
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                allowed_domains=["github.com:443", "pypi.org"],
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["annotations"] == {
+            "klangk.netfilter.rules": "github.com:443,pypi.org"
+        }
+        assert kwargs["hooks_dir"] == str((tmp_path / "hooks").resolve())
+
+    def test_egress_filter_missing_netfilter_state_is_noop(self):
+        # Defensive: an app-state without a netfilter subsystem (some
+        # partial test builders) is treated as unrestricted rather than
+        # raising. #1365
+        app_state = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=make_settings({}))
+        )
+        reg = container.ContainerRegistry(app_state)
+        assert reg._egress_filter(["github.com"]) == (None, None)
 
     async def test_sudo_disabled_by_default(self, workspace):
         with patch_podman(self.registry) as p:

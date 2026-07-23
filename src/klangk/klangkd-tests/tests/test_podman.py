@@ -260,6 +260,37 @@ class TestCreateContainer:
         assert "--pull=missing" in args
         assert "--pull=never" not in args
 
+    async def test_annotations_emitted(self):
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n",
+                "img",
+                annotations={"klangk.netfilter.rules": "github.com:443"},
+                replace=False,
+            )
+        args = _args(m)
+        assert [
+            "--annotation",
+            "klangk.netfilter.rules=github.com:443",
+        ] == args[args.index("--annotation") : args.index("--annotation") + 2]
+
+    async def test_hooks_dir_emitted(self):
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n", "img", hooks_dir="/etc/klangk/hooks", replace=False
+            )
+        args = _args(m)
+        assert ["--hooks-dir", "/etc/klangk/hooks"] == args[
+            args.index("--hooks-dir") : args.index("--hooks-dir") + 2
+        ]
+
+    async def test_no_hooks_dir_or_annotation_by_default(self):
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container("n", "img", replace=False)
+        args = _args(m)
+        assert "--hooks-dir" not in args
+        assert "--annotation" not in args
+
 
 class TestStartContainer:
     async def test_start(self):

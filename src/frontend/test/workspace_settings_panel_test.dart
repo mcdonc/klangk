@@ -23,6 +23,9 @@ Finder _mountInput() => find.byWidgetPredicate(
 Finder _envInput() => find.byWidgetPredicate(
       (w) => w is TextField && w.decoration?.hintText == 'KEY=VALUE',
     );
+Finder _allowedDomainsInput() => find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == 'github.com:443',
+    );
 
 /// A WsClient whose sendShutdownContainer we can observe, for the danger-zone
 /// confirm dialog test.
@@ -296,6 +299,36 @@ void main() {
       await tester.pump();
 
       expect(find.text('FOO=bar'), findsNothing);
+    });
+  });
+
+  group('allowed domains editor', () {
+    testWidgets('adds a valid host:port', (tester) async {
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await tester.enterText(_allowedDomainsInput(), 'example.com:443');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      expect(find.text('example.com:443'), findsOneWidget);
+    });
+
+    testWidgets('rejects a spec with whitespace', (tester) async {
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await tester.enterText(_allowedDomainsInput(), 'bad spec');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      expect(find.text('Expected host or host:port'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is SelectableText && (w.data ?? '') == 'bad spec',
+        ),
+        findsNothing,
+      );
     });
   });
 

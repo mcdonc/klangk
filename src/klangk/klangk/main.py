@@ -27,6 +27,7 @@ from . import (
     oidc,
     features,
     podman,
+    netfilter,
     ssl_trust,
     terminal,
     util as util_mod,
@@ -353,6 +354,11 @@ class Lifecycle:
         SIGHUP restart path.
         """
         state = self.app.state
+        # #1365: materialize the OCI egress-filter hook into the configured
+        # hooks dir (no-op when netfilter is disabled). Best-effort — a
+        # failure logs and leaves the feature disabled rather than blocking
+        # startup.
+        state.netfilter.install_hooks()
         registry = state.container_registry
         await registry.prewarm_podman()
         await registry.reap_instance_containers()
@@ -460,6 +466,7 @@ class Lifecycle:
         # Every app.state subsystem that implements reconfigure().
         subsystems = [
             "ssl_trust",
+            "netfilter",
             "auth",
             "podman",
             "sockets",
@@ -861,6 +868,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # (cert-dir resolver + backend-process trust applier). The 4 pure
     # path/bundle helpers stay module-level in ssl_trust.py.
     app.state.ssl_trust = ssl_trust.SSLTrust(app)
+    # #1365: NetFilter(app_state) owns the per-workspace egress-filter
+    # OCI hook install dir + annotation builder (opt-in via
+    # KLANGKD_NETFILTER_HOOKS_DIR). Reaches config through self.settings.
+    app.state.netfilter = netfilter.NetFilter(app)
     app.state.auth = auth.Auth(app)
     # #1468: Podman(settings) owns the resolved binary path + the ~20 CLI
     # wrappers. Constructed before the registry/terminal so they reach it

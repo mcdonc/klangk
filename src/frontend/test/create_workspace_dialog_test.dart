@@ -100,7 +100,7 @@ void main() {
       expect(find.text('New Workspace'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Create'), findsOneWidget);
-      expect(find.byType(TextField), findsNWidgets(5));
+      expect(find.byType(TextField), findsNWidgets(6));
       expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
     });
 
@@ -393,6 +393,38 @@ void main() {
       await tester.pump();
 
       expect(postedBody!.containsKey('image'), isFalse);
+      // allowed_domains is omitted entirely when none are added.
+      expect(postedBody!.containsKey('allowed_domains'), isFalse);
+    });
+
+    testWidgets('includes allowed domains in body', (tester) async {
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'x', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog());
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      final input = find.widgetWithText(TextField, 'github.com:443');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'github.com:443');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      await tester.enterText(_nameField(), 'Filtered');
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody!['allowed_domains'], ['github.com:443']);
     });
 
     testWidgets('clears mount error on successful add', (tester) async {

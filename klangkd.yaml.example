@@ -34,6 +34,11 @@ data_dir: "cmd:echo $DEVENV_STATE/klangk/data"
 # --- Container / workspace ---
 image_name: klangk-workspace
 
+# --- Per-workspace egress filtering (#1365) ---
+# Set to a directory the OCI runtime can read to enable opt-in per-workspace
+# allowed_domains enforcement. Unset (default) = unrestricted egress.
+# netfilter_hooks_dir: /var/lib/klangk/netfilter-hooks
+
 # --- Uncomment to enable OIDC ---
 # auth_modes: both
 # oidc_providers:
