@@ -187,6 +187,18 @@ class TestConfigFile:
                 {"KLANGKD_NETFILTER_DEFAULT_DOMAINS": "good.com,bad spec"}
             )
 
+    def test_netfilter_default_domains_wrong_type_aborts_boot(self, tmp_path):
+        """A non-list/non-string value (e.g. a bare int from a malformed
+        YAML block) is rejected at construction, not silently coerced."""
+        from pydantic import ValidationError
+
+        # YAML delivering a scalar int directly (a typo'd block like
+        # `netfilter_default_domains: 42` instead of a list).
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("netfilter_default_domains: 42\n")
+        with pytest.raises(ValidationError):
+            make_settings({}, config_file=str(cfg))
+
     def test_file_cmd_resolution_from_yaml(self, tmp_path):
         """file:/cmd: values in YAML resolve at construction (#1461)."""
         secret = tmp_path / "jwt.txt"
