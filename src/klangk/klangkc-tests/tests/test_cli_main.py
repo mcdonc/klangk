@@ -2,6 +2,7 @@
 
 import json
 import os
+import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -472,7 +473,10 @@ class TestMainCLI:
         )
         CLIState().save()
 
-        main.app_callback(server="prod")
+        main.app_callback(
+            types.SimpleNamespace(invoked_subcommand="status"),
+            server="prod",
+        )
         assert main._server_override == "http://prod:8995"
 
     def test_list_workspaces_empty(self, logged_in_cfg, monkeypatch):

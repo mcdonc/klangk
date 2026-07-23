@@ -137,6 +137,31 @@ def seed_config(server_url: str, user: str | None = None) -> None:
     _CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
 
 
+def add_server_to_config(
+    alias: str, server_url: str, user: str | None = None
+) -> None:
+    """Add (or replace) a named server entry in klangk.yaml.
+
+    Unlike ``seed_config`` (one-shot, only when the file is absent), this
+    merges into an existing user config so the TUI can add a server alias
+    interactively without clobbering the rest of the file. klangk.yaml
+    remains user-owned; this is the one managed write, used only by the
+    TUI's add-server flow.
+    """
+    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if _CONFIG_PATH.exists():
+        data = yaml.safe_load(_CONFIG_PATH.read_text()) or {}
+    else:
+        data = {}
+    servers = data.get("servers") or {}
+    entry: dict = {"url": server_url}
+    if user:
+        entry["user"] = user
+    servers[alias] = entry
+    data["servers"] = servers
+    _CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
+
+
 @dataclass
 class UserEntry:
     """Per-user credentials within a server in klangk-state.yaml."""

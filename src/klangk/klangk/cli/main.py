@@ -67,6 +67,10 @@ app = typer.Typer(
     name="klangk",
     help="Klangk Client",
     rich_markup_mode="rich",
+    # Run the callback even with no subcommand so bare `klangk` can launch
+    # the interactive TUI (see _maybe_launch_tui). `--help`/`--version` are
+    # still handled by click before the callback runs, so they keep precedence.
+    invoke_without_command=True,
 )
 
 _cfg_cache: CLIConfig | None = None
@@ -101,6 +105,7 @@ _SOCKET_NAME = "klangk.sock"
 
 @app.callback()
 def app_callback(
+    ctx: typer.Context,
     server: str | None = typer.Option(
         None, "--server", help="Server alias or URL"
     ),
@@ -108,6 +113,34 @@ def app_callback(
     global _server_override
     if server is not None:
         _server_override = _cfg().resolve_server(server)
+    if ctx.invoked_subcommand is None:
+        _maybe_launch_tui(ctx)
+
+
+def _is_interactive() -> bool:
+    """True when stdin and stdout are both real terminals."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _maybe_launch_tui(ctx: typer.Context) -> None:
+    """Launch the interactive TUI for a bare ``klangk`` invocation.
+
+    Only on a real terminal: in non-TTY contexts (pipes, CI, typer's
+    ``CliRunner``) the historic "print help" behavior is preserved so the
+    command stays scriptable and the CLI test suite isn't surprised by a
+    TUI it can't drive. The TUI is imported lazily so the textual dep
+    never loads on plain subcommand paths (``klangk ls`` etc.).
+    """
+    if not _is_interactive():
+        typer.echo(ctx.get_help())
+        raise typer.Exit(code=0)
+    from .tui import run_tui  # noqa: allow-deferred-import
+
+    try:
+        run_tui(server_url=_server_override)
+    except Exception as exc:  # surface TUI crashes, don't swallow them
+        _err.print(f"[red]TUI error:[/red] {exc}")
+        raise typer.Exit(code=1)
 
 
 def _default_server_uds_path() -> str:
