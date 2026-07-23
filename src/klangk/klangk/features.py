@@ -1,7 +1,7 @@
 """Feature manifest: read the build-emitted ``features.json`` and bridge the
 declared config keys.
 
-The runtime no longer scans ``KLANGK_PLUGINS_DIR`` for per-feature
+The runtime no longer scans ``KLANGKD_PLUGINS_DIR`` for per-feature
 ``package.json`` files — that presumed materialized source trees on the
 ``klangkd`` host, which pip/uv installs never have (#1655). Instead the build
 (``import_dart_features.py``) emits a single ``features.json`` into the frontend
@@ -20,7 +20,7 @@ per-feature metadata (the frontend owns that).
         ...
       ],
       "defaults": ["celebrate", "beep", ...],
-      "container_env_keys": ["KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID", ...]
+      "container_env_keys": ["KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID", ...]
     }
 
 Values for the declared keys are resolved via :func:`resolve_dynamic_config`
@@ -46,14 +46,14 @@ _FRONTEND_SCOPES = {"frontend", "both"}
 
 # Every klangk.config key a feature declares for the container env bridge
 # (scope container/both) must start with this prefix. Server-side settings
-# are all ``KLANGK_<SETTING>`` (no ``FEATURE_`` infix), so the prefix alone
+# are all ``KLANGKD_<SETTING>`` (no ``FEATURE_`` infix), so the prefix alone
 # guarantees a feature can never declare a key that collides with a server
-# secret, path, or infra field (``KLANGK_JWT_SECRET``, ``KLANGK_DATA_DIR``, …)
+# secret, path, or infra field (``KLANGKD_JWT_SECRET``, ``KLANGKD_DATA_DIR``, …)
 # — no denylist / reserved-set needed, and nothing to keep in sync between
-# this file and the build emitter (#1662). Non-KLANGK_ environment poison
+# this file and the build emitter (#1662). Non-KLANGKD_ environment poison
 # (``PATH``, ``HOME``, ``LD_PRELOAD``, …) is rejected by the same rule.
 # Mirrors _CONTAINER_ENV_KEY_PREFIX in scripts/import_dart_features.py.
-_CONTAINER_ENV_KEY_PREFIX = "KLANGK_FEATURE_"
+_CONTAINER_ENV_KEY_PREFIX = "KLANGKWS_FEATURE_"
 
 # Features.json is a build artifact shipped in the wheel — not attacker-
 # controlled at runtime — but cap its read size as defense-in-depth against
@@ -66,9 +66,9 @@ _MAX_MANIFEST_BYTES = 1024 * 1024
 def is_valid_container_env_key(key: str) -> bool:
     """True if *key* is a safe container-env declaration.
 
-    Must start with :data:`_CONTAINER_ENV_KEY_PREFIX` (``KLANGK_FEATURE_``).
+    Must start with :data:`_CONTAINER_ENV_KEY_PREFIX` (``KLANGKWS_FEATURE_``).
     That prefix is the feature-config namespace; every server setting is
-    ``KLANGK_<SETTING>`` (no ``FEATURE_`` infix), so the prefix alone keeps
+    ``KLANGKD_<SETTING>`` (no ``FEATURE_`` infix), so the prefix alone keeps
     feature-declared container env vars from ever colliding with a server
     secret / path / infra field — no reserved-set / denylist required (#1662).
     Used by both the runtime resolver (here) and re-implemented by the build
@@ -145,7 +145,7 @@ class Features:
         Backs the ``features`` field of ``GET /api/version`` — the full set
         of features possible to use on this install, regardless of whether
         they're active for this deploy (#1655: activation is a frontend
-        concern, gated by KLANGK_FEATURES_ENABLE against this list).
+        concern, gated by KLANGKD_FEATURES_ENABLE against this list).
         """
         features = self._manifest.get("features", [])
         return [
@@ -172,9 +172,9 @@ class Features:
         default. Env remains the escape hatch for per-invocation overrides.
 
         Defense-in-depth (#1662): even though the build layer refuses to
-        emit reserved/non-KLANGK_ keys, this runtime guard skips them too —
+        emit reserved/non-KLANGKD_ keys, this runtime guard skips them too —
         a stale or older manifest shipping with a newer server must not
-        leak ``KLANGK_JWT_SECRET`` etc. into a container. A skipped key is
+        leak ``KLANGKD_JWT_SECRET`` etc. into a container. A skipped key is
         logged at warning level so a misbuilt manifest is visible.
         """
         result: dict[str, str] = {}
@@ -185,7 +185,7 @@ class Features:
             if not is_valid_container_env_key(key):
                 logger.warning(
                     "features.json container_env_keys lists %r — refusing "
-                    "to resolve (missing KLANGK_FEATURE_ prefix); "
+                    "to resolve (missing KLANGKWS_FEATURE_ prefix); "
                     "skipping. Rebuild with a corrected feature.",
                     key,
                 )
@@ -201,12 +201,12 @@ class Features:
     def frontend_config(self) -> dict[str, str]:
         """Return config entries for the ``GET /api/config`` response.
 
-        Keys are the lowercased **suffix** after ``KLANGK_FEATURE_``
-        (e.g. ``KLANGK_FEATURE_BOING_SPEED`` → ``boing_speed``). Declared
-        keys that don't carry the ``KLANGK_FEATURE_`` prefix are skipped —
+        Keys are the lowercased **suffix** after ``KLANGKWS_FEATURE_``
+        (e.g. ``KLANGKWS_FEATURE_BOING_SPEED`` → ``boing_speed``). Declared
+        keys that don't carry the ``KLANGKWS_FEATURE_`` prefix are skipped —
         the prefix is the feature-config namespace (#1662): it keeps
         feature-declared config from colliding with server settings
-        (``KLANGK_<SETTING>``) and gives the frontend a stable, un-prefixed
+        (``KLANGKD_<SETTING>``) and gives the frontend a stable, un-prefixed
         JSON key shape. The shape (which keys exist, descriptions,
         defaults) is read from the per-feature ``config`` blocks in
         ``features.json``; the values are resolved server-side via
@@ -234,14 +234,14 @@ class Features:
                 ):
                     logger.warning(
                         "features.json frontend-scope config key %r — "
-                        "missing KLANGK_FEATURE_ prefix; skipping. Rebuild "
+                        "missing KLANGKWS_FEATURE_ prefix; skipping. Rebuild "
                         "with a corrected feature.",
                         key,
                     )
                     continue
                 default = spec.get("default", "")
-                # Strip the KLANGK_FEATURE_ prefix and lowercase the suffix
-                # for the JSON key (e.g. KLANGK_FEATURE_BOING_SPEED →
+                # Strip the KLANGKWS_FEATURE_ prefix and lowercase the suffix
+                # for the JSON key (e.g. KLANGKWS_FEATURE_BOING_SPEED →
                 # boing_speed). The prefix is enforced above; the suffix is
                 # the feature-owned name, surfaced un-prefixed to the frontend.
                 json_key = key[len(_CONTAINER_ENV_KEY_PREFIX) :].lower()
@@ -254,7 +254,7 @@ class Features:
         return result
 
     def features_enable(self) -> str | None:
-        """The deploy's chosen active-feature list (``KLANGK_FEATURES_ENABLE``).
+        """The deploy's chosen active-feature list (``KLANGKD_FEATURES_ENABLE``).
 
         Forwarded verbatim via ``/api/config`` so the frontend can resolve
         the active set against its sibling ``features.json`` (canonical

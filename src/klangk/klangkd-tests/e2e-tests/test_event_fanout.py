@@ -29,16 +29,16 @@ def server():
     fanout (container ready, exec output routing), not LLM interactions.
     """
     server = start_server(
-        KLANGK_JWT_SECRET="fanout-e2e-secret",
-        KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-        KLANGK_DEFAULT_USER="test@example.com",
-        KLANGK_DEFAULT_PASSWORD="testpass",
-        KLANGK_TEST_MODE="1",
-        KLANGK_IDLE_TIMEOUT_SECONDS="300",
+        KLANGKD_JWT_SECRET="fanout-e2e-secret",
+        KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGKD_DEFAULT_USER="test@example.com",
+        KLANGKD_DEFAULT_PASSWORD="testpass",
+        KLANGKD_TEST_MODE="1",
+        KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         LOGFIRE_TOKEN="",
-        KLANGK_LLM_BASE_URL="",
-        KLANGK_LLM_API_KEY="",
-        KLANGK_LLM_MODEL="",
+        KLANGKD_LLM_BASE_URL="",
+        KLANGKD_LLM_API_KEY="",
+        KLANGKD_LLM_MODEL="",
     )
     yield server
     stop_server(server)
@@ -138,7 +138,7 @@ async def recv_until(ws, predicate, timeout=30):
 
 
 def register_user(server, email, password):
-    """Register a new user (requires KLANGK_TEST_MODE=1), return auth dict."""
+    """Register a new user (requires KLANGKD_TEST_MODE=1), return auth dict."""
     resp = server["client"].post(
         "/api/v1/auth/register",
         json={"email": email, "password": password},

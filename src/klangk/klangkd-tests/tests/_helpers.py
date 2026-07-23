@@ -53,9 +53,9 @@ def make_settings(
     """
     env = dict(env or {})
     env.setdefault(
-        "KLANGK_STATE_DIR", tempfile.mkdtemp(prefix="klangk-state-")
+        "KLANGKD_STATE_DIR", tempfile.mkdtemp(prefix="klangk-state-")
     )
-    env.setdefault("KLANGK_DATA_DIR", tempfile.mkdtemp(prefix="klangk-data-"))
+    env.setdefault("KLANGKD_DATA_DIR", tempfile.mkdtemp(prefix="klangk-data-"))
     return KlangkSettings(env=env, config_file=config_file)
 
 

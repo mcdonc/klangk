@@ -61,9 +61,9 @@ async def app(db, temp_data_dir):
 
     settings = make_settings(
         env={
-            "KLANGK_AUTH_MODES": "password",
-            "KLANGK_DATA_DIR": str(temp_data_dir),
-            "KLANGK_CUSTOMIZE_DIR": str(temp_data_dir / "customize"),
+            "KLANGKD_AUTH_MODES": "password",
+            "KLANGKD_DATA_DIR": str(temp_data_dir),
+            "KLANGKD_CUSTOMIZE_DIR": str(temp_data_dir / "customize"),
         }
     )
     app.state.settings = settings
@@ -345,7 +345,7 @@ class TestVersion:
             types_mod.SimpleNamespace(
                 state=types_mod.SimpleNamespace(
                     settings=make_settings(
-                        env={"KLANGK_FRONTEND_DIR": str(frontend_dir)}
+                        env={"KLANGKD_FRONTEND_DIR": str(frontend_dir)}
                     )
                 )
             )
@@ -362,7 +362,7 @@ class TestVersion:
         self, client, app, tmp_path, monkeypatch
     ):
         # When version.json carries a "variant" field (a downstream product
-        # identity string, set via KLANGK_VARIANT in generate-version.sh), the
+        # identity string, set via KLANGKD_VARIANT in generate-version.sh), the
         # /api/v1/version endpoint surfaces it verbatim (see #1358).
         version_file = tmp_path / "version.json"
         version_file.write_text(
@@ -430,7 +430,7 @@ class TestConfig:
                             "version": "1.0.0",
                             "description": "",
                             "config": {
-                                "KLANGK_FEATURE_MY_FEATURE_VAR": {
+                                "KLANGKWS_FEATURE_MY_FEATURE_VAR": {
                                     "description": "",
                                     "default": "",
                                     "scope": "frontend",
@@ -449,23 +449,23 @@ class TestConfig:
             types_mod.SimpleNamespace(
                 state=types_mod.SimpleNamespace(
                     settings=make_settings(
-                        env={"KLANGK_FRONTEND_DIR": str(frontend_dir)}
+                        env={"KLANGKD_FRONTEND_DIR": str(frontend_dir)}
                     )
                 )
             )
         )
-        monkeypatch.setenv("KLANGK_FEATURE_MY_FEATURE_VAR", "test-value")
+        monkeypatch.setenv("KLANGKWS_FEATURE_MY_FEATURE_VAR", "test-value")
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
-        # KLANGK_FEATURE_MY_FEATURE_VAR → lowercased suffix `my_feature_var`
+        # KLANGKWS_FEATURE_MY_FEATURE_VAR → lowercased suffix `my_feature_var`
         # (#1662: strip prefix + lowercase suffix for /api/config keys).
         assert data["my_feature_var"] == "test-value"
 
     async def test_get_config_includes_features_enable_when_set(
         self, client, app, monkeypatch
     ):
-        # KLANGK_FEATURES_ENABLE is forwarded verbatim via /api/config when
+        # KLANGKD_FEATURES_ENABLE is forwarded verbatim via /api/config when
         # set (#1655); absent when unset (frontend falls back to manifest
         # defaults).
         monkeypatch.setattr(
@@ -507,7 +507,7 @@ class TestConfig:
         assert data["min_password_length"] == _auth().min_password_length
 
     async def test_get_config_logo_url_defaults_empty(self, client, app):
-        # No KLANGK_LOGO_URL set -> empty string (UI renders default widget).
+        # No KLANGKD_LOGO_URL set -> empty string (UI renders default widget).
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         assert resp.json()["logo_url"] == ""
@@ -1672,7 +1672,7 @@ class TestWorkspaceRoutes:
     async def test_create_auto_start_rejected_without_env(self, client, user):
         headers = await _auth_headers(client)
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("KLANGK_ALLOW_AUTOSTART", None)
+            os.environ.pop("KLANGKD_ALLOW_AUTOSTART", None)
             resp = await client.post(
                 "/api/v1/workspaces",
                 headers=headers,
@@ -2218,7 +2218,7 @@ class TestWorkspaceRoutes:
         )
         ws_id = resp.json()["id"]
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("KLANGK_ALLOW_AUTOSTART", None)
+            os.environ.pop("KLANGKD_ALLOW_AUTOSTART", None)
             resp = await client.put(
                 f"/api/v1/workspaces/{ws_id}",
                 json={"auto_start": True},
@@ -4076,7 +4076,7 @@ def _instance_id():
     """The instance ID this server uses (read from <data_dir>/instance-id).
 
     Matches the value the volume routes validate ``klangk.instance`` labels
-    against. Uses the active test data_dir (KLANGK_DATA_DIR in os.environ, set
+    against. Uses the active test data_dir (KLANGKD_DATA_DIR in os.environ, set
     by the temp_data_dir fixture) so it agrees with the ``app`` fixture's util.
     Not a cached global — a fresh read each call.
     """
@@ -4905,7 +4905,7 @@ class TestSetIdleTimeout:
             )
 
     async def test_endpoint_missing_without_test_mode(self, client):
-        """Without KLANGK_TEST_MODE, the endpoints should not exist."""
+        """Without KLANGKD_TEST_MODE, the endpoints should not exist."""
         resp = await client.post(
             "/api/v1/test/set-idle-timeout", json={"seconds": 10}
         )
@@ -7388,7 +7388,9 @@ class TestWorkspaceExportImport:
                     name="env-sanitize",
                     env={
                         "MY_VAR": "safe",
-                        "KLANGK_BRIDGE_TOKEN": "stolen",
+                        "KLANGKD_BRIDGE_TOKEN": "stolen",
+                        "KLANGKWS_BRIDGE_URL": "stale-injected",
+                        "KLANGKBUILD_HOST_IMAGE": "stale-build",
                         "LD_PRELOAD": "/evil.so",
                         "PATH": "/bad",
                         "NORMAL_VAR": "ok",
@@ -7418,7 +7420,9 @@ class TestWorkspaceExportImport:
         env = imported.get("env", {})
         assert "MY_VAR" in env
         assert "NORMAL_VAR" in env
-        assert "KLANGK_BRIDGE_TOKEN" not in env
+        assert "KLANGKD_BRIDGE_TOKEN" not in env
+        assert "KLANGKWS_BRIDGE_URL" not in env
+        assert "KLANGKBUILD_HOST_IMAGE" not in env
         assert "LD_PRELOAD" not in env
         assert "PATH" not in env
 

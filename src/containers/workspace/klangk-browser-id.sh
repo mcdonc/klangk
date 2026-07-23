@@ -9,7 +9,7 @@ set -e
 
 # Try tmux environment (updated on every reattach).
 if command -v tmux >/dev/null 2>&1 && tmux info >/dev/null 2>&1; then
-  ID=$(tmux show-environment -g KLANGK_BROWSER_ID 2>/dev/null | cut -d= -f2-)
+  ID=$(tmux show-environment -g KLANGKWS_BROWSER_ID 2>/dev/null | cut -d= -f2-)
   if [ -n "$ID" ]; then
     echo "$ID"
     exit 0
@@ -17,8 +17,8 @@ if command -v tmux >/dev/null 2>&1 && tmux info >/dev/null 2>&1; then
 fi
 
 # Env var fallback (set at podman exec time, may be stale).
-if [ -n "$KLANGK_BROWSER_ID" ]; then
-  echo "$KLANGK_BROWSER_ID"
+if [ -n "$KLANGKWS_BROWSER_ID" ]; then
+  echo "$KLANGKWS_BROWSER_ID"
   exit 0
 fi
 

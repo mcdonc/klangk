@@ -41,7 +41,7 @@ Uploads go into the currently viewed directory (not always root).
 - **Progress indicator** shows upload status
 - **Duplicate detection** — blocks upload if a file or folder with
   the same name already exists
-- Maximum upload size: 500 MB (configurable via `KLANGK_IMPORT_MAX_SIZE`)
+- Maximum upload size: 500 MB (configurable via `KLANGKD_IMPORT_MAX_SIZE`)
 
 ## Downloading
 

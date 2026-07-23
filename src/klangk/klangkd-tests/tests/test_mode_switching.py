@@ -1,4 +1,4 @@
-"""End-to-end acceptance tests for switching ``KLANGK_AUTH_MODES``.
+"""End-to-end acceptance tests for switching ``KLANGKD_AUTH_MODES``.
 
 These are deliberately **high-level**: each test drives the real HTTP API
 (starting in one auth mode, performing the documented upgrade/downgrade
@@ -9,7 +9,7 @@ the docs honest — if a documented flow stops working, these tests fail.
 The auth mode is read from ``app.state.oidc.auth_modes()`` (#1450), which
 derives it from ``settings.auth_modes`` frozen at OIDC construction.  A
 mode switch is therefore simulated by rebuilding the OIDC instance (a
-"restart") after changing ``KLANGK_AUTH_MODES``.
+"restart") after changing ``KLANGKD_AUTH_MODES``.
 """
 
 import pytest
@@ -66,7 +66,7 @@ _current_app = None
 async def mode_server(db, monkeypatch, app_state):
     """Boot a real-router server whose default admin user is seeded the way
     the real lifespan seeds it (``main.Lifecycle.seed_default_user``), then flip modes
-    by changing ``KLANGK_AUTH_MODES`` between requests.
+    by changing ``KLANGKD_AUTH_MODES`` between requests.
 
     Returns ``(client, default_user)`` where ``default_user`` is the DB row
     for the seeded default user (so tests know its ``id`` / ``email``).
@@ -79,9 +79,9 @@ async def mode_server(db, monkeypatch, app_state):
     # seeding + then starts the server in none mode for the upgrade tests.)
     await _lifecycle(
         {
-            "KLANGK_AUTH_MODES": "password",
-            "KLANGK_DEFAULT_USER": DEFAULT_EMAIL,
-            "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
+            "KLANGKD_AUTH_MODES": "password",
+            "KLANGKD_DEFAULT_USER": DEFAULT_EMAIL,
+            "KLANGKD_DEFAULT_PASSWORD": SEEDED_PASSWORD,
         }
     ).seed_default_user()
     default_user = await app_state.state.model.users.get_user_by_email(
@@ -91,7 +91,7 @@ async def mode_server(db, monkeypatch, app_state):
 
     app = FastAPI()
     app.state.settings = make_settings(
-        {"KLANGK_AUTH_MODES": "none", "KLANGK_DEFAULT_USER": DEFAULT_EMAIL}
+        {"KLANGKD_AUTH_MODES": "none", "KLANGKD_DEFAULT_USER": DEFAULT_EMAIL}
     )
     app.state.oidc = oidc_mod.OIDC(app)
     app.state.features = features_mod.Features(app)
@@ -126,7 +126,7 @@ def _set_mode(mode: str):
     """
     app = _current_app
     app.state.settings = make_settings(
-        {"KLANGK_AUTH_MODES": mode, "KLANGK_DEFAULT_USER": DEFAULT_EMAIL}
+        {"KLANGKD_AUTH_MODES": mode, "KLANGKD_DEFAULT_USER": DEFAULT_EMAIL}
     )
     app.state.oidc = oidc_mod.OIDC(app)
 
@@ -424,18 +424,18 @@ class TestRestartIdempotency:
         _none()
         await _lifecycle(
             {
-                "KLANGK_AUTH_MODES": "none",
-                "KLANGK_DEFAULT_USER": DEFAULT_EMAIL,
-                "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
+                "KLANGKD_AUTH_MODES": "none",
+                "KLANGKD_DEFAULT_USER": DEFAULT_EMAIL,
+                "KLANGKD_DEFAULT_PASSWORD": SEEDED_PASSWORD,
             }
         ).seed_default_user()  # simulate restart in none mode
 
         _password()
         await _lifecycle(
             {
-                "KLANGK_AUTH_MODES": "password",
-                "KLANGK_DEFAULT_USER": DEFAULT_EMAIL,
-                "KLANGK_DEFAULT_PASSWORD": SEEDED_PASSWORD,
+                "KLANGKD_AUTH_MODES": "password",
+                "KLANGKD_DEFAULT_USER": DEFAULT_EMAIL,
+                "KLANGKD_DEFAULT_PASSWORD": SEEDED_PASSWORD,
             }
         ).seed_default_user()  # simulate restart in password mode
 

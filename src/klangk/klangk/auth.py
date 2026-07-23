@@ -199,12 +199,12 @@ class Auth:
         prevent = self.app.state.settings.prevent_insecure_jwt_secret.lower()
         if prevent in ("1", "true", "yes"):
             raise ConfigurationError(
-                "KLANGK_JWT_SECRET is unset or the insecure default. Set a "
-                "strong secret or remove KLANGK_PREVENT_INSECURE_JWT_SECRET."
+                "KLANGKD_JWT_SECRET is unset or the insecure default. Set a "
+                "strong secret or remove KLANGKD_PREVENT_INSECURE_JWT_SECRET."
             )
         logger.warning(
-            "KLANGK_JWT_SECRET is unset or the insecure default. Set "
-            "KLANGK_PREVENT_INSECURE_JWT_SECRET=1 in production."
+            "KLANGKD_JWT_SECRET is unset or the insecure default. Set "
+            "KLANGKD_PREVENT_INSECURE_JWT_SECRET=1 in production."
         )
 
     # --- toggles ---

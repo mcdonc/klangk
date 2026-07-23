@@ -178,7 +178,7 @@ class TestMainPayloadDir:
         assert data["features"][0]["name"] == "demo"
 
     def test_main_ignores_klangk_plugins_dir_env(self, tmp_path, monkeypatch):
-        # KLANGK_PLUGINS_DIR must have no effect on where the payload lands
+        # KLANGKBUILD_PLUGINS_DIR must have no effect on where the payload lands
         # (#1660 — the var is gone from every layer).
         fake_repo = tmp_path / "repo"
         fake_repo.mkdir()
@@ -190,7 +190,7 @@ class TestMainPayloadDir:
 
         bogus = tmp_path / "bogus-env-target"
         bogus.mkdir()
-        monkeypatch.setenv("KLANGK_PLUGINS_DIR", str(bogus))
+        monkeypatch.setenv("KLANGKBUILD_PLUGINS_DIR", str(bogus))
 
         payload = tmp_path / "payload"
         payload.mkdir()
@@ -200,7 +200,7 @@ class TestMainPayloadDir:
         # Nothing was written under the env-var-named dir.
         assert not (bogus / "features.lock").exists()
         # The module no longer references the env var at all.
-        assert "KLANGK_PLUGINS_DIR" not in {
+        assert "KLANGKBUILD_PLUGINS_DIR" not in {
             name for name, _ in update_features.__dict__.items()
         }
 

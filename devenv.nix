@@ -53,7 +53,7 @@ in
       git # "error: Failed to find git" during devenv:git-hooks:install
       gzip
       gnutar
-      caddy # reverse-proxy engine behind KLANGK_PROXY_ENGINE=caddy (#1559)
+      caddy # reverse-proxy engine behind KLANGKD_PROXY_ENGINE=caddy (#1559)
       nginx
       podman
       ruff
@@ -201,27 +201,27 @@ in
     else
       config.devenv.state + "/klangk/podman/policy.json"
   );
-  env.KLANGK_VERSION_FILE = versionFile;
+  env.KLANGKD_VERSION_FILE = versionFile;
   # state_dir: runtime state (UDS, rendered Caddyfile, pid). Devenv pins it
   # to $DEVENV_STATE/klangk; the field default is $XDG_STATE_HOME/klangkd
   # (→ ~/.local/state/klangkd; #1459, #1644, #1646).
-  env.KLANGK_STATE_DIR = stateDir;
+  env.KLANGKD_STATE_DIR = stateDir;
   # Frontend dir: the backend runs editable in devenv (PYTHONPATH on the
   # source tree), so the in-package default (klangk/frontend, #1600) does
   # not exist. Point at the repo's Flutter web build output instead --
   # produced by scripts/flutterbuildweb.sh before `devenv up`. Operators
   # running an installed wheel leave this unset and get the in-package
   # default (#1456, #1600).
-  env.KLANGK_FRONTEND_DIR = config.devenv.root + "/src/frontend/build/web";
+  env.KLANGKD_FRONTEND_DIR = config.devenv.root + "/src/frontend/build/web";
   # Docker build platform for klangk images. On Linux, default to the host
   # architecture so arm64 machines build/run natively instead of under amd64
   # emulation. The published GHCR base (klangk-workspace-base:latest) is
   # multi-arch (amd64 + arm64), so we default to the host's native
   # architecture on all platforms. Override via devenv.local.nix.
-  env.KLANGK_PLATFORM = lib.mkOverride 1500 (
+  env.KLANGKBUILD_PLATFORM = lib.mkOverride 1500 (
     if pkgs.stdenv.hostPlatform.isAarch64 then "linux/arm64" else "linux/amd64"
   );
-  env.KLANGK_IMAGE_NAME = lib.mkOverride 1500 "klangk-workspace";
+  env.KLANGKD_IMAGE_NAME = lib.mkOverride 1500 "klangk-workspace";
 
   scripts.flutterbuildweb.exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh" "$@"'';
   scripts.build-workspace-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-workspace-image.sh" "$@"'';

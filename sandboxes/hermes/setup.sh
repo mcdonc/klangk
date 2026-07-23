@@ -21,12 +21,12 @@ INSTALL_DIR="/hermes"
 # command (#1133/#1158: the gateway runs in the agent's standalone
 # `service` tmux session). The owner manages hermes through the Service
 # terminal tab, not their own shell, so nothing hermes-related belongs in
-# the owner's home (#1171). $KLANGK_AGENT_HOME is injected into the
+# the owner's home (#1171). $KLANGKWS_AGENT_HOME is injected into the
 # container env at bring-up and inherited by every podman exec (including
 # the WS exec that runs this script); the `:-` fallback defends against an
 # unset var. With HOME repointed, the existing ~/.profile appends below
 # land in the agent's ~/.profile unchanged.
-export HOME="${KLANGK_AGENT_HOME:-/home/clanker}"
+export HOME="${KLANGKWS_AGENT_HOME:-/home/clanker}"
 
 # Hermes release branch -- single source of truth for the installed version.
 # The human version (e.g. 0.17.x) tracks this but isn't asserted here.
@@ -91,20 +91,20 @@ fi
 # HERMES_INFERENCE_MODEL -- it triggers provider auto-detection that bypasses
 # the custom endpoint; the model goes in config.yaml instead.
 use_proxy=false
-case "${KLANGK_HERMES_USE_LLM_PROXY:-true}" in
+case "${KLANGKWS_HERMES_USE_LLM_PROXY:-true}" in
 true | 1) use_proxy=true ;;
 esac
-if [ "$use_proxy" = true ] && [ -n "${KLANGK_LLM_PROXY_URL:-}" ]; then
+if [ "$use_proxy" = true ] && [ -n "${KLANGKWS_LLM_PROXY_URL:-}" ]; then
   token="$(/opt/klangk/bin/klangk-workspace-token 2>/dev/null || true)"
 
   # config.yaml -- provider + model (overwritten; they don't change).
   cat >"$INSTALL_DIR/config.yaml" <<EOF
 model:
   provider: klangk-proxy
-  model: "${KLANGK_LLM_MODEL}"
+  model: "${KLANGKWS_LLM_MODEL}"
 custom_providers:
   - name: klangk-proxy
-    base_url: "${KLANGK_LLM_PROXY_URL}"
+    base_url: "${KLANGKWS_LLM_PROXY_URL}"
     key_env: OPENAI_API_KEY
 EOF
 
@@ -116,7 +116,7 @@ EOF
   touch "$env_file"
   sed -i '/^OPENAI_BASE_URL=/d;/^OPENAI_API_KEY=/d' "$env_file"
   cat >>"$env_file" <<EOF
-OPENAI_BASE_URL=${KLANGK_LLM_PROXY_URL}
+OPENAI_BASE_URL=${KLANGKWS_LLM_PROXY_URL}
 OPENAI_API_KEY=${token}
 EOF
 fi

@@ -124,7 +124,7 @@ class Agents:
         already exists (skeleton files only on first creation), and
         ``klangk-setup-pi --force`` re-writes Pi config to pick up env-var
         changes.  Called eagerly at container bring-up (so
-        ``$KLANGK_AGENT_HOME`` points at a populated directory for every
+        ``$KLANGKWS_AGENT_HOME`` points at a populated directory for every
         process) and again from chat-start, which caches the result per
         ``AgentSession``.
         """
@@ -152,7 +152,7 @@ class Agents:
         # Run klangk-setup-pi to populate ~/.pi/agent/ with models.json,
         # settings.json, etc.  Unlike real users, the agent has no
         # personal preferences — --force deletes settings.json first so
-        # it picks up the current KLANGK_LLM_MODEL env var.
+        # it picks up the current KLANGKWS_LLM_MODEL env var.
         proc = await asyncio.create_subprocess_exec(
             self.app.state.podman.bin,
             "exec",

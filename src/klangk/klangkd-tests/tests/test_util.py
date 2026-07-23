@@ -94,7 +94,7 @@ class TestRunCmdValue:
 
 class TestResolveDynamicConfig:
     """resolve_dynamic_config resolves feature-declared dynamic keys (outside
-    the KLANGK_ settings model) with file:/cmd: deref."""
+    the KLANGKD_ settings model) with file:/cmd: deref."""
 
     def test_plain_value(self, monkeypatch):
         monkeypatch.setenv("TEST_SECRET", "plain-value")
@@ -252,7 +252,7 @@ class TestResolveDynamicConfigFeaturesConfig:
 
     def test_empty_string_env_wins_over_features_config(self, monkeypatch):
         # env is consulted first and wins even when set to the empty string —
-        # an operator who clears KLANGK_FEATURE_X="" to blank it for a run
+        # an operator who clears KLANGKWS_FEATURE_X="" to blank it for a run
         # gets "", not the durable features_config value. This matches the
         # pre-#1659 env-only behavior (empty env is still "set"); locked in
         # so a future "treat empty as unset" change is deliberate, not drift.
@@ -287,14 +287,14 @@ class TestResolveFileValue:
 
 class TestCustomizeDir:
     def test_returns_env_value(self):
-        u = _util({"KLANGK_CUSTOMIZE_DIR": "/opt/custom"})
+        u = _util({"KLANGKD_CUSTOMIZE_DIR": "/opt/custom"})
         assert u.customize_dir() == "/opt/custom"
 
     def test_defaults_to_xdg_config_home_custom(self, monkeypatch):
         # #1644: customize_dir is config (user-edited, durable), not state —
         # derives from $XDG_CONFIG_HOME, not state_dir.
         monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/xcfg")
-        u = _util({"KLANGK_STATE_DIR": "/tmp/state"})
+        u = _util({"KLANGKD_STATE_DIR": "/tmp/state"})
         assert u.customize_dir() == os.path.join(
             "/tmp/xcfg", "klangkd", "custom"
         )
@@ -304,12 +304,12 @@ class TestInstanceId:
     """Util.resolve_instance_id / instance_id / instance_id_path (#1553)."""
 
     def test_path_is_in_data_dir(self, tmp_path):
-        u = _util({"KLANGK_DATA_DIR": str(tmp_path)})
+        u = _util({"KLANGKD_DATA_DIR": str(tmp_path)})
         assert u.instance_id_path() == tmp_path / "instance-id"
 
     def test_resolve_generates_and_persists_uuid(self, tmp_path):
         """First resolve generates a UUID-4 and writes it to the file."""
-        u = _util({"KLANGK_DATA_DIR": str(tmp_path)})
+        u = _util({"KLANGKD_DATA_DIR": str(tmp_path)})
         result = u.resolve_instance_id()
         assert uuid.UUID(result).version == 4
         assert u.instance_id() == result
@@ -318,15 +318,17 @@ class TestInstanceId:
 
     def test_persisted_value_survives(self, tmp_path):
         """A second Util (fresh process) reads back the same ID from the file."""
-        first = _util({"KLANGK_DATA_DIR": str(tmp_path)}).resolve_instance_id()
+        first = _util(
+            {"KLANGKD_DATA_DIR": str(tmp_path)}
+        ).resolve_instance_id()
         second = _util(
-            {"KLANGK_DATA_DIR": str(tmp_path)}
+            {"KLANGKD_DATA_DIR": str(tmp_path)}
         ).resolve_instance_id()
         assert first == second
 
     def test_empty_file_is_recreated(self, tmp_path):
         """An empty/garbage instance-id file is regenerated, not fatal."""
-        u = _util({"KLANGK_DATA_DIR": str(tmp_path)})
+        u = _util({"KLANGKD_DATA_DIR": str(tmp_path)})
         path = u.instance_id_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("   \n")  # whitespace-only -> treated as missing
@@ -336,7 +338,7 @@ class TestInstanceId:
 
     def test_instance_id_resolves_lazily(self, tmp_path):
         """instance_id() resolves on first use when resolve wasn't called."""
-        u = _util({"KLANGK_DATA_DIR": str(tmp_path)})
+        u = _util({"KLANGKD_DATA_DIR": str(tmp_path)})
         # No resolve_instance_id() call — instance_id() does it lazily.
         result = u.instance_id()
         assert uuid.UUID(result).version == 4
@@ -367,31 +369,31 @@ class TestCorsOrigins:
         assert u.cors_origins() == ["http://localhost"]
 
     def test_egress_port_not_synthesized(self):
-        """KLANGK_EGRESS_PORT does not leak into the CORS origin."""
-        u = _util({"KLANGK_EGRESS_PORT": "9000"})
+        """KLANGKD_EGRESS_PORT does not leak into the CORS origin."""
+        u = _util({"KLANGKD_EGRESS_PORT": "9000"})
         assert u.cors_origins() == ["http://localhost"]
 
     def test_hosting_hostname_carries_port(self):
-        u = _util({"KLANGK_HOSTING_HOSTNAME": "localhost:8996"})
+        u = _util({"KLANGKD_HOSTING_HOSTNAME": "localhost:8996"})
         assert u.cors_origins() == ["http://localhost:8996"]
 
     def test_hosting_hostname(self):
         u = _util(
             {
-                "KLANGK_HOSTING_HOSTNAME": "klangk.example.com",
-                "KLANGK_HOSTING_PROTO": "https",
+                "KLANGKD_HOSTING_HOSTNAME": "klangk.example.com",
+                "KLANGKD_HOSTING_PROTO": "https",
             }
         )
         assert u.cors_origins() == ["https://klangk.example.com"]
 
     def test_hosting_hostname_default_proto(self):
-        u = _util({"KLANGK_HOSTING_HOSTNAME": "klangk.example.com"})
+        u = _util({"KLANGKD_HOSTING_HOSTNAME": "klangk.example.com"})
         assert u.cors_origins() == ["http://klangk.example.com"]
 
     def test_explicit_origins(self):
         u = _util(
             {
-                "KLANGK_CORS_ORIGINS": "https://a.example.com, https://b.example.com"
+                "KLANGKD_CORS_ORIGINS": "https://a.example.com, https://b.example.com"
             }
         )
         assert u.cors_origins() == [
@@ -400,14 +402,14 @@ class TestCorsOrigins:
         ]
 
     def test_explicit_origins_strips_empties(self):
-        u = _util({"KLANGK_CORS_ORIGINS": "https://a.com,,"})
+        u = _util({"KLANGKD_CORS_ORIGINS": "https://a.com,,"})
         assert u.cors_origins() == ["https://a.com"]
 
     def test_explicit_overrides_hosting(self):
         u = _util(
             {
-                "KLANGK_CORS_ORIGINS": "https://override.com",
-                "KLANGK_HOSTING_HOSTNAME": "ignored.com",
+                "KLANGKD_CORS_ORIGINS": "https://override.com",
+                "KLANGKD_HOSTING_HOSTNAME": "ignored.com",
             }
         )
         assert u.cors_origins() == ["https://override.com"]
@@ -427,7 +429,7 @@ class TestTrustedProxyCidrs:
         import ipaddress
 
         trusted = _util(
-            {"KLANGK_TRUSTED_PROXY_CIDRS": "10.0.0.0/8, 192.168.1.5"}
+            {"KLANGKD_TRUSTED_PROXY_CIDRS": "10.0.0.0/8, 192.168.1.5"}
         ).trusted_proxy_cidrs()
         assert ipaddress.ip_network("10.0.0.0/8") in trusted
         assert ipaddress.ip_address("192.168.1.5") in trusted
@@ -438,13 +440,13 @@ class TestTrustedProxyCidrs:
 
         with caplog.at_level(logging.WARNING, logger="klangk.util"):
             trusted = _util(
-                {"KLANGK_TRUSTED_PROXY_CIDRS": "not-an-ip, 127.0.0.1"}
+                {"KLANGKD_TRUSTED_PROXY_CIDRS": "not-an-ip, 127.0.0.1"}
             ).trusted_proxy_cidrs()
         assert ipaddress.ip_address("127.0.0.1") in trusted
         # The invalid entry is logged without echoing its value (env-var-
         # derived data is treated as potentially sensitive by CodeQL).
         assert any(
-            "invalid KLANGK_TRUSTED_PROXY_CIDRS entry" in r.getMessage()
+            "invalid KLANGKD_TRUSTED_PROXY_CIDRS entry" in r.getMessage()
             for r in caplog.records
         )
 
@@ -452,7 +454,7 @@ class TestTrustedProxyCidrs:
         import ipaddress
 
         trusted = _util(
-            {"KLANGK_TRUSTED_PROXY_CIDRS": "garbage"}
+            {"KLANGKD_TRUSTED_PROXY_CIDRS": "garbage"}
         ).trusted_proxy_cidrs()
         assert ipaddress.ip_address("127.0.0.1") in trusted
 
@@ -460,7 +462,7 @@ class TestTrustedProxyCidrs:
         import ipaddress
 
         trusted = _util(
-            {"KLANGK_TRUSTED_PROXY_CIDRS": ""}
+            {"KLANGKD_TRUSTED_PROXY_CIDRS": ""}
         ).trusted_proxy_cidrs()
         assert ipaddress.ip_address("127.0.0.1") in trusted
 
@@ -478,9 +480,9 @@ class TestDeriveHostingInfo:
     def test_env_vars_take_precedence(self):
         u = _util(
             {
-                "KLANGK_HOSTING_HOSTNAME": "env.example.com",
-                "KLANGK_HOSTING_PROTO": "https",
-                "KLANGK_HOSTING_BASE_PATH": "/app",
+                "KLANGKD_HOSTING_HOSTNAME": "env.example.com",
+                "KLANGKD_HOSTING_PROTO": "https",
+                "KLANGKD_HOSTING_BASE_PATH": "/app",
             }
         )
         h, p, b = u.derive_hosting_info(
@@ -492,7 +494,7 @@ class TestDeriveHostingInfo:
 
     def test_forwarded_headers_trusted_from_loopback_peer(self):
         """Forwarded headers honored when the peer is a trusted proxy (loopback by default)."""
-        u = _util({"KLANGK_EGRESS_PORT": "8995"})
+        u = _util({"KLANGKD_EGRESS_PORT": "8995"})
         h, p, b = u.derive_hosting_info(
             {
                 "x-forwarded-host": "arctor.repoze.org",
@@ -511,7 +513,7 @@ class TestDeriveHostingInfo:
         An attacker reaching the backend directly (e.g. from a public IP)
         must not be able to poison X-Forwarded-Host to mint phishing links.
         """
-        u = _util({"KLANGK_EGRESS_PORT": "8995"})
+        u = _util({"KLANGKD_EGRESS_PORT": "8995"})
         h, p, b = u.derive_hosting_info(
             {
                 "host": "localhost:8997",
@@ -527,7 +529,7 @@ class TestDeriveHostingInfo:
 
     def test_forwarded_headers_rejected_when_no_peer(self):
         """Forwarded headers ignored when client_host is unavailable (fail-closed)."""
-        u = _util({"KLANGK_EGRESS_PORT": "8995"})
+        u = _util({"KLANGKD_EGRESS_PORT": "8995"})
         h, p, b = u.derive_hosting_info(
             {
                 "host": "localhost:8997",
@@ -541,11 +543,11 @@ class TestDeriveHostingInfo:
         assert b == ""
 
     def test_reject_proxy_headers_override(self):
-        """KLANGK_REJECT_PROXY_HEADERS=1 forces trust off even for loopback peers."""
+        """KLANGKD_REJECT_PROXY_HEADERS=1 forces trust off even for loopback peers."""
         u = _util(
             {
-                "KLANGK_EGRESS_PORT": "8995",
-                "KLANGK_REJECT_PROXY_HEADERS": "1",
+                "KLANGKD_EGRESS_PORT": "8995",
+                "KLANGKD_REJECT_PROXY_HEADERS": "1",
             }
         )
         h, p, b = u.derive_hosting_info(
@@ -565,8 +567,8 @@ class TestDeriveHostingInfo:
         """A non-loopback peer is trusted when its CIDR is configured."""
         u = _util(
             {
-                "KLANGK_EGRESS_PORT": "8995",
-                "KLANGK_TRUSTED_PROXY_CIDRS": "10.0.0.0/8",
+                "KLANGKD_EGRESS_PORT": "8995",
+                "KLANGKD_TRUSTED_PROXY_CIDRS": "10.0.0.0/8",
             }
         )
         h, p, b = u.derive_hosting_info(
@@ -586,10 +588,10 @@ class TestDeriveHostingInfo:
 
         the proxy forwards the client's Host as both Host and X-Forwarded-Host,
         so the port the browser hit rides along unmodified — no port is
-        synthesized from KLANGK_EGRESS_PORT (that is internal wiring, not the
+        synthesized from KLANGKD_EGRESS_PORT (that is internal wiring, not the
         public port; wrong behind a real proxy/ingress).
         """
-        u = _util({"KLANGK_EGRESS_PORT": "8995"})
+        u = _util({"KLANGKD_EGRESS_PORT": "8995"})
         h, p, b = u.derive_hosting_info({"host": "myhost:8997"}, "127.0.0.1")
         assert h == "myhost:8997"
         assert p == "http"
@@ -603,14 +605,14 @@ class TestDeriveHostingInfo:
         assert b == ""
 
     def test_egress_port_not_synthesized_into_host(self):
-        """KLANGK_EGRESS_PORT is NOT used to compose the URL authority.
+        """KLANGKD_EGRESS_PORT is NOT used to compose the URL authority.
 
         With no env override and an uninformative (empty) request, the floor
-        is bare localhost — even though KLANGK_EGRESS_PORT is set. The port
-        must come from KLANGK_HOSTING_HOSTNAME or the Host header, never
+        is bare localhost — even though KLANGKD_EGRESS_PORT is set. The port
+        must come from KLANGKD_HOSTING_HOSTNAME or the Host header, never
         guessed from the internal egress port (#1240).
         """
-        u = _util({"KLANGK_EGRESS_PORT": "8995"})
+        u = _util({"KLANGKD_EGRESS_PORT": "8995"})
         h, p, b = u.derive_hosting_info({}, "127.0.0.1")
         assert h == "localhost"
         assert p == "http"
@@ -633,10 +635,10 @@ class TestDeriveHostingInfo:
         """Env override applies even with no request (#1240)."""
         u = _util(
             {
-                "KLANGK_HOSTING_HOSTNAME": "klangk.example.com",
-                "KLANGK_HOSTING_PROTO": "https",
-                "KLANGK_HOSTING_BASE_PATH": "/klangk",
-                "KLANGK_EGRESS_PORT": "8995",
+                "KLANGKD_HOSTING_HOSTNAME": "klangk.example.com",
+                "KLANGKD_HOSTING_PROTO": "https",
+                "KLANGKD_HOSTING_BASE_PATH": "/klangk",
+                "KLANGKD_EGRESS_PORT": "8995",
             }
         )
         h, p, b = u.derive_hosting_info(None, None)
@@ -646,7 +648,7 @@ class TestDeriveHostingInfo:
 
     def test_no_headers_falls_back_to_localhost(self):
         """No env, no request -> bare localhost (no port synthesized)."""
-        u = _util({"KLANGK_EGRESS_PORT": "8995"})
+        u = _util({"KLANGKD_EGRESS_PORT": "8995"})
         h, p, b = u.derive_hosting_info(None, None)
         assert h == "localhost"
         assert p == "http"
@@ -715,10 +717,10 @@ class TestClientIsLoopback:
         assert u.client_is_loopback(self._hdr(), "10.89.0.5") is False
 
     def test_reject_proxy_header_forces_peer_only(self):
-        """KLANGK_REJECT_PROXY_HEADERS=1 disables forwarded-header trust, so
+        """KLANGKD_REJECT_PROXY_HEADERS=1 disables forwarded-header trust, so
         the loopback peer (the proxy) is evaluated directly -> admit, and the
         spoofed non-loopback X-Real-IP is ignored."""
-        u = _util({"KLANGK_REJECT_PROXY_HEADERS": "1"})
+        u = _util({"KLANGKD_REJECT_PROXY_HEADERS": "1"})
         h = self._hdr(**{"x-real-ip": "10.89.0.5"})
         assert u.client_is_loopback(h, "127.0.0.1") is True
 
@@ -802,7 +804,7 @@ class TestPortDiscovery:
         assert isinstance(p, int)
         assert 0 < p <= MAX_PORT
         # The port must actually be bindable right now (the E2E harnesses
-        # rely on this to seed KLANGK_PORT / KLANGK_PORT_RANGE_START).
+        # rely on this to seed KLANGKD_PORT / KLANGKD_PORT_RANGE_START).
         assert port_in_use(p) is False
 
     def test_free_port_is_distinct_across_calls(self):

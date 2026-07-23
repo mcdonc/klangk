@@ -6,7 +6,7 @@ call in ``main.py``'s module body. That had three problems:
 1. **Import-order-dependent.** ``basicConfig`` is a no-op if the root logger
    already has handlers, so whichever module imported ``main`` first won.
 2. **No settings integration.** Level/format were hardcoded, with no home for
-   a ``KLANGK_LOG_LEVEL`` knob.
+   a ``KLANGKD_LOG_LEVEL`` knob.
 3. **No third-party logger management.** uvicorn, sqlalchemy, httpx, ... each
    got their own logger with no central place to silence them.
 
@@ -22,7 +22,7 @@ module-level functions (no state object):
   indirection resolver log).
 - :func:`configure` — called once settings are finalized (in
   :func:`klangk.main.build_app`) to re-apply the level from
-  ``settings.log_level`` (``KLANGK_LOG_LEVEL``), overriding the import-time
+  ``settings.log_level`` (``KLANGKD_LOG_LEVEL``), overriding the import-time
   defaults. Idempotent, so it is also the **SIGHUP reconfigure** path:
   :func:`klangk.main.Lifecycle._apply_reloaded_settings` calls it right after
   the settings swap (before the subsystem loop, so warnings the loop emits use
@@ -82,7 +82,7 @@ _DEFAULT_LEVEL = logging.INFO
 # Third-party loggers managed centrally (logger name -> level). These are
 # libraries klangk depends on that log at their own verbosity by default and
 # would drown klangk's own INFO output. Levels are re-applied on every
-# configure() so an operator raising ``KLANGK_LOG_LEVEL`` to DEBUG still gets a
+# configure() so an operator raising ``KLANGKD_LOG_LEVEL`` to DEBUG still gets a
 # quiet chatty-library surface unless they raise these explicitly via a future
 # per-logger override.
 _THIRD_PARTY_LEVELS: dict[str, int | str] = {
@@ -141,7 +141,7 @@ def configure_defaults() -> None:
     logging is formatted from the very first log call — including during
     ``KlangkSettings`` construction, which runs before any ``app`` exists.
     Idempotent. :func:`configure` later overrides the level from
-    ``KLANGK_LOG_LEVEL``.
+    ``KLANGKD_LOG_LEVEL``.
     """
     _apply(_DEFAULT_LEVEL)
 
@@ -151,7 +151,7 @@ def configure(settings) -> None:
 
     Called in :func:`klangk.main.build_app` (once settings are constructed) and
     again on every SIGHUP reload (after the settings swap, before the subsystem
-    reconfigure loop) so ``KLANGK_LOG_LEVEL`` takes effect without a process
+    reconfigure loop) so ``KLANGKD_LOG_LEVEL`` takes effect without a process
     restart (#1587). Reads ``settings.log_level`` live; idempotent.
     """
     _apply(_level_to_int(settings.log_level))
@@ -160,5 +160,5 @@ def configure(settings) -> None:
 # Configure sensible defaults at import so logging is formatted from the very
 # first log call — including during ``KlangkSettings`` construction, which runs
 # before any ``app`` exists. ``configure(settings)`` (in ``build_app``) later
-# overrides the level from ``KLANGK_LOG_LEVEL``. (#1467)
+# overrides the level from ``KLANGKD_LOG_LEVEL``. (#1467)
 configure_defaults()

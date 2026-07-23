@@ -17,13 +17,13 @@ trap 'rm -rf "$PAYLOAD_DIR"' EXIT
 # aggregator + features.json from those trees.
 #
 # Git-sourced features are skipped by default (update_features.py --local-only)
-# — set KLANGK_BUILD_INCLUDE_REMOTE=1 to fetch them. Keeps CI off the network
+# — set KLANGKBUILD_BUILD_INCLUDE_REMOTE=1 to fetch them. Keeps CI off the network
 # and resilient to upstream failures (the policy dates to #1691). Every
 # feature in features.yaml is a local path entry today (soliplex was vendored
 # in #1686), so the skip is currently a no-op; the gate stays as the generic
 # remote-feature policy for any future git entry.
 UPDATE_FLAGS=(--payload-dir "$PAYLOAD_DIR")
-if [ "${KLANGK_BUILD_INCLUDE_REMOTE:-0}" != "1" ]; then
+if [ "${KLANGKBUILD_BUILD_INCLUDE_REMOTE:-0}" != "1" ]; then
   UPDATE_FLAGS+=(--local-only)
 fi
 python3 scripts/update_features.py "${UPDATE_FLAGS[@]}"
@@ -31,9 +31,9 @@ python3 scripts/import_dart_features.py --payload-dir "$PAYLOAD_DIR"
 
 # flterm is forked (github.com/runyaga/flterm) to build on the nix Flutter
 # (3.41 / Dart 3.11) -- upstream 0.0.3 needs Dart 3.12 for private-named
-# parameters; the fork removes that. No host Flutter required. KLANGK_WEB_FLUTTER
+# parameters; the fork removes that. No host Flutter required. KLANGKBUILD_WEB_FLUTTER
 # can still override the binary; defaults to `flutter` on PATH (nix toolchain).
-FLUTTER="${KLANGK_WEB_FLUTTER:-flutter}"
+FLUTTER="${KLANGKBUILD_WEB_FLUTTER:-flutter}"
 
 # TEMPORARY: wasm builds are disabled to debug a production-only issue on
 # rag.enfoldsystems.net that is not reproducible locally. This builds the

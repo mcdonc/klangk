@@ -36,11 +36,11 @@ function getWorkspaceToken() {
 }
 
 function getConfig() {
-  const bridgeUrl = process.env.KLANGK_BRIDGE_URL;
+  const bridgeUrl = process.env.KLANGKWS_BRIDGE_URL;
   const workspaceToken = getWorkspaceToken();
   if (!bridgeUrl) {
     throw new Error(
-      "@klangk/bridge: KLANGK_BRIDGE_URL is not set. " +
+      "@klangk/bridge: KLANGKWS_BRIDGE_URL is not set. " +
         "Are you running inside a Klangk container?",
     );
   }
@@ -152,7 +152,7 @@ async function browserAction(action, payload = {}) {
  * @returns {Promise<boolean>}
  */
 async function isBridgeAvailable() {
-  const bridgeUrl = process.env.KLANGK_BRIDGE_URL;
+  const bridgeUrl = process.env.KLANGKWS_BRIDGE_URL;
   if (!bridgeUrl) return false;
   const browserId = getBrowserId();
   if (!browserId) return false;

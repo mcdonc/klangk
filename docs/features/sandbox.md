@@ -27,7 +27,7 @@ web UI.
 > a whole — when the workspace is created, without rebuilding anything.
 > By contrast, [features](features.md) are compiled into the workspace
 > image at build time, so what they add is available across the whole
-> deployment and switched on/off deploy-wide via `KLANGK_FEATURES_ENABLE`
+> deployment and switched on/off deploy-wide via `KLANGKD_FEATURES_ENABLE`
 > — adding a brand-new feature requires a rebuild, but activating an
 > already-compiled-in one does not.
 
@@ -100,7 +100,7 @@ sandbox:
 
 The setup script runs once — on workspace creation, not on
 reconnect. It runs as the `klangk` user inside the container. If
-`KLANGK_ALLOW_SUDO` is enabled on the server, the script can use
+`KLANGKD_ALLOW_SUDO` is enabled on the server, the script can use
 `sudo` for system-level setup (installing packages, etc.).
 
 ### `copy`
@@ -144,7 +144,7 @@ Bind mounts from the host into the container. Format:
 
 Relative source paths are resolved to absolute paths before being
 sent to the server. The server validates all mount sources against
-`KLANGK_ALLOWED_MOUNT_ROOTS` if that setting is configured.
+`KLANGKD_ALLOWED_MOUNT_ROOTS` if that setting is configured.
 
 The sandbox root mount (at `mount-at`) is implicit — you don't need
 to list it here.
@@ -269,7 +269,7 @@ directory is the sandbox root (the `mount-at` path).
 default. Without it, setup scripts are limited to user-space
 operations (installing to `~`, downloading binaries, etc.). To
 install system packages with `apt`, install nix, or modify system
-files, the server administrator must set `KLANGK_ALLOW_SUDO=true`
+files, the server administrator must set `KLANGKD_ALLOW_SUDO=true`
 in the server's `.env` file.
 
 ### Where the service command runs (and how to install for it)
@@ -277,7 +277,7 @@ in the server's `.env` file.
 A `service-command` does **not** run in the workspace owner's shell.
 It runs as the workspace's **agent** identity, in a dedicated
 `service` tmux session whose `$HOME` is the agent's home
-(`/home/clanker` by default, exposed as `$KLANGK_AGENT_HOME`) — not
+(`/home/clanker` by default, exposed as `$KLANGKWS_AGENT_HOME`) — not
 the owner's. The owner interacts with it through the **Service**
 terminal tab in the web UI.
 
@@ -300,9 +300,9 @@ will look:
 set -euo pipefail
 
 # Run the rest of setup as the agent identity: the service command
-# runs in the agent's service session ($KLANGK_AGENT_HOME), so install
+# runs in the agent's service session ($KLANGKWS_AGENT_HOME), so install
 # everything the service command depends on into THAT home.
-export HOME="${KLANGK_AGENT_HOME:-/home/clanker}"
+export HOME="${KLANGKWS_AGENT_HOME:-/home/clanker}"
 
 # Now ~/.profile, ~/.local/bin, etc. resolve into the agent's home.
 ```
@@ -320,7 +320,7 @@ export HOME="${KLANGK_AGENT_HOME:-/home/clanker}"
 # setup.sh
 set -euo pipefail
 
-# Install nix (requires KLANGK_ALLOW_SUDO=true on the server)
+# Install nix (requires KLANGKD_ALLOW_SUDO=true on the server)
 if ! command -v nix &>/dev/null; then
   curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
 fi
@@ -408,10 +408,10 @@ And a setup script:
 set -euo pipefail
 
 # Run the rest of setup as the agent identity: the service command
-# runs in the agent's service session ($KLANGK_AGENT_HOME), so install
+# runs in the agent's service session ($KLANGKWS_AGENT_HOME), so install
 # everything it depends on into THAT home. See
 # "Where the service command runs" in sandbox.md.
-export HOME="${KLANGK_AGENT_HOME:-/home/clanker}"
+export HOME="${KLANGKWS_AGENT_HOME:-/home/clanker}"
 
 # Install nix (single-user, no daemon needed in containers).
 if ! nix --version &>/dev/null; then
@@ -457,11 +457,11 @@ klangk shell myproj -A
 
 ## Interaction with server settings
 
-- **`KLANGK_ALLOWED_MOUNT_ROOTS`**: All bind mount sources are
+- **`KLANGKD_ALLOWED_MOUNT_ROOTS`**: All bind mount sources are
   validated against this list. If your mounts are under `/home` and
   the server allows `/home`, it works. Named volumes bypass this
   check.
-- **`KLANGK_IMAGE_NAME` / `KLANGK_ALLOWED_IMAGES`**: The `image`
+- **`KLANGKD_IMAGE_NAME` / `KLANGKD_ALLOWED_IMAGES`**: The `image`
   field must match one of the server's allowed images.
-- **`KLANGK_ALLOW_SUDO`**: Must be enabled on the server for setup
+- **`KLANGKD_ALLOW_SUDO`**: Must be enabled on the server for setup
   scripts that need `sudo` (e.g., installing system packages, nix).

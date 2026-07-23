@@ -32,55 +32,55 @@ services:
       - SYS_ADMIN
     environment:
       # --- Core ---
-      KLANGK_PORT: "8997"
-      KLANGK_EGRESS_PORT: "8995"
-      KLANGK_DEFAULT_USER: "admin@example.com"
-      KLANGK_DEFAULT_PASSWORD: "admin"
-      KLANGK_JWT_SECRET: "${KLANGK_JWT_SECRET}"
-      KLANGK_PREVENT_INSECURE_JWT_SECRET: "1"
-      KLANGK_DATA_DIR: /home/klangk/data
+      KLANGKD_PORT: "8997"
+      KLANGKD_EGRESS_PORT: "8995"
+      KLANGKD_DEFAULT_USER: "admin@example.com"
+      KLANGKD_DEFAULT_PASSWORD: "admin"
+      KLANGKD_JWT_SECRET: "${KLANGKD_JWT_SECRET}"
+      KLANGKD_PREVENT_INSECURE_JWT_SECRET: "1"
+      KLANGKD_DATA_DIR: /home/klangk/data
 
       # --- Customization directory (runtime, no rebuild) ---
       # Single directory for branding, certs, and email templates.
       # Subdirectories: branding/, certs/, email-templates/
-      KLANGK_CUSTOMIZE_DIR: /home/klangk/custom
+      KLANGKD_CUSTOMIZE_DIR: /home/klangk/custom
 
       # --- Branding (runtime, no rebuild) ---
       # Product name across the tab title, app-bar wordmark, and emails.
-      # KLANGK_PRODUCT_NAME: "Acme Labs"
+      # KLANGKD_PRODUCT_NAME: "Acme Labs"
       # Serve the logo from branding/logo.png (place in custom/branding/):
-      KLANGK_LOGO_URL: "/branding/logo.png"
-      # KLANGK_BRAND_COLOR: "#E65100"
+      KLANGKD_LOGO_URL: "/branding/logo.png"
+      # KLANGKD_BRAND_COLOR: "#E65100"
 
       # --- Legal & support links (runtime, no rebuild) ---
-      # KLANGK_TERMS_URL: "https://example.com/terms"
-      # KLANGK_PRIVACY_URL: "https://example.com/privacy"
-      # KLANGK_AUP_URL: "https://example.com/aup"
-      # KLANGK_SUPPORT_URL: "https://example.com/support"
-      # KLANGK_SUPPORT_EMAIL: "support@example.com"
+      # KLANGKD_TERMS_URL: "https://example.com/terms"
+      # KLANGKD_PRIVACY_URL: "https://example.com/privacy"
+      # KLANGKD_AUP_URL: "https://example.com/aup"
+      # KLANGKD_SUPPORT_URL: "https://example.com/support"
+      # KLANGKD_SUPPORT_EMAIL: "support@example.com"
 
       # --- Email customization (runtime, no rebuild) ---
       # Place templates in custom/email-templates/ (see docs)
-      # KLANGK_SMTP_REPLY_TO: "support@example.com"
-      # KLANGK_SMTP_HOST: "${KLANGK_SMTP_HOST}"
-      # KLANGK_SMTP_USER: "${KLANGK_SMTP_USER}"
-      # KLANGK_SMTP_PASSWORD: "${KLANGK_SMTP_PASSWORD}"
-      # KLANGK_SMTP_FROM: "${KLANGK_SMTP_FROM}"
+      # KLANGKD_SMTP_REPLY_TO: "support@example.com"
+      # KLANGKD_SMTP_HOST: "${KLANGKD_SMTP_HOST}"
+      # KLANGKD_SMTP_USER: "${KLANGKD_SMTP_USER}"
+      # KLANGKD_SMTP_PASSWORD: "${KLANGKD_SMTP_PASSWORD}"
+      # KLANGKD_SMTP_FROM: "${KLANGKD_SMTP_FROM}"
 
       # --- Custom CA certs (runtime, no rebuild) ---
       # Place *.pem/*.crt files in custom/certs/ — trusted for outbound TLS
-      # (OIDC, SMTP, LLM). Resolved via KLANGK_CUSTOMIZE_DIR/certs/.
+      # (OIDC, SMTP, LLM). Resolved via KLANGKD_CUSTOMIZE_DIR/certs/.
 
       # --- OIDC (runtime, no rebuild) ---
       # Uncomment to enable. Edit custom/oidc/oidc.yaml with your provider details.
-      # KLANGK_OIDC_CONFIG: /home/klangk/custom/oidc/oidc.yaml
-      # KLANGK_AUTH_MODES: "both"
-      # KLANGK_OIDC_LOGIN_HOOK: /home/klangk/custom/oidc/login_hook.py
+      # KLANGKD_OIDC_CONFIG: /home/klangk/custom/oidc/oidc.yaml
+      # KLANGKD_AUTH_MODES: "both"
+      # KLANGKD_OIDC_LOGIN_HOOK: /home/klangk/custom/oidc/login_hook.py
 
       # --- LLM ---
-      KLANGK_LLM_BASE_URL: "${KLANGK_LLM_BASE_URL}"
-      KLANGK_LLM_API_KEY: "${KLANGK_LLM_API_KEY}"
-      KLANGK_LLM_MODEL: "${KLANGK_LLM_MODEL}"
+      KLANGKD_LLM_BASE_URL: "${KLANGKD_LLM_BASE_URL}"
+      KLANGKD_LLM_API_KEY: "${KLANGKD_LLM_API_KEY}"
+      KLANGKD_LLM_MODEL: "${KLANGKD_LLM_MODEL}"
 
       # --- Observability ---
       LOGFIRE_BASE_URL: "${LOGFIRE_BASE_URL}"
@@ -88,9 +88,9 @@ services:
       LOGFIRE_ENVIRONMENT: "${LOGFIRE_ENVIRONMENT}"
 
       # --- Other ---
-      # KLANGK_DISABLE_REGISTRATION: "1"
-      # KLANGK_DNS_SERVERS: "100.100.100.100,8.8.8.8"
-      KLANGK_ALLOWED_MOUNT_ROOTS: "/home/klangk/mount"
+      # KLANGKD_DISABLE_REGISTRATION: "1"
+      # KLANGKD_DNS_SERVERS: "100.100.100.100,8.8.8.8"
+      KLANGKD_ALLOWED_MOUNT_ROOTS: "/home/klangk/mount"
 
     volumes:
       # Data volume (must exist, owned by 1000:1000):

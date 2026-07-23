@@ -18,7 +18,7 @@
  *
  * How the animation works: pi calls the `boing` tool (registered by the
  * boingball extension). The tool POSTs `{action:"boing", browser_id}` to the
- * host bridge (KLANGK_BRIDGE_URL), which fans the action out over the
+ * host bridge (KLANGKWS_BRIDGE_URL), which fans the action out over the
  * workspace WebSocket; the Flutter app renders a bouncing-ball overlay above
  * the canvas.
  *

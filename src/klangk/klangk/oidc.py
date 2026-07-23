@@ -77,7 +77,7 @@ def _parse_providers(
     """Parse a list of raw provider dicts into OIDCProvider objects.
 
     Shared by both inline (config-file ``oidc_providers:``) and external
-    (``KLANGK_OIDC_CONFIG``) loading paths.  *config_dir* is used to resolve
+    (``KLANGKD_OIDC_CONFIG``) loading paths.  *config_dir* is used to resolve
     relative ``ca-cert`` paths — ``None`` when loaded inline (relative paths
     are not meaningful without a file to be relative to).
     """
@@ -105,7 +105,7 @@ def _parse_providers(
 
 
 def _parse_hook_value(raw: str) -> tuple[str, str]:
-    """Parse KLANGK_OIDC_LOGIN_HOOK into (file_path, func_name).
+    """Parse KLANGKD_OIDC_LOGIN_HOOK into (file_path, func_name).
 
     Accepted formats:
     - ``/path/to/hook.py:func_name``
@@ -196,7 +196,7 @@ class OIDC:
 
         Sources (checked in order, first non-empty wins):
 
-        1. **External file** — ``KLANGK_OIDC_CONFIG`` (``self.app.state.settings.oidc_config``)
+        1. **External file** — ``KLANGKD_OIDC_CONFIG`` (``self.app.state.settings.oidc_config``)
            pointing at a separate YAML file.  This is an env-var override, so it
            wins over the config file (consistent with the global precedence rule:
            env > file > defaults).
@@ -207,12 +207,12 @@ class OIDC:
         :class:`~klangk.exceptions.ConfigurationError` if the external
         file path is set but doesn't exist.
         """
-        # 1. External file via KLANGK_OIDC_CONFIG (env override wins)
+        # 1. External file via KLANGKD_OIDC_CONFIG (env override wins)
         config_path = self.app.state.settings.oidc_config
         if config_path:
             if not os.path.isfile(config_path):
                 raise ConfigurationError(
-                    f"KLANGK_OIDC_CONFIG={config_path!r} not found"
+                    f"KLANGKD_OIDC_CONFIG={config_path!r} not found"
                     " (use an absolute path)"
                 )
             config_dir = os.path.dirname(os.path.abspath(config_path))
@@ -229,14 +229,14 @@ class OIDC:
     def init_providers(self) -> None:
         """Load providers into the instance registry.
 
-        Raises ConfigurationError if KLANGK_AUTH_MODES requires OIDC but no
+        Raises ConfigurationError if KLANGKD_AUTH_MODES requires OIDC but no
         providers are configured or the config file is missing.
         """
         self.providers = self.load_config()
         mode = self.auth_modes()
         if mode in ("oidc", "both") and not self.providers:
             raise ConfigurationError(
-                f"KLANGK_AUTH_MODES={mode!r} but no OIDC providers configured"
+                f"KLANGKD_AUTH_MODES={mode!r} but no OIDC providers configured"
             )
         if self.providers:
             names = ", ".join(p.id for p in self.providers)
@@ -267,18 +267,18 @@ class OIDC:
         single-user local-dev mode). ``none`` auto-issues a token for the
         seeded default user via ``POST /api/v1/auth/local``; see #1374.
 
-        When ``KLANGK_AUTH_MODES`` is unset the default is ``none``. OIDC
-        settings (``KLANGK_OIDC_*``) do **not** change the mode (#1419) — they
+        When ``KLANGKD_AUTH_MODES`` is unset the default is ``none``. OIDC
+        settings (``KLANGKD_OIDC_*``) do **not** change the mode (#1419) — they
         only take effect once the mode is ``oidc`` or ``both`` (set explicitly).
         A fresh klangk with nothing configured therefore boots in no-login
         single-user mode, bound to loopback, and "just works" locally without a
         password. Operators who want password login, OIDC, or both set
-        ``KLANGK_AUTH_MODES`` explicitly.
+        ``KLANGKD_AUTH_MODES`` explicitly.
 
-        ``KLANGK_AUTH_MODES`` is the sole authority on auth — nothing else
+        ``KLANGKD_AUTH_MODES`` is the sole authority on auth — nothing else
         defaults or overrides it (#1422 removed the deployment-shape setting
         that used to default it). The deployment shape is derived from this
-        knob plus ``KLANGK_LISTEN``.
+        knob plus ``KLANGKD_LISTEN``.
 
         Reads ``self.app.state.settings.auth_modes`` (resolved once at construction) —
         part of the composition-root refactor (#1426): the mode is not re-read
@@ -437,7 +437,7 @@ class OIDC:
     # --- login hook ---
 
     def load_login_hook(self) -> None:
-        """Load the OIDC login hook from KLANGK_OIDC_LOGIN_HOOK.
+        """Load the OIDC login hook from KLANGKD_OIDC_LOGIN_HOOK.
 
         The value is a file path to a Python script, optionally followed
         by ``:func_name``.  If the function name is omitted it defaults
@@ -463,21 +463,21 @@ class OIDC:
         path, func_name = _parse_hook_value(raw)
         if not os.path.isfile(path):
             raise ConfigurationError(
-                f"KLANGK_OIDC_LOGIN_HOOK: file not found: {path!r}"
+                f"KLANGKD_OIDC_LOGIN_HOOK: file not found: {path!r}"
             )
         spec = importlib.util.spec_from_file_location(
             "_klangk_login_hook", path
         )
         if spec is None or spec.loader is None:  # pragma: no cover
             raise ConfigurationError(
-                f"KLANGK_OIDC_LOGIN_HOOK: could not load: {path!r}"
+                f"KLANGKD_OIDC_LOGIN_HOOK: could not load: {path!r}"
             )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         hook = getattr(mod, func_name, None)
         if hook is None or not callable(hook):
             raise ConfigurationError(
-                f"KLANGK_OIDC_LOGIN_HOOK: {func_name!r} not found or not "
+                f"KLANGKD_OIDC_LOGIN_HOOK: {func_name!r} not found or not "
                 f"callable in {path!r}"
             )
         self.login_hook = hook

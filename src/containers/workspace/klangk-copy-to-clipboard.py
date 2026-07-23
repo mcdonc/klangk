@@ -21,7 +21,7 @@ import sys
 import urllib.error
 import urllib.request
 
-BRIDGE_URL = os.environ.get("KLANGK_BRIDGE_URL", "")
+BRIDGE_URL = os.environ.get("KLANGKWS_BRIDGE_URL", "")
 
 
 def _get_workspace_token():

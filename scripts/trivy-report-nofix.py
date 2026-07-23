@@ -30,7 +30,7 @@ import sys
 # (status == "fixed" / a populated FixedVersion) is upgrade-resolvable.
 NO_FIX_STATUSES = {"affected", "fix_deferred", "will_not_fix", "end_of_life"}
 TRACKING_ISSUE = "https://github.com/mcdonc/klangk/issues/570"
-IMAGE = os.environ.get("KLANGK_IMAGE_NAME", "klangk-workspace") + ":latest"
+IMAGE = os.environ.get("KLANGKD_IMAGE_NAME", "klangk-workspace") + ":latest"
 SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "UNKNOWN": 4}
 
 

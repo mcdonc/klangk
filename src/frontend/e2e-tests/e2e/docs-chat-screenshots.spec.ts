@@ -2,7 +2,7 @@
  * Captures screenshots for chat / AI agent documentation.
  * Run with: npx playwright test --project docs-screenshots -g "chat"
  *
- * Requires KLANGK_LLM_* env vars for agent responses.
+ * Requires KLANGKD_LLM_* env vars for agent responses.
  * Screenshots are saved to docs/assets/chat/
  */
 import { test } from "@playwright/test";

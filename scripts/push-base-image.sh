@@ -7,8 +7,8 @@
 # into the local Docker engine, so it is built and pushed in one step
 # via buildx; use build-base-image.sh for a local single-arch build.
 #
-# Override the published architectures with KLANGK_BASE_PLATFORMS,
-# e.g. KLANGK_BASE_PLATFORMS=linux/amd64 to publish amd64 only.
+# Override the published architectures with KLANGKBUILD_BASE_PLATFORMS,
+# e.g. KLANGKBUILD_BASE_PLATFORMS=linux/amd64 to publish amd64 only.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
@@ -17,7 +17,7 @@ IMAGE="ghcr.io/mcdonc/klangk/klangk-workspace-base"
 COMMIT="$(git rev-parse --short HEAD)"
 CALVER="$(date -u +%Y.%m.%d)"
 VERSION="${CALVER}-${COMMIT}"
-PLATFORMS="${KLANGK_BASE_PLATFORMS:-linux/amd64,linux/arm64}"
+PLATFORMS="${KLANGKBUILD_BASE_PLATFORMS:-linux/amd64,linux/arm64}"
 BUILDER="klangk-multiarch"
 
 # Check if already logged in to ghcr.io

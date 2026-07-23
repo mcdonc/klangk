@@ -126,7 +126,7 @@ class PortAllocator:
         self.app = app
 
     async def allocate_ports(self, workspace_id: str, count: int) -> list[int]:
-        # Clamp to the server-wide cap (KLANGK_HOSTED_PORTS_PER_WORKSPACE)
+        # Clamp to the server-wide cap (KLANGKD_HOSTED_PORTS_PER_WORKSPACE)
         # so creation never allocates ports the deployer has disabled —
         # otherwise a cap of 0 would still leave orphan allocations
         # until the container's first start reconcile (#1237).
@@ -681,7 +681,7 @@ class ContainerRegistry:
         policy = self.app.state.settings.image_pull_policy
         if policy not in _VALID_PULL_POLICIES:
             logger.warning(
-                "Invalid KLANGK_IMAGE_PULL_POLICY=%r (valid: %s); using 'never'.",
+                "Invalid KLANGKD_IMAGE_PULL_POLICY=%r (valid: %s); using 'never'.",
                 policy,
                 ", ".join(sorted(_VALID_PULL_POLICIES)),
             )
@@ -747,7 +747,7 @@ class ContainerRegistry:
                 timeout = int(env_val)
             except ValueError:
                 logger.warning(
-                    "KLANGK_IDLE_TIMEOUT_SECONDS=%r is not a valid integer, "
+                    "KLANGKD_IDLE_TIMEOUT_SECONDS=%r is not a valid integer, "
                     "using default %d",
                     env_val,
                     default,
@@ -765,7 +765,7 @@ class ContainerRegistry:
             return max(0, int(raw))
         except ValueError:
             logger.warning(
-                "KLANGK_HOSTED_PORTS_PER_WORKSPACE=%r is not an int; "
+                "KLANGKD_HOSTED_PORTS_PER_WORKSPACE=%r is not an int; "
                 "using default %d",
                 raw,
                 DEFAULT_PORTS_PER_WORKSPACE,
@@ -1148,7 +1148,7 @@ class ContainerRegistry:
         """Allocate or trim host ports under the port lock.
 
         ``num_ports`` is clamped down to the server-wide cap
-        (``KLANGK_HOSTED_PORTS_PER_WORKSPACE``). At cap 0 every workspace
+        (``KLANGKD_HOSTED_PORTS_PER_WORKSPACE``). At cap 0 every workspace
         releases all of its allocations; the returned empty list then
         suppresses the hosting env in :meth:`_build_env` (#1237).
         """
@@ -1195,7 +1195,7 @@ class ContainerRegistry:
         no start path can bypass the override: when a caller omits them we
         derive the env / bare-localhost floor via ``derive_hosting_info``
         (the same resolver the request paths use), so a deployer's
-        ``KLANGK_HOSTING_HOSTNAME`` is honored on every start — eager or not.
+        ``KLANGKD_HOSTING_HOSTNAME`` is honored on every start — eager or not.
         """
         if (
             hosting_hostname is None
@@ -1216,9 +1216,9 @@ class ContainerRegistry:
         egress_port = self.app.state.settings.egress_port
         proxy_url = f"http://host.containers.internal:{egress_port}/llm-proxy"
         llm_model = self.app.state.settings.llm_model
-        env_vars.append(f"KLANGK_LLM_PROXY_URL={proxy_url}")
+        env_vars.append(f"KLANGKWS_LLM_PROXY_URL={proxy_url}")
         if llm_model:
-            env_vars.append(f"KLANGK_LLM_MODEL={llm_model}")
+            env_vars.append(f"KLANGKWS_LLM_MODEL={llm_model}")
         env_vars.append("PI_SKIP_VERSION_CHECK=1")
         logger.info(
             "Container LLM proxy: %s (model: %s)",
@@ -1227,26 +1227,26 @@ class ContainerRegistry:
         )
 
         # Hosted-app serving env. Omit entirely when the workspace has
-        # no host ports (KLANGK_HOSTED_PORTS_PER_WORKSPACE=0, or a
-        # per-workspace value of 0): KLANGK_PORT_MAPPINGS absent makes
+        # no host ports (KLANGKD_HOSTED_PORTS_PER_WORKSPACE=0, or a
+        # per-workspace value of 0): KLANGKWS_PORT_MAPPINGS absent makes
         # klangk-hosted-url / get_hosted_url error out cleanly, and the
-        # KLANGK_HOSTING_* vars are meaningless without hosting. #1237
+        # KLANGKWS_HOSTING_* vars are meaningless without hosting. #1237
         if host_ports:
             mappings = [
                 f"{CONTAINER_PORT_START + i}:{hp}"
                 for i, hp in enumerate(host_ports)
             ]
-            env_vars.append(f"KLANGK_PORT_MAPPINGS={','.join(mappings)}")
-            env_vars.append(f"KLANGK_HOSTING_HOSTNAME={hosting_hostname}")
-            env_vars.append(f"KLANGK_HOSTING_PROTO={hosting_proto}")
-            env_vars.append(f"KLANGK_HOSTING_BASE_PATH={hosting_base_path}")
-        env_vars.append(f"KLANGK_WORKSPACE_ID={workspace_id}")
-        env_vars.append(f"KLANGK_AGENT_HOME={agent_home}")
+            env_vars.append(f"KLANGKWS_PORT_MAPPINGS={','.join(mappings)}")
+            env_vars.append(f"KLANGKWS_HOSTING_HOSTNAME={hosting_hostname}")
+            env_vars.append(f"KLANGKWS_HOSTING_PROTO={hosting_proto}")
+            env_vars.append(f"KLANGKWS_HOSTING_BASE_PATH={hosting_base_path}")
+        env_vars.append(f"KLANGKWS_WORKSPACE_ID={workspace_id}")
+        env_vars.append(f"KLANGKWS_AGENT_HOME={agent_home}")
         env_vars.append(
-            f"KLANGK_BRIDGE_URL=http://host.containers.internal:{egress_port}"
+            f"KLANGKWS_BRIDGE_URL=http://host.containers.internal:{egress_port}"
         )
         if self.terminal_banner:
-            env_vars.append(f"KLANGK_TERMINAL_BANNER={self.terminal_banner}")
+            env_vars.append(f"KLANGKWS_TERMINAL_BANNER={self.terminal_banner}")
 
         # Runtime SSL/CA trust (#1181): point OpenSSL/Python/curl/Node
         # at the bundle the entrypoint builds from the mounted certs.
@@ -1497,7 +1497,7 @@ class ContainerRegistry:
         # Build environment and mounts.
         t_env = time.monotonic()
         # Resolve the agent home at this async seam (``_build_env`` is
-        # sync) so every exec process inherits KLANGK_AGENT_HOME (#1157).
+        # sync) so every exec process inherits KLANGKWS_AGENT_HOME (#1157).
         agent_home = f"/home/{await self.app.state.model.users.agent_handle()}"
         ssl_dir = self.app.state.ssl_trust.ssl_cert_dir()
         if ssl_dir:

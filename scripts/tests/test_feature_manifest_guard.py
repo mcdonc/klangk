@@ -1,10 +1,10 @@
-"""Build-layer tests for the KLANGK_FEATURE_ prefix guard in
+"""Build-layer tests for the KLANGKWS_FEATURE_ prefix guard in
 import_dart_features.py (#1662).
 
 The build emitter refuses to write a ``klangk.config`` key into
-``features.json`` when the key doesn't start with ``KLANGK_FEATURE_``. That
+``features.json`` when the key doesn't start with ``KLANGKWS_FEATURE_``. That
 prefix is the feature-config namespace: every server setting is
-``KLANGK_<SETTING>`` (no ``FEATURE_`` infix), so the prefix alone keeps
+``KLANGKD_<SETTING>`` (no ``FEATURE_`` infix), so the prefix alone keeps
 feature-declared keys from ever colliding with a server secret / path / infra
 field — no reserved set / denylist needed. Generic env poison (``PATH``,
 ``HOME``, ``LD_PRELOAD``, …) is rejected by the same rule.
@@ -66,7 +66,7 @@ def _make_feature(features_dir, name, config):
 
 
 class TestPrefixGuard:
-    """A klangk.config key without the KLANGK_FEATURE_ prefix fails the build.
+    """A klangk.config key without the KLANGKWS_FEATURE_ prefix fails the build.
 
     Applies to every scope (container, frontend, both) — the declaration-side
     rule is uniform; how the value is surfaced to consumers differs (container
@@ -74,25 +74,25 @@ class TestPrefixGuard:
     """
 
     def test_unprefixed_klangk_key_raises(self, tmp_path):
-        # KLANGK_JWT_SECRET looks superficially namespaced but lacks FEATURE_.
+        # KLANGKD_JWT_SECRET looks superficially namespaced but lacks FEATURE_.
         # This is the canonical "would leak a server secret" example — the
         # prefix rule alone catches it without any denylist.
         p = _make_feature(
             tmp_path,
             "leaky",
-            {"KLANGK_JWT_SECRET": {"scope": "container", "default": ""}},
+            {"KLANGKD_JWT_SECRET": {"scope": "container", "default": ""}},
         )
         with pytest.raises(_BadKeyError) as ei:
             import_dart_features.collect_feature_metadata([p], str(tmp_path))
         msg = str(ei.value)
         assert "leaky" in msg
-        assert "KLANGK_JWT_SECRET" in msg
-        assert "KLANGK_FEATURE_" in msg
+        assert "KLANGKD_JWT_SECRET" in msg
+        assert "KLANGKWS_FEATURE_" in msg
 
     def test_bare_unprefixed_key_raises(self, tmp_path):
-        # SOLIPLEX_URL (no KLANGK_ at all) — the pre-vendoring soliplex
+        # SOLIPLEX_URL (no KLANGKD_ at all) — the pre-vendoring soliplex
         # declaration form. Same failure; the rule is "must start with
-        # KLANGK_FEATURE_", nothing narrower.
+        # KLANGKWS_FEATURE_", nothing narrower.
         p = _make_feature(
             tmp_path,
             "soliplex-old",
@@ -111,10 +111,10 @@ class TestPrefixGuard:
             "LD_PRELOAD",
             "PYTHONPATH",
             "NODE_PATH",
-            "KLANGK_JWT_SECRET",
-            "KLANGK_DATA_DIR",
-            "KLANGK_SOCKET",
-            "KLANGK_BOING_SPEED",  # the OLD pre-FEATURE_ name — must rename
+            "KLANGKD_JWT_SECRET",
+            "KLANGKD_DATA_DIR",
+            "KLANGKD_SOCKET",
+            "KLANGKBUILD_BOING_SPEED",  # the OLD pre-FEATURE_ name — must rename
         ],
     )
     def test_each_non_prefixed_key_raises(self, tmp_path, key):
@@ -130,25 +130,25 @@ class TestPrefixGuard:
         p = _make_feature(
             tmp_path,
             "p",
-            {"KLANGK_JWT_SECRET": {"scope": scope, "default": ""}},
+            {"KLANGKD_JWT_SECRET": {"scope": scope, "default": ""}},
         )
         with pytest.raises(_BadKeyError):
             import_dart_features.collect_feature_metadata([p], str(tmp_path))
 
 
 class TestPrefixedKeysStillEmit:
-    """The intended pattern (KLANGK_FEATURE_<NAME>) still emits — the guard
+    """The intended pattern (KLANGKWS_FEATURE_<NAME>) still emits — the guard
     doesn't overreach."""
 
     def test_container_scope_emits_to_env_keys(self, tmp_path):
         # The git-credential feature's renamed key
-        # (KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID, scope=container) is the
+        # (KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID, scope=container) is the
         # canonical 'good' container example.
         p = _make_feature(
             tmp_path,
             "git-credential",
             {
-                "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID": {
+                "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": {
                     "scope": "container",
                     "default": "",
                     "description": "GitHub OAuth client ID",
@@ -158,20 +158,20 @@ class TestPrefixedKeysStillEmit:
         features, env_keys = import_dart_features.collect_feature_metadata(
             [p], str(tmp_path)
         )
-        assert env_keys == ["KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID"]
+        assert env_keys == ["KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID"]
         assert features[0]["name"] == "git-credential"
         # The full prefixed key is carried into the feature's config block
         # too — the runtime resolver strips + lowercases for /api/config.
-        assert "KLANGK_FEATURE_GITHUB_OAUTH_CLIENT_ID" in features[0]["config"]
+        assert "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID" in features[0]["config"]
 
     def test_frontend_scope_emits_to_config_block(self, tmp_path):
-        # The boingball feature's renamed key (KLANGK_FEATURE_BOING_SPEED,
+        # The boingball feature's renamed key (KLANGKWS_FEATURE_BOING_SPEED,
         # scope=frontend) is the canonical 'good' frontend example.
         p = _make_feature(
             tmp_path,
             "boingball",
             {
-                "KLANGK_FEATURE_BOING_SPEED": {
+                "KLANGKWS_FEATURE_BOING_SPEED": {
                     "scope": "frontend",
                     "default": "1.0",
                     "description": "Animation speed",
@@ -183,19 +183,19 @@ class TestPrefixedKeysStillEmit:
         )
         # Frontend-scope keys don't enter container_env_keys.
         assert env_keys == []
-        assert "KLANGK_FEATURE_BOING_SPEED" in features[0]["config"]
+        assert "KLANGKWS_FEATURE_BOING_SPEED" in features[0]["config"]
 
     def test_both_scope_emits_to_both_surfaces(self, tmp_path):
         p = _make_feature(
             tmp_path,
             "shared",
-            {"KLANGK_FEATURE_SHARED_URL": {"scope": "both", "default": ""}},
+            {"KLANGKWS_FEATURE_SHARED_URL": {"scope": "both", "default": ""}},
         )
         features, env_keys = import_dart_features.collect_feature_metadata(
             [p], str(tmp_path)
         )
-        assert env_keys == ["KLANGK_FEATURE_SHARED_URL"]
-        assert "KLANGK_FEATURE_SHARED_URL" in features[0]["config"]
+        assert env_keys == ["KLANGKWS_FEATURE_SHARED_URL"]
+        assert "KLANGKWS_FEATURE_SHARED_URL" in features[0]["config"]
 
 
 class TestPrefixConstantDrift:
@@ -214,5 +214,5 @@ class TestPrefixConstantDrift:
         assert (
             import_dart_features._CONTAINER_ENV_KEY_PREFIX
             == _CONTAINER_ENV_KEY_PREFIX
-            == "KLANGK_FEATURE_"
+            == "KLANGKWS_FEATURE_"
         )

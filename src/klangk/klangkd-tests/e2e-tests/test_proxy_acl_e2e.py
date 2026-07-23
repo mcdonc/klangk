@@ -6,7 +6,7 @@ controlled env to verify the generated config contains the correct
 allow/deny directives (replaces the old scripts/nginx.sh invocation).
 
 TestProxyAclEnforcement — starts the proxy (nginx) + uvicorn and verifies that
-requests from 127.0.0.1 are denied when KLANGK_CONTAINER_SUBNETS is
+requests from 127.0.0.1 are denied when KLANGKD_CONTAINER_SUBNETS is
 set to a non-local subnet (explicit override does not add 127.0.0.1).
 """
 
@@ -35,14 +35,14 @@ def _render_conf(env_overrides, tmpdir=None):
     Keys the renderer consults but that aren't in ``env_overrides`` are
     absent from the dict (unset) so each test starts from a known-clean
     state — without this, ``test_no_llm_block_*`` would see a
-    ``KLANGK_LLM_BASE_URL`` leaked from ``test_llm_block_*``.
+    ``KLANGKD_LLM_BASE_URL`` leaked from ``test_llm_block_*``.
     """
     env = {
-        "KLANGK_PORT": "19998",
-        "KLANGK_LISTEN": "127.0.0.1",
-        "KLANGK_EGRESS_PORT": "19999",
-        "KLANGK_DATA_DIR": str(tmpdir or "/tmp/klangk-e2e-data"),
-        "KLANGK_STATE_DIR": str(tmpdir or "/tmp/klangk-e2e-state"),
+        "KLANGKD_PORT": "19998",
+        "KLANGKD_LISTEN": "127.0.0.1",
+        "KLANGKD_EGRESS_PORT": "19999",
+        "KLANGKD_DATA_DIR": str(tmpdir or "/tmp/klangk-e2e-data"),
+        "KLANGKD_STATE_DIR": str(tmpdir or "/tmp/klangk-e2e-state"),
         **env_overrides,
     }
     from klangk.proxy import ProxyRenderer, tcp_upstream
@@ -64,11 +64,11 @@ class TestProxyAclConfig:
     """Verify the renderer generates correct allow/deny lines."""
 
     def test_explicit_subnets(self, tmp_path):
-        """KLANGK_CONTAINER_SUBNETS override produces exact allow lines."""
+        """KLANGKD_CONTAINER_SUBNETS override produces exact allow lines."""
         conf = _render_conf(
             {
-                "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16",
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
             },
             str(tmp_path),
         )
@@ -94,7 +94,7 @@ class TestProxyAclConfig:
     def test_auto_detect_host_ips(self, tmp_path):
         """Without override, host IPv4 addresses are auto-detected."""
         conf = _render_conf(
-            {"KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434"},
+            {"KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434"},
             str(tmp_path),
         )
         # Scope to the container-endpoint ACL (see test_explicit_subnets for
@@ -113,19 +113,19 @@ class TestProxyAclConfig:
         assert "allow 192.168.0.0/16;" not in bd
 
     def test_no_llm_block_without_url(self, tmp_path):
-        """LLM proxy block is omitted when KLANGK_LLM_BASE_URL is unset."""
+        """LLM proxy block is omitted when KLANGKD_LLM_BASE_URL is unset."""
         conf = _render_conf(
-            {"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"},
+            {"KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24"},
             str(tmp_path),
         )
         assert "llm-proxy" not in conf
 
     def test_llm_block_present_with_url(self, tmp_path):
-        """LLM proxy block is included when KLANGK_LLM_BASE_URL is set."""
+        """LLM proxy block is included when KLANGKD_LLM_BASE_URL is set."""
         conf = _render_conf(
             {
-                "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
             },
             str(tmp_path),
         )
@@ -133,18 +133,18 @@ class TestProxyAclConfig:
         assert "allow 10.89.0.0/24;" in conf
 
     def test_llm_api_key_cmd_prefix_resolved(self, tmp_path):
-        """A cmd:-prefixed KLANGK_LLM_API_KEY is resolved (not emitted verbatim).
+        """A cmd:-prefixed KLANGKD_LLM_API_KEY is resolved (not emitted verbatim).
 
-        nginx.sh consumes KLANGK_LLM_API_KEY via bash expansion, so it must
+        nginx.sh consumes KLANGKD_LLM_API_KEY via bash expansion, so it must
         run it through klangk-resolve-value — otherwise the generated
         conf would send `Bearer cmd:...` verbatim as the Authorization
         header.
         """
         conf = _render_conf(
             {
-                "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGK_LLM_API_KEY": "cmd:printf %s resolved-key",
+                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_LLM_API_KEY": "cmd:printf %s resolved-key",
             },
             str(tmp_path),
         )
@@ -153,14 +153,14 @@ class TestProxyAclConfig:
         assert "cmd:" not in conf
 
     def test_llm_api_key_file_prefix_resolved(self, tmp_path):
-        """A file:-prefixed KLANGK_LLM_API_KEY is read from the file."""
+        """A file:-prefixed KLANGKD_LLM_API_KEY is read from the file."""
         key_file = tmp_path / "llm-key"
         key_file.write_text("from-file-key\n")
         conf = _render_conf(
             {
-                "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGK_LLM_API_KEY": f"file:{key_file}",
+                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_LLM_API_KEY": f"file:{key_file}",
             },
             str(tmp_path),
         )
@@ -168,11 +168,11 @@ class TestProxyAclConfig:
         assert "file:" not in conf
 
     def test_llm_base_url_cmd_prefix_resolved(self, tmp_path):
-        """A cmd:-prefixed KLANGK_LLM_BASE_URL is resolved to the real URL."""
+        """A cmd:-prefixed KLANGKD_LLM_BASE_URL is resolved to the real URL."""
         conf = _render_conf(
             {
-                "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
-                "KLANGK_LLM_BASE_URL": "cmd:printf %s http://127.0.0.1:11434",
+                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
+                "KLANGKD_LLM_BASE_URL": "cmd:printf %s http://127.0.0.1:11434",
             },
             str(tmp_path),
         )
@@ -183,7 +183,7 @@ class TestProxyAclConfig:
     def test_browser_delegate_has_acl(self, tmp_path):
         """browser-delegate endpoint always gets the ACL."""
         conf = _render_conf(
-            {"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"},
+            {"KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24"},
             str(tmp_path),
         )
         # Find the browser-delegate location block and check it has the ACL.
@@ -228,10 +228,10 @@ class TestProxyAclConfig:
 
     def test_auth_local_acl_independent_of_container_subnets(self, tmp_path):
         """The /auth/local ACL is a fixed loopback allowlist — it must NOT be
-        widened by KLANGK_CONTAINER_SUBNETS, or a container could reach the
+        widened by KLANGKD_CONTAINER_SUBNETS, or a container could reach the
         free-token endpoint."""
         conf = _render_conf(
-            {"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"}, str(tmp_path)
+            {"KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24"}, str(tmp_path)
         )
         m = re.search(
             r"location = /api/v1/auth/local \{(.*?)\}",
@@ -255,8 +255,8 @@ class TestProxyAclConfig:
         the http-scope geo block, keyed on the pre-realip peer (#1546)."""
         conf = _render_conf(
             {
-                "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16",
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
             },
             str(tmp_path),
         )
@@ -271,10 +271,10 @@ class TestProxyAclConfig:
 
     def test_catch_all_never_denies_loopback(self, tmp_path):
         """Loopback is never flagged by the geo even when it appears in
-        KLANGK_CONTAINER_SUBNETS — local browsers connect via loopback and
+        KLANGKD_CONTAINER_SUBNETS — local browsers connect via loopback and
         must reach the full UI/API."""
         conf = _render_conf(
-            {"KLANGK_CONTAINER_SUBNETS": "127.0.0.1,10.89.0.0/24"},
+            {"KLANGKD_CONTAINER_SUBNETS": "127.0.0.1,10.89.0.0/24"},
             str(tmp_path),
         )
         assert "10.89.0.0/24 1;" in conf
@@ -286,7 +286,7 @@ class TestProxyAclConfig:
         whenever non-loopback container subnets are configured — there is
         no way to opt out of the brute-force cap (#1376)."""
         conf = _render_conf(
-            {"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"}, str(tmp_path)
+            {"KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24"}, str(tmp_path)
         )
         assert "geo $realip_remote_addr $container_source {" in conf
         assert "10.89.0.0/24 1;" in conf
@@ -294,7 +294,7 @@ class TestProxyAclConfig:
 
 
 class TestProxyHostedBlock:
-    """KLANGK_HOSTED_PORTS_PER_WORKSPACE gates the /hosted/ proxy (#1237)."""
+    """KLANGKD_HOSTED_PORTS_PER_WORKSPACE gates the /hosted/ proxy (#1237)."""
 
     def test_default_emits_proxy_locations(self, tmp_path):
         """Unset / non-zero: both hosted proxy locations are present."""
@@ -312,14 +312,14 @@ class TestProxyHostedBlock:
     def test_explicit_nonzero_emits_proxy_locations(self, tmp_path):
         """An explicit positive cap still emits the proxy locations."""
         conf = _render_conf(
-            {"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "3"}, str(tmp_path)
+            {"KLANGKD_HOSTED_PORTS_PER_WORKSPACE": "3"}, str(tmp_path)
         )
         assert "location ~ ^/hosted/[^/]+/(?<hosted_port>" in conf
 
     def test_zero_replaces_proxy_with_404(self, tmp_path):
         """cap=0 collapses the hosted locations to a single 404 location."""
         conf = _render_conf(
-            {"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "0"}, str(tmp_path)
+            {"KLANGKD_HOSTED_PORTS_PER_WORKSPACE": "0"}, str(tmp_path)
         )
         assert "location ^~ /hosted/ {" in conf
         assert "return 404;" in conf
@@ -331,7 +331,7 @@ class TestProxyHostedBlock:
         """Garbage is not '0', so the proxy stays enabled (backend clamps
         to the default 5; the proxy only needs the boolean off-switch)."""
         conf = _render_conf(
-            {"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "garbage"}, str(tmp_path)
+            {"KLANGKD_HOSTED_PORTS_PER_WORKSPACE": "garbage"}, str(tmp_path)
         )
         assert "location ~ ^/hosted/[^/]+/(?<hosted_port>" in conf
         assert "return 404;" not in conf
@@ -343,9 +343,9 @@ class TestProxyAclEnforcement:
     @pytest.fixture(scope="class")
     @staticmethod
     def proxy_stack(tmp_path_factory):
-        """Start uvicorn + the proxy (nginx) with a restrictive KLANGK_CONTAINER_SUBNETS.
+        """Start uvicorn + the proxy (nginx) with a restrictive KLANGKD_CONTAINER_SUBNETS.
 
-        KLANGK_CONTAINER_SUBNETS=192.0.2.0/24 (TEST-NET-1). With an
+        KLANGKD_CONTAINER_SUBNETS=192.0.2.0/24 (TEST-NET-1). With an
         explicit override, 127.0.0.1 is NOT implicitly added, so
         requests from localhost are denied on ACL-gated endpoints
         (/llm-proxy, /api/v1/browser-delegate). Regular endpoints (/)
@@ -365,12 +365,12 @@ class TestProxyAclEnforcement:
         server = start_server(
             data_dir=data_dir,
             state_dir=state_dir,
-            KLANGK_JWT_SECRET="proxy-acl-test-secret",
-            KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-            KLANGK_DEFAULT_USER="test@example.com",
-            KLANGK_DEFAULT_PASSWORD="testpass",
-            KLANGK_TEST_MODE="1",
-            KLANGK_IDLE_TIMEOUT_SECONDS="300",
+            KLANGKD_JWT_SECRET="proxy-acl-test-secret",
+            KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+            KLANGKD_DEFAULT_USER="test@example.com",
+            KLANGKD_DEFAULT_PASSWORD="testpass",
+            KLANGKD_TEST_MODE="1",
+            KLANGKD_IDLE_TIMEOUT_SECONDS="300",
             LOGFIRE_TOKEN="",
         )
         uds_path = server["uds_path"]
@@ -382,14 +382,14 @@ class TestProxyAclEnforcement:
         import types
 
         proxy_env = {
-            "KLANGK_PORT": browser_port,
-            "KLANGK_LISTEN": "0.0.0.0",
-            "KLANGK_EGRESS_PORT": egress_port,
-            "KLANGK_CONTAINER_SUBNETS": "192.0.2.0/24",
-            "KLANGK_LLM_BASE_URL": "http://127.0.0.1:1",
-            "KLANGK_LLM_API_KEY": "fake-key",
-            "KLANGK_DATA_DIR": data_dir,
-            "KLANGK_STATE_DIR": state_dir,
+            "KLANGKD_PORT": browser_port,
+            "KLANGKD_LISTEN": "0.0.0.0",
+            "KLANGKD_EGRESS_PORT": egress_port,
+            "KLANGKD_CONTAINER_SUBNETS": "192.0.2.0/24",
+            "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:1",
+            "KLANGKD_LLM_API_KEY": "fake-key",
+            "KLANGKD_DATA_DIR": data_dir,
+            "KLANGKD_STATE_DIR": state_dir,
         }
         proxy_state = os.path.join(tmpdir, "nginx")
         os.makedirs(proxy_state, exist_ok=True)
@@ -514,12 +514,12 @@ class TestProxyDenyByDefault:
         server = start_server(
             data_dir=data_dir,
             state_dir=state_dir,
-            KLANGK_JWT_SECRET="proxy-deny-test-secret",
-            KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-            KLANGK_DEFAULT_USER="test@example.com",
-            KLANGK_DEFAULT_PASSWORD="testpass",
-            KLANGK_TEST_MODE="1",
-            KLANGK_IDLE_TIMEOUT_SECONDS="300",
+            KLANGKD_JWT_SECRET="proxy-deny-test-secret",
+            KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+            KLANGKD_DEFAULT_USER="test@example.com",
+            KLANGKD_DEFAULT_PASSWORD="testpass",
+            KLANGKD_TEST_MODE="1",
+            KLANGKD_IDLE_TIMEOUT_SECONDS="300",
             LOGFIRE_TOKEN="",
         )
         uds_path = server["uds_path"]
@@ -534,12 +534,12 @@ class TestProxyDenyByDefault:
         import types
 
         proxy_env = {
-            "KLANGK_PORT": browser_port,
-            "KLANGK_LISTEN": "0.0.0.0",
-            "KLANGK_EGRESS_PORT": egress_port,
-            "KLANGK_CONTAINER_SUBNETS": host_ip,
-            "KLANGK_DATA_DIR": data_dir,
-            "KLANGK_STATE_DIR": state_dir,
+            "KLANGKD_PORT": browser_port,
+            "KLANGKD_LISTEN": "0.0.0.0",
+            "KLANGKD_EGRESS_PORT": egress_port,
+            "KLANGKD_CONTAINER_SUBNETS": host_ip,
+            "KLANGKD_DATA_DIR": data_dir,
+            "KLANGKD_STATE_DIR": state_dir,
         }
         proxy_state = os.path.join(tmpdir, "nginx")
         os.makedirs(proxy_state, exist_ok=True)
@@ -671,17 +671,17 @@ class TestProxyAuthLocalAcl:
 
         # Start the real backend (klangkd on its UDS); the proxy (started
         # below) proxies to this socket (#1525).
-        # KLANGK_AUTH_MODES=none so /auth/local actually mints a token.
+        # KLANGKD_AUTH_MODES=none so /auth/local actually mints a token.
         server = start_server(
             data_dir=data_dir,
             state_dir=state_dir,
-            KLANGK_JWT_SECRET="proxy-auth-local-test-secret",
-            KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-            KLANGK_DEFAULT_USER="test@example.com",
-            KLANGK_DEFAULT_PASSWORD="testpass",
-            KLANGK_AUTH_MODES="none",
-            KLANGK_TEST_MODE="1",
-            KLANGK_IDLE_TIMEOUT_SECONDS="300",
+            KLANGKD_JWT_SECRET="proxy-auth-local-test-secret",
+            KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+            KLANGKD_DEFAULT_USER="test@example.com",
+            KLANGKD_DEFAULT_PASSWORD="testpass",
+            KLANGKD_AUTH_MODES="none",
+            KLANGKD_TEST_MODE="1",
+            KLANGKD_IDLE_TIMEOUT_SECONDS="300",
             LOGFIRE_TOKEN="",
         )
         uds_path = server["uds_path"]
@@ -694,11 +694,11 @@ class TestProxyAuthLocalAcl:
         import types
 
         proxy_env = {
-            "KLANGK_PORT": browser_port,
-            "KLANGK_LISTEN": "0.0.0.0",
-            "KLANGK_EGRESS_PORT": egress_port,
-            "KLANGK_DATA_DIR": data_dir,
-            "KLANGK_STATE_DIR": state_dir,
+            "KLANGKD_PORT": browser_port,
+            "KLANGKD_LISTEN": "0.0.0.0",
+            "KLANGKD_EGRESS_PORT": egress_port,
+            "KLANGKD_DATA_DIR": data_dir,
+            "KLANGKD_STATE_DIR": state_dir,
         }
         proxy_state = os.path.join(tmpdir, "nginx")
         os.makedirs(proxy_state, exist_ok=True)

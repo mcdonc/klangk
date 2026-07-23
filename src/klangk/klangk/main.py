@@ -185,13 +185,13 @@ class Lifecycle:
         - ``none`` / ``oidc`` → seed with ``password_hash=None``. The row is
           load-bearing for ``/auth/local`` (token minting, #1374) but no
           endpoint validates the hash — a password would be noise.
-        - ``password`` / ``both`` → seed with ``KLANGK_DEFAULT_PASSWORD``.
+        - ``password`` / ``both`` → seed with ``KLANGKD_DEFAULT_PASSWORD``.
           **Fail-fast if unset** — auto-generating + printing to stderr was
           a footgun for detached deployments (the password was lost to a
           log nobody reads, causing lockout).
 
         In all modes: once the admin group has ≥1 member, this method is a
-        no-op (#1622 — editing ``KLANGK_DEFAULT_*`` and restarting cannot
+        no-op (#1622 — editing ``KLANGKD_DEFAULT_*`` and restarting cannot
         mint a new admin or clobber the existing one).
         """
         settings = self.app.state.settings
@@ -226,7 +226,7 @@ class Lifecycle:
             password = settings.default_password
             if password is None:
                 raise RuntimeError(
-                    f"auth_modes={auth_modes} requires KLANGK_DEFAULT_PASSWORD "
+                    f"auth_modes={auth_modes} requires KLANGKD_DEFAULT_PASSWORD "
                     "(set it in klangkd.yaml or the env). Refusing to boot "
                     "without a known admin password."
                 )
@@ -275,7 +275,7 @@ class Lifecycle:
         flip back to ``none`` mode, use ``/auth/local`` to get a free admin
         token, run ``klangk admin users set-password`` to set a real hash,
         then flip back to password/both. Or re-empty the admin group +
-        reseed with ``KLANGK_DEFAULT_PASSWORD`` staged.
+        reseed with ``KLANGKD_DEFAULT_PASSWORD`` staged.
         """
         auth_modes = self.app.state.settings.auth_modes or "none"
         if auth_modes not in ("password", "both"):
@@ -296,7 +296,7 @@ class Lifecycle:
             "none/oidc mode). Recovery: boot in none mode, run "
             "`klangk admin users set-password <email>` via /auth/local trust, "
             "then flip back to password/both. Or delete the admin row and "
-            "reseed with KLANGK_DEFAULT_PASSWORD staged."
+            "reseed with KLANGKD_DEFAULT_PASSWORD staged."
         )
 
     async def seed_agent_user(self) -> None:
@@ -328,7 +328,7 @@ class Lifecycle:
             if await cursor.fetchone() is not None:
                 raise RuntimeError(
                     f"Cannot seed chat agent: handle {handle!r} is already"
-                    " used by another user. Set KLANGK_AGENT_HANDLE to a"
+                    " used by another user. Set KLANGKD_AGENT_HANDLE to a"
                     " unique value."
                 )
             await db.execute(
@@ -452,7 +452,7 @@ class Lifecycle:
         app.state.settings = new
         # #1467: reconfigure global logging from the new settings *first*, so
         # any warnings the subsystem loop below emits (e.g. "ssl_trust
-        # reconfigure failed") use the new KLANGK_LOG_LEVEL. Logging is global
+        # reconfigure failed") use the new KLANGKD_LOG_LEVEL. Logging is global
         # module state, reconfigured at this explicit seam (not an
         # app.state.* subsystem).
         configure_logging(new)
@@ -579,16 +579,16 @@ def _is_loopback_bind(host: str) -> bool:
 def enforce_no_auth_bind_safety(app) -> None:
     """Refuse to start in ``none`` auth mode unless the browser bind is loopback.
 
-    ``KLANGK_AUTH_MODES=none`` freely issues a token for the seeded default
+    ``KLANGKD_AUTH_MODES=none`` freely issues a token for the seeded default
     user (``POST /api/v1/auth/local``); anyone who can reach that endpoint is
-    effectively logged in as admin. In full/browser mode (`KLANGK_PORT` set),
-    the loopback browser bind (`KLANGK_LISTEN`) is the identity boundary — it
+    effectively logged in as admin. In full/browser mode (`KLANGKD_PORT` set),
+    the loopback browser bind (`KLANGKD_LISTEN`) is the identity boundary — it
     keeps the endpoint reachable from the operator's own browser but not from
     the network or from workspace containers. Override the gate explicitly
-    with ``KLANGK_ALLOW_INSECURE_NO_AUTH=1`` when you knowingly expose a
+    with ``KLANGKD_ALLOW_INSECURE_NO_AUTH=1`` when you knowingly expose a
     no-auth server (e.g. a throwaway VM on an isolated network). #1374.
 
-    In headless mode (`KLANGK_PORT` unset) there is no browser listener at
+    In headless mode (`KLANGKD_PORT` unset) there is no browser listener at
     all — the backend serves only the UDS (same-uid trust boundary), and
     ``/auth/local`` is never exposed over TCP — so the gate is a no-op (#1542).
     """
@@ -606,17 +606,17 @@ def enforce_no_auth_bind_safety(app) -> None:
         "yes",
     ):
         logger.warning(
-            "KLANGK_AUTH_MODES=none with non-loopback bind %r — allowed "
-            "because KLANGK_ALLOW_INSECURE_NO_AUTH=1. Anyone who can reach "
+            "KLANGKD_AUTH_MODES=none with non-loopback bind %r — allowed "
+            "because KLANGKD_ALLOW_INSECURE_NO_AUTH=1. Anyone who can reach "
             "this address is effectively logged in as the default admin user.",
             host,
         )
         return
     raise SystemExit(
-        "Refusing to start: KLANGK_AUTH_MODES=none but KLANGK_LISTEN=%r "
+        "Refusing to start: KLANGKD_AUTH_MODES=none but KLANGKD_LISTEN=%r "
         "is not a loopback address. no-auth mode freely issues an admin "
         "token, so it must bind loopback (127.0.0.0/8, ::1, or localhost). "
-        "Set KLANGK_LISTEN=127.0.0.1, or set KLANGK_ALLOW_INSECURE_NO_AUTH=1 "
+        "Set KLANGKD_LISTEN=127.0.0.1, or set KLANGKD_ALLOW_INSECURE_NO_AUTH=1 "
         "to override if you understand the risk. See #1374." % host
     )
 
@@ -655,7 +655,7 @@ async def lifespan(app: FastAPI):
 
     # Make the backend process itself trust deployer-supplied CAs (#1181)
     # before any outbound TLS happens (OIDC discovery, SMTP relay, LLM-proxy
-    # upstream). No-op when KLANGK_SSL_CERT_DIR is unset or empty of certs.
+    # upstream). No-op when KLANGKD_SSL_CERT_DIR is unset or empty of certs.
     app.state.ssl_trust.apply_backend_ssl_trust()
 
     # Configure Logfire *after* SSL trust is applied. logfire.configure()
@@ -754,7 +754,7 @@ def register_exception_handlers(application: FastAPI) -> None:
 # --- Live CORS middleware (#1610) ---
 # Instead of a static CORSMiddleware, this wrapper re-reads allowed origins
 # from app.state.util.cors_origins() on every request so a SIGHUP reload
-# of KLANGK_CORS_ORIGINS takes effect without a process restart.
+# of KLANGKD_CORS_ORIGINS takes effect without a process restart.
 
 
 class LiveCORSMiddleware:
@@ -798,8 +798,8 @@ def setup_static_files(app: FastAPI, frontend_dir: Path) -> None:
 
     Optionally mounts a branding directory at ``/branding`` so a custom
     logo / assets can be served without a Flutter rebuild.  Prefers
-    ``<KLANGK_CUSTOMIZE_DIR>/branding`` when it exists; falls back to
-    ``<KLANGK_DATA_DIR>/branding`` if that exists.  If neither directory
+    ``<KLANGKD_CUSTOMIZE_DIR>/branding`` when it exists; falls back to
+    ``<KLANGKD_DATA_DIR>/branding`` if that exists.  If neither directory
     exists, the ``/branding`` mount is skipped entirely.  Mounted before
     the catch-all ``/`` frontend mount so it takes priority, and without
     ``html=True`` (no directory listing). See #1152, #1360.
@@ -849,7 +849,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     app.state.settings = settings
     # #1467: logging is configured centrally (module-level defaults are
     # already active from the import of klangk.logger; this call re-applies
-    # the level from KLANGK_LOG_LEVEL now that settings are finalized, and
+    # the level from KLANGKD_LOG_LEVEL now that settings are finalized, and
     # is also the SIGHUP reconfigure path). No app.state.logger object —
     # logging is global module state, reconfigured at this explicit seam.
     configure_logging(settings)
@@ -875,7 +875,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     app.state.container_registry = container.ContainerRegistry(app)
     # Slice 2b (#1463): proxy watchdog is an owned instance with start/stop
     # lifecycle methods called by the lifespan. The engine is selected once
-    # here by KLANGK_PROXY_ENGINE (#1559): ``caddy`` (default since #1634,
+    # here by KLANGKD_PROXY_ENGINE (#1559): ``caddy`` (default since #1634,
     # Caddyfile rendered and pushed to Caddy's admin API over a UDS) or
     # ``nginx`` (the long-standing Python-owned nginx renderer, deprecated
     # since #1634 — the escape hatch for a Caddy regression; emits a settings
@@ -963,7 +963,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     else:
         logger.warning(
             "frontend_dir %s does not exist; the web UI will not be "
-            "served. Point KLANGK_FRONTEND_DIR at a built Flutter web "
+            "served. Point KLANGKD_FRONTEND_DIR at a built Flutter web "
             "directory, or (for a packaged install) reinstall a wheel that "
             "ships the frontend artifact (#1600).",
             frontend_dir,

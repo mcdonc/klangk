@@ -55,7 +55,7 @@ def validate_window_name(name: str) -> None:
 
 # Backend env vars stripped from the in-container shell.
 _SENSITIVE_ENV_PREFIXES = (
-    "KLANGK_LLM_API_KEY",
+    "KLANGKD_LLM_API_KEY",
     "ANTHROPIC_",
     "OPENAI_",
     "GOOGLE_",
@@ -74,9 +74,9 @@ def build_environment(
     if user_home is not None:
         env.append(f"HOME={user_home}")
     if user_id is not None:
-        env.append(f"KLANGK_USER_ID={user_id}")
+        env.append(f"KLANGKWS_USER_ID={user_id}")
     if user_handle is not None:
-        env.append(f"KLANGK_USER_HANDLE={user_handle}")
+        env.append(f"KLANGKWS_USER_HANDLE={user_handle}")
     if ssh_agent_socket is not None:
         env.append(f"SSH_AUTH_SOCK={ssh_agent_socket}")
     return env
@@ -241,7 +241,7 @@ class Terminal:
         """Whether new terminal sessions are wrapped in tmux.
 
         Defaults to enabled (the historical behaviour).  Set
-        ``KLANGK_DISABLE_TMUX`` to a truthy value (``1``/``true``/``yes``) to
+        ``KLANGKD_DISABLE_TMUX`` to a truthy value (``1``/``true``/``yes``) to
         drop users straight into a plain login shell instead.  Note this only
         affects the default per-user terminal; shared/joined terminals are
         built on tmux session groups and always use tmux regardless.

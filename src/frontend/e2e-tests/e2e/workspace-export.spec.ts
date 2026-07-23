@@ -56,7 +56,7 @@ const INSTALL_FSA_SHIM = `
 })();
 `;
 
-// Admin account provisioned by global-setup (KLANGK_DEFAULT_USER / PASSWORD).
+// Admin account provisioned by global-setup (KLANGKD_DEFAULT_USER / PASSWORD).
 // The export endpoint is admin-only (workspaces.py: has_permission("admin")).
 const ADMIN_EMAIL = "admin@example.com";
 const ADMIN_PASSWORD = "admin";

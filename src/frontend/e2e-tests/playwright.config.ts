@@ -1,9 +1,9 @@
 import { defineConfig } from "@playwright/test";
 
 // E2E tests use non-default ports to avoid conflicts with a dev server
-const BACKEND_PORT = process.env.KLANGK_E2E_PORT || "18997";
+const BACKEND_PORT = process.env.KLANGKBUILD_E2E_PORT || "18997";
 const BASE_URL =
-  process.env.KLANGK_TEST_URL || `http://localhost:${BACKEND_PORT}`;
+  process.env.KLANGKBUILD_TEST_URL || `http://localhost:${BACKEND_PORT}`;
 const BROWSERS = process.env.PLAYWRIGHT_BROWSERS_PATH || "";
 
 const chromiumUse = {
@@ -69,10 +69,10 @@ export default defineConfig({
   testDir: "./e2e",
   timeout: 300_000,
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.KLANGK_E2E_WORKERS
-    ? /^\d+$/.test(process.env.KLANGK_E2E_WORKERS)
-      ? parseInt(process.env.KLANGK_E2E_WORKERS, 10)
-      : process.env.KLANGK_E2E_WORKERS
+  workers: process.env.KLANGKBUILD_E2E_WORKERS
+    ? /^\d+$/.test(process.env.KLANGKBUILD_E2E_WORKERS)
+      ? parseInt(process.env.KLANGKBUILD_E2E_WORKERS, 10)
+      : process.env.KLANGKBUILD_E2E_WORKERS
     : 4,
   fullyParallel: true,
   globalSetup: "./global-setup.ts",
@@ -148,7 +148,7 @@ export default defineConfig({
     {
       // Dist smoke test (#1611) — release.yml's dist-smoke-test job runs
       // ONLY this project, against a klangkd started from an installed
-      // wheel (KLANGK_TEST_URL points Playwright at it; global-setup
+      // wheel (KLANGKBUILD_TEST_URL points Playwright at it; global-setup
       // short-circuits its own server startup in that mode). One test,
       // one browser: proves the frontend shipped in the wheel boots and
       // renders the login page through nginx → UDS → uvicorn.

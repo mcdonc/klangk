@@ -57,12 +57,12 @@ def _start_server(data_dir):
     server = start_server(
         uds=False,
         data_dir=data_dir,
-        KLANGK_JWT_SECRET="tw-e2e-secret",
-        KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-        KLANGK_DEFAULT_USER="test@example.com",
-        KLANGK_DEFAULT_PASSWORD="testpass",
-        KLANGK_TEST_MODE="1",
-        KLANGK_IDLE_TIMEOUT_SECONDS="300",
+        KLANGKD_JWT_SECRET="tw-e2e-secret",
+        KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGKD_DEFAULT_USER="test@example.com",
+        KLANGKD_DEFAULT_PASSWORD="testpass",
+        KLANGKD_TEST_MODE="1",
+        KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         LOGFIRE_TOKEN="",
         log_path=log_path,
     )

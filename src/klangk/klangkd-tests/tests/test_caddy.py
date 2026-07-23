@@ -198,22 +198,22 @@ class TestMaxBodySize:
         assert _renderer(make_settings({}))._max_body_size() == "500MB"
 
     def test_custom(self):
-        s = make_settings({"KLANGK_FILE_UPLOAD_SIZE_MAX": "10485760"})
+        s = make_settings({"KLANGKD_FILE_UPLOAD_SIZE_MAX": "10485760"})
         assert _renderer(s)._max_body_size() == "10MB"
 
     def test_minimum_1mb(self):
-        s = make_settings({"KLANGK_FILE_UPLOAD_SIZE_MAX": "100"})
+        s = make_settings({"KLANGKD_FILE_UPLOAD_SIZE_MAX": "100"})
         assert _renderer(s)._max_body_size() == "1MB"
 
     def test_garbage_falls_back(self):
-        s = make_settings({"KLANGK_FILE_UPLOAD_SIZE_MAX": "not-a-number"})
+        s = make_settings({"KLANGKD_FILE_UPLOAD_SIZE_MAX": "not-a-number"})
         assert _renderer(s)._max_body_size() == "500MB"
 
 
 class TestContainerSourceLists:
     def test_egress_list_includes_all_sources(self):
         s = make_settings(
-            env={"KLANGK_CONTAINER_SUBNETS": "127.0.0.1,10.89.0.0/24"}
+            env={"KLANGKD_CONTAINER_SUBNETS": "127.0.0.1,10.89.0.0/24"}
         )
         lst = _renderer(s)._egress_remote_ip_list()
         assert "10.89.0.0/24" in lst
@@ -222,14 +222,14 @@ class TestContainerSourceLists:
 
     def test_browser_deny_list_excludes_loopback(self):
         s = make_settings(
-            env={"KLANGK_CONTAINER_SUBNETS": "127.0.0.1,10.89.0.0/24"}
+            env={"KLANGKD_CONTAINER_SUBNETS": "127.0.0.1,10.89.0.0/24"}
         )
         lst = _renderer(s)._browser_deny_remote_ip_list()
         assert "10.89.0.0/24" in lst
         assert "127.0.0.1" not in lst
 
     def test_all_loopback_warns(self, caplog):
-        s = make_settings({"KLANGK_CONTAINER_SUBNETS": "127.0.0.1"})
+        s = make_settings({"KLANGKD_CONTAINER_SUBNETS": "127.0.0.1"})
         with caplog.at_level("WARNING"):
             _renderer(s)._container_source_entries()
         assert "no non-loopback" in caplog.text
@@ -267,7 +267,9 @@ class TestCaddySupportsFullGlobalBlock:
         from klangk import caddy as caddy_mod
 
         class _R:
-            returncode = 1  # e.g. 2.6.2: "unrecognized global option: persist_config"
+            returncode = (
+                1  # e.g. 2.6.2: "unrecognized global option: persist_config"
+            )
 
         monkeypatch.setattr(caddy_mod.subprocess, "run", lambda *a, **k: _R())
         assert caddy_mod._caddy_supports_full_global_block("/x/caddy") is False
@@ -285,10 +287,12 @@ class TestCaddySupportsFullGlobalBlock:
 
 class TestGlobalBlock:
     def test_admin_uds_autohttps_persist(self):
-        s = make_settings({"KLANGK_PORT": "8997"})
+        s = make_settings({"KLANGKD_PORT": "8997"})
         g = _renderer(s)._global_block("/d/caddy-admin.sock")
         assert "admin unix///d/caddy-admin.sock" in g
-        assert "|0600" not in g  # mode enforced via os.chmod, not the address (#1709)
+        assert (
+            "|0600" not in g
+        )  # mode enforced via os.chmod, not the address (#1709)
         assert "auto_https off" in g
         assert "persist_config off" in g
 
@@ -300,7 +304,7 @@ class TestGlobalBlock:
         _wait_for_admin); #1559's locked decision stands, just not via the
         address. Regression guard against re-adding the version-fragile
         suffix."""
-        g = _renderer(make_settings({"KLANGK_PORT": "8997"}))._global_block(
+        g = _renderer(make_settings({"KLANGKD_PORT": "8997"}))._global_block(
             "/d/caddy-admin.sock"
         )
         assert "|0600" not in g
@@ -314,9 +318,9 @@ class TestGlobalBlock:
         falls back to localhost:2019 on Caddy < 2.7, #1709). Site config arrives
         later via POST /load, so auto_https / persist_config / trusted_proxies
         are deliberately absent here."""
-        b = _renderer(make_settings({"KLANGK_PORT": "8997"}))._bootstrap_block(
-            "/d/caddy-admin.sock"
-        )
+        b = _renderer(
+            make_settings({"KLANGKD_PORT": "8997"})
+        )._bootstrap_block("/d/caddy-admin.sock")
         # Establishes the admin endpoint (no |0600 suffix — see
         # test_admin_address_has_no_mode_suffix; mode is chmod'd at runtime).
         assert "admin unix///d/caddy-admin.sock" in b
@@ -331,8 +335,8 @@ class TestGlobalBlock:
     def test_trusted_proxies_present_by_default(self):
         s = make_settings(
             {
-                "KLANGK_PORT": "8997",
-                "KLANGK_TRUSTED_PROXY_CIDRS": "10.0.0.0/8,127.0.0.1",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_TRUSTED_PROXY_CIDRS": "10.0.0.0/8,127.0.0.1",
             }
         )
         g = _renderer(s)._global_block("/d/sock")
@@ -346,7 +350,7 @@ class TestGlobalBlock:
         block degrades to admin + auto_https only -- no persist_config, no
         servers/trusted_proxies/strict. CaddyWatchdog.start's probe decides
         which path."""
-        s = make_settings({"KLANGK_PORT": "8997"})
+        s = make_settings({"KLANGKD_PORT": "8997"})
         g = _renderer(s)._global_block("/d/sock", full_global=False)
         assert "auto_https off" in g
         assert "persist_config" not in g
@@ -355,20 +359,20 @@ class TestGlobalBlock:
 
     def test_trusted_proxies_suppressed_when_reject(self):
         s = make_settings(
-            {"KLANGK_PORT": "8997", "KLANGK_REJECT_PROXY_HEADERS": "1"}
+            {"KLANGKD_PORT": "8997", "KLANGKD_REJECT_PROXY_HEADERS": "1"}
         )
         g = _renderer(s)._global_block("/d/sock")
         assert "trusted_proxies" not in g
 
     def test_trusted_proxies_defaults_to_loopback(self):
-        s = make_settings({"KLANGK_PORT": "8997"})
+        s = make_settings({"KLANGKD_PORT": "8997"})
         g = _renderer(s)._global_block("/d/sock")
         assert "trusted_proxies static 127.0.0.1 ::1" in g
 
     def test_trusted_proxies_empty_falls_back_to_loopback(self):
-        """All-empty/commas KLANGK_TRUSTED_PROXY_CIDRS → loopback fallback."""
+        """All-empty/commas KLANGKD_TRUSTED_PROXY_CIDRS → loopback fallback."""
         s = make_settings(
-            {"KLANGK_PORT": "8997", "KLANGK_TRUSTED_PROXY_CIDRS": ",,"}
+            {"KLANGKD_PORT": "8997", "KLANGKD_TRUSTED_PROXY_CIDRS": ",,"}
         )
         g = _renderer(s)._global_block("/d/sock")
         assert "trusted_proxies static 127.0.0.1 ::1" in g
@@ -395,8 +399,8 @@ class TestLlmBlock:
     def test_with_url_and_key(self):
         s = make_settings(
             env={
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGK_LLM_API_KEY": "sekret",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_LLM_API_KEY": "sekret",
             }
         )
         guard = "\t\trespond @notContainerSrc 403\n"
@@ -416,8 +420,8 @@ class TestLlmBlock:
         ``rewrite`` so the final upstream path is preserved (#1681)."""
         s = make_settings(
             env={
-                "KLANGK_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
-                "KLANGK_LLM_API_KEY": "k",
+                "KLANGKD_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
+                "KLANGKD_LLM_API_KEY": "k",
             }
         )
         b = _renderer(s)._build_llm_block("upstream", "")
@@ -439,8 +443,8 @@ class TestLlmBlock:
         "/v4//chat"."""
         s = make_settings(
             env={
-                "KLANGK_LLM_BASE_URL": "http://proxy.local/v1/",
-                "KLANGK_LLM_API_KEY": "k",
+                "KLANGKD_LLM_BASE_URL": "http://proxy.local/v1/",
+                "KLANGKD_LLM_API_KEY": "k",
             }
         )
         b = _renderer(s)._build_llm_block("upstream", "")
@@ -455,8 +459,8 @@ class TestLlmBlock:
         with no prefix and no query."""
         s = make_settings(
             env={
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGK_LLM_API_KEY": "k",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_LLM_API_KEY": "k",
             }
         )
         b = _renderer(s)._build_llm_block("upstream", "")
@@ -479,11 +483,11 @@ class TestLlmBlock:
         upstream (#1687)."""
         s = make_settings(
             env={
-                "KLANGK_LLM_BASE_URL": (
+                "KLANGKD_LLM_BASE_URL": (
                     "https://generativelanguage.googleapis.com/v1beta"
                     "?key=AIzaSy-example"
                 ),
-                "KLANGK_LLM_API_KEY": "k",
+                "KLANGKD_LLM_API_KEY": "k",
             }
         )
         b = _renderer(s)._build_llm_block("upstream", "")
@@ -496,8 +500,8 @@ class TestLlmBlock:
         {http.request.uri.path}?<base_query> (no path prefix)."""
         s = make_settings(
             env={
-                "KLANGK_LLM_BASE_URL": "http://gateway.local?token=op-secret",
-                "KLANGK_LLM_API_KEY": "k",
+                "KLANGKD_LLM_BASE_URL": "http://gateway.local?token=op-secret",
+                "KLANGKD_LLM_API_KEY": "k",
             }
         )
         b = _renderer(s)._build_llm_block("upstream", "")
@@ -506,13 +510,13 @@ class TestLlmBlock:
 
 class TestHostedBlock:
     def test_disabled_when_zero(self):
-        s = make_settings({"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "0"})
+        s = make_settings({"KLANGKD_HOSTED_PORTS_PER_WORKSPACE": "0"})
         b = _renderer(s)._build_hosted_block()
         assert "respond 404" in b
         assert "reverse_proxy 127.0.0.1" not in b
 
     def test_enabled_emits_redirect_and_proxy(self):
-        s = make_settings({"KLANGK_PORT": "8997"})
+        s = make_settings({"KLANGKD_PORT": "8997"})
         b = _renderer(s)._build_hosted_block()
         assert "path_regexp hostedsl" in b
         assert "redir {uri}/ 308" in b
@@ -558,7 +562,9 @@ class TestLlmBlockCaddyAdapt:
         import subprocess
         import tempfile
 
-        with tempfile.NamedTemporaryFile("w", suffix=".Caddyfile", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".Caddyfile", delete=False
+        ) as f:
             f.write(cf)
             path = f.name
         try:
@@ -577,7 +583,9 @@ class TestLlmBlockCaddyAdapt:
     def _find_llm_subroute(adapted: dict) -> list:
         """Walk the adapted config; return the routes inside the /llm-proxy handle_path block."""
         routes_out = []
-        for server in adapted.get("apps", {}).get("http", {}).get("servers", {}).values():
+        for server in (
+            adapted.get("apps", {}).get("http", {}).get("servers", {}).values()
+        ):
             for route in server.get("routes", []):
                 match = route.get("match", [])
                 if not any("/llm-proxy" in str(m) for m in match):
@@ -602,8 +610,8 @@ class TestLlmBlockCaddyAdapt:
         """
         s = make_settings(
             env={
-                "KLANGK_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
-                "KLANGK_LLM_API_KEY": "k",
+                "KLANGKD_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
+                "KLANGKD_LLM_API_KEY": "k",
             }
         )
         cf = _renderer(s).render_config("unix//s", "/d/caddy-admin.sock")
@@ -635,17 +643,17 @@ class TestLlmBlockCaddyAdapt:
             for h in r.get("handle", [])
             if h.get("handler") == "rewrite" and "uri" in h
         ]
-        assert any(
-            "/api/coding/paas/v4" in u for u in rewrite_uris
-        ), f"base path not in rewrite target: {rewrite_uris}"
+        assert any("/api/coding/paas/v4" in u for u in rewrite_uris), (
+            f"base path not in rewrite target: {rewrite_uris}"
+        )
 
     def test_host_only_url_compiles(self):
         """Sanity: a host-only URL (no path) still compiles — regression guard
         that the path-split refactor didn't break the simple case."""
         s = make_settings(
             env={
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGK_LLM_API_KEY": "k",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_LLM_API_KEY": "k",
             }
         )
         cf = _renderer(s).render_config("unix//s", "/d/caddy-admin.sock")
@@ -660,11 +668,11 @@ class TestLlmBlockCaddyAdapt:
         query case."""
         s = make_settings(
             env={
-                "KLANGK_LLM_BASE_URL": (
+                "KLANGKD_LLM_BASE_URL": (
                     "https://generativelanguage.googleapis.com/v1beta"
                     "?key=AIzaSy-example"
                 ),
-                "KLANGK_LLM_API_KEY": "k",
+                "KLANGKD_LLM_API_KEY": "k",
             }
         )
         cf = _renderer(s).render_config("unix//s", "/d/caddy-admin.sock")
@@ -677,9 +685,9 @@ class TestLlmBlockCaddyAdapt:
             for h in r.get("handle", [])
             if h.get("handler") == "rewrite" and "uri" in h
         ]
-        assert any(
-            "?key=AIzaSy-example" in u for u in rewrite_uris
-        ), f"base query not in rewrite target: {rewrite_uris}"
+        assert any("?key=AIzaSy-example" in u for u in rewrite_uris), (
+            f"base query not in rewrite target: {rewrite_uris}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -801,8 +809,6 @@ class TestLlmBlockCaddyQueryDrop:
         the renderer must always emit a query component (even empty) to
         force query-replacement. (#1696 review.)
         """
-        import os
-        import time
         import subprocess
         import urllib.request
 
@@ -822,7 +828,7 @@ class TestLlmBlockCaddyQueryDrop:
         from _helpers import make_settings
 
         s = make_settings(
-            env={"KLANGK_LLM_BASE_URL": url, "KLANGK_LLM_API_KEY": "k"}
+            env={"KLANGKD_LLM_BASE_URL": url, "KLANGKD_LLM_API_KEY": "k"}
         )
         block = CaddyRenderer(
             types.SimpleNamespace(state=types.SimpleNamespace(settings=s))
@@ -839,10 +845,7 @@ class TestLlmBlockCaddyQueryDrop:
             for line in block.splitlines()
             if not line.strip().startswith("header_up Authorization")
         )
-        cf = (
-            "{\n\tadmin off\n}\n"
-            f":{proxy_port} {{\n{block_sanitized}\n}}\n"
-        )
+        cf = f"{{\n\tadmin off\n}}\n:{proxy_port} {{\n{block_sanitized}\n}}\n"
         cf_path = str(tmp_path / "Caddyfile")
         with open(cf_path, "w") as f:
             f.write(cf)
@@ -884,7 +887,7 @@ class TestRenderConfig:
 
     def test_full_has_two_listeners(self):
         s = make_settings(
-            {"KLANGK_PORT": "8997", "KLANGK_EGRESS_PORT": "8995"}
+            {"KLANGKD_PORT": "8997", "KLANGKD_EGRESS_PORT": "8995"}
         )
         cf = _renderer(s).render_config(
             tcp_upstream("127.0.0.1", "8997"), self.ADMIN
@@ -896,7 +899,7 @@ class TestRenderConfig:
         assert "bind 0.0.0.0" in cf
 
     def test_headless_has_only_egress(self):
-        s = make_settings(env={"KLANGK_EGRESS_PORT": "8995"})
+        s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
         cf = _renderer(s).render_config("unix//sock", self.ADMIN)
         assert "http://:8995 {" in cf
         assert "http://:8997" not in cf
@@ -905,16 +908,16 @@ class TestRenderConfig:
     def test_template_keys_off_port_not_auth(self):
         for auth in ("none", "password", "both"):
             sh = make_settings(
-                env={"KLANGK_AUTH_MODES": auth, "KLANGK_EGRESS_PORT": "8995"}
+                env={"KLANGKD_AUTH_MODES": auth, "KLANGKD_EGRESS_PORT": "8995"}
             )
             assert "http://:8997" not in _renderer(sh).render_config(
                 "unix//s", self.ADMIN
             )
             sf = make_settings(
                 env={
-                    "KLANGK_AUTH_MODES": auth,
-                    "KLANGK_PORT": "8997",
-                    "KLANGK_EGRESS_PORT": "8995",
+                    "KLANGKD_AUTH_MODES": auth,
+                    "KLANGKD_PORT": "8997",
+                    "KLANGKD_EGRESS_PORT": "8995",
                 }
             )
             assert "http://:8997 {" in _renderer(sf).render_config(
@@ -922,20 +925,23 @@ class TestRenderConfig:
             )
 
     def test_forward_auth_present(self):
-        s = make_settings(env={"KLANGK_EGRESS_PORT": "8995"})
+        s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         assert "forward_auth unix//s {" in cf
         assert "uri /api/v1/auth/verify-workspace-token" in cf
 
     def test_request_body_max_size(self):
         s = make_settings(
-            {"KLANGK_PORT": "8997", "KLANGK_FILE_UPLOAD_SIZE_MAX": "10485760"}
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_FILE_UPLOAD_SIZE_MAX": "10485760",
+            }
         )
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         assert "max_size 10MB" in cf
 
     def test_auth_local_loopback_acl(self):
-        s = make_settings({"KLANGK_PORT": "8997"})
+        s = make_settings({"KLANGKD_PORT": "8997"})
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         # nginx uses ``location =`` (exact); Caddy mirrors with a path matcher.
         assert "@authlocal path /api/v1/auth/local" in cf
@@ -946,7 +952,7 @@ class TestRenderConfig:
     def test_auth_local_is_exact_match(self):
         """/auth/local uses an exact path matcher (nginx ``location =``), so a
         sub-path like /api/v1/auth/local/other does NOT match the handle."""
-        s = make_settings({"KLANGK_PORT": "8997"})
+        s = make_settings({"KLANGKD_PORT": "8997"})
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         assert "path /api/v1/auth/local\n" in cf
         # no trailing /* (which would make it prefix)
@@ -954,7 +960,10 @@ class TestRenderConfig:
 
     def test_browser_catch_all_container_deny(self):
         s = make_settings(
-            {"KLANGK_PORT": "8997", "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"}
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
+            }
         )
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         assert "@containerSrc remote_ip 10.89.0.0/24" in cf
@@ -966,7 +975,10 @@ class TestRenderConfig:
         ``client_ip`` (which would re-introduce the #1546 403). ``{client_ip}``
         as an ``X-Real-IP`` header_up value is unrelated and fine."""
         s = make_settings(
-            {"KLANGK_PORT": "8997", "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"}
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
+            }
         )
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         assert "@containerSrc remote_ip 10.89.0.0/24" in cf
@@ -977,8 +989,8 @@ class TestRenderConfig:
     def test_egress_acl_uses_remote_ip(self):
         s = make_settings(
             env={
-                "KLANGK_EGRESS_PORT": "8995",
-                "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
+                "KLANGKD_EGRESS_PORT": "8995",
+                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
             }
         )
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
@@ -987,22 +999,22 @@ class TestRenderConfig:
     def test_post_chat_message_is_exact_match(self):
         """nginx uses ``location =`` (exact) for post-chat-message; Caddy
         mirrors with a path matcher so sub-paths don't match."""
-        s = make_settings(env={"KLANGK_EGRESS_PORT": "8995"})
+        s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         assert "@postchat path /api/v1/workspaces/post-chat-message" in cf
         assert "handle @postchat {" in cf
         assert "path /api/v1/workspaces/post-chat-message/*" not in cf
 
     def test_egress_fail_closed_when_no_container_sources(self, monkeypatch):
-        """Whitespace-only KLANGK_CONTAINER_SUBNETS → no sources → egress
+        """Whitespace-only KLANGKD_CONTAINER_SUBNETS → no sources → egress
         fails closed (deny all), matching nginx's bare ``deny all;``."""
         import klangk.caddy as caddy_mod
 
         monkeypatch.setattr(caddy_mod, "detect_host_ipv4s", lambda: [])
         s = make_settings(
             env={
-                "KLANGK_EGRESS_PORT": "8995",
-                "KLANGK_CONTAINER_SUBNETS": "   ",
+                "KLANGKD_EGRESS_PORT": "8995",
+                "KLANGKD_CONTAINER_SUBNETS": "   ",
             }
         )
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
@@ -1017,7 +1029,7 @@ class TestRenderConfig:
         nginx ``geo default 0`` equivalent. Regression for the empty-set case
         that previously left a dangling @containerSrc reference."""
         s = make_settings(
-            {"KLANGK_PORT": "8997", "KLANGK_CONTAINER_SUBNETS": "127.0.0.1"}
+            {"KLANGKD_PORT": "8997", "KLANGKD_CONTAINER_SUBNETS": "127.0.0.1"}
         )
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         assert "@containerSrc" not in cf
@@ -1028,9 +1040,9 @@ class TestRenderConfig:
     def test_llm_api_key_resolved(self):
         s = make_settings(
             env={
-                "KLANGK_PORT": "8997",
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGK_LLM_API_KEY": "cmd:printf %s resolved-key",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_LLM_API_KEY": "cmd:printf %s resolved-key",
             }
         )
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
@@ -1049,22 +1061,22 @@ class TestRenderConfig:
         (regression, found in review)."""
         s = make_settings(
             env={
-                "KLANGK_PORT": "8997",
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGK_LLM_API_KEY": "k",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_LLM_API_KEY": "k",
             }
         )
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         assert "handle_path /llm-proxy/*" in cf
 
     def test_llm_absent_without_url(self):
-        s = make_settings({"KLANGK_PORT": "8997"})
+        s = make_settings({"KLANGKD_PORT": "8997"})
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         assert "/llm-proxy" not in cf
 
     def test_global_block_prepended(self):
         s = make_settings(
-            {"KLANGK_PORT": "8997", "KLANGK_EGRESS_PORT": "8995"}
+            {"KLANGKD_PORT": "8997", "KLANGKD_EGRESS_PORT": "8995"}
         )
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         # global block is first, before any site block.
@@ -1075,7 +1087,7 @@ class TestRenderConfig:
 
 class TestFindProxyBin:
     def test_configured(self):
-        s = make_settings({"KLANGK_PROXY_BIN": "/custom/caddy"})
+        s = make_settings({"KLANGKD_PROXY_BIN": "/custom/caddy"})
         assert _renderer(s).find_proxy_bin() == "/custom/caddy"
 
     def test_fallback_to_which(self, monkeypatch):
@@ -1105,17 +1117,17 @@ class TestFindProxyBin:
 
 class TestWatchdogPaths:
     def test_admin_socket_under_state_dir(self, tmp_path):
-        s = make_settings({"KLANGK_STATE_DIR": str(tmp_path)})
+        s = make_settings({"KLANGKD_STATE_DIR": str(tmp_path)})
         wd = _wd(s)
         assert wd.admin_socket == str(tmp_path / "caddy-admin.sock")
 
     def test_admin_socket_override(self, tmp_path):
-        """KLANGK_CADDY_ADMIN_SOCKET overrides the default path (#1636) — read
+        """KLANGKD_CADDY_ADMIN_SOCKET overrides the default path (#1636) — read
         live off settings, not built inline."""
         s = make_settings(
             {
-                "KLANGK_STATE_DIR": str(tmp_path),
-                "KLANGK_CADDY_ADMIN_SOCKET": "/short/caddy-admin.sock",
+                "KLANGKD_STATE_DIR": str(tmp_path),
+                "KLANGKD_CADDY_ADMIN_SOCKET": "/short/caddy-admin.sock",
             }
         )
         wd = _wd(s)
@@ -1126,14 +1138,14 @@ class TestWatchdogPaths:
         """The Caddy bind address is the bare unix//<path> with NO |0600 mode
         suffix (that's version-fragile — #1709; mode enforced via os.chmod).
         The bare path (admin_socket) is what httpx dials."""
-        s = make_settings({"KLANGK_STATE_DIR": str(tmp_path)})
+        s = make_settings({"KLANGKD_STATE_DIR": str(tmp_path)})
         wd = _wd(s)
         assert wd.admin_bind_address == f"unix//{tmp_path}/caddy-admin.sock"
         assert "|0600" not in wd.admin_bind_address
         assert wd.admin_socket == str(tmp_path / "caddy-admin.sock")
 
     def test_find_proxy_bin_delegates_to_renderer(self, monkeypatch):
-        s = make_settings({"KLANGK_PROXY_BIN": "/x/caddy"})
+        s = make_settings({"KLANGKD_PROXY_BIN": "/x/caddy"})
         assert _wd(s).find_proxy_bin() == "/x/caddy"
 
 
@@ -1141,7 +1153,7 @@ class TestWatchdogLoadConfig:
     @pytest.mark.asyncio
     async def test_renders_and_posts(self, monkeypatch):
         """load_config renders the Caddyfile (UDS upstream) and POSTs it."""
-        s = make_settings(env={"KLANGK_EGRESS_PORT": "8995"})
+        s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
         wd = _wd(s)
         client = _FakeAsyncClient()
         await wd.load_config(client=client)
@@ -1221,7 +1233,7 @@ class TestWaitForAdmin:
 class TestWatchdogStart:
     @pytest.mark.asyncio
     async def test_start_noop_when_disabled(self, monkeypatch):
-        monkeypatch.setenv("_KLANGK_DISABLE_PROXY", "1")
+        monkeypatch.setenv("_KLANGKD_DISABLE_PROXY", "1")
         wd = _wd(make_settings({}))
         await wd.start()
         assert wd._task is None
@@ -1231,12 +1243,12 @@ class TestWatchdogStart:
         """When enabled, start() resolves the bin + schedules the watchdog."""
         s = make_settings(
             env={
-                "KLANGK_STATE_DIR": str(tmp_path),
-                "KLANGK_SOCKET": str(tmp_path / "klangk.sock"),
-                "KLANGK_EGRESS_PORT": "19999",
+                "KLANGKD_STATE_DIR": str(tmp_path),
+                "KLANGKD_SOCKET": str(tmp_path / "klangk.sock"),
+                "KLANGKD_EGRESS_PORT": "19999",
             }
         )
-        monkeypatch.delenv("_KLANGK_DISABLE_PROXY", raising=False)
+        monkeypatch.delenv("_KLANGKD_DISABLE_PROXY", raising=False)
         monkeypatch.setattr(
             "klangk.caddy.CaddyRenderer.find_proxy_bin",
             lambda self: "/fake/caddy",

@@ -208,7 +208,7 @@ class TestStart:
         await s.stop()
 
     async def test_start_unsets_sensitive_env_vars(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_LLM_API_KEY", "secret")
+        monkeypatch.setenv("KLANGKD_LLM_API_KEY", "secret")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "secret2")
         fake = FakeShell(block_after_chunks=True)
         with _patch(fake):
@@ -217,7 +217,7 @@ class TestStart:
 
         argv = fake.argv
         unset = [argv[i + 1] for i, a in enumerate(argv) if a == "-u"]
-        assert "KLANGK_LLM_API_KEY" in unset
+        assert "KLANGKD_LLM_API_KEY" in unset
         assert "ANTHROPIC_API_KEY" in unset
         await s.stop()
 
@@ -226,7 +226,7 @@ class TestStart:
         with _patch(fake):
             s = TerminalSession("cid", terminal=_terminal)
             await s.start()
-        assert not any("KLANGK_CMD_OVERRIDE" in a for a in fake.argv)
+        assert not any("KLANGKD_CMD_OVERRIDE" in a for a in fake.argv)
         await s.stop()
 
     async def test_no_browser_id_env_var(self):
@@ -235,8 +235,8 @@ class TestStart:
         with _patch(fake):
             s = TerminalSession("cid", terminal=_terminal)
             await s.start()
-        assert not any("KLANGK_BROWSER_ID" in a for a in fake.argv)
-        assert not any("KLANGK_BRIDGE_TOKEN" in a for a in fake.argv)
+        assert not any("KLANGKD_BROWSER_ID" in a for a in fake.argv)
+        assert not any("KLANGKD_BRIDGE_TOKEN" in a for a in fake.argv)
         await s.stop()
 
     async def test_user_home_sets_home_env(self):
@@ -252,8 +252,8 @@ class TestStart:
             )
             await s.start(120, 40)
         assert "HOME=/home/alice" in fake.argv
-        assert "KLANGK_USER_ID=uid-123" in fake.argv
-        assert "KLANGK_USER_HANDLE=alice" in fake.argv
+        assert "KLANGKWS_USER_ID=uid-123" in fake.argv
+        assert "KLANGKWS_USER_HANDLE=alice" in fake.argv
         # Work dir is always /home (bash cd's to $HOME on login)
         assert fake.argv[fake.argv.index("-w") + 1] == "/home"
         # HOME is also passed to tmux via -e so child shells inherit it
@@ -1025,10 +1025,10 @@ class TestBuildShellCommandTmuxDisabled:
         assert unique is None
 
     def test_plain_shell_still_unsets_sensitive_env(self, monkeypatch):
-        monkeypatch.setenv("KLANGK_LLM_API_KEY", "secret")
+        monkeypatch.setenv("KLANGKD_LLM_API_KEY", "secret")
         cmd, _ = build_shell_command(session_name="uid", tmux_enabled=False)
         unset = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-u"]
-        assert "KLANGK_LLM_API_KEY" in unset
+        assert "KLANGKD_LLM_API_KEY" in unset
         assert "tmux" not in cmd
 
     def test_shared_socket_still_uses_tmux_when_disabled(self):

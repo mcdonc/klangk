@@ -242,7 +242,7 @@ class _PasswordSectionState extends State<_PasswordSection> {
             obscureText: _obscureNew,
             validator: (v) {
               if (v == null || v.isEmpty) return 'Required';
-              // Read the server-configured minimum (KLANGK_MIN_PASSWORD_LENGTH,
+              // Read the server-configured minimum (KLANGKD_MIN_PASSWORD_LENGTH,
               // surfaced by AuthService from /api/v1/config) instead of
               // hardcoding 8 — otherwise the client passes a password the
               // server rejects when the deploy raised the floor (#1350).

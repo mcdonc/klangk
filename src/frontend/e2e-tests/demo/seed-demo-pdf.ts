@@ -19,10 +19,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
-const DEMO_URL = process.env.KLANGK_TEST_URL || "http://localhost:8996";
-const HERO = process.env.KLANGK_DEMO_ADMIN_EMAIL || "admin@example.com";
-const PASS = process.env.KLANGK_DEMO_ADMIN_PASSWORD || "adminpass";
-const WS = process.env.KLANGK_DEMO_WORKSPACE || "demo";
+const DEMO_URL = process.env.KLANGKBUILD_TEST_URL || "http://localhost:8996";
+const HERO = process.env.KLANGKBUILD_DEMO_ADMIN_EMAIL || "admin@example.com";
+const PASS = process.env.KLANGKBUILD_DEMO_ADMIN_PASSWORD || "adminpass";
+const WS = process.env.KLANGKBUILD_DEMO_WORKSPACE || "demo";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PDF = join(__dirname, "assets", "pyramid-docs.pdf");
 

@@ -25,7 +25,7 @@ optionally configure:
   container to verify the service is actually healthy (exit 0 =
   healthy). See [Health Check](health-check.md).
 - **Bind mounts** — mount host directories into the container.
-  If `KLANGK_ALLOWED_MOUNT_ROOTS` is set (comma-separated list of
+  If `KLANGKD_ALLOWED_MOUNT_ROOTS` is set (comma-separated list of
   paths), only directories under those roots can be bind-mounted.
   Protected paths like the Docker/Podman socket are always blocked.
 - **Environment variables** — set custom env vars for the container
@@ -40,7 +40,7 @@ service workspaces where a long-running process (configured via
 [Service Command](service-command.md)) should be available
 immediately — without waiting for a user to connect.
 
-Auto-start requires the server to have `KLANGK_ALLOW_AUTOSTART`
+Auto-start requires the server to have `KLANGKD_ALLOW_AUTOSTART`
 set to `1`/`true`/`yes`. When disabled (the default), the
 auto-start option is hidden in the UI, CLI, and API.
 
@@ -94,7 +94,7 @@ has access at a glance.
 ## Mount security
 
 Workspace bind mounts are validated at create and edit time. Two
-protections apply regardless of `KLANGK_ALLOWED_MOUNT_ROOTS`:
+protections apply regardless of `KLANGKD_ALLOWED_MOUNT_ROOTS`:
 
 **Protected paths** — the following host paths are always blocked,
 even if they fall under an allowed root:
@@ -102,7 +102,7 @@ even if they fall under an allowed root:
 - `/var/run/docker.sock`, `/run/docker.sock`,
   `/run/podman/podman.sock` — mounting a container engine socket
   grants full host control
-- `KLANGK_DATA_DIR` (and anything beneath it) — contains every
+- `KLANGKD_DATA_DIR` (and anything beneath it) — contains every
   user's workspace home and the database
 
 **Volume isolation** — named volumes (e.g., `nix-store:/nix`) are
@@ -114,7 +114,7 @@ cross-tenant and cross-user data access on shared hosts.
 ## Idle timeout
 
 Containers stop automatically after 30 minutes of inactivity
-(configurable via `KLANGK_IDLE_TIMEOUT_SECONDS`). Activity includes
+(configurable via `KLANGKD_IDLE_TIMEOUT_SECONDS`). Activity includes
 terminal input, file operations, and AI agent events — so containers
 stay alive during long-running LLM requests as long as events are
 flowing.

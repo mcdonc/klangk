@@ -11,24 +11,24 @@ managed block at the end of `.demo-env`, then sources `.demo-env` inside the
 devenv shell at launch (devenv.nix does not enable dotenv, so `.demo-env` is
 not auto-loaded). The values:
 
-- `KLANGK_INSTANCE_ID=video` — own pid file + container labels, no port clash.
-- `KLANGK_PORT=8998` — uvicorn's TCP port (only referenced for teardown; the
+- `_KLANGK_INSTANCE_ID=video` — own pid file + container labels, no port clash.
+- `KLANGKD_PORT=8998` — uvicorn's TCP port (only referenced for teardown; the
   bind is a UDS, not TCP).
-- `KLANGK_EGRESS_PORT=8996` — the port the browser/CLI hit (the demo's public
+- `KLANGKD_EGRESS_PORT=8996` — the port the browser/CLI hit (the demo's public
   port).
-- `KLANGK_LISTEN=127.0.0.1` — selects the full (browser) proxy template.
-- `KLANGK_STATE_DIR=/tmp/klangk-demo` — **short path** so the UDS
+- `KLANGKD_LISTEN=127.0.0.1` — selects the full (browser) proxy template.
+- `KLANGKD_STATE_DIR=/tmp/klangk-demo` — **short path** so the UDS
   (`<state_dir>/klangk.sock`) fits under AF_UNIX's 108-byte `sun_path` limit
   (#1531). The worktree-relative path devenv.nix sets is too long for a deep
   worktree. Sourced inside the devenv shell, this wins over devenv.nix.
-- `KLANGK_DEFAULT_USER=admin@plope.com` / `KLANGK_DEFAULT_PASSWORD=admin` —
+- `KLANGKD_DEFAULT_USER=admin@plope.com` / `KLANGKD_DEFAULT_PASSWORD=admin` —
   the bootstrap admin `demo-seed.ts` logs in as to create the hero + cast.
-- `KLANGK_AUTH_MODES=both` — the login screen shows the OIDC button above the
+- `KLANGKD_AUTH_MODES=both` — the login screen shows the OIDC button above the
   password fields. The login-card click coordinates in `demo-helpers.ts` were
   measured for that layout (the button shifts the fields down ~0.07).
-- `KLANGK_OIDC_CONFIG=<demo>/demo-oidc.yaml` — fake OIDC provider so `both`
+- `KLANGKD_OIDC_CONFIG=<demo>/demo-oidc.yaml` — fake OIDC provider so `both`
   mode boots (the demo never actually authenticates via OIDC).
-- `KLANGK_HOSTING_HOSTNAME=localhost:8996` — hosted-app URLs resolve through
+- `KLANGKD_HOSTING_HOSTNAME=localhost:8996` — hosted-app URLs resolve through
   the proxy on the public port.
 
 ## Changes made
@@ -58,22 +58,22 @@ Sourcing `.demo-env` _inside_ the devenv shell (after devenv's env setup) makes
 (removed the devenv-manager-discovery logic — there's no manager to fight
 anymore; just kill the klangkd + nginx procs and whatever holds the ports).
 
-### 3. Short `KLANGK_STATE_DIR` + bootstrap creds + OIDC config (run-demo-backend.sh)
+### 3. Short `KLANGKD_STATE_DIR` + bootstrap creds + OIDC config (run-demo-backend.sh)
 
 The managed block now sets everything klangkd needs (it runs `--config=none`,
 so env is the only source):
 
-- `KLANGK_STATE_DIR=/tmp/klangk-demo` — the worktree default overflows the
+- `KLANGKD_STATE_DIR=/tmp/klangk-demo` — the worktree default overflows the
   UDS path (#1531).
-- `KLANGK_DEFAULT_USER` / `KLANGK_DEFAULT_PASSWORD` — the seed's bootstrap
+- `KLANGKD_DEFAULT_USER` / `KLANGKD_DEFAULT_PASSWORD` — the seed's bootstrap
   login.
-- `KLANGK_AUTH_MODES=both` + `KLANGK_OIDC_CONFIG` — see above.
+- `KLANGKD_AUTH_MODES=both` + `KLANGKD_OIDC_CONFIG` — see above.
 
 ### 4. New `demo-oidc.yaml`
 
 A fake OIDC provider (`demo-sso`) so `both` mode boots. The issuer is never
 contacted (every scene logs in with a password). Format is a bare YAML list
-of providers (the external-file format `KLANGK_OIDC_CONFIG` expects), not the
+of providers (the external-file format `KLANGKD_OIDC_CONFIG` expects), not the
 `oidc_providers:`-keyed inline format.
 
 ### 5. Pre-existing type errors in collab-choreography.ts (used by scene 08/08b)
@@ -99,22 +99,22 @@ repo's default). Updated the README's references.
 CLI scenes now connect over the UDS (`/tmp/klangk-demo/klangk.sock`) instead
 of the TCP URL. Both listeners are up simultaneously (uvicorn on the UDS,
 the proxy on TCP :8996), so CLI and browser scenes share one backend with no
-config change between them. `record-cli.sh` exports `KLANGK_DEMO_SERVER` so
+config change between them. `record-cli.sh` exports `KLANGKBUILD_DEMO_SERVER` so
 `cli_demo.py` uses the same transport as the prep helpers.
 
 ### 9. LLM creds in .demo-env (run-demo-backend.sh)
 
-Added `KLANGK_LLM_BASE_URL`, `KLANGK_LLM_API_KEY`, and `KLANGK_LLM_MODEL` to
+Added `KLANGKD_LLM_BASE_URL`, `KLANGKD_LLM_API_KEY`, and `KLANGKD_LLM_MODEL` to
 the managed `.demo-env` block. The API key uses `cmd:` indirection
 (`cmd:cat /run/agenix/zai-authtoken-chrism2`) so klangkd resolves the secret
 at boot — the literal token is never stored in `.demo-env`. Values are
 single-quoted because `.demo-env` is `source`d by bash: unquoted
 `VAR=cmd:cat /path` parses as `VAR=cmd:cat` + execute `/path`.
 
-### 10. KLANGK_ALLOW_AUTOSTART=1 in .demo-env (run-demo-backend.sh)
+### 10. KLANGKD_ALLOW_AUTOSTART=1 in .demo-env (run-demo-backend.sh)
 
 Scene 3 (`klangk sandbox`) creates a workspace with `auto_start: true` from the
-sandbox config. The server rejects this with 400 unless `KLANGK_ALLOW_AUTOSTART=1`
+sandbox config. The server rejects this with 400 unless `KLANGKD_ALLOW_AUTOSTART=1`
 is set. Added to the managed `.demo-env` block and the idempotency guard.
 
 ### 11. Scene 3 Setup complete timeout (cli_demo.py)

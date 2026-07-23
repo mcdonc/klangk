@@ -37,17 +37,17 @@
 # ffprobe, xdotool. The Python driver is stdlib-only (no pexpect, no pip).
 #
 # Knobs (env vars):
-#   KLANGK_DEMO_WIDTH        default 1920    canvas width  (px)
-#   KLANGK_DEMO_HEIGHT       default 1080    canvas height (px)
-#   KLANGK_DEMO_FONT         default "DejaVu Sans Mono"
-#   KLANGK_DEMO_FONT_SIZE    default 22      terminal font size (pt)
-#   KLANGK_DEMO_FPS          default 30      capture framerate
-#   KLANGK_DEMO_CRF          default 20      x264 quality (lower = better)
-#   KLANGK_DEMO_X264_PRESET  default medium
-#   KLANGK_DEMO_DISPLAY      default 97      Xvfb display number to use
-#   KLANGK_DEMO_TMUX_SESSION default klangk-demo
-#   KLANGK_DEMO_OUTPUT       default src/frontend/e2e-tests/demo/recordings/recording-<ts>.mp4
-#   KLANGK_DEMO_PROMPT       default "host $ "
+#   KLANGKBUILD_DEMO_WIDTH        default 1920    canvas width  (px)
+#   KLANGKBUILD_DEMO_HEIGHT       default 1080    canvas height (px)
+#   KLANGKBUILD_DEMO_FONT         default "DejaVu Sans Mono"
+#   KLANGKBUILD_DEMO_FONT_SIZE    default 22      terminal font size (pt)
+#   KLANGKBUILD_DEMO_FPS          default 30      capture framerate
+#   KLANGKBUILD_DEMO_CRF          default 20      x264 quality (lower = better)
+#   KLANGKBUILD_DEMO_X264_PRESET  default medium
+#   KLANGKBUILD_DEMO_DISPLAY      default 97      Xvfb display number to use
+#   KLANGKBUILD_DEMO_TMUX_SESSION default klangk-demo
+#   KLANGKBUILD_DEMO_OUTPUT       default src/frontend/e2e-tests/demo/recordings/recording-<ts>.mp4
+#   KLANGKBUILD_DEMO_PROMPT       default "host $ "
 #                            (PS1 for the session shell; supports ANSI escapes)
 
 set -uo pipefail
@@ -55,19 +55,19 @@ set -uo pipefail
 WORKTREE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$WORKTREE_ROOT"
 
-WIDTH="${KLANGK_DEMO_WIDTH:-1920}"
-HEIGHT="${KLANGK_DEMO_HEIGHT:-1080}"
-FONT="${KLANGK_DEMO_FONT:-DejaVu Sans Mono}"
-FONT_SIZE="${KLANGK_DEMO_FONT_SIZE:-22}"
-FPS="${KLANGK_DEMO_FPS:-30}"
-CRF="${KLANGK_DEMO_CRF:-20}"
-PRESET="${KLANGK_DEMO_X264_PRESET:-medium}"
-DISPLAY_NUM="${KLANGK_DEMO_DISPLAY:-97}"
-SESSION="${KLANGK_DEMO_TMUX_SESSION:-klangk-demo}"
-PROMPT="${KLANGK_DEMO_PROMPT:-host $ }"
+WIDTH="${KLANGKBUILD_DEMO_WIDTH:-1920}"
+HEIGHT="${KLANGKBUILD_DEMO_HEIGHT:-1080}"
+FONT="${KLANGKBUILD_DEMO_FONT:-DejaVu Sans Mono}"
+FONT_SIZE="${KLANGKBUILD_DEMO_FONT_SIZE:-22}"
+FPS="${KLANGKBUILD_DEMO_FPS:-30}"
+CRF="${KLANGKBUILD_DEMO_CRF:-20}"
+PRESET="${KLANGKBUILD_DEMO_X264_PRESET:-medium}"
+DISPLAY_NUM="${KLANGKBUILD_DEMO_DISPLAY:-97}"
+SESSION="${KLANGKBUILD_DEMO_TMUX_SESSION:-klangk-demo}"
+PROMPT="${KLANGKBUILD_DEMO_PROMPT:-host $ }"
 export DISPLAY=":${DISPLAY_NUM}"
 
-OUT="${KLANGK_DEMO_OUTPUT:-src/frontend/e2e-tests/demo/recordings/recording-$(date +%Y%m%d-%H%M%S).mp4}"
+OUT="${KLANGKBUILD_DEMO_OUTPUT:-src/frontend/e2e-tests/demo/recordings/recording-$(date +%Y%m%d-%H%M%S).mp4}"
 mkdir -p "$(dirname "$OUT")"
 
 if [ "$#" -eq 0 ]; then
@@ -142,8 +142,8 @@ echo "  Xvfb up (pid $XVFB_PID)"
 # inherit the same environment with no extra typing on camera.
 VENV_BIN="$WORKTREE_ROOT/.devenv/state/venv/bin"
 SSH_SOCK="${SSH_AUTH_SOCK:-/run/user/$(id -u)/ssh-agent}"
-RCFILE="${KLANGK_DEMO_RCFILE:-$(mktemp -t klangk-demo-pane-rc.XXXXXX)}"
-export KLANGK_DEMO_RCFILE="$RCFILE"
+RCFILE="${KLANGKBUILD_DEMO_RCFILE:-$(mktemp -t klangk-demo-pane-rc.XXXXXX)}"
+export KLANGKBUILD_DEMO_RCFILE="$RCFILE"
 cat >"$RCFILE" <<RC
 # klangk demo recorder — per-pane shell setup (auto-generated; do not edit).
 # Sourced by every pane via 'bash --rcfile'.
@@ -208,7 +208,7 @@ echo
 # --- 4. run the driver -----------------------------------------------------
 # Hand the driver the session name + display so it can drive tmux. `set +e`
 # so a failing/aborted scene still lets ffmpeg finalize the recording.
-export KLANGK_DEMO_TMUX_SESSION="$SESSION"
+export KLANGKBUILD_DEMO_TMUX_SESSION="$SESSION"
 export DISPLAY
 echo "=== running driver ==="
 set +e
@@ -222,9 +222,9 @@ echo "=== finalizing recording ==="
 
 # Optionally dump every surviving pane's full scrollback to a text transcript
 # next to the recording (the cheap, vision-free way to QA a take). OFF by
-# default -- set KLANGK_DEMO_TRANSCRIPT=1 to enable. (Panes a scene killed
+# default -- set KLANGKBUILD_DEMO_TRANSCRIPT=1 to enable. (Panes a scene killed
 # mid-take aren't captured -- only the survivors are.)
-if [ "${KLANGK_DEMO_TRANSCRIPT:-0}" = "1" ]; then
+if [ "${KLANGKBUILD_DEMO_TRANSCRIPT:-0}" = "1" ]; then
   TRANSCRIPT="${OUT%.*}.transcript.txt"
   {
     echo "# transcript for: $OUT"

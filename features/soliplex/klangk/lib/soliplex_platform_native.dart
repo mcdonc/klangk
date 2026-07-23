@@ -15,9 +15,9 @@ const _redirectUri = 'klangk://callback';
 
 /// Klangk backend base URL. On native there is no DOM to read it from, so it
 /// comes from the compile-time define the app is already built with
-/// (`--dart-define=KLANGK_BACKEND_URL=...`). Falls back to localhost dev port.
+/// (`--dart-define=KLANGKD_BACKEND_URL=...`). Falls back to localhost dev port.
 String soliplexBackendBase() {
-  const fromDefine = String.fromEnvironment('KLANGK_BACKEND_URL');
+  const fromDefine = String.fromEnvironment('KLANGKD_BACKEND_URL');
   return fromDefine.isNotEmpty ? fromDefine : 'http://localhost:8997';
 }
 

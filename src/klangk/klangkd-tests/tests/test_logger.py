@@ -45,7 +45,7 @@ def _klangk_handlers(root):
 def _make_settings(level=None):
     env = {}
     if level is not None:
-        env["KLANGK_LOG_LEVEL"] = level
+        env["KLANGKD_LOG_LEVEL"] = level
     return make_settings(env)
 
 
@@ -132,26 +132,26 @@ class TestConfigureDefaults:
         """
         logger_mod.configure_defaults()
         with caplog.at_level(logging.WARNING, logger="klangk.settings"):
-            # Constructing settings with a deprecated KLANGK_PROXY_PORT emits
+            # Constructing settings with a deprecated KLANGKD_PROXY_PORT emits
             # a WARNING from a settings validator — proving the configured
             # root handles pre-app logging.
             from klangk.settings import KlangkSettings
 
             KlangkSettings(
                 env={
-                    "KLANGK_STATE_DIR": "/tmp/state",
-                    "KLANGK_PROXY_PORT": "9999",
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PROXY_PORT": "9999",
                 }
             )
         assert any(
-            "KLANGK_PROXY_PORT is deprecated" in r.message
+            "KLANGKD_PROXY_PORT is deprecated" in r.message
             for r in caplog.records
         )
 
 
 class TestConfigure:
     """The settings-driven phase: configure(settings) re-applies the level from
-    KLANGK_LOG_LEVEL, overriding the import-time defaults (#1467)."""
+    KLANGKD_LOG_LEVEL, overriding the import-time defaults (#1467)."""
 
     def test_sets_root_level_from_settings(self, clean_root):
         logger_mod.configure(_make_settings("DEBUG"))

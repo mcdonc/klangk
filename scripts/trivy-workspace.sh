@@ -7,7 +7,7 @@
 #   trivy-workspace --format json                # JSON output
 set -euo pipefail
 
-IMAGE="${KLANGK_IMAGE_NAME:-klangk-workspace}:latest"
+IMAGE="${KLANGKD_IMAGE_NAME:-klangk-workspace}:latest"
 
 # Save the image to a tarball so trivy can scan it without needing
 # access to the podman storage directly.

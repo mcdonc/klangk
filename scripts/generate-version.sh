@@ -6,7 +6,7 @@
 #   2. Current branch name (dev builds)
 #   3. Full commit SHA (detached HEAD)
 #
-# If KLANGK_VARIANT is set (non-empty), a "variant" field carrying that
+# If KLANGKBUILD_VARIANT is set (non-empty), a "variant" field carrying that
 # product-identity string is emitted between "version" and "commit". When
 # unset/empty the output is byte-identical to stock klangk — the field is
 # omitted entirely, not emitted as null (see #1358).
@@ -20,7 +20,7 @@ if [ "$VERSION" = "HEAD" ]; then
 fi
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-VARIANT="${KLANGK_VARIANT:-}"
+VARIANT="${KLANGKBUILD_VARIANT:-}"
 if [ -n "$VARIANT" ]; then
   printf '{"version":"%s","variant":"%s","commit":"%s","built_at":"%s"}\n' \
     "$VERSION" "$VARIANT" "$COMMIT" "$BUILT_AT"

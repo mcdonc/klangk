@@ -55,11 +55,11 @@ def _stop_server(proc, data_dir):
 def server():
     """Start a real Klangk server (klangkd over its UDS) for the test module."""
     server = start_server(
-        KLANGK_JWT_SECRET="acl-e2e-test-secret",
-        KLANGK_DEFAULT_USER="admin@example.com",
-        KLANGK_DEFAULT_PASSWORD="adminpass",
-        KLANGK_TEST_MODE="1",
-        KLANGK_IDLE_TIMEOUT_SECONDS="300",
+        KLANGKD_JWT_SECRET="acl-e2e-test-secret",
+        KLANGKD_DEFAULT_USER="admin@example.com",
+        KLANGKD_DEFAULT_PASSWORD="adminpass",
+        KLANGKD_TEST_MODE="1",
+        KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         LOGFIRE_TOKEN="",
     )
     yield server
@@ -971,7 +971,7 @@ class TestAdminResourceACL:
 class TestAutoStartWithServiceCommand:
     """Verify auto_start + service_command workspace creation via API.
 
-    Uses a separate server with KLANGK_ALLOW_AUTOSTART=1.
+    Uses a separate server with KLANGKD_ALLOW_AUTOSTART=1.
     """
 
     @pytest.fixture(autouse=True, scope="class")
@@ -979,12 +979,12 @@ class TestAutoStartWithServiceCommand:
     def autostart_server(request):
         server = start_server(
             data_dir=tempfile.mkdtemp(prefix="klangk-autostart-e2e-"),
-            KLANGK_JWT_SECRET="autostart-e2e-secret",
-            KLANGK_DEFAULT_USER="admin@example.com",
-            KLANGK_DEFAULT_PASSWORD="adminpass",
-            KLANGK_TEST_MODE="1",
-            KLANGK_IDLE_TIMEOUT_SECONDS="300",
-            KLANGK_ALLOW_AUTOSTART="1",
+            KLANGKD_JWT_SECRET="autostart-e2e-secret",
+            KLANGKD_DEFAULT_USER="admin@example.com",
+            KLANGKD_DEFAULT_PASSWORD="adminpass",
+            KLANGKD_TEST_MODE="1",
+            KLANGKD_IDLE_TIMEOUT_SECONDS="300",
+            KLANGKD_ALLOW_AUTOSTART="1",
             LOGFIRE_TOKEN="",
         )
         request.cls._server = server

@@ -208,7 +208,7 @@ class ProxyRenderer:
     def detect_dns_resolvers(self) -> str:
         """Space-separated nameservers for nginx's ``resolver`` directive.
 
-        From ``KLANGK_DNS_SERVERS`` (comma→space) if set, else parsed from
+        From ``KLANGKD_DNS_SERVERS`` (comma→space) if set, else parsed from
         ``/etc/resolv.conf`` (IPv6 bracketed for nginx), else ``8.8.8.8``.
         """
         raw = self._app.state.settings.dns_servers
@@ -247,7 +247,7 @@ class ProxyRenderer:
           catch-all guard. Loopback is excluded so a local browser keeps full
           UI/API access.
 
-        Source: explicit ``KLANGK_CONTAINER_SUBNETS`` if set (used verbatim,
+        Source: explicit ``KLANGKD_CONTAINER_SUBNETS`` if set (used verbatim,
         127.0.0.1 NOT implicitly added), else auto-detected host IPv4s, else
         the RFC1918 fallback.
         """
@@ -326,7 +326,7 @@ class ProxyRenderer:
         This needs the realip module compiled into nginx (it provides the
         ``$realip_remote_addr`` variable) — already required by #1560's
         ``set_real_ip_from`` directives. When proxy-header trust is off
-        (``KLANGK_REJECT_PROXY_HEADERS``), no realip directives fire,
+        (``KLANGKD_REJECT_PROXY_HEADERS``), no realip directives fire,
         ``$remote_addr`` is never rewritten, and ``$realip_remote_addr`` simply
         equals it — correct either way.
 
@@ -347,7 +347,7 @@ class ProxyRenderer:
         )
 
     def compute_client_max_body_size(self) -> str:
-        """Derive nginx ``client_max_body_size`` from ``KLANGK_FILE_UPLOAD_SIZE_MAX``.
+        """Derive nginx ``client_max_body_size`` from ``KLANGKD_FILE_UPLOAD_SIZE_MAX``.
 
         The setting is in bytes (default 500 MB); nginx wants ``Nm``. Minimum 1m.
         """
@@ -397,14 +397,14 @@ class ProxyRenderer:
     def _build_hosted_block(self) -> str:
         """The /hosted/ proxy locations (or a 404 block when disabled).
 
-        Disabled entirely when ``KLANGK_HOSTED_PORTS_PER_WORKSPACE`` is exactly 0
+        Disabled entirely when ``KLANGKD_HOSTED_PORTS_PER_WORKSPACE`` is exactly 0
         — mirrors the backend's ``ports_per_workspace_cap()`` (#1237).
         """
         raw = self._app.state.settings.hosted_ports_per_workspace
         if str(raw).strip() == "0":
             return (
                 "    # Hosted-app serving is disabled "
-                "(KLANGK_HOSTED_PORTS_PER_WORKSPACE=0).\n"
+                "(KLANGKD_HOSTED_PORTS_PER_WORKSPACE=0).\n"
                 "    location ^~ /hosted/ {\n"
                 "      return 404;\n"
                 "    }\n"
@@ -442,7 +442,7 @@ class ProxyRenderer:
         )
 
     def _build_llm_block(self, acl: str, resolvers: str) -> str:
-        """The /llm-proxy/ location, only when ``KLANGK_LLM_BASE_URL`` is set.
+        """The /llm-proxy/ location, only when ``KLANGKD_LLM_BASE_URL`` is set.
 
         Containers hit this instead of the real endpoint, so they never see the
         API key. Uses an nginx variable so the upstream resolves at request time
@@ -523,7 +523,7 @@ class ProxyRenderer:
         )
 
     def _reject_proxy_headers(self) -> bool:
-        """True if KLANGK_REJECT_PROXY_HEADERS is set (hard trust-off)."""
+        """True if KLANGKD_REJECT_PROXY_HEADERS is set (hard trust-off)."""
         raw = self._app.state.settings.reject_proxy_headers
         return bool(raw and str(raw).strip().lower() in ("1", "true", "yes"))
 
@@ -541,10 +541,10 @@ class ProxyRenderer:
         trusted set** (``set_real_ip_from``): a direct, non-proxy connection
         cannot spoof XFF.
 
-        Reuses ``KLANGK_TRUSTED_PROXY_CIDRS`` — the same trust set the
+        Reuses ``KLANGKD_TRUSTED_PROXY_CIDRS`` — the same trust set the
         Python ``peer_trusted()`` / ``client_is_loopback()`` helpers consult
         — so nginx and the backend agree on which peers are trusted.
-        Suppressed entirely when ``KLANGK_REJECT_PROXY_HEADERS`` is set (hard
+        Suppressed entirely when ``KLANGKD_REJECT_PROXY_HEADERS`` is set (hard
         trust-off), preserving the fail-closed posture.
         """
         if self._reject_proxy_headers():
@@ -564,7 +564,7 @@ class ProxyRenderer:
                     ipaddress.ip_network(token, strict=False)
                 except ValueError:
                     logger.warning(
-                        "Ignoring an invalid KLANGK_TRUSTED_PROXY_CIDRS "
+                        "Ignoring an invalid KLANGKD_TRUSTED_PROXY_CIDRS "
                         "entry in nginx realip block"
                     )
                     continue
@@ -587,8 +587,8 @@ class ProxyRenderer:
     def render_config(self, upstream: str) -> str:
         """Render ``nginx.conf`` as a string.
 
-        Template selection keys off ``KLANGK_PORT`` (#1542): **unset** ⇒
-        headless (a single container-egress listener on ``KLANGK_EGRESS_PORT``);
+        Template selection keys off ``KLANGKD_PORT`` (#1542): **unset** ⇒
+        headless (a single container-egress listener on ``KLANGKD_EGRESS_PORT``);
         **set** ⇒ full (a browser listener on ``{listen}:{port}`` plus a
         separate container-egress listener). ``upstream`` is the ``proxy_pass``
         base (:func:`uds_upstream` for the production socket bind,
@@ -605,7 +605,7 @@ class ProxyRenderer:
     ) -> str:
         """The container-egress locations, shared by headless and full modes.
 
-        Served on the ``KLANGK_EGRESS_PORT`` listener (container → backend via
+        Served on the ``KLANGKD_EGRESS_PORT`` listener (container → backend via
         ``host.containers.internal``): the LLM proxy (when configured), the
         browser-delegate bridge, container-posted chat messages, and the
         workspace-token ``auth_request`` subrequest + JSON 401 page that gate
@@ -658,8 +658,8 @@ class ProxyRenderer:
     def _render_headless_config(self, upstream: str) -> str:
         """Render the headless ``nginx.conf`` — egress listener only (#1542).
 
-        ``KLANGK_PORT`` is unset ⇒ headless: no browser listener is rendered.
-        the proxy listens on ``KLANGK_EGRESS_PORT`` for container → backend egress
+        ``KLANGKD_PORT`` is unset ⇒ headless: no browser listener is rendered.
+        the proxy listens on ``KLANGKD_EGRESS_PORT`` for container → backend egress
         (``/llm-proxy``, ``/api/v1/browser-delegate``,
         ``/api/v1/workspaces/post-chat-message``). The browser UI, ``/hosted/``,
         ``/auth/local``, and the catch-all ``location /`` are all absent — the
@@ -697,7 +697,7 @@ http {{
     def _render_full_config(self, upstream: str) -> str:
         """Render the full (browser) ``nginx.conf`` — two listeners (#1542).
 
-        ``KLANGK_PORT`` is set ⇒ full/browser mode. Two server blocks:
+        ``KLANGKD_PORT`` is set ⇒ full/browser mode. Two server blocks:
 
         - **Egress listener** (``listen {egress_listen}:{egress_port};``): container → backend
           egress (shared with headless via :meth:`_egress_locations`).
@@ -828,7 +828,7 @@ http {{
         return text
 
     def find_proxy_bin(self) -> str:
-        """Locate the nginx binary: KLANGK_PROXY_BIN > PATH > /usr/sbin/nginx."""
+        """Locate the nginx binary: KLANGKD_PROXY_BIN > PATH > /usr/sbin/nginx."""
         configured = self._app.state.settings.proxy_bin
         if configured:
             return str(configured)
@@ -924,8 +924,8 @@ class ProxyWatchdog:
         """Render nginx.conf and return ``(bin_path, conf_path)``.
 
         uvicorn always binds the UDS at ``settings.socket`` (default
-        ``<state_dir>/klangk.sock``, overridable via ``KLANGK_SOCKET``); the proxy
-        proxies to that socket regardless of deployment shape. ``KLANGK_PORT``
+        ``<state_dir>/klangk.sock``, overridable via ``KLANGKD_SOCKET``); the proxy
+        proxies to that socket regardless of deployment shape. ``KLANGKD_PORT``
         selects headless (unset) vs full (set) templates and the nginx listen
         directives; the upstream is always the UDS.
         """
@@ -940,12 +940,12 @@ class ProxyWatchdog:
     async def start(self) -> None:
         """Render the proxy config and start the proxy watchdog.
 
-        Gated only by ``_KLANGK_DISABLE_PROXY`` — an **internal,
+        Gated only by ``_KLANGKD_DISABLE_PROXY`` — an **internal,
         non-user-facing** env var the test suite sets to suppress nginx spawn
         (tests boot the app via the lifespan and don't want a real nginx
         process). Not a documented config knob; no operator-facing name.
         """
-        if os.environ.get("_KLANGK_DISABLE_PROXY"):
+        if os.environ.get("_KLANGKD_DISABLE_PROXY"):
             return
         bin_path, conf_path = self._prepare()
         self._stopping = False

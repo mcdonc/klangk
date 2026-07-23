@@ -3,7 +3,7 @@
 The build scripts (``scripts/flutterbuildweb.sh``,
 ``scripts/build-workspace-image.sh``) wrap ``update_features.py`` and default
 to ``--local-only`` — skipping git-sourced features — unless
-``KLANGK_BUILD_INCLUDE_REMOTE=1`` is set. This keeps CI off the network and
+``KLANGKBUILD_BUILD_INCLUDE_REMOTE=1`` is set. This keeps CI off the network and
 resilient to upstream failures: the policy dates to #1691, when a remote
 feature's transitive git dep had a missing LFS object that broke every CI
 build. Today every feature in ``features.yaml`` is a local path entry
@@ -34,7 +34,7 @@ _BUILD_SCRIPTS = [
 
 def test_build_scripts_check_env_var():
     """Every build script that calls update_features.py gates git-sourced
-    features behind KLANGK_BUILD_INCLUDE_REMOTE=1.
+    features behind KLANGKBUILD_BUILD_INCLUDE_REMOTE=1.
 
     Without this guard, a default CI build clones every git-sourced feature
     declared in features.yaml, and any upstream failure (a missing LFS
@@ -46,9 +46,9 @@ def test_build_scripts_check_env_var():
             f"{script.name} no longer calls update_features.py — "
             f"guard test is stale, investigate"
         )
-        assert "KLANGK_BUILD_INCLUDE_REMOTE" in text, (
+        assert "KLANGKBUILD_BUILD_INCLUDE_REMOTE" in text, (
             f"{script.name} calls update_features.py without the "
-            f"KLANGK_BUILD_INCLUDE_REMOTE guard — a default CI build will "
+            f"KLANGKBUILD_BUILD_INCLUDE_REMOTE guard — a default CI build will "
             f"clone git-sourced features and can be broken by any upstream "
             f"failure (the original failure mode was #1691)"
         )
@@ -70,10 +70,10 @@ def test_build_scripts_default_to_local_only():
     for script in _BUILD_SCRIPTS:
         text = script.read_text()
         # The conditional adds --local-only UNLESS the env var is "1".
-        # Match the pattern: if [ "${KLANGK_BUILD_INCLUDE_REMOTE:-0}" != "1" ]
+        # Match the pattern: if [ "${KLANGKBUILD_BUILD_INCLUDE_REMOTE:-0}" != "1" ]
         # (the :-0 default makes unset → "0" → != "1" → true → add --local-only).
-        assert "KLANGK_BUILD_INCLUDE_REMOTE:-0" in text, (
-            f"{script.name} doesn't default KLANGK_BUILD_INCLUDE_REMOTE to '0' "
+        assert "KLANGKBUILD_BUILD_INCLUDE_REMOTE:-0" in text, (
+            f"{script.name} doesn't default KLANGKBUILD_BUILD_INCLUDE_REMOTE to '0' "
             f"— the polarity may be flipped, making remote-fetch the default "
             f"(re-exposes CI to upstream failures)"
         )

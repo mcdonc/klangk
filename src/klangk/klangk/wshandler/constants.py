@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Plain debug flag (not a KlangkSettings field): read straight from the
 # environment, no file:/cmd: resolution (#1516).
-WS_DEBUG = bool(os.environ.get("KLANGKWS_DEBUG"))
+WS_DEBUG = bool(os.environ.get("KLANGKD_WEBSOCKET_DEBUG"))
 
 # Max size for terminal/exec input data (base64-decoded bytes).
 # Matches uvicorn's --ws-max-size (16 MB) so the app-level cap isn't
@@ -33,7 +33,7 @@ SEND_QUEUE_SIZE = 256
 
 
 def log_ws_msg(direction: str, msg: dict, user: dict | None = None) -> None:
-    """Log a WebSocket message for debugging (KLANGKWS_DEBUG=1)."""
+    """Log a WebSocket message for debugging (KLANGKD_WEBSOCKET_DEBUG=1)."""
     if not WS_DEBUG:
         return
     msg_type = msg.get("type") or msg.get("cmd") or "?"

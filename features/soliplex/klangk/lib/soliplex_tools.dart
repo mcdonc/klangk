@@ -45,7 +45,7 @@ final SoliplexServerRegistry soliplexServers = SoliplexServerRegistry(
 /// soliplex_client transport in `_streamRun` is coverage-ignored; this is not).
 class CitationAccumulator {
   CitationAccumulator({sox.CitationExtractor? extractor})
-      : _extractor = extractor ?? sox.CitationExtractor();
+    : _extractor = extractor ?? sox.CitationExtractor();
 
   final sox.CitationExtractor _extractor;
 
@@ -205,8 +205,8 @@ class SoliplexClient {
   /// the URL shape is testable without a live server.
   String uploadsUrl(String roomId, {String? threadId}) =>
       (threadId == null || threadId.isEmpty)
-          ? '$_baseUrl/api/v1/uploads/$roomId'
-          : '$_baseUrl/api/v1/uploads/$roomId/thread/$threadId';
+      ? '$_baseUrl/api/v1/uploads/$roomId'
+      : '$_baseUrl/api/v1/uploads/$roomId/thread/$threadId';
 
   /// Build the single-file GET URL. soliplex puts a literal `/file/` segment
   /// before the filename on BOTH the room and thread download routes:
@@ -227,8 +227,8 @@ class SoliplexClient {
   /// and :313). This asymmetry with the GET routes is deliberate on the server.
   String uploadPostUrl(String roomId, {String? threadId}) =>
       (threadId == null || threadId.isEmpty)
-          ? '$_baseUrl/api/v1/uploads/$roomId'
-          : '$_baseUrl/api/v1/uploads/$roomId/$threadId';
+      ? '$_baseUrl/api/v1/uploads/$roomId'
+      : '$_baseUrl/api/v1/uploads/$roomId/$threadId';
 
   /// List files uploaded to a [roomId], or to a thread within it when
   /// [threadId] is given. Normalizes the soliplex `RoomUploads`/`ThreadUploads`
@@ -297,7 +297,8 @@ class SoliplexClient {
       final text = utf8.decode(bytes);
       if (text.length > maxTextBytes) {
         return (
-          content: '${text.substring(0, maxTextBytes)}\n'
+          content:
+              '${text.substring(0, maxTextBytes)}\n'
               '...[truncated: ${text.length} chars total, '
               'showing first $maxTextBytes]',
           base64: false,
@@ -391,14 +392,9 @@ class SoliplexClient {
     }
     final runId = runs.keys.first;
 
-    final text = await _streamRun(
-        roomId,
-        threadId,
-        runId,
-        [
-          sox.UserMessage(id: _messageId(0), content: question),
-        ],
-        onChunk);
+    final text = await _streamRun(roomId, threadId, runId, [
+      sox.UserMessage(id: _messageId(0), content: question),
+    ], onChunk);
     return (text: text, threadId: threadId);
   }
 
@@ -508,7 +504,7 @@ class SoliplexClient {
             citations.consume(event);
             // Keepalive: forward an empty chunk for every other AG-UI event
             // (run/activity/tool/thinking). The klangk bridge bounds the gap
-            // BETWEEN chunks (KLANGK_BRIDGE_TIMEOUT_SECONDS, default 30s); a
+            // BETWEEN chunks (KLANGKD_BRIDGE_TIMEOUT_SECONDS, default 30s); a
             // long-but-active run (RAG + LLM, multi-step tools) emits these
             // frequently, so relaying them resets the idle timer and the
             // request never times out — even past 30s/2min. Empty deltas add
@@ -517,8 +513,9 @@ class SoliplexClient {
           }
         }
       }
-      final answer =
-          buffer.isNotEmpty ? buffer.toString() : '(No response from Soliplex)';
+      final answer = buffer.isNotEmpty
+          ? buffer.toString()
+          : '(No response from Soliplex)';
       // CITATIONS PROTOTYPE: append a compact Sources list when any were seen.
       // formatSources returns '' when empty, so this is a no-op otherwise.
       return answer + formatSources(citations.sources);

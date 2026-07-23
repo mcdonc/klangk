@@ -97,21 +97,21 @@ class TestParseIdleTimeout:
         assert reg.check_interval_seconds == max(10, min(60, 30 * 60 // 3))
 
     def test_custom_value(self):
-        reg = self._registry({"KLANGK_IDLE_TIMEOUT_SECONDS": "120"})
+        reg = self._registry({"KLANGKD_IDLE_TIMEOUT_SECONDS": "120"})
         assert reg.idle_timeout_seconds == 120
         assert reg.check_interval_seconds == max(10, min(60, 120 // 3))
 
     def test_invalid_value_uses_default(self):
-        reg = self._registry({"KLANGK_IDLE_TIMEOUT_SECONDS": "not_a_number"})
+        reg = self._registry({"KLANGKD_IDLE_TIMEOUT_SECONDS": "not_a_number"})
         assert reg.idle_timeout_seconds == 30 * 60
 
     def test_small_value_clamps_interval(self):
-        reg = self._registry({"KLANGK_IDLE_TIMEOUT_SECONDS": "15"})
+        reg = self._registry({"KLANGKD_IDLE_TIMEOUT_SECONDS": "15"})
         assert reg.idle_timeout_seconds == 15
         assert reg.check_interval_seconds == 10  # clamped to min 10
 
     def test_large_value_clamps_interval(self):
-        reg = self._registry({"KLANGK_IDLE_TIMEOUT_SECONDS": "3600"})
+        reg = self._registry({"KLANGKD_IDLE_TIMEOUT_SECONDS": "3600"})
         assert reg.idle_timeout_seconds == 3600
         assert reg.check_interval_seconds == 60  # clamped to max 60
 
@@ -124,28 +124,28 @@ class TestSslCertDir:
 
     def test_missing_dir_returns_none(self, tmp_path):
         gone = tmp_path / "does-not-exist"
-        s = make_settings({"KLANGK_SSL_CERT_DIR": str(gone)})
+        s = make_settings({"KLANGKD_SSL_CERT_DIR": str(gone)})
         assert self._trust(s).ssl_cert_dir() is None
 
     def test_empty_dir_returns_none(self, tmp_path):
         # Dir exists but contains no .pem/.crt.
         (tmp_path / "readme.txt").write_text("no certs here")
-        s = make_settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
+        s = make_settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path)})
         assert self._trust(s).ssl_cert_dir() is None
 
     def test_dir_with_pem_returns_path(self, tmp_path):
         (tmp_path / "ca.pem").write_text("-----BEGIN CERTIFICATE-----")
-        s = make_settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
+        s = make_settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path)})
         assert self._trust(s).ssl_cert_dir() == str(tmp_path.resolve())
 
     def test_dir_with_crt_returns_path(self, tmp_path):
         (tmp_path / "my-ca.crt").write_text("-----BEGIN CERTIFICATE-----")
-        s = make_settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
+        s = make_settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path)})
         assert self._trust(s).ssl_cert_dir() == str(tmp_path.resolve())
 
     def test_extension_case_insensitive(self, tmp_path):
         (tmp_path / "CA.PEM").write_text("-----BEGIN CERTIFICATE-----")
-        s = make_settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
+        s = make_settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path)})
         assert self._trust(s).ssl_cert_dir() == str(tmp_path.resolve())
 
     def test_ssl_env_vars_empty_without_dir(self):
@@ -180,7 +180,7 @@ class TestImagePullPolicy:
         # Rebuild registry with env override
         import types as types_mod
 
-        settings = make_settings({"KLANGK_IMAGE_PULL_POLICY": "missing"})
+        settings = make_settings({"KLANGKD_IMAGE_PULL_POLICY": "missing"})
         app_state = types_mod.SimpleNamespace(
             state=types_mod.SimpleNamespace(settings=settings)
         )
@@ -190,14 +190,14 @@ class TestImagePullPolicy:
     def test_invalid_falls_back_to_never(self, caplog):
         import types as types_mod
 
-        settings = make_settings({"KLANGK_IMAGE_PULL_POLICY": "sometimes"})
+        settings = make_settings({"KLANGKD_IMAGE_PULL_POLICY": "sometimes"})
         app_state = types_mod.SimpleNamespace(
             state=types_mod.SimpleNamespace(settings=settings)
         )
         reg = container.ContainerRegistry(app_state)
         with caplog.at_level("WARNING"):
             assert reg.image_pull_policy() == "never"
-        assert "Invalid KLANGK_IMAGE_PULL_POLICY" in caplog.text
+        assert "Invalid KLANGKD_IMAGE_PULL_POLICY" in caplog.text
 
 
 class TestActivityTracking:
@@ -409,18 +409,18 @@ class TestDnsConfig:
 
     def test_single_server(self):
         assert self._registry(
-            {"KLANGK_DNS_SERVERS": "100.100.100.100"}
+            {"KLANGKD_DNS_SERVERS": "100.100.100.100"}
         ).container_dns_config() == ["100.100.100.100"]
 
     def test_multiple_servers(self):
         result = self._registry(
-            {"KLANGK_DNS_SERVERS": "100.100.100.100, 8.8.8.8"}
+            {"KLANGKD_DNS_SERVERS": "100.100.100.100, 8.8.8.8"}
         ).container_dns_config()
         assert result == ["100.100.100.100", "8.8.8.8"]
 
     def test_empty_string(self):
         assert (
-            self._registry({"KLANGK_DNS_SERVERS": ""}).container_dns_config()
+            self._registry({"KLANGKD_DNS_SERVERS": ""}).container_dns_config()
             == []
         )
 
@@ -441,7 +441,7 @@ class TestConstants:
 
 
 class TestPortsPerWorkspaceCap:
-    """KLANGK_HOSTED_PORTS_PER_WORKSPACE resolver (#1237)."""
+    """KLANGKD_HOSTED_PORTS_PER_WORKSPACE resolver (#1237)."""
 
     def setup_method(self):
         app_state = _make_app_state()
@@ -462,7 +462,7 @@ class TestPortsPerWorkspaceCap:
     def test_override(self):
         assert (
             self._registry(
-                {"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "3"}
+                {"KLANGKD_HOSTED_PORTS_PER_WORKSPACE": "3"}
             ).ports_per_workspace_cap()
             == 3
         )
@@ -470,7 +470,7 @@ class TestPortsPerWorkspaceCap:
     def test_zero_disables(self):
         assert (
             self._registry(
-                {"KLANGK_HOSTED_PORTS_PER_WORKSPACE": "0"}
+                {"KLANGKD_HOSTED_PORTS_PER_WORKSPACE": "0"}
             ).ports_per_workspace_cap()
             == 0
         )
@@ -780,19 +780,19 @@ class TestStartContainer:
         kwargs = p.create_container.call_args.kwargs
         env = kwargs["env"]
         env_dict = dict(e.split("=", 1) for e in env)
-        assert env_dict["KLANGK_LLM_PROXY_URL"] == (
+        assert env_dict["KLANGKWS_LLM_PROXY_URL"] == (
             "http://host.containers.internal:8995/llm-proxy"
         )
-        assert env_dict["KLANGK_LLM_MODEL"] == "gemma4:31b"
+        assert env_dict["KLANGKWS_LLM_MODEL"] == "gemma4:31b"
         # The agent's home is injected at container start so every exec
         # process (terminals, service command, health check) inherits it.
-        assert env_dict["KLANGK_AGENT_HOME"] == "/home/clanker"
+        assert env_dict["KLANGKWS_AGENT_HOME"] == "/home/clanker"
         assert (
-            env_dict["KLANGK_BRIDGE_URL"]
+            env_dict["KLANGKWS_BRIDGE_URL"]
             == "http://host.containers.internal:8995"
         )
         # API keys should NOT be in the container env
-        assert not any(e.startswith("KLANGK_LLM_API_KEY=") for e in env)
+        assert not any(e.startswith("KLANGKD_LLM_API_KEY=") for e in env)
         assert not any(e.startswith("ANTHROPIC_API_KEY=") for e in env)
         # host.containers.internal must be resolvable
         assert "host.containers.internal:host-gateway" in kwargs["add_hosts"]
@@ -881,9 +881,9 @@ class TestStartContainer:
                 hosting_base_path="/klangk",
             )
         env = p.create_container.call_args.kwargs["env"]
-        assert "KLANGK_HOSTING_HOSTNAME=example.com" in env
-        assert "KLANGK_HOSTING_PROTO=https" in env
-        assert "KLANGK_HOSTING_BASE_PATH=/klangk" in env
+        assert "KLANGKWS_HOSTING_HOSTNAME=example.com" in env
+        assert "KLANGKWS_HOSTING_PROTO=https" in env
+        assert "KLANGKWS_HOSTING_BASE_PATH=/klangk" in env
 
     async def test_hosting_env_vars_default_is_bare_localhost(self, workspace):
         """Omitted hosting_* resolves to bare localhost (#1240).
@@ -892,9 +892,9 @@ class TestStartContainer:
         workspace create have no request to derive from). Before the fix
         the defaults were a bare ``localhost`` with no port anyway, but
         *bypassed* ``derive_hosting_info`` entirely — so a deployer who set
-        ``KLANGK_HOSTING_HOSTNAME`` saw it ignored on every eager start.
+        ``KLANGKD_HOSTING_HOSTNAME`` saw it ignored on every eager start.
         Now the choke point resolves it, and no port is synthesized from
-        ``KLANGK_EGRESS_PORT`` (the port must live in HOSTING_HOSTNAME).
+        ``KLANGKD_EGRESS_PORT`` (the port must live in HOSTING_HOSTNAME).
         """
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -903,9 +903,9 @@ class TestStartContainer:
                 "/tmp/home",
             )
         env = p.create_container.call_args.kwargs["env"]
-        assert "KLANGK_HOSTING_HOSTNAME=localhost" in env
-        assert "KLANGK_HOSTING_PROTO=http" in env
-        assert "KLANGK_HOSTING_BASE_PATH=" in env
+        assert "KLANGKWS_HOSTING_HOSTNAME=localhost" in env
+        assert "KLANGKWS_HOSTING_PROTO=http" in env
+        assert "KLANGKWS_HOSTING_BASE_PATH=" in env
 
     async def test_terminal_banner_default_empty(self, workspace):
         """Default terminal banner is empty, so env var is not passed."""
@@ -916,7 +916,7 @@ class TestStartContainer:
                 "/tmp/home",
             )
         env = p.create_container.call_args.kwargs["env"]
-        assert not any(e.startswith("KLANGK_TERMINAL_BANNER=") for e in env)
+        assert not any(e.startswith("KLANGKWS_TERMINAL_BANNER=") for e in env)
 
     async def test_terminal_banner_custom(self, workspace, monkeypatch):
         """Deployer can set a terminal banner via env var."""
@@ -932,12 +932,12 @@ class TestStartContainer:
                 "/tmp/home",
             )
         env = p.create_container.call_args.kwargs["env"]
-        assert "KLANGK_TERMINAL_BANNER=Custom warning" in env
+        assert "KLANGKWS_TERMINAL_BANNER=Custom warning" in env
 
     async def test_ssl_trust_mounted_when_cert_dir_configured(
         self, workspace, monkeypatch, tmp_path
     ):
-        """A configured KLANGK_SSL_CERT_DIR is bind-mounted ro and env set (#1181)."""
+        """A configured KLANGKD_SSL_CERT_DIR is bind-mounted ro and env set (#1181)."""
         ssl_dir = tmp_path / "ssl"
         ssl_dir.mkdir()
         (ssl_dir / "corp-ca.pem").write_text("-----BEGIN CERTIFICATE-----")
@@ -959,7 +959,7 @@ class TestStartContainer:
         assert "NODE_EXTRA_CA_CERTS=/tmp/klangk/ca-bundle.crt" in env
 
     async def test_no_ssl_trust_when_cert_dir_unset(self, workspace):
-        """Without KLANGK_SSL_CERT_DIR there is no mount and no trust env."""
+        """Without KLANGKD_SSL_CERT_DIR there is no mount and no trust env."""
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
@@ -1024,7 +1024,7 @@ class TestStartContainer:
         assert len(ports) == 2
 
     async def test_cap_clamps_allocation_down(self, workspace, monkeypatch):
-        """KLANGK_HOSTED_PORTS_PER_WORKSPACE clamps num_ports down (#1237)."""
+        """KLANGKD_HOSTED_PORTS_PER_WORKSPACE clamps num_ports down (#1237)."""
         monkeypatch.setattr(
             self.registry.app.state.settings, "hosted_ports_per_workspace", "3"
         )
@@ -1059,7 +1059,7 @@ class TestStartContainer:
         assert ports == []
 
     async def test_cap_zero_omits_hosting_env(self, workspace, monkeypatch):
-        """cap=0 suppresses KLANGK_PORT_MAPPINGS / KLANGK_HOSTING_* (#1237)."""
+        """cap=0 suppresses KLANGKWS_PORT_MAPPINGS / KLANGKWS_HOSTING_* (#1237)."""
         monkeypatch.setattr(
             self.registry.app.state.settings, "hosted_ports_per_workspace", "0"
         )
@@ -1071,11 +1071,11 @@ class TestStartContainer:
                 num_ports=5,
             )
         env = p.create_container.call_args.kwargs["env"]
-        assert not any(e.startswith("KLANGK_PORT_MAPPINGS=") for e in env)
-        assert not any(e.startswith("KLANGK_HOSTING_") for e in env)
+        assert not any(e.startswith("KLANGKWS_PORT_MAPPINGS=") for e in env)
+        assert not any(e.startswith("KLANGKWS_HOSTING_") for e in env)
         # Non-hosting env is still present.
-        assert any(e.startswith("KLANGK_WORKSPACE_ID=") for e in env)
-        assert any(e.startswith("KLANGK_LLM_PROXY_URL=") for e in env)
+        assert any(e.startswith("KLANGKWS_WORKSPACE_ID=") for e in env)
+        assert any(e.startswith("KLANGKWS_LLM_PROXY_URL=") for e in env)
 
     async def test_cap_zero_blocks_creation_allocation(
         self, workspace, monkeypatch
@@ -1104,10 +1104,10 @@ class TestStartContainer:
             )
         env = p.create_container.call_args.kwargs["env"]
         env_dict = dict(e.split("=", 1) for e in env)
-        assert env_dict["KLANGK_PORT_MAPPINGS"].count(",") == 4  # 5 mappings
-        assert "KLANGK_HOSTING_HOSTNAME" in env_dict
-        assert "KLANGK_HOSTING_PROTO" in env_dict
-        assert "KLANGK_HOSTING_BASE_PATH" in env_dict
+        assert env_dict["KLANGKWS_PORT_MAPPINGS"].count(",") == 4  # 5 mappings
+        assert "KLANGKWS_HOSTING_HOSTNAME" in env_dict
+        assert "KLANGKWS_HOSTING_PROTO" in env_dict
+        assert "KLANGKWS_HOSTING_BASE_PATH" in env_dict
 
     async def test_container_config_structure(self, workspace):
         with patch_podman(self.registry) as p:
@@ -1141,21 +1141,21 @@ class TestStartContainer:
     ):
         # container_env() reads the build-emitted container_env_keys list and
         # resolves each from the server env (#1655). Feature-declared keys
-        # must carry the KLANGK_FEATURE_ prefix (#1662). Patch the parsed
+        # must carry the KLANGKWS_FEATURE_ prefix (#1662). Patch the parsed
         # manifest so the test doesn't need a real features.json on disk.
         monkeypatch.setattr(
             self.registry.app.state.features,
             "_manifest",
-            {"container_env_keys": ["KLANGK_FEATURE_TEST_VAR"]},
+            {"container_env_keys": ["KLANGKWS_FEATURE_TEST_VAR"]},
         )
-        monkeypatch.setenv("KLANGK_FEATURE_TEST_VAR", "feature-val")
+        monkeypatch.setenv("KLANGKWS_FEATURE_TEST_VAR", "feature-val")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         env_list = p.create_container.call_args.kwargs["env"]
         env_dict = dict(e.split("=", 1) for e in env_list)
-        assert env_dict["KLANGK_FEATURE_TEST_VAR"] == "feature-val"
+        assert env_dict["KLANGKWS_FEATURE_TEST_VAR"] == "feature-val"
 
 
 class TestStartContainerPortConflict:
@@ -1564,7 +1564,7 @@ class TestProtectedPaths:
         import tempfile
 
         # Use a separate temp dir so it doesn't overlap with the
-        # KLANGK_DATA_DIR that conftest sets to tmp_path.
+        # KLANGKD_DATA_DIR that conftest sets to tmp_path.
         with tempfile.TemporaryDirectory(prefix="mount-test-") as d:
             d = Path(d)
             allowed = d / "allowed"
@@ -3470,13 +3470,13 @@ class TestRegistrySettingsDerived:
         return container.ContainerRegistry(app_state)
 
     def test_allowed_images_from_settings(self):
-        reg = self._registry({"KLANGK_ALLOWED_IMAGES": "foo,bar"})
+        reg = self._registry({"KLANGKD_ALLOWED_IMAGES": "foo,bar"})
         assert "foo" in reg.allowed_images
         assert "bar" in reg.allowed_images
         assert reg.image_name in reg.allowed_images  # default always allowed
 
     def test_allowed_mount_roots_from_settings(self):
-        reg = self._registry({"KLANGK_ALLOWED_MOUNT_ROOTS": "/home,/data"})
+        reg = self._registry({"KLANGKD_ALLOWED_MOUNT_ROOTS": "/home,/data"})
         assert any(r.endswith("/home") for r in reg.allowed_mount_roots)
         assert any(r.endswith("/data") for r in reg.allowed_mount_roots)
 

@@ -551,8 +551,8 @@ test.describe("Klangk E2E", () => {
 
         // 3. Kill the backend server to simulate a real outage.
         //    The E2E global setup stores the PID.
-        const pid = process.env.KLANGK_E2E_PID;
-        if (!pid) throw new Error("KLANGK_E2E_PID not set");
+        const pid = process.env.KLANGKBUILD_E2E_PID;
+        if (!pid) throw new Error("KLANGKBUILD_E2E_PID not set");
         const { execSync, spawn: spawnProc } = await import("child_process");
         const { join } = await import("path");
         const { openSync } = await import("fs");
@@ -575,14 +575,15 @@ test.describe("Klangk E2E", () => {
         // 4. Restart the backend server with the same config.
         //    Replicate the env from global-setup.ts.
         const projectRoot = join(__dirname, "..", "..", "..", "..");
-        const backendPort = process.env.KLANGK_E2E_PORT || "18997";
-        const dataDir = process.env.KLANGK_E2E_DATA_DIR || "/tmp/klangk-e2e";
+        const backendPort = process.env.KLANGKBUILD_E2E_PORT || "18997";
+        const dataDir =
+          process.env.KLANGKBUILD_E2E_DATA_DIR || "/tmp/klangk-e2e";
         const stateDir =
-          process.env.KLANGK_E2E_STATE_DIR || "/tmp/klangk-e2e-state";
+          process.env.KLANGKBUILD_E2E_STATE_DIR || "/tmp/klangk-e2e-state";
         // klangkd's proxy (nginx) reopens /dev/stdout (its access_log), which fails
         // with ENXIO when stdout is a pipe — append to the same log file via
         // an fd so nginx can reopen it cleanly (#1525).
-        const logPath = process.env.KLANGK_E2E_LOG;
+        const logPath = process.env.KLANGKBUILD_E2E_LOG;
         const logFd = logPath ? openSync(logPath, "a") : "pipe";
         const backendProcess = spawnProc(
           "python3",
@@ -592,27 +593,27 @@ test.describe("Klangk E2E", () => {
             detached: true,
             stdio: ["ignore", logFd, logFd],
             env: cleanEnv({
-              KLANGK_PORT: backendPort,
-              KLANGK_DATA_DIR: dataDir,
-              KLANGK_STATE_DIR: stateDir,
-              KLANGK_JWT_SECRET: "e2e-test-secret",
-              KLANGK_DEFAULT_USER: "admin@example.com",
-              KLANGK_DEFAULT_PASSWORD: "admin",
-              KLANGK_TEST_MODE: "1",
-              KLANGK_PORT_RANGE_START: "19200",
+              KLANGKD_PORT: backendPort,
+              KLANGKD_DATA_DIR: dataDir,
+              KLANGKD_STATE_DIR: stateDir,
+              KLANGKD_JWT_SECRET: "e2e-test-secret",
+              KLANGKD_DEFAULT_USER: "admin@example.com",
+              KLANGKD_DEFAULT_PASSWORD: "admin",
+              KLANGKD_TEST_MODE: "1",
+              KLANGKD_PORT_RANGE_START: "19200",
               LOGFIRE_TOKEN: "",
-              KLANGK_LOGIN_BANNER_TITLE: "",
-              KLANGK_LOGIN_BANNER: "",
-              KLANGK_OIDC_CONFIG: "",
-              KLANGK_AUTH_MODES: "",
-              KLANGK_OIDC_LOGIN_HOOK: "",
-              KLANGK_DISABLE_REGISTRATION: "",
-              KLANGK_DISABLE_INVITES: "",
+              KLANGKD_LOGIN_BANNER_TITLE: "",
+              KLANGKD_LOGIN_BANNER: "",
+              KLANGKD_OIDC_CONFIG: "",
+              KLANGKD_AUTH_MODES: "",
+              KLANGKD_OIDC_LOGIN_HOOK: "",
+              KLANGKD_DISABLE_REGISTRATION: "",
+              KLANGKD_DISABLE_INVITES: "",
             }),
           },
         );
         restartedPid = backendProcess.pid ?? null;
-        process.env.KLANGK_E2E_PID = String(backendProcess.pid);
+        process.env.KLANGKBUILD_E2E_PID = String(backendProcess.pid);
 
         // Wait for the server to be ready
         const baseUrl = `http://localhost:${backendPort}`;
@@ -826,7 +827,7 @@ test.describe("Klangk E2E", () => {
     request,
   }) => {
     test.skip(
-      !!process.env.KLANGK_CONTAINER_TEST_MODE,
+      !!process.env.KLANGKBUILD_CONTAINER_TEST_MODE,
       "requires local podman access",
     );
     const email = `lifecycle-${Date.now()}@test.example.com`;
@@ -915,7 +916,7 @@ test.describe("Klangk E2E", () => {
     request,
   }) => {
     test.skip(
-      !!process.env.KLANGK_CONTAINER_TEST_MODE,
+      !!process.env.KLANGKBUILD_CONTAINER_TEST_MODE,
       "requires local podman access",
     );
     const email = `host-home-${Date.now()}@test.example.com`;
@@ -927,7 +928,7 @@ test.describe("Klangk E2E", () => {
     );
 
     // Write a file to the host home directory before starting the container
-    const dataDir = process.env.KLANGK_E2E_DATA_DIR!;
+    const dataDir = process.env.KLANGKBUILD_E2E_DATA_DIR!;
     const homePath = `${dataDir}/workspaces/${workspaceId}/home`;
     const { mkdirSync, writeFileSync } = await import("fs");
     mkdirSync(homePath, { recursive: true });
@@ -988,13 +989,13 @@ test.describe("Klangk E2E", () => {
 
     test("container stops after idle timeout", async ({ page, request }) => {
       test.skip(
-        !!process.env.KLANGK_CONTAINER_TEST_MODE,
+        !!process.env.KLANGKBUILD_CONTAINER_TEST_MODE,
         "requires local podman access",
       );
       // Check if test mode is enabled
       const getResp = await request.get(`${API_BASE}/api/v1/test/idle-timeout`);
       if (!getResp.ok()) {
-        test.skip(true, "KLANGK_TEST_MODE not enabled");
+        test.skip(true, "KLANGKD_TEST_MODE not enabled");
         return;
       }
 
@@ -1092,13 +1093,13 @@ test.describe("Klangk E2E", () => {
     request,
   }) => {
     test.skip(
-      !!process.env.KLANGK_CONTAINER_TEST_MODE,
+      !!process.env.KLANGKBUILD_CONTAINER_TEST_MODE,
       "requires local podman access",
     );
     // Check if test mode is enabled (browsers endpoint needs it)
     const testCheck = await request.get(`${API_BASE}/api/v1/test/idle-timeout`);
     if (!testCheck.ok()) {
-      test.skip(true, "KLANGK_TEST_MODE not enabled");
+      test.skip(true, "KLANGKD_TEST_MODE not enabled");
       return;
     }
 
@@ -1662,7 +1663,7 @@ test.describe("Klangk E2E", () => {
 
   test("container recreated on page refresh", async ({ page, request }) => {
     test.skip(
-      !!process.env.KLANGK_CONTAINER_TEST_MODE,
+      !!process.env.KLANGKBUILD_CONTAINER_TEST_MODE,
       "requires local podman access",
     );
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(

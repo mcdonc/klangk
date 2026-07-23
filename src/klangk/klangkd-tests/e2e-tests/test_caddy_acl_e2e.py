@@ -23,7 +23,7 @@ behavior. The config is delivered by writing the rendered Caddyfile to a
 temp file and launching ``caddy run --config <file>`` — functionally
 identical to the production admin-API path (the same Caddyfile is adapted
 by Caddy either way); the secret-on-disk guarantee is tested separately by
-starting full ``klangkd`` with ``KLANGK_PROXY_ENGINE=caddy`` and scanning
+starting full ``klangkd`` with ``KLANGKD_PROXY_ENGINE=caddy`` and scanning
 ``state_dir``.
 
 Run with: devenv shell -- test-backend-e2e test_caddy_acl_e2e.py
@@ -286,15 +286,15 @@ class TestCaddyAclEnforcement:
             from klangk.caddy import tcp_upstream
 
             settings_env = {
-                "KLANGK_DATA_DIR": tmpdir,
-                "KLANGK_STATE_DIR": tmpdir,
-                "KLANGK_PORT": str(browser_port),
-                "KLANGK_LISTEN": "127.0.0.1",
-                "KLANGK_EGRESS_PORT": str(egress_port),
-                "KLANGK_EGRESS_LISTEN": "127.0.0.1",
-                "KLANGK_CONTAINER_SUBNETS": "192.0.2.0/24",
-                "KLANGK_LLM_BASE_URL": f"http://127.0.0.1:{echo_port}",
-                "KLANGK_LLM_API_KEY": "fake-llm-key",
+                "KLANGKD_DATA_DIR": tmpdir,
+                "KLANGKD_STATE_DIR": tmpdir,
+                "KLANGKD_PORT": str(browser_port),
+                "KLANGKD_LISTEN": "127.0.0.1",
+                "KLANGKD_EGRESS_PORT": str(egress_port),
+                "KLANGKD_EGRESS_LISTEN": "127.0.0.1",
+                "KLANGKD_CONTAINER_SUBNETS": "192.0.2.0/24",
+                "KLANGKD_LLM_BASE_URL": f"http://127.0.0.1:{echo_port}",
+                "KLANGKD_LLM_API_KEY": "fake-llm-key",
             }
             proc, conf_path = _render_and_launch(
                 settings_env,
@@ -349,7 +349,7 @@ class TestCaddyEgressAclAllow:
     silently pass while breaking every container in production.
 
     Technique (mirrors ``TestCaddyDenyByDefault``): set
-    ``KLANGK_CONTAINER_SUBNETS=<host_ip>`` so the host's non-loopback IPv4
+    ``KLANGKD_CONTAINER_SUBNETS=<host_ip>`` so the host's non-loopback IPv4
     — the address pasta-NAT container traffic appears as — is a
     container source, then send from exactly that IP to the egress port
     (bound ``0.0.0.0`` so it's reachable via the host IP) and assert the
@@ -374,18 +374,18 @@ class TestCaddyEgressAclAllow:
             from klangk.caddy import tcp_upstream
 
             settings_env = {
-                "KLANGK_DATA_DIR": tmpdir,
-                "KLANGK_STATE_DIR": tmpdir,
-                "KLANGK_PORT": str(browser_port),
-                "KLANGK_LISTEN": "127.0.0.1",
-                "KLANGK_EGRESS_PORT": str(egress_port),
+                "KLANGKD_DATA_DIR": tmpdir,
+                "KLANGKD_STATE_DIR": tmpdir,
+                "KLANGKD_PORT": str(browser_port),
+                "KLANGKD_LISTEN": "127.0.0.1",
+                "KLANGKD_EGRESS_PORT": str(egress_port),
                 # Bind egress on all interfaces so the host_ip source is
                 # reachable (127.0.0.1 would only accept loopback peers).
-                "KLANGK_EGRESS_LISTEN": "0.0.0.0",
+                "KLANGKD_EGRESS_LISTEN": "0.0.0.0",
                 # The host's non-loopback IPv4 is the (sole) container source.
-                "KLANGK_CONTAINER_SUBNETS": host_ip,
-                "KLANGK_LLM_BASE_URL": f"http://127.0.0.1:{echo_port}",
-                "KLANGK_LLM_API_KEY": "fake-llm-key",
+                "KLANGKD_CONTAINER_SUBNETS": host_ip,
+                "KLANGKD_LLM_BASE_URL": f"http://127.0.0.1:{echo_port}",
+                "KLANGKD_LLM_API_KEY": "fake-llm-key",
             }
             proc, conf_path = _render_and_launch(
                 settings_env,
@@ -463,12 +463,12 @@ class TestCaddyDenyByDefault:
         server = start_server(
             data_dir=data_dir,
             state_dir=state_dir,
-            KLANGK_JWT_SECRET="caddy-deny-test-secret",
-            KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-            KLANGK_DEFAULT_USER="test@example.com",
-            KLANGK_DEFAULT_PASSWORD="testpass",
-            KLANGK_TEST_MODE="1",
-            KLANGK_IDLE_TIMEOUT_SECONDS="300",
+            KLANGKD_JWT_SECRET="caddy-deny-test-secret",
+            KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+            KLANGKD_DEFAULT_USER="test@example.com",
+            KLANGKD_DEFAULT_PASSWORD="testpass",
+            KLANGKD_TEST_MODE="1",
+            KLANGKD_IDLE_TIMEOUT_SECONDS="300",
             LOGFIRE_TOKEN="",
         )
         uds_path = server["uds_path"]
@@ -476,13 +476,13 @@ class TestCaddyDenyByDefault:
         from klangk.caddy import uds_upstream
 
         settings_env = {
-            "KLANGK_DATA_DIR": tmpdir,
-            "KLANGK_STATE_DIR": tmpdir,
-            "KLANGK_PORT": str(browser_port),
-            "KLANGK_LISTEN": "0.0.0.0",
-            "KLANGK_EGRESS_PORT": str(egress_port),
-            "KLANGK_EGRESS_LISTEN": "0.0.0.0",
-            "KLANGK_CONTAINER_SUBNETS": host_ip,
+            "KLANGKD_DATA_DIR": tmpdir,
+            "KLANGKD_STATE_DIR": tmpdir,
+            "KLANGKD_PORT": str(browser_port),
+            "KLANGKD_LISTEN": "0.0.0.0",
+            "KLANGKD_EGRESS_PORT": str(egress_port),
+            "KLANGKD_EGRESS_LISTEN": "0.0.0.0",
+            "KLANGKD_CONTAINER_SUBNETS": host_ip,
         }
         proc, conf_path = _render_and_launch(
             settings_env, uds_upstream(uds_path), admin_sock, tmpdir
@@ -572,13 +572,13 @@ class TestCaddyAuthLocalAcl:
         server = start_server(
             data_dir=data_dir,
             state_dir=state_dir,
-            KLANGK_JWT_SECRET="caddy-auth-local-test-secret",
-            KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-            KLANGK_DEFAULT_USER="test@example.com",
-            KLANGK_DEFAULT_PASSWORD="testpass",
-            KLANGK_AUTH_MODES="none",
-            KLANGK_TEST_MODE="1",
-            KLANGK_IDLE_TIMEOUT_SECONDS="300",
+            KLANGKD_JWT_SECRET="caddy-auth-local-test-secret",
+            KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+            KLANGKD_DEFAULT_USER="test@example.com",
+            KLANGKD_DEFAULT_PASSWORD="testpass",
+            KLANGKD_AUTH_MODES="none",
+            KLANGKD_TEST_MODE="1",
+            KLANGKD_IDLE_TIMEOUT_SECONDS="300",
             LOGFIRE_TOKEN="",
         )
         uds_path = server["uds_path"]
@@ -586,12 +586,12 @@ class TestCaddyAuthLocalAcl:
         from klangk.caddy import uds_upstream
 
         settings_env = {
-            "KLANGK_DATA_DIR": tmpdir,
-            "KLANGK_STATE_DIR": tmpdir,
-            "KLANGK_PORT": str(browser_port),
-            "KLANGK_LISTEN": "0.0.0.0",
-            "KLANGK_EGRESS_PORT": str(egress_port),
-            "KLANGK_EGRESS_LISTEN": "0.0.0.0",
+            "KLANGKD_DATA_DIR": tmpdir,
+            "KLANGKD_STATE_DIR": tmpdir,
+            "KLANGKD_PORT": str(browser_port),
+            "KLANGKD_LISTEN": "0.0.0.0",
+            "KLANGKD_EGRESS_PORT": str(egress_port),
+            "KLANGKD_EGRESS_LISTEN": "0.0.0.0",
         }
         proc, conf_path = _render_and_launch(
             settings_env, uds_upstream(uds_path), admin_sock, tmpdir
@@ -753,13 +753,13 @@ class TestCaddyHostedProxy:
             from klangk.caddy import tcp_upstream
 
             settings_env = {
-                "KLANGK_DATA_DIR": tmpdir,
-                "KLANGK_STATE_DIR": tmpdir,
-                "KLANGK_PORT": str(browser_port),
-                "KLANGK_LISTEN": "127.0.0.1",
-                "KLANGK_EGRESS_PORT": str(egress_port),
-                "KLANGK_EGRESS_LISTEN": "127.0.0.1",
-                "KLANGK_CONTAINER_SUBNETS": "192.0.2.0/24",
+                "KLANGKD_DATA_DIR": tmpdir,
+                "KLANGKD_STATE_DIR": tmpdir,
+                "KLANGKD_PORT": str(browser_port),
+                "KLANGKD_LISTEN": "127.0.0.1",
+                "KLANGKD_EGRESS_PORT": str(egress_port),
+                "KLANGKD_EGRESS_LISTEN": "127.0.0.1",
+                "KLANGKD_CONTAINER_SUBNETS": "192.0.2.0/24",
             }
             proc, conf_path = _render_and_launch(
                 settings_env,
@@ -843,7 +843,7 @@ class TestCaddySecretNotOnDisk:
     file under state_dir. And the admin endpoint is a UDS only (no loopback
     TCP).
 
-    This starts the full ``klangkd`` with ``KLANGK_PROXY_ENGINE=caddy`` and
+    This starts the full ``klangkd`` with ``KLANGKD_PROXY_ENGINE=caddy`` and
     an LLM API key, waits for Caddy to serve, then scans every file under
     state_dir for the key string. The CaddyWatchdog delivers the Caddyfile
     via ``POST /load`` (in-memory) and ``persist_config off`` prevents
@@ -873,24 +873,24 @@ class TestCaddySecretNotOnDisk:
         egress_port = free_port()
 
         env = clean_env(
-            KLANGK_PROXY_ENGINE="caddy",
-            KLANGK_PORT=str(browser_port),
-            KLANGK_LISTEN="127.0.0.1",
-            KLANGK_EGRESS_PORT=str(egress_port),
-            KLANGK_EGRESS_LISTEN="127.0.0.1",
-            KLANGK_STATE_DIR=state_dir,
-            KLANGK_DATA_DIR=data_dir,
-            KLANGK_JWT_SECRET="caddy-secret-test",
-            KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-            KLANGK_DEFAULT_USER="test@example.com",
-            KLANGK_DEFAULT_PASSWORD="testpass",
-            KLANGK_AUTH_MODES="none",
-            KLANGK_TEST_MODE="1",
-            KLANGK_IDLE_TIMEOUT_SECONDS="300",
-            KLANGK_PORT_RANGE_START=str(free_port()),
-            KLANGK_LLM_BASE_URL="http://127.0.0.1:9999",
-            KLANGK_LLM_API_KEY=llm_key,
-            _KLANGK_DISABLE_PROXY="",
+            KLANGKD_PROXY_ENGINE="caddy",
+            KLANGKD_PORT=str(browser_port),
+            KLANGKD_LISTEN="127.0.0.1",
+            KLANGKD_EGRESS_PORT=str(egress_port),
+            KLANGKD_EGRESS_LISTEN="127.0.0.1",
+            KLANGKD_STATE_DIR=state_dir,
+            KLANGKD_DATA_DIR=data_dir,
+            KLANGKD_JWT_SECRET="caddy-secret-test",
+            KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+            KLANGKD_DEFAULT_USER="test@example.com",
+            KLANGKD_DEFAULT_PASSWORD="testpass",
+            KLANGKD_AUTH_MODES="none",
+            KLANGKD_TEST_MODE="1",
+            KLANGKD_IDLE_TIMEOUT_SECONDS="300",
+            KLANGKD_PORT_RANGE_START=str(free_port()),
+            KLANGKD_LLM_BASE_URL="http://127.0.0.1:9999",
+            KLANGKD_LLM_API_KEY=llm_key,
+            _KLANGKD_DISABLE_PROXY="",
             LOGFIRE_TOKEN="",
         )
         # Resolve Caddy's autosave path the way Caddy does: XDG_CONFIG_HOME
@@ -969,13 +969,13 @@ class TestCaddySecretNotOnDisk:
             from klangk.caddy import tcp_upstream
 
             settings_env = {
-                "KLANGK_DATA_DIR": tmpdir,
-                "KLANGK_STATE_DIR": tmpdir,
-                "KLANGK_PORT": str(browser_port),
-                "KLANGK_LISTEN": "127.0.0.1",
-                "KLANGK_EGRESS_PORT": str(egress_port),
-                "KLANGK_EGRESS_LISTEN": "127.0.0.1",
-                "KLANGK_CONTAINER_SUBNETS": "192.0.2.0/24",
+                "KLANGKD_DATA_DIR": tmpdir,
+                "KLANGKD_STATE_DIR": tmpdir,
+                "KLANGKD_PORT": str(browser_port),
+                "KLANGKD_LISTEN": "127.0.0.1",
+                "KLANGKD_EGRESS_PORT": str(egress_port),
+                "KLANGKD_EGRESS_LISTEN": "127.0.0.1",
+                "KLANGKD_CONTAINER_SUBNETS": "192.0.2.0/24",
             }
             proc, conf_path = _render_and_launch(
                 settings_env,

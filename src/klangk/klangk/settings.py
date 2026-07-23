@@ -1,12 +1,12 @@
 """Typed configuration via pydantic-settings (#1394, #1395).
 
-This module is the single source of truth for all ``KLANGK_*`` configuration.
+This module is the single source of truth for all ``KLANGKD_*`` configuration.
 It replaces the ad-hoc ``resolve_env_value`` / ``resolve_env_bool`` /
 ``os.environ.get`` reads that were scattered across the codebase.
 
 Design (see #1392, #1394):
 
-- **pydantic-settings** reads env vars (``env_prefix="KLANGK_"``) into a typed
+- **pydantic-settings** reads env vars (``env_prefix="KLANGKD_"``) into a typed
   ``KlangkSettings`` model.  Fields are ``Optional[str]`` in this chunk to
   preserve the exact string-returning behavior of the legacy
   ``resolve_env_value``; typed fields (``int`` / ``bool`` / ``list``) arrive
@@ -16,7 +16,7 @@ Design (see #1392, #1394):
   (#1461). Every ``settings.field`` read thereafter returns the already-
   resolved value — no caller wraps in ``resolve_indirection``. The private
   ``_resolve_indirection`` survives for two callers: that validator, and the
-  non-``KLANGK_`` path of :func:`resolve_env_value` (feature-declared dynamic
+  non-``KLANGKD_`` path of :func:`resolve_env_value` (feature-declared dynamic
   keys discovered from ``package.json``, which are not settings fields and so
   cannot be resolved at construction).
 - **Env-change-detection cache** (:func:`get_settings`): cache-free —
@@ -50,7 +50,7 @@ from pydantic_settings.sources.providers.env import parse_env_vars
 
 logger = logging.getLogger(__name__)
 
-# Valid values for ``KLANGK_AUTH_MODES``. ``None`` (unset) defaults to ``none``
+# Valid values for ``KLANGKD_AUTH_MODES``. ``None`` (unset) defaults to ``none``
 # at *read* time (in ``oidc.auth_modes``), but a non-None value must be one of
 # these — rejecting typos at construction so a misspelled mode fails loudly at
 # boot instead of silently downgrading to the no-auth ``none`` mode (which
@@ -134,9 +134,9 @@ _CMD_TIMEOUT_SECONDS = 10
 # package serves the UI out of the box. Resolved from this module's location
 # so it lands at <site-packages>/klangk/frontend for a wheel install.
 # Source-tree deployments (devenv, the host container) don't have the
-# in-package dir -- they set KLANGK_FRONTEND_DIR to the repo's
+# in-package dir -- they set KLANGKD_FRONTEND_DIR to the repo's
 # src/frontend/build/web (see devenv.nix, src/containers/host/Dockerfile).
-# KLANGK_FRONTEND_DIR always overrides (#1456).
+# KLANGKD_FRONTEND_DIR always overrides (#1456).
 _DEFAULT_FRONTEND_DIR = str(Path(__file__).resolve().parent / "frontend")
 
 
@@ -298,7 +298,7 @@ class _KebabYamlConfigSettingsSource(YamlConfigSettingsSource):
 
 
 class KlangkSettings(BaseSettings):
-    """Typed configuration for all ``KLANGK_*`` environment variables.
+    """Typed configuration for all ``KLANGKD_*`` environment variables.
 
     Fields are ``Optional[str]`` (default ``None``) in this chunk to preserve
     the exact behavior of the legacy ``resolve_env_value`` function: a call
@@ -337,9 +337,9 @@ class KlangkSettings(BaseSettings):
     _reload_config_file: str | None = PrivateAttr(default=None)
 
     model_config = SettingsConfigDict(
-        env_prefix="KLANGK_",
+        env_prefix="KLANGKD_",
         extra="ignore",
-        # Do NOT set env_nested_delimiter — KLANGK_ACCESS_TOKEN_HOURS is a
+        # Do NOT set env_nested_delimiter — KLANGKD_ACCESS_TOKEN_HOURS is a
         # flat field (access_token_hours), not a nested table.
     )
 
@@ -378,7 +378,7 @@ class KlangkSettings(BaseSettings):
         Returns a fresh ``KlangkSettings`` built from the env mapping + config
         file captured at construction (see ``_reload_env`` /
         ``_reload_config_file``).  In production the env mapping is the live
-        ``os.environ``, so a reload after an operator edits ``KLANGK_*``
+        ``os.environ``, so a reload after an operator edits ``KLANGKD_*``
         picks up the new values; in tests it is the dict passed to the
         constructor, so reload re-reads that dict and never touches
         ``os.environ``.
@@ -455,7 +455,7 @@ class KlangkSettings(BaseSettings):
     # (DEBUG/INFO/WARNING/ERROR/CRITICAL, any case) or a numeric string.
     # Defaults to INFO. Applied by ``klangk.logger.configure(settings)`` in
     # build_app, and re-applied on every SIGHUP reload (after the settings
-    # swap), so ``KLANGK_LOG_LEVEL`` can be changed without a process restart
+    # swap), so ``KLANGKD_LOG_LEVEL`` can be changed without a process restart
     # (#1467). The field validator below rejects garbage at construction
     # (fail-fast) so a typo'd level aborts boot rather than silently leaving
     # logging at the wrong verbosity.
@@ -464,15 +464,15 @@ class KlangkSettings(BaseSettings):
     # --- Server / network ---
     # listen: the proxy's **browser** interface/address (e.g. ``127.0.0.1``,
     # ``0.0.0.0``). Rendered as ``listen {listen}:{port};`` only when
-    # ``KLANGK_PORT`` is set (full/browser mode). Default ``127.0.0.1``
+    # ``KLANGKD_PORT`` is set (full/browser mode). Default ``127.0.0.1``
     # (loopback) keeps the browser listener reachable only from the operator's
     # machine unless an operator deliberately widens it (#1542). The
     # polymorphic socket-path meaning (#1422) never shipped in a release and
-    # is retired — the UDS path is now ``KLANGK_SOCKET``.
+    # is retired — the UDS path is now ``KLANGKD_SOCKET``.
     listen: str = "127.0.0.1"
     # port: the proxy's **browser** port (e.g. ``8997``). **No default** — unset
     # ⇒ headless mode (no browser listener is rendered; only the container-
-    # egress listener on ``KLANGK_EGRESS_PORT`` is served). Set ⇒ full/browser
+    # egress listener on ``KLANGKD_EGRESS_PORT`` is served). Set ⇒ full/browser
     # mode (browser UI + API + hosted apps on ``listen {listen}:{port};``).
     port: str | None = None
     # egress_port: the container-egress port the proxy listens on for
@@ -481,7 +481,7 @@ class KlangkSettings(BaseSettings):
     # modes. Default ``8995``. Must differ from ``port`` so ingress vs egress
     # can be firewalled separately (#1542). ``None`` here is a sentinel —
     # ``_resolve_socket_and_ports`` resolves it to ``"8995"`` (or folds the
-    # deprecated ``KLANGK_PROXY_PORT`` into it).
+    # deprecated ``KLANGKD_PROXY_PORT`` into it).
     egress_port: str | None = None
     # egress_listen: the interface/address the proxy binds for the container-
     # egress listener, rendered as ``listen {egress_listen}:{egress_port};``.
@@ -499,8 +499,8 @@ class KlangkSettings(BaseSettings):
     # Folded into ``egress_port`` by ``_resolve_socket_and_ports``: if both
     # are set, ``egress_port`` wins and ``proxy_port`` is ignored (with a
     # warning); if only ``proxy_port`` is set it is used as the egress port
-    # (with a deprecation warning). Renamed from ``nginx_port``/``KLANGK_NGINX_PORT``
-    # to drop nginx-specific terminology (#1430); the old ``KLANGK_NGINX_PORT``
+    # (with a deprecation warning). Renamed from ``nginx_port``/``KLANGKD_NGINX_PORT``
+    # to drop nginx-specific terminology (#1430); the old ``KLANGKD_NGINX_PORT``
     # name is no longer recognized. To be removed in a future release.
     # **Callers read ``settings.egress_port`` — nothing reads ``proxy_port``
     # except that one validator.**
@@ -510,23 +510,23 @@ class KlangkSettings(BaseSettings):
     # ``<state_dir>/klangk.sock`` (derived in ``_resolve_socket_and_ports``
     # after ``state_dir`` is resolved). A fail-fast validator rejects resolved
     # paths exceeding the portable AF_UNIX ``sun_path`` bound (104 chars) with
-    # a diagnostic telling the deployer to shorten ``KLANGK_SOCKET`` or move
-    # ``KLANGK_STATE_DIR`` shallower (#1531, #1542).
+    # a diagnostic telling the deployer to shorten ``KLANGKD_SOCKET`` or move
+    # ``KLANGKD_STATE_DIR`` shallower (#1531, #1542).
     socket: str | None = None
     # caddy_admin_socket: the admin-API UDS path for the Caddy engine
-    # (KLANGK_PROXY_ENGINE=caddy, #1559). Default
+    # (KLANGKD_PROXY_ENGINE=caddy, #1559). Default
     # ``<state_dir>/caddy-admin.sock`` (derived in ``_resolve_socket_and_ports``
     # after ``state_dir`` is resolved — mirrors ``socket``). A fail-fast
     # validator rejects resolved paths exceeding the portable AF_UNIX
     # ``sun_path`` bound (104 chars), pointing the deployer at
-    # ``KLANGK_CADDY_ADMIN_SOCKET`` / ``KLANGK_STATE_DIR`` (#1636 — the
+    # ``KLANGKD_CADDY_ADMIN_SOCKET`` / ``KLANGKD_STATE_DIR`` (#1636 — the
     # backend-UDS ``socket`` field has the same guard from #1531/#1542).
     # The nginx engine never reads this field.
     caddy_admin_socket: str | None = None
     # state_dir: runtime state (the UDS when listen is a socket path, rendered
     # proxy config, pid). Defaults to ``$XDG_STATE_HOME/klangkd`` (→
     # ``~/.local/state/klangkd`` when the var is unset, incl. macOS) when no
-    # explicit value is supplied (#1644); explicit ``KLANGK_STATE_DIR`` /
+    # explicit value is supplied (#1644); explicit ``KLANGKD_STATE_DIR`` /
     # config-file values still win (devenv pins it to ``$DEVENV_STATE/klangk``
     # via devenv.nix; the host container sets ``/tmp/klangk-state``). If
     # neither ``$XDG_STATE_HOME`` nor ``$HOME`` is set, construction fails
@@ -534,8 +534,8 @@ class KlangkSettings(BaseSettings):
     state_dir: str | None = None
     # proxy_bin: the proxy executable the renderer spawns (currently nginx).
     # Falls back to shutil.which("nginx") then /usr/sbin/nginx at render time.
-    # Renamed from ``nginx_bin``/``KLANGK_NGINX_BIN`` (#1430); the old
-    # ``KLANGK_NGINX_BIN`` name is no longer recognized.
+    # Renamed from ``nginx_bin``/``KLANGKD_NGINX_BIN`` (#1430); the old
+    # ``KLANGKD_NGINX_BIN`` name is no longer recognized.
     proxy_bin: str | None = None
     # proxy_engine: which reverse-proxy engine the watchdog owns
     # (#1559). ``caddy`` (default since #1634) renders a Caddyfile and
@@ -551,20 +551,20 @@ class KlangkSettings(BaseSettings):
     proxy_engine: str = "caddy"
     # trust_outer_proxy: opt-in to surviving an outer trusted proxy's
     # X-Forwarded-* in the proxy's catch-all (see #1396 renderer). Mirrors the
-    # KLANGK_TRUST_OUTER_PROXY env var the old nginx.sh read.
+    # KLANGKD_TRUST_OUTER_PROXY env var the old nginx.sh read.
     trust_outer_proxy: str = ""
     # frontend_dir: directory the built Flutter Web UI is served from
     # (#1456, #1600). Defaults to the in-package location (klangk/frontend,
     # computed above as _DEFAULT_FRONTEND_DIR) so a packaged/installed
     # klangkd serves the UI out of the box; source-tree deployments (devenv,
-    # the host container) override via KLANGK_FRONTEND_DIR to point at the
+    # the host container) override via KLANGKD_FRONTEND_DIR to point at the
     # repo's src/frontend/build/web. The UI is mounted only when the dir
     # exists; build_app logs a warning otherwise (#1600).
     frontend_dir: str = _DEFAULT_FRONTEND_DIR
-    # ws_msg_size_max: max WebSocket message size (bytes), passed to uvicorn.
+    # websocket_msg_size_max: max WebSocket message size (bytes), passed to uvicorn.
     # Default 16 MiB; klangkd reads it through the typed config (config file +
     # file:/cmd: resolution), not raw env.
-    ws_msg_size_max: str | None = "16777216"
+    websocket_msg_size_max: str | None = "16777216"
     cors_origins: str | None = None
     dns_servers: str = ""
     hosting_hostname: str | None = None
@@ -578,14 +578,14 @@ class KlangkSettings(BaseSettings):
     # to ``<state_dir>/data`` when unset (derived in the ``_require_dirs``
     # validator after state_dir is resolved), so an operator who sets only
     # ``state_dir`` gets a sensible data location. An explicit
-    # ``KLANGK_DATA_DIR`` / config-file value wins (#1506).
+    # ``KLANGKD_DATA_DIR`` / config-file value wins (#1506).
     data_dir: str | None = None
     # config_dir: the config-tree root for user-edited, durable intent
     # (branding, email templates) — the config-tree analogue of
     # ``state_dir`` (#1649). Defaults to ``$XDG_CONFIG_HOME/klangkd`` (→
     # ``~/.config/klangkd``, read-with-fallback) when unset; ``customize_dir``
     # derives from the resolved ``config_dir`` (like ``data_dir`` derives
-    # from ``state_dir``). An explicit ``KLANGK_CONFIG_DIR`` wins; per-sub-dir
+    # from ``state_dir``). An explicit ``KLANGKD_CONFIG_DIR`` wins; per-sub-dir
     # env vars still win over the derivation. Read at boot and on SIGHUP
     # (reloadable, like the sub-dirs).
     config_dir: str | None = None
@@ -593,7 +593,7 @@ class KlangkSettings(BaseSettings):
     # intent, so it's **config**, not state. Defaults to
     # ``<config_dir>/custom`` (→ ``~/.config/klangkd/custom``) when unset,
     # deriving from the resolved ``config_dir`` (#1644, #1649); no longer
-    # under ``state_dir``. Explicit ``KLANGK_CUSTOMIZE_DIR`` still wins.
+    # under ``state_dir``. Explicit ``KLANGKD_CUSTOMIZE_DIR`` still wins.
     customize_dir: str | None = None
     # features_enable: which compiled-in features (features) are turned on for
     # this deploy. Canonical semantics (#1655): unset → the manifest's
@@ -719,7 +719,7 @@ class KlangkSettings(BaseSettings):
                 resolved = _resolve_indirection(val, name)
                 if resolved is None:
                     raise ValueError(
-                        f"KLANGK_{name.upper()} could not be resolved: the "
+                        f"KLANGKD_{name.upper()} could not be resolved: the "
                         f"file:/cmd: reference failed. See logs for detail."
                     )
                 setattr(self, name, resolved)
@@ -727,7 +727,7 @@ class KlangkSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_llm_base_url(self) -> "KlangkSettings":
-        """Reject ``KLANGK_LLM_BASE_URL`` values containing a fragment (#1687).
+        """Reject ``KLANGKD_LLM_BASE_URL`` values containing a fragment (#1687).
 
         Fragments are client-side only — every HTTP client strips them
         before the request goes on the wire — so a fragment on the base
@@ -759,7 +759,7 @@ class KlangkSettings(BaseSettings):
         parts = urlsplit(v)
         if parts.fragment:
             raise ValueError(
-                "KLANGK_LLM_BASE_URL has a fragment ('#...') suffix that "
+                "KLANGKD_LLM_BASE_URL has a fragment ('#...') suffix that "
                 "HTTP clients strip before the wire — the proxy would "
                 "silently drop it. Remove the fragment. (The URL value is "
                 "intentionally not echoed here; it may contain a secret.)"
@@ -792,7 +792,7 @@ class KlangkSettings(BaseSettings):
         reads the build-emitted ``features.json`` from ``frontend_dir``. The
         build reads the checked-in ``features.yaml`` at the repo root and
         materializes feature trees into a throwaway tempdir (#1660) — no
-        ``KLANGK_PLUGINS_DIR`` env var exists at any layer.
+        ``KLANGKD_PLUGINS_DIR`` env var exists at any layer.
         """
         if not self.state_dir:
             # If neither $XDG_STATE_HOME nor $HOME is set (the pathological
@@ -806,9 +806,9 @@ class KlangkSettings(BaseSettings):
                 "XDG_STATE_HOME"
             ):
                 raise ValueError(
-                    "KLANGK_STATE_DIR is required (env var or config file), "
+                    "KLANGKD_STATE_DIR is required (env var or config file), "
                     "and no default could be derived: $XDG_STATE_HOME and $HOME "
-                    "are both unset. Set KLANGK_STATE_DIR to the runtime state "
+                    "are both unset. Set KLANGKD_STATE_DIR to the runtime state "
                     "directory (UDS socket, rendered proxy config, pid file)."
                 )
             self.state_dir = os.path.join(_xdg_state_home(), _XDG_SUBDIR)
@@ -825,7 +825,7 @@ class KlangkSettings(BaseSettings):
         # default_user: the admin identity for first-boot seeding. Derived
         # from the invoking Unix user (<user>@example.com) so a bare
         # ``klangkd`` seeds the operator's own identity (#1645). Explicit
-        # KLANGK_DEFAULT_USER (env/config) always wins — unaffected for
+        # KLANGKD_DEFAULT_USER (env/config) always wins — unaffected for
         # intentional deployments that stage a specific admin email.
         if not self.default_user:
             self.default_user = f"{_safe_getuser()}@example.com"
@@ -844,28 +844,28 @@ class KlangkSettings(BaseSettings):
         **every consumer reads ``self.egress_port`` and ``self.socket`` —
         nothing reads ``proxy_port``.**
 
-        ``KLANGK_PROXY_PORT`` deprecation ladder (no hard error, #1542):
+        ``KLANGKD_PROXY_PORT`` deprecation ladder (no hard error, #1542):
 
         - ``egress_port`` set, ``proxy_port`` unset → use egress (clean).
         - ``egress_port`` unset, ``proxy_port`` set → use ``proxy_port`` as
           the egress port + a loud deprecation warning.
         - both set → ``egress_port`` wins, ``proxy_port`` ignored + a warning.
         """
-        # --- KLANGK_PROXY_PORT → egress_port fold ---
+        # --- KLANGKD_PROXY_PORT → egress_port fold ---
         if self.proxy_port is not None:
             if self.egress_port is not None:
                 logger.warning(
-                    "KLANGK_PROXY_PORT is ignored because KLANGK_EGRESS_PORT "
-                    "is also set; KLANGK_EGRESS_PORT takes precedence. "
-                    "KLANGK_PROXY_PORT is deprecated — remove it and use "
-                    "KLANGK_EGRESS_PORT."
+                    "KLANGKD_PROXY_PORT is ignored because KLANGKD_EGRESS_PORT "
+                    "is also set; KLANGKD_EGRESS_PORT takes precedence. "
+                    "KLANGKD_PROXY_PORT is deprecated — remove it and use "
+                    "KLANGKD_EGRESS_PORT."
                 )
             else:
                 logger.warning(
-                    "KLANGK_PROXY_PORT is deprecated; rename it to "
-                    "KLANGK_EGRESS_PORT. Its value is used as the egress "
+                    "KLANGKD_PROXY_PORT is deprecated; rename it to "
+                    "KLANGKD_EGRESS_PORT. Its value is used as the egress "
                     "port for this run, but a future release will stop "
-                    "recognizing KLANGK_PROXY_PORT."
+                    "recognizing KLANGKD_PROXY_PORT."
                 )
                 self.egress_port = self.proxy_port
         if self.egress_port is None:
@@ -874,8 +874,8 @@ class KlangkSettings(BaseSettings):
         # --- egress ≠ browser port (ingress/egress firewall separation) ---
         if self.port is not None and self.egress_port == self.port:
             raise ValueError(
-                f"KLANGK_EGRESS_PORT ({self.egress_port!r}) must differ from "
-                f"KLANGK_PORT ({self.port!r}). The two proxy listeners carry "
+                f"KLANGKD_EGRESS_PORT ({self.egress_port!r}) must differ from "
+                f"KLANGKD_PORT ({self.port!r}). The two proxy listeners carry "
                 "browser ingress vs container egress so operators can firewall "
                 "them separately; sharing a port defeats that and the proxy cannot "
                 "bind two server blocks to the same port."
@@ -898,11 +898,11 @@ class KlangkSettings(BaseSettings):
         # var to fix). See #1531/#1542 (backend) and #1636 (admin).
         max_socket_len = 104
         self._enforce_socket_length(
-            self.socket, "KLANGK_SOCKET", max_socket_len
+            self.socket, "KLANGKD_SOCKET", max_socket_len
         )
         self._enforce_socket_length(
             self.caddy_admin_socket,
-            "KLANGK_CADDY_ADMIN_SOCKET",
+            "KLANGKD_CADDY_ADMIN_SOCKET",
             max_socket_len,
         )
         return self
@@ -912,7 +912,7 @@ class KlangkSettings(BaseSettings):
         """Raise ValueError if a UDS path exceeds the portable sun_path bound.
 
         Naming the env var in the message lets the operator fix *this* socket
-        (vs the generic "move KLANGK_STATE_DIR shallower") when only one of
+        (vs the generic "move KLANGKD_STATE_DIR shallower") when only one of
         the two is too long.
         """
         if len(value) > max_len:
@@ -921,7 +921,7 @@ class KlangkSettings(BaseSettings):
                 f"({len(value)} chars), which exceeds the "
                 f"{max_len}-character AF_UNIX sun_path limit. "
                 f"Either set {env_var} to a shorter absolute path "
-                "(e.g. /tmp/klangk.sock) or move KLANGK_STATE_DIR shallower "
+                "(e.g. /tmp/klangk.sock) or move KLANGKD_STATE_DIR shallower "
                 "in the filesystem. (The kernel caps UDS paths at "
                 "sockaddr_un.sun_path: 108 bytes incl. NUL on Linux → 107 "
                 "usable; 104 on macOS, so a deep state_dir overflows the "
@@ -948,7 +948,7 @@ class KlangkSettings(BaseSettings):
         if upper.isdigit():
             return upper
         raise ValueError(
-            f"KLANGK_LOG_LEVEL={v!r} is invalid. "
+            f"KLANGKD_LOG_LEVEL={v!r} is invalid. "
             "Must be a level name (DEBUG/INFO/WARNING/ERROR/CRITICAL) "
             "or a numeric value."
         )
@@ -958,7 +958,7 @@ class KlangkSettings(BaseSettings):
     def _validate_auth_modes(cls, v: str | None) -> str | None:
         """Reject typo'd auth modes so a misspelling fails loudly at boot.
 
-        Without this, ``KLANGK_AUTH_MODES=passdword`` (or any value outside the
+        Without this, ``KLANGKD_AUTH_MODES=passdword`` (or any value outside the
         valid set) would fall through ``oidc.auth_modes()`` to the ``none``
         default — a *silent security downgrade*: ``none`` freely issues an
         admin token via ``POST /api/v1/auth/local``. ``None`` is allowed (the
@@ -975,7 +975,7 @@ class KlangkSettings(BaseSettings):
             return None
         if v not in _VALID_AUTH_MODES:
             raise ValueError(
-                f"KLANGK_AUTH_MODES={v!r} is invalid. "
+                f"KLANGKD_AUTH_MODES={v!r} is invalid. "
                 f"Must be one of {sorted(_VALID_AUTH_MODES)} (or unset "
                 "→ defaults to 'none')."
             )
@@ -983,7 +983,7 @@ class KlangkSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _warn_on_deprecated_proxy_engine(self) -> "KlangkSettings":
-        """Warn when ``KLANGK_PROXY_ENGINE=nginx`` is selected.
+        """Warn when ``KLANGKD_PROXY_ENGINE=nginx`` is selected.
 
         Since #1634 the default is ``caddy``; ``nginx`` is a deprecated
         fallback kept for one release as the escape hatch if a Caddy
@@ -996,11 +996,11 @@ class KlangkSettings(BaseSettings):
         """
         if self.proxy_engine == "nginx":
             logger.warning(
-                "KLANGK_PROXY_ENGINE=nginx is deprecated; the default is now "
+                "KLANGKD_PROXY_ENGINE=nginx is deprecated; the default is now "
                 "caddy. nginx remains selectable this release as the escape "
                 "hatch for a Caddy regression, but will be removed in a "
                 "future release. To silence this, switch to "
-                "KLANGK_PROXY_ENGINE=caddy (the default — just unset the var)."
+                "KLANGKD_PROXY_ENGINE=caddy (the default — just unset the var)."
             )
         return self
 
@@ -1019,7 +1019,7 @@ class KlangkSettings(BaseSettings):
 # features.py / import_dart_features.py). Every feature-declared config key
 # starts with this; the features_config: block accepts either this full form
 # or the stripped, lowercased short form (see resolve_dynamic_config, #1737).
-_FEATURE_CONFIG_PREFIX = "KLANGK_FEATURE_"
+_FEATURE_CONFIG_PREFIX = "KLANGKWS_FEATURE_"
 
 
 def resolve_dynamic_config(
@@ -1030,7 +1030,7 @@ def resolve_dynamic_config(
     """Resolve a feature-declared dynamic config key.
 
     Feature config keys (discovered from each feature's ``package.json``) are
-    outside the ``KLANGK_`` settings model — they are not known at settings
+    outside the ``KLANGKD_`` settings model — they are not known at settings
     construction, so they can't be resolved by the model validator. This
     reads ``os.environ`` directly and applies :func:`_resolve_indirection`
     so feature config honors ``file:``/``cmd:`` prefixes (a feature-declared
@@ -1051,7 +1051,7 @@ def resolve_dynamic_config(
        to *default*, mirroring how a bad env ref behaves.
 
     The block accepts either the full declared name
-    (``KLANGK_FEATURE_SOLIPLEX_URL``) or the stripped, lowercased short form
+    (``KLANGKWS_FEATURE_SOLIPLEX_URL``) or the stripped, lowercased short form
     (``soliplex_url`` — the same key surfaced to the frontend via
     ``/api/v1/config``); env stays full-prefixed (#1737).
     3. **feature default** — the *default* argument (the feature-declared
@@ -1075,7 +1075,7 @@ def resolve_dynamic_config(
         if fc_raw is None:
             # #1737: the block may use the short, JSON-style key (e.g.
             # ``soliplex_url``) instead of the full declared name
-            # (``KLANGK_FEATURE_SOLIPLEX_URL``). Try the stripped, lowercased
+            # (``KLANGKWS_FEATURE_SOLIPLEX_URL``). Try the stripped, lowercased
             # form so operators can write either. Env stays full-prefixed —
             # only the config-file block accepts the short form.
             fc_raw = features_config.get(

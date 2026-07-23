@@ -55,16 +55,16 @@ def _start_server(data_dir, port=None, extra_env=None):
     """
     log_path = os.path.join(data_dir, "server.log")
     overrides = {
-        "KLANGK_JWT_SECRET": "cli-e2e-test-secret",
-        "KLANGK_PREVENT_INSECURE_JWT_SECRET": "",
-        "KLANGK_DEFAULT_USER": "test@example.com",
-        "KLANGK_DEFAULT_PASSWORD": "testpass",
-        "KLANGK_TEST_MODE": "1",
-        "KLANGK_IDLE_TIMEOUT_SECONDS": "300",
+        "KLANGKD_JWT_SECRET": "cli-e2e-test-secret",
+        "KLANGKD_PREVENT_INSECURE_JWT_SECRET": "",
+        "KLANGKD_DEFAULT_USER": "test@example.com",
+        "KLANGKD_DEFAULT_PASSWORD": "testpass",
+        "KLANGKD_TEST_MODE": "1",
+        "KLANGKD_IDLE_TIMEOUT_SECONDS": "300",
         "LOGFIRE_TOKEN": "",
     }
     if port is not None:
-        overrides["KLANGK_PORT"] = port
+        overrides["KLANGKD_PORT"] = port
     if extra_env:
         overrides.update(extra_env)
     server = start_server(
@@ -648,7 +648,7 @@ class TestAutoStart:
         proc, base_url = _start_server(
             data_dir,
             str(free_port()),
-            extra_env={"KLANGK_ALLOW_AUTOSTART": "1"},
+            extra_env={"KLANGKD_ALLOW_AUTOSTART": "1"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-autostart-config")
         env = clean_env(HOME=str(config_dir))
@@ -704,7 +704,7 @@ class TestAutoStart:
             _run(["klangk", "rm", "e2e-autostart2"], env=env)
 
     def test_create_auto_start_rejected_without_env(self, cli_config):
-        """auto_start=True is rejected when KLANGK_ALLOW_AUTOSTART is unset."""
+        """auto_start=True is rejected when KLANGKD_ALLOW_AUTOSTART is unset."""
         env = cli_config["env"]
         result = _run(
             ["klangk", "create", "e2e-autostart-no", "--auto-start"],
@@ -766,7 +766,7 @@ class TestSandboxAutoStartServiceCommand:
         proc, base_url = _start_server(
             data_dir,
             TestSandboxAutoStartServiceCommand.PORT,
-            extra_env={"KLANGK_ALLOW_AUTOSTART": "1"},
+            extra_env={"KLANGKD_ALLOW_AUTOSTART": "1"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-sandbox-defcmd-config")
         env = clean_env(HOME=str(config_dir))
@@ -1430,7 +1430,7 @@ class TestExportImport:
 
 
 class TestAllowedMountRoots:
-    """Verify KLANGK_ALLOWED_MOUNT_ROOTS restricts bind mount sources."""
+    """Verify KLANGKD_ALLOWED_MOUNT_ROOTS restricts bind mount sources."""
 
     @pytest.fixture(autouse=True, scope="class")
     @staticmethod
@@ -1439,7 +1439,7 @@ class TestAllowedMountRoots:
         proc, base_url = _start_server(
             data_dir,
             str(free_port()),
-            extra_env={"KLANGK_ALLOWED_MOUNT_ROOTS": "/tmp,/home"},
+            extra_env={"KLANGKD_ALLOWED_MOUNT_ROOTS": "/tmp,/home"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-mount-roots-config")
         env = clean_env(HOME=str(config_dir))
@@ -1951,7 +1951,7 @@ def short_token_server():
     proc, base_url = _start_server(
         data_dir,
         str(free_port()),
-        extra_env={"KLANGK_ACCESS_TOKEN_HOURS": "0.002"},
+        extra_env={"KLANGKD_ACCESS_TOKEN_HOURS": "0.002"},
     )
     yield {"url": base_url, "data_dir": data_dir, "proc": proc}
     _stop_server(proc, data_dir)

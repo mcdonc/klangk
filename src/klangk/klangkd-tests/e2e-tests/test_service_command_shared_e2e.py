@@ -35,16 +35,16 @@ from _e2e_server import start_server, stop_server, ws_connect as _ws_dial
 def server():
     """Start a real Klangk server for the test module."""
     server = start_server(
-        KLANGK_JWT_SECRET="dcmd-shared-e2e-secret",
-        KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-        KLANGK_DEFAULT_USER="test@example.com",
-        KLANGK_DEFAULT_PASSWORD="testpass",
-        KLANGK_TEST_MODE="1",
-        KLANGK_IDLE_TIMEOUT_SECONDS="0",
+        KLANGKD_JWT_SECRET="dcmd-shared-e2e-secret",
+        KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGKD_DEFAULT_USER="test@example.com",
+        KLANGKD_DEFAULT_PASSWORD="testpass",
+        KLANGKD_TEST_MODE="1",
+        KLANGKD_IDLE_TIMEOUT_SECONDS="0",
         LOGFIRE_TOKEN="",
-        KLANGK_LLM_BASE_URL="",
-        KLANGK_LLM_API_KEY="",
-        KLANGK_LLM_MODEL="",
+        KLANGKD_LLM_BASE_URL="",
+        KLANGKD_LLM_API_KEY="",
+        KLANGKD_LLM_MODEL="",
     )
     yield server
     stop_server(server)

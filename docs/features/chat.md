@@ -88,9 +88,9 @@ until another user speaks (interjection) or you @mention someone else.
 
 The agent requires an LLM backend. Set these environment variables:
 
-- `KLANGK_LLM_BASE_URL` — OpenAI-compatible API endpoint
-- `KLANGK_LLM_MODEL` — model name (e.g. `gemma4:31b`)
-- `KLANGK_LLM_API_KEY` — API key (optional, depends on provider)
+- `KLANGKD_LLM_BASE_URL` — OpenAI-compatible API endpoint
+- `KLANGKD_LLM_MODEL` — model name (e.g. `gemma4:31b`)
+- `KLANGKD_LLM_API_KEY` — API key (optional, depends on provider)
 
 Without these, the agent is unavailable and @clanker mentions are ignored.
 
@@ -99,10 +99,10 @@ Without these, the agent is unavailable and @clanker mentions are ignored.
 The agent's handle and email are configured via environment variables and
 seeded into the database on first startup:
 
-| Variable              | Default               |
-| --------------------- | --------------------- |
-| `KLANGK_AGENT_HANDLE` | `clanker`             |
-| `KLANGK_AGENT_EMAIL`  | `clanker@example.com` |
+| Variable               | Default               |
+| ---------------------- | --------------------- |
+| `KLANGKD_AGENT_HANDLE` | `clanker`             |
+| `KLANGKD_AGENT_EMAIL`  | `clanker@example.com` |
 
 After seeding, the agent identity is read from the database. Changing
 these env vars and restarting will update the agent's record in the
@@ -111,13 +111,13 @@ credentials.
 
 ### Disabling the agent
 
-Set `KLANGK_AGENT_DISABLED` (`1`/`true`/`yes`) to prevent the chat
+Set `KLANGKD_AGENT_DISABLED` (`1`/`true`/`yes`) to prevent the chat
 agent's `pi --mode rpc` subprocess from starting. When set, the
 subprocess is never spawned, so the agent never comes online.
 
-| Variable                | Default | Effect                                                                                                                 |
-| ----------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `KLANGK_AGENT_DISABLED` | (unset) | Set to `1`/`true`/`yes` and the chat agent's `pi --mode rpc` subprocess is not started. Read each time it would start. |
+| Variable                 | Default | Effect                                                                                                                 |
+| ------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `KLANGKD_AGENT_DISABLED` | (unset) | Set to `1`/`true`/`yes` and the chat agent's `pi --mode rpc` subprocess is not started. Read each time it would start. |
 
 @mention autocomplete suggests only users who are **present** (a
 @mention is a synchronous act delivered to currently-connected sockets;

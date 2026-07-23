@@ -41,10 +41,10 @@ in and can start using workspaces.
 
 ## Configuration
 
-| Variable                     | Default | Description                            |
-| ---------------------------- | ------- | -------------------------------------- |
-| `KLANGK_DISABLE_INVITES`     | (unset) | Set to `1` to disable invitations      |
-| `KLANGK_INVITE_EXPIRE_HOURS` | `72`    | How long invitation links remain valid |
+| Variable                      | Default | Description                            |
+| ----------------------------- | ------- | -------------------------------------- |
+| `KLANGKD_DISABLE_INVITES`     | (unset) | Set to `1` to disable invitations      |
+| `KLANGKD_INVITE_EXPIRE_HOURS` | `72`    | How long invitation links remain valid |
 
 ## CLI Commands
 

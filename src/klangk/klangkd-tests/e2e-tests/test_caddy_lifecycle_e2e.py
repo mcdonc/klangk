@@ -10,7 +10,7 @@ SIGKILL.
 The Caddy engine (``CaddyWatchdog``) reuses the nginx engine's preexec
 (``_proxy_preexec``), so the session/PDEATHSIG/killpg behavior is shared —
 but it must be proven against a real ``caddy`` child. These tests do that:
-they spawn the full ``klangkd`` with ``KLANGK_PROXY_ENGINE=caddy`` and send
+they spawn the full ``klangkd`` with ``KLANGKD_PROXY_ENGINE=caddy`` and send
 each signal, asserting the proxy's port closes.
 
 Run with: devenv shell -- test-backend-e2e test_caddy_lifecycle_e2e.py
@@ -64,20 +64,20 @@ def _start_klangkd():
     egress_port = str(free_port())
 
     env = clean_env(
-        KLANGK_PROXY_ENGINE="caddy",
-        KLANGK_PORT=str(free_port()),
-        KLANGK_EGRESS_PORT=egress_port,
-        KLANGK_STATE_DIR=data_dir,
-        KLANGK_DATA_DIR=data_dir,
-        KLANGK_JWT_SECRET="caddy-lifecycle-test",
-        KLANGK_PREVENT_INSECURE_JWT_SECRET="",
-        KLANGK_DEFAULT_USER="test@example.com",
-        KLANGK_DEFAULT_PASSWORD="testpass",
-        KLANGK_AUTH_MODES="none",
-        KLANGK_TEST_MODE="1",
-        KLANGK_IDLE_TIMEOUT_SECONDS="300",
-        KLANGK_PORT_RANGE_START=str(free_port()),
-        _KLANGK_DISABLE_PROXY="",
+        KLANGKD_PROXY_ENGINE="caddy",
+        KLANGKD_PORT=str(free_port()),
+        KLANGKD_EGRESS_PORT=egress_port,
+        KLANGKD_STATE_DIR=data_dir,
+        KLANGKD_DATA_DIR=data_dir,
+        KLANGKD_JWT_SECRET="caddy-lifecycle-test",
+        KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGKD_DEFAULT_USER="test@example.com",
+        KLANGKD_DEFAULT_PASSWORD="testpass",
+        KLANGKD_AUTH_MODES="none",
+        KLANGKD_TEST_MODE="1",
+        KLANGKD_IDLE_TIMEOUT_SECONDS="300",
+        KLANGKD_PORT_RANGE_START=str(free_port()),
+        _KLANGKD_DISABLE_PROXY="",
         LOGFIRE_TOKEN="",
     )
 

@@ -56,15 +56,15 @@ class TestClientMaxBodySize:
         assert _renderer(s).compute_client_max_body_size() == "500m"
 
     def test_custom(self):
-        s = make_settings({"KLANGK_FILE_UPLOAD_SIZE_MAX": "10485760"})
+        s = make_settings({"KLANGKD_FILE_UPLOAD_SIZE_MAX": "10485760"})
         assert _renderer(s).compute_client_max_body_size() == "10m"
 
     def test_minimum_1m(self):
-        s = make_settings({"KLANGK_FILE_UPLOAD_SIZE_MAX": "100"})
+        s = make_settings({"KLANGKD_FILE_UPLOAD_SIZE_MAX": "100"})
         assert _renderer(s).compute_client_max_body_size() == "1m"
 
     def test_garbage_falls_back(self):
-        s = make_settings({"KLANGK_FILE_UPLOAD_SIZE_MAX": "not-a-number"})
+        s = make_settings({"KLANGKD_FILE_UPLOAD_SIZE_MAX": "not-a-number"})
         assert _renderer(s).compute_client_max_body_size() == "500m"
 
 
@@ -153,7 +153,7 @@ class TestAccessLogDest:
         # an openable destination or nginx fails config parse.
         monkeypatch.setattr("klangk.proxy.stdout_is_reopenable", lambda: False)
         monkeypatch.setattr("os.path.exists", lambda p: False)
-        s = make_settings({"KLANGK_STATE_DIR": str(tmp_path)})
+        s = make_settings({"KLANGKD_STATE_DIR": str(tmp_path)})
         assert _renderer(s).access_log_dest() == (
             f"access_log {tmp_path}/nginx-access.log;"
         )
@@ -180,7 +180,7 @@ class TestAccessLogDest:
     def test_systemd_choice_lands_in_full_config(self, monkeypatch):
         monkeypatch.setattr("klangk.proxy.stdout_is_reopenable", lambda: False)
         monkeypatch.setattr("os.path.exists", lambda p: p == "/dev/log")
-        s = make_settings({"KLANGK_PORT": "8997"})  # port set ⇒ full/browser
+        s = make_settings({"KLANGKD_PORT": "8997"})  # port set ⇒ full/browser
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         assert "access_log syslog:server=unix:/dev/log;" in conf
         assert "/dev/stdout" not in conf
@@ -189,7 +189,7 @@ class TestAccessLogDest:
 class TestContainerAcls:
     def test_explicit_subnets(self):
         s = make_settings(
-            env={"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16"}
+            env={"KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16"}
         )
         acl, deny = _renderer(s).compute_container_acls()
         assert "allow 10.89.0.0/24;" in acl
@@ -203,7 +203,7 @@ class TestContainerAcls:
         assert "if ($container_source) { return 403; }" in deny
 
     def test_all_loopback_warns(self, caplog):
-        s = make_settings({"KLANGK_CONTAINER_SUBNETS": "127.0.0.1"})
+        s = make_settings({"KLANGKD_CONTAINER_SUBNETS": "127.0.0.1"})
         _renderer(s)._container_source_entries()
         assert "no non-loopback" in caplog.text
 
@@ -230,7 +230,7 @@ class TestContainerGeo:
 
     def test_explicit_subnets_listed_loopback_excluded(self):
         s = make_settings(
-            env={"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16"}
+            env={"KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16"}
         )
         geo = _renderer(s).compute_container_geo()
         assert "geo $realip_remote_addr $container_source {" in geo
@@ -242,7 +242,7 @@ class TestContainerGeo:
         """Loopback maps to default 0 (allowed) even when listed in the set —
         local browsers keep full UI/API access."""
         s = make_settings(
-            env={"KLANGK_CONTAINER_SUBNETS": "127.0.0.1,10.89.0.0/24"}
+            env={"KLANGKD_CONTAINER_SUBNETS": "127.0.0.1,10.89.0.0/24"}
         )
         geo = _renderer(s).compute_container_geo()
         assert "10.89.0.0/24 1;" in geo
@@ -252,7 +252,7 @@ class TestContainerGeo:
         """Even with no non-loopback sources, the ``$container_source`` variable
         is declared (default 0) so the ``location /`` guard references a
         defined variable."""
-        s = make_settings({"KLANGK_CONTAINER_SUBNETS": "127.0.0.1"})
+        s = make_settings({"KLANGKD_CONTAINER_SUBNETS": "127.0.0.1"})
         geo = _renderer(s).compute_container_geo()
         assert "geo $realip_remote_addr $container_source {" in geo
         assert "default 0;" in geo
@@ -264,7 +264,7 @@ class TestContainerGeo:
         (``$realip_remote_addr``), not the realip-rewritten real client
         (``$remote_addr``) — otherwise a co-located trusted proxy whose real
         client is a host IP is denied on every browser request."""
-        s = make_settings(env={"KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24"})
+        s = make_settings(env={"KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24"})
         geo = _renderer(s).compute_container_geo()
         assert "$realip_remote_addr" in geo
         assert "$remote_addr $container_source" not in geo
@@ -272,9 +272,9 @@ class TestContainerGeo:
     def test_geo_emitted_in_full_config_at_http_scope(self):
         s = make_settings(
             {
-                "KLANGK_PORT": "8997",
-                "KLANGK_EGRESS_PORT": "8995",
-                "KLANGK_CONTAINER_SUBNETS": "10.89.0.0/24",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_EGRESS_PORT": "8995",
+                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
             }
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
@@ -290,18 +290,18 @@ class TestContainerGeo:
 
 class TestDnsResolvers:
     def test_explicit_servers(self):
-        s = make_settings({"KLANGK_DNS_SERVERS": "1.2.3.4,5.6.7.8"})
+        s = make_settings({"KLANGKD_DNS_SERVERS": "1.2.3.4,5.6.7.8"})
         result = _renderer(s).detect_dns_resolvers()
         assert "1.2.3.4" in result
         assert "5.6.7.8" in result
 
     def test_ipv6_bracketed(self):
-        s = make_settings({"KLANGK_DNS_SERVERS": "::1"})
+        s = make_settings({"KLANGKD_DNS_SERVERS": "::1"})
         assert "[::1]" in _renderer(s).detect_dns_resolvers()
 
     def test_empty_tokens_skipped(self):
-        """Trailing commas / empty entries in KLANGK_DNS_SERVERS are skipped."""
-        s = make_settings({"KLANGK_DNS_SERVERS": "1.2.3.4,,5.6.7.8,"})
+        """Trailing commas / empty entries in KLANGKD_DNS_SERVERS are skipped."""
+        s = make_settings({"KLANGKD_DNS_SERVERS": "1.2.3.4,,5.6.7.8,"})
         result = _renderer(s).detect_dns_resolvers()
         assert "1.2.3.4" in result
         assert "5.6.7.8" in result
@@ -314,9 +314,9 @@ class TestDnsResolvers:
 
 class TestRenderConfig:
     def test_basic_structure(self):
-        # KLANGK_PORT set ⇒ full/browser template.
+        # KLANGKD_PORT set ⇒ full/browser template.
         s = make_settings(
-            {"KLANGK_PORT": "8997", "KLANGK_EGRESS_PORT": "8995"}
+            {"KLANGKD_PORT": "8997", "KLANGKD_EGRESS_PORT": "8995"}
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         assert "daemon off;" in conf
@@ -331,21 +331,21 @@ class TestRenderConfig:
 
     def test_uds_upstream_in_conf(self):
         s = make_settings(
-            {"KLANGK_PORT": "8997", "KLANGK_EGRESS_PORT": "8995"}
+            {"KLANGKD_PORT": "8997", "KLANGKD_EGRESS_PORT": "8995"}
         )
         conf = _renderer(s).render_config(uds_upstream("/tmp/klangk.sock"))
         assert "proxy_pass http://unix:/tmp/klangk.sock:" in conf
 
     def test_no_llm_block_without_url(self):
-        s = make_settings({"KLANGK_PORT": "8997"})
+        s = make_settings({"KLANGKD_PORT": "8997"})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         assert "llm-proxy" not in conf
 
     def test_llm_block_with_url(self):
         s = make_settings(
             env={
-                "KLANGK_PORT": "8997",
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
             }
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
@@ -354,9 +354,9 @@ class TestRenderConfig:
     def test_llm_api_key_resolved(self):
         s = make_settings(
             env={
-                "KLANGK_PORT": "8997",
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGK_LLM_API_KEY": "cmd:printf %s resolved-key",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_LLM_API_KEY": "cmd:printf %s resolved-key",
             }
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
@@ -373,9 +373,9 @@ class TestRenderConfig:
         split (upstream + rewrite) keeps nginx's permissive behavior (#1681)."""
         s = make_settings(
             env={
-                "KLANGK_PORT": "8997",
-                "KLANGK_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
-                "KLANGK_LLM_API_KEY": "k",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
+                "KLANGKD_LLM_API_KEY": "k",
             }
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
@@ -397,16 +397,16 @@ class TestRenderConfig:
         import re
 
         env = {
-            "KLANGK_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
-            "KLANGK_LLM_API_KEY": "k",
+            "KLANGKD_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
+            "KLANGKD_LLM_API_KEY": "k",
         }
-        # Headless (no KLANGK_PORT).
+        # Headless (no KLANGKD_PORT).
         s_headless = make_settings(env=env)
         headless = _renderer(s_headless).render_config(
             tcp_upstream("127.0.0.1", "8997")
         )
-        # Full/browser mode (KLANGK_PORT set).
-        s_full = make_settings(env={**env, "KLANGK_PORT": "8997"})
+        # Full/browser mode (KLANGKD_PORT set).
+        s_full = make_settings(env={**env, "KLANGKD_PORT": "8997"})
         full = _renderer(s_full).render_config(
             tcp_upstream("127.0.0.1", "8997")
         )
@@ -444,12 +444,12 @@ class TestRenderConfig:
         upstream (#1687)."""
         s = make_settings(
             env={
-                "KLANGK_PORT": "8997",
-                "KLANGK_LLM_BASE_URL": (
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_LLM_BASE_URL": (
                     "https://generativelanguage.googleapis.com/v1beta"
                     "?key=AIzaSy-example"
                 ),
-                "KLANGK_LLM_API_KEY": "k",
+                "KLANGKD_LLM_API_KEY": "k",
             }
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
@@ -463,7 +463,7 @@ class TestRenderConfig:
         assert "?key=AIzaSy-example/$1" not in conf
 
     def test_auth_local_loopback_acl(self):
-        s = make_settings({"KLANGK_PORT": "8997"})
+        s = make_settings({"KLANGKD_PORT": "8997"})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         # Find the auth/local block.
         import re
@@ -480,8 +480,8 @@ class TestRenderConfig:
     def test_hosted_disabled(self):
         s = make_settings(
             {
-                "KLANGK_PORT": "8997",
-                "KLANGK_HOSTED_PORTS_PER_WORKSPACE": "0",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_HOSTED_PORTS_PER_WORKSPACE": "0",
             }
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
@@ -489,13 +489,13 @@ class TestRenderConfig:
         assert "return 404;" in conf
 
     def test_hosted_enabled_default(self):
-        s = make_settings({"KLANGK_PORT": "8997"})
+        s = make_settings({"KLANGKD_PORT": "8997"})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         assert "location ~ ^/hosted/[^/]+/(?<hosted_port>" in conf
 
     def test_trust_outer_proxy(self):
         s = make_settings(
-            {"KLANGK_PORT": "8997", "KLANGK_TRUST_OUTER_PROXY": "1"}
+            {"KLANGKD_PORT": "8997", "KLANGKD_TRUST_OUTER_PROXY": "1"}
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         # When trusting outer proxy, X-Forwarded-* come from client headers.
@@ -503,7 +503,7 @@ class TestRenderConfig:
         assert "http_x_forwarded_host" in conf
 
     def test_no_trust_outer_proxy(self):
-        s = make_settings({"KLANGK_PORT": "8997"})
+        s = make_settings({"KLANGKD_PORT": "8997"})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         # Default: X-Forwarded-* derived from trusted values.
         assert "proxy_set_header X-Forwarded-Proto $scheme;" in conf
@@ -514,7 +514,7 @@ class TestRealipBlock:
     """The realip module directives so ``$remote_addr`` is the real client (#1558)."""
 
     def test_default_loopback_trust(self):
-        s = make_settings({"KLANGK_PORT": "8997"})
+        s = make_settings({"KLANGKD_PORT": "8997"})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         assert "set_real_ip_from 127.0.0.1;" in conf
         assert "set_real_ip_from ::1;" in conf
@@ -524,8 +524,8 @@ class TestRealipBlock:
     def test_custom_cidrs(self):
         s = make_settings(
             {
-                "KLANGK_PORT": "8997",
-                "KLANGK_TRUSTED_PROXY_CIDRS": "10.100.0.0/24,127.0.0.1",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_TRUSTED_PROXY_CIDRS": "10.100.0.0/24,127.0.0.1",
             }
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
@@ -534,14 +534,14 @@ class TestRealipBlock:
 
     def test_suppressed_when_reject_proxy_headers(self):
         s = make_settings(
-            {"KLANGK_PORT": "8997", "KLANGK_REJECT_PROXY_HEADERS": "1"}
+            {"KLANGKD_PORT": "8997", "KLANGKD_REJECT_PROXY_HEADERS": "1"}
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         assert "set_real_ip_from" not in conf
         assert "real_ip_header" not in conf
 
     def test_present_in_headless(self):
-        s = make_settings(env={"KLANGK_EGRESS_PORT": "8995"})
+        s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
         conf = _renderer(s).render_config(uds_upstream("/tmp/klangk.sock"))
         assert "set_real_ip_from 127.0.0.1;" in conf
         assert "real_ip_header X-Forwarded-For;" in conf
@@ -549,8 +549,8 @@ class TestRealipBlock:
     def test_invalid_entries_skipped(self):
         s = make_settings(
             {
-                "KLANGK_PORT": "8997",
-                "KLANGK_TRUSTED_PROXY_CIDRS": "127.0.0.1,not-a-cidr,10.0.0.0/8",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_TRUSTED_PROXY_CIDRS": "127.0.0.1,not-a-cidr,10.0.0.0/8",
             }
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
@@ -562,8 +562,8 @@ class TestRealipBlock:
         """Empty tokens are skipped; if every entry is invalid, loopback is used."""
         s = make_settings(
             {
-                "KLANGK_PORT": "8997",
-                "KLANGK_TRUSTED_PROXY_CIDRS": ",not-valid,",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_TRUSTED_PROXY_CIDRS": ",not-valid,",
             }
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
@@ -573,7 +573,7 @@ class TestRealipBlock:
 
     def test_block_at_http_scope(self):
         """The realip directives sit at ``http {}`` scope, outside any server block."""
-        s = make_settings({"KLANGK_PORT": "8997"})
+        s = make_settings({"KLANGKD_PORT": "8997"})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         # set_real_ip_from must appear before the first 'server {' block.
         realip_pos = conf.index("set_real_ip_from")
@@ -586,9 +586,9 @@ class TestRealipBlock:
         secret.write_text("file-based-key\n")
         s = make_settings(
             env={
-                "KLANGK_PORT": "8997",
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGK_LLM_API_KEY": f"file:{secret}",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_LLM_API_KEY": f"file:{secret}",
             }
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
@@ -596,14 +596,14 @@ class TestRealipBlock:
 
 
 class TestHeadlessTemplate:
-    """``KLANGK_PORT`` unset ⇒ headless template (#1542).
+    """``KLANGKD_PORT`` unset ⇒ headless template (#1542).
 
     Headless emits a single container-egress listener on
-    ``KLANGK_EGRESS_PORT`` serving the container→backend paths
+    ``KLANGKD_EGRESS_PORT`` serving the container→backend paths
     (``/llm-proxy``, ``/api/v1/browser-delegate``,
     ``/api/v1/workspaces/post-chat-message`` + their ``auth_request`` gate).
     No browser listener, no UI, no ``/hosted/``, no ``/auth/local``.
-    Setting ``KLANGK_PORT`` ⇒ full template; ``KLANGK_AUTH_MODES`` never
+    Setting ``KLANGKD_PORT`` ⇒ full template; ``KLANGKD_AUTH_MODES`` never
     changes which template renders.
     """
 
@@ -611,8 +611,8 @@ class TestHeadlessTemplate:
         """Headless + LLM ⇒ /llm-proxy + egress paths, no browser surface."""
         s = make_settings(
             env={
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGK_EGRESS_PORT": "8995",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_EGRESS_PORT": "8995",
             }
         )
         conf = _renderer(s).render_config(uds_upstream("/tmp/klangk.sock"))
@@ -635,7 +635,7 @@ class TestHeadlessTemplate:
     def test_headless_no_llm_still_serves_egress(self):
         """Headless + no LLM ⇒ no /llm-proxy, but browser-delegate /
         post-chat-message + their auth_request infra remain."""
-        s = make_settings(env={"KLANGK_EGRESS_PORT": "8995"})
+        s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
         conf = _renderer(s).render_config(uds_upstream("/tmp/klangk.sock"))
         assert "location ~ ^/llm-proxy/" not in conf
         # The other egress locations persist (they don't depend on LLM).
@@ -652,8 +652,8 @@ class TestHeadlessTemplate:
         browser catch-all location."""
         s = make_settings(
             env={
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGK_EGRESS_PORT": "8995",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_EGRESS_PORT": "8995",
             }
         )
         conf = _renderer(s).render_config(uds_upstream("/tmp/klangk.sock"))
@@ -664,12 +664,12 @@ class TestHeadlessTemplate:
         assert "location / {" not in conf
 
     def test_egress_listen_override_flows_into_directive(self):
-        """KLANGK_EGRESS_LISTEN pins the egress listener interface (#1542)."""
+        """KLANGKD_EGRESS_LISTEN pins the egress listener interface (#1542)."""
         s = make_settings(
             env={
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGK_EGRESS_PORT": "8995",
-                "KLANGK_EGRESS_LISTEN": "192.168.1.5",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_EGRESS_PORT": "8995",
+                "KLANGKD_EGRESS_LISTEN": "192.168.1.5",
             }
         )
         conf = _renderer(s).render_config(uds_upstream("/tmp/klangk.sock"))
@@ -677,12 +677,12 @@ class TestHeadlessTemplate:
         assert "listen 0.0.0.0:8995;" not in conf
 
     def test_port_set_emits_full_template(self):
-        """Regression guard: KLANGK_PORT set ⇒ full browser template."""
+        """Regression guard: KLANGKD_PORT set ⇒ full browser template."""
         s = make_settings(
             env={
-                "KLANGK_PORT": "8997",
-                "KLANGK_LISTEN": "127.0.0.1",
-                "KLANGK_EGRESS_PORT": "8995",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_LISTEN": "127.0.0.1",
+                "KLANGKD_EGRESS_PORT": "8995",
             }
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
@@ -698,9 +698,9 @@ class TestHeadlessTemplate:
         for auth in ("none", "password", "both"):
             s_headless = make_settings(
                 env={
-                    "KLANGK_AUTH_MODES": auth,
-                    "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
-                    "KLANGK_EGRESS_PORT": "8995",
+                    "KLANGKD_AUTH_MODES": auth,
+                    "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
+                    "KLANGKD_EGRESS_PORT": "8995",
                 }
             )
             headless = _renderer(s_headless).render_config(
@@ -711,9 +711,9 @@ class TestHeadlessTemplate:
 
             s_full = make_settings(
                 env={
-                    "KLANGK_PORT": "8997",
-                    "KLANGK_AUTH_MODES": auth,
-                    "KLANGK_EGRESS_PORT": "8995",
+                    "KLANGKD_PORT": "8997",
+                    "KLANGKD_AUTH_MODES": auth,
+                    "KLANGKD_EGRESS_PORT": "8995",
                 }
             )
             full = _renderer(s_full).render_config(
@@ -724,7 +724,7 @@ class TestHeadlessTemplate:
 
 class TestFindProxyBin:
     def test_configured(self):
-        s = make_settings({"KLANGK_PROXY_BIN": "/custom/nginx"})
+        s = make_settings({"KLANGKD_PROXY_BIN": "/custom/nginx"})
         assert _renderer(s).find_proxy_bin() == "/custom/nginx"
 
     def test_fallback_to_which(self):
@@ -756,7 +756,7 @@ class TestDetectHostIPv4s:
 
 class TestDnsResolversFromResolvConf:
     def test_parses_resolv_conf(self, monkeypatch):
-        """When KLANGK_DNS_SERVERS is unset, nameservers come from resolv.conf."""
+        """When KLANGKD_DNS_SERVERS is unset, nameservers come from resolv.conf."""
         import klangk.proxy as proxy_mod
 
         s = make_settings({})
@@ -802,7 +802,7 @@ class TestContainerAclFallback:
 
 class TestWriteConfig:
     def test_writes_file(self, tmp_path):
-        s = make_settings({"KLANGK_EGRESS_PORT": "8995"})
+        s = make_settings({"KLANGKD_EGRESS_PORT": "8995"})
         r = _renderer(s)
         conf_path = tmp_path / "nginx.conf"
         text = r.render_config(tcp_upstream("127.0.0.1", "8997"))
@@ -827,11 +827,11 @@ class TestKlangkdHelpers:
         monkeypatch.delenv("HOME", raising=False)
         monkeypatch.delenv("XDG_STATE_HOME", raising=False)
         with pytest.raises(ValidationError) as exc_info:
-            KlangkSettings(env={"KLANGK_DATA_DIR": "/tmp/data"})
-        assert "KLANGK_STATE_DIR" in str(exc_info.value)
+            KlangkSettings(env={"KLANGKD_DATA_DIR": "/tmp/data"})
+        assert "KLANGKD_STATE_DIR" in str(exc_info.value)
 
     def test_state_dir_env_sets_value(self):
-        s = make_settings({"KLANGK_STATE_DIR": "/custom/state"})
+        s = make_settings({"KLANGKD_STATE_DIR": "/custom/state"})
         assert s.state_dir == "/custom/state"
 
     def test_state_dir_config_file_sets_value(self, tmp_path):
@@ -840,13 +840,13 @@ class TestKlangkdHelpers:
         cfg = tmp_path / "config.yaml"
         cfg.write_text('state_dir: "/from/config"\n')
         s = KlangkSettings(
-            env={"KLANGK_DATA_DIR": str(tmp_path)},
+            env={"KLANGKD_DATA_DIR": str(tmp_path)},
             config_file=str(cfg),
         )
         assert s.state_dir == "/from/config"
 
 
-# The watchdog is gated only by the internal _KLANGK_DISABLE_PROXY kill
+# The watchdog is gated only by the internal _KLANGKD_DISABLE_PROXY kill
 # switch (test-only); nginx is owned unconditionally in real runs. Covered
 # below.
 
@@ -856,9 +856,9 @@ class TestWatchdogGate:
 
     @pytest.mark.asyncio
     async def test_start_noop_when_disabled(self, monkeypatch):
-        """No-op when the test-only _KLANGK_DISABLE_PROXY is set."""
+        """No-op when the test-only _KLANGKD_DISABLE_PROXY is set."""
 
-        monkeypatch.setenv("_KLANGK_DISABLE_PROXY", "1")
+        monkeypatch.setenv("_KLANGKD_DISABLE_PROXY", "1")
         wd = _wd(make_settings({}))
         await wd.start()
         assert wd._task is None
@@ -876,12 +876,12 @@ class TestWatchdogGate:
         sock = str(tmp_path / "klangk.sock")
         s = make_settings(
             env={
-                "KLANGK_STATE_DIR": str(tmp_path),
-                "KLANGK_SOCKET": sock,
-                "KLANGK_EGRESS_PORT": "19999",
+                "KLANGKD_STATE_DIR": str(tmp_path),
+                "KLANGKD_SOCKET": sock,
+                "KLANGKD_EGRESS_PORT": "19999",
             }
         )
-        monkeypatch.delenv("_KLANGK_DISABLE_PROXY", raising=False)
+        monkeypatch.delenv("_KLANGKD_DISABLE_PROXY", raising=False)
         monkeypatch.setattr(
             "klangk.proxy.ProxyRenderer.find_proxy_bin",
             lambda self: "/fake/nginx",
@@ -916,9 +916,9 @@ class TestPrepareProxy:
 
         s = make_settings(
             env={
-                "KLANGK_STATE_DIR": str(tmp_path),
-                "KLANGK_EGRESS_PORT": "19999",
-                "KLANGK_LLM_BASE_URL": "http://127.0.0.1:11434",
+                "KLANGKD_STATE_DIR": str(tmp_path),
+                "KLANGKD_EGRESS_PORT": "19999",
+                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
             }
         )
         monkeypatch.setattr(

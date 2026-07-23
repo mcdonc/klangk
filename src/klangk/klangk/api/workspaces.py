@@ -174,7 +174,7 @@ async def create_workspace(
         raise HTTPException(
             status_code=400,
             detail="Auto-start is not enabled on this server"
-            " (set KLANGK_ALLOW_AUTOSTART=1)",
+            " (set KLANGKD_ALLOW_AUTOSTART=1)",
         )
     if (
         body.image
@@ -252,7 +252,7 @@ async def update_workspace(
         raise HTTPException(
             status_code=400,
             detail="Auto-start is not enabled on this server"
-            " (set KLANGK_ALLOW_AUTOSTART=1)",
+            " (set KLANGKD_ALLOW_AUTOSTART=1)",
         )
     if "image" in fields and fields["image"] is not None:
         if fields["image"] not in app.state.container_registry.allowed_images:
@@ -648,10 +648,20 @@ async def _extract_archive_metadata(
     raw_env = metadata.get("env")
     if isinstance(raw_env, dict):
         blocked = {"LD_PRELOAD", "LD_LIBRARY_PATH", "PATH"}
+        # Strip every klangk-namespaced env var from the archived snapshot:
+        # server settings (KLANGKD_), container-injected vars (KLANGKWS_),
+        # build knobs (KLANGKBUILD_), and CLI vars (KLANGK_) are all
+        # re-derived for the new container. `extra_env` is appended last in
+        # the container env (last wins at the podman layer), so a stale value
+        # from the exporting instance must not leak through and clobber the
+        # live injection (#1740).
         env = {
             k: v
             for k, v in raw_env.items()
-            if not k.startswith("KLANGK_") and k not in blocked
+            if not k.startswith(
+                ("KLANGKD_", "KLANGKWS_", "KLANGKBUILD_", "KLANGK_")
+            )
+            and k not in blocked
         }
     else:
         env = None

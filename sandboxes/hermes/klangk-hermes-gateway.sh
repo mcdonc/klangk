@@ -11,11 +11,11 @@
 set -euo pipefail
 
 # If the llm-proxy is disabled, just start the gateway unconfigured.
-if [ "${KLANGK_HERMES_USE_LLM_PROXY:-true}" != "true" ] &&
-  [ "${KLANGK_HERMES_USE_LLM_PROXY:-}" != "1" ]; then
+if [ "${KLANGKWS_HERMES_USE_LLM_PROXY:-true}" != "true" ] &&
+  [ "${KLANGKWS_HERMES_USE_LLM_PROXY:-}" != "1" ]; then
   exec hermes gateway run
 fi
-[ -n "${KLANGK_LLM_PROXY_URL:-}" ] || exec hermes gateway run
+[ -n "${KLANGKWS_LLM_PROXY_URL:-}" ] || exec hermes gateway run
 
 hermes_home="${HERMES_HOME:-$HOME/.hermes}"
 token="$(/opt/klangk/bin/klangk-workspace-token 2>/dev/null || true)"
@@ -27,7 +27,7 @@ if [ -n "$token" ]; then
   # Refresh only the two keys we manage; preserve anything else the user set.
   sed -i '/^OPENAI_BASE_URL=/d;/^OPENAI_API_KEY=/d' "$env_file"
   cat >>"$env_file" <<EOF
-OPENAI_BASE_URL=${KLANGK_LLM_PROXY_URL}
+OPENAI_BASE_URL=${KLANGKWS_LLM_PROXY_URL}
 OPENAI_API_KEY=${token}
 EOF
 fi

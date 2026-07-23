@@ -38,7 +38,7 @@ def _make_app_state(settings=None):
         # Pin a default password so tests that exercise the full lifespan
         # (where seed_default_user runs) don't fail-fast in password mode.
         # In none mode (the default) the password is ignored (null hash).
-        settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
+        settings = make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"})
     # Two-phase: shell first so owned instances can take app at
     # construction (#1426).
     app_state = types.SimpleNamespace(
@@ -105,8 +105,8 @@ class TestSeedDefaultUser:
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_DEFAULT_USER": "seed-test",
-                    "KLANGK_DEFAULT_PASSWORD": "seed-pass",
+                    "KLANGKD_DEFAULT_USER": "seed-test",
+                    "KLANGKD_DEFAULT_PASSWORD": "seed-pass",
                 }
             )
         ).seed_default_user()
@@ -116,8 +116,8 @@ class TestSeedDefaultUser:
     async def test_skips_existing_user(self, db, app_state):
         s = make_settings(
             {
-                "KLANGK_DEFAULT_USER": "seed-test",
-                "KLANGK_DEFAULT_PASSWORD": "seed-pass",
+                "KLANGKD_DEFAULT_USER": "seed-test",
+                "KLANGKD_DEFAULT_PASSWORD": "seed-pass",
             }
         )
         await _lifecycle(s).seed_default_user()
@@ -130,7 +130,7 @@ class TestSeedDefaultUser:
         # Default mode (none): seed with null password_hash. The row exists
         # for /auth/local token minting but no endpoint checks the hash (#1645).
         await _lifecycle(
-            make_settings({"KLANGK_DEFAULT_USER": "none-test"})
+            make_settings({"KLANGKD_DEFAULT_USER": "none-test"})
         ).seed_default_user()
         user = await app_state.state.model.users.get_user_by_email("none-test")
         assert user is not None
@@ -150,12 +150,12 @@ class TestSeedDefaultUserAuthModeGating:
     """#1645 Table A: password handling depends on auth_modes.
 
     none / oidc → null password_hash (row is for /auth/local token minting).
-    password / both → require KLANGK_DEFAULT_PASSWORD or fail-fast.
+    password / both → require KLANGKD_DEFAULT_PASSWORD or fail-fast.
     """
 
     async def test_none_mode_seeds_null_password(self, db, app_state):
         await _lifecycle(
-            make_settings({"KLANGK_DEFAULT_USER": "u-none"})
+            make_settings({"KLANGKD_DEFAULT_USER": "u-none"})
         ).seed_default_user()
         user = await app_state.state.model.users.get_user_by_email("u-none")
         assert user["password_hash"] is None
@@ -164,8 +164,8 @@ class TestSeedDefaultUserAuthModeGating:
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_AUTH_MODES": "oidc",
-                    "KLANGK_DEFAULT_USER": "u-oidc",
+                    "KLANGKD_AUTH_MODES": "oidc",
+                    "KLANGKD_DEFAULT_USER": "u-oidc",
                 }
             )
         ).seed_default_user()
@@ -176,9 +176,9 @@ class TestSeedDefaultUserAuthModeGating:
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_AUTH_MODES": "password",
-                    "KLANGK_DEFAULT_USER": "u-pw",
-                    "KLANGK_DEFAULT_PASSWORD": "real-pass",
+                    "KLANGKD_AUTH_MODES": "password",
+                    "KLANGKD_DEFAULT_USER": "u-pw",
+                    "KLANGKD_DEFAULT_PASSWORD": "real-pass",
                 }
             )
         ).seed_default_user()
@@ -191,12 +191,12 @@ class TestSeedDefaultUserAuthModeGating:
     async def test_password_mode_fails_fast_without_default_password(
         self, db, app_state
     ):
-        with pytest.raises(RuntimeError, match="KLANGK_DEFAULT_PASSWORD"):
+        with pytest.raises(RuntimeError, match="KLANGKD_DEFAULT_PASSWORD"):
             await _lifecycle(
                 make_settings(
                     {
-                        "KLANGK_AUTH_MODES": "password",
-                        "KLANGK_DEFAULT_USER": "u-nopw",
+                        "KLANGKD_AUTH_MODES": "password",
+                        "KLANGKD_DEFAULT_USER": "u-nopw",
                     }
                 )
             ).seed_default_user()
@@ -205,9 +205,9 @@ class TestSeedDefaultUserAuthModeGating:
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_AUTH_MODES": "both",
-                    "KLANGK_DEFAULT_USER": "u-both",
-                    "KLANGK_DEFAULT_PASSWORD": "both-pass",
+                    "KLANGKD_AUTH_MODES": "both",
+                    "KLANGKD_DEFAULT_USER": "u-both",
+                    "KLANGKD_DEFAULT_PASSWORD": "both-pass",
                 }
             )
         ).seed_default_user()
@@ -217,12 +217,12 @@ class TestSeedDefaultUserAuthModeGating:
     async def test_both_mode_fails_fast_without_default_password(
         self, db, app_state
     ):
-        with pytest.raises(RuntimeError, match="KLANGK_DEFAULT_PASSWORD"):
+        with pytest.raises(RuntimeError, match="KLANGKD_DEFAULT_PASSWORD"):
             await _lifecycle(
                 make_settings(
                     {
-                        "KLANGK_AUTH_MODES": "both",
-                        "KLANGK_DEFAULT_USER": "u-both-nopw",
+                        "KLANGKD_AUTH_MODES": "both",
+                        "KLANGKD_DEFAULT_USER": "u-both-nopw",
                     }
                 )
             ).seed_default_user()
@@ -237,7 +237,7 @@ class TestSeedDefaultUserAuthModeGating:
         disabled outside none mode)."""
         # Seed in none mode → admin row with password_hash=None.
         await _lifecycle(
-            make_settings({"KLANGK_DEFAULT_USER": "u-nullhash@example.com"})
+            make_settings({"KLANGKD_DEFAULT_USER": "u-nullhash@example.com"})
         ).seed_default_user()
         admin = await app_state.state.model.users.get_user_by_email(
             "u-nullhash@example.com"
@@ -250,8 +250,8 @@ class TestSeedDefaultUserAuthModeGating:
             await _lifecycle(
                 make_settings(
                     {
-                        "KLANGK_AUTH_MODES": "password",
-                        "KLANGK_DEFAULT_USER": "u-nullhash@example.com",
+                        "KLANGKD_AUTH_MODES": "password",
+                        "KLANGKD_DEFAULT_USER": "u-nullhash@example.com",
                     }
                 )
             ).seed_default_user()
@@ -265,9 +265,9 @@ class TestSeedDefaultUserAuthModeGating:
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_AUTH_MODES": "password",
-                    "KLANGK_DEFAULT_USER": "u-hashed@example.com",
-                    "KLANGK_DEFAULT_PASSWORD": "real-pass",
+                    "KLANGKD_AUTH_MODES": "password",
+                    "KLANGKD_DEFAULT_USER": "u-hashed@example.com",
+                    "KLANGKD_DEFAULT_PASSWORD": "real-pass",
                 }
             )
         ).seed_default_user()
@@ -276,9 +276,9 @@ class TestSeedDefaultUserAuthModeGating:
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_AUTH_MODES": "password",
-                    "KLANGK_DEFAULT_USER": "u-hashed@example.com",
-                    "KLANGK_DEFAULT_PASSWORD": "real-pass",
+                    "KLANGKD_AUTH_MODES": "password",
+                    "KLANGKD_DEFAULT_USER": "u-hashed@example.com",
+                    "KLANGKD_DEFAULT_PASSWORD": "real-pass",
                 }
             )
         ).seed_default_user()
@@ -287,11 +287,11 @@ class TestSeedDefaultUserAuthModeGating:
         """The guard doesn't fire in none mode even with a null-hash admin —
         none mode never validates passwords."""
         await _lifecycle(
-            make_settings({"KLANGK_DEFAULT_USER": "u-none@example.com"})
+            make_settings({"KLANGKD_DEFAULT_USER": "u-none@example.com"})
         ).seed_default_user()
         # Second boot, still none mode — no raise.
         await _lifecycle(
-            make_settings({"KLANGK_DEFAULT_USER": "u-none@example.com"})
+            make_settings({"KLANGKD_DEFAULT_USER": "u-none@example.com"})
         ).seed_default_user()
 
 
@@ -300,7 +300,7 @@ class TestSeedDefaultUserGating:
 
     Once the ``admin`` group has ≥1 member, ``seed_default_user`` must not
     create a new admin or modify any existing user, no matter what
-    ``KLANGK_DEFAULT_*`` says — closes the config-mints-admin hole and
+    ``KLANGKD_DEFAULT_*`` says — closes the config-mints-admin hole and
     prevents lockout.
     """
 
@@ -308,13 +308,13 @@ class TestSeedDefaultUserGating:
         self, db, app_state
     ):
         """Legacy/post-first-boot install: an admin already exists → seed is
-        a no-op on users, regardless of KLANGK_DEFAULT_USER."""
+        a no-op on users, regardless of KLANGKD_DEFAULT_USER."""
         # Seed once to populate the admin group.
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_DEFAULT_USER": "first@example.com",
-                    "KLANGK_DEFAULT_PASSWORD": "first-pass",
+                    "KLANGKD_DEFAULT_USER": "first@example.com",
+                    "KLANGKD_DEFAULT_PASSWORD": "first-pass",
                 }
             )
         ).seed_default_user()
@@ -323,13 +323,13 @@ class TestSeedDefaultUserGating:
         )
         assert original is not None
 
-        # Now change KLANGK_DEFAULT_USER and re-seed → must NOT create a
+        # Now change KLANGKD_DEFAULT_USER and re-seed → must NOT create a
         # second admin from the new config.
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_DEFAULT_USER": "second@example.com",
-                    "KLANGK_DEFAULT_PASSWORD": "second-pass",
+                    "KLANGKD_DEFAULT_USER": "second@example.com",
+                    "KLANGKD_DEFAULT_PASSWORD": "second-pass",
                 }
             )
         ).seed_default_user()
@@ -349,14 +349,14 @@ class TestSeedDefaultUserGating:
     async def test_does_not_modify_existing_admin_when_config_changes(
         self, db, app_state
     ):
-        """Changing KLANGK_DEFAULT_* after first boot cannot clobber the
+        """Changing KLANGKD_DEFAULT_* after first boot cannot clobber the
         existing admin's email/password (no lockout)."""
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_AUTH_MODES": "password",
-                    "KLANGK_DEFAULT_USER": "keep@example.com",
-                    "KLANGK_DEFAULT_PASSWORD": "original-pass",
+                    "KLANGKD_AUTH_MODES": "password",
+                    "KLANGKD_DEFAULT_USER": "keep@example.com",
+                    "KLANGKD_DEFAULT_PASSWORD": "original-pass",
                 }
             )
         ).seed_default_user()
@@ -370,9 +370,9 @@ class TestSeedDefaultUserGating:
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_AUTH_MODES": "password",
-                    "KLANGK_DEFAULT_USER": "changed@example.com",
-                    "KLANGK_DEFAULT_PASSWORD": "changed-pass",
+                    "KLANGKD_AUTH_MODES": "password",
+                    "KLANGKD_DEFAULT_USER": "changed@example.com",
+                    "KLANGKD_DEFAULT_PASSWORD": "changed-pass",
                 }
             )
         ).seed_default_user()
@@ -389,15 +389,15 @@ class TestSeedDefaultUserGating:
     async def test_reseeds_after_admin_group_emptied(self, db, app_state):
         """Delete-resurrection at the group level: deleting the admin user
         account (which cascades their group membership) + restart re-seeds
-        from KLANGK_DEFAULT_* (the gate is group membership, not a tombstone).
+        from KLANGKD_DEFAULT_* (the gate is group membership, not a tombstone).
         The operator "reset to seeded config" flow is deleting the admin
         account, not demoting it."""
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_AUTH_MODES": "password",
-                    "KLANGK_DEFAULT_USER": "resurrect@example.com",
-                    "KLANGK_DEFAULT_PASSWORD": "resurrect-pass",
+                    "KLANGKD_AUTH_MODES": "password",
+                    "KLANGKD_DEFAULT_USER": "resurrect@example.com",
+                    "KLANGKD_DEFAULT_PASSWORD": "resurrect-pass",
                 }
             )
         ).seed_default_user()
@@ -422,9 +422,9 @@ class TestSeedDefaultUserGating:
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_AUTH_MODES": "password",
-                    "KLANGK_DEFAULT_USER": "resurrect@example.com",
-                    "KLANGK_DEFAULT_PASSWORD": "resurrect-pass",
+                    "KLANGKD_AUTH_MODES": "password",
+                    "KLANGKD_DEFAULT_USER": "resurrect@example.com",
+                    "KLANGKD_DEFAULT_PASSWORD": "resurrect-pass",
                 }
             )
         ).seed_default_user()
@@ -455,9 +455,9 @@ class TestSeedDefaultUserGating:
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_AUTH_MODES": "password",
-                    "KLANGK_DEFAULT_USER": "fresh@example.com",
-                    "KLANGK_DEFAULT_PASSWORD": "fresh-pass",
+                    "KLANGKD_AUTH_MODES": "password",
+                    "KLANGKD_DEFAULT_USER": "fresh@example.com",
+                    "KLANGKD_DEFAULT_PASSWORD": "fresh-pass",
                 }
             )
         ).seed_default_user()
@@ -492,13 +492,13 @@ def _bind_safety_app_state(
     browser-bind gate applies; pass ``port=None`` to exercise headless
     (where the gate is a no-op — no browser listener, #1542).
     """
-    env = {"KLANGK_AUTH_MODES": auth_mode} if auth_mode else {}
+    env = {"KLANGKD_AUTH_MODES": auth_mode} if auth_mode else {}
     if port is not None:
-        env["KLANGK_PORT"] = port
+        env["KLANGKD_PORT"] = port
     if listen is not None:
-        env["KLANGK_LISTEN"] = listen
+        env["KLANGKD_LISTEN"] = listen
     if allow_insecure is not None:
-        env["KLANGK_ALLOW_INSECURE_NO_AUTH"] = allow_insecure
+        env["KLANGKD_ALLOW_INSECURE_NO_AUTH"] = allow_insecure
     settings = make_settings(env)
     app_state = types.SimpleNamespace(
         state=types.SimpleNamespace(settings=settings)
@@ -552,7 +552,7 @@ class TestNoAuthBindSafety:
             )
 
     def test_allows_loopback_default_when_listen_unset(self):
-        # KLANGK_LISTEN defaults to 127.0.0.1 (#1375).
+        # KLANGKD_LISTEN defaults to 127.0.0.1 (#1375).
         assert (
             main.enforce_no_auth_bind_safety(
                 _bind_safety_app_state(auth_mode="none")
@@ -583,13 +583,13 @@ class TestNoAuthBindSafety:
                 _bind_safety_app_state(auth_mode="none", listen="0.0.0.0")
             )
         msg = str(exc_info.value)
-        assert "KLANGK_AUTH_MODES=none" in msg
+        assert "KLANGKD_AUTH_MODES=none" in msg
         assert "loopback" in msg
-        assert "KLANGK_ALLOW_INSECURE_NO_AUTH=1" in msg
+        assert "KLANGKD_ALLOW_INSECURE_NO_AUTH=1" in msg
         assert "0.0.0.0" in msg
 
     def test_headless_exempt_from_bind_check(self):
-        """Headless (KLANGK_PORT unset) has no browser listener, so the bind
+        """Headless (KLANGKD_PORT unset) has no browser listener, so the bind
         gate is a no-op — none mode is safe regardless of the listen address,
         because /auth/local is never exposed over TCP (#1542)."""
         assert (
@@ -635,8 +635,8 @@ class TestSeedAgentUser:
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_AGENT_EMAIL": "bot@test.com",
-                    "KLANGK_AGENT_HANDLE": "TestBot",
+                    "KLANGKD_AGENT_EMAIL": "bot@test.com",
+                    "KLANGKD_AGENT_HANDLE": "TestBot",
                 }
             )
         ).seed_agent_user()
@@ -652,8 +652,8 @@ class TestSeedAgentUser:
         await _lifecycle(
             make_settings(
                 {
-                    "KLANGK_AGENT_EMAIL": "new@test.com",
-                    "KLANGK_AGENT_HANDLE": "NewBot",
+                    "KLANGKD_AGENT_EMAIL": "new@test.com",
+                    "KLANGKD_AGENT_HANDLE": "NewBot",
                 }
             )
         ).seed_agent_user()
@@ -705,7 +705,7 @@ class TestSeedAgentUser:
         assert human["handle"] == "alice"
         with pytest.raises(RuntimeError, match="alice"):
             await _lifecycle(
-                make_settings({"KLANGK_AGENT_HANDLE": "alice"})
+                make_settings({"KLANGKD_AGENT_HANDLE": "alice"})
             ).seed_agent_user()
         # Human user is untouched.
         refreshed = await app_state.state.model.users.get_user_by_id(
@@ -730,7 +730,7 @@ class TestSeedAgentUser:
         )
         with pytest.raises(RuntimeError, match="already used by another user"):
             await _lifecycle(
-                make_settings({"KLANGK_AGENT_HANDLE": "alice"})
+                make_settings({"KLANGKD_AGENT_HANDLE": "alice"})
             ).seed_agent_user()
         # Agent keeps its original handle; human untouched.
         agent = await app_state.state.model.users.get_user_by_id(
@@ -766,7 +766,7 @@ class TestSeedAgentUser:
 
         with pytest.raises(RuntimeError):
             await _lifecycle(
-                make_settings({"KLANGK_AGENT_HANDLE": "alice"})
+                make_settings({"KLANGKD_AGENT_HANDLE": "alice"})
             ).seed_agent_user()
 
         # Human's files are exactly where they were — nothing migrated.
@@ -1053,7 +1053,7 @@ class TestStartupShutdownRestart:
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
         lc._restart_lock = None
-        new_settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
+        new_settings = make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"})
         order = []
         with (
             patch.object(
@@ -1109,7 +1109,7 @@ class TestStartupShutdownRestart:
         """Swap + reconfigure called on every subsystem."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        new_settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
+        new_settings = make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"})
         old_settings = app_state.state.settings
         called = []
         for attr in (
@@ -1161,7 +1161,7 @@ class TestStartupShutdownRestart:
         POST /load). The nginx engine has no apply_pending_reload and is skipped."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        new_settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
+        new_settings = make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"})
         # Stand in a Caddy-shaped watchdog with a flagging reconfigure +
         # an apply_pending_reload awaitable we can assert on.
         reload_calls = []
@@ -1185,7 +1185,7 @@ class TestStartupShutdownRestart:
         abort the wider SIGHUP); Caddy keeps its last-known-good config."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        new_settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
+        new_settings = make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"})
 
         class _BadCaddyWd:
             def reconfigure(self, app):
@@ -1208,7 +1208,7 @@ class TestStartupShutdownRestart:
         """A failing reconfigure is skipped + warned, the rest still run."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        new_settings = make_settings({"KLANGK_DEFAULT_PASSWORD": "test"})
+        new_settings = make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"})
         with (
             patch.object(
                 app_state.state.ssl_trust,
@@ -1235,7 +1235,7 @@ class TestStartupShutdownRestart:
         lc = app_state.state.lifecycle
         old = app_state.state.settings
         new = make_settings(
-            {"KLANGK_DEFAULT_PASSWORD": "test", "KLANGK_PORT": "9999"}
+            {"KLANGKD_DEFAULT_PASSWORD": "test", "KLANGKD_PORT": "9999"}
         )
         with caplog.at_level("WARNING"):
             lc._warn_non_reloadable(old, new)
@@ -1261,7 +1261,7 @@ class TestStartupShutdownRestart:
         # Build new settings from the same env as old so only
         # reloadable fields differ.
         env = dict(old._reload_env)
-        env["KLANGK_AGENT_HANDLE"] = "newbot"
+        env["KLANGKD_AGENT_HANDLE"] = "newbot"
         new = make_settings(env)
         with caplog.at_level("WARNING"):
             lc._warn_non_reloadable(old, new)
@@ -1270,7 +1270,7 @@ class TestStartupShutdownRestart:
     async def test_agent_handle_change_takes_effect_after_restart(
         self, db, app_state
     ):
-        """Acceptance test: editing KLANGK_AGENT_HANDLE + SIGHUP makes the
+        """Acceptance test: editing KLANGKD_AGENT_HANDLE + SIGHUP makes the
         new handle the live agent handle without a process restart."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
@@ -1286,8 +1286,8 @@ class TestStartupShutdownRestart:
 
         # Simulate a config change: new settings with a different handle.
         env = dict(app_state.state.settings._reload_env)
-        env["KLANGK_AGENT_HANDLE"] = "newbot"
-        env["KLANGK_AGENT_EMAIL"] = "newbot@example.com"
+        env["KLANGKD_AGENT_HANDLE"] = "newbot"
+        env["KLANGKD_AGENT_EMAIL"] = "newbot@example.com"
         new_settings = make_settings(env)
         await lc._apply_reloaded_settings(new_settings)
         new_handle = await app_state.state.model.users.agent_handle()
@@ -1464,7 +1464,7 @@ class TestSetupStaticFiles:
         assert resp.content.startswith(b"\x89PNG")
 
     async def test_branding_prefers_customize_dir(self, tmp_path, monkeypatch):
-        # When <KLANGK_CUSTOMIZE_DIR>/branding exists, it is preferred
+        # When <KLANGKD_CUSTOMIZE_DIR>/branding exists, it is preferred
         # over <data_dir>/branding.  See #1360.
         (tmp_path / "index.html").write_text("<html></html>")
         custom = tmp_path / "cust"
@@ -1472,7 +1472,7 @@ class TestSetupStaticFiles:
         branding.mkdir(parents=True)
 
         test_app = FastAPI()
-        _settings = make_settings({"KLANGK_CUSTOMIZE_DIR": str(custom)})
+        _settings = make_settings({"KLANGKD_CUSTOMIZE_DIR": str(custom)})
         test_app.state.settings = _settings
         test_app.state.util = util_mod.Util(test_app)
 
@@ -1705,7 +1705,9 @@ class TestPidFile:
         util = util_mod.Util(
             types.SimpleNamespace(
                 state=types.SimpleNamespace(
-                    settings=make_settings({"KLANGK_STATE_DIR": str(tmp_path)})
+                    settings=make_settings(
+                        {"KLANGKD_STATE_DIR": str(tmp_path)}
+                    )
                 )
             )
         )
@@ -1748,7 +1750,7 @@ class TestBuildApp:
         assert model.AgentPrincipalError in app.exception_handlers
 
     def test_build_app_default_engine_is_caddy(self):
-        """KLANGK_PROXY_ENGINE unset → the Caddy CaddyWatchdog (#1559, #1634).
+        """KLANGKD_PROXY_ENGINE unset → the Caddy CaddyWatchdog (#1559, #1634).
 
         Since #1634 the default is ``caddy``; nginx is a deprecated escape
         hatch selected explicitly.
@@ -1759,27 +1761,27 @@ class TestBuildApp:
         assert isinstance(app.state.proxy_watchdog, CaddyWatchdog)
 
     def test_build_app_nginx_engine_wires_nginx_watchdog(self):
-        """KLANGK_PROXY_ENGINE=nginx → the (deprecated) nginx ProxyWatchdog.
+        """KLANGKD_PROXY_ENGINE=nginx → the (deprecated) nginx ProxyWatchdog.
 
         Kept this release as the escape hatch for a Caddy regression; the
         settings layer warns on selection (#1634).
         """
         from klangk.proxy import ProxyWatchdog
 
-        app = main.build_app(make_settings({"KLANGK_PROXY_ENGINE": "nginx"}))
+        app = main.build_app(make_settings({"KLANGKD_PROXY_ENGINE": "nginx"}))
         assert isinstance(app.state.proxy_watchdog, ProxyWatchdog)
 
     def test_build_app_warns_when_frontend_dir_absent(self, caplog):
         """build_app warns when frontend_dir doesn't exist (#1600).
 
         A packaged install whose wheel lacked the Flutter artifact, or a
-        bad KLANGK_FRONTEND_DIR override, must be obvious instead of
+        bad KLANGKD_FRONTEND_DIR override, must be obvious instead of
         silently serving an API-only app.
         """
         import logging
 
         settings = make_settings(
-            {"KLANGK_FRONTEND_DIR": "/nonexistent/klangk/frontend"}
+            {"KLANGKD_FRONTEND_DIR": "/nonexistent/klangk/frontend"}
         )
         with caplog.at_level(logging.WARNING, logger=main.logger.name):
             app = main.build_app(settings)
@@ -1795,7 +1797,7 @@ class TestBuildApp:
     def test_build_app_mounts_frontend_when_dir_exists(self, tmp_path):
         """build_app mounts the UI when frontend_dir exists (#1600)."""
         (tmp_path / "index.html").write_text("<html></html>")
-        settings = make_settings({"KLANGK_FRONTEND_DIR": str(tmp_path)})
+        settings = make_settings({"KLANGKD_FRONTEND_DIR": str(tmp_path)})
         app = main.build_app(settings)
         mounts = [
             r for r in app.routes if getattr(r, "name", "") == "frontend"
@@ -1803,7 +1805,7 @@ class TestBuildApp:
         assert mounts, "expected '/' static mount when frontend dir exists"
 
     def test_build_app_configures_logging_from_settings(self):
-        """build_app re-applies the log level from KLANGK_LOG_LEVEL (#1467).
+        """build_app re-applies the log level from KLANGKD_LOG_LEVEL (#1467).
 
         Logging is global module state (no app.state.logger object);
         build_app calls ``klangk.logger.configure(settings)`` after settings
@@ -1812,7 +1814,7 @@ class TestBuildApp:
         """
         import logging
 
-        app = main.build_app(make_settings({"KLANGK_LOG_LEVEL": "DEBUG"}))
+        app = main.build_app(make_settings({"KLANGKD_LOG_LEVEL": "DEBUG"}))
         assert app.state.settings.log_level == "DEBUG"
         assert logging.getLogger().level == logging.DEBUG
 
@@ -1881,7 +1883,7 @@ class TestLiveCORSMiddleware:
     """LiveCORSMiddleware reads origins from app state on each request (#1610)."""
 
     async def test_rebuilds_on_settings_change(self):
-        settings1 = make_settings({"KLANGK_CORS_ORIGINS": "http://a.example"})
+        settings1 = make_settings({"KLANGKD_CORS_ORIGINS": "http://a.example"})
         app = main.build_app(settings1)
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -1901,7 +1903,7 @@ class TestLiveCORSMiddleware:
 
             # Swap settings with a different origin
             settings2 = make_settings(
-                {"KLANGK_CORS_ORIGINS": "http://b.example"}
+                {"KLANGKD_CORS_ORIGINS": "http://b.example"}
             )
             app.state.settings = settings2
 
@@ -1920,7 +1922,7 @@ class TestLiveCORSMiddleware:
     async def test_caches_until_settings_change(self):
         import types as _types
 
-        settings = make_settings({"KLANGK_CORS_ORIGINS": "http://x.example"})
+        settings = make_settings({"KLANGKD_CORS_ORIGINS": "http://x.example"})
         app = _types.SimpleNamespace(
             state=_types.SimpleNamespace(
                 settings=settings,
@@ -1940,7 +1942,7 @@ class TestLiveCORSMiddleware:
         assert inner1 is inner2  # cached — same settings object
 
         # Swap settings → inner changes
-        settings2 = make_settings({"KLANGK_CORS_ORIGINS": "http://y.example"})
+        settings2 = make_settings({"KLANGKD_CORS_ORIGINS": "http://y.example"})
         app.state.settings = settings2
         app.state.util = util_mod.Util(
             _types.SimpleNamespace(
@@ -1967,7 +1969,7 @@ class TestRemountFrontend:
         app.state.util = util_mod.Util(app)
         main.setup_static_files(app, old_dir)
 
-        new_settings = make_settings({"KLANGK_FRONTEND_DIR": str(new_dir)})
+        new_settings = make_settings({"KLANGKD_FRONTEND_DIR": str(new_dir)})
         lc._remount_frontend(app, new_settings)
 
         transport = ASGITransport(app=app)
@@ -1991,7 +1993,7 @@ class TestRemountFrontend:
         main.setup_static_files(app, old_dir)
 
         new_settings = make_settings(
-            {"KLANGK_FRONTEND_DIR": str(tmp_path / "nonexistent")}
+            {"KLANGKD_FRONTEND_DIR": str(tmp_path / "nonexistent")}
         )
         lc._remount_frontend(app, new_settings)
 
@@ -2008,7 +2010,7 @@ class TestRemountFrontend:
         lc = app_state.state.lifecycle
         old_settings = app_state.state.settings
         new_settings = make_settings(
-            dict(old_settings._reload_env, KLANGK_FRONTEND_DIR=str(tmp_path))
+            dict(old_settings._reload_env, KLANGKD_FRONTEND_DIR=str(tmp_path))
         )
         with patch.object(lc, "_remount_frontend") as mock_remount:
             await lc._apply_reloaded_settings(new_settings)

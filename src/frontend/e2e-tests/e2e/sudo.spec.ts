@@ -65,7 +65,7 @@ async function execInContainer(
   });
 }
 
-// The E2E server starts without KLANGK_ALLOW_SUDO (defaults to disabled).
+// The E2E server starts without KLANGKD_ALLOW_SUDO (defaults to disabled).
 test.describe("sudo configuration", () => {
   test("sudo is disabled by default", async ({ page, request }) => {
     const { workspaceId, token, cleanup } = await createAndOpenWorkspace(

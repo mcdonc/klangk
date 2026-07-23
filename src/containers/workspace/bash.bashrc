@@ -18,9 +18,9 @@ cd "$HOME" 2>/dev/null
 python3 /opt/klangk/bin/klangk-setup-pi
 
 # Display terminal banner if configured (deployers override via
-# KLANGK_TERMINAL_BANNER env var; empty string disables it).
-if [ -n "${KLANGK_TERMINAL_BANNER:-}" ]; then
-  printf '\033[33m%s\033[0m\n' "$KLANGK_TERMINAL_BANNER"
+# KLANGKWS_TERMINAL_BANNER env var; empty string disables it).
+if [ -n "${KLANGKWS_TERMINAL_BANNER:-}" ]; then
+  printf '\033[33m%s\033[0m\n' "$KLANGKWS_TERMINAL_BANNER"
 fi
 
 # Run feature on-shell-init hooks (alphabetical by feature name).

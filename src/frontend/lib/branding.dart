@@ -4,8 +4,8 @@ import 'package:flutter/foundation.dart';
 ///
 /// This is the single source of truth for deployer-configurable display
 /// values. UI widgets read these instead of hardcoded literals so a
-/// deployment can rename the product (`KLANGK_PRODUCT_NAME`) or swap the
-/// logo (`KLANGK_LOGO_URL`) without a frontend rebuild. Future white-label
+/// deployment can rename the product (`KLANGKD_PRODUCT_NAME`) or swap the
+/// logo (`KLANGKD_LOGO_URL`) without a frontend rebuild. Future white-label
 /// knobs (support link, footer) should land here too so they stay in one
 /// place.
 ///
@@ -52,12 +52,9 @@ class Branding {
   /// The set legal links (Terms / Privacy / AUP), most-prominent first.
   /// Empty when none are configured. Used by the auth screens' footer.
   static List<MapEntry<String, String>> get legalLinks => [
-        if (termsUrl.isNotEmpty)
-          MapEntry('Terms', termsUrl),
-        if (privacyUrl.isNotEmpty)
-          MapEntry('Privacy', privacyUrl),
-        if (aupUrl.isNotEmpty)
-          MapEntry('Acceptable Use', aupUrl),
+        if (termsUrl.isNotEmpty) MapEntry('Terms', termsUrl),
+        if (privacyUrl.isNotEmpty) MapEntry('Privacy', privacyUrl),
+        if (aupUrl.isNotEmpty) MapEntry('Acceptable Use', aupUrl),
       ];
 
   /// The configured support link target, or `''` when none. Prefers the

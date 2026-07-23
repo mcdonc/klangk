@@ -13,12 +13,12 @@ const STRIP_PREFIXES = ["KLANGK", "_KLANGK", "KLANGKC", "LOGFIRE"];
 // container image, the compiled frontend, version stamp) — produced by
 // devenv's klangk:build-workspace-image / klangk:flutter-build tasks, not
 // by any test. Forwarded deliberately so the server finds the built
-// image/frontend. (KLANGK_PLUGINS_DIR was removed in #1660/#1665 — the
+// image/frontend. (KLANGKBUILD_PLUGINS_DIR was removed in #1660/#1665 — the
 // runtime reads features.json from the frontend bundle, not feature trees.)
 const INFRA_VARS = [
-  "KLANGK_IMAGE_NAME",
-  "KLANGK_VERSION_FILE",
-  "KLANGK_FRONTEND_DIR",
+  "KLANGKD_IMAGE_NAME",
+  "KLANGKD_VERSION_FILE",
+  "KLANGKD_FRONTEND_DIR",
 ];
 
 export function cleanEnv(
@@ -37,9 +37,9 @@ export function cleanEnv(
     if (val !== undefined) env[name] = val;
   }
   // E2E baseline defaults. the proxy is NOT disabled: the frontend suite
-  // launches real klangkd, fronted by its own proxy on KLANGK_PORT (the
+  // launches real klangkd, fronted by its own proxy on KLANGKD_PORT (the
   // browser hits the proxy, which proxies to klangkd's UDS — #1525).
-  if (!env.KLANGK_AUTH_MODES) env.KLANGK_AUTH_MODES = "password";
+  if (!env.KLANGKD_AUTH_MODES) env.KLANGKD_AUTH_MODES = "password";
   Object.assign(env, overrides);
   return env;
 }

@@ -22,20 +22,20 @@ docker run -d \
   --device /dev/net/tun \
   --security-opt seccomp=unconfined \
   --security-opt systempaths=unconfined \
-  -e KLANGK_DEFAULT_USER=you@example.com \
-  -e KLANGK_DEFAULT_PASSWORD=changeme \
-  -e KLANGK_AUTH_MODES=password \
-  -e KLANGK_JWT_SECRET=$(openssl rand -hex 32) \
-  -e KLANGK_LLM_BASE_URL=https://ollama.com/v1 \
-  -e KLANGK_LLM_API_KEY=your-api-key \
-  -e KLANGK_LLM_MODEL=gemma4:31b \
+  -e KLANGKD_DEFAULT_USER=you@example.com \
+  -e KLANGKD_DEFAULT_PASSWORD=changeme \
+  -e KLANGKD_AUTH_MODES=password \
+  -e KLANGKD_JWT_SECRET=$(openssl rand -hex 32) \
+  -e KLANGKD_LLM_BASE_URL=https://ollama.com/v1 \
+  -e KLANGKD_LLM_API_KEY=your-api-key \
+  -e KLANGKD_LLM_MODEL=gemma4:31b \
   ghcr.io/mcdonc/klangk/klangk-host:v1.0
 ```
 
 Open <http://localhost:8995> and log in with the email and password
 you set above.
 
-The examples pin `KLANGK_AUTH_MODES=password` because a Docker image
+The examples pin `KLANGKD_AUTH_MODES=password` because a Docker image
 publishes its port (`-p 8995:8995`) and is network-reachable, while the
 default mode (`none`) is loopback-only. See [Auth Modes](../features/auth-modes.md)
 and [#1391](https://github.com/mcdonc/klangk/issues/1391) for the
@@ -100,13 +100,13 @@ services:
       - seccomp=unconfined
       - systempaths=unconfined
     environment:
-      KLANGK_DEFAULT_USER: you@example.com
-      KLANGK_DEFAULT_PASSWORD: changeme
-      KLANGK_AUTH_MODES: password
-      KLANGK_JWT_SECRET: change-this-to-a-random-secret
-      KLANGK_LLM_BASE_URL: https://ollama.com/v1
-      KLANGK_LLM_API_KEY: your-api-key
-      KLANGK_LLM_MODEL: gemma4:31b
+      KLANGKD_DEFAULT_USER: you@example.com
+      KLANGKD_DEFAULT_PASSWORD: changeme
+      KLANGKD_AUTH_MODES: password
+      KLANGKD_JWT_SECRET: change-this-to-a-random-secret
+      KLANGKD_LLM_BASE_URL: https://ollama.com/v1
+      KLANGKD_LLM_API_KEY: your-api-key
+      KLANGKD_LLM_MODEL: gemma4:31b
 
 volumes:
   klangk-data:

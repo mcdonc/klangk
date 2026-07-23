@@ -10,22 +10,22 @@
  * Run:  devenv shell -- npx playwright test --config=src/frontend/e2e-tests/demo/playwright.demo.config.ts
  * One:  ... -g "clanker chat"          (grep a scene title)
  *
- * Pre-reqs: demo backend up on $KLANGK_TEST_URL (default :8996 via
- * run-demo-backend.sh), KLANGK_ALLOW_AUTOSTART=1, and the demo seed
+ * Pre-reqs: demo backend up on $KLANGKBUILD_TEST_URL (default :8996 via
+ * run-demo-backend.sh), KLANGKD_ALLOW_AUTOSTART=1, and the demo seed
  * (demo-seed.ts) run once. See README.md.
  */
 import { defineConfig } from "@playwright/test";
 
-const DEMO_URL = process.env.KLANGK_TEST_URL || "http://localhost:8996";
+const DEMO_URL = process.env.KLANGKBUILD_TEST_URL || "http://localhost:8996";
 const BROWSERS = process.env.PLAYWRIGHT_BROWSERS_PATH || "";
 // Logical viewport = the size Flutter lays out for = the Xvfb capture size in
 // record-demo.sh. Default native 1920x1080 (crisp, desktop-sized widgets). For
-// a 2x-bigger (but softer) render, set KLANGK_DEMO_VW=960 KLANGK_DEMO_VH=540
+// a 2x-bigger (but softer) render, set KLANGKBUILD_DEMO_VW=960 KLANGKBUILD_DEMO_VH=540
 // and have record-demo.sh upscale the 960x540 capture to 1920x1080.
 // (We cannot use devicePixelRatio>1 to get crisp-AND-2x: it breaks Flutter
 // Web button hit-testing. See the viewport comment below.)
-const VW = Number(process.env.KLANGK_DEMO_VW || 960);
-const VH = Number(process.env.KLANGK_DEMO_VH || 540);
+const VW = Number(process.env.KLANGKBUILD_DEMO_VW || 960);
+const VH = Number(process.env.KLANGKBUILD_DEMO_VH || 540);
 
 // Videos are written under test-results/ alongside each scene; the README maps
 // scene name -> .webm file and how to convert/import to DaVinci.
@@ -45,12 +45,12 @@ export default defineConfig({
   // record-demo.sh points this at a temp dir and discards it (the ffmpeg
   // capture is the keeper), so no stray artifacts land outside recordings/.
   // Defaults to `test-results` for a direct `playwright test` dry check.
-  outputDir: process.env.KLANGK_DEMO_PW_OUTPUT || "test-results",
-  // No global setup/teardown: we point at YOUR running server via KLANGK_TEST_URL.
+  outputDir: process.env.KLANGKBUILD_DEMO_PW_OUTPUT || "test-results",
+  // No global setup/teardown: we point at YOUR running server via KLANGKBUILD_TEST_URL.
   use: {
     baseURL: DEMO_URL,
     // Logical viewport (Flutter layout size) = capture size. Default 1920x1080
-    // (crisp, 1:1 device px, working hit-testing). Env-tunable (KLANGK_DEMO_VW/
+    // (crisp, 1:1 device px, working hit-testing). Env-tunable (KLANGKBUILD_DEMO_VW/
     // VH) so record-demo.sh can render at 960x540 + upscale to 1920x1080 for a
     // 2x-bigger-but-softer take.
     //
@@ -69,13 +69,13 @@ export default defineConfig({
     // full-res capture from record-demo.sh is the one you actually edit.
     video: "on",
     // Headed so you can SEE each click resolve as the scenes run (and watch me
-    // dial in coordinates). Override with KLANGK_DEMO_HEADLESS=1 for a quick
+    // dial in coordinates). Override with KLANGKBUILD_DEMO_HEADLESS=1 for a quick
     // background dry check.
-    headless: process.env.KLANGK_DEMO_HEADLESS === "1",
+    headless: process.env.KLANGKBUILD_DEMO_HEADLESS === "1",
     // --headed is recommended for recording (see README); run headless only for a
     // quick dry check. A modest slowMo makes clicks read as deliberate on camera.
     launchOptions: {
-      slowMo: Number(process.env.KLANGK_DEMO_SLOWMO || 50),
+      slowMo: Number(process.env.KLANGKBUILD_DEMO_SLOWMO || 50),
       executablePath:
         process.env.CHROME_PATH ||
         `${BROWSERS}/chromium-1223/chrome-linux64/chrome`,

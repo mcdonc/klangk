@@ -6,7 +6,7 @@ has a 'pending' or 'accepted' invitation.  Revoked invitations do not count.
 Usage (mount the file anywhere, point the env var at it):
 
     docker run -v ./login_hook.py:/etc/klangk/login_hook.py:ro \\
-               -e KLANGK_OIDC_LOGIN_HOOK=/etc/klangk/login_hook.py \\
+               -e KLANGKD_OIDC_LOGIN_HOOK=/etc/klangk/login_hook.py \\
                ...
 """
 

@@ -24,8 +24,8 @@ egress_port: "8995"
 idle_timeout_seconds: "300"
 
 # --- Storage ---
-# Both are required (no defaults, #1461). Devenv sets KLANGK_STATE_DIR /
-# KLANGK_DATA_DIR in the env (see devenv.nix), so these config-file values
+# Both are required (no defaults, #1461). Devenv sets KLANGKD_STATE_DIR /
+# KLANGKD_DATA_DIR in the env (see devenv.nix), so these config-file values
 # are redundant in dev but shown for reference. In a real deployment set
 # them here or via the env vars.
 state_dir: "cmd:echo $DEVENV_STATE/klangk"

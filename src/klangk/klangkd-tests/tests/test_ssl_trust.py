@@ -55,28 +55,28 @@ class TestSslCertDir:
         assert _trust(_settings({})).ssl_cert_dir() is None
 
     def test_missing_dir_returns_none(self, tmp_path):
-        s = _settings({"KLANGK_SSL_CERT_DIR": str(tmp_path / "nope")})
+        s = _settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path / "nope")})
         assert _trust(s).ssl_cert_dir() is None
 
     def test_empty_dir_returns_none(self, tmp_path):
         (tmp_path / "readme.txt").write_text("no certs")
-        s = _settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
+        s = _settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path)})
         assert _trust(s).ssl_cert_dir() is None
 
     def test_pem_and_crt_detected(self, tmp_path):
         (tmp_path / "a.pem").write_text("CERTA")
         (tmp_path / "b.CRT").write_text("CERTB")
-        s = _settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
+        s = _settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path)})
         assert _trust(s).ssl_cert_dir() == str(tmp_path.resolve())
 
     def test_falls_back_to_customize_dir_certs(self, tmp_path):
-        # When KLANGK_SSL_CERT_DIR is unset but <customize_dir>/certs
+        # When KLANGKD_SSL_CERT_DIR is unset but <customize_dir>/certs
         # exists with cert files, it is used.  See #1360.
         custom = tmp_path / "cust"
         certs = custom / "certs"
         certs.mkdir(parents=True)
         (certs / "ca.pem").write_text("CERT")
-        s = _settings({"KLANGK_CUSTOMIZE_DIR": str(custom)})
+        s = _settings({"KLANGKD_CUSTOMIZE_DIR": str(custom)})
         assert _trust(s).ssl_cert_dir() == str(certs.resolve())
 
     def test_customize_dir_certs_ignored_when_empty(self, tmp_path):
@@ -84,7 +84,7 @@ class TestSslCertDir:
         custom = tmp_path / "cust"
         certs = custom / "certs"
         certs.mkdir(parents=True)
-        s = _settings({"KLANGK_CUSTOMIZE_DIR": str(custom)})
+        s = _settings({"KLANGKD_CUSTOMIZE_DIR": str(custom)})
         assert _trust(s).ssl_cert_dir() is None
 
 
@@ -109,7 +109,7 @@ class TestApplyBackendSslTrust:
             assert k not in os.environ
 
     def test_noop_when_dir_has_no_certs(self, tmp_path):
-        s = _settings({"KLANGK_SSL_CERT_DIR": str(tmp_path)})
+        s = _settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path)})
         assert _trust(s).apply_backend_ssl_trust() is None
         for k in ssl_trust.SSL_TRUST_VARS:
             assert k not in os.environ
@@ -127,8 +127,8 @@ class TestApplyBackendSslTrust:
         data_dir = tmp_path / "data"
         s = _settings(
             {
-                "KLANGK_SSL_CERT_DIR": str(cert_dir),
-                "KLANGK_DATA_DIR": str(data_dir),
+                "KLANGKD_SSL_CERT_DIR": str(cert_dir),
+                "KLANGKD_DATA_DIR": str(data_dir),
             }
         )
 
@@ -157,8 +157,8 @@ class TestApplyBackendSslTrust:
         (tmp_path / "sys.pem").write_text("SYSTEM-MARKER\n")
         s = _settings(
             {
-                "KLANGK_SSL_CERT_DIR": str(cert_dir),
-                "KLANGK_DATA_DIR": str(tmp_path / "data"),
+                "KLANGKD_SSL_CERT_DIR": str(cert_dir),
+                "KLANGKD_DATA_DIR": str(tmp_path / "data"),
             }
         )
 
@@ -187,8 +187,8 @@ class TestApplyBackendSslTrust:
         (tmp_path / "sys.pem").write_text("SYSTEM\n")
         s = _settings(
             {
-                "KLANGK_SSL_CERT_DIR": str(cert_dir),
-                "KLANGK_DATA_DIR": str(tmp_path / "data"),
+                "KLANGKD_SSL_CERT_DIR": str(cert_dir),
+                "KLANGKD_DATA_DIR": str(tmp_path / "data"),
             }
         )
 
@@ -216,8 +216,8 @@ class TestApplyBackendSslTrust:
         monkeypatch.setattr(ssl_trust, "system_ca_bundle", lambda **kw: None)
         s = _settings(
             {
-                "KLANGK_SSL_CERT_DIR": str(cert_dir),
-                "KLANGK_DATA_DIR": str(tmp_path / "data"),
+                "KLANGKD_SSL_CERT_DIR": str(cert_dir),
+                "KLANGKD_DATA_DIR": str(tmp_path / "data"),
             }
         )
 
@@ -348,8 +348,8 @@ class TestInternalsAndErrorBranches:
             _trust(
                 _settings(
                     {
-                        "KLANGK_SSL_CERT_DIR": str(cert_dir),
-                        "KLANGK_DATA_DIR": str(tmp_path / "data"),
+                        "KLANGKD_SSL_CERT_DIR": str(cert_dir),
+                        "KLANGKD_DATA_DIR": str(tmp_path / "data"),
                     }
                 )
             ).apply_backend_ssl_trust()
@@ -370,8 +370,8 @@ class TestInternalsAndErrorBranches:
                 _trust(
                     _settings(
                         {
-                            "KLANGK_SSL_CERT_DIR": str(cert_dir),
-                            "KLANGK_DATA_DIR": str(tmp_path / "data"),
+                            "KLANGKD_SSL_CERT_DIR": str(cert_dir),
+                            "KLANGKD_DATA_DIR": str(tmp_path / "data"),
                         }
                     )
                 ).apply_backend_ssl_trust()

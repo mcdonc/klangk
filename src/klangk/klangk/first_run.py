@@ -12,8 +12,8 @@ switches to ``auth_modes: password`` / ``both``. The generated file's purpose
 is discoverability (``this is where your config lives``) + a quick-reference
 for the mode transitions, not carrying any seeded identity.
 
-The resolved config-file path lives under ``KLANGK_CONFIG_DIR`` (default
-``$XDG_CONFIG_HOME/klangkd``, #1649, #1646). ``KLANGK_CONFIG_DIR`` is read from the
+The resolved config-file path lives under ``KLANGKD_CONFIG_DIR`` (default
+``$XDG_CONFIG_HOME/klangkd``, #1649, #1646). ``KLANGKD_CONFIG_DIR`` is read from the
 env **before** any ``KlangkSettings`` construction — it can't come from
 ``klangkd.yaml`` because ``klangkd.yaml`` is what we're locating (the
 bootstrap rule from #1649).
@@ -49,7 +49,7 @@ _CONFIG_FILENAME = "klangkd.yaml"
 def default_config_path() -> str:
     """Return the config-file path a bare ``klangkd`` resolves to.
 
-    ``$KLANGK_CONFIG_DIR/klangkd.yaml`` when the env var is set (the
+    ``$KLANGKD_CONFIG_DIR/klangkd.yaml`` when the env var is set (the
     operator's explicit override), else ``$XDG_CONFIG_HOME/klangkd/klangkd.yaml``
     (XDG fallback to ``~/.config`` — Linux *and* macOS, per #1607).
     The server's XDG subdir is ``klangkd`` (the binary name); the CLI uses
@@ -60,7 +60,7 @@ def default_config_path() -> str:
     it lives in, so the config-tree root has to be computable before we
     locate the file.
     """
-    config_dir = os.environ.get("KLANGK_CONFIG_DIR") or os.path.join(
+    config_dir = os.environ.get("KLANGKD_CONFIG_DIR") or os.path.join(
         _xdg_config_home(), _XDG_SUBDIR
     )
     return os.path.join(config_dir, _CONFIG_FILENAME)
@@ -79,8 +79,8 @@ def _render_config() -> str:
     return f"""# klangkd configuration — generated on first run ({timestamp}).
 #
 # This file was auto-created because no klangkd.yaml was found at its
-# expected location (${{KLANGK_CONFIG_DIR:-$XDG_CONFIG_HOME/klangkd}}/klangkd.yaml,
-# overridable via KLANGK_CONFIG_DIR). Edit it to customize your deployment.
+# expected location (${{KLANGKD_CONFIG_DIR:-$XDG_CONFIG_HOME/klangkd}}/klangkd.yaml,
+# overridable via KLANGKD_CONFIG_DIR). Edit it to customize your deployment.
 #
 # By default klangkd runs in solo mode: headless (UDS, no browser listener),
 # auth_modes=none (loopback trust, no password). The admin identity is
@@ -113,7 +113,7 @@ def generate_default_config(path: str) -> None:
     The file is a near-empty template (see :func:`_render_config`): no admin
     identity or password is emitted. The admin row is seeded at runtime
     (derived from the Unix user; null password in ``none``/``oidc`` mode,
-    or ``KLANGK_DEFAULT_PASSWORD`` in ``password``/``both`` mode — fail-fast
+    or ``KLANGKD_DEFAULT_PASSWORD`` in ``password``/``both`` mode — fail-fast
     if unset). See ``main.seed_default_user``.
 
     The parent directory is created (0700) if missing. **Does not overwrite**

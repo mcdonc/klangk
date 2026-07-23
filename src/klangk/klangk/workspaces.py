@@ -516,7 +516,7 @@ class Workspaces:
     async def auto_start_workspaces(self) -> int:
         """Start containers for all workspaces with auto_start enabled.
 
-        Skipped entirely if ``KLANGK_ALLOW_AUTOSTART`` is not set.
+        Skipped entirely if ``KLANGKD_ALLOW_AUTOSTART`` is not set.
         Returns the number of containers started.
         """
         if not self.app.state.settings.allow_autostart:

@@ -51,7 +51,7 @@ Both are git deps so the package resolves on any machine/CI.
 
 This follows Klangk `main`'s feature convention: a feature repo holds its Flutter
 package under `klangk/`. Add an entry to your `features.yaml`
-(`$KLANGK_FEATURES_DIR/features.yaml`):
+(`features.yaml`):
 
 ```yaml
 features:

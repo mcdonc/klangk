@@ -1,7 +1,7 @@
 /**
  * Captures invitation admin page screenshots against the running dev server.
  * Run with:
- *   KLANGK_TEST_URL=http://localhost:8995 npx playwright test \
+ *   KLANGKBUILD_TEST_URL=http://localhost:8995 npx playwright test \
  *     --project docs-screenshots -g "invitation" --no-deps
  */
 import { test } from "@playwright/test";
@@ -21,7 +21,7 @@ const SCREENSHOT_DIR = join(
 
 mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
-const BASE_URL = process.env.KLANGK_TEST_URL || "http://localhost:8995";
+const BASE_URL = process.env.KLANGKBUILD_TEST_URL || "http://localhost:8995";
 
 function fv(page: import("@playwright/test").Page) {
   return page.locator("flutter-view");

@@ -5,16 +5,16 @@
 # containers. The Pi `get_hosted_url` tool (builtin-extensions/port-map.ts)
 # delegates to this script so the shell and the agent share one implementation.
 #
-# Reads KLANGK_PORT_MAPPINGS ("8000:9000,8001:9001,...") to resolve the host
+# Reads KLANGKWS_PORT_MAPPINGS ("8000:9000,8001:9001,...") to resolve the host
 # port for the given container port, then combines it with the
-# KLANGK_HOSTING_* / KLANGK_WORKSPACE_ID env vars (which the backend injects
+# KLANGKWS_HOSTING_* / KLANGKWS_WORKSPACE_ID env vars (which the backend injects
 # when the container starts) to print:
 #
 #   {proto}://{hostname}{base_path}/hosted/{workspace_id}/{host_port}/
 #
 # Exit codes:
 #   0  success (URL on stdout)
-#   1  bad args, port not mapped, or missing KLANGK_PORT_MAPPINGS
+#   1  bad args, port not mapped, or missing KLANGKWS_PORT_MAPPINGS
 set -eu
 
 usage() {
@@ -29,9 +29,9 @@ fi
 
 container_port=$1
 
-mappings=${KLANGK_PORT_MAPPINGS:-}
+mappings=${KLANGKWS_PORT_MAPPINGS:-}
 if [ -z "$mappings" ]; then
-  echo "klangk-hosted-url: KLANGK_PORT_MAPPINGS is not set" >&2
+  echo "klangk-hosted-url: KLANGKWS_PORT_MAPPINGS is not set" >&2
   echo "(this script must run inside a Klangk workspace container)" >&2
   exit 1
 fi
@@ -59,15 +59,15 @@ while [ -n "$rest" ]; do
 done
 
 if [ -z "$host_port" ]; then
-  echo "klangk-hosted-url: container port $container_port is not in KLANGK_PORT_MAPPINGS" >&2
+  echo "klangk-hosted-url: container port $container_port is not in KLANGKWS_PORT_MAPPINGS" >&2
   echo "Mapped container ports: $valid_ports" >&2
   exit 1
 fi
 
-proto=${KLANGK_HOSTING_PROTO:-http}
-hostname=${KLANGK_HOSTING_HOSTNAME:-localhost}
-base_path=${KLANGK_HOSTING_BASE_PATH:-}
-workspace_id=${KLANGK_WORKSPACE_ID:-}
+proto=${KLANGKWS_HOSTING_PROTO:-http}
+hostname=${KLANGKWS_HOSTING_HOSTNAME:-localhost}
+base_path=${KLANGKWS_HOSTING_BASE_PATH:-}
+workspace_id=${KLANGKWS_WORKSPACE_ID:-}
 
 printf '%s://%s%s/hosted/%s/%s/\n' \
   "$proto" "$hostname" "$base_path" "$workspace_id" "$host_port"

@@ -325,7 +325,7 @@ class TestNoConfigDivergenceRegression:
     Pre-#1578, ``model.db.get_current_db()`` lazily built
     ``DB(KlangkSettings(os.environ))`` when nothing was bound — so a process
     started from a config file whose ``data_dir`` differed from ambient
-    ``KLANGK_DATA_DIR`` would read/write a *different* SQLite file than the
+    ``KLANGKD_DATA_DIR`` would read/write a *different* SQLite file than the
     one ``init_db`` had populated. With the ContextVar + delegates gone, every
     path reaches ``app_state.state.db``; this test asserts the divergence is
     structurally impossible.
@@ -351,7 +351,7 @@ class TestNoConfigDivergenceRegression:
 
     async def test_db_follows_settings_not_env(self, tmp_path, monkeypatch):
         """init_db + a model write both land on the config-file data_dir,
-        never on the ambient ``KLANGK_DATA_DIR`` dir."""
+        never on the ambient ``KLANGKD_DATA_DIR`` dir."""
         import types
 
         from _helpers import make_settings
@@ -362,8 +362,8 @@ class TestNoConfigDivergenceRegression:
         ambient_data.mkdir()
 
         # Ambient env points at a DIFFERENT data dir than the app's settings.
-        monkeypatch.setenv("KLANGK_DATA_DIR", str(ambient_data))
-        monkeypatch.setenv("KLANGK_STATE_DIR", str(tmp_path / "as"))
+        monkeypatch.setenv("KLANGKD_DATA_DIR", str(ambient_data))
+        monkeypatch.setenv("KLANGKD_STATE_DIR", str(tmp_path / "as"))
 
         # The app is built from settings whose data_dir is the configured one
         # (mirrors a config-file-launched process). Build the owned DB + Model
@@ -374,8 +374,8 @@ class TestNoConfigDivergenceRegression:
 
         settings = make_settings(
             {
-                "KLANGK_DATA_DIR": str(config_data),
-                "KLANGK_STATE_DIR": str(tmp_path / "cs"),
+                "KLANGKD_DATA_DIR": str(config_data),
+                "KLANGKD_STATE_DIR": str(tmp_path / "cs"),
             }
         )
         state = types.SimpleNamespace(
