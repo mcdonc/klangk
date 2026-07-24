@@ -1043,6 +1043,22 @@ class TestKlangkClient:
             with pytest.raises(AuthError, match="Session expired"):
                 client.list_workspaces()
 
+    def test_duplicate_workspace(self):
+        client = KlangkClient("http://test:8995", "token")
+        fake_ws = MagicMock(id="src-id")
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {"id": "new-id", "name": "src-copy"}
+        with (
+            patch.object(client, "resolve_workspace", return_value=fake_ws),
+            patch.object(client, "post", return_value=mock_resp),
+        ):
+            result = client.duplicate_workspace("src", "src-copy")
+            assert result == {"id": "new-id", "name": "src-copy"}
+            client.post.assert_called_once_with(
+                "/api/v1/workspaces/src-id/duplicate",
+                json={"name": "src-copy"},
+            )
+
     def test_list_workspaces_parses_response(self):
         client = KlangkClient("http://test:8995", "valid-token")
         mock_resp = MagicMock()

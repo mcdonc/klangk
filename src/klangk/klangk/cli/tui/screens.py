@@ -19,12 +19,14 @@ from textual.widgets import (
     Input,
     OptionList,
     Static,
+    TabbedContent,
+    TabPane,
 )
 from textual.widgets.option_list import Option
 
 from .state import LoginError
 from ..transport import is_valid_server_spec
-from .widgets import Sidebar, StatusBar
+from .widgets import StatusBar
 from .ws import listen_for_status
 
 
@@ -313,7 +315,8 @@ class LoginScreen(Screen):
 
 
 class MainScreen(Screen):
-    """The app shell: sidebar + content + status bar, with a live WS feed."""
+    """The TUI home: a two-page workspace list (owned / shared) + status bar,
+    with a live WS feed. Selecting a workspace opens its detail screen."""
 
     BINDINGS = [
         ("s", "switch_server", "Switch server"),
@@ -323,18 +326,14 @@ class MainScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
-        yield Horizontal(
-            Sidebar(id="sidebar"),
-            Vertical(
-                Static("", id="content"),
-                id="main",
-            ),
-        )
+        with TabbedContent(id="ws_tabs"):
+            yield TabPane("Owned by me", OptionList(id="owned_list"))
+            yield TabPane("Shared to me", OptionList(id="shared_list"))
         yield StatusBar(id="status")
         yield Footer()
 
     def on_mount(self) -> None:
-        self.refresh_view()
+        self.refresh_lists()
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(self._status_loop, name="status-ws")
 
@@ -347,30 +346,53 @@ class MainScreen(Screen):
     def action_logout(self) -> None:
         self.app.do_logout()
 
-    def refresh_view(self) -> None:
+    # --- list population ---
+
+    def refresh_lists(self) -> None:
+        self._populate("#owned_list", self._safe_list(owned=True))
+        self._populate("#shared_list", self._safe_list(owned=False))
+        self._refresh_status()
+
+    def _safe_list(self, *, owned: bool) -> list:
         state = self.app.tui_state
-        self.query_one("#sidebar", Sidebar).set_items(
-            [
-                "klangk",
-                "",
-                "[s] switch server",
-                "[a] add server",
-                "[l] logout",
-                "[q] quit",
-            ]
-        )
-        server = state.current_url()
-        user = state.email() or "(unknown)"
+        try:
+            return (
+                state.list_owned_workspaces()
+                if owned
+                else state.list_shared_workspaces()
+            )
+        except Exception:
+            return []
+
+    @staticmethod
+    def _fmt(ws) -> str:
+        mark = ">" if ws.running else "."
+        health = f" ({ws.health})" if ws.health else ""
+        return f"{mark} {ws.name}{health}"
+
+    def _populate(self, selector: str, workspaces: list) -> None:
+        ol = self.query_one(selector, OptionList)
+        ol.clear_options()
+        if not workspaces:
+            ol.add_option(Option("(no workspaces)", id="", disabled=True))
+            return
+        for ws in workspaces:
+            ol.add_option(Option(self._fmt(ws), id=ws.name))
+
+    def _refresh_status(self) -> None:
+        state = self.app.tui_state
         self.query_one("#status", StatusBar).set_state(
-            server=server, user=user, extra=self.app.live_extra
+            server=state.current_url(),
+            user=state.email() or "(unknown)",
+            extra=self.app.live_extra,
         )
-        body = (
-            f"Server: {server or '(none)'}\n"
-            f"User: {user}\n\n"
-            "Live workspace/container status is streaming. "
-            "Workspace screens arrive in later issues (#1747+)."
-        )
-        self.query_one("#content", Static).update(body)
+
+    def on_option_list_option_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        name = event.option.id
+        if name:
+            self.app.push_screen(WorkspaceDetailScreen(name))
 
     async def _status_loop(self) -> None:
         state = self.app.tui_state
@@ -383,12 +405,186 @@ class MainScreen(Screen):
         except Exception:
             # Best-effort: the TUI stays usable if the status stream dies.
             self.app.live_extra = "status: disconnected"
-            self.refresh_view()
+            self._refresh_status()
 
     def _on_status_event(self, event: dict) -> None:
         etype = event.get("type", "event")
         self.app.live_extra = f"live: {etype}"
-        self.refresh_view()
+        self._refresh_status()
+        if etype == "workspaces_changed":
+            self.refresh_lists()
+
+
+class WorkspaceDetailScreen(Screen):
+    """Read-only workspace detail + restart / duplicate / delete actions."""
+
+    BINDINGS = [
+        ("escape", "app.pop_screen", "Back"),
+        ("r", "restart", "Restart"),
+        ("d", "duplicate", "Duplicate"),
+        ("x", "delete", "Delete"),
+    ]
+
+    def __init__(self, name: str) -> None:
+        super().__init__()
+        self._name = name
+        self._ws = None
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=False)
+        yield Vertical(
+            Static("", id="detail_title"),
+            Static("", id="detail_body"),
+            Static("", id="detail_msg"),
+            id="detail_box",
+        )
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self._load()
+
+    def _load(self) -> None:
+        try:
+            self._ws = self.app.tui_state.find_workspace(self._name)
+        except Exception:
+            self._ws = None
+        self._display()
+
+    def _display(self) -> None:
+        self.query_one("#detail_title", Static).update(
+            f"Workspace: {self._name}"
+        )
+        ws = self._ws
+        body = self.query_one("#detail_body", Static)
+        if ws is None:
+            body.update("Could not load workspace.")
+            return
+        lines = [
+            f"running: {'yes' if ws.running else 'no'}",
+            f"health: {ws.health or '-'}",
+        ]
+        if ws.health_message:
+            lines.append(f"health note: {ws.health_message}")
+        if ws.image:
+            lines.append(f"image: {ws.image}")
+        if ws.service_command:
+            lines.append(f"service command: {ws.service_command}")
+        if ws.health_check:
+            lines.append(f"health check: {ws.health_check}")
+        lines.append(f"auto-start: {'on' if ws.auto_start else 'off'}")
+        if ws.mounts:
+            lines.append("mounts:")
+            lines.extend(f"  {m}" for m in ws.mounts)
+        if ws.env:
+            lines.append("environment:")
+            lines.extend(f"  {k}={v}" for k, v in ws.env.items())
+        if ws.owner_email:
+            lines.append(f"owner: {ws.owner_email}")
+        body.update("\n".join(lines))
+
+    def _msg(self, text: str, *, error: bool = False) -> None:
+        rendered = f"[red]{text}[/red]" if error else text
+        self.query_one("#detail_msg", Static).update(rendered)
+
+    # --- actions ---
+
+    def action_restart(self) -> None:
+        def _on_confirm(confirmed: bool) -> None:
+            if not confirmed:
+                return
+            try:
+                self.app.tui_state.restart_workspace(self._name)
+            except Exception as exc:
+                self._msg(f"Restart failed: {exc}", error=True)
+                return
+            self._msg("Restart requested.")
+            self.app.refresh_workspaces()
+
+        self.app.push_screen(
+            ConfirmScreen(
+                f"Restart '{self._name}'? This ends active terminal"
+                " sessions and recreates the container."
+            ),
+            _on_confirm,
+        )
+
+    def action_delete(self) -> None:
+        def _on_confirm(confirmed: bool) -> None:
+            if not confirmed:
+                return
+            try:
+                self.app.tui_state.delete_workspace(self._name)
+            except Exception as exc:
+                self._msg(f"Delete failed: {exc}", error=True)
+                return
+            self.app.pop_screen()  # back to the list
+            self.app.refresh_workspaces()
+
+        self.app.push_screen(
+            ConfirmScreen(
+                f"Delete '{self._name}'? This permanently deletes the"
+                " workspace and its container."
+            ),
+            _on_confirm,
+        )
+
+    def action_duplicate(self) -> None:
+        self.app.push_screen(DuplicateScreen(self._name), self._on_duplicate)
+
+    def _on_duplicate(self, new_name: str | None) -> None:
+        if not new_name:
+            return
+        try:
+            self.app.tui_state.duplicate_workspace(self._name, new_name)
+        except Exception as exc:
+            self._msg(f"Duplicate failed: {exc}", error=True)
+            return
+        self._msg(f"Duplicated as '{new_name}'.")
+        self.app.refresh_workspaces()
+
+
+class DuplicateScreen(ModalScreen):
+    """Prompt for a new name to duplicate a workspace under."""
+
+    DEFAULT_CSS = """
+    DuplicateScreen { align: center middle; }
+    DuplicateScreen > Vertical {
+        width: 64; max-width: 90%; padding: 0 2;
+        border: round $primary; background: $panel;
+    }
+    DuplicateScreen Horizontal {
+        align-horizontal: right; height: auto; padding-top: 1;
+    }
+    """
+
+    def __init__(self, source_name: str) -> None:
+        super().__init__()
+        self._source = source_name
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(f"Duplicate '{self._source}' as:"),
+            Input(value=f"{self._source}-copy", id="dup_name"),
+            Horizontal(
+                Button("Cancel", id="cancel"),
+                Button("Duplicate", id="ok", variant="primary"),
+            ),
+            id="dup_box",
+        )
+
+    def _commit(self) -> None:
+        name = self.query_one("#dup_name", Input).value.strip()
+        self.dismiss(name or None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "ok":
+            self._commit()
+        elif event.button.id == "cancel":
+            self.dismiss(None)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "dup_name":
+            self._commit()
 
 
 class ServerSwitchScreen(Screen):

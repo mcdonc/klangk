@@ -13,6 +13,11 @@ from textual.widgets import Button, Input, OptionList, Static
 
 from klangk.cli import config as cfgmod
 from klangk.cli import tui as tui_pkg
+from klangk.cli.client import Workspace
+from klangk.cli.tui import screens as scr
+from klangk.cli.tui import state as tui_state_mod
+from klangk.cli.tui import ws as ws_mod
+from klangk.cli.tui.app import KlangkApp, run_tui
 from klangk.cli.config import (
     CLIConfig,
     CLIState,
@@ -20,16 +25,14 @@ from klangk.cli.config import (
     add_server_to_config,
     remove_server_from_config,
 )
-from klangk.cli.tui import screens as scr
-from klangk.cli.tui import state as tui_state_mod
-from klangk.cli.tui import ws as ws_mod
-from klangk.cli.tui.app import KlangkApp, run_tui
 from klangk.cli.tui.screens import (
     AddServerScreen,
     ConfirmScreen,
+    DuplicateScreen,
     LoginScreen,
     MainScreen,
     ServerSwitchScreen,
+    WorkspaceDetailScreen,
 )
 from klangk.cli.tui.state import LoginError, TuiState
 from klangk.cli.tui.ws import listen_for_status
@@ -88,9 +91,30 @@ def _authed_state(**extra):
         email=lambda: "me@x.example",
         token=lambda: "tok",
         known_servers=lambda: [],
+        list_owned_workspaces=lambda: [],
+        list_shared_workspaces=lambda: [],
     )
     base.update(extra)
     return _st(**base)
+
+
+def _ws(owned=None, shared=None, **extra):
+    """Authed state whose workspace lists return the given workspaces."""
+    base = dict(
+        is_authenticated=lambda: True,
+        current_url=lambda: "https://x.example",
+        email=lambda: "me@x.example",
+        token=lambda: "tok",
+        known_servers=lambda: [],
+        list_owned_workspaces=lambda: owned or [],
+        list_shared_workspaces=lambda: shared or [],
+    )
+    base.update(extra)
+    return _st(**base)
+
+
+def _wsobj(name, **k):
+    return Workspace(id="id-" + name, name=name, created_at="x", **k)
 
 
 # ---------------------------------------------------------------------------
@@ -754,6 +778,359 @@ async def test_server_switch_and_add(monkeypatch):
         app4.screen._add()
         await pilot.pause()
         assert "required" in str(app4.screen.query_one("#add_msg").render())
+
+
+# --- workspace list / detail / actions (#1747) ---
+
+
+def test_tui_state_workspace_methods(monkeypatch, redirect_xdg):
+    from unittest.mock import MagicMock
+
+    fake = MagicMock()
+    fake.list_workspaces.return_value = [_wsobj("a")]
+    fake.list_shared_workspaces.return_value = [_wsobj("b")]
+    fake.resolve_workspace.return_value = _wsobj("a")
+    fake.duplicate_workspace.return_value = {"id": "3", "name": "c"}
+    st = TuiState("https://x.example")
+    monkeypatch.setattr(st, "client", lambda: fake)
+    assert st.list_owned_workspaces()[0].name == "a"
+    assert st.list_shared_workspaces()[0].name == "b"
+    assert st.find_workspace("a").name == "a"
+    st.restart_workspace("a")
+    st.delete_workspace("a")
+    assert st.duplicate_workspace("a", "c") == {"id": "3", "name": "c"}
+    fake.restart_workspace.assert_called_once_with("a")
+    fake.delete_workspace.assert_called_once_with("a")
+    fake.duplicate_workspace.assert_called_once_with("a", "c")
+
+
+async def test_main_screen_lists_and_status(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(
+        _ws(
+            owned=[
+                _wsobj("alpha", running=True, health="healthy"),
+                _wsobj("beta"),
+            ],
+            shared=[_wsobj("gamma", owner_email="o@x")],
+        )
+    )
+    async with app.run_test():
+        m = app.screen
+        assert m.query_one("#owned_list").option_count == 2
+        assert m.query_one("#shared_list").option_count == 1
+        status = str(m.query_one("#status").render())
+        assert "https://x.example" in status
+        assert "me@x.example" in status
+
+
+async def test_main_screen_list_error_shows_placeholder(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    def boom():
+        raise RuntimeError("net")
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=boom, list_shared_workspaces=boom)
+    )
+    async with app.run_test():
+        m = app.screen
+        assert m.query_one("#owned_list").option_count == 1
+        assert m.query_one("#shared_list").option_count == 1
+
+
+async def test_main_screen_select_opens_detail(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.screen.on_option_list_option_selected(FakeOptionSelected("alpha"))
+        await pilot.pause()
+        assert isinstance(app.screen, WorkspaceDetailScreen)
+
+
+async def test_main_screen_select_empty_no_push(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws())  # empty lists -> placeholder rows
+    async with app.run_test() as pilot:
+        app.screen.on_option_list_option_selected(FakeOptionSelected(""))
+        await pilot.pause()
+        assert isinstance(app.screen, MainScreen)
+
+
+async def test_status_event_refreshes_on_change(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    calls = {"n": 0}
+
+    def owned():
+        calls["n"] += 1
+        return [a]
+
+    st = _ws(owned=[a])
+    st.list_owned_workspaces = owned
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.screen._on_status_event({"type": "service_health"})
+        await pilot.pause()
+        assert app.live_extra == "live: service_health"
+        before = calls["n"]
+        app.screen._on_status_event({"type": "workspaces_changed"})
+        await pilot.pause()
+        assert calls["n"] > before  # list re-fetched
+
+
+async def test_detail_loads_and_renders(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj(
+        "alpha",
+        running=True,
+        health="healthy",
+        health_message="ok",
+        image="img",
+        service_command="cmd",
+        health_check="hc",
+        mounts=["/h:/c"],
+        env={"K": "v"},
+        owner_email="o@x",
+    )
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        d = app.screen
+        assert "alpha" in str(d.query_one("#detail_title").render())
+        body = str(d.query_one("#detail_body").render())
+        for s in [
+            "running: yes",
+            "health: healthy",
+            "health note: ok",
+            "image: img",
+            "service command: cmd",
+            "health check: hc",
+            "auto-start: off",
+            "mounts:",
+            "/h:/c",
+            "environment:",
+            "K=v",
+            "owner: o@x",
+        ]:
+            assert s in body, s
+
+
+async def test_detail_load_failure(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _ws()
+    st.find_workspace = lambda n: (_ for _ in ()).throw(RuntimeError("x"))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        assert "Could not load" in str(
+            app.screen.query_one("#detail_body").render()
+        )
+
+
+async def test_detail_restart_confirm_cancel_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    restarted = {}
+    st = _ws()
+    st.find_workspace = lambda n: a
+    st.restart_workspace = lambda n: restarted.__setitem__("r", n)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        app.screen.action_restart()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        # cancel -> not restarted
+        app.screen.dismiss(False)
+        await pilot.pause()
+        assert "r" not in restarted
+        # confirm -> restarted
+        app.screen.action_restart()
+        await pilot.pause()
+        app.screen.dismiss(True)
+        await pilot.pause()
+        assert restarted.get("r") == "alpha"
+        assert "Restart requested" in str(
+            app.screen.query_one("#detail_msg").render()
+        )
+        # error
+        st.restart_workspace = lambda n: (_ for _ in ()).throw(
+            RuntimeError("boom")
+        )
+        app.screen.action_restart()
+        await pilot.pause()
+        app.screen.dismiss(True)
+        await pilot.pause()
+        assert "Restart failed" in str(
+            app.screen.query_one("#detail_msg").render()
+        )
+
+
+async def test_detail_delete_confirm_cancel_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    deleted = {}
+    st = _ws()
+    st.find_workspace = lambda n: a
+    st.delete_workspace = lambda n: deleted.__setitem__("d", n)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        app.screen.action_delete()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        # cancel -> stays on detail, not deleted
+        app.screen.dismiss(False)
+        await pilot.pause()
+        assert "d" not in deleted
+        assert isinstance(app.screen, WorkspaceDetailScreen)
+        # confirm -> deleted, pops back to list
+        app.screen.action_delete()
+        await pilot.pause()
+        app.screen.dismiss(True)
+        await pilot.pause()
+        assert deleted.get("d") == "alpha"
+        assert isinstance(app.screen, MainScreen)
+
+
+async def test_detail_delete_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws()
+    st.find_workspace = lambda n: a
+    st.delete_workspace = lambda n: (_ for _ in ()).throw(RuntimeError("boom"))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        app.screen.action_delete()
+        await pilot.pause()
+        app.screen.dismiss(True)
+        await pilot.pause()
+        assert "Delete failed" in str(
+            app.screen.query_one("#detail_msg").render()
+        )
+        assert isinstance(app.screen, WorkspaceDetailScreen)
+
+
+async def test_detail_duplicate_ok_cancel_input_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    duped = {}
+    st = _ws()
+    st.find_workspace = lambda n: a
+    st.duplicate_workspace = lambda n, nn: duped.__setitem__("d", (n, nn))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        # cancel via button
+        app.screen.action_duplicate()
+        await pilot.pause()
+        assert isinstance(app.screen, DuplicateScreen)
+        app.screen.on_button_pressed(FakeBtnPress("cancel"))
+        await pilot.pause()
+        assert "d" not in duped
+        # ok via button (prefilled name)
+        app.screen.action_duplicate()
+        await pilot.pause()
+        app.screen.on_button_pressed(FakeBtnPress("ok"))
+        await pilot.pause()
+        assert duped.get("d") == ("alpha", "alpha-copy")
+        assert "Duplicated" in str(
+            app.screen.query_one("#detail_msg").render()
+        )
+        # ok via input submit (enter)
+        app.screen.action_duplicate()
+        await pilot.pause()
+        di = app.screen.query_one("#dup_name", Input)
+        di.value = "alpha-copy2"
+        app.screen.on_input_submitted(Input.Submitted(di, di.value))
+        await pilot.pause()
+        assert duped.get("d") == ("alpha", "alpha-copy2")
+        # empty name -> treated as cancel
+        app.screen.action_duplicate()
+        await pilot.pause()
+        app.screen.query_one("#dup_name", Input).value = ""
+        app.screen.on_button_pressed(FakeBtnPress("ok"))
+        await pilot.pause()
+        assert duped.get("d") == ("alpha", "alpha-copy2")  # unchanged
+        # error
+        st.duplicate_workspace = lambda n, nn: (_ for _ in ()).throw(
+            RuntimeError("boom")
+        )
+        app.screen.action_duplicate()
+        await pilot.pause()
+        app.screen.on_button_pressed(FakeBtnPress("ok"))
+        await pilot.pause()
+        assert "Duplicate failed" in str(
+            app.screen.query_one("#detail_msg").render()
+        )
+
+
+async def test_refresh_workspaces_refreshes_main(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    calls = {"n": 0}
+
+    def owned():
+        calls["n"] += 1
+        return [a]
+
+    st = _ws(owned=[a])
+    st.list_owned_workspaces = owned
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        before = calls["n"]
+        app.refresh_workspaces()
+        await pilot.pause()
+        assert calls["n"] > before
 
 
 # ---------------------------------------------------------------------------

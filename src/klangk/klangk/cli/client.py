@@ -538,6 +538,16 @@ class KlangkClient:
         self.check_auth(resp)
         self._raise_for_status(resp)
 
+    def duplicate_workspace(self, name: str, new_name: str) -> dict:
+        ws = self.resolve_workspace(name)
+        resp = self.post(
+            f"/api/v1/workspaces/{ws.id}/duplicate",
+            json={"name": new_name},
+        )
+        self.check_auth(resp)
+        self._raise_for_status(resp)
+        return resp.json()
+
     def export_workspace(
         self,
         workspace_id: str,

@@ -25,19 +25,10 @@ class KlangkApp(App):
     Screen {
         align: center top;
     }
-    #login_box {
+    #login_box, #switch_box, #add_box, #detail_box, #dup_box {
         width: 96;
         max-width: 90%;
         padding: 0 2;
-    }
-    #switch_box, #add_box {
-        width: 104;
-        max-width: 90%;
-        padding: 2 2;
-    }
-    #main {
-        padding: 1 2;
-        width: 1fr;
     }
     /* A little air under the server status line, before the picker. */
     #server_line {
@@ -107,7 +98,14 @@ class KlangkApp(App):
             self.pop_screen()
         top = self.screen_stack[-1] if self.screen_stack else None
         if isinstance(top, MainScreen):
-            top.refresh_view()
+            top.refresh_lists()
+
+    def refresh_workspaces(self) -> None:
+        """Refresh the workspace list on the MainScreen (if present)."""
+        for screen in reversed(self.screen_stack):
+            if isinstance(screen, MainScreen):
+                screen.refresh_lists()
+                return
 
 
 def run_tui(server_url: str | None = None) -> None:
