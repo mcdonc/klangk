@@ -2,7 +2,9 @@
 
 import json
 import os
+import shutil
 import stat
+import subprocess
 import types
 
 import pytest
@@ -250,3 +252,337 @@ class TestNetFilterEnabled:
         assert (
             nf.NetFilter(_app(hooks_dir=str(tmp_path / "h"))).enabled() is True
         )
+
+
+# --- the OCI hook script, actually executed ---
+#
+# The hook's iptables ruleset IS the security enforcement, and a string-only
+# assertion ("klangk.netfilter.rules" in f.read()) lets every argv-splitting
+# and IPv6-parsing bug ship undetected (#1365 review: B1/B2 both escaped
+# because HOOK_SCRIPT had zero executable coverage). These tests run it for
+# real against synthetic OCI state with shimmed nsenter/iptables/getent.
+
+
+def _state(rules, *, with_pid=True):
+    """Build synthetic OCI container state JSON for the hook.
+
+    ``rules`` is the ``klangk.netfilter.rules`` annotation value, or ``None``
+    to omit the annotation (early-exit path). ``with_pid=False`` omits ``pid``
+    (the other early-exit path). Otherwise ``pid`` is the running process's
+    id so the hook's ``[ -e /proc/$pid/ns/net ]`` guard passes — the nsenter
+    shim ignores the path anyway.
+    """
+    s = {}
+    if with_pid:
+        s["pid"] = os.getpid()
+    if rules is not None:
+        s["annotations"] = {nf.ANNOTATION_KEY: rules}
+    return json.dumps(s)
+
+
+def _run_hook(tmp_path, state, getent_map=None, resolv=None, hosts=None):
+    """Execute ``nf.HOOK_SCRIPT`` against ``state``; return recorded iptables
+    invocations (each a ``list[str]`` of argv).
+
+    ``nsenter``/``iptables``/``getent`` are shimmed on a prepended PATH dir
+    so the hook runs without root or a real netns. ``getent_map`` maps a host
+    to its resolved IPs (newline-separated via the shim); a host absent from
+    the map resolves to itself (deterministic, and enough to test argv).
+    ``resolv``/``hosts`` are the contents of the container's
+    /etc/resolv.conf and /etc/hosts the hook reads (via env-var path
+    overrides); both default to empty so per-destination assertions stay
+    clean — the dedicated DNS/gateway tests pass content.
+    """
+    getent_map = getent_map or {}
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    record = tmp_path / "iptables.log"
+    map_file = tmp_path / "getent.map"
+    resolv_file = tmp_path / "resolv.conf"
+    hosts_file = tmp_path / "hosts"
+
+    map_file.write_text(
+        "\n".join(f"{h}|{','.join(ips)}" for h, ips in getent_map.items())
+        + "\n"
+    )
+    resolv_file.write_text(resolv or "")
+    hosts_file.write_text(hosts or "")
+    # getent ahosts <host> shim: resolve from the | map, else echo the host.
+    (bin_dir / "getent").write_text(
+        "#!/bin/sh\n"
+        f'map="{map_file}"\n'
+        'host="$2"\n'
+        'if [ -f "$map" ]; then\n'
+        '  while IFS="|" read -r h ips; do\n'
+        '    if [ "$h" = "$host" ]; then\n'
+        '      printf "%s\\n" "$ips" | tr "," "\\n"\n'
+        "      exit 0\n"
+        "    fi\n"
+        '  done < "$map"\n'
+        "fi\n"
+        'printf "%s\\n" "$host"\n'
+    )
+    (bin_dir / "getent").chmod(0o755)
+    # nsenter shim: drop the --net flag + the "iptables" token, then re-exec
+    # the iptables shim with the remaining args (the real netns is irrelevant
+    # to what we're asserting, which is the argv the hook builds).
+    (bin_dir / "nsenter").write_text(
+        "#!/bin/sh\n"
+        "shift  # --net=/proc/.../ns/net\n"
+        'shift  # "iptables"\n'
+        'exec iptables "$@"\n'
+    )
+    (bin_dir / "nsenter").chmod(0o755)
+    # iptables shim: record argv, one arg per line, blank line between calls.
+    (bin_dir / "iptables").write_text(
+        "#!/bin/sh\n"
+        f'rec="{record}"\n'
+        'for a in "$@"; do\n'
+        '  printf "%s\\n" "$a" >>"$rec"\n'
+        "done\n"
+        'printf "\\n" >>"$rec"\n'
+        "exit 0\n"
+    )
+    (bin_dir / "iptables").chmod(0o755)
+
+    hook = bin_dir / "klangk-netfilter.sh"
+    hook.write_text(nf.HOOK_SCRIPT)
+    hook.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    # Point the hook at our temp resolv.conf/hosts instead of /proc/$pid/root.
+    env["KLANGK_NETFILTER_RESOLV"] = str(resolv_file)
+    env["KLANGK_NETFILTER_HOSTS"] = str(hosts_file)
+    sh = shutil.which("sh") or "/bin/sh"
+    proc = subprocess.run(
+        [sh, str(hook)],
+        input=state,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert proc.returncode == 0, (
+        f"hook exited {proc.returncode}\nstderr:\n{proc.stderr}"
+    )
+    if not record.exists():
+        return []
+    calls = []
+    for block in record.read_text().split("\n\n"):
+        args = block.split("\n")
+        if args == [""]:
+            continue
+        calls.append(args)
+    return calls
+
+
+def _accept_rules(calls):
+    """The per-destination ACCEPT invocations: [-A, OUTPUT, -d, <ip>, ...]."""
+    return [c for c in calls if c[:3] == ["-A", "OUTPUT", "-d"]]
+
+
+class TestHookScriptExecutable:
+    def test_host_port_emits_split_argv(self, tmp_path):
+        # B1 regression: the ACCEPT rule must reach iptables as separate
+        # argv entries (-d <ip> -p tcp --dport <port> -j ACCEPT), not one
+        # blob. The IFS=',' bug collapsed the whole rule into a single
+        # rejected argument.
+        calls = _run_hook(
+            tmp_path,
+            _state("github.com:443"),
+            getent_map={"github.com": ["140.82.112.4"]},
+        )
+        assert _accept_rules(calls) == [
+            [
+                "-A",
+                "OUTPUT",
+                "-d",
+                "140.82.112.4",
+                "-p",
+                "tcp",
+                "--dport",
+                "443",
+                "-j",
+                "ACCEPT",
+            ],
+        ]
+
+    def test_default_drop_policy_set(self, tmp_path):
+        # The fail-closed posture: OUTPUT policy is DROP before any ACCEPT.
+        calls = _run_hook(
+            tmp_path,
+            _state("a.example"),
+            getent_map={"a.example": ["1.2.3.4"]},
+        )
+        assert ["-P", "OUTPUT", "DROP"] in calls
+
+    def test_multi_ip_host_emits_one_rule_per_ip(self, tmp_path):
+        # B1 compounding bug: under IFS=',' getent's newline-separated output
+        # collapsed into one garbage IP. Each resolved IP must get its own
+        # correctly-split ACCEPT rule.
+        calls = _run_hook(
+            tmp_path,
+            _state("multi.example:443"),
+            getent_map={"multi.example": ["1.1.1.1", "2.2.2.2"]},
+        )
+        assert _accept_rules(calls) == [
+            [
+                "-A",
+                "OUTPUT",
+                "-d",
+                "1.1.1.1",
+                "-p",
+                "tcp",
+                "--dport",
+                "443",
+                "-j",
+                "ACCEPT",
+            ],
+            [
+                "-A",
+                "OUTPUT",
+                "-d",
+                "2.2.2.2",
+                "-p",
+                "tcp",
+                "--dport",
+                "443",
+                "-j",
+                "ACCEPT",
+            ],
+        ]
+
+    def test_bracketed_ipv6_with_port(self, tmp_path):
+        # B2 regression: [2001:db8::1]:443 is blessed by the API validator
+        # but the hook's ':' suffix-splitting mangled it (_host="[2001").
+        # Brackets must be stripped and the port parsed.
+        calls = _run_hook(
+            tmp_path,
+            _state("[2001:db8::1]:443"),
+            getent_map={"2001:db8::1": ["2001:db8::1"]},
+        )
+        assert _accept_rules(calls) == [
+            [
+                "-A",
+                "OUTPUT",
+                "-d",
+                "2001:db8::1",
+                "-p",
+                "tcp",
+                "--dport",
+                "443",
+                "-j",
+                "ACCEPT",
+            ],
+        ]
+
+    def test_bracketed_ipv6_without_port(self, tmp_path):
+        # B2: [::1] (no port) — brackets stripped, no --dport emitted.
+        calls = _run_hook(
+            tmp_path,
+            _state("[::1]"),
+            getent_map={"::1": ["::1"]},
+        )
+        assert _accept_rules(calls) == [
+            ["-A", "OUTPUT", "-d", "::1", "-j", "ACCEPT"],
+        ]
+
+    def test_multiple_specs_all_applied_in_order(self, tmp_path):
+        # The whole CSV is split and each spec yields its rules.
+        calls = _run_hook(
+            tmp_path,
+            _state("github.com:443,pypi.org,[::1]"),
+            getent_map={
+                "github.com": ["140.82.112.4"],
+                "pypi.org": ["151.101.0.0"],
+            },
+        )
+        dests = [c[3] for c in _accept_rules(calls)]
+        assert dests == ["140.82.112.4", "151.101.0.0", "::1"]
+
+    def test_host_without_port_allows_all_ports(self, tmp_path):
+        calls = _run_hook(
+            tmp_path,
+            _state("pypi.org"),
+            getent_map={"pypi.org": ["151.101.0.0"]},
+        )
+        assert _accept_rules(calls) == [
+            ["-A", "OUTPUT", "-d", "151.101.0.0", "-j", "ACCEPT"],
+        ]
+
+    def test_no_annotation_is_noop(self, tmp_path):
+        # No rules annotation → the hook exits before touching iptables.
+        assert _run_hook(tmp_path, _state(None)) == []
+
+    def test_no_pid_is_noop(self, tmp_path):
+        # No init pid → same early exit (no netns to install into).
+        assert _run_hook(tmp_path, _state("a.com:443", with_pid=False)) == []
+
+    # --- I1: DNS must be pinned to the container's resolvers, not blanket ---
+
+    def test_dns_allowed_only_to_resolv_nameservers(self, tmp_path):
+        # I1 regression: :53 used to be ACCEPTed to ANY destination (an
+        # exfil / DNS-tunneling channel). Now it's allowed only to the
+        # nameservers in the container's /etc/resolv.conf.
+        calls = _run_hook(
+            tmp_path,
+            _state("github.com:443"),
+            getent_map={"github.com": ["140.82.112.4"]},
+            resolv="nameserver 1.1.1.1\nnameserver 8.8.8.8\n",
+        )
+        dns = [c for c in calls if "--dport" in c and "53" in c and "-p" in c]
+        # One udp + one tcp rule per nameserver, each pinned to that IP.
+        for ns in ("1.1.1.1", "8.8.8.8"):
+            for proto in ("udp", "tcp"):
+                assert [
+                    "-A",
+                    "OUTPUT",
+                    "-p",
+                    proto,
+                    "--dport",
+                    "53",
+                    "-d",
+                    ns,
+                    "-j",
+                    "ACCEPT",
+                ] in dns
+        # No blanket :53 rule (one without a -d destination) survives.
+        assert not any("-d" not in c for c in dns)
+
+    def test_no_dns_allow_when_no_resolvers(self, tmp_path):
+        # With no nameservers configured, DNS is fully blocked (fail-closed),
+        # never falling back to the old blanket :53 ACCEPT.
+        calls = _run_hook(
+            tmp_path,
+            _state("github.com:443"),
+            getent_map={"github.com": ["140.82.112.4"]},
+            resolv="",  # no nameservers
+        )
+        assert not any("--dport" in c and "53" in c for c in calls)
+
+    # --- I7: gateway resolved from the container's /etc/hosts, not getent ---
+
+    def test_gateway_allowed_from_hosts_file(self, tmp_path):
+        # I7 regression: host.containers.internal used to be resolved via the
+        # host netns getent (where the name doesn't exist) → no gateway rule →
+        # the workspace couldn't reach its LLM proxy / browser delegate / chat
+        # bridge. Now it's read from the container's /etc/hosts.
+        calls = _run_hook(
+            tmp_path,
+            _state("github.com:443"),
+            getent_map={"github.com": ["140.82.112.4"]},
+            hosts=("127.0.0.1 localhost\n10.0.2.2 host.containers.internal\n"),
+        )
+        assert ["-A", "OUTPUT", "-d", "10.0.2.2", "-j", "ACCEPT"] in calls
+
+    def test_gateway_absent_when_not_in_hosts(self, tmp_path):
+        # No host.containers.internal entry → no gateway rule. Confirms the
+        # hook doesn't fall back to a host-netns getent (which would either
+        # silently produce nothing or resolve the wrong IP).
+        calls = _run_hook(
+            tmp_path,
+            _state("github.com:443"),
+            getent_map={"github.com": ["140.82.112.4"]},
+            hosts="127.0.0.1 localhost\n",
+        )
+        assert not any("-d" in c and "10.0.2.2" in c for c in calls)

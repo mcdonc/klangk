@@ -170,14 +170,40 @@ resolve() {
     getent ahosts "$1" 2>/dev/null | awk '{print $1}' | sort -u
 }
 
-# Print one ACCEPT rule per resolved IP for a host[:port] spec.
+# Print one ACCEPT rule per resolved IP for a host[:port] spec. Handles
+# bracketed IPv6 literals ([::1], [2001:db8::1]:443) — the brackets are
+# stripped and the optional ]:port suffix parsed — as well as plain
+# hostnames/IPv4 with an optional :port. A non-numeric port is skipped
+# defensively (the API validator rejects these, but the hook never trusts
+# the annotation blindly).
 accept_rules() {
     _spec=$1
-    _host=${_spec%%:*}
+    _host=
     _port=
     case "$_spec" in
-        *:*) _port=${_spec##*:} ;;
+        "["*"]"*)
+            # [ipv6] or [ipv6]:port — drop the brackets + parse the port.
+            _host=${_spec%%]*}        # "[ipv6"  (strip ](:port) suffix)
+            _host=${_host#?}          # "ipv6"   (strip leading [)
+            case "$_spec" in
+                *"]:"*) _port=${_spec##*:} ;;
+            esac
+            ;;
+        *)
+            # hostname / IPv4, optional :port.
+            _host=${_spec%%:*}
+            case "$_spec" in
+                *:*) _port=${_spec##*:} ;;
+            esac
+            ;;
     esac
+    [ -n "$_host" ] || return 0
+    # Defensive: skip a non-numeric port rather than emit a bad rule.
+    if [ -n "$_port" ]; then
+        case "$_port" in
+            *[!0-9]*) return 0 ;;
+        esac
+    fi
     for _ip in $(resolve "$_host"); do
         if [ -n "$_port" ]; then
             printf '%s\n' "-d $_ip -p tcp --dport $_port -j ACCEPT"
@@ -187,31 +213,69 @@ accept_rules() {
     done
 }
 
-# Default-deny egress; allow loopback, established, and DNS first so the
-# container can still resolve hostnames at runtime.
+# Default-deny egress; allow loopback + established first.
 ipt -P OUTPUT DROP
 ipt -A OUTPUT -o lo -j ACCEPT
 ipt -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-ipt -A OUTPUT -p udp --dport 53 -j ACCEPT
-ipt -A OUTPUT -p tcp --dport 53 -j ACCEPT
 
-# Always allow the backend gateway (LLM proxy, browser delegate, chat
-# bridge) — host.containers.internal is added by --add-host.
-for _ip in $(resolve host.containers.internal); do
-    ipt -A OUTPUT -d "$_ip" -j ACCEPT
-done
+# DNS: allow :53 ONLY to the container's configured resolvers (read from
+# its /etc/resolv.conf via /proc/$pid/root — the OCI runtime has set up the
+# container's mount namespace by createContainer time), not to any
+# destination. A blanket :53 ACCEPT is an exfil / DNS-tunneling channel that
+# defeats an anti-exfiltration filter. KLANGK_NETFILTER_RESOLV overrides the
+# path (for tests); if the file is absent/unreadable DNS is blocked and the
+# gap is logged (#1365).
+_resolv=${KLANGK_NETFILTER_RESOLV:-/proc/$pid/root/etc/resolv.conf}
+if [ -r "$_resolv" ]; then
+    while read -r _kw _ns _rest; do
+        [ "$_kw" = "nameserver" ] || continue
+        [ -n "$_ns" ] || continue
+        ipt -A OUTPUT -p udp --dport 53 -d "$_ns" -j ACCEPT
+        ipt -A OUTPUT -p tcp --dport 53 -d "$_ns" -j ACCEPT
+    done < "$_resolv"
+else
+    echo "klangk-netfilter: cannot read $_resolv; DNS will be blocked" >&2
+fi
 
-# Per-workspace allowed destinations.
+# Backend gateway (LLM proxy, browser delegate, chat bridge). The backend
+# adds host.containers.internal:host-gateway to the container, so resolve it
+# from the CONTAINER's /etc/hosts — the host netns this hook runs in does not
+# know the name (it is a podman-injected container-side alias), and resolving
+# it via the host's getent silently yields no IP, leaving the workspace cut
+# off from its own backend. KLANGK_NETFILTER_HOSTS overrides the path (tests).
+_hosts=${KLANGK_NETFILTER_HOSTS:-/proc/$pid/root/etc/hosts}
+if [ -r "$_hosts" ]; then
+    while read -r _gip _grest; do
+        # Skip comment/blank lines.
+        case "$_gip" in \#*|"") continue ;; esac
+        case " $_grest " in
+            *" host.containers.internal "*)
+                [ -n "$_gip" ] && ipt -A OUTPUT -d "$_gip" -j ACCEPT
+                ;;
+        esac
+    done < "$_hosts"
+fi
+
+# Per-workspace allowed destinations. Split the comma-separated rules under
+# IFS=',', then RESTORE IFS before the loop body so that (a) accept_rules'
+# command substitutions split getent's newline-separated output into IPs,
+# and (b) the unquoted $_rule below word-splits into separate iptables argv
+# entries. Without the restore, every ACCEPT rule collapsed into one blob
+# argument that iptables rejected, and multi-IP hosts collapsed into one
+# garbage IP — silently, since ipt()'s failures are only logged (#1365).
 _save_ifs=$IFS
 IFS=','
-for _spec in $rules; do
+set -- $rules
+IFS=$_save_ifs
+for _spec in "$@"; do
     [ -n "$_spec" ] || continue
     accept_rules "$_spec" | while IFS= read -r _rule; do
         [ -n "$_rule" ] || continue
+        # $_rule is intentionally unquoted: each line is a series of
+        # iptables flags that must word-split into separate arguments.
         ipt -A OUTPUT $_rule
     done
 done
-IFS=$_save_ifs
 
 exit 0
 """

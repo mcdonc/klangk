@@ -116,13 +116,21 @@ class AuthService extends ChangeNotifier {
     _loadToken();
   }
 
-  Future<void> _loadToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    _token = prefs.getString(_tokenKey);
-
+  /// Fetch `/api/v1/config` and apply the result. Sends the persisted
+  /// token when available so the server returns authenticated-only fields
+  /// (notably the netfilter deploy allow-list + armed status, #1365) — the
+  /// pre-auth payload omits them. Called at startup and after a fresh
+  /// login (so a just-authenticated user picks up the fields without an
+  /// app restart).
+  Future<void> _loadConfig() async {
     try {
       final client = testAuthHttpClientOverride ?? http.Client();
-      final resp = await client.get(Uri.parse('$_baseUrl/api/v1/config'));
+      final resp = await client.get(
+        Uri.parse('$_baseUrl/api/v1/config'),
+        headers: {
+          if (_token != null) 'Authorization': 'Bearer $_token',
+        },
+      );
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         _bannerTitle = (data['login_banner_title'] as String?) ?? '';
@@ -147,6 +155,13 @@ class AuthService extends ChangeNotifier {
       // coverage:ignore-start
       debugPrint('[AuthService] load config failed: $e');
     } // coverage:ignore-end
+  }
+
+  Future<void> _loadToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    _token = prefs.getString(_tokenKey);
+
+    await _loadConfig();
 
     if (_bannerText.isNotEmpty) {
       if (_loginBannerEveryVisit) {
@@ -224,6 +239,10 @@ class AuthService extends ChangeNotifier {
     _token = token;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_tokenKey, token);
+    // Re-fetch config now that we have a token, so authenticated-only
+    // fields (e.g. the netfilter deploy allow-list, #1365) are picked up
+    // without an app restart.
+    await _loadConfig();
     await _fetchPermissions();
     _scheduleTokenRefresh();
     notifyListeners();

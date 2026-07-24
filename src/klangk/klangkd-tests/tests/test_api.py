@@ -416,14 +416,29 @@ class TestConfig:
         assert "login_banner" in data
         assert "instance_id" in data
 
-    async def test_get_config_exposes_netfilter_default_domains(
+    async def test_get_config_omits_netfilter_fields_when_unauthenticated(
         self, client, app
+    ):
+        # #1365: the deploy allow-list + armed-status advertise the egress
+        # perimeter, so they must NOT appear on the pre-auth /config payload
+        # (which feeds the login page). Anonymous callers learn neither.
+        app.state.settings.netfilter_default_domains = ["github.com:443"]
+        resp = await client.get("/api/v1/config")
+        data = resp.json()
+        assert "netfilter_default_domains" not in data
+        assert "netfilter_enabled" not in data
+
+    async def test_get_config_exposes_netfilter_default_domains(
+        self, client, app, user
     ):
         # #1365: the create-workspace UI pre-fills its allowed-domains editor
         # from the deploy-wide default (which a workspace overrides, not
-        # unions). netfilter_enabled gates showing the editor at all.
+        # unions). netfilter_enabled gates showing the editor at all. Both
+        # are returned only to authenticated callers (the UI sends the token
+        # on its /config fetch and re-fetches after login).
         app.state.settings.netfilter_default_domains = ["github.com:443"]
-        resp = await client.get("/api/v1/config")
+        headers = await _auth_headers(client)
+        resp = await client.get("/api/v1/config", headers=headers)
         assert resp.json()["netfilter_default_domains"] == ["github.com:443"]
         # hooks dir unset in the test fixture → disabled.
         assert resp.json()["netfilter_enabled"] is False

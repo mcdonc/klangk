@@ -24,8 +24,10 @@ starts.
    ruleset in the container's network namespace (via `nsenter` on the init
    pid).
 4. The default `OUTPUT` policy is `DROP`; loopback, established
-   connections, DNS (udp/tcp 53), the backend gateway
-   (`host.containers.internal`), and the resolved allowed destinations are
+   connections, **DNS to the container's configured resolvers only**
+   (read from its `/etc/resolv.conf`, not a blanket `udp/tcp 53` allow),
+   the backend gateway (`host.containers.internal`, resolved from the
+   container's `/etc/hosts`), and the resolved allowed destinations are
    `ACCEPT`ed. Everything else is dropped.
 
 The hook runs **before** the container process starts, so the ruleset is in
@@ -73,8 +75,11 @@ curl -X PUT https://klangkd/api/v1/workspaces/<id> \
 - `host:port` allows a single TCP port.
 - Each entry is validated server-side; malformed entries are rejected with
   HTTP 400.
-- An empty list (or `null`) means **unrestricted** — the workspace is never
-  filtered.
+- An empty list (or `null`) **inherits the deploy-wide default**
+  (`KLANGKD_NETFILTER_DEFAULT_DOMAINS`); if no default is configured, the
+  workspace is **unrestricted**. There is currently no per-workspace opt-out
+  into truly-unrestricted egress when a deploy default is set — clear the
+  default server-side to permit unrestricted workspaces.
 
 A restart of the workspace container applies the change to a running
 workspace (the ruleset is set at create time).
@@ -97,6 +102,13 @@ unusable, but the warning makes the gap visible.
   Mitigation: allow a port without pinning a host, or allow a CIDR
   range (a possible future enhancement; the initial implementation is
   `host`/`host:port` only).
+- **DNS is pinned to resolvers, not blocked entirely.** Outbound `:53` is
+  accepted only to the nameservers in the container's `/etc/resolv.conf`,
+  so a workspace cannot talk to an arbitrary host on port 53. This does
+  **not** prevent DNS tunneling through those permitted resolvers to
+  attacker-controlled domains (data can still be encoded in DNS queries).
+  Treat the filter as an egress allow-list, not a complete anti-exfiltration
+  guarantee against DNS-based channels.
 - **Port granularity.** The initial implementation supports `host` and
   `host:port`. CIDR ranges and port-only rules may follow.
 - **`macOS` hosts.** The `createContainer` hook runs inside the
