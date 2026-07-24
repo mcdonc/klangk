@@ -178,26 +178,33 @@ class TestConfigFile:
             is None
         )
 
-    def test_netfilter_default_domains_invalid_aborts_boot(self):
-        """A bad spec fails fast at construction, not silently at use."""
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
-            make_settings(
+    def test_netfilter_default_domains_invalid_warns_and_empties(self, caplog):
+        """#1772: a bad spec no longer aborts boot — it warns and falls back
+        to None (no deploy default), so a typo can't take the server down."""
+        with caplog.at_level("WARNING"):
+            s = make_settings(
                 {"KLANGKD_NETFILTER_DEFAULT_DOMAINS": "good.com,bad spec"}
             )
+        assert s.netfilter_default_domains is None
+        assert any("invalid spec" in r.message for r in caplog.records)
 
-    def test_netfilter_default_domains_wrong_type_aborts_boot(self, tmp_path):
-        """A non-list/non-string value (e.g. a bare int from a malformed
-        YAML block) is rejected at construction, not silently coerced."""
-        from pydantic import ValidationError
-
+    def test_netfilter_default_domains_wrong_type_warns_and_empties(
+        self, tmp_path, caplog
+    ):
+        """#1772: a non-list/non-string value (e.g. a bare int from a
+        malformed YAML block) warns and falls back to None rather than
+        aborting construction."""
         # YAML delivering a scalar int directly (a typo'd block like
         # `netfilter_default_domains: 42` instead of a list).
         cfg = tmp_path / "config.yaml"
         cfg.write_text("netfilter_default_domains: 42\n")
-        with pytest.raises(ValidationError):
-            make_settings({}, config_file=str(cfg))
+        with caplog.at_level("WARNING"):
+            s = make_settings({}, config_file=str(cfg))
+        assert s.netfilter_default_domains is None
+        assert any(
+            "must be a list or a comma-separated string" in r.message
+            for r in caplog.records
+        )
 
     def test_file_cmd_resolution_from_yaml(self, tmp_path):
         """file:/cmd: values in YAML resolve at construction (#1461)."""
