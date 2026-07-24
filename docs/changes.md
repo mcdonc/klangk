@@ -78,6 +78,27 @@ operators or integrators to act when upgrading.
   field on the workspace create/update API. See
   [Egress Filtering](https://klangk.dev/features/egress-filtering).
 
+- **The `klangk` TUI can create workspaces from a full create form (#1748).**
+  Press `n` on the workspace list to open a form mirroring the Flutter
+  `CreateWorkspaceDialog`: name, a container-image picker populated from
+  `/api/v1/images`, add/remove mounts and environment-variable editors, an
+  optional service shell command and health-check command, and an auto-start
+  checkbox (shown only when the server permits it, off by default). Mounts
+  (`source:/container[:opts]`) and env (`KEY=VALUE`) are validated client-side,
+  matching the Flutter create dialog (the CLI `create` is marginally looser
+  on env keys). All user-facing text — including the image-picker entries
+  (sourced from the server) and the create-result message — renders via rich
+  `Text`, so a name/image/message containing bracket characters can't crash
+  the TUI; a non-JSON server error body is handled gracefully instead of
+  crashing. If the image list can't be
+  fetched the form still works (the server applies its default image; if the
+  server's default isn't in the allowed list the picker starts unselected and
+  an untouched picker omits the image, matching the Flutter dialog). After a
+  successful create the list refreshes and the TUI offers to open the new
+  workspace's detail screen (where its terminals are listed); a live in-TUI
+  PTY shell session is a future step, so #1748's "open shell now" bullet is
+  satisfied as "open workspace" for now.
+
 - **The `features_config:` block now accepts the stripped, lowercased key form
   (`soliplex_url`) in addition to the full declared name
   (`KLANGKWS_FEATURE_SOLIPLEX_URL`) (#1737).** The short form matches the key the

@@ -174,6 +174,7 @@ class Workspace:
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
     health_check: str | None = None
+    allowed_domains: list[str] | None = None
     owner_email: str | None = None
     running: bool = False
     health: str | None = None
@@ -425,6 +426,7 @@ class KlangkClient:
             running=bool(w.get("running", False)),
             health=w.get("health"),
             health_message=w.get("health_message"),
+            allowed_domains=w.get("allowed_domains"),
         )
 
     def create_workspace(
@@ -437,6 +439,7 @@ class KlangkClient:
         env: dict[str, str] | None = None,
         setup_state: str | None = None,
         health_check: str | None = None,
+        allowed_domains: list[str] | None = None,
     ) -> Workspace:
         body: dict = {"name": name}
         if image:
@@ -453,6 +456,8 @@ class KlangkClient:
             body["setup_state"] = setup_state
         if health_check:
             body["health_check"] = health_check
+        if allowed_domains:
+            body["allowed_domains"] = allowed_domains
         resp = self.post("/api/v1/workspaces", json=body)
         self.check_auth(resp)
         self._raise_for_status(resp)
@@ -460,6 +465,18 @@ class KlangkClient:
         return Workspace(
             id=w["id"], name=w["name"], created_at=w["created_at"]
         )
+
+    def update_workspace(self, workspace_id: str, **fields) -> None:
+        """Partial-update workspace fields (``PUT /api/v1/workspaces/<id>``).
+
+        Only the provided keyword fields are sent. Returns ``None``; raises
+        :class:`httpx.HTTPStatusError` on a non-2xx so callers (TUI/CLI) can
+        surface the server's ``detail``. Used by the TUI edit form (#1778);
+        the CLI ``edit`` command still PUTs inline (#1779 will adopt this).
+        """
+        resp = self.put(f"/api/v1/workspaces/{workspace_id}", json=fields)
+        self.check_auth(resp)
+        self._raise_for_status(resp)
 
     def set_setup_state(self, workspace_id: str, setup_state: str) -> None:
         """Update a workspace's setup_state lifecycle field (#1033).

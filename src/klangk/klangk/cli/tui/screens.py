@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
+import logging
+
+import httpx
+
 from rich.text import Text
 
 from textual.app import ComposeResult
@@ -16,10 +20,12 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
+    Checkbox,
     Footer,
     Header,
     Input,
     OptionList,
+    Select,
     Static,
     TabbedContent,
     TabPane,
@@ -27,10 +33,17 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from .state import LoginError
-from ..client import AuthError, WorkspaceNotFoundError
+from ..client import AuthError, Workspace, WorkspaceNotFoundError
+from ..env import validate_env_entry
+from ..mount import (
+    validate_allowed_domain_spec,
+    validate_mount_spec,
+)
 from ..transport import is_valid_server_spec
 from .widgets import StatusBar
 from .ws import listen_for_status
+
+logger = logging.getLogger(__name__)
 
 
 class ConfirmScreen(ModalScreen[bool]):
@@ -52,16 +65,26 @@ class ConfirmScreen(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, message: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        yes_label: str = "Delete",
+        yes_variant: str = "error",
+        no_label: str = "Cancel",
+    ) -> None:
         super().__init__()
         self.message = message
+        self._yes_label = yes_label
+        self._yes_variant = yes_variant
+        self._no_label = no_label
 
     def compose(self) -> ComposeResult:
         yield Vertical(
             Static(Text(self.message)),
             Horizontal(
-                Button("Cancel", id="no"),
-                Button("Delete", id="yes", variant="error"),
+                Button(self._no_label, id="no"),
+                Button(self._yes_label, id="yes", variant=self._yes_variant),
             ),
         )
 
@@ -324,6 +347,7 @@ class MainScreen(Screen):
 
     BINDINGS = [
         ("s", "switch_server", "Switch server"),
+        ("n", "create", "New"),
         ("l", "logout", "Logout"),
     ]
 
@@ -346,6 +370,52 @@ class MainScreen(Screen):
 
     def action_logout(self) -> None:
         self.app.do_logout()
+
+    def action_create(self) -> None:
+        state = self.app.tui_state
+        try:
+            data = state.list_images()
+            default = data.get("default", "") or ""
+            allowed = list(data.get("allowed") or [])
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            logger.debug("Could not fetch image list: %s", exc)
+            default, allowed = "", []
+        try:
+            allow_autostart = state.allow_autostart()
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            logger.debug("Could not fetch autostart config: %s", exc)
+            allow_autostart = False
+        self.app.push_screen(
+            CreateWorkspaceScreen(
+                allowed=allowed,
+                default=default,
+                allow_autostart=allow_autostart,
+            ),
+            self._on_created,
+        )
+
+    def _on_created(self, name: str | None) -> None:
+        """Refresh the list after a create, then offer to open the new
+        workspace's detail screen (its terminal list lives there). A live
+        in-TUI PTY shell is a future step — #1748's 'open shell' bullet is
+        satisfied here as 'open workspace', not a live shell."""
+        if not name:
+            return
+        self.refresh_lists()
+
+        def _offer(open_it: bool) -> None:
+            if open_it:
+                self.app.push_screen(WorkspaceDetailScreen(name))
+
+        self.app.push_screen(
+            ConfirmScreen(
+                f"Created '{name}'. Open workspace now?",
+                yes_label="Open",
+                yes_variant="primary",
+                no_label="Later",
+            ),
+            _offer,
+        )
 
     # --- list population ---
 
@@ -452,6 +522,7 @@ class WorkspaceDetailScreen(Screen):
 
     BINDINGS = [
         ("escape", "app.pop_screen", "Back"),
+        ("e", "edit", "Edit"),
         ("r", "restart", "Restart"),
         ("d", "duplicate", "Duplicate"),
         ("x", "delete", "Delete"),
@@ -536,6 +607,9 @@ class WorkspaceDetailScreen(Screen):
         if ws.env:
             lines.append("environment:")
             lines.extend(f"  {k}={v}" for k, v in ws.env.items())
+        if ws.allowed_domains:
+            lines.append("allowed domains:")
+            lines.extend(f"  {d}" for d in ws.allowed_domains)
         if ws.owner_email:
             lines.append(f"owner: {ws.owner_email}")
         body.update(Text("\n".join(lines)))
@@ -544,6 +618,39 @@ class WorkspaceDetailScreen(Screen):
         self.query_one("#detail_msg", Static).update(
             Text(text, style="red" if error else "")
         )
+
+    def action_edit(self) -> None:
+        # Open the edit form pre-populated from this workspace (#1778).
+        # Images + allow_autostart are fetched here (sync, #1766 debt) so the
+        # form has them at mount time.
+        if self._ws is None:
+            return
+        state = self.app.tui_state
+        try:
+            data = state.list_images()
+            default = data.get("default", "") or ""
+            allowed = list(data.get("allowed") or [])
+        except Exception:
+            default, allowed = "", []
+        try:
+            allow_autostart = state.allow_autostart()
+        except Exception:
+            allow_autostart = False
+        self.app.push_screen(
+            EditWorkspaceScreen(
+                workspace=self._ws,
+                allowed=allowed,
+                default=default,
+                allow_autostart=allow_autostart,
+            ),
+            self._on_edited,
+        )
+
+    def _on_edited(self, saved: bool | None) -> None:
+        # Refresh the workspace after a successful edit (fields may have
+        # changed; create-time changes need a restart, offered in the form).
+        if saved:
+            self._load()
 
     def apply_status_event(self, event: dict) -> None:
         """Update running/health from a live status broadcast.
@@ -650,7 +757,9 @@ class WorkspaceDetailScreen(Screen):
         self.app.push_screen(
             ConfirmScreen(
                 f"Restart '{self._name}'? This ends active terminal"
-                " sessions and recreates the container."
+                " sessions and recreates the container.",
+                yes_label="Restart",
+                yes_variant="warning",
             ),
             _on_confirm,
         )
@@ -732,6 +841,664 @@ class DuplicateScreen(ModalScreen):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "dup_name":
             self._commit()
+
+
+class CreateWorkspaceScreen(Screen):
+    """Full-screen workspace create form (parity with Flutter
+    ``CreateWorkspaceDialog``).
+
+    Fields, top to bottom: name, container image (``Select`` populated
+    from ``/api/v1/images``), a mounts list editor, an env list editor,
+    an optional service shell command, an optional health-check command,
+    and — only when the server permits it — an auto-start checkbox.
+    Mounts/env are validated client-side (``validate_mount_spec`` /
+    ``validate_env_entry``) exactly as the Flutter dialog and the CLI
+    ``create`` command do.
+
+    Images and the ``allow_autostart`` flag are fetched by the caller
+    (``MainScreen.action_create``) and passed in, because ``self.app`` is
+    not available until the screen is mounted.
+    """
+
+    BINDINGS = [("escape", "app.pop_screen", "Back")]
+
+    def __init__(
+        self,
+        *,
+        allowed: list[str],
+        default: str,
+        allow_autostart: bool,
+    ) -> None:
+        super().__init__()
+        self._allowed = list(allowed)
+        self._default = default or ""
+        self._allow_autostart = bool(allow_autostart)
+        self._mounts: list[str] = []
+        self._env: dict[str, str] = {}
+        self._allowed_domains: list[str] = []
+        if self._allowed:
+            # Select tuples are (prompt, value). Prompts are rich Text so an
+            # image name containing brackets can't trigger markup parsing.
+            self._select_options = [(Text(img), img) for img in self._allowed]
+            self._select_value = (
+                self._default if self._default in self._allowed else None
+            )
+        else:
+            # Couldn't list images — offer a single inert placeholder so the
+            # user can still create; the server applies its default image.
+            self._select_options = [
+                (Text("(server default)"), "(server default)")
+            ]
+            self._select_value = "(server default)"
+
+    def compose(self) -> ComposeResult:
+        if self._select_value is not None:
+            image_select = Select(
+                self._select_options, value=self._select_value, id="image"
+            )
+        else:
+            # No valid default to preselect — leave the picker unselected
+            # (the server applies its default image if none is chosen).
+            image_select = Select(self._select_options, id="image")
+        yield Header(show_clock=False)
+        yield Vertical(
+            Static("New workspace", classes="title"),
+            Static("", id="create_msg"),
+            Static("Name"),
+            Input(id="name"),
+            Static("Container image"),
+            image_select,
+            Static("Mounts  (source:/container/path[:opts])"),
+            OptionList(id="mount_list"),
+            Horizontal(
+                Input(
+                    id="mount_input",
+                    placeholder="/host/path:/container/path",
+                ),
+                Button("Add", id="add_mount"),
+                Button("Remove", id="rm_mount"),
+            ),
+            Static("Environment  (KEY=VALUE)"),
+            OptionList(id="env_list"),
+            Horizontal(
+                Input(id="env_input", placeholder="KEY=VALUE"),
+                Button("Add", id="add_env"),
+                Button("Remove", id="rm_env"),
+            ),
+            Static(
+                "Allowed Domains  (host or host:port; empty = unrestricted)"
+            ),
+            OptionList(id="allow_list"),
+            Horizontal(
+                Input(id="allow_input", placeholder="github.com:443"),
+                Button("Add", id="add_allow"),
+                Button("Remove", id="rm_allow"),
+            ),
+            Static("Service shell command (optional)"),
+            Input(id="command"),
+            Static("Health check command (optional)"),
+            Input(id="health_check"),
+            Checkbox("Auto start", id="auto_start"),
+            Static(
+                Text("(start this workspace when the server starts)"),
+                id="auto_caption",
+            ),
+            Horizontal(
+                Button("Cancel", id="cancel"),
+                Button("Create", id="create", variant="primary"),
+                classes="actions",
+            ),
+            id="create_box",
+        )
+        yield Footer()
+
+    def on_mount(self) -> None:
+        # Only show the auto-start checkbox (and its caption) when the server
+        # allows it; ``auto_start`` defaults to off either way.
+        shown = self._allow_autostart
+        cb = self.query_one("#auto_start", Checkbox)
+        cb.display = shown
+        cb.disabled = not shown
+        self.query_one("#auto_caption", Static).display = shown
+        self._render_mounts()
+        self._render_env()
+        self._render_allowed_domains()
+
+    def _msg(self, text: str, *, error: bool = False) -> None:
+        self.query_one("#create_msg", Static).update(
+            Text(text, style="red" if error else "")
+        )
+
+    # --- mounts list editor ---
+
+    def _render_mounts(self) -> None:
+        ol = self.query_one("#mount_list", OptionList)
+        ol.clear_options()
+        if not self._mounts:
+            ol.add_option(Option(Text("(no mounts)"), id="", disabled=True))
+            return
+        for i, m in enumerate(self._mounts):
+            ol.add_option(Option(Text(m), id=f"m{i}"))
+
+    def _add_mount(self) -> None:
+        inp = self.query_one("#mount_input", Input)
+        v = inp.value.strip()
+        if not v:
+            return
+        err = validate_mount_spec(v)
+        if err:
+            self._msg(err, error=True)
+            return
+        self._mounts.append(v)
+        inp.value = ""
+        self._msg("")
+        self._render_mounts()
+
+    def _remove_mount(self) -> None:
+        ol = self.query_one("#mount_list", OptionList)
+        idx = ol.highlighted
+        if idx is None or not 0 <= idx < len(self._mounts):
+            return
+        del self._mounts[idx]
+        self._render_mounts()
+
+    # --- env list editor ---
+
+    def _render_env(self) -> None:
+        ol = self.query_one("#env_list", OptionList)
+        ol.clear_options()
+        if not self._env:
+            ol.add_option(Option(Text("(no env vars)"), id="", disabled=True))
+            return
+        for i, (k, val) in enumerate(self._env.items()):
+            ol.add_option(Option(Text(f"{k}={val}"), id=f"e{i}"))
+
+    def _add_env(self) -> None:
+        inp = self.query_one("#env_input", Input)
+        v = inp.value.strip()
+        if not v:
+            return
+        err = validate_env_entry(v)
+        if err:
+            self._msg(err, error=True)
+            return
+        key, _, value = v.partition("=")
+        self._env[key] = value
+        inp.value = ""
+        self._msg("")
+        self._render_env()
+
+    def _remove_env(self) -> None:
+        ol = self.query_one("#env_list", OptionList)
+        idx = ol.highlighted
+        keys = list(self._env)
+        if idx is None or not 0 <= idx < len(keys):
+            return
+        del self._env[keys[idx]]
+        self._render_env()
+
+    # --- allowed-domains list editor (#1745) ---
+
+    def _render_allowed_domains(self) -> None:
+        ol = self.query_one("#allow_list", OptionList)
+        ol.clear_options()
+        if not self._allowed_domains:
+            ol.add_option(Option(Text("(unrestricted)"), id="", disabled=True))
+            return
+        for i, d in enumerate(self._allowed_domains):
+            ol.add_option(Option(Text(d), id=f"a{i}"))
+
+    def _add_allowed_domain(self) -> None:
+        inp = self.query_one("#allow_input", Input)
+        v = inp.value.strip()
+        if not v:
+            return
+        err = validate_allowed_domain_spec(v)
+        if err:
+            self._msg(err, error=True)
+            return
+        if v not in self._allowed_domains:
+            self._allowed_domains.append(v)
+        inp.value = ""
+        self._msg("")
+        self._render_allowed_domains()
+
+    def _remove_allowed_domain(self) -> None:
+        ol = self.query_one("#allow_list", OptionList)
+        idx = ol.highlighted
+        if idx is None or not 0 <= idx < len(self._allowed_domains):
+            return
+        del self._allowed_domains[idx]
+        self._render_allowed_domains()
+
+    # --- create ---
+
+    def _create(self) -> None:
+        name = self.query_one("#name", Input).value.strip()
+        if not name:
+            self._msg("Name is required.", error=True)
+            return
+        sel = self.query_one("#image", Select)
+        val = sel.value
+        # Send only a real, non-default selection. When the server's default
+        # isn't in the allowed list we start unselected (Select.BLANK), so an
+        # untouched picker omits the image — matching the Flutter dialog.
+        if (
+            val is Select.BLANK
+            or val is Select.NULL
+            or not self._allowed
+            or val == self._default
+        ):
+            image = None
+        else:
+            image = val
+        command = self.query_one("#command", Input).value.strip() or None
+        health_check = (
+            self.query_one("#health_check", Input).value.strip() or None
+        )
+        auto = (
+            self._allow_autostart
+            and self.query_one("#auto_start", Checkbox).value
+        )
+        mounts = list(self._mounts) or None
+        env = dict(self._env) or None
+        allowed_domains = list(self._allowed_domains) or None
+        try:
+            ws = self.app.tui_state.create_workspace(
+                name,
+                image=image,
+                service_command=command,
+                auto_start=auto,
+                mounts=mounts,
+                env=env,
+                health_check=health_check,
+                allowed_domains=allowed_domains,
+            )
+        except AuthError:
+            self._msg("Session expired — please log in again.", error=True)
+            return
+        except httpx.HTTPStatusError as exc:
+            # The error body may not be JSON (proxy HTML page, empty body,
+            # plaintext) — parse defensively so a malformed response can't
+            # crash the TUI from inside this handler.
+            try:
+                detail = exc.response.json().get("detail", exc.response.text)
+            except (ValueError, KeyError):
+                detail = exc.response.text or str(exc)
+            self._msg(f"Failed to create: {detail}", error=True)
+            return
+        except Exception as exc:
+            self._msg(f"Failed to create: {exc}", error=True)
+            return
+        self.dismiss(ws.name)
+
+    # --- event handlers ---
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "cancel":
+            self.dismiss(None)
+        elif bid == "create":
+            self._create()
+        elif bid == "add_mount":
+            self._add_mount()
+        elif bid == "rm_mount":
+            self._remove_mount()
+        elif bid == "add_env":
+            self._add_env()
+        elif bid == "rm_env":
+            self._remove_env()
+        elif bid == "add_allow":
+            self._add_allowed_domain()
+        elif bid == "rm_allow":
+            self._remove_allowed_domain()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        eid = event.input.id
+        if eid == "mount_input":
+            self._add_mount()
+        elif eid == "env_input":
+            self._add_env()
+        elif eid == "allow_input":
+            self._add_allowed_domain()
+        elif eid in ("name", "command", "health_check"):
+            self._create()
+
+
+class EditWorkspaceScreen(Screen):
+    """Full-screen workspace edit form (parity with Flutter
+    ``WorkspaceSettingsPanel``).
+
+    Like :class:`CreateWorkspaceScreen` but pre-populated from an existing
+    workspace, saving via a partial ``PUT``. Saving a change to a
+    container-create-time field (image / mounts / env / service_command /
+    allowed_domains) on a *running* workspace prompts a "restart needed to
+    apply" offer (#1778, #1749); ``setup_state`` / ``health_check`` propagate
+    live and never trigger it.
+    """
+
+    BINDINGS = [("escape", "app.pop_screen", "Back")]
+
+    def __init__(
+        self,
+        *,
+        workspace: Workspace,
+        allowed: list[str],
+        default: str,
+        allow_autostart: bool,
+    ) -> None:
+        super().__init__()
+        self._ws = workspace
+        self._allow_autostart = bool(allow_autostart)
+        self._default = default or ""
+        self._mounts: list[str] = list(workspace.mounts or [])
+        self._env: dict[str, str] = dict(workspace.env or {})
+        self._allowed_domains: list[str] = list(
+            workspace.allowed_domains or []
+        )
+        # Image picker: include the workspace's current image even if it
+        # isn't in the server's allowed list, pre-selected (untouched = no
+        # change). Prompts are rich Text so bracket-laden names can't crash.
+        cur = workspace.image or ""
+        opts = list(allowed)
+        if cur and cur not in opts:
+            opts.append(cur)
+        if opts:
+            self._select_options = [(Text(i), i) for i in opts]
+            self._select_value = cur if cur in opts else None
+        else:
+            self._select_options = [(Text("(none)"), "(none)")]
+            self._select_value = "(none)"
+
+    def compose(self) -> ComposeResult:
+        if self._select_value is not None:
+            image_select = Select(
+                self._select_options, value=self._select_value, id="image"
+            )
+        else:
+            image_select = Select(self._select_options, id="image")
+        yield Header(show_clock=False)
+        yield Vertical(
+            Static(Text(f"Edit workspace: {self._ws.name}"), classes="title"),
+            Static("", id="edit_msg"),
+            Static("Name"),
+            Input(value=self._ws.name or "", id="name"),
+            Static("Container image"),
+            image_select,
+            Static("Mounts  (source:/container/path[:opts])"),
+            OptionList(id="mount_list"),
+            Horizontal(
+                Input(
+                    id="mount_input",
+                    placeholder="/host/path:/container/path",
+                ),
+                Button("Add", id="add_mount"),
+                Button("Remove", id="rm_mount"),
+            ),
+            Static("Environment  (KEY=VALUE)"),
+            OptionList(id="env_list"),
+            Horizontal(
+                Input(id="env_input", placeholder="KEY=VALUE"),
+                Button("Add", id="add_env"),
+                Button("Remove", id="rm_env"),
+            ),
+            Static(
+                "Allowed Domains  (host or host:port; empty = unrestricted)"
+            ),
+            OptionList(id="allow_list"),
+            Horizontal(
+                Input(id="allow_input", placeholder="github.com:443"),
+                Button("Add", id="add_allow"),
+                Button("Remove", id="rm_allow"),
+            ),
+            Static("Service shell command (optional)"),
+            Input(value=self._ws.service_command or "", id="command"),
+            Static("Health check command (optional)"),
+            Input(value=self._ws.health_check or "", id="health_check"),
+            Checkbox("Auto start", value=self._ws.auto_start, id="auto_start"),
+            Static(
+                Text("(start this workspace when the server starts)"),
+                id="auto_caption",
+            ),
+            Horizontal(
+                Button("Cancel", id="cancel"),
+                Button("Save", id="save", variant="primary"),
+                classes="actions",
+            ),
+            id="edit_box",
+        )
+        yield Footer()
+
+    def on_mount(self) -> None:
+        shown = self._allow_autostart
+        cb = self.query_one("#auto_start", Checkbox)
+        cb.display = shown
+        cb.disabled = not shown
+        self.query_one("#auto_caption", Static).display = shown
+        self._render_mounts()
+        self._render_env()
+        self._render_allowed_domains()
+
+    def _msg(self, text: str, *, error: bool = False) -> None:
+        self.query_one("#edit_msg", Static).update(
+            Text(text, style="red" if error else "")
+        )
+
+    # --- list editors (same pattern as CreateWorkspaceScreen) ---
+
+    def _render_mounts(self) -> None:
+        ol = self.query_one("#mount_list", OptionList)
+        ol.clear_options()
+        if not self._mounts:
+            ol.add_option(Option(Text("(no mounts)"), id="", disabled=True))
+            return
+        for i, m in enumerate(self._mounts):
+            ol.add_option(Option(Text(m), id=f"m{i}"))
+
+    def _add_mount(self) -> None:
+        inp = self.query_one("#mount_input", Input)
+        v = inp.value.strip()
+        if not v:
+            return
+        err = validate_mount_spec(v)
+        if err:
+            self._msg(err, error=True)
+            return
+        self._mounts.append(v)
+        inp.value = ""
+        self._msg("")
+        self._render_mounts()
+
+    def _remove_mount(self) -> None:
+        ol = self.query_one("#mount_list", OptionList)
+        idx = ol.highlighted
+        if idx is None or not 0 <= idx < len(self._mounts):
+            return
+        del self._mounts[idx]
+        self._render_mounts()
+
+    def _render_env(self) -> None:
+        ol = self.query_one("#env_list", OptionList)
+        ol.clear_options()
+        if not self._env:
+            ol.add_option(Option(Text("(no env vars)"), id="", disabled=True))
+            return
+        for i, (k, val) in enumerate(self._env.items()):
+            ol.add_option(Option(Text(f"{k}={val}"), id=f"e{i}"))
+
+    def _add_env(self) -> None:
+        inp = self.query_one("#env_input", Input)
+        v = inp.value.strip()
+        if not v:
+            return
+        err = validate_env_entry(v)
+        if err:
+            self._msg(err, error=True)
+            return
+        key, _, value = v.partition("=")
+        self._env[key] = value
+        inp.value = ""
+        self._msg("")
+        self._render_env()
+
+    def _remove_env(self) -> None:
+        ol = self.query_one("#env_list", OptionList)
+        idx = ol.highlighted
+        keys = list(self._env)
+        if idx is None or not 0 <= idx < len(keys):
+            return
+        del self._env[keys[idx]]
+        self._render_env()
+
+    def _render_allowed_domains(self) -> None:
+        ol = self.query_one("#allow_list", OptionList)
+        ol.clear_options()
+        if not self._allowed_domains:
+            ol.add_option(Option(Text("(unrestricted)"), id="", disabled=True))
+            return
+        for i, d in enumerate(self._allowed_domains):
+            ol.add_option(Option(Text(d), id=f"a{i}"))
+
+    def _add_allowed_domain(self) -> None:
+        inp = self.query_one("#allow_input", Input)
+        v = inp.value.strip()
+        if not v:
+            return
+        err = validate_allowed_domain_spec(v)
+        if err:
+            self._msg(err, error=True)
+            return
+        if v not in self._allowed_domains:
+            self._allowed_domains.append(v)
+        inp.value = ""
+        self._msg("")
+        self._render_allowed_domains()
+
+    def _remove_allowed_domain(self) -> None:
+        ol = self.query_one("#allow_list", OptionList)
+        idx = ol.highlighted
+        if idx is None or not 0 <= idx < len(self._allowed_domains):
+            return
+        del self._allowed_domains[idx]
+        self._render_allowed_domains()
+
+    # --- save ---
+
+    def _save(self) -> None:
+        name = self.query_one("#name", Input).value.strip()
+        if not name:
+            self._msg("Name is required.", error=True)
+            return
+        sel = self.query_one("#image", Select)
+        val = sel.value
+        image = val if (val and val != "(none)") else None
+        command = self.query_one("#command", Input).value.strip() or None
+        health_check = (
+            self.query_one("#health_check", Input).value.strip() or None
+        )
+        auto = (
+            self._allow_autostart
+            and self.query_one("#auto_start", Checkbox).value
+        )
+        mounts = list(self._mounts) or None
+        env = dict(self._env) or None
+        allowed_domains = list(self._allowed_domains) or None
+        body = {
+            "name": name,
+            "image": image,
+            "service_command": command,
+            "health_check": health_check,
+            "auto_start": auto,
+            "mounts": mounts,
+            "env": env,
+            "allowed_domains": allowed_domains,
+        }
+        # Restart needed iff a container-create-time field changed on a
+        # running workspace (#1749). setup_state/health_check propagate
+        # live and are intentionally excluded from this check.
+        ws = self._ws
+        orig_mounts = list(ws.mounts or []) or None
+        orig_env = dict(ws.env or {}) or None
+        orig_domains = list(ws.allowed_domains or []) or None
+        restart_needed = bool(ws.running) and (
+            (image or None) != (ws.image or None)
+            or mounts != orig_mounts
+            or env != orig_env
+            or (command or None) != (ws.service_command or None)
+            or allowed_domains != orig_domains
+        )
+        try:
+            self.app.tui_state.update_workspace(ws.id, **body)
+        except AuthError:
+            self._msg("Session expired — please log in again.", error=True)
+            return
+        except httpx.HTTPStatusError as exc:
+            try:
+                detail = exc.response.json().get("detail", exc.response.text)
+            except Exception:
+                detail = exc.response.text or str(exc)
+            self._msg(f"Failed to save: {detail}", error=True)
+            return
+        except Exception as exc:
+            self._msg(f"Failed to save: {exc}", error=True)
+            return
+        if restart_needed:
+
+            def _after(restart: bool) -> None:
+                if restart:
+                    try:
+                        self.app.tui_state.restart_workspace(ws.name)
+                    except Exception as exc:
+                        self._msg(
+                            f"Saved, but restart failed: {exc}", error=True
+                        )
+                        return
+                self.dismiss(True)
+
+            self.app.push_screen(
+                ConfirmScreen(
+                    "A running container is not affected by this edit. "
+                    "Restart now to apply?",
+                    yes_label="Restart",
+                    yes_variant="warning",
+                    no_label="Skip",
+                ),
+                _after,
+            )
+        else:
+            self.dismiss(True)
+
+    # --- event handlers ---
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "cancel":
+            self.dismiss(False)
+        elif bid == "save":
+            self._save()
+        elif bid == "add_mount":
+            self._add_mount()
+        elif bid == "rm_mount":
+            self._remove_mount()
+        elif bid == "add_env":
+            self._add_env()
+        elif bid == "rm_env":
+            self._remove_env()
+        elif bid == "add_allow":
+            self._add_allowed_domain()
+        elif bid == "rm_allow":
+            self._remove_allowed_domain()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        eid = event.input.id
+        if eid == "mount_input":
+            self._add_mount()
+        elif eid == "env_input":
+            self._add_env()
+        elif eid == "allow_input":
+            self._add_allowed_domain()
+        elif eid in ("name", "command", "health_check"):
+            self._save()
 
 
 class ServerSwitchScreen(Screen):

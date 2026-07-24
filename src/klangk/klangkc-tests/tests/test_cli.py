@@ -1059,6 +1059,56 @@ class TestKlangkClient:
                 json={"name": "src-copy"},
             )
 
+    def test_create_workspace_includes_allowed_domains(self):
+        client = KlangkClient("http://test:8995", "token")
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "id": "ws-1",
+            "name": "n",
+            "created_at": "x",
+        }
+        with patch.object(client, "post", return_value=mock_resp):
+            client.create_workspace(
+                "n", allowed_domains=["github.com:443", "pypi.org"]
+            )
+            body = client.post.call_args.kwargs["json"]
+            assert body["allowed_domains"] == ["github.com:443", "pypi.org"]
+            # Omitted when not provided (server applies no default list).
+            client.create_workspace("n2")
+            assert (
+                "allowed_domains" not in client.post.call_args.kwargs["json"]
+            )
+
+    def test_update_workspace_puts_fields(self):
+        client = KlangkClient("http://test:8995", "token")
+        with patch.object(
+            client, "put", return_value=MagicMock(status_code=200)
+        ):
+            client.update_workspace(
+                "ws-1", name="renamed", allowed_domains=["a.com"]
+            )
+            client.put.assert_called_once_with(
+                "/api/v1/workspaces/ws-1",
+                json={"name": "renamed", "allowed_domains": ["a.com"]},
+            )
+
+    def test_workspace_from_json_parses_allowed_domains(self):
+        ws = KlangkClient._workspace_from_json(
+            {
+                "id": "ws-1",
+                "name": "n",
+                "created_at": "x",
+                "allowed_domains": ["github.com:443"],
+            },
+            shared=False,
+        )
+        assert ws.allowed_domains == ["github.com:443"]
+        # Absent key -> None (unrestricted).
+        ws2 = KlangkClient._workspace_from_json(
+            {"id": "ws-2", "name": "n2", "created_at": "x"}, shared=False
+        )
+        assert ws2.allowed_domains is None
+
     def test_list_terminals(self):
         client = KlangkClient("http://test:8995", "token")
         ws = Workspace(id="ws" + "0" * 60, name="alpha", created_at="x")
