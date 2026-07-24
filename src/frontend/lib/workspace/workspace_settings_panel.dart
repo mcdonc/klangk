@@ -162,6 +162,8 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
           context.select<AuthService, bool>((a) => a.allowAutostart),
       saveMessage: _saveMessage,
       pendingEgressRestart: _pendingEgressRestart,
+      netfilterEnabled:
+          context.select<AuthService, bool>((a) => a.netfilterEnabled),
       onSave: _saveSettings,
     );
   }
@@ -187,6 +189,7 @@ class _SettingsForm extends StatefulWidget {
   final bool allowAutostart;
   final String? saveMessage;
   final bool pendingEgressRestart;
+  final bool netfilterEnabled;
   final Future<void> Function(Map<String, dynamic>) onSave;
 
   const _SettingsForm({
@@ -197,6 +200,7 @@ class _SettingsForm extends StatefulWidget {
     required this.allowAutostart,
     required this.saveMessage,
     required this.pendingEgressRestart,
+    required this.netfilterEnabled,
     required this.onSave,
   });
 
@@ -663,7 +667,42 @@ class _SettingsFormState extends State<_SettingsForm> {
             fontSize: 12,
           ),
         ),
+        if (_allowedDomains.isNotEmpty && !widget.netfilterEnabled) ...[
+          const SizedBox(height: 8),
+          _buildEgressNotEnforcedNotice(),
+        ],
       ],
+    );
+  }
+
+  /// #1769: this workspace declares allowed_domains but the deploy has
+  /// netfilter disabled (KLANGKD_NETFILTER_HOOKS_DIR unset/unwritable),
+  /// so the allow-list is NOT being enforced — the container starts with
+  /// unrestricted egress (deliberate fail-open). Surface the gap to the
+  /// user who set the list (the party at risk); the server only logs the
+  /// warning to operator logs otherwise.
+  Widget _buildEgressNotEnforcedNotice() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: KColors.accentAmber.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.warning_amber, size: 18),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Egress filtering is not active on this server — the '
+              'allowed-domains list above is NOT being enforced. This '
+              'workspace will start with unrestricted outbound network '
+              'until an operator sets KLANGKD_NETFILTER_HOOKS_DIR.',
+            ),
+          ),
+        ],
+      ),
     );
   }
 

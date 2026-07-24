@@ -107,11 +107,16 @@ void main() {
     Future<http.Response> Function(http.Request) handler, {
     Map<String, List<String>>? permissions,
     List<Map<String, dynamic>>? groups,
+    bool netfilterEnabled = false,
   }) {
     return MockClient((request) async {
       if (request.url.path.contains('/api/v1/config')) {
         return http.Response(
-          jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+          jsonEncode({
+            'login_banner_title': '',
+            'login_banner': '',
+            'netfilter_enabled': netfilterEnabled,
+          }),
           200,
         );
       }
@@ -359,6 +364,88 @@ void main() {
       // First letters of email addresses
       expect(find.text('A'), findsOneWidget);
       expect(find.text('B'), findsOneWidget);
+    });
+
+    // #1769: a workspace carrying allowed_domains while the deploy has
+    // netfilter disabled starts unrestricted (fail-open); badge it so the
+    // user who set the list sees the gap, not just operator logs.
+    group('egress not-enforced badge (#1769)', () {
+      testWidgets('badges a workspace with allowed_domains when netfilter off',
+          (tester) async {
+        testAuthHttpClientOverride = withPermissions((request) async {
+          if (request.url.path == '/api/v1/workspaces') {
+            return http.Response(
+              jsonEncode(_envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'Filtered',
+                  'container_id': null,
+                  'created_at': '2026-01-15 14:30:00',
+                  'allowed_domains': ['github.com:443'],
+                },
+              ])),
+              200,
+            );
+          }
+          return http.Response('Not found', 404);
+        });
+        await tester.pumpWidget(buildPage());
+        await tester.pumpAndSettle();
+
+        expect(find.byIcon(Icons.warning_amber), findsOneWidget);
+      });
+
+      testWidgets('no badge when netfilter is enabled (allow-list enforced)',
+          (tester) async {
+        testAuthHttpClientOverride = withPermissions(
+          (request) async {
+            if (request.url.path == '/api/v1/workspaces') {
+              return http.Response(
+                jsonEncode(_envelope([
+                  {
+                    'id': 'ws-1',
+                    'name': 'Filtered',
+                    'container_id': null,
+                    'created_at': '2026-01-15 14:30:00',
+                    'allowed_domains': ['github.com:443'],
+                  },
+                ])),
+                200,
+              );
+            }
+            return http.Response('Not found', 404);
+          },
+          netfilterEnabled: true,
+        );
+        await tester.pumpWidget(buildPage());
+        await tester.pumpAndSettle();
+
+        expect(find.byIcon(Icons.warning_amber), findsNothing);
+      });
+
+      testWidgets('no badge when a workspace has no allowed_domains',
+          (tester) async {
+        testAuthHttpClientOverride = withPermissions((request) async {
+          if (request.url.path == '/api/v1/workspaces') {
+            return http.Response(
+              jsonEncode(_envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'Plain',
+                  'container_id': null,
+                  'created_at': '2026-01-15 14:30:00',
+                },
+              ])),
+              200,
+            );
+          }
+          return http.Response('Not found', 404);
+        });
+        await tester.pumpWidget(buildPage());
+        await tester.pumpAndSettle();
+
+        expect(find.byIcon(Icons.warning_amber), findsNothing);
+      });
     });
 
     testWidgets('shows shared workspaces section', (tester) async {

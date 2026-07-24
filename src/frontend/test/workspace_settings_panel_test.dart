@@ -70,10 +70,17 @@ http.Client _client({
   int transferStatus = 200,
   Map<String, dynamic>? transferResponse,
   List<Map<String, dynamic>>? searchResults,
+  bool netfilterEnabled = false,
 }) {
   final ws = (workspace ?? _workspace);
   return MockClient((request) async {
     final p = request.url.path;
+    if (p == '/api/v1/config') {
+      return http.Response(
+        jsonEncode({'netfilter_enabled': netfilterEnabled}),
+        200,
+      );
+    }
     if (p == '/api/v1/workspaces') {
       return http.Response(jsonEncode([ws]), 200);
     }
@@ -405,6 +412,60 @@ void main() {
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
     });
+  });
+
+  // #1769: a workspace that declares allowed_domains while the deploy has
+  // netfilter disabled starts unrestricted (fail-open). The gap must be
+  // surfaced to the user who set the list, not just operator logs.
+  group('egress not-enforced notice (#1769)', () {
+    testWidgets(
+      'shows the notice when allowed_domains are set and netfilter is off',
+      (tester) async {
+        testAuthHttpClientOverride = _client(
+          workspace: {
+            ..._workspace,
+            'allowed_domains': <String>['example.com:443'],
+          },
+        );
+        await tester.pumpWidget(_buildPanel());
+        await tester.pumpAndSettle();
+
+        expect(
+          find.textContaining('NOT being enforced'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'hides the notice when netfilter is enabled (allow-list enforced)',
+      (tester) async {
+        testAuthHttpClientOverride = _client(
+          workspace: {
+            ..._workspace,
+            'allowed_domains': <String>['example.com:443'],
+          },
+          netfilterEnabled: true,
+        );
+        await tester.pumpWidget(_buildPanel());
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('NOT being enforced'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'hides the notice when no allowed_domains are set (unrestricted by '
+      'design)',
+      (tester) async {
+        // Default workspace has no allowed_domains; nothing to enforce.
+        testAuthHttpClientOverride = _client();
+        await tester.pumpWidget(_buildPanel());
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('NOT being enforced'), findsNothing);
+      },
+    );
   });
 
   group('save', () {

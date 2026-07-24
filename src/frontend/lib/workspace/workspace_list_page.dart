@@ -566,6 +566,20 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                                       e.value['created_at'] as String?,
                                     ),
                                   ),
+                                  if (_hasUnenforcedEgress(e.value)) ...[
+                                    const SizedBox(width: 8),
+                                    Tooltip(
+                                      message: 'Allowed-domains set but '
+                                          'egress filtering is not '
+                                          'enforced (netfilter disabled '
+                                          'on server)',
+                                      child: Icon(
+                                        Icons.warning_amber,
+                                        size: 16,
+                                        color: Colors.orange,
+                                      ),
+                                    ),
+                                  ],
                                   if (wsMembers.isNotEmpty) ...[
                                     const SizedBox(width: 8),
                                     ...wsMembers.map((m) {
@@ -627,6 +641,16 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         ],
       ),
     );
+  }
+
+  /// #1769: true when this workspace declares allowed_domains but the
+  /// deploy has netfilter disabled, so the allow-list is NOT enforced
+  /// (deliberate fail-open). Used to badge such workspaces in the list —
+  /// the gap is otherwise visible only in operator logs.
+  bool _hasUnenforcedEgress(Map<String, dynamic> ws) {
+    if (_auth.netfilterEnabled) return false;
+    final domains = ws['allowed_domains'] as List?;
+    return domains != null && domains.isNotEmpty;
   }
 
   Widget _buildTabBody(_Section section) {
