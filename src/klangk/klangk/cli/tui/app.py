@@ -57,9 +57,12 @@ class KlangkApp(App):
         border-left: none;
         border-right: none;
     }
-    /* Give the server picker a visible box so its width matches the fields. */
+    /* Give the server picker a visible top/bottom rule (no side borders) so
+    its width matches the fields without inset side bars. */
     OptionList {
         border: tall $border-blurred;
+        border-left: none;
+        border-right: none;
     }
     """
 
