@@ -49,13 +49,17 @@ class KlangkApp(App):
         align-horizontal: right;
         height: auto;
     }
-    /* Underline-style entry fields: keep only the bottom border so each
-    field is one row shorter (text sitting on an underline). */
+    /* Underline-style entry fields: invisible top border + no side borders,
+    keeping the default height so the text stays vertically centered on the
+    middle row, with only the bottom border showing as an underline. */
     Input, Input:focus {
-        height: 2;
-        border-top: none;
+        border-top: blank;
         border-left: none;
         border-right: none;
+    }
+    /* Give the server picker a visible box so its width matches the fields. */
+    OptionList {
+        border: tall $border-blurred;
     }
     """
 
