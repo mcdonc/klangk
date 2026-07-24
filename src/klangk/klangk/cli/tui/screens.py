@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
+import httpx
+
 from rich.text import Text
 
 from textual.app import ComposeResult
@@ -16,10 +18,12 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
+    Checkbox,
     Footer,
     Header,
     Input,
     OptionList,
+    Select,
     Static,
     TabbedContent,
     TabPane,
@@ -28,6 +32,7 @@ from textual.widgets.option_list import Option
 
 from .state import LoginError
 from ..client import AuthError, WorkspaceNotFoundError
+from ..mount import validate_env_entry, validate_mount_spec
 from ..transport import is_valid_server_spec
 from .widgets import StatusBar
 from .ws import listen_for_status
@@ -324,6 +329,7 @@ class MainScreen(Screen):
 
     BINDINGS = [
         ("s", "switch_server", "Switch server"),
+        ("n", "create", "New"),
         ("l", "logout", "Logout"),
     ]
 
@@ -346,6 +352,43 @@ class MainScreen(Screen):
 
     def action_logout(self) -> None:
         self.app.do_logout()
+
+    def action_create(self) -> None:
+        state = self.app.tui_state
+        try:
+            data = state.list_images()
+            default = data.get("default", "") or ""
+            allowed = list(data.get("allowed") or [])
+        except Exception:
+            default, allowed = "", []
+        try:
+            allow_autostart = state.allow_autostart()
+        except Exception:
+            allow_autostart = False
+        self.app.push_screen(
+            CreateWorkspaceScreen(
+                allowed=allowed,
+                default=default,
+                allow_autostart=allow_autostart,
+            ),
+            self._on_created,
+        )
+
+    def _on_created(self, name: str | None) -> None:
+        """Refresh the list after a create, then offer to open the new
+        workspace (the TUI's shell entry point — a live in-TUI PTY shell is
+        a future step; the detail screen hosts the terminal list)."""
+        if not name:
+            return
+        self.refresh_lists()
+
+        def _offer(open_it: bool) -> None:
+            if open_it:
+                self.app.push_screen(WorkspaceDetailScreen(name))
+
+        self.app.push_screen(
+            ConfirmScreen(f"Created '{name}'. Open it now?"), _offer
+        )
 
     # --- list population ---
 
@@ -732,6 +775,250 @@ class DuplicateScreen(ModalScreen):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "dup_name":
             self._commit()
+
+
+class CreateWorkspaceScreen(Screen):
+    """Full-screen workspace create form (parity with Flutter
+    ``CreateWorkspaceDialog``).
+
+    Fields, top to bottom: name, container image (``Select`` populated
+    from ``/api/v1/images``), a mounts list editor, an env list editor,
+    an optional service shell command, an optional health-check command,
+    and — only when the server permits it — an auto-start checkbox.
+    Mounts/env are validated client-side (``validate_mount_spec`` /
+    ``validate_env_entry``) exactly as the Flutter dialog and the CLI
+    ``create`` command do.
+
+    Images and the ``allow_autostart`` flag are fetched by the caller
+    (``MainScreen.action_create``) and passed in, because ``self.app`` is
+    not available until the screen is mounted.
+    """
+
+    BINDINGS = [("escape", "app.pop_screen", "Back")]
+
+    def __init__(
+        self,
+        *,
+        allowed: list[str],
+        default: str,
+        allow_autostart: bool,
+    ) -> None:
+        super().__init__()
+        self._allowed = list(allowed)
+        self._default = default or ""
+        self._allow_autostart = bool(allow_autostart)
+        self._mounts: list[str] = []
+        self._env: dict[str, str] = {}
+        if self._allowed:
+            self._select_options = [(img, img) for img in self._allowed]
+            self._select_value = (
+                self._default
+                if self._default in self._allowed
+                else self._allowed[0]
+            )
+        else:
+            # Couldn't list images — offer a single inert placeholder so the
+            # user can still create; the server applies its default image.
+            # Select tuples are (prompt, value).
+            self._select_options = [("(server default)", "(server default)")]
+            self._select_value = "(server default)"
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=False)
+        yield Vertical(
+            Static("New workspace", classes="title"),
+            Static("", id="create_msg"),
+            Static("Name"),
+            Input(id="name"),
+            Static("Container image"),
+            Select(
+                self._select_options,
+                value=self._select_value,
+                id="image",
+            ),
+            Static("Mounts  (source:/container/path[:opts])"),
+            OptionList(id="mount_list"),
+            Horizontal(
+                Input(
+                    id="mount_input",
+                    placeholder="/host/path:/container/path",
+                ),
+                Button("Add", id="add_mount"),
+                Button("Remove", id="rm_mount"),
+            ),
+            Static("Environment  (KEY=VALUE)"),
+            OptionList(id="env_list"),
+            Horizontal(
+                Input(id="env_input", placeholder="KEY=VALUE"),
+                Button("Add", id="add_env"),
+                Button("Remove", id="rm_env"),
+            ),
+            Static("Service shell command (optional)"),
+            Input(id="command"),
+            Static("Health check command (optional)"),
+            Input(id="health_check"),
+            Checkbox("Auto start", id="auto_start"),
+            Horizontal(
+                Button("Cancel", id="cancel"),
+                Button("Create", id="create", variant="primary"),
+                classes="actions",
+            ),
+            id="create_box",
+        )
+        yield Footer()
+
+    def on_mount(self) -> None:
+        # Only show the auto-start checkbox when the server allows it;
+        # ``auto_start`` defaults to off either way.
+        cb = self.query_one("#auto_start", Checkbox)
+        cb.display = self._allow_autostart
+        cb.disabled = not self._allow_autostart
+        self._render_mounts()
+        self._render_env()
+
+    def _msg(self, text: str, *, error: bool = False) -> None:
+        self.query_one("#create_msg", Static).update(
+            Text(text, style="red" if error else "")
+        )
+
+    # --- mounts list editor ---
+
+    def _render_mounts(self) -> None:
+        ol = self.query_one("#mount_list", OptionList)
+        ol.clear_options()
+        if not self._mounts:
+            ol.add_option(Option(Text("(no mounts)"), id="", disabled=True))
+            return
+        for i, m in enumerate(self._mounts):
+            ol.add_option(Option(Text(m), id=f"m{i}"))
+
+    def _add_mount(self) -> None:
+        inp = self.query_one("#mount_input", Input)
+        v = inp.value.strip()
+        if not v:
+            return
+        err = validate_mount_spec(v)
+        if err:
+            self._msg(err, error=True)
+            return
+        self._mounts.append(v)
+        inp.value = ""
+        self._msg("")
+        self._render_mounts()
+
+    def _remove_mount(self) -> None:
+        ol = self.query_one("#mount_list", OptionList)
+        idx = ol.highlighted
+        if idx is None or not 0 <= idx < len(self._mounts):
+            return
+        del self._mounts[idx]
+        self._render_mounts()
+
+    # --- env list editor ---
+
+    def _render_env(self) -> None:
+        ol = self.query_one("#env_list", OptionList)
+        ol.clear_options()
+        if not self._env:
+            ol.add_option(Option(Text("(no env vars)"), id="", disabled=True))
+            return
+        for i, (k, val) in enumerate(self._env.items()):
+            ol.add_option(Option(Text(f"{k}={val}"), id=f"e{i}"))
+
+    def _add_env(self) -> None:
+        inp = self.query_one("#env_input", Input)
+        v = inp.value.strip()
+        if not v:
+            return
+        err = validate_env_entry(v)
+        if err:
+            self._msg(err, error=True)
+            return
+        key, _, value = v.partition("=")
+        self._env[key] = value
+        inp.value = ""
+        self._msg("")
+        self._render_env()
+
+    def _remove_env(self) -> None:
+        ol = self.query_one("#env_list", OptionList)
+        idx = ol.highlighted
+        keys = list(self._env)
+        if idx is None or not 0 <= idx < len(keys):
+            return
+        del self._env[keys[idx]]
+        self._render_env()
+
+    # --- create ---
+
+    def _create(self) -> None:
+        name = self.query_one("#name", Input).value.strip()
+        if not name:
+            self._msg("Name is required.", error=True)
+            return
+        sel = self.query_one("#image", Select)
+        image = (
+            sel.value
+            if (self._allowed and sel.value != self._default)
+            else None
+        )
+        command = self.query_one("#command", Input).value.strip() or None
+        health_check = (
+            self.query_one("#health_check", Input).value.strip() or None
+        )
+        auto = (
+            self._allow_autostart
+            and self.query_one("#auto_start", Checkbox).value
+        )
+        mounts = list(self._mounts) or None
+        env = dict(self._env) or None
+        try:
+            ws = self.app.tui_state.create_workspace(
+                name,
+                image=image,
+                service_command=command,
+                auto_start=auto,
+                mounts=mounts,
+                env=env,
+                health_check=health_check,
+            )
+        except AuthError:
+            self._msg("Session expired — please log in again.", error=True)
+            return
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.json().get("detail", exc.response.text)
+            self._msg(f"Failed to create: {detail}", error=True)
+            return
+        except Exception as exc:
+            self._msg(f"Failed to create: {exc}", error=True)
+            return
+        self.dismiss(ws.name)
+
+    # --- event handlers ---
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "cancel":
+            self.dismiss(None)
+        elif bid == "create":
+            self._create()
+        elif bid == "add_mount":
+            self._add_mount()
+        elif bid == "rm_mount":
+            self._remove_mount()
+        elif bid == "add_env":
+            self._add_env()
+        elif bid == "rm_env":
+            self._remove_env()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        eid = event.input.id
+        if eid == "mount_input":
+            self._add_mount()
+        elif eid == "env_input":
+            self._add_env()
+        elif eid in ("name", "command", "health_check"):
+            self._create()
 
 
 class ServerSwitchScreen(Screen):

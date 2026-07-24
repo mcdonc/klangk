@@ -6,6 +6,7 @@ from textual.app import App
 
 from .screens import (
     AddServerScreen,
+    CreateWorkspaceScreen,
     LoginScreen,
     MainScreen,
     ServerSwitchScreen,
@@ -25,7 +26,7 @@ class KlangkApp(App):
     Screen {
         align: center top;
     }
-    #login_box, #switch_box, #add_box, #detail_box, #dup_box {
+    #login_box, #switch_box, #add_box, #detail_box, #dup_box, #create_box {
         width: 96;
         max-width: 90%;
         padding: 0 2;
@@ -116,6 +117,7 @@ def run_tui(server_url: str | None = None) -> None:
 # Re-export for convenience / tests.
 __all__ = [
     "AddServerScreen",
+    "CreateWorkspaceScreen",
     "KlangkApp",
     "LoginScreen",
     "MainScreen",

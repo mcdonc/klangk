@@ -127,6 +127,29 @@ class TuiState:
     def duplicate_workspace(self, name: str, new_name: str) -> dict:
         return self.client().duplicate_workspace(name, new_name)
 
+    def create_workspace(
+        self,
+        name: str,
+        image: str | None = None,
+        service_command: str | None = None,
+        auto_start: bool = False,
+        mounts: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        health_check: str | None = None,
+    ) -> Workspace:
+        return self.client().create_workspace(
+            name,
+            image=image,
+            service_command=service_command,
+            auto_start=auto_start,
+            mounts=mounts,
+            env=env,
+            health_check=health_check,
+        )
+
+    def list_images(self) -> dict:
+        return self.client().list_images()
+
     async def list_terminals(self, name: str) -> list[dict]:
         return await self.client().list_terminals(name)
 
@@ -155,6 +178,21 @@ class TuiState:
         if not isinstance(config, dict):
             return []
         return list(config.get("oidc_providers") or [])
+
+    def allow_autostart(self) -> bool:
+        """Whether the server permits per-workspace auto-start.
+
+        Derived from ``allow_autostart`` in ``/api/v1/config`` (the same
+        field the Flutter UI gates its checkbox on). Defaults to False on
+        any failure so the TUI never offers a setting the server rejects.
+        """
+        url = self.current_url()
+        if url is None:
+            return False
+        config = fetch_config(url)
+        if not isinstance(config, dict):
+            return False
+        return bool(config.get("allow_autostart"))
 
     # --- login arms ---
 

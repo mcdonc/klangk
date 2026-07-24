@@ -10,7 +10,7 @@ from __future__ import annotations
 import httpx
 import pytest
 from rich.text import Text
-from textual.widgets import Button, Input, OptionList, Static
+from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
 
 from klangk.cli import config as cfgmod
 from klangk.cli import tui as tui_pkg
@@ -29,6 +29,7 @@ from klangk.cli.config import (
 from klangk.cli.tui.screens import (
     AddServerScreen,
     ConfirmScreen,
+    CreateWorkspaceScreen,
     DuplicateScreen,
     LoginScreen,
     MainScreen,
@@ -235,6 +236,27 @@ def test_oidc_providers(monkeypatch, redirect_xdg):
     monkeypatch.setattr(tui_state_mod, "fetch_config", lambda url: None)
     assert TuiState("https://x.example").oidc_providers() == []
     assert TuiState().oidc_providers() == []
+
+
+def test_allow_autostart(monkeypatch, redirect_xdg):
+    monkeypatch.setattr(
+        tui_state_mod,
+        "fetch_config",
+        lambda url: {"allow_autostart": True},
+    )
+    assert TuiState("https://x.example").allow_autostart() is True
+    monkeypatch.setattr(
+        tui_state_mod,
+        "fetch_config",
+        lambda url: {"allow_autostart": False},
+    )
+    assert TuiState("https://x.example").allow_autostart() is False
+    # missing field / non-dict / no server -> safe default False
+    monkeypatch.setattr(tui_state_mod, "fetch_config", lambda url: {})
+    assert TuiState("https://x.example").allow_autostart() is False
+    monkeypatch.setattr(tui_state_mod, "fetch_config", lambda url: None)
+    assert TuiState("https://x.example").allow_autostart() is False
+    assert TuiState().allow_autostart() is False
 
 
 def test_login_password_success(monkeypatch, redirect_xdg):
@@ -812,6 +834,22 @@ def test_tui_state_workspace_methods(monkeypatch, redirect_xdg):
     fake.restart_workspace.assert_called_once_with("a")
     fake.delete_workspace.assert_called_once_with("a")
     fake.duplicate_workspace.assert_called_once_with("a", "c")
+
+    fake.create_workspace.return_value = _wsobj("new")
+    fake.list_images.return_value = {"default": "base", "allowed": ["base"]}
+    created = st.create_workspace("new", image="base", mounts=["/h:/c"])
+    assert created.name == "new"
+    assert st.list_images() == {"default": "base", "allowed": ["base"]}
+    fake.create_workspace.assert_called_once_with(
+        "new",
+        image="base",
+        service_command=None,
+        auto_start=False,
+        mounts=["/h:/c"],
+        env=None,
+        health_check=None,
+    )
+    fake.list_images.assert_called_once_with()
 
 
 def test_tui_state_terminal_methods(monkeypatch, redirect_xdg):
@@ -1639,6 +1677,433 @@ async def test_detail_delete_terminal_empty_result(monkeypatch):
         await pilot.pause()
         assert "Delete failed" in str(d.query_one("#detail_msg").render())
         assert d.query_one("#term_list").option_count == 2  # unchanged
+
+
+# ---------------------------------------------------------------------------
+# Create workspace form (#1748)
+# ---------------------------------------------------------------------------
+
+
+def _create_state(create=None, **extra):
+    """Authed state with image/autostart/create stubs for create-screen tests."""
+    base = dict(
+        list_images=lambda: {
+            "default": "base",
+            "allowed": ["base", "py:3"],
+        },
+        allow_autostart=lambda: True,
+        create_workspace=create or (lambda *a, **k: _wsobj("zzz")),
+    )
+    base.update(extra)
+    return _ws(**base)
+
+
+async def test_create_screen_renders_defaults(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        assert isinstance(cs, CreateWorkspaceScreen)
+        cb = cs.query_one("#auto_start", Checkbox)
+        assert cb.display is True  # shown (autostart allowed)
+        assert cb.value is False  # off by default
+        assert cs.query_one("#image", Select).value == "base"  # server default
+
+
+async def test_create_screen_autostart_hidden_when_not_allowed(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_create_state(allow_autostart=lambda: False))
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cb = app.screen.query_one("#auto_start", Checkbox)
+        assert cb.display is False
+        assert cb.disabled is True
+
+
+async def test_create_screen_mount_editor(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        # valid add
+        cs.query_one("#mount_input").value = "/host:/c:ro"
+        cs._add_mount()
+        assert cs._mounts == ["/host:/c:ro"]
+        assert cs.query_one("#mount_input").value == ""
+        # invalid rejected, message shown
+        cs.query_one("#mount_input").value = "badmount"
+        cs._add_mount()
+        assert cs._mounts == ["/host:/c:ro"]
+        assert "source:dest" in str(cs.query_one("#create_msg").render())
+        # empty input is a no-op
+        cs._add_mount()
+        # remove the highlighted entry
+        cs.query_one("#mount_list").highlighted = 0
+        cs._remove_mount()
+        assert cs._mounts == []
+
+
+async def test_create_screen_env_editor(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        cs.query_one("#env_input").value = "FOO=bar"
+        cs._add_env()
+        assert cs._env == {"FOO": "bar"}
+        # invalid rejected
+        cs.query_one("#env_input").value = "NOEQ"
+        cs._add_env()
+        assert cs._env == {"FOO": "bar"}
+        assert "KEY=VALUE" in str(cs.query_one("#create_msg").render())
+        # duplicate key overwrites
+        cs.query_one("#env_input").value = "FOO=baz"
+        cs._add_env()
+        assert cs._env == {"FOO": "baz"}
+        # remove
+        cs.query_one("#env_list").highlighted = 0
+        cs._remove_env()
+        assert cs._env == {}
+
+
+async def test_create_screen_name_required(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    called = []
+    app = KlangkApp(
+        _create_state(create=lambda *a, **k: called.append(k) or _wsobj("z"))
+    )
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        app.screen._create()  # name empty
+        assert called == []
+        assert (
+            "required"
+            in str(app.screen.query_one("#create_msg").render()).lower()
+        )
+
+
+async def test_create_screen_submit_omits_default_image(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    captured = {}
+
+    def create(name, **k):
+        captured["name"] = name
+        captured["k"] = k
+        return _wsobj(name)
+
+    app = KlangkApp(
+        _create_state(create=create, allow_autostart=lambda: False)
+    )
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        cs.query_one("#name").value = "myws"
+        cs._create()  # default image kept -> omitted
+        await pilot.pause()
+        assert captured["name"] == "myws"
+        assert captured["k"]["image"] is None
+        assert captured["k"]["auto_start"] is False
+        assert captured["k"]["mounts"] is None
+        assert captured["k"]["env"] is None
+
+
+async def test_create_screen_submit_custom_fields(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    captured = {}
+
+    def create(name, **k):
+        captured["name"] = name
+        captured["k"] = k
+        return _wsobj(name)
+
+    app = KlangkApp(_create_state(create=create))
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        cs.query_one("#name").value = "myws"
+        cs.query_one("#image", Select).value = "py:3"
+        cs.query_one("#command").value = "sleep 1"
+        cs.query_one("#health_check").value = "curl localhost"
+        cs.query_one("#mount_input").value = "/h:/c"
+        cs._add_mount()
+        cs.query_one("#env_input").value = "A=1"
+        cs._add_env()
+        cs.query_one("#auto_start", Checkbox).value = True
+        cs._create()
+        await pilot.pause()
+        assert captured["k"]["image"] == "py:3"
+        assert captured["k"]["service_command"] == "sleep 1"
+        assert captured["k"]["health_check"] == "curl localhost"
+        assert captured["k"]["mounts"] == ["/h:/c"]
+        assert captured["k"]["env"] == {"A": "1"}
+        assert captured["k"]["auto_start"] is True
+
+
+async def test_create_screen_http_error_shows_detail(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    resp = httpx.Response(
+        400,
+        json={"detail": "name taken"},
+        request=httpx.Request("POST", "https://x.example"),
+    )
+
+    def create(name, **k):
+        raise httpx.HTTPStatusError(
+            "boom", request=resp.request, response=resp
+        )
+
+    app = KlangkApp(_create_state(create=create))
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        cs.query_one("#name").value = "dup"
+        cs._create()
+        assert "name taken" in str(cs.query_one("#create_msg").render())
+        assert isinstance(app.screen, CreateWorkspaceScreen)  # still on form
+
+
+async def test_create_screen_auth_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    def create(name, **k):
+        raise AuthError("expired")
+
+    app = KlangkApp(_create_state(create=create))
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        cs.query_one("#name").value = "ws"
+        cs._create()
+        assert "Session expired" in str(cs.query_one("#create_msg").render())
+
+
+async def test_create_screen_images_unavailable(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    captured = {}
+
+    def create(name, **k):
+        captured["k"] = k
+        return _wsobj(name)
+
+    def boom():
+        raise RuntimeError("images endpoint down")
+
+    app = KlangkApp(
+        _create_state(create=create, list_images=boom, allow_autostart=boom)
+    )
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        assert cs._allowed == []
+        assert cs.query_one("#auto_start", Checkbox).display is False
+        cs.query_one("#name").value = "ws"
+        cs._create()
+        await pilot.pause()
+        assert captured["k"]["image"] is None  # omitted
+
+
+async def test_create_screen_cancel_button(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        app.screen.on_button_pressed(FakeBtnPress("cancel"))
+        await pilot.pause()
+        assert isinstance(app.screen, MainScreen)  # back to the list
+
+
+async def test_create_screen_input_submit_routing(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        # empty name submit -> required error (no dismiss)
+        name = cs.query_one("#name")
+        cs.on_input_submitted(Input.Submitted(name, ""))
+        assert "required" in str(cs.query_one("#create_msg").render()).lower()
+        # mount input submit -> add
+        m = cs.query_one("#mount_input")
+        m.value = "/h:/c"
+        cs.on_input_submitted(Input.Submitted(m, m.value))
+        assert cs._mounts == ["/h:/c"]
+        # env input submit -> add
+        e = cs.query_one("#env_input")
+        e.value = "K=V"
+        cs.on_input_submitted(Input.Submitted(e, e.value))
+        assert cs._env == {"K": "V"}
+
+
+async def test_create_flow_offer_opens_detail(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("new")))
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        cs.query_one("#name").value = "new"
+        cs._create()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)  # "Open it now?"
+        app.screen.dismiss(True)
+        await pilot.pause()
+        assert isinstance(app.screen, WorkspaceDetailScreen)
+        assert app.screen._name == "new"
+
+
+async def test_create_flow_offer_declined(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("new")))
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        cs.query_one("#name").value = "new"
+        cs._create()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(False)
+        await pilot.pause()
+        assert isinstance(app.screen, MainScreen)
+
+
+async def test_create_editor_guards(monkeypatch):
+    """Empty input + nothing-highlighted are no-ops (guard returns)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        # empty input -> no-op for both editors
+        cs._add_mount()
+        assert cs._mounts == []
+        cs._add_env()
+        assert cs._env == {}
+        # nothing highlighted -> remove is a no-op
+        cs.query_one("#mount_list").highlighted = None
+        cs._remove_mount()
+        cs.query_one("#env_list").highlighted = None
+        cs._remove_env()
+        assert cs._mounts == []
+        assert cs._env == {}
+
+
+async def test_create_screen_generic_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    def create(name, **k):
+        raise RuntimeError("boom")
+
+    app = KlangkApp(_create_state(create=create))
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        cs.query_one("#name").value = "ws"
+        cs._create()
+        assert "Failed to create: boom" in str(
+            cs.query_one("#create_msg").render()
+        )
+
+
+async def test_create_button_routing(monkeypatch):
+    """on_button_pressed routes add/rm/create to the editor + create paths."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("ws")))
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        # add mount via button
+        cs.query_one("#mount_input").value = "/h:/c"
+        cs.on_button_pressed(FakeBtnPress("add_mount"))
+        assert cs._mounts == ["/h:/c"]
+        # remove mount via button
+        cs.query_one("#mount_list").highlighted = 0
+        cs.on_button_pressed(FakeBtnPress("rm_mount"))
+        assert cs._mounts == []
+        # add env via button
+        cs.query_one("#env_input").value = "K=V"
+        cs.on_button_pressed(FakeBtnPress("add_env"))
+        assert cs._env == {"K": "V"}
+        # remove env via button
+        cs.query_one("#env_list").highlighted = 0
+        cs.on_button_pressed(FakeBtnPress("rm_env"))
+        assert cs._env == {}
+        # create via button -> success -> offer
+        cs.query_one("#name").value = "ws"
+        cs.on_button_pressed(FakeBtnPress("create"))
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
 
 
 # ---------------------------------------------------------------------------

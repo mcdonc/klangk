@@ -78,6 +78,18 @@ operators or integrators to act when upgrading.
   field on the workspace create/update API. See
   [Egress Filtering](https://klangk.dev/features/egress-filtering).
 
+- **The `klangk` TUI can create workspaces from a full create form (#1748).**
+  Press `n` on the workspace list to open a form mirroring the Flutter
+  `CreateWorkspaceDialog`: name, a container-image picker populated from
+  `/api/v1/images`, add/remove mounts and environment-variable editors, an
+  optional service shell command and health-check command, and an auto-start
+  checkbox (shown only when the server permits it, off by default). Mounts
+  (`source:/container[:opts]`) and env (`KEY=VALUE`) are validated client-side
+  with the same rules as the CLI `create` command. If the image list can't be
+  fetched the form still works (the server applies its default image). After a
+  successful create the list refreshes and the TUI offers to open the new
+  workspace; a live in-TUI shell session is a future step.
+
 - **The `features_config:` block now accepts the stripped, lowercased key form
   (`soliplex_url`) in addition to the full declared name
   (`KLANGKWS_FEATURE_SOLIPLEX_URL`) (#1737).** The short form matches the key the
