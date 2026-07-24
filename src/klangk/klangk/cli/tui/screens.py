@@ -334,6 +334,7 @@ class MainScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.app.title = "Klangk: Workspaces"
         self.refresh_lists()
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(self._status_loop, name="status-ws")
@@ -429,18 +430,29 @@ class WorkspaceDetailScreen(Screen):
         ("r", "restart", "Restart"),
         ("d", "duplicate", "Duplicate"),
         ("x", "delete", "Delete"),
+        ("delete", "delete_terminal", "Del term"),
     ]
+
+    DEFAULT_CSS = """
+    WorkspaceDetailScreen #term_list {
+        height: auto;
+        max-height: 14;
+    }
+    """
 
     def __init__(self, name: str) -> None:
         super().__init__()
         self._name = name
         self._ws = None
+        self._terminals: list[dict] = []
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield Vertical(
             Static("", id="detail_title"),
             Static("", id="detail_body"),
+            Static("Terminals (own):", id="term_label"),
+            OptionList(id="term_list"),
             Static("", id="detail_msg"),
             id="detail_box",
         )
@@ -448,6 +460,7 @@ class WorkspaceDetailScreen(Screen):
 
     def on_mount(self) -> None:
         self._load()
+        self.run_worker(self._load_terminals, exit_on_error=False)
 
     def _load(self) -> None:
         try:
@@ -523,6 +536,52 @@ class WorkspaceDetailScreen(Screen):
         else:
             return
         self._display()
+
+    # --- terminals (own) ---
+
+    async def _load_terminals(self) -> None:
+        try:
+            windows = await self.app.tui_state.list_terminals(self._name)
+        except Exception:
+            windows = []
+        self._terminals = windows or []
+        self._render_terminals()
+
+    def _render_terminals(self) -> None:
+        ol = self.query_one("#term_list", OptionList)
+        ol.clear_options()
+        if not self._terminals:
+            ol.add_option(Option(Text("(no terminals)"), id="", disabled=True))
+            return
+        for w in self._terminals:
+            idx = w.get("index", "")
+            name = w.get("name") or idx
+            ol.add_option(Option(Text(f"{idx}  {name}"), id=str(idx)))
+
+    def action_delete_terminal(self) -> None:
+        ol = self.query_one("#term_list", OptionList)
+        if ol.highlighted is None:
+            return
+        opt = ol.get_option_at_index(ol.highlighted)
+        if not opt.id:
+            return
+        if len(self._terminals) <= 1:
+            self._msg("Can't delete the last terminal.", error=True)
+            return
+        index = int(opt.id)
+        self.run_worker(self._do_delete_terminal(index), exit_on_error=False)
+
+    async def _do_delete_terminal(self, index: int) -> None:
+        try:
+            windows = await self.app.tui_state.close_terminal(
+                self._name, index
+            )
+        except Exception as exc:
+            self._msg(f"Delete failed: {exc}", error=True)
+            return
+        self._terminals = windows or []
+        self._render_terminals()
+        self._msg(f"Deleted terminal {index}.")
 
     # --- actions ---
 

@@ -94,6 +94,8 @@ def _authed_state(**extra):
         known_servers=lambda: [],
         list_owned_workspaces=lambda: [],
         list_shared_workspaces=lambda: [],
+        list_terminals=_async_empty,
+        close_terminal=_async_empty,
     )
     base.update(extra)
     return _st(**base)
@@ -109,6 +111,8 @@ def _ws(owned=None, shared=None, **extra):
         known_servers=lambda: [],
         list_owned_workspaces=lambda: owned or [],
         list_shared_workspaces=lambda: shared or [],
+        list_terminals=_async_empty,
+        close_terminal=_async_empty,
     )
     base.update(extra)
     return _st(**base)
@@ -116,6 +120,11 @@ def _ws(owned=None, shared=None, **extra):
 
 def _wsobj(name, **k):
     return Workspace(id="id-" + name, name=name, created_at="x", **k)
+
+
+async def _async_empty(*a, **k):
+    """Async stub for TuiState terminal methods (returns no terminals)."""
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -805,6 +814,22 @@ def test_tui_state_workspace_methods(monkeypatch, redirect_xdg):
     fake.duplicate_workspace.assert_called_once_with("a", "c")
 
 
+def test_tui_state_terminal_methods(monkeypatch, redirect_xdg):
+    from unittest.mock import AsyncMock, MagicMock
+
+    import asyncio
+
+    fake = MagicMock()
+    fake.list_terminals = AsyncMock(return_value=[{"index": 0, "name": "m"}])
+    fake.close_terminal = AsyncMock(return_value=[])
+    st = TuiState("https://x.example")
+    monkeypatch.setattr(st, "client", lambda: fake)
+    assert asyncio.run(st.list_terminals("a")) == [{"index": 0, "name": "m"}]
+    assert asyncio.run(st.close_terminal("a", 0)) == []
+    fake.list_terminals.assert_called_once_with("a")
+    fake.close_terminal.assert_called_once_with("a", 0)
+
+
 async def test_main_screen_lists_and_status(monkeypatch):
     async def noop(*a, **k):
         return None
@@ -1287,6 +1312,204 @@ async def test_status_event_routed_to_detail(monkeypatch):
         assert "running: yes" in str(
             app.screen.query_one("#detail_body").render()
         )
+
+
+async def _async_terms(*a, **k):
+    """Async stub returning two owned terminal windows."""
+    return [
+        {"index": 0, "name": "main", "id": "@0"},
+        {"index": 1, "name": "build", "id": "@1"},
+    ]
+
+
+async def test_detail_terminals_listed(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=_async_terms)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()  # deterministic render
+        await pilot.pause()
+        tl = app.screen.query_one("#term_list")
+        assert tl.option_count == 2
+        assert "main" in str(tl.get_option_at_index(0).prompt)
+        assert "build" in str(tl.get_option_at_index(1).prompt)
+
+
+async def test_detail_terminals_empty_placeholder(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws()  # list_terminals -> _async_empty -> []
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        tl = app.screen.query_one("#term_list")
+        assert tl.option_count == 1  # the (no terminals) placeholder
+
+
+async def test_detail_terminal_load_failure(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    async def boom(*a, **k):
+        raise RuntimeError("ws down")
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=boom)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()  # swallows the error
+        await pilot.pause()
+        assert app.screen.query_one("#term_list").option_count == 1
+
+
+async def test_detail_delete_terminal_guard_last(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    async def one(*a, **k):
+        return [{"index": 0, "name": "only", "id": "@0"}]
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=one, close_terminal=_async_empty)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        d.query_one("#term_list").highlighted = 0
+        d.action_delete_terminal()  # only terminal -> refused
+        await pilot.pause()
+        assert "Can't delete the last terminal" in str(
+            d.query_one("#detail_msg").render()
+        )
+
+
+async def test_detail_delete_terminal_no_selection(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=_async_terms, close_terminal=_async_empty)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        # nothing highlighted -> no-op
+        d.query_one("#term_list").highlighted = None
+        d.action_delete_terminal()
+        await pilot.pause()
+        assert d.query_one("#term_list").option_count == 2  # unchanged
+
+
+async def test_detail_delete_terminal_placeholder(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws()  # no terminals -> (no terminals) placeholder
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        d.query_one("#term_list").highlighted = 0  # the placeholder
+        d.action_delete_terminal()  # opt.id == "" -> no-op
+        await pilot.pause()
+        assert d.query_one("#term_list").option_count == 1  # unchanged
+
+
+async def test_detail_delete_terminal(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    closed = {}
+
+    async def _close(name, index):
+        closed["i"] = index
+        return [{"index": 0, "name": "main", "id": "@0"}]
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=_async_terms, close_terminal=_close)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        d.query_one("#term_list").highlighted = 1
+        d.action_delete_terminal()
+        for _ in range(3):
+            await pilot.pause()
+        assert closed.get("i") == 1
+        assert "Deleted terminal 1" in str(d.query_one("#detail_msg").render())
+        assert d.query_one("#term_list").option_count == 1
+
+
+async def test_detail_delete_terminal_failure(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    async def _close(name, index):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=_async_terms, close_terminal=_close)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        await d._do_delete_terminal(1)  # close raises
+        await pilot.pause()
+        assert "Delete failed" in str(d.query_one("#detail_msg").render())
+
+
+async def test_main_screen_title(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws())
+    async with app.run_test():
+        assert app.title == "Klangk: Workspaces"
 
 
 # ---------------------------------------------------------------------------

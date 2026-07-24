@@ -48,6 +48,13 @@ operators or integrators to act when upgrading.
   characters can't crash the TUI; list/detail load errors degrade to a
   graceful message. Volume cleanup is deferred.
 
+- **The `klangk` TUI detail screen now lists the workspace's terminals and
+  lets you delete them (#1747).** The detail page enumerates the terminals
+  you own (fetched over the workspace WebSocket) and adds a Delete-key
+  binding to remove the selected one; the last terminal is protected, as
+  in Flutter. Selecting a terminal is wired for a future `klangk shell`
+  step. The workspace-list page is now titled "Klangk: Workspaces".
+
 - **The `features_config:` block now accepts the stripped, lowercased key form
   (`soliplex_url`) in addition to the full declared name
   (`KLANGKWS_FEATURE_SOLIPLEX_URL`) (#1737).** The short form matches the key the

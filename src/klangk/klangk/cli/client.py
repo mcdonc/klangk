@@ -548,6 +548,93 @@ class KlangkClient:
         self._raise_for_status(resp)
         return resp.json()
 
+    # --- terminals (workspace WebSocket; no REST endpoint) ---
+
+    async def list_terminals(self, name: str) -> list[dict]:
+        """Return this user's own terminal windows in workspace *name*.
+
+        There is no REST endpoint for terminal windows, so this drives the
+        workspace WebSocket: connect, wait for the container, open a
+        terminal to enumerate windows, then stop. Returns ``[]`` on any
+        failure so the TUI can degrade gracefully.
+        """
+        return await self._terminals(name)
+
+    async def close_terminal(self, name: str, index: int) -> list[dict]:
+        """Close terminal window *index* in *name*; return the updated list."""
+        return await self._terminals(name, close_index=index)
+
+    async def _terminals(
+        self, name: str, *, close_index: int | None = None
+    ) -> list[dict]:
+        try:
+            ws = self.resolve_workspace(name)
+            async with ws_connect(
+                self.server_url, token=self.token or ""
+            ) as conn:
+                await wait_container_ready(conn, ws.id)
+                await conn.send(json.dumps({"cmd": "ui_ready"}))
+                await self._drain_until_ready(conn)
+                cols, rows = get_terminal_size()
+                await conn.send(
+                    json.dumps(
+                        {
+                            "cmd": "terminal_start",
+                            "cols": cols,
+                            "rows": rows,
+                        }
+                    )
+                )
+                windows = await self._recv_windows(conn)
+                if close_index is not None and windows:
+                    await conn.send(
+                        json.dumps(
+                            {
+                                "cmd": "terminal_close_window",
+                                "index": close_index,
+                            }
+                        )
+                    )
+                    windows = await self._recv_windows(conn)
+                await send_ignore_closed(
+                    conn, json.dumps({"cmd": "terminal_stop"})
+                )
+                return windows
+        except Exception:
+            return []
+
+    @staticmethod
+    async def _drain_until_ready(conn, timeout: float = 30.0) -> None:
+        """Read frames until the post-``ui_ready`` container_ready event."""
+        loop = asyncio.get_event_loop()
+        end = loop.time() + timeout
+        while True:
+            remaining = end - loop.time()
+            if remaining <= 0:  # pragma: no cover
+                raise asyncio.TimeoutError
+            raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+            msg = json.loads(raw)
+            if (
+                msg.get("type") == "event"
+                and isinstance(msg.get("event"), dict)
+                and msg["event"].get("name") == "container_ready"
+            ):
+                return
+
+    @staticmethod
+    async def _recv_windows(conn, timeout: float = 30.0) -> list[dict]:
+        """Read frames until a ``terminal_windows`` frame arrives."""
+        loop = asyncio.get_event_loop()
+        end = loop.time() + timeout
+        while True:
+            remaining = end - loop.time()
+            if remaining <= 0:  # pragma: no cover
+                raise asyncio.TimeoutError
+            raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+            msg = json.loads(raw)
+            if msg.get("type") == "terminal_windows":
+                return msg.get("windows") or []
+
     def export_workspace(
         self,
         workspace_id: str,

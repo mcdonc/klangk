@@ -127,6 +127,12 @@ class TuiState:
     def duplicate_workspace(self, name: str, new_name: str) -> dict:
         return self.client().duplicate_workspace(name, new_name)
 
+    async def list_terminals(self, name: str) -> list[dict]:
+        return await self.client().list_terminals(name)
+
+    async def close_terminal(self, name: str, index: int) -> list[dict]:
+        return await self.client().close_terminal(name, index)
+
     # --- auth mode (probed live via /config) ---
 
     def auth_mode(self) -> str:
