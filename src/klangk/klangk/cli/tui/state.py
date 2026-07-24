@@ -136,6 +136,7 @@ class TuiState:
         mounts: list[str] | None = None,
         env: dict[str, str] | None = None,
         health_check: str | None = None,
+        allowed_domains: list[str] | None = None,
     ) -> Workspace:
         return self.client().create_workspace(
             name,
@@ -145,7 +146,12 @@ class TuiState:
             mounts=mounts,
             env=env,
             health_check=health_check,
+            allowed_domains=allowed_domains,
         )
+
+    def update_workspace(self, workspace_id: str, **fields) -> None:
+        """Partial-update a workspace's fields (used by the TUI edit form, #1778)."""
+        self.client().update_workspace(workspace_id, **fields)
 
     def list_images(self) -> dict:
         return self.client().list_images()

@@ -31,6 +31,7 @@ from klangk.cli.tui.screens import (
     ConfirmScreen,
     CreateWorkspaceScreen,
     DuplicateScreen,
+    EditWorkspaceScreen,
     LoginScreen,
     MainScreen,
     ServerSwitchScreen,
@@ -848,8 +849,15 @@ def test_tui_state_workspace_methods(monkeypatch, redirect_xdg):
         mounts=["/h:/c"],
         env=None,
         health_check=None,
+        allowed_domains=None,
     )
     fake.list_images.assert_called_once_with()
+
+    # #1778: update_workspace forwards to the client.
+    st.update_workspace("id-x", name="renamed", allowed_domains=["a.com"])
+    fake.update_workspace.assert_called_once_with(
+        "id-x", name="renamed", allowed_domains=["a.com"]
+    )
 
 
 def test_tui_state_terminal_methods(monkeypatch, redirect_xdg):
@@ -1002,6 +1010,53 @@ async def test_detail_loads_and_renders(monkeypatch):
             "owner: o@x",
         ]:
             assert s in body, s
+
+
+async def test_detail_renders_allowed_domains(monkeypatch):
+    # #1745: the current allowlist is shown in the detail view.
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", allowed_domains=["github.com:443", "pypi.org"])
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        body = str(app.screen.query_one("#detail_body").render())
+        assert "allowed domains:" in body
+        assert "github.com:443" in body
+        assert "pypi.org" in body
+
+
+async def test_detail_action_edit_opens_form_and_refreshes(monkeypatch):
+    # #1778: 'e' on the detail opens the edit form; a successful save
+    # refreshes the detail (re-fetches the workspace).
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", image="base")
+    finds = []
+    st = _ws(
+        list_images=lambda: {"default": "base", "allowed": ["base", "py:3"]},
+        allow_autostart=lambda: True,
+    )
+    st.find_workspace = lambda n: finds.append(n) or a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        app.screen.action_edit()
+        await pilot.pause()
+        assert isinstance(app.screen, EditWorkspaceScreen)
+        # Simulate a successful save/disdismiss -> _on_edited refreshes.
+        app.screen.dismiss(True)
+        await pilot.pause()
+        assert isinstance(app.screen, WorkspaceDetailScreen)
+        assert finds.count("alpha") >= 2  # initial load + post-edit reload
 
 
 async def test_detail_load_failure(monkeypatch):
@@ -1985,6 +2040,11 @@ async def test_create_screen_input_submit_routing(monkeypatch):
         e.value = "K=V"
         cs.on_input_submitted(Input.Submitted(e, e.value))
         assert cs._env == {"K": "V"}
+        # allow input submit -> add
+        a = cs.query_one("#allow_input")
+        a.value = "github.com:443"
+        cs.on_input_submitted(Input.Submitted(a, a.value))
+        assert cs._allowed_domains == ["github.com:443"]
 
 
 async def test_create_flow_offer_opens_detail(monkeypatch):
@@ -2101,6 +2161,14 @@ async def test_create_button_routing(monkeypatch):
         cs.query_one("#env_list").highlighted = 0
         cs.on_button_pressed(FakeBtnPress("rm_env"))
         assert cs._env == {}
+        # add allowed-domain via button
+        cs.query_one("#allow_input").value = "github.com:443"
+        cs.on_button_pressed(FakeBtnPress("add_allow"))
+        assert cs._allowed_domains == ["github.com:443"]
+        # remove allowed-domain via button
+        cs.query_one("#allow_list").highlighted = 0
+        cs.on_button_pressed(FakeBtnPress("rm_allow"))
+        assert cs._allowed_domains == []
         # create via button -> success -> offer
         cs.query_one("#name").value = "ws"
         cs.on_button_pressed(FakeBtnPress("create"))
@@ -2206,6 +2274,563 @@ async def test_create_screen_default_not_in_allowed(monkeypatch):
         cs._create()  # nothing picked -> image omitted
         await pilot.pause()
         assert captured["k"]["image"] is None
+
+
+# ---------------------------------------------------------------------------
+# Edit workspace form (#1778) + allowed_domains (#1745)
+# ---------------------------------------------------------------------------
+
+
+def _edit_state(ws, *, update=None, restart=None, **extra):
+    """Authed state with image/autostart/update/restart stubs for edit tests."""
+    base = dict(
+        list_images=lambda: {"default": "base", "allowed": ["base", "py:3"]},
+        allow_autostart=lambda: True,
+        update_workspace=update or (lambda *a, **k: None),
+        restart_workspace=restart or (lambda *a, **k: None),
+    )
+    base.update(extra)
+    return _ws(**base)
+
+
+def _edit_screen(app, ws, **kw):
+    app.push_screen(
+        EditWorkspaceScreen(
+            workspace=ws,
+            allowed=kw.get("allowed", ["base", "py:3"]),
+            default=kw.get("default", "base"),
+            allow_autostart=kw.get("allow_autostart", True),
+        )
+    )
+
+
+async def test_create_screen_allowed_domains_editor(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        # valid add
+        cs.query_one("#allow_input").value = "github.com:443"
+        cs._add_allowed_domain()
+        assert cs._allowed_domains == ["github.com:443"]
+        assert cs.query_one("#allow_input").value == ""
+        # invalid rejected
+        cs.query_one("#allow_input").value = "bad spec"
+        cs._add_allowed_domain()
+        assert cs._allowed_domains == ["github.com:443"]
+        assert "host:port" in str(cs.query_one("#create_msg").render())
+        # duplicate add is a no-op; empty input is a no-op
+        cs.query_one("#allow_input").value = "github.com:443"
+        cs._add_allowed_domain()
+        cs._add_allowed_domain()  # empty input
+        assert cs._allowed_domains == ["github.com:443"]
+        # remove with nothing highlighted is a no-op
+        cs.query_one("#allow_list").highlighted = None
+        cs._remove_allowed_domain()
+        assert cs._allowed_domains == ["github.com:443"]
+        # remove
+        cs.query_one("#allow_list").highlighted = 0
+        cs._remove_allowed_domain()
+        assert cs._allowed_domains == []
+
+
+async def test_edit_screen_pre_populates(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    ws = _wsobj(
+        "alpha",
+        image="py:3",
+        mounts=["/h:/c"],
+        env={"A": "1"},
+        service_command="sh",
+        health_check="hc",
+        auto_start=True,
+        allowed_domains=["github.com:443"],
+    )
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        assert es.query_one("#name").value == "alpha"
+        assert es.query_one("#image", Select).value == "py:3"
+        assert es.query_one("#command").value == "sh"
+        assert es.query_one("#health_check").value == "hc"
+        assert es.query_one("#auto_start", Checkbox).value is True
+        assert es._mounts == ["/h:/c"]
+        assert es._env == {"A": "1"}
+        assert es._allowed_domains == ["github.com:443"]
+
+
+async def test_edit_screen_allowed_domains_editor(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    ws = _wsobj("alpha", allowed_domains=["github.com:443"])
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        # duplicate add is a no-op
+        es.query_one("#allow_input").value = "github.com:443"
+        es._add_allowed_domain()
+        assert es._allowed_domains == ["github.com:443"]
+        # new entry
+        es.query_one("#allow_input").value = "pypi.org:443"
+        es._add_allowed_domain()
+        assert es._allowed_domains == ["github.com:443", "pypi.org:443"]
+        # invalid rejected
+        es.query_one("#allow_input").value = "bad spec"
+        es._add_allowed_domain()
+        assert len(es._allowed_domains) == 2
+        assert "host:port" in str(es.query_one("#edit_msg").render())
+        # remove highlighted
+        es.query_one("#allow_list").highlighted = 0
+        es._remove_allowed_domain()
+        assert es._allowed_domains == ["pypi.org:443"]
+
+
+async def test_edit_screen_save_calls_update(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    captured = {}
+
+    def update(wid, **f):
+        captured["id"] = wid
+        captured.update(f)
+
+    ws = _wsobj("alpha", image="base", running=False)
+    app = KlangkApp(_edit_state(ws, update=update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#name").value = "renamed"
+        es.query_one("#allow_input").value = "github.com:443"
+        es._add_allowed_domain()
+        es._save()
+        await pilot.pause()
+        assert captured["id"] == ws.id
+        assert captured["name"] == "renamed"
+        assert captured["allowed_domains"] == ["github.com:443"]
+        # No restart offer: workspace not running.
+        assert not isinstance(app.screen, ConfirmScreen)
+        assert not isinstance(app.screen, EditWorkspaceScreen)  # dismissed
+
+
+async def test_edit_screen_restart_needed_when_running_and_changed(
+    monkeypatch,
+):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    restarted = []
+    ws = _wsobj("alpha", image="base", running=True)
+    app = KlangkApp(
+        _edit_state(ws, restart=lambda *a, **k: restarted.append(a))
+    )
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#image", Select).value = "py:3"  # create-time change
+        es._save()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)  # restart offered
+        # accept -> restart_workspace called + edit screen dismissed
+        app.screen.dismiss(True)
+        await pilot.pause()
+        assert restarted
+        assert not isinstance(app.screen, EditWorkspaceScreen)
+
+
+async def test_edit_screen_no_restart_when_create_field_unchanged(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    ws = _wsobj("alpha", image="base", running=True)
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        # No create-time field changed (only a live-propagating field).
+        es.query_one("#health_check").value = "curl x"
+        es._save()
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmScreen)
+        assert not isinstance(app.screen, EditWorkspaceScreen)
+
+
+async def test_edit_screen_name_required(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    updated = []
+    ws = _wsobj("alpha")
+    app = KlangkApp(_edit_state(ws, update=lambda *a, **k: updated.append(k)))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#name").value = ""
+        es._save()
+        assert updated == []
+        assert "required" in str(es.query_one("#edit_msg").render()).lower()
+
+
+async def test_edit_screen_save_http_error_shows_detail(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    resp = httpx.Response(
+        400,
+        json={"detail": "name taken"},
+        request=httpx.Request("PUT", "https://x.example"),
+    )
+
+    def update(wid, **f):
+        raise httpx.HTTPStatusError(
+            "boom", request=resp.request, response=resp
+        )
+
+    ws = _wsobj("alpha")
+    app = KlangkApp(_edit_state(ws, update=update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es._save()
+        assert "name taken" in str(es.query_one("#edit_msg").render())
+        assert isinstance(app.screen, EditWorkspaceScreen)  # still on form
+
+
+async def test_edit_screen_cancel_dismisses(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    updated = []
+    ws = _wsobj("alpha")
+    app = KlangkApp(_edit_state(ws, update=lambda *a, **k: updated.append(k)))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es.on_button_pressed(Button.Pressed(button=es.query_one("#cancel")))
+        await pilot.pause()
+        assert updated == []
+        assert not isinstance(app.screen, EditWorkspaceScreen)
+
+
+async def test_edit_screen_current_image_not_in_allowed(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    # The workspace's image isn't in the server's allowed list — the picker
+    # still shows + pre-selects it (untouched = no change).
+    ws = _wsobj("alpha", image="custom:latest")
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        assert es.query_one("#image", Select).value == "custom:latest"
+
+
+async def test_edit_screen_mount_editor(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    ws = _wsobj("alpha")
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#mount_input").value = "/host:/c:ro"
+        es._add_mount()
+        assert es._mounts == ["/host:/c:ro"]
+        es.query_one("#mount_list").highlighted = 0
+        es._remove_mount()
+        assert es._mounts == []
+
+
+async def test_edit_screen_editors_edge_cases(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    ws = _wsobj("alpha")  # no mounts/env/allowed_domains
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        # empty input is a no-op for each editor
+        es._add_mount()
+        es._add_env()
+        es._add_allowed_domain()
+        assert es._mounts == [] and es._env == {} and es._allowed_domains == []
+        # invalid rejected
+        es.query_one("#mount_input").value = "badmount"
+        es._add_mount()
+        assert "source:dest" in str(es.query_one("#edit_msg").render())
+        es.query_one("#env_input").value = "NOEQ"
+        es._add_env()
+        assert "KEY=VALUE" in str(es.query_one("#edit_msg").render())
+        # remove with nothing highlighted is a no-op
+        es._remove_mount()
+        es._remove_env()
+        es._remove_allowed_domain()
+        # env dup overwrites
+        es.query_one("#env_input").value = "K=1"
+        es._add_env()
+        es.query_one("#env_input").value = "K=2"
+        es._add_env()
+        assert es._env == {"K": "2"}
+
+
+async def test_edit_button_and_input_routing(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    ws = _wsobj("alpha", running=False)
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        # button routing: add/rm for each editor
+        es.query_one("#mount_input").value = "/h:/c"
+        es.on_button_pressed(FakeBtnPress("add_mount"))
+        es.query_one("#mount_list").highlighted = 0
+        es.on_button_pressed(FakeBtnPress("rm_mount"))
+        assert es._mounts == []
+        es.query_one("#env_input").value = "K=V"
+        es.on_button_pressed(FakeBtnPress("add_env"))
+        es.query_one("#env_list").highlighted = 0
+        es.on_button_pressed(FakeBtnPress("rm_env"))
+        assert es._env == {}
+        es.query_one("#allow_input").value = "github.com:443"
+        es.on_button_pressed(FakeBtnPress("add_allow"))
+        es.query_one("#allow_list").highlighted = 0
+        es.on_button_pressed(FakeBtnPress("rm_allow"))
+        assert es._allowed_domains == []
+        # input submit routing
+        m = es.query_one("#mount_input")
+        m.value = "/h:/c"
+        es.on_input_submitted(Input.Submitted(m, m.value))
+        assert es._mounts == ["/h:/c"]
+        e = es.query_one("#env_input")
+        e.value = "K=V"
+        es.on_input_submitted(Input.Submitted(e, e.value))
+        assert es._env == {"K": "V"}
+        a = es.query_one("#allow_input")
+        a.value = "pypi.org"
+        es.on_input_submitted(Input.Submitted(a, a.value))
+        assert es._allowed_domains == ["pypi.org"]
+        # save via button + name submit
+        es.on_button_pressed(FakeBtnPress("save"))
+        await pilot.pause()
+        assert not isinstance(app.screen, EditWorkspaceScreen)
+
+
+async def test_edit_screen_save_auth_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    ws = _wsobj("alpha")
+    app = KlangkApp(
+        _edit_state(
+            ws,
+            update=lambda *a, **k: (_ for _ in ()).throw(AuthError("expired")),
+        )
+    )
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es._save()
+        assert "Session expired" in str(es.query_one("#edit_msg").render())
+
+
+async def test_edit_screen_save_generic_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    def update(wid, **f):
+        raise RuntimeError("boom")
+
+    ws = _wsobj("alpha")
+    app = KlangkApp(_edit_state(ws, update=update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es._save()
+        assert "Failed to save: boom" in str(
+            es.query_one("#edit_msg").render()
+        )
+
+
+async def test_edit_screen_save_http_error_non_json(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    resp = httpx.Response(
+        502,
+        text="<html>proxy</html>",
+        request=httpx.Request("PUT", "https://x.example"),
+    )
+
+    def update(wid, **f):
+        raise httpx.HTTPStatusError(
+            "boom", request=resp.request, response=resp
+        )
+
+    ws = _wsobj("alpha")
+    app = KlangkApp(_edit_state(ws, update=update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es._save()
+        assert "proxy" in str(es.query_one("#edit_msg").render())
+
+
+async def test_edit_screen_field_submit_saves(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    updated = []
+    ws = _wsobj("alpha", running=False)
+    app = KlangkApp(_edit_state(ws, update=lambda *a, **k: updated.append(k)))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        name = es.query_one("#name")
+        es.on_input_submitted(Input.Submitted(name, name.value))  # -> _save
+        await pilot.pause()
+        assert updated  # update_workspace called
+        assert not isinstance(app.screen, EditWorkspaceScreen)
+
+
+async def test_edit_screen_restart_declined(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    restarted = []
+    ws = _wsobj("alpha", image="base", running=True)
+    app = KlangkApp(
+        _edit_state(ws, restart=lambda *a, **k: restarted.append(1))
+    )
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#image", Select).value = "py:3"
+        es._save()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(False)  # decline restart
+        await pilot.pause()
+        assert restarted == []
+        assert not isinstance(app.screen, EditWorkspaceScreen)
+
+
+async def test_edit_screen_restart_failure(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    def boom(*a, **k):
+        raise RuntimeError("restart down")
+
+    ws = _wsobj("alpha", image="base", running=True)
+    app = KlangkApp(_edit_state(ws, restart=boom))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#image", Select).value = "py:3"
+        es._save()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(True)  # accept restart -> fails
+        await pilot.pause()
+        assert "restart failed" in str(es.query_one("#edit_msg").render())
+
+
+async def test_detail_action_edit_no_workspace(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(
+        list_images=lambda: {"default": "base", "allowed": ["base"]},
+        allow_autostart=lambda: True,
+    )
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        d = app.screen
+        d._ws = None  # nothing loaded
+        d.action_edit()  # early no-op
+        await pilot.pause()
+        assert isinstance(app.screen, WorkspaceDetailScreen)
+
+
+async def test_detail_action_edit_fetch_failure(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+
+    def boom():
+        raise RuntimeError("down")
+
+    st = _ws(list_images=boom, allow_autostart=boom)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        app.screen.action_edit()
+        await pilot.pause()
+        # form still opens, with no images + autostart off
+        assert isinstance(app.screen, EditWorkspaceScreen)
+        assert app.screen._select_value == "(none)"
 
 
 async def test_confirm_screen_button_labels(monkeypatch):
