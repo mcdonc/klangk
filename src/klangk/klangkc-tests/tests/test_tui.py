@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from textual.widgets import Button, Input, OptionList
+from textual.widgets import Button, Input, OptionList, Static
 
 from klangk.cli import config as cfgmod
 from klangk.cli import tui as tui_pkg
@@ -26,6 +26,7 @@ from klangk.cli.tui import ws as ws_mod
 from klangk.cli.tui.app import KlangkApp, run_tui
 from klangk.cli.tui.screens import (
     AddServerScreen,
+    ConfirmScreen,
     LoginScreen,
     MainScreen,
     ServerSwitchScreen,
@@ -888,6 +889,35 @@ async def test_populate_servers_dedups_default_udsk(monkeypatch):
         assert len(ol._options) == 1
 
 
+async def test_confirm_screen(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    captured = {}
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        app.push_screen(
+            ConfirmScreen("Delete X?"),
+            lambda r: captured.__setitem__("r", r),
+        )
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        # Cancel -> False
+        app.screen.on_button_pressed(FakeBtnPress("no"))
+        await pilot.pause()
+        assert captured.get("r") is False
+        # Delete -> True
+        app.push_screen(
+            ConfirmScreen("Delete X?"),
+            lambda r: captured.__setitem__("r2", r),
+        )
+        await pilot.pause()
+        app.screen.on_button_pressed(FakeBtnPress("yes"))
+        await pilot.pause()
+        assert captured.get("r2") is True
+
+
 async def test_login_delete_server(monkeypatch):
     async def noop(*a, **k):
         return None
@@ -913,21 +943,38 @@ async def test_login_delete_server(monkeypatch):
     async with app.run_test() as pilot:
         login = app.screen
         ol = login.query_one("#server_options", OptionList)
-        # nothing highlighted -> prompt to select
+        # nothing highlighted -> prompt to select (no dialog)
         ol.highlighted = None
         login.action_delete_server()
         await pilot.pause()
         assert "Select a server" in str(login.query_one("#message").render())
-        # highlight + delete -> delete_server called, success message
+        # highlight + action -> confirm dialog (not yet deleted)
         ol.highlighted = 0
         login.action_delete_server()
         await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        assert "https://prod.example" in str(
+            app.screen.query_one(Static).render()
+        )
+        assert "u" not in deleted
+        # cancel -> not deleted
+        app.screen.dismiss(False)
+        await pilot.pause()
+        assert "u" not in deleted
+        # confirm -> deleted
+        ol.highlighted = 0
+        login.action_delete_server()
+        await pilot.pause()
+        app.screen.dismiss(True)
+        await pilot.pause()
         assert deleted.get("u") == "https://prod.example"
         assert "Server deleted" in str(login.query_one("#message").render())
-        # delete returns False -> "Not a saved alias"
+        # confirm but delete returns False -> "Not a saved alias"
         st.delete_server = lambda url: False
         ol.highlighted = 0
         login.action_delete_server()
+        await pilot.pause()
+        app.screen.dismiss(True)
         await pilot.pause()
         assert "Not a saved alias" in str(login.query_one("#message").render())
 
@@ -963,7 +1010,8 @@ async def test_login_delete_clears_to_no_server(monkeypatch):
         ol.highlighted = 0
         login.action_delete_server()
         await pilot.pause()
-        # current_url now None -> no-server state
+        app.screen.dismiss(True)
+        await pilot.pause()
         assert "No server selected" in str(
             login.query_one("#server_line").render()
         )
@@ -987,14 +1035,25 @@ async def test_switch_screen_delete_server(monkeypatch):
         await pilot.pause()
         switch = app.screen
         ol = switch.query_one("#server_options", OptionList)
-        # nothing highlighted -> no-op
+        # nothing highlighted -> no dialog, no delete
         ol.highlighted = None
         switch.action_delete_server()
         await pilot.pause()
+        assert app.screen is switch
         assert "u" not in deleted
-        # highlight + delete
+        # highlight + action -> dialog; cancel -> not deleted
         ol.highlighted = 0
         switch.action_delete_server()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(False)
+        await pilot.pause()
+        assert "u" not in deleted
+        # confirm -> deleted
+        ol.highlighted = 0
+        switch.action_delete_server()
+        await pilot.pause()
+        app.screen.dismiss(True)
         await pilot.pause()
         assert deleted.get("u") == "https://prod.example"
 

@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.screen import Screen
+from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
     Footer,
@@ -25,6 +25,42 @@ from textual.widgets.option_list import Option
 from .state import LoginError
 from .widgets import Sidebar, StatusBar
 from .ws import listen_for_status
+
+
+class ConfirmScreen(ModalScreen[bool]):
+    """A yes/no confirmation dialog. Dismisses with True on confirm."""
+
+    DEFAULT_CSS = """
+    ConfirmScreen { align: center middle; }
+    ConfirmScreen > Vertical {
+        width: 64;
+        max-width: 90%;
+        padding: 1 2;
+        border: round $primary;
+        background: $panel;
+    }
+    ConfirmScreen Horizontal {
+        align-horizontal: right;
+        height: auto;
+        padding-top: 1;
+    }
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__()
+        self.message = message
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(self.message),
+            Horizontal(
+                Button("Cancel", id="no"),
+                Button("Delete", id="yes", variant="error"),
+            ),
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "yes")
 
 
 class LoginScreen(Screen):
@@ -43,7 +79,6 @@ class LoginScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield Vertical(
-            Static("klangk", classes="title"),
             Static("", id="server_line"),
             OptionList(id="server_options"),
             Input(
@@ -58,8 +93,11 @@ class LoginScreen(Screen):
             Input(placeholder="Email or handle", id="identifier"),
             Input(placeholder="Password", id="password", password=True),
             Horizontal(
-                Button("Log in", id="login", variant="primary"),
                 Button("Log in via browser (SSO)", id="oidc"),
+                classes="actions",
+            ),
+            Horizontal(
+                Button("Log in", id="login", variant="primary"),
                 classes="actions",
             ),
             Static("", id="message"),
@@ -132,15 +170,23 @@ class LoginScreen(Screen):
             self._set_message("Select a server to delete.", error=True)
             return
         url = ol.get_option_at_index(idx).id
-        if self.app.tui_state.delete_server(url):
-            self._set_message("Server deleted.")
-        else:
-            self._set_message("Not a saved alias.", error=True)
-        self._populate_servers()
-        if self.app.tui_state.current_url() is None:
-            self._show_no_server()
-        else:
-            self._setup_auth()
+
+        def _on_confirm(confirmed: bool) -> None:
+            if not confirmed:
+                return
+            if self.app.tui_state.delete_server(url):
+                self._set_message("Server deleted.")
+            else:
+                self._set_message("Not a saved alias.", error=True)
+            self._populate_servers()
+            if self.app.tui_state.current_url() is None:
+                self._show_no_server()
+            else:
+                self._setup_auth()
+
+        self.app.push_screen(
+            ConfirmScreen(f"Delete server {url}?"), _on_confirm
+        )
 
     # --- auth-mode setup ---
 
@@ -275,7 +321,6 @@ class MainScreen(Screen):
         yield Horizontal(
             Sidebar(id="sidebar"),
             Vertical(
-                Static("klangk", classes="title"),
                 Static("", id="content"),
                 id="main",
             ),
@@ -382,8 +427,16 @@ class ServerSwitchScreen(Screen):
         if idx is None:
             return
         url = ol.get_option_at_index(idx).id
-        self.app.tui_state.delete_server(url)
-        self._populate()
+
+        def _on_confirm(confirmed: bool) -> None:
+            if not confirmed:
+                return
+            self.app.tui_state.delete_server(url)
+            self._populate()
+
+        self.app.push_screen(
+            ConfirmScreen(f"Delete server {url}?"), _on_confirm
+        )
 
     def on_option_list_option_selected(
         self, event: OptionList.OptionSelected

@@ -54,6 +54,7 @@ class KlangkApp(App):
         self.live_extra = ""
 
     def on_mount(self) -> None:
+        self.title = "Klangk"
         if self.tui_state.is_authenticated():
             self.push_screen(MainScreen())
         else:
