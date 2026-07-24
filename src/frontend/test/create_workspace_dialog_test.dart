@@ -63,6 +63,8 @@ void main() {
     String defaultImage = 'klangk-pi',
     List<String>? allowedImages,
     bool allowAutostart = false,
+    List<String> defaultAllowedDomains = const [],
+    bool netfilterEnabled = false,
   }) {
     final a = auth ?? AuthService();
     return MaterialApp(
@@ -78,6 +80,8 @@ void main() {
                   defaultImage: defaultImage,
                   allowedImages: allowedImages ?? [defaultImage, 'klangk-full'],
                   allowAutostart: allowAutostart,
+                  defaultAllowedDomains: defaultAllowedDomains,
+                  netfilterEnabled: netfilterEnabled,
                 ),
               );
             });
@@ -100,7 +104,7 @@ void main() {
       expect(find.text('New Workspace'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Create'), findsOneWidget);
-      expect(find.byType(TextField), findsNWidgets(5));
+      expect(find.byType(TextField), findsNWidgets(6));
       expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
     });
 
@@ -393,6 +397,238 @@ void main() {
       await tester.pump();
 
       expect(postedBody!.containsKey('image'), isFalse);
+      // allowed_domains is omitted entirely when none are added.
+      expect(postedBody!.containsKey('allowed_domains'), isFalse);
+    });
+
+    testWidgets('includes allowed domains in body', (tester) async {
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'x', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog());
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      final input = find.widgetWithText(TextField, 'github.com:443');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'github.com:443');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      await tester.enterText(_nameField(), 'Filtered');
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody!['allowed_domains'], ['github.com:443']);
+    });
+
+    testWidgets('pre-fills allowed domains from the deploy default',
+        (tester) async {
+      // #1365: the editor inherits KLANGKD_NETFILTER_DEFAULT_DOMAINS so a
+      // new workspace starts from the deployer's floor. The creator's
+      // edits replace (not merge with) the default.
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'x', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog(
+        defaultAllowedDomains: ['github.com:443', 'pypi.org'],
+      ));
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      // Both defaults render as chips (SelectableText, not the input's
+      // hintText which also carries 'github.com:443').
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is SelectableText && (w.data ?? '') == 'github.com:443',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('pypi.org'), findsOneWidget);
+
+      // Submitting without edits sends the inherited default as the
+      // workspace's own allowed_domains.
+      await tester.enterText(_nameField(), 'Inherited');
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody!['allowed_domains'], ['github.com:443', 'pypi.org']);
+    });
+
+    testWidgets('creator edits replace the inherited default', (tester) async {
+      // Removing a chip and adding a new one produces exactly the edited
+      // set — the default is not unioned back in.
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'x', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog(
+        defaultAllowedDomains: ['github.com:443', 'pypi.org'],
+      ));
+      await tester.pump();
+      await tester.pump();
+
+      // Remove pypi.org (the second chip's close button).
+      await tester.tap(find.byIcon(Icons.close).at(1));
+      await tester.pump();
+      expect(find.text('pypi.org'), findsNothing);
+
+      // Add a new domain.
+      final input = find.widgetWithText(TextField, 'github.com:443');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'added.io');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      await tester.enterText(_nameField(), 'Edited');
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      // The default's pypi.org is gone; the added domain is present; the
+      // unedited default entry survives. Pure override, no merge.
+      expect(postedBody!['allowed_domains'], ['github.com:443', 'added.io']);
+    });
+
+    testWidgets('rejects an invalid allowed domain spec', (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog());
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      final input = find.widgetWithText(TextField, 'github.com:443');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'bad spec');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      expect(find.text('Expected host or host:port'), findsOneWidget);
+      // The bad spec did not become a list item.
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is SelectableText && (w.data ?? '') == 'bad spec',
+        ),
+        findsNothing,
+      );
+    });
+
+    testWidgets('removes an allowed domain via its close button',
+        (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog());
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      final input = find.widgetWithText(TextField, 'github.com:443');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'example.com:443');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(find.text('example.com:443'), findsOneWidget);
+
+      // The only close icon on screen is this chip's remove button
+      // (no mounts/env chips were added).
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pump();
+      expect(find.text('example.com:443'), findsNothing);
+    });
+
+    testWidgets('copies an allowed domain via its copy button', (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog());
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      final input = find.widgetWithText(TextField, 'github.com:443');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'example.com:443');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      // The only copy icon on screen is this chip's copy button.
+      await tester.tap(find.byIcon(Icons.copy));
+      await tester.pump();
+      // Tapping copy fired the chip's onPressed (Clipboard.setData) —
+      // the chip is otherwise unchanged.
+      expect(find.text('example.com:443'), findsOneWidget);
+    });
+
+    testWidgets('rejects port > 65535', (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog());
+      await tester.pump();
+      await tester.pump();
+
+      final input = find.widgetWithText(TextField, 'github.com:443');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'a.com:99999');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      expect(find.textContaining('65535'), findsOneWidget);
+    });
+
+    testWidgets('shows not-enforced notice when netfilter disabled',
+        (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog(
+        defaultAllowedDomains: ['github.com:443'],
+        netfilterEnabled: false,
+      ));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.textContaining('NOT be enforced'), findsOneWidget);
+    });
+
+    testWidgets('hides not-enforced notice when netfilter enabled',
+        (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog(
+        defaultAllowedDomains: ['github.com:443'],
+        netfilterEnabled: true,
+      ));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.textContaining('NOT be enforced'), findsNothing);
     });
 
     testWidgets('clears mount error on successful add', (tester) async {

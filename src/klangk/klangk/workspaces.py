@@ -202,6 +202,7 @@ class Workspaces:
             "mounts": ws.get("mounts"),
             "env": ws.get("env"),
             "health_check": ws.get("health_check"),
+            "allowed_domains": ws.get("allowed_domains"),
             "num_ports": ws.get("num_ports", 5),
         }
 
@@ -367,6 +368,7 @@ class Workspaces:
         env: dict[str, str] | None = None,
         setup_state: str | None = None,
         health_check: str | None = None,
+        allowed_domains: list[str] | None = None,
     ) -> dict:
         workspace = (
             await self.app.state.model.workspaces.create_workspace_with_acl(
@@ -379,6 +381,7 @@ class Workspaces:
                 env=env,
                 setup_state=setup_state or model.SETUP_STATE_COMPLETE,
                 health_check=health_check,
+                allowed_domains=allowed_domains,
             )
         )
         home = self.home_path(workspace["id"])
@@ -510,6 +513,7 @@ class Workspaces:
             health_check=ws.get("health_check"),
             setup_state=ws.get("setup_state"),
             service_command=ws.get("service_command"),
+            allowed_domains=ws.get("allowed_domains"),
         )
         return cid, status
 

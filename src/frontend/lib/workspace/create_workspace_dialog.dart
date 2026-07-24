@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
-import 'workspace_list_page.dart' show validateMountSpec;
+import 'workspace_list_page.dart'
+    show validateMountSpec, validateAllowedDomainSpec;
 
 /// Dialog for creating a new workspace. Fields, top to bottom:
 /// Name, Mounts, Environment Variables, Service shell command, Health
@@ -19,12 +20,26 @@ class CreateWorkspaceDialog extends StatefulWidget {
   /// from AuthService.allowAutostart (server's KLANGKD_ALLOW_AUTOSTART).
   final bool allowAutostart;
 
+  /// #1365: deploy-wide netfilter default allow-list, surfaced via
+  /// /api/v1/config (KLANGKD_NETFILTER_DEFAULT_DOMAINS). The editor is
+  /// pre-filled with this so a new workspace inherits the deployer's floor;
+  /// the creator's edits replace it (stored as the workspace's own
+  /// allowed_domains). Empty when netfilter is unset/disabled on the server.
+  final List<String> defaultAllowedDomains;
+
+  /// #1365: whether netfilter is armed on the server. When false, the
+  /// allowed-domains editor shows a "not enforced" notice so the creator
+  /// knows the list won't take effect until an operator enables netfilter.
+  final bool netfilterEnabled;
+
   const CreateWorkspaceDialog({
     super.key,
     required this.auth,
     required this.defaultImage,
     required this.allowedImages,
     this.allowAutostart = false,
+    this.defaultAllowedDomains = const [],
+    this.netfilterEnabled = false,
   });
 
   @override
@@ -37,13 +52,16 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _healthCheckController = TextEditingController();
   final _mountController = TextEditingController();
   final _envController = TextEditingController();
+  final _allowedDomainsController = TextEditingController();
   late String _selectedImage;
   final _mounts = <String>[];
   final _envVars = <String, String>{};
+  final _allowedDomains = <String>[];
   bool _autoStart = false;
   String? _errorMessage;
   String? _mountError;
   String? _envError;
+  String? _allowedDomainsError;
 
   final _labelStyle = TextStyle(
     color: KColors.textPrimary,
@@ -54,6 +72,10 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   void initState() {
     super.initState();
     _selectedImage = widget.defaultImage;
+    // #1365: pre-fill the editor with the deploy-wide default so a new
+    // workspace inherits it; the creator's edits replace (not merge with)
+    // the default and are submitted as the workspace's allowed_domains.
+    _allowedDomains.addAll(widget.defaultAllowedDomains);
   }
 
   @override
@@ -63,6 +85,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     _healthCheckController.dispose();
     _mountController.dispose();
     _envController.dispose();
+    _allowedDomainsController.dispose();
     super.dispose();
   }
 
@@ -98,6 +121,21 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     });
   }
 
+  void _tryAddAllowedDomain() {
+    final v = _allowedDomainsController.text.trim();
+    if (v.isEmpty) return;
+    final err = validateAllowedDomainSpec(v);
+    if (err != null) {
+      setState(() => _allowedDomainsError = err);
+      return;
+    }
+    setState(() {
+      if (!_allowedDomains.contains(v)) _allowedDomains.add(v);
+      _allowedDomainsController.clear();
+      _allowedDomainsError = null;
+    });
+  }
+
   static String? _validateEnvEntry(String input) {
     if (!input.contains('=')) return 'Expected KEY=VALUE format';
     final key = input.substring(0, input.indexOf('='));
@@ -119,6 +157,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     if (_mounts.isNotEmpty) body['mounts'] = List<String>.from(_mounts);
     if (_envVars.isNotEmpty) {
       body['env'] = Map<String, String>.from(_envVars);
+    }
+    if (_allowedDomains.isNotEmpty) {
+      body['allowed_domains'] = List<String>.from(_allowedDomains);
     }
     if (widget.allowAutostart && _autoStart) {
       body['auto_start'] = true;
@@ -181,6 +222,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
               ),
               ..._buildMountsEditor(),
               ..._buildEnvVarsEditor(),
+              ..._buildAllowedDomainsEditor(),
               const SizedBox(height: 16),
               TextField(
                 controller: _cmdController,
@@ -384,6 +426,98 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
           IconButton(icon: const Icon(Icons.add), onPressed: _tryAddEnv),
         ],
       ),
+    ];
+  }
+
+  List<Widget> _buildAllowedDomainsEditor() {
+    return [
+      const SizedBox(height: 16),
+      Text('Allowed Domains', style: _labelStyle),
+      const SizedBox(height: 8),
+      ..._allowedDomains.asMap().entries.map(
+            (e) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SelectableText(
+                      e.value,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 16),
+                    tooltip: 'Copy',
+                    onPressed: () =>
+                        Clipboard.setData(ClipboardData(text: e.value)),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () =>
+                        setState(() => _allowedDomains.removeAt(e.key)),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      if (_allowedDomainsError != null) ...[
+        Text(
+          _allowedDomainsError!,
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.error,
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 4),
+      ],
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _allowedDomainsController,
+              decoration: const InputDecoration(
+                hintText: 'github.com:443',
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              style: const TextStyle(fontSize: 13),
+              onSubmitted: (_) => _tryAddAllowedDomain(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+              icon: const Icon(Icons.add), onPressed: _tryAddAllowedDomain),
+        ],
+      ),
+      if (_allowedDomains.isNotEmpty && !widget.netfilterEnabled) ...[
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.amber.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.warning_amber, size: 18),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Egress filtering is not active on this server — the '
+                  'allowed-domains list will NOT be enforced until an '
+                  'operator enables netfilter.',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     ];
   }
 }

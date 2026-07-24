@@ -1038,6 +1038,20 @@ class ContainerRegistry:
             setup_state=setup_state,
         )
 
+    def _egress_filter(
+        self, allowed_domains: list[str] | None
+    ) -> tuple[dict[str, str] | None, list[str] | None, list[str] | None]:
+        """Build ``(annotations, hooks_dirs, cap_drop)`` for egress (#1365).
+
+        ``(None, None, None)`` when unrestricted (no domains, or netfilter
+        disabled). Delegates to ``app.state.netfilter``; defensive for
+        test app-states that may not wire it.
+        """
+        nf = getattr(self.app.state, "netfilter", None)
+        if nf is None:
+            return None, None, None
+        return nf.create_kwargs(allowed_domains)
+
     async def start_container(
         self,
         workspace_id: str,
@@ -1056,6 +1070,7 @@ class ContainerRegistry:
         health_check: str | None = None,
         setup_state: str | None = None,
         service_command: str | None = None,
+        allowed_domains: list[str] | None = None,
     ) -> tuple[str, str]:
         """Start (or restart) a Pi container for a workspace.
 
@@ -1083,6 +1098,7 @@ class ContainerRegistry:
                 health_check=health_check,
                 setup_state=setup_state,
                 service_command=service_command,
+                allowed_domains=allowed_domains,
             )
 
     async def _handle_existing_container(
@@ -1463,6 +1479,7 @@ class ContainerRegistry:
         health_check: str | None = None,
         setup_state: str | None = None,
         service_command: str | None = None,
+        allowed_domains: list[str] | None = None,
     ) -> tuple[str, str]:
         """Inner implementation of start_container (called under lock)."""
         t_start = time.monotonic()
@@ -1556,6 +1573,23 @@ class ContainerRegistry:
             userns=self.app.state.settings.userns,
             pull=self.image_pull_policy(),
         )
+
+        # Per-workspace egress filtering (#1365): add the OCI annotation
+        # + --hooks-dir only when the workspace declares allowed_domains
+        # AND netfilter is enabled, so unrestricted workspaces keep
+        # podman's default hooks-dir behavior (no behavior change). The
+        # klangk hooks dir is passed alongside the standard default hook
+        # dirs (#1770 — --hooks-dir overrides, not appends, so the
+        # standard dirs are repeated to keep operator createContainer
+        # hooks running). The filtered container also drops NET_ADMIN
+        # (#1773) so the entrypoint can't flush the ruleset.
+        annotations, hooks_dirs, cap_drop = self._egress_filter(
+            allowed_domains
+        )
+        if annotations is not None:
+            create_kwargs["annotations"] = annotations
+            create_kwargs["hooks_dir"] = hooks_dirs
+            create_kwargs["cap_drop"] = cap_drop
 
         logger.info(
             "workspace-open: build env vars, volumes, and "

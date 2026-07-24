@@ -2,13 +2,13 @@
 
 Project-specific guidance for coding agents working in this repo.
 
-## Prefix most commands with `devenv --quiet -O dotenv.enable:bool false shell --`
+## Prefix most commands with `devenv --quiet shell --`
 
 Klangk uses [devenv](https://devenv.sh) (Nix-based) for its dev environment. **Every command that touches the project toolchain must be run through the devenv shell**, including git. The toolchain — Python venv, Node, Dart/Flutter, podman, pre-commit hooks, etc. — only exists inside the shell.
 
 ```bash
-devenv --quiet -O dotenv.enable:bool false shell -- git commit -m "..."
-devenv --quiet -O dotenv.enable:bool false shell -- pytest
+devenv --quiet -- git commit -m "..."
+devenv --quiet -- pytest
 ```
 
 The flags: `--quiet` suppresses noisy devenv output; `-O dotenv.enable:bool false` prevents devenv from loading `.env` (which can interfere with test environments that set their own env vars via monkeypatch). `shell --` launches an ephemeral shell with the full environment, runs the command, and exits — this is the pattern agents should use for one-off commands. (`devenv shell` with no `--` drops into an interactive shell; not useful for non-interactive agents.) This applies to **all** commands: builds, tests, lint, `git`, `podman`, `flutter`, `gh`.

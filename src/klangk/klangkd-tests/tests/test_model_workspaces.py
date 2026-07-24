@@ -175,6 +175,56 @@ async def test_update_workspace_fields(ws, user):
     )
 
 
+async def test_allowed_domains_roundtrip(ws, user):
+    # Create persists the list; get/get_by_id/list all surface it.
+    ws_row = await ws.create_workspace_with_acl(
+        user["id"],
+        "filtered",
+        allowed_domains=["github.com:443", "pypi.org"],
+    )
+    assert ws_row["allowed_domains"] == ["github.com:443", "pypi.org"]
+    got = await ws.get_workspace(ws_row["id"], user["id"])
+    assert got["allowed_domains"] == ["github.com:443", "pypi.org"]
+    by_id = await ws.get_workspace_by_id(ws_row["id"])
+    assert by_id["allowed_domains"] == ["github.com:443", "pypi.org"]
+    listing = await ws.list_workspaces(user["id"])
+    assert listing["items"][0]["allowed_domains"] == [
+        "github.com:443",
+        "pypi.org",
+    ]
+
+
+async def test_allowed_domains_default_none(ws, user):
+    # No allowed_domains -> NULL -> unrestricted (surfaces as None).
+    ws_row = await ws.create_workspace(user["id"], "open")
+    assert ws_row["allowed_domains"] is None
+    got = await ws.get_workspace(ws_row["id"], user["id"])
+    assert got["allowed_domains"] is None
+
+
+async def test_allowed_domains_updateable(ws, user):
+    ws_row = await ws.create_workspace(user["id"], "editable")
+    assert (
+        await ws.update_workspace(
+            ws_row["id"],
+            user["id"],
+            allowed_domains=["github.com"],
+        )
+        is True
+    )
+    got = await ws.get_workspace(ws_row["id"], user["id"])
+    assert got["allowed_domains"] == ["github.com"]
+    # Clearing by passing None restores unrestricted.
+    assert (
+        await ws.update_workspace(
+            ws_row["id"], user["id"], allowed_domains=None
+        )
+        is True
+    )
+    got = await ws.get_workspace(ws_row["id"], user["id"])
+    assert got["allowed_domains"] is None
+
+
 async def test_transfer_workspace(ws, app_state, user):
     new_owner = await app_state.state.model.users.create_user("new@x.com", "h")
     ws_row = await ws.create_workspace_with_acl(user["id"], "transfer-me")

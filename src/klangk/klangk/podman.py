@@ -263,28 +263,47 @@ class Podman:
         add_hosts: list[str] | None = None,
         dns: list[str] | None = None,
         env: list[str] | None = None,
+        annotations: dict[str, str] | None = None,
+        hooks_dir: list[str] | None = None,
         init: bool = False,
         interactive: bool = False,
         pull: str = "never",
         replace: bool = True,
         userns: str | None = None,
+        cap_drop: list[str] | None = None,
     ) -> str:
         """Create a container and return its id.
 
         ``publish`` is a list of ``(host_port, container_port)`` pairs.
         ``replace=True`` removes an existing container with the same name.
+        ``annotations``/``hooks_dir`` carry per-workspace OCI hooks (e.g.
+        the netfilter egress filter, #1365): each annotation becomes a
+        ``--annotation key=value`` flag, and each ``hooks_dir`` entry becomes
+        a ``--hooks-dir`` flag. ``--hooks-dir`` overrides (does not append)
+        podman's default hook search paths, so a filtered container passes
+        the klangk dir *and* the standard default dirs to keep operator
+        createContainer hooks running (#1770); unrestricted workspaces omit
+        the flag entirely (no behavior change). ``cap_drop`` becomes one
+        ``--cap-drop`` flag each (used to drop ``NET_ADMIN`` on filtered
+        workspaces, #1773).
         """
         args = ["create", f"--pull={pull}", "--name", name]
         if replace:
             args.append("--replace")
+        for d in hooks_dir or []:
+            args += ["--hooks-dir", d]
         if init:
             args.append("--init")
         if interactive:
             args.append("-i")
         if userns:
             args += ["--userns", userns]
+        for cap in cap_drop or []:
+            args += ["--cap-drop", cap]
         for key, value in (labels or {}).items():
             args += ["--label", f"{key}={value}"]
+        for key, value in (annotations or {}).items():
+            args += ["--annotation", f"{key}={value}"]
         for bind in binds or []:
             args += ["-v", bind]
         for path, opts in (tmpfs or {}).items():

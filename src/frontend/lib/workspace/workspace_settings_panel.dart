@@ -8,6 +8,7 @@ import '../theme/colors.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import '../ws/ws_client.dart';
+import 'workspace_list_page.dart' show validateAllowedDomainSpec;
 
 /// Workspace settings panel: config editing only.
 /// Used as a tab in the IDE layout.
@@ -28,6 +29,11 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   String? _error;
   String? _saveMessage;
   Timer? _saveMessageTimer;
+  // #1365: set when a successful save changed allowed_domains on a
+  // workspace whose container is running — the egress filter is baked at
+  // container create time, so the new ruleset won't take effect until the
+  // container is restarted. Surfaced as a notice under the save message.
+  bool _pendingEgressRestart = false;
 
   @override
   void initState() {
@@ -111,7 +117,20 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     );
     if (!mounted) return;
     if (resp.statusCode == 200) {
-      setState(() => _saveMessage = 'Settings saved');
+      // #1365: the egress filter is applied at container create time (the
+      // OCI hook runs at createContainer), so a change to allowed_domains
+      // only takes effect on the next (re)start. Detect the change before
+      // _loadData() reassigns _workspace, and only nag when a container is
+      // actually running (a stopped workspace picks the new rules up on
+      // its next start — no action needed).
+      final prevDomains = _workspace?['allowed_domains'];
+      final egressChanged =
+          !_domainListsEqual(prevDomains, fields['allowed_domains']);
+      final running = (_workspace?['running'] as bool?) ?? false;
+      setState(() {
+        _saveMessage = 'Settings saved';
+        _pendingEgressRestart = egressChanged && running;
+      });
       _loadData();
       _saveMessageTimer?.cancel();
       _saveMessageTimer = Timer(const Duration(seconds: 2), () {
@@ -143,9 +162,24 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       allowAutostart:
           context.select<AuthService, bool>((a) => a.allowAutostart),
       saveMessage: _saveMessage,
+      pendingEgressRestart: _pendingEgressRestart,
+      netfilterEnabled:
+          context.select<AuthService, bool>((a) => a.netfilterEnabled),
       onSave: _saveSettings,
     );
   }
+}
+
+/// Compare two allowed_domains values (each a ``List?`` of ``String``) for
+/// order-independent equality, so the restart notice fires only on a real
+/// change — not a harmless reorder or the null/empty equivalence (#1365).
+bool _domainListsEqual(Object? a, Object? b) {
+  final la = (a is List ? a.cast<String>() : const <String>[]);
+  final lb = (b is List ? b.cast<String>() : const <String>[]);
+  if (la.length != lb.length) return false;
+  // Order-independent: the server de-dupes + may reorder on round-trip, so
+  // compare as sets to avoid a spurious "changed" on a save that didn't.
+  return <String>{...la}.difference(<String>{...lb}).isEmpty;
 }
 
 class _SettingsForm extends StatefulWidget {
@@ -155,6 +189,8 @@ class _SettingsForm extends StatefulWidget {
   final String defaultImage;
   final bool allowAutostart;
   final String? saveMessage;
+  final bool pendingEgressRestart;
+  final bool netfilterEnabled;
   final Future<void> Function(Map<String, dynamic>) onSave;
 
   const _SettingsForm({
@@ -164,6 +200,8 @@ class _SettingsForm extends StatefulWidget {
     required this.defaultImage,
     required this.allowAutostart,
     required this.saveMessage,
+    required this.pendingEgressRestart,
+    required this.netfilterEnabled,
     required this.onSave,
   });
 
@@ -177,12 +215,15 @@ class _SettingsFormState extends State<_SettingsForm> {
   late TextEditingController _healthCheckCtrl;
   final _mountCtrl = TextEditingController();
   final _envCtrl = TextEditingController();
+  final _allowedDomainsCtrl = TextEditingController();
   late String _selectedImage;
   late List<String> _mounts;
   late Map<String, String> _envVars;
+  late List<String> _allowedDomains;
   bool _autoStart = false;
   String? _mountError;
   String? _envError;
+  String? _allowedDomainsError;
   bool _saving = false;
   bool _exporting = false;
 
@@ -209,6 +250,10 @@ class _SettingsFormState extends State<_SettingsForm> {
     _envVars = Map<String, String>.from(
       (widget.workspace['env'] as Map?)?.cast<String, String>() ??
           <String, String>{},
+    );
+    _allowedDomains = List<String>.from(
+      (widget.workspace['allowed_domains'] as List?)?.cast<String>() ??
+          <String>[],
     );
     _autoStart = (widget.workspace['auto_start'] as bool?) ?? false;
   }
@@ -252,6 +297,13 @@ class _SettingsFormState extends State<_SettingsForm> {
             <String, String>{},
       );
     }
+    if (old.workspace['allowed_domains'] !=
+        widget.workspace['allowed_domains']) {
+      _allowedDomains = List<String>.from(
+        (widget.workspace['allowed_domains'] as List?)?.cast<String>() ??
+            <String>[],
+      );
+    }
   }
 
   @override
@@ -261,6 +313,7 @@ class _SettingsFormState extends State<_SettingsForm> {
     _healthCheckCtrl.dispose();
     _mountCtrl.dispose();
     _envCtrl.dispose();
+    _allowedDomainsCtrl.dispose();
     super.dispose();
   }
 
@@ -276,6 +329,7 @@ class _SettingsFormState extends State<_SettingsForm> {
           : _healthCheckCtrl.text.trim(),
       'mounts': _mounts.isNotEmpty ? _mounts : null,
       'env': _envVars.isNotEmpty ? _envVars : null,
+      'allowed_domains': _allowedDomains.isNotEmpty ? _allowedDomains : null,
       if (widget.allowAutostart) 'auto_start': _autoStart,
     });
     if (mounted) setState(() => _saving = false);
@@ -315,6 +369,21 @@ class _SettingsFormState extends State<_SettingsForm> {
     });
   }
 
+  void _tryAddAllowedDomain() {
+    final v = _allowedDomainsCtrl.text.trim();
+    if (v.isEmpty) return;
+    final err = validateAllowedDomainSpec(v);
+    if (err != null) {
+      setState(() => _allowedDomainsError = err);
+      return;
+    }
+    setState(() {
+      if (!_allowedDomains.contains(v)) _allowedDomains.add(v);
+      _allowedDomainsCtrl.clear();
+      _allowedDomainsError = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final labelStyle = TextStyle(
@@ -332,6 +401,10 @@ class _SettingsFormState extends State<_SettingsForm> {
             children: [
               if (widget.saveMessage != null) ...[
                 _buildSaveMessage(),
+                if (widget.pendingEgressRestart) ...[
+                  const SizedBox(height: 8),
+                  _buildEgressRestartNotice(),
+                ],
                 const SizedBox(height: 16),
               ],
               _buildConfigCard(labelStyle),
@@ -358,6 +431,34 @@ class _SettingsFormState extends State<_SettingsForm> {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(widget.saveMessage!),
+    );
+  }
+
+  /// #1365: the egress filter is baked into the container at create time
+  /// (the OCI createContainer hook installs the iptables ruleset before the
+  /// entrypoint runs), so a saved allowed_domains change has no effect on a
+  /// running container until it's restarted. Shown under the save message
+  /// only when the change landed and a container is live.
+  Widget _buildEgressRestartNotice() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: KColors.accentAmber.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.restart_alt, size: 18),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Restart the workspace container to apply the new egress '
+              'filter — the ruleset is set at container create time.',
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -417,6 +518,8 @@ class _SettingsFormState extends State<_SettingsForm> {
         _buildMountsEditor(labelStyle),
         const SizedBox(height: 16),
         _buildEnvVarsEditor(labelStyle),
+        const SizedBox(height: 16),
+        _buildAllowedDomainsEditor(labelStyle),
         const SizedBox(height: 16),
         TextField(
           controller: _cmdCtrl,
@@ -529,6 +632,74 @@ class _SettingsFormState extends State<_SettingsForm> {
               onRemove: () => setState(() => _envVars.remove(e.value.key)),
             ),
           ),
+    );
+  }
+
+  Widget _buildAllowedDomainsEditor(TextStyle labelStyle) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildEditableList(
+          label: 'Allowed Domains',
+          labelStyle: labelStyle,
+          hint: 'github.com:443',
+          controller: _allowedDomainsCtrl,
+          error: _allowedDomainsError,
+          onAdd: _tryAddAllowedDomain,
+          items: _allowedDomains.asMap().entries.map(
+                (e) => _buildEditableListItem(
+                  text: e.value,
+                  onCopy: e.value,
+                  onRemove: () =>
+                      setState(() => _allowedDomains.removeAt(e.key)),
+                ),
+              ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Restricts outbound network to these hosts (host or host:port). '
+          'Requires netfilter to be enabled on the server; empty '
+          'means unrestricted.',
+          style: TextStyle(
+            color: KColors.textSecondary,
+            fontSize: 12,
+          ),
+        ),
+        if (_allowedDomains.isNotEmpty && !widget.netfilterEnabled) ...[
+          const SizedBox(height: 8),
+          _buildEgressNotEnforcedNotice(),
+        ],
+      ],
+    );
+  }
+
+  /// #1769: this workspace declares allowed_domains but the deploy has
+  /// netfilter disabled, so the allow-list is NOT being enforced — the
+  /// container starts with unrestricted egress (deliberate fail-open).
+  /// Surface the gap to the user who set the list (the party at risk);
+  /// the server only logs the warning to operator logs otherwise.
+  Widget _buildEgressNotEnforcedNotice() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: KColors.accentAmber.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.warning_amber, size: 18),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Egress filtering is not active on this server — the '
+              'allowed-domains list above is NOT being enforced. This '
+              'workspace will start with unrestricted outbound network '
+              'until an operator enables netfilter on the server.',
+            ),
+          ),
+        ],
+      ),
     );
   }
 

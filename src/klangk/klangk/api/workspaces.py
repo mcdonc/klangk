@@ -28,6 +28,7 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 from .. import (
     acl,
     auth,
+    netfilter as netfilter_mod,
     wshandler,
 )
 from ._common import get_app_dep
@@ -60,6 +61,34 @@ router = APIRouter()
 # safety ceiling, not a hard contract -- a user with more workspaces
 # than this should use explicit pagination.
 BARE_LIST_LIMIT = 500
+
+
+def _validate_allowed_domains(
+    values: list[str] | None, app
+) -> list[str] | None:
+    """Validate + normalize a workspace's ``allowed_domains`` list.
+
+    Returns the validated list (de-duplicated, ordered), or ``None`` when
+    no list was supplied (unrestricted egress). Raises an HTTP 400 with a
+    precise message on any malformed ``host[:port]`` entry. Only warns —
+    never rejects — when the deployer has not enabled netfilter: the value
+    is still persisted so it takes effect the moment the operator sets
+    ``KLANGKD_NETFILTER_HOOKS_DIR`` (#1365).
+    """
+    if not values:
+        return None
+    try:
+        domains = netfilter_mod.parse_allowed_domains(values)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not app.state.netfilter.enabled():
+        logger.warning(
+            "Workspace configured allowed_domains=%s but netfilter is not "
+            "armed on this server; the value is persisted but egress will "
+            "be UNRESTRICTED until netfilter is enabled (#1365, #1774).",
+            domains,
+        )
+    return domains
 
 
 def _annotate_running(items: list[dict], container_registry) -> list[dict]:
@@ -162,6 +191,7 @@ class CreateWorkspaceRequest(BaseModel):
     env: dict[str, str] | None = None
     setup_state: Literal["pending", "complete", "failed"] | None = None
     health_check: str | None = None
+    allowed_domains: list[str] | None = None
 
 
 @router.post("/workspaces")
@@ -189,6 +219,7 @@ async def create_workspace(
         mount_err = app.state.container_registry.validate_mounts(body.mounts)
         if mount_err:
             raise HTTPException(status_code=400, detail=mount_err)
+    allowed_domains = _validate_allowed_domains(body.allowed_domains, app)
     try:
         ws = await app.state.workspaces.create_workspace(
             user["id"],
@@ -200,6 +231,7 @@ async def create_workspace(
             env=body.env,
             setup_state=body.setup_state or "complete",
             health_check=body.health_check,
+            allowed_domains=allowed_domains,
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -238,6 +270,7 @@ class UpdateWorkspaceRequest(BaseModel):
     env: dict[str, str] | None = None
     setup_state: Literal["pending", "complete", "failed"] | None = None
     health_check: str | None = None
+    allowed_domains: list[str] | None = None
 
 
 @router.put("/workspaces/{workspace_id}")
@@ -267,6 +300,10 @@ async def update_workspace(
         )
         if mount_err:
             raise HTTPException(status_code=400, detail=mount_err)
+    if "allowed_domains" in fields:
+        fields["allowed_domains"] = _validate_allowed_domains(
+            fields["allowed_domains"], app
+        )
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
     workspace = await app.state.model.workspaces.get_workspace(workspace_id)
@@ -320,6 +357,7 @@ async def duplicate_workspace(
             mounts=source.get("mounts"),
             env=source.get("env"),
             health_check=source.get("health_check"),
+            allowed_domains=source.get("allowed_domains"),
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -674,6 +712,7 @@ async def _extract_archive_metadata(
         "mounts": mounts,
         "env": env,
         "health_check": metadata.get("health_check"),
+        "allowed_domains": metadata.get("allowed_domains"),
     }
 
 
@@ -732,6 +771,9 @@ async def import_workspace(
     ws = None
     try:
         meta = await _extract_archive_metadata(archive_path, name, app)
+        allowed_domains = _validate_allowed_domains(
+            meta.get("allowed_domains"), app
+        )
 
         try:
             ws = await app.state.workspaces.create_workspace(
@@ -743,6 +785,7 @@ async def import_workspace(
                 mounts=meta["mounts"],
                 env=meta["env"],
                 health_check=meta["health_check"],
+                allowed_domains=allowed_domains,
             )
         except SAIntegrityError:
             raise HTTPException(

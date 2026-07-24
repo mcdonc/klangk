@@ -46,6 +46,10 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 from pydantic import PrivateAttr, field_validator, model_validator
+
+# netfilter.py is pure-stdlib (no settings import), so this top-level import
+# is cycle-safe. Used by the netfilter_default_domains field validator below.
+from klangk.netfilter import parse_allowed_domains
 from pydantic_settings.sources.providers.env import parse_env_vars
 
 logger = logging.getLogger(__name__)
@@ -620,6 +624,37 @@ class KlangkSettings(BaseSettings):
     health_check_startup_grace: str | None = None
     health_check_timeout: str | None = None
     hosted_ports_per_workspace: str = "5"
+    # netfilter_enabled: master on/off switch for per-workspace egress
+    # filtering (#1774). Defaults to True — netfilter is armed out of the
+    # box (the OCI hook is materialized into a state_dir subdir at startup;
+    # see NetFilter). Set False to disable the feature entirely (e.g. in an
+    # environment without iptables/nsenter, or where the hook can't be
+    # granted CAP_NET_ADMIN): enabled() reports false, create_kwargs() never
+    # passes --hooks-dir, and workspaces with allowed_domains fail open
+    # with a loud warning (#1769). This is the operator *intent*; the
+    # /api/v1/config field of the same name is the resolved *armed status*
+    # (intent AND hook installed, #1771).
+    netfilter_enabled: bool = True
+    # netfilter_hooks_dir: directory where the per-workspace egress-filter
+    # OCI hook (klangk-netfilter.{json,sh}) is materialized at startup.
+    # When netfilter_enabled is True (the default) and this is unset, it
+    # defaults to <state_dir>/oci-hooks — so filtering works out of the box
+    # without a second env var (#1774). Set it explicitly only when the OCI
+    # runtime can't see state_dir (a split runtime / DinD outer container /
+    # podman-machine CoreOS VM). The path must be resolvable where the OCI
+    # runtime executes.
+    netfilter_hooks_dir: str | None = None
+    # netfilter_default_domains: a deploy-wide allow-list applied to every
+    # workspace that doesn't declare its own (#1365). A workspace with a
+    # non-empty allowed_domains *overrides* (replaces) this default; a
+    # workspace with none inherits it. Unset (default) preserves the
+    # original per-workspace-only behavior (empty = unrestricted).
+    #
+    # Accepts either a comma-separated string (env var) or a real list
+    # (YAML config file), normalized + validated at construction by
+    # _coerce_netfilter_default_domains. A malformed value warns and falls
+    # back to None (no default) rather than aborting the server (#1772).
+    netfilter_default_domains: list[str] | None = None
     test_mode: str | None = None
     version_file: str | None = None
 
@@ -980,6 +1015,58 @@ class KlangkSettings(BaseSettings):
                 "→ defaults to 'none')."
             )
         return v
+
+    @field_validator("netfilter_default_domains", mode="before")
+    @classmethod
+    def _coerce_netfilter_default_domains(cls, v):
+        """Accept either a comma-separated string (env var) or a real list
+        (YAML config file), then validate + de-dupe via
+        :func:`klangk.netfilter.parse_allowed_domains` (#1365).
+
+        Env vars deliver a single string (``a.com,b.com``); the YAML source
+        delivers a native list. Both are normalized to a validated, de-duped
+        ``list[str]`` of ``host[:port]`` specs. ``None`` / empty → ``None``
+        (no deploy default; workspaces unrestricted unless they declare their
+        own).
+
+        A malformed value (a bad ``host[:port]`` spec, or a non-list/
+        non-string type) does NOT abort the server — it logs a loud warning
+        and falls back to ``None`` (no deploy default applied), so a typo in
+        the deploy-wide default can't take down a running server or kill a
+        SIGHUP reload (#1772). This matches the warn+fallback posture of
+        peer settings (e.g. ``image_pull_policy``) and netfilter's
+        fail-open-with-visibility design — a misconfigured deploy degrades
+        to unrestricted + a visible warning rather than refusing to run.
+        """
+        if v is None:
+            return None
+        if isinstance(v, str):
+            parts = [s.strip() for s in v.split(",")]
+            items = [p for p in parts if p]
+        elif isinstance(v, list):
+            items = [str(s).strip() for s in v if str(s).strip()]
+        else:
+            logger.warning(
+                "KLANGKD_NETFILTER_DEFAULT_DOMAINS=%r must be a list or a "
+                "comma-separated string (got %s); ignoring the deploy-wide "
+                "default (no default applied).",
+                v,
+                type(v).__name__,
+            )
+            return None
+        if not items:
+            return None
+        try:
+            return parse_allowed_domains(items)
+        except ValueError as exc:
+            logger.warning(
+                "KLANGKD_NETFILTER_DEFAULT_DOMAINS=%r has an invalid spec "
+                "(%s); ignoring the deploy-wide default (no default "
+                "applied). Fix the value and reload to restore it.",
+                v,
+                exc,
+            )
+            return None
 
     @model_validator(mode="after")
     def _warn_on_deprecated_proxy_engine(self) -> "KlangkSettings":

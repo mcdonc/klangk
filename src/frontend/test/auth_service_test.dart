@@ -89,6 +89,8 @@ void main() {
       bool loginBannerEveryVisit = false,
       int? minPasswordLength,
       String? productName,
+      List<String>? netfilterDefaultDomains,
+      bool? netfilterEnabled,
     }) {
       return MockClient((request) async {
         if (request.url.path.contains('/api/v1/config')) {
@@ -102,6 +104,10 @@ void main() {
               if (minPasswordLength != null)
                 'min_password_length': minPasswordLength,
               if (productName != null) 'product_name': productName,
+              if (netfilterDefaultDomains != null)
+                'netfilter_default_domains': netfilterDefaultDomains,
+              if (netfilterEnabled != null)
+                'netfilter_enabled': netfilterEnabled,
             }),
             200,
           );
@@ -146,6 +152,26 @@ void main() {
       final service2 = AuthService();
       await Future.delayed(Duration.zero);
       expect(service2.allowAutostart, isTrue);
+    });
+
+    test('loads netfilter default domains + enabled from /api/config',
+        () async {
+      // #1365: defaults (absent fields) → empty / disabled.
+      testAuthHttpClientOverride = _bannerClient();
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.netfilterDefaultDomains, isEmpty);
+      expect(service.netfilterEnabled, isFalse);
+
+      // Advertised values are surfaced verbatim.
+      testAuthHttpClientOverride = _bannerClient(
+        netfilterDefaultDomains: ['github.com:443', 'pypi.org'],
+        netfilterEnabled: true,
+      );
+      final service2 = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service2.netfilterDefaultDomains, ['github.com:443', 'pypi.org']);
+      expect(service2.netfilterEnabled, isTrue);
     });
 
     test('loads min_password_length from /api/config', () async {

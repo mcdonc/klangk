@@ -70,6 +70,10 @@ def _make_app_state(settings=None):
     app_state.state.util = util_mod.Util(app_state)
     # #1567: the lifespan calls app.state.ssl_trust.apply_backend_ssl_trust().
     app_state.state.ssl_trust = ssl_trust_mod.SSLTrust(app_state)
+    # #1365: the lifespan calls app.state.netfilter.install_hooks().
+    from klangk.netfilter import NetFilter
+
+    app_state.state.netfilter = NetFilter(app_state)
     app_state.state.auth = auth_mod.Auth(app_state)
     app_state.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app_state)
     from klangk.terminal import Terminal

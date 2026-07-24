@@ -260,6 +260,69 @@ class TestCreateContainer:
         assert "--pull=missing" in args
         assert "--pull=never" not in args
 
+    async def test_annotations_emitted(self):
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n",
+                "img",
+                annotations={"klangk.netfilter.rules": "github.com:443"},
+                replace=False,
+            )
+        args = _args(m)
+        assert [
+            "--annotation",
+            "klangk.netfilter.rules=github.com:443",
+        ] == args[args.index("--annotation") : args.index("--annotation") + 2]
+
+    async def test_hooks_dir_emitted(self):
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n", "img", hooks_dir=["/etc/klangk/hooks"], replace=False
+            )
+        args = _args(m)
+        assert ["--hooks-dir", "/etc/klangk/hooks"] == args[
+            args.index("--hooks-dir") : args.index("--hooks-dir") + 2
+        ]
+
+    async def test_multiple_hooks_dirs_each_emit_a_flag(self):
+        # #1770: --hooks-dir overrides (does not append) podman's default
+        # hook search paths, so a filtered container passes the klangk dir
+        # AND the standard default dirs — one --hooks-dir flag each, in
+        # order, so operator createContainer hooks keep running.
+        dirs = [
+            "/etc/klangk/hooks",
+            "/usr/share/containers/oci/hooks.d",
+            "/etc/containers/oci/hooks.d",
+        ]
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n", "img", hooks_dir=dirs, replace=False
+            )
+        args = _args(m)
+        assert args.count("--hooks-dir") == 3
+        emitted = [
+            args[i + 1] for i, a in enumerate(args) if a == "--hooks-dir"
+        ]
+        assert emitted == dirs
+
+    async def test_no_hooks_dir_or_annotation_by_default(self):
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container("n", "img", replace=False)
+        args = _args(m)
+        assert "--hooks-dir" not in args
+        assert "--annotation" not in args
+        assert "--cap-drop" not in args
+
+    async def test_cap_drop_emitted(self):
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n", "img", cap_drop=["NET_ADMIN"], replace=False
+            )
+        args = _args(m)
+        assert ["--cap-drop", "NET_ADMIN"] == args[
+            args.index("--cap-drop") : args.index("--cap-drop") + 2
+        ]
+
 
 class TestStartContainer:
     async def test_start(self):

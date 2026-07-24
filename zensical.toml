@@ -25,6 +25,7 @@ nav = [
     { "Service Command" = "features/service-command.md" },
     { "Auto-Start" = "features/auto-start.md" },
     { "Health Check" = "features/health-check.md" },
+    { "Egress Filtering" = "features/egress-filtering.md" },
     { "Sandbox" = "features/sandbox.md" },
     { "Chat" = "features/chat.md" },
     { "File Viewer" = "features/file-viewer.md" },

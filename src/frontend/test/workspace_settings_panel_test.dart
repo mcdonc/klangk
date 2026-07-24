@@ -23,6 +23,9 @@ Finder _mountInput() => find.byWidgetPredicate(
 Finder _envInput() => find.byWidgetPredicate(
       (w) => w is TextField && w.decoration?.hintText == 'KEY=VALUE',
     );
+Finder _allowedDomainsInput() => find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == 'github.com:443',
+    );
 
 /// A WsClient whose sendShutdownContainer we can observe, for the danger-zone
 /// confirm dialog test.
@@ -67,10 +70,17 @@ http.Client _client({
   int transferStatus = 200,
   Map<String, dynamic>? transferResponse,
   List<Map<String, dynamic>>? searchResults,
+  bool netfilterEnabled = false,
 }) {
   final ws = (workspace ?? _workspace);
   return MockClient((request) async {
     final p = request.url.path;
+    if (p == '/api/v1/config') {
+      return http.Response(
+        jsonEncode({'netfilter_enabled': netfilterEnabled}),
+        200,
+      );
+    }
     if (p == '/api/v1/workspaces') {
       return http.Response(jsonEncode([ws]), 200);
     }
@@ -299,6 +309,165 @@ void main() {
     });
   });
 
+  group('allowed domains editor', () {
+    testWidgets('adds a valid host:port', (tester) async {
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await tester.enterText(_allowedDomainsInput(), 'example.com:443');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      expect(find.text('example.com:443'), findsOneWidget);
+    });
+
+    testWidgets('rejects a spec with whitespace', (tester) async {
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await tester.enterText(_allowedDomainsInput(), 'bad spec');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      expect(find.text('Expected host or host:port'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is SelectableText && (w.data ?? '') == 'bad spec',
+        ),
+        findsNothing,
+      );
+    });
+
+    testWidgets('removes an allowed domain via its close button',
+        (tester) async {
+      // Mounts/env empty so the only close icon on screen belongs to the
+      // allowed-domains chip.
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'mounts': <String>[],
+        'env': <String, String>{},
+        'allowed_domains': <String>['example.com:443'],
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      expect(find.text('example.com:443'), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pump();
+
+      expect(find.text('example.com:443'), findsNothing);
+    });
+
+    testWidgets('reload after save re-reads allowed_domains from server',
+        (tester) async {
+      // A successful save calls _loadData(), which re-fetches the workspace
+      // and rebuilds the form with a fresh map. didUpdateWidget must
+      // re-read allowed_domains (#1365) so the editor tracks server state
+      // instead of holding a stale local copy. The PUT drops the server's
+      // allowed_domains entirely so the null-coalescing fallback in the
+      // refresh path is also exercised.
+      List<String>? domains = ['example.com:443'];
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/workspaces') {
+          final ws = <String, dynamic>{..._workspace};
+          if (domains != null)
+            ws['allowed_domains'] = List<String>.from(domains!);
+          return http.Response(jsonEncode([ws]), 200);
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi', 'other:latest'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          domains = null;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+      expect(find.text('example.com:443'), findsOneWidget);
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // After the post-save reload the server no longer carries
+      // allowed_domains, so didUpdateWidget refreshed _allowedDomains to
+      // empty (the null-coalescing fallback) and the chip is gone.
+      expect(find.text('example.com:443'), findsNothing);
+
+      // Advance past the 2s save-message auto-clear timer so no timer is
+      // pending at dispose (flutter_test fails on pending timers).
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+  });
+
+  // #1769: a workspace that declares allowed_domains while the deploy has
+  // netfilter disabled starts unrestricted (fail-open). The gap must be
+  // surfaced to the user who set the list, not just operator logs.
+  group('egress not-enforced notice (#1769)', () {
+    testWidgets(
+      'shows the notice when allowed_domains are set and netfilter is off',
+      (tester) async {
+        testAuthHttpClientOverride = _client(
+          workspace: {
+            ..._workspace,
+            'allowed_domains': <String>['example.com:443'],
+          },
+        );
+        await tester.pumpWidget(_buildPanel());
+        await tester.pumpAndSettle();
+
+        expect(
+          find.textContaining('NOT being enforced'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'hides the notice when netfilter is enabled (allow-list enforced)',
+      (tester) async {
+        testAuthHttpClientOverride = _client(
+          workspace: {
+            ..._workspace,
+            'allowed_domains': <String>['example.com:443'],
+          },
+          netfilterEnabled: true,
+        );
+        await tester.pumpWidget(_buildPanel());
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('NOT being enforced'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'hides the notice when no allowed_domains are set (unrestricted by '
+      'design)',
+      (tester) async {
+        // Default workspace has no allowed_domains; nothing to enforce.
+        testAuthHttpClientOverride = _client();
+        await tester.pumpWidget(_buildPanel());
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('NOT being enforced'), findsNothing);
+      },
+    );
+  });
+
   group('save', () {
     testWidgets('save success shows "Settings saved" message', (tester) async {
       await tester.pumpWidget(_buildPanel());
@@ -388,6 +557,88 @@ void main() {
       expect(find.textContaining('Failed'), findsOneWidget);
       expect(find.textContaining('bad mounts'), findsOneWidget);
       // Drain the 2s auto-clear timer (see save-success test).
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+        'allowed_domains change on a running container shows restart notice',
+        (tester) async {
+      // #1365: the egress filter is baked at container create time, so a
+      // saved change only takes effect after a restart. The notice appears
+      // only when a container is running AND allowed_domains changed.
+      // Mounts/env emptied so the only close icon is the domain chip's.
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'mounts': <String>[],
+        'env': <String, String>{},
+        'allowed_domains': <String>['old.example:443'],
+        'running': true,
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Remove the existing domain so the save differs from the loaded ws.
+      await tester.tap(find.byIcon(Icons.close).first);
+      await tester.pump();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(find.textContaining('Restart the workspace container'),
+          findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('no restart notice when allowed_domains unchanged on save',
+        (tester) async {
+      // Saving without touching the filter must not nag.
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'allowed_domains': <String>['stable.example:443'],
+        'running': true,
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(
+          find.textContaining('Restart the workspace container'), findsNothing);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('no restart notice when container is not running',
+        (tester) async {
+      // A stopped workspace picks the new rules up on next start — no
+      // action needed, so no notice even though allowed_domains changed.
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'mounts': <String>[],
+        'env': <String, String>{},
+        'allowed_domains': <String>['old.example:443'],
+        'running': false,
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.close).first);
+      await tester.pump();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(
+          find.textContaining('Restart the workspace container'), findsNothing);
+      await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
     });
   });

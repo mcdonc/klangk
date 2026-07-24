@@ -184,7 +184,10 @@ if os.environ.get("KLANGKD_TEST_MODE"):  # pragma: no cover
 
 
 @router.get("/config")
-async def get_config(app=Depends(get_app_dep)):
+async def get_config(
+    app=Depends(get_app_dep),
+    user: dict | None = Depends(auth.get_current_user_optional),
+):
     s = app.state.settings
     config = {
         "registration_enabled": app.state.auth.registration_enabled(),
@@ -219,6 +222,19 @@ async def get_config(app=Depends(get_app_dep)):
         "support_url": s.support_url,
         "support_email": s.support_email,
     }
+    # #1365: deploy-wide netfilter allow-list + whether the feature is
+    # armed. These advertise the deploy's egress perimeter, so they are
+    # exposed only to authenticated callers — NOT on the pre-auth /config
+    # payload that feeds the login page (otherwise an anonymous caller
+    # learns which hosts this deploy permits and whether the filter is on).
+    # The create-workspace UI reads them post-login (the frontend sends the
+    # persisted token on its /config fetch and re-fetches after login). See
+    # #1769 re: per-workspace enforcement visibility.
+    if user is not None:
+        config["netfilter_default_domains"] = (
+            app.state.netfilter.default_domains()
+        )
+        config["netfilter_enabled"] = app.state.netfilter.enabled()
     config.update(app.state.features.frontend_config())
     # KLANGKD_FEATURES_ENABLE: the deploy's chosen active-feature list,
     # forwarded verbatim so the frontend can resolve the active set against

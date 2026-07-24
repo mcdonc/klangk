@@ -25,6 +25,12 @@ class AuthService extends ChangeNotifier {
   int _minPasswordLength = 8;
   String _instanceId = 'default';
   bool _allowAutostart = false;
+  // #1365: deploy-wide netfilter default allow-list + whether the feature
+  // is armed. Surfaced via /api/v1/config so the create-workspace UI can
+  // pre-fill its allowed-domains editor from the default (a workspace
+  // overrides, not unions) and gate the editor on netfilter_enabled.
+  List<String> _netfilterDefaultDomains = const [];
+  bool _netfilterEnabled = false;
   Timer? _permissionTimer;
   Timer? _refreshTimer;
 
@@ -55,6 +61,17 @@ class AuthService extends ChangeNotifier {
   /// on this — setting auto_start on a server that rejects it would
   /// 400 (#1115).
   bool get allowAutostart => _allowAutostart;
+
+  /// #1365: the deploy-wide netfilter default allow-list
+  /// (KLANGKD_NETFILTER_DEFAULT_DOMAINS). The create-workspace dialog
+  /// pre-fills its editor from this; a workspace's own list overrides
+  /// (replaces) it.
+  List<String> get netfilterDefaultDomains => _netfilterDefaultDomains;
+
+  /// #1365: whether netfilter is armed on the server (hooks dir configured).
+  /// The UI shows the allowed-domains editor only when the deploy can
+  /// actually enforce it.
+  bool get netfilterEnabled => _netfilterEnabled;
 
   /// Decode the JWT payload.
   Map<String, dynamic>? get _payload {
@@ -99,13 +116,21 @@ class AuthService extends ChangeNotifier {
     _loadToken();
   }
 
-  Future<void> _loadToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    _token = prefs.getString(_tokenKey);
-
+  /// Fetch `/api/v1/config` and apply the result. Sends the persisted
+  /// token when available so the server returns authenticated-only fields
+  /// (notably the netfilter deploy allow-list + armed status, #1365) — the
+  /// pre-auth payload omits them. Called at startup and after a fresh
+  /// login (so a just-authenticated user picks up the fields without an
+  /// app restart).
+  Future<void> _loadConfig() async {
     try {
       final client = testAuthHttpClientOverride ?? http.Client();
-      final resp = await client.get(Uri.parse('$_baseUrl/api/v1/config'));
+      final resp = await client.get(
+        Uri.parse('$_baseUrl/api/v1/config'),
+        headers: {
+          if (_token != null) 'Authorization': 'Bearer $_token',
+        },
+      );
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         _bannerTitle = (data['login_banner_title'] as String?) ?? '';
@@ -114,6 +139,10 @@ class AuthService extends ChangeNotifier {
             (data['login_banner_every_visit'] as bool?) ?? false;
         _instanceId = (data['instance_id'] as String?) ?? 'default';
         _allowAutostart = (data['allow_autostart'] as bool?) ?? false;
+        _netfilterDefaultDomains =
+            (data['netfilter_default_domains'] as List?)?.cast<String>() ??
+                const [];
+        _netfilterEnabled = (data['netfilter_enabled'] as bool?) ?? false;
         _minPasswordLength =
             (data['min_password_length'] as num?)?.toInt() ?? 8;
         // White-label values — mirrored into the Branding helper so widgets
@@ -126,6 +155,13 @@ class AuthService extends ChangeNotifier {
       // coverage:ignore-start
       debugPrint('[AuthService] load config failed: $e');
     } // coverage:ignore-end
+  }
+
+  Future<void> _loadToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    _token = prefs.getString(_tokenKey);
+
+    await _loadConfig();
 
     if (_bannerText.isNotEmpty) {
       if (_loginBannerEveryVisit) {
@@ -203,6 +239,10 @@ class AuthService extends ChangeNotifier {
     _token = token;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_tokenKey, token);
+    // Re-fetch config now that we have a token, so authenticated-only
+    // fields (e.g. the netfilter deploy allow-list, #1365) are picked up
+    // without an app restart.
+    await _loadConfig();
     await _fetchPermissions();
     _scheduleTokenRefresh();
     notifyListeners();
