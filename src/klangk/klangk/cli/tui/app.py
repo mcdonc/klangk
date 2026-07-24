@@ -28,20 +28,26 @@ class KlangkApp(App):
     #login_box {
         width: 96;
         max-width: 90%;
-        padding: 1 2;
+        padding: 2 2;
     }
     #switch_box, #add_box {
         width: 104;
         max-width: 90%;
-        padding: 1 2;
+        padding: 2 2;
     }
     #main {
         padding: 1 2;
         width: 1fr;
     }
-    /* Right-align button rows with the input fields above them. */
+    /* A little air under the server status line, before the picker. */
+    #server_line {
+        margin-bottom: 1;
+    }
+    /* Right-align button rows; don't let them expand vertically (avoids a
+    large gap below the button before the next field). */
     .actions {
         align-horizontal: right;
+        height: auto;
     }
     """
 

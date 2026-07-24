@@ -23,6 +23,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from .state import LoginError
+from ..transport import is_valid_server_spec
 from .widgets import Sidebar, StatusBar
 from .ws import listen_for_status
 
@@ -35,14 +36,14 @@ class ConfirmScreen(ModalScreen[bool]):
     ConfirmScreen > Vertical {
         width: 64;
         max-width: 90%;
-        padding: 1 2;
+        height: auto;
+        padding: 0 2;
         border: round $primary;
         background: $panel;
     }
     ConfirmScreen Horizontal {
         align-horizontal: right;
         height: auto;
-        padding-top: 1;
     }
     """
 
@@ -86,7 +87,7 @@ class LoginScreen(Screen):
                 id="server_input",
             ),
             Horizontal(
-                Button("Add server", id="use_server"),
+                Button("Use server", id="use_server"),
                 classes="actions",
             ),
             Static("", id="notice"),
@@ -112,7 +113,7 @@ class LoginScreen(Screen):
     def _show_no_server(self) -> None:
         self.query_one("#server_line", Static).update(
             "No server selected. Pick one above or enter a URL,"
-            " then press 'Add server'."
+            " then press 'Use server'."
         )
         self._disable_credentials()
 
@@ -151,10 +152,17 @@ class LoginScreen(Screen):
         if raw in cfg.servers:
             # Known alias — switch to its URL.
             self.app.tui_state.switch_server(cfg.servers[raw].url)
-        else:
+        elif is_valid_server_spec(raw):
             # A new server (URL or UDS path) — save it as an alias so it can
             # be re-selected later.
             self.app.tui_state.add_server(self._derive_alias(raw), raw)
+        else:
+            self._set_message(
+                "Enter a server URL (https://host), a socket path"
+                " (/...), or a known alias.",
+                error=True,
+            )
+            return
         self.query_one("#server_input", Input).value = ""
         self._set_message("")
         self._populate_servers()
@@ -478,6 +486,12 @@ class AddServerScreen(Screen):
         msg = self.query_one("#add_msg", Static)
         if not alias or not url:
             msg.update("[red]Alias and URL are required.[/red]")
+            return
+        if not is_valid_server_spec(url):
+            msg.update(
+                "[red]URL must be http(s)://host or an absolute socket"
+                " path (/...).[/red]"
+            )
             return
         self.app.tui_state.add_server(alias, url)
         self.app.server_changed()

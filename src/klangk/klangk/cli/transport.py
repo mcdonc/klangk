@@ -66,6 +66,21 @@ def resolve_transport(server_spec: str) -> ServerTransport:
     )
 
 
+def is_valid_server_spec(server_spec: str) -> bool:
+    """True if *server_spec* is a usable server location.
+
+    Mirrors ``resolve_transport``: an ``http(s)://`` URL (TCP) or an
+    absolute path (UDS). Anything else — a bare name or relative path — is
+    not usable and would raise from ``resolve_transport`` at request time,
+    so callers should reject it up front (e.g. the TUI server picker).
+    """
+    try:
+        resolve_transport(server_spec)
+    except ValueError:
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # HTTP helper
 # ---------------------------------------------------------------------------

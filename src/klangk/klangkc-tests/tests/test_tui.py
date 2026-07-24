@@ -853,7 +853,7 @@ async def test_login_server_picker(monkeypatch):
         await pilot.pause()
         assert calls.get("add") == ("other.sock", "/var/run/other.sock")
 
-        # "Add server" button also dispatches
+        # "Use server" button also dispatches
         srv_input.value = "prod"
         login.on_button_pressed(FakeBtnPress("use_server"))
         await pilot.pause()
@@ -887,6 +887,59 @@ async def test_populate_servers_dedups_default_udsk(monkeypatch):
         ol = app.screen.query_one("#server_options", OptionList)
         # only the persisted alias row; no separate "Local klangkd (UDS)" row
         assert len(ol._options) == 1
+
+
+async def test_login_choose_invalid_server(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    added = {}
+    st = _st(
+        current_url=lambda: None,
+        known_servers=lambda: [],
+        default_uds=lambda: None,
+        cfg=lambda: CLIConfig(),
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+        add_server=lambda alias, url, user=None: added.__setitem__(
+            "a", (alias, url)
+        ),
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        login = app.screen
+        login._choose_server("sdfsdf")
+        await pilot.pause()
+        # not persisted, and a sensible message is shown
+        assert added.get("a") is None
+        assert "URL" in str(login.query_one("#message").render())
+
+
+async def test_add_server_rejects_invalid_url(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    added = {}
+    st = _authed_state(
+        add_server=lambda alias, url, user=None: added.__setitem__(
+            "a", (alias, url)
+        )
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(AddServerScreen())
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#alias", Input).value = "x"
+        s.query_one("#url", Input).value = "sdfsdf"
+        s._add()
+        await pilot.pause()
+        assert added.get("a") is None
+        assert "http" in str(s.query_one("#add_msg").render()).lower()
 
 
 async def test_confirm_screen(monkeypatch):
