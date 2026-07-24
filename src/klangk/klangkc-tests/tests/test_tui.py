@@ -1930,7 +1930,7 @@ async def test_create_screen_images_unavailable(monkeypatch):
         return _wsobj(name)
 
     def boom():
-        raise RuntimeError("images endpoint down")
+        raise OSError("images endpoint down")
 
     app = KlangkApp(
         _create_state(create=create, list_images=boom, allow_autostart=boom)

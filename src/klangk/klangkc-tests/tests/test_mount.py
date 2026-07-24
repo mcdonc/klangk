@@ -1,6 +1,7 @@
 """Tests for client-side mount spec validation."""
 
-from klangk.cli.mount import validate_env_entry, validate_mount_spec
+from klangk.cli.env import validate_env_entry
+from klangk.cli.mount import validate_mount_spec
 
 
 class TestValidateMountSpec:

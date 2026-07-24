@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
+import logging
+
 import httpx
 
 from rich.text import Text
@@ -32,10 +34,13 @@ from textual.widgets.option_list import Option
 
 from .state import LoginError
 from ..client import AuthError, WorkspaceNotFoundError
-from ..mount import validate_env_entry, validate_mount_spec
+from ..env import validate_env_entry
+from ..mount import validate_mount_spec
 from ..transport import is_valid_server_spec
 from .widgets import StatusBar
 from .ws import listen_for_status
+
+logger = logging.getLogger(__name__)
 
 
 class ConfirmScreen(ModalScreen[bool]):
@@ -369,11 +374,13 @@ class MainScreen(Screen):
             data = state.list_images()
             default = data.get("default", "") or ""
             allowed = list(data.get("allowed") or [])
-        except Exception:
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            logger.debug("Could not fetch image list: %s", exc)
             default, allowed = "", []
         try:
             allow_autostart = state.allow_autostart()
-        except Exception:
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            logger.debug("Could not fetch autostart config: %s", exc)
             allow_autostart = False
         self.app.push_screen(
             CreateWorkspaceScreen(
@@ -991,13 +998,15 @@ class CreateWorkspaceScreen(Screen):
         # Send only a real, non-default selection. When the server's default
         # isn't in the allowed list we start unselected (Select.BLANK), so an
         # untouched picker omits the image — matching the Flutter dialog.
-        image = (
-            val
-            if (
-                self._allowed and val != self._default and val in self._allowed
-            )
-            else None
-        )
+        if (
+            val is Select.BLANK
+            or val is Select.NULL
+            or not self._allowed
+            or val == self._default
+        ):
+            image = None
+        else:
+            image = val
         command = self.query_one("#command", Input).value.strip() or None
         health_check = (
             self.query_one("#health_check", Input).value.strip() or None
@@ -1027,7 +1036,7 @@ class CreateWorkspaceScreen(Screen):
             # crash the TUI from inside this handler.
             try:
                 detail = exc.response.json().get("detail", exc.response.text)
-            except Exception:
+            except (ValueError, KeyError):
                 detail = exc.response.text or str(exc)
             self._msg(f"Failed to create: {detail}", error=True)
             return
