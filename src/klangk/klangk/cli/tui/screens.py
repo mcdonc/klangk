@@ -76,11 +76,15 @@ class LoginScreen(Screen):
         ol = self.query_one("#server_options", OptionList)
         ol.clear_options()
         current = self.app.tui_state.current_url()
-        for s in self.app.tui_state.known_servers():
+        known = self.app.tui_state.known_servers()
+        known_urls = {s.url for s in known}
+        for s in known:
             mark = "*" if s.url == current else " "
             ol.add_option(Option(f"{mark} {s.alias}  ({s.url})", id=s.url))
         uds = self.app.tui_state.default_uds()
-        if uds and uds != current:
+        # Only offer the auto-detected default UDS if no alias already covers
+        # it (otherwise it would duplicate the persisted alias row).
+        if uds and uds != current and uds not in known_urls:
             ol.add_option(Option(f"  Local klangkd (UDS)  ({uds})", id=uds))
 
     @staticmethod
@@ -101,12 +105,9 @@ class LoginScreen(Screen):
         if raw in cfg.servers:
             # Known alias — switch to its URL.
             self.app.tui_state.switch_server(cfg.servers[raw].url)
-        elif raw.startswith("/"):
-            # A socket path (e.g. the auto-detected UDS): use it without
-            # persisting a throwaway alias.
-            self.app.tui_state.switch_server(raw)
         else:
-            # A new URL — save it as an alias so it appears next time.
+            # A new server (URL or UDS path) — save it as an alias so it can
+            # be re-selected later.
             self.app.tui_state.add_server(self._derive_alias(raw), raw)
         self.query_one("#server_input", Input).value = ""
         self._set_message("")

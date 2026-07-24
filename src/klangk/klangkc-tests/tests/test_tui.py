@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, OptionList
 
 from klangk.cli import config as cfgmod
 from klangk.cli import tui as tui_pkg
@@ -815,12 +815,12 @@ async def test_login_server_picker(monkeypatch):
             "https://newhost.example/x",
         )
 
-        # UDS path -> switch without persisting an alias
+        # UDS path -> also persisted as an alias (basename)
         srv_input = login.query_one("#server_input", Input)
-        srv_input.value = "/tmp/klangk.sock"
+        srv_input.value = "/var/run/other.sock"
         login.on_input_submitted(Input.Submitted(srv_input, srv_input.value))
         await pilot.pause()
-        assert calls.get("switch") == "/tmp/klangk.sock"
+        assert calls.get("add") == ("other.sock", "/var/run/other.sock")
 
         # "Use server" button also dispatches
         srv_input.value = "prod"
@@ -831,6 +831,31 @@ async def test_login_server_picker(monkeypatch):
         # after a successful pick the server line + enabled creds reflect it
         assert "Server:" in str(login.query_one("#server_line").render())
         assert not login.query_one("#login", Button).disabled
+
+
+async def test_populate_servers_dedups_default_udsk(monkeypatch):
+    """The auto-detected default UDS isn't double-listed when an alias
+    already points at it (after the user persisted it)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    uds = "/tmp/klangk.sock"
+    st = _st(
+        current_url=lambda: None,
+        known_servers=lambda: [tui_state_mod.ServerInfo("local", uds)],
+        default_uds=lambda: uds,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+    )
+    app = KlangkApp(st)
+    async with app.run_test():
+        ol = app.screen.query_one("#server_options", OptionList)
+        # only the persisted alias row; no separate "Local klangkd (UDS)" row
+        assert len(ol._options) == 1
 
 
 # ---------------------------------------------------------------------------
