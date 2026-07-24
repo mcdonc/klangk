@@ -28,7 +28,7 @@ class KlangkApp(App):
     #login_box {
         width: 96;
         max-width: 90%;
-        padding: 2 2;
+        padding: 0 2;
     }
     #switch_box, #add_box {
         width: 104;
