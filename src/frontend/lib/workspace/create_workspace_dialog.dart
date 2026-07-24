@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
-import 'workspace_list_page.dart' show validateMountSpec;
+import 'workspace_list_page.dart'
+    show validateMountSpec, validateAllowedDomainSpec;
 
 /// Dialog for creating a new workspace. Fields, top to bottom:
 /// Name, Mounts, Environment Variables, Service shell command, Health
@@ -26,6 +27,11 @@ class CreateWorkspaceDialog extends StatefulWidget {
   /// allowed_domains). Empty when netfilter is unset/disabled on the server.
   final List<String> defaultAllowedDomains;
 
+  /// #1365: whether netfilter is armed on the server. When false, the
+  /// allowed-domains editor shows a "not enforced" notice so the creator
+  /// knows the list won't take effect until an operator enables netfilter.
+  final bool netfilterEnabled;
+
   const CreateWorkspaceDialog({
     super.key,
     required this.auth,
@@ -33,6 +39,7 @@ class CreateWorkspaceDialog extends StatefulWidget {
     required this.allowedImages,
     this.allowAutostart = false,
     this.defaultAllowedDomains = const [],
+    this.netfilterEnabled = false,
   });
 
   @override
@@ -117,10 +124,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   void _tryAddAllowedDomain() {
     final v = _allowedDomainsController.text.trim();
     if (v.isEmpty) return;
-    final spec = RegExp(
-        r'^\[[0-9A-Fa-f:.]+\](:[0-9]{1,5})?$|^[A-Za-z0-9][A-Za-z0-9.\-]*(:[0-9]{1,5})?$');
-    if (v.contains(' ') || v.contains('/') || !spec.hasMatch(v)) {
-      setState(() => _allowedDomainsError = 'Expected host or host:port');
+    final err = validateAllowedDomainSpec(v);
+    if (err != null) {
+      setState(() => _allowedDomainsError = err);
       return;
     }
     setState(() {
@@ -488,6 +494,30 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
               icon: const Icon(Icons.add), onPressed: _tryAddAllowedDomain),
         ],
       ),
+      if (_allowedDomains.isNotEmpty && !widget.netfilterEnabled) ...[
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.amber.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.warning_amber, size: 18),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Egress filtering is not active on this server — the '
+                  'allowed-domains list will NOT be enforced until an '
+                  'operator enables netfilter.',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     ];
   }
 }

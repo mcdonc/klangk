@@ -44,6 +44,24 @@ String? validateMountSpec(String spec) {
   return null;
 }
 
+/// Client-side validation for a ``host`` or ``host:port`` allowed-domain
+/// spec. Returns an error string on failure, ``null`` on success. The server
+/// validates definitively; this catches typos at the boundary.
+String? validateAllowedDomainSpec(String spec) {
+  if (spec.contains(' ') || spec.contains('/')) {
+    return 'Expected host or host:port';
+  }
+  final re = RegExp(
+      r'^\[[0-9A-Fa-f:.]+\](:[0-9]{1,5})?$|^[A-Za-z0-9][A-Za-z0-9.\-]*(:[0-9]{1,5})?$');
+  if (!re.hasMatch(spec)) return 'Expected host or host:port';
+  // Reject ports > 65535 (the regex allows up to 5 digits).
+  final portMatch = RegExp(r':(\d{1,5})$').firstMatch(spec);
+  if (portMatch != null && int.parse(portMatch.group(1)!) > 65535) {
+    return 'Port must be 1–65535';
+  }
+  return null;
+}
+
 class WorkspaceListPage extends StatefulWidget {
   const WorkspaceListPage({super.key}); // coverage:ignore-line
 
@@ -353,6 +371,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         allowedImages: allowedImages,
         allowAutostart: _auth.allowAutostart,
         defaultAllowedDomains: _auth.netfilterDefaultDomains,
+        netfilterEnabled: _auth.netfilterEnabled,
       ),
     );
 

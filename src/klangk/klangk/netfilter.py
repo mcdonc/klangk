@@ -103,7 +103,22 @@ def _valid_domain_spec(spec: str) -> bool:
         return False
     if "/" in spec:
         return False
-    return bool(_DOMAIN_RE.match(spec) or _DOMAIN_BRACKET_RE.match(spec))
+    if not (_DOMAIN_RE.match(spec) or _DOMAIN_BRACKET_RE.match(spec)):
+        return False
+    # The regex accepts up to 5 digits; additionally reject ports > 65535.
+    if ":" in spec:
+        # For bracketed IPv6 ([::1]:port), the port follows ']:'.
+        # For host:port, the port follows the last ':'.
+        if spec.startswith("["):
+            idx = spec.rfind("]:")
+            port_str = (
+                spec[idx + 2 :] if idx >= 0 and idx + 2 < len(spec) else None
+            )
+        else:
+            port_str = spec.rsplit(":", 1)[1]
+        if port_str and port_str.isdigit() and int(port_str) > 65535:
+            return False
+    return True
 
 
 def parse_allowed_domains(values: list[str]) -> list[str]:

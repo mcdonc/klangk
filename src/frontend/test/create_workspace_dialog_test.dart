@@ -64,6 +64,7 @@ void main() {
     List<String>? allowedImages,
     bool allowAutostart = false,
     List<String> defaultAllowedDomains = const [],
+    bool netfilterEnabled = false,
   }) {
     final a = auth ?? AuthService();
     return MaterialApp(
@@ -80,6 +81,7 @@ void main() {
                   allowedImages: allowedImages ?? [defaultImage, 'klangk-full'],
                   allowAutostart: allowAutostart,
                   defaultAllowedDomains: defaultAllowedDomains,
+                  netfilterEnabled: netfilterEnabled,
                 ),
               );
             });
@@ -580,6 +582,53 @@ void main() {
       // Tapping copy fired the chip's onPressed (Clipboard.setData) —
       // the chip is otherwise unchanged.
       expect(find.text('example.com:443'), findsOneWidget);
+    });
+
+    testWidgets('rejects port > 65535', (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog());
+      await tester.pump();
+      await tester.pump();
+
+      final input = find.widgetWithText(TextField, 'github.com:443');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'a.com:99999');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      expect(find.textContaining('65535'), findsOneWidget);
+    });
+
+    testWidgets('shows not-enforced notice when netfilter disabled',
+        (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog(
+        defaultAllowedDomains: ['github.com:443'],
+        netfilterEnabled: false,
+      ));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.textContaining('NOT be enforced'), findsOneWidget);
+    });
+
+    testWidgets('hides not-enforced notice when netfilter enabled',
+        (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog(
+        defaultAllowedDomains: ['github.com:443'],
+        netfilterEnabled: true,
+      ));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.textContaining('NOT be enforced'), findsNothing);
     });
 
     testWidgets('clears mount error on successful add', (tester) async {

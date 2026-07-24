@@ -48,6 +48,7 @@ class TestParseAllowedDomains:
             "10.0.0.1",
             "10.0.0.1:53",
             "sub.domain.example.com:8080",
+            "a.com:65535",  # max valid port
             "[::1]",
             "[2001:db8::1]:443",
         ],
@@ -61,6 +62,8 @@ class TestParseAllowedDomains:
             "bad spec",  # whitespace
             "a.com:abc",  # non-numeric port
             "a.com:123456",  # port too long (>5 digits)
+            "a.com:99999",  # port > 65535
+            "[::1]:70000",  # bracketed IPv6, port > 65535
             "/etc/passwd",  # slash
             "-leading",  # leading hyphen rejected by host grammar
             "a.com/path",

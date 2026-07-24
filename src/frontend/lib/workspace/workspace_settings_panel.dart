@@ -8,6 +8,7 @@ import '../theme/colors.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import '../ws/ws_client.dart';
+import 'workspace_list_page.dart' show validateAllowedDomainSpec;
 
 /// Workspace settings panel: config editing only.
 /// Used as a tab in the IDE layout.
@@ -371,12 +372,9 @@ class _SettingsFormState extends State<_SettingsForm> {
   void _tryAddAllowedDomain() {
     final v = _allowedDomainsCtrl.text.trim();
     if (v.isEmpty) return;
-    // Lightweight client-side check (the server validates definitively):
-    // a spec is a host with an optional :port, no spaces or slashes.
-    final spec = RegExp(
-        r'^\[[0-9A-Fa-f:.]+\](:[0-9]{1,5})?$|^[A-Za-z0-9][A-Za-z0-9.\-]*(:[0-9]{1,5})?$');
-    if (v.contains(' ') || v.contains('/') || !spec.hasMatch(v)) {
-      setState(() => _allowedDomainsError = 'Expected host or host:port');
+    final err = validateAllowedDomainSpec(v);
+    if (err != null) {
+      setState(() => _allowedDomainsError = err);
       return;
     }
     setState(() {
@@ -676,11 +674,10 @@ class _SettingsFormState extends State<_SettingsForm> {
   }
 
   /// #1769: this workspace declares allowed_domains but the deploy has
-  /// netfilter disabled (KLANGKD_NETFILTER_HOOKS_DIR unset/unwritable),
-  /// so the allow-list is NOT being enforced — the container starts with
-  /// unrestricted egress (deliberate fail-open). Surface the gap to the
-  /// user who set the list (the party at risk); the server only logs the
-  /// warning to operator logs otherwise.
+  /// netfilter disabled, so the allow-list is NOT being enforced — the
+  /// container starts with unrestricted egress (deliberate fail-open).
+  /// Surface the gap to the user who set the list (the party at risk);
+  /// the server only logs the warning to operator logs otherwise.
   Widget _buildEgressNotEnforcedNotice() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -688,12 +685,12 @@ class _SettingsFormState extends State<_SettingsForm> {
         color: KColors.accentAmber.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: Row(
+      child: const Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.warning_amber, size: 18),
-          const SizedBox(width: 8),
-          const Expanded(
+          Icon(Icons.warning_amber, size: 18),
+          SizedBox(width: 8),
+          Expanded(
             child: Text(
               'Egress filtering is not active on this server — the '
               'allowed-domains list above is NOT being enforced. This '

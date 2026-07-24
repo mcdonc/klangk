@@ -83,7 +83,7 @@ curl -X PUT https://klangkd/api/v1/workspaces/<id> \
 ```
 
 - `host` allows all ports to that host.
-- `host:port` allows a single TCP port.
+- `host:port` allows a single TCP port (port must be 1–65535).
 - Each entry is validated server-side; malformed entries are rejected with
   HTTP 400.
 - An empty list (or `null`) **inherits the deploy-wide default**
