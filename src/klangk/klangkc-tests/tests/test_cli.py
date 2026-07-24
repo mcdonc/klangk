@@ -1043,6 +1043,121 @@ class TestKlangkClient:
             with pytest.raises(AuthError, match="Session expired"):
                 client.list_workspaces()
 
+    def test_duplicate_workspace(self):
+        client = KlangkClient("http://test:8995", "token")
+        fake_ws = MagicMock(id="src-id")
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {"id": "new-id", "name": "src-copy"}
+        with (
+            patch.object(client, "resolve_workspace", return_value=fake_ws),
+            patch.object(client, "post", return_value=mock_resp),
+        ):
+            result = client.duplicate_workspace("src", "src-copy")
+            assert result == {"id": "new-id", "name": "src-copy"}
+            client.post.assert_called_once_with(
+                "/api/v1/workspaces/src-id/duplicate",
+                json={"name": "src-copy"},
+            )
+
+    def test_list_terminals(self):
+        client = KlangkClient("http://test:8995", "token")
+        ws = Workspace(id="ws" + "0" * 60, name="alpha", created_at="x")
+        client.resolve_workspace = MagicMock(return_value=ws)
+        messages = [
+            json.dumps({"type": "container_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"index": 0, "name": "main", "id": "@0"},
+                        {"index": 1, "name": "build", "id": "@1"},
+                    ],
+                }
+            ),
+        ]
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "klangk.cli.transport.websockets.connect",
+            return_value=mock_ws,
+        ):
+            windows = asyncio.run(client.list_terminals("alpha"))
+        assert [w["name"] for w in windows] == ["main", "build"]
+
+    def test_list_terminals_failure(self):
+        # resolve_workspace raising -> graceful empty list
+        client = KlangkClient("http://test:8995", "token")
+        client.resolve_workspace = MagicMock(side_effect=RuntimeError("nope"))
+        assert asyncio.run(client.list_terminals("alpha")) == []
+
+    def test_close_terminal(self):
+        client = KlangkClient("http://test:8995", "token")
+        ws = Workspace(id="ws" + "0" * 60, name="alpha", created_at="x")
+        client.resolve_workspace = MagicMock(return_value=ws)
+        messages = [
+            json.dumps({"type": "container_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"index": 0, "name": "main", "id": "@0"},
+                        {"index": 1, "name": "build", "id": "@1"},
+                    ],
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"index": 0, "name": "main", "id": "@0"},
+                    ],
+                }
+            ),
+        ]
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "klangk.cli.transport.websockets.connect",
+            return_value=mock_ws,
+        ):
+            windows = asyncio.run(client.close_terminal("alpha", 1))
+        assert len(windows) == 1  # one closed
+
+    def test_close_terminal_no_windows(self):
+        # close on a workspace reporting no windows -> no close sent, []
+        client = KlangkClient("http://test:8995", "token")
+        ws = Workspace(id="ws" + "0" * 60, name="alpha", created_at="x")
+        client.resolve_workspace = MagicMock(return_value=ws)
+        messages = [
+            json.dumps({"type": "container_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps({"type": "terminal_windows", "windows": []}),
+        ]
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "klangk.cli.transport.websockets.connect",
+            return_value=mock_ws,
+        ):
+            assert asyncio.run(client.close_terminal("alpha", 0)) == []
+
     def test_list_workspaces_parses_response(self):
         client = KlangkClient("http://test:8995", "valid-token")
         mock_resp = MagicMock()

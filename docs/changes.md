@@ -30,10 +30,35 @@ operators or integrators to act when upgrading.
 - **Bare `klangk` (no subcommand) launches an interactive textual TUI on a
   real terminal (#1746).** The TUI is the foundation of the terminal client:
   in-TUI login (local/password, with no-auth auto-login and OIDC hand-off to
-  `klangk login`), live server switching including adding a new alias, and a
+  `klangk login`), live server switching, and a
   live workspace/container status feed over the existing WebSocket. Subcommands
   are unchanged; in non-interactive contexts (pipes, CI) bare `klangk` still
   prints help. `textual` is now a runtime dependency.
+
+- **The `klangk` TUI now lists workspaces and manages them in-app
+  (#1747).** The home screen is a two-page list (Owned by me / Shared to
+  me) that refreshes from the live WebSocket status feed. Selecting a
+  workspace opens a detail screen (running/health, image, command, mounts,
+  env, owner) with Restart, Duplicate, and Delete actions — each guarded by
+  a confirmation. The detail screen mirrors live status (running/health)
+  from `container_status`/`service_health` broadcasts; Duplicate prompts
+  for a new name (server requires one); Delete is a yes/no confirm that
+  returns to the list. All user-facing text is rendered as rich `Text`
+  (never markup-parsed) — list rows, detail body, confirm dialogs, the
+  duplicate prompt, the status bar, and login messages — so workspace
+  names or messages containing bracket characters can't crash the TUI.
+  Load errors degrade gracefully: an expired session is surfaced as a
+  distinct "session expired" state (not mistaken for an empty list), and
+  if the open workspace is deleted by another client the detail screen
+  returns to the list. Volume cleanup is deferred.
+
+- **The `klangk` TUI detail screen now lists the workspace's terminals and
+  lets you delete them (#1747).** The detail page enumerates the terminals
+  you own (fetched over the workspace WebSocket) and adds a Delete-key
+  binding to remove the selected one; the last terminal is protected by a
+  client-side guard (matching Flutter), and a failed close/refresh is
+  reported rather than silently emptying the list. Selecting a terminal is wired for a future `klangk shell`
+  step. The workspace-list page is now titled "Klangk: Workspaces".
 
 - **The `features_config:` block now accepts the stripped, lowercased key form
   (`soliplex_url`) in addition to the full declared name

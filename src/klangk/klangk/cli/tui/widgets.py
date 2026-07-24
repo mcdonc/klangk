@@ -1,8 +1,10 @@
-"""StatusBar and Sidebar widgets for the klangk TUI."""
+"""StatusBar widget for the klangk TUI."""
 
 from __future__ import annotations
 
 from textual.widgets import Static
+
+from rich.text import Text
 
 
 class StatusBar(Static):
@@ -31,21 +33,6 @@ class StatusBar(Static):
         )
         if extra:
             text += f"   |   {extra}"
-        self.update(text)
-
-
-class Sidebar(Static):
-    """Left navigation pane (keybinding-driven for the foundation)."""
-
-    DEFAULT_CSS = """
-    Sidebar {
-        dock: left;
-        width: 24;
-        padding: 1 2;
-        background: $panel;
-        border-right: solid $primary-background;
-    }
-    """
-
-    def set_items(self, items: list[str]) -> None:
-        self.update("\n".join(items))
+        # Render literally — server URL / user / live `extra` may contain
+        # bracket characters that would otherwise be parsed as markup.
+        self.update(Text(text))

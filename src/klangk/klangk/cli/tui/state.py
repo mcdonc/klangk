@@ -21,7 +21,7 @@ from ..auth import (
     fetch_config,
     local_login,
 )
-from ..client import KlangkClient
+from ..client import KlangkClient, Workspace
 from ..config import (
     CLIConfig,
     CLIState,
@@ -106,6 +106,32 @@ class TuiState:
 
     def client(self) -> KlangkClient:
         return KlangkClient(self.current_url(), self.token())
+
+    # --- workspaces ---
+
+    def list_owned_workspaces(self) -> list[Workspace]:
+        return self.client().list_workspaces(all_pages=True)
+
+    def list_shared_workspaces(self) -> list[Workspace]:
+        return self.client().list_shared_workspaces(all_pages=True)
+
+    def find_workspace(self, name: str) -> Workspace:
+        return self.client().resolve_workspace(name)
+
+    def restart_workspace(self, name: str) -> None:
+        self.client().restart_workspace(name)
+
+    def delete_workspace(self, name: str) -> None:
+        self.client().delete_workspace(name)
+
+    def duplicate_workspace(self, name: str, new_name: str) -> dict:
+        return self.client().duplicate_workspace(name, new_name)
+
+    async def list_terminals(self, name: str) -> list[dict]:
+        return await self.client().list_terminals(name)
+
+    async def close_terminal(self, name: str, index: int) -> list[dict]:
+        return await self.client().close_terminal(name, index)
 
     # --- auth mode (probed live via /config) ---
 
