@@ -18,6 +18,7 @@ from klangk.cli.config import (
     CLIState,
     ServerEntry,
     add_server_to_config,
+    remove_server_from_config,
 )
 from klangk.cli.tui import screens as scr
 from klangk.cli.tui import state as tui_state_mod
@@ -111,6 +112,20 @@ def test_add_server_merges_existing(redirect_xdg):
     loaded = CLIConfig.load()
     assert set(loaded.servers) == {"a", "b"}
     assert loaded.servers["a"].url == "https://a.example"
+
+
+def test_remove_server_from_config(redirect_xdg):
+    add_server_to_config("a", "https://a.example")
+    add_server_to_config("b", "https://b.example")
+    assert remove_server_from_config("a") is True
+    assert set(CLIConfig.load().servers) == {"b"}
+    # removing an absent alias is a no-op (False)
+    assert remove_server_from_config("zzz") is False
+
+
+def test_remove_server_no_config_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(cfgmod, "_CONFIG_PATH", tmp_path / "nope.yaml")
+    assert remove_server_from_config("a") is False
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +320,21 @@ def test_logout_switch_add(redirect_xdg):
     loaded = CLIConfig.load()
     assert loaded.servers["c"].url == "https://c.example"
     assert loaded.servers["c"].user == "u"
+
+
+def test_delete_server(redirect_xdg):
+    add_server_to_config("a", "https://a.example")
+    add_server_to_config("b", "https://b.example")
+    TuiState().switch_server("https://a.example")  # make 'a' active
+    assert TuiState().state().active_server == "https://a.example"
+
+    # delete by url -> alias gone, active pointer cleared
+    assert TuiState().delete_server("https://a.example") is True
+    assert set(CLIConfig.load().servers) == {"b"}
+    assert TuiState().state().active_server is None
+
+    # not found
+    assert TuiState().delete_server("https://nope.example") is False
 
 
 # ---------------------------------------------------------------------------
@@ -856,6 +886,117 @@ async def test_populate_servers_dedups_default_udsk(monkeypatch):
         ol = app.screen.query_one("#server_options", OptionList)
         # only the persisted alias row; no separate "Local klangkd (UDS)" row
         assert len(ol._options) == 1
+
+
+async def test_login_delete_server(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    cfg = CLIConfig()
+    cfg.servers = {"prod": ServerEntry(url="https://prod.example")}
+    deleted = {}
+    st = _st(
+        current_url=lambda: "https://prod.example",
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod", "https://prod.example")
+        ],
+        default_uds=lambda: None,
+        cfg=lambda: cfg,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+        delete_server=lambda url: deleted.__setitem__("u", url) or True,
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        login = app.screen
+        ol = login.query_one("#server_options", OptionList)
+        # nothing highlighted -> prompt to select
+        ol.highlighted = None
+        login.action_delete_server()
+        await pilot.pause()
+        assert "Select a server" in str(login.query_one("#message").render())
+        # highlight + delete -> delete_server called, success message
+        ol.highlighted = 0
+        login.action_delete_server()
+        await pilot.pause()
+        assert deleted.get("u") == "https://prod.example"
+        assert "Server deleted" in str(login.query_one("#message").render())
+        # delete returns False -> "Not a saved alias"
+        st.delete_server = lambda url: False
+        ol.highlighted = 0
+        login.action_delete_server()
+        await pilot.pause()
+        assert "Not a saved alias" in str(login.query_one("#message").render())
+
+
+async def test_login_delete_clears_to_no_server(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _st(
+        current_url=lambda: "https://prod.example",
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod", "https://prod.example")
+        ],
+        default_uds=lambda: None,
+        cfg=lambda: CLIConfig(),
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+    )
+
+    def fake_delete(url):
+        st.current_url = lambda: None
+        st.known_servers = lambda: []
+        return True
+
+    st.delete_server = fake_delete
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        login = app.screen
+        ol = login.query_one("#server_options", OptionList)
+        ol.highlighted = 0
+        login.action_delete_server()
+        await pilot.pause()
+        # current_url now None -> no-server state
+        assert "No server selected" in str(
+            login.query_one("#server_line").render()
+        )
+
+
+async def test_switch_screen_delete_server(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    deleted = {}
+    st = _authed_state(
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod", "https://prod.example")
+        ],
+        delete_server=lambda url: deleted.__setitem__("u", url),
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(ServerSwitchScreen())
+        await pilot.pause()
+        switch = app.screen
+        ol = switch.query_one("#server_options", OptionList)
+        # nothing highlighted -> no-op
+        ol.highlighted = None
+        switch.action_delete_server()
+        await pilot.pause()
+        assert "u" not in deleted
+        # highlight + delete
+        ol.highlighted = 0
+        switch.action_delete_server()
+        await pilot.pause()
+        assert deleted.get("u") == "https://prod.example"
 
 
 # ---------------------------------------------------------------------------

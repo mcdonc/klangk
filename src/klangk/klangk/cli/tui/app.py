@@ -26,18 +26,22 @@ class KlangkApp(App):
         align: center top;
     }
     #login_box {
-        width: 64;
+        width: 96;
         max-width: 90%;
         padding: 1 2;
     }
     #switch_box, #add_box {
-        width: 70;
+        width: 104;
         max-width: 90%;
         padding: 1 2;
     }
     #main {
         padding: 1 2;
         width: 1fr;
+    }
+    /* Right-align button rows with the input fields above them. */
+    .actions {
+        align-horizontal: right;
     }
     """
 

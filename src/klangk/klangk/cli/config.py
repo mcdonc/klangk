@@ -203,6 +203,24 @@ def add_server_to_config(
     _CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
 
 
+def remove_server_from_config(alias: str) -> bool:
+    """Remove a named server entry from klangk.yaml.
+
+    Returns True if the alias was present and removed, False otherwise.
+    The counterpart to ``add_server_to_config`` (TUI delete-server flow).
+    """
+    if not _CONFIG_PATH.exists():
+        return False
+    data = yaml.safe_load(_CONFIG_PATH.read_text()) or {}
+    servers = data.get("servers") or {}
+    if alias not in servers:
+        return False
+    del servers[alias]
+    data["servers"] = servers
+    _CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
+    return True
+
+
 @dataclass
 class UserEntry:
     """Per-user credentials within a server in klangk-state.yaml."""

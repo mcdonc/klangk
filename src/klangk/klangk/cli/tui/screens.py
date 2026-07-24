@@ -38,6 +38,8 @@ class LoginScreen(Screen):
     password form; ``unreachable`` → diagnostic.
     """
 
+    BINDINGS = [("d", "delete_server", "Delete server")]
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield Vertical(
@@ -48,12 +50,18 @@ class LoginScreen(Screen):
                 placeholder=("Server URL or alias (e.g. https://host, prod)"),
                 id="server_input",
             ),
-            Button("Use server", id="use_server"),
+            Horizontal(
+                Button("Use server", id="use_server"),
+                classes="actions",
+            ),
             Static("", id="notice"),
             Input(placeholder="Email or handle", id="identifier"),
             Input(placeholder="Password", id="password", password=True),
-            Button("Log in", id="login", variant="primary"),
-            Button("Log in via browser (SSO)", id="oidc"),
+            Horizontal(
+                Button("Log in", id="login", variant="primary"),
+                Button("Log in via browser (SSO)", id="oidc"),
+                classes="actions",
+            ),
             Static("", id="message"),
             id="login_box",
         )
@@ -64,11 +72,14 @@ class LoginScreen(Screen):
         if self.app.tui_state.current_url() is not None:
             self._setup_auth()
         else:
-            self.query_one("#server_line", Static).update(
-                "No server selected. Pick one above or enter a URL,"
-                " then press 'Use server'."
-            )
-            self._disable_credentials()
+            self._show_no_server()
+
+    def _show_no_server(self) -> None:
+        self.query_one("#server_line", Static).update(
+            "No server selected. Pick one above or enter a URL,"
+            " then press 'Use server'."
+        )
+        self._disable_credentials()
 
     # --- server picker ---
 
@@ -113,6 +124,23 @@ class LoginScreen(Screen):
         self._set_message("")
         self._populate_servers()
         self._setup_auth()
+
+    def action_delete_server(self) -> None:
+        ol = self.query_one("#server_options", OptionList)
+        idx = ol.highlighted
+        if idx is None:
+            self._set_message("Select a server to delete.", error=True)
+            return
+        url = ol.get_option_at_index(idx).id
+        if self.app.tui_state.delete_server(url):
+            self._set_message("Server deleted.")
+        else:
+            self._set_message("Not a saved alias.", error=True)
+        self._populate_servers()
+        if self.app.tui_state.current_url() is None:
+            self._show_no_server()
+        else:
+            self._setup_auth()
 
     # --- auth-mode setup ---
 
@@ -316,7 +344,10 @@ class MainScreen(Screen):
 class ServerSwitchScreen(Screen):
     """Pick a known server alias to switch to."""
 
-    BINDINGS = [("escape", "app.pop_screen", "Back")]
+    BINDINGS = [
+        ("escape", "app.pop_screen", "Back"),
+        ("d", "delete_server", "Delete"),
+    ]
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -329,17 +360,30 @@ class ServerSwitchScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        servers = self.app.tui_state.known_servers()
-        if not servers:
-            self.query_one("#switch_msg", Static).update(
-                "No servers configured. Use 'a' to add one."
-            )
-            return
-        current = self.app.tui_state.current_url()
+        self._populate()
+
+    def _populate(self) -> None:
         ol = self.query_one("#server_options", OptionList)
+        ol.clear_options()
+        servers = self.app.tui_state.known_servers()
+        msg = self.query_one("#switch_msg", Static)
+        if not servers:
+            msg.update("No servers configured. Use 'a' to add one.")
+            return
+        msg.update("")
+        current = self.app.tui_state.current_url()
         for s in servers:
             mark = "*" if s.url == current else " "
             ol.add_option(Option(f"{mark} {s.alias}  ({s.url})", id=s.url))
+
+    def action_delete_server(self) -> None:
+        ol = self.query_one("#server_options", OptionList)
+        idx = ol.highlighted
+        if idx is None:
+            return
+        url = ol.get_option_at_index(idx).id
+        self.app.tui_state.delete_server(url)
+        self._populate()
 
     def on_option_list_option_selected(
         self, event: OptionList.OptionSelected

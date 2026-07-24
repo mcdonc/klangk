@@ -27,6 +27,7 @@ from ..config import (
     CLIState,
     add_server_to_config,
     default_server_uds_path,
+    remove_server_from_config,
 )
 from ..transport import http_request
 
@@ -204,3 +205,22 @@ class TuiState:
         state = self.state()
         state.active_server = url
         state.save()
+
+    def delete_server(self, url: str) -> bool:
+        """Delete the alias pointing at *url*.
+
+        Returns True if an alias was removed. If it was the active server,
+        the active pointer is cleared (so ``current_url`` falls back to the
+        default UDS or None) rather than left dangling.
+        """
+        cfg = self.cfg()
+        aliases = [a for a, e in cfg.servers.items() if e.url == url]
+        if not aliases:
+            return False
+        for a in aliases:
+            remove_server_from_config(a)
+        state = self.state()
+        if state.active_server == url:
+            state.active_server = None
+            state.save()
+        return True
