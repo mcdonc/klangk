@@ -11,6 +11,7 @@ from .screens import (
     LoginScreen,
     MainScreen,
     ServerSwitchScreen,
+    WorkspaceDetailScreen,
 )
 from .state import TuiState
 
@@ -79,6 +80,33 @@ class KlangkApp(App):
             self.push_screen(MainScreen())
         else:
             self.push_screen(LoginScreen())
+
+    def _sync_title(self) -> None:
+        """Mirror the active screen in the window title (#1778).
+
+        "Klangk: workspace <name>" on the detail/edit screen, "Klangk:
+        Workspaces" on the list. Run after every push/pop (via the overrides
+        below) so returning from detail/edit to the list resets it too —
+        textual fires no show hook on pop-back, so the App owns the sync.
+        Other screens (login, server switch, …) leave the title unchanged.
+        """
+        screen = self.screen
+        if isinstance(screen, WorkspaceDetailScreen):
+            self.title = f"Klangk: workspace {screen._name}"
+        elif isinstance(screen, EditWorkspaceScreen):
+            self.title = f"Klangk: workspace {screen._ws.name}"
+        elif isinstance(screen, MainScreen):
+            self.title = "Klangk: Workspaces"
+
+    def push_screen(self, screen, *args, **kwargs):
+        result = super().push_screen(screen, *args, **kwargs)
+        self.call_after_refresh(self._sync_title)
+        return result
+
+    def pop_screen(self):
+        result = super().pop_screen()
+        self.call_after_refresh(self._sync_title)
+        return result
 
     # --- navigation hooks used by screens ---
 

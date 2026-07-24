@@ -1059,6 +1059,36 @@ async def test_detail_action_edit_opens_form_and_refreshes(monkeypatch):
         assert finds.count("alpha") >= 2  # initial load + post-edit reload
 
 
+async def test_detail_and_edit_set_window_title(monkeypatch):
+    # The app/window title reflects the active screen: "Klangk: Workspaces"
+    # on the list, "Klangk: workspace <name>" on detail/edit, restored on pop.
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", image="base")
+    st = _ws(
+        list_images=lambda: {"default": "base", "allowed": ["base", "py:3"]},
+        allow_autostart=lambda: True,
+    )
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        assert app.title == "Klangk: Workspaces"
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        assert app.title == "Klangk: workspace alpha"
+        app.screen.action_edit()
+        await pilot.pause()
+        assert app.title == "Klangk: workspace alpha"  # edit (same workspace)
+        app.pop_screen()  # edit -> detail
+        await pilot.pause()
+        assert app.title == "Klangk: workspace alpha"
+        app.pop_screen()  # detail -> main
+        await pilot.pause()
+        assert app.title == "Klangk: Workspaces"
+
+
 async def test_detail_load_failure(monkeypatch):
     async def noop(*a, **k):
         return None
