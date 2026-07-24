@@ -52,7 +52,12 @@ from .client import (
     reset_terminal,
     _server_mode_is_none,
 )
-from .config import CLIConfig, CLIState, seed_config, _xdg_state_home
+from .config import (
+    CLIConfig,
+    CLIState,
+    default_server_uds_path,
+    seed_config,
+)
 from .mount import validate_mount_spec
 from .transport import ws_connect
 from .sandbox import (
@@ -67,6 +72,10 @@ app = typer.Typer(
     name="klangk",
     help="Klangk Client",
     rich_markup_mode="rich",
+    # Run the callback even with no subcommand so bare `klangk` can launch
+    # the interactive TUI (see _maybe_launch_tui). `--help`/`--version` are
+    # still handled by click before the callback runs, so they keep precedence.
+    invoke_without_command=True,
 )
 
 _cfg_cache: CLIConfig | None = None
@@ -89,18 +98,10 @@ def _state() -> CLIState:
 
 _server_override: str | None = None
 
-# Server-side XDG subdir + socket filename, mirrored from
-# ``settings.py`` (``_XDG_SUBDIR = "klangkd"``; socket =
-# ``<state_dir>/klangk.sock``) so the CLI can locate a co-located
-# ``klangkd``'s default UDS without importing from the server package
-# (``klangk.cli`` isolation rule). Named constants make the mirroring
-# grep-able if the server renames either.
-_SERVER_XDG_SUBDIR = "klangkd"
-_SOCKET_NAME = "klangk.sock"
-
 
 @app.callback()
 def app_callback(
+    ctx: typer.Context,
     server: str | None = typer.Option(
         None, "--server", help="Server alias or URL"
     ),
@@ -108,39 +109,34 @@ def app_callback(
     global _server_override
     if server is not None:
         _server_override = _cfg().resolve_server(server)
+    if ctx.invoked_subcommand is None:
+        _maybe_launch_tui(ctx)
 
 
-def _default_server_uds_path() -> str:
-    """Return the UDS path a co-located ``klangkd`` binds by default.
+def _is_interactive() -> bool:
+    """True when stdin and stdout are both real terminals."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
 
-    Mirrors the server's derivation so a single-host ``klangkd`` +
-    ``klangk`` works with no ``klangk login`` step (#1676). Resolution
-    order, matching the server:
 
-    1. ``KLANGK_SOCKET`` — if an explicit *plain absolute* path (not a
-       ``file:``/``cmd:`` indirection, which the server resolves by
-       running a cmd / reading a file and the CLI can't reproduce), the
-       server binds exactly there, so return it directly. This covers the
-       natural way to relocate a socket (``KLANGK_SOCKET=/run/klangk.sock``).
-    2. ``KLANGK_STATE_DIR/klangk.sock`` when ``KLANGK_STATE_DIR`` is set.
-    3. ``$XDG_STATE_HOME/klangkd/klangk.sock`` (→ ``~/.local/state/klangkd/…``).
+def _maybe_launch_tui(ctx: typer.Context) -> None:
+    """Launch the interactive TUI for a bare ``klangk`` invocation.
 
-    Replicated in ``klangk.cli`` — not imported — because the CLI runs in
-    a different environment than the server (``klangk.cli`` isolation
-    rule) and reuses ``config._xdg_state_home`` for the XDG fallback so
-    the two derivations can't drift. The ``file:``/``cmd:``
-    ``KLANGK_SOCKET`` indirection case is not reproduced; operators who
-    relocate the socket that way still need a one-time ``klangk login``.
+    Only on a real terminal: in non-TTY contexts (pipes, CI, typer's
+    ``CliRunner``) the historic "print help" behavior is preserved so the
+    command stays scriptable and the CLI test suite isn't surprised by a
+    TUI it can't drive. The TUI is imported lazily so the textual dep
+    never loads on plain subcommand paths (``klangk ls`` etc.).
     """
-    explicit = os.environ.get("KLANGK_SOCKET")
-    if explicit and explicit.startswith("/"):
-        # An absolute value is a plain path the server binds verbatim;
-        # file:/cmd: indirections don't start with "/" and fall through.
-        return explicit
-    state_dir = os.environ.get("KLANGK_STATE_DIR")
-    if not state_dir:
-        state_dir = os.path.join(str(_xdg_state_home()), _SERVER_XDG_SUBDIR)
-    return os.path.join(state_dir, _SOCKET_NAME)
+    if not _is_interactive():
+        typer.echo(ctx.get_help())
+        raise typer.Exit(code=0)
+    from .tui import run_tui  # noqa: allow-deferred-import
+
+    try:
+        run_tui(server_url=_server_override)
+    except Exception as exc:  # surface TUI crashes, don't swallow them
+        _err.print(f"[red]TUI error:[/red] {exc}")
+        raise typer.Exit(code=1)
 
 
 def server_url() -> str:
@@ -157,7 +153,7 @@ def server_url() -> str:
     # passes, and the unreachable connect is then surfaced by
     # ``require_auth`` as a clear "Cannot connect to klangkd" message
     # rather than a misleading "Not logged in".
-    default_uds = _default_server_uds_path()
+    default_uds = default_server_uds_path()
     if Path(default_uds).exists():
         return default_uds
     _err.print(

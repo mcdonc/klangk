@@ -2,6 +2,7 @@
 
 import json
 import os
+import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -316,36 +317,38 @@ class TestMainCLI:
 
     def test_default_server_uds_path_derivation(self, monkeypatch):
         """Unit-test the path derivation independent of existence."""
-        from klangk.cli import main
+        from klangk.cli import config
 
         monkeypatch.delenv("KLANGK_STATE_DIR", raising=False)
         monkeypatch.setenv("XDG_STATE_HOME", "/custom/xdg")
         assert (
-            main._default_server_uds_path()
+            config.default_server_uds_path()
             == "/custom/xdg/klangkd/klangk.sock"
         )
 
         monkeypatch.setenv("XDG_STATE_HOME", "/custom/xdg")
         monkeypatch.setenv("KLANGK_STATE_DIR", "/explicit/state")
-        assert main._default_server_uds_path() == "/explicit/state/klangk.sock"
+        assert (
+            config.default_server_uds_path() == "/explicit/state/klangk.sock"
+        )
 
         monkeypatch.delenv("KLANGK_STATE_DIR", raising=False)
         monkeypatch.delenv("XDG_STATE_HOME", raising=False)
         # Unset fallback → ~/.local/state (expanduser under HOME).
-        assert main._default_server_uds_path().endswith(
+        assert config.default_server_uds_path().endswith(
             ".local/state/klangkd/klangk.sock"
         )
 
         # An explicit plain absolute KLANGK_SOCKET is honored verbatim —
         # the server binds exactly there and skips the state_dir default.
         monkeypatch.setenv("KLANGK_SOCKET", "/run/klangk.sock")
-        assert main._default_server_uds_path() == "/run/klangk.sock"
+        assert config.default_server_uds_path() == "/run/klangk.sock"
 
         # file:/cmd: indirections can't be resolved client-side and must
         # fall through to the state_dir-derived default.
         for indirect in ("file:/etc/klangk/socket", "cmd:cat /etc/socket"):
             monkeypatch.setenv("KLANGK_SOCKET", indirect)
-            assert main._default_server_uds_path().endswith(
+            assert config.default_server_uds_path().endswith(
                 ".local/state/klangkd/klangk.sock"
             )
         monkeypatch.delenv("KLANGK_SOCKET", raising=False)
@@ -472,7 +475,10 @@ class TestMainCLI:
         )
         CLIState().save()
 
-        main.app_callback(server="prod")
+        main.app_callback(
+            types.SimpleNamespace(invoked_subcommand="status"),
+            server="prod",
+        )
         assert main._server_override == "http://prod:8995"
 
     def test_list_workspaces_empty(self, logged_in_cfg, monkeypatch):

@@ -8,9 +8,22 @@ from klangk.cli.transport import (
     ServerTransport,
     http_request,
     http_stream,
+    is_valid_server_spec,
     resolve_transport,
     ws_connect,
 )
+
+
+class TestIsValidServerSpec:
+    def test_valid_specs(self):
+        assert is_valid_server_spec("https://host:8995")
+        assert is_valid_server_spec("http://host")
+        assert is_valid_server_spec("/run/klangk.sock")
+
+    def test_invalid_specs(self):
+        assert not is_valid_server_spec("sdfsdf")
+        assert not is_valid_server_spec("relative/path")
+        assert not is_valid_server_spec("host:8995")  # no scheme
 
 
 class TestResolveTransport:
