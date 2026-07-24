@@ -170,45 +170,49 @@ class TestNetFilterInstallHooks:
 
 
 class TestNetFilterCreateKwargs:
-    def test_no_domains_returns_none_pair(self):
-        assert nf.NetFilter(_app()).create_kwargs(None) == (None, None)
-        assert nf.NetFilter(_app()).create_kwargs([]) == (None, None)
+    def test_no_domains_returns_none_triplet(self):
+        assert nf.NetFilter(_app()).create_kwargs(None) == (None, None, None)
+        assert nf.NetFilter(_app()).create_kwargs([]) == (None, None, None)
 
     def test_domains_without_hooks_dir_warns_and_fail_opens(self, caplog):
         app = _app()  # netfilter disabled
         with caplog.at_level("WARNING"):
             result = nf.NetFilter(app).create_kwargs(["github.com:443"])
-        assert result == (None, None)
+        assert result == (None, None, None)
         assert any("UNRESTRICTED" in r.message for r in caplog.records)
 
-    def test_domains_with_hooks_dir_returns_annotation_and_path(
+    def test_domains_with_hooks_dir_returns_annotation_path_and_cap_drop(
         self, tmp_path
     ):
         path = str(tmp_path / "hooks")
-        ann, hooks = nf.NetFilter(_app(hooks_dir=path)).create_kwargs(
-            ["github.com:443", "pypi.org"]
-        )
+        ann, hooks, cap_drop = nf.NetFilter(
+            _app(hooks_dir=path)
+        ).create_kwargs(["github.com:443", "pypi.org"])
         assert ann == {nf.ANNOTATION_KEY: "github.com:443,pypi.org"}
         assert hooks == os.path.realpath(path)
+        # A filtered container drops NET_ADMIN so the entrypoint can't
+        # flush the ruleset (#1773).
+        assert cap_drop == ["NET_ADMIN"]
 
     def test_workspace_overrides_deploy_default(self, tmp_path):
         # A non-empty workspace list replaces the default (no merge).
         path = str(tmp_path / "hooks")
-        ann, _ = nf.NetFilter(
+        ann, _, cap_drop = nf.NetFilter(
             _app(hooks_dir=path, default_domains=["default.com", "a.io"])
         ).create_kwargs(["ws.com:443"])
         assert ann == {nf.ANNOTATION_KEY: "ws.com:443"}
+        assert cap_drop == ["NET_ADMIN"]
 
     def test_empty_workspace_inherits_deploy_default(self, tmp_path):
         path = str(tmp_path / "hooks")
-        ann, hooks = nf.NetFilter(
+        ann, hooks, _ = nf.NetFilter(
             _app(hooks_dir=path, default_domains=["default.com", "a.io"])
         ).create_kwargs(None)
         assert ann == {nf.ANNOTATION_KEY: "default.com,a.io"}
         assert hooks == os.path.realpath(path)
 
         # Same for an explicit empty list (None and [] both inherit).
-        ann2, _ = nf.NetFilter(
+        ann2, _, _ = nf.NetFilter(
             _app(hooks_dir=path, default_domains=["default.com", "a.io"])
         ).create_kwargs([])
         assert ann2 == {nf.ANNOTATION_KEY: "default.com,a.io"}
@@ -217,7 +221,7 @@ class TestNetFilterCreateKwargs:
         app = _app(default_domains=["default.com"])  # no hooks dir
         with caplog.at_level("WARNING"):
             result = nf.NetFilter(app).create_kwargs(None)
-        assert result == (None, None)
+        assert result == (None, None, None)
         assert any("UNRESTRICTED" in r.message for r in caplog.records)
 
 

@@ -1040,16 +1040,16 @@ class ContainerRegistry:
 
     def _egress_filter(
         self, allowed_domains: list[str] | None
-    ) -> tuple[dict[str, str] | None, str | None]:
-        """Build ``(annotations, hooks_dir)`` for per-workspace egress (#1365).
+    ) -> tuple[dict[str, str] | None, str | None, list[str] | None]:
+        """Build ``(annotations, hooks_dir, cap_drop)`` for egress (#1365).
 
-        ``(None, None)`` when unrestricted (no domains, or netfilter
+        ``(None, None, None)`` when unrestricted (no domains, or netfilter
         disabled). Delegates to ``app.state.netfilter``; defensive for
         test app-states that may not wire it.
         """
         nf = getattr(self.app.state, "netfilter", None)
         if nf is None:
-            return None, None
+            return None, None, None
         return nf.create_kwargs(allowed_domains)
 
     async def start_container(
@@ -1577,11 +1577,14 @@ class ContainerRegistry:
         # Per-workspace egress filtering (#1365): add the OCI annotation
         # + --hooks-dir only when the workspace declares allowed_domains
         # AND netfilter is enabled, so unrestricted workspaces keep
-        # podman's default hooks-dir behavior (no behavior change).
-        annotations, hooks_dir = self._egress_filter(allowed_domains)
+        # podman's default hooks-dir behavior (no behavior change). The
+        # filtered container also drops NET_ADMIN (#1773) so the entrypoint
+        # can't flush the ruleset.
+        annotations, hooks_dir, cap_drop = self._egress_filter(allowed_domains)
         if annotations is not None:
             create_kwargs["annotations"] = annotations
             create_kwargs["hooks_dir"] = hooks_dir
+            create_kwargs["cap_drop"] = cap_drop
 
         logger.info(
             "workspace-open: build env vars, volumes, and "

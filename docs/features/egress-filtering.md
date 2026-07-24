@@ -109,6 +109,16 @@ unusable, but the warning makes the gap visible.
   attacker-controlled domains (data can still be encoded in DNS queries).
   Treat the filter as an egress allow-list, not a complete anti-exfiltration
   guarantee against DNS-based channels.
+- **Ruleset immutability depends on the runtime capability set.** The
+  hook installs the iptables rules before the container entrypoint starts,
+  and a filtered workspace also has `NET_ADMIN` dropped explicitly
+  (`--cap-drop NET_ADMIN`). `NET_ADMIN` is already absent from podman's
+  default capability set, so this is a no-op under defaults and defense
+  in depth against an operator override. It is **not** a hard guarantee:
+  running the workspace `--privileged`, adding `--cap-add NET_ADMIN`, or a
+  permissive seccomp profile hands the entrypoint `iptables -F OUTPUT`,
+  which flushes the ruleset and lets it exfiltrate freely. Do not run
+  filtered workspaces privileged or grant `NET_ADMIN`.
 - **Port granularity.** The initial implementation supports `host` and
   `host:port`. CIDR ranges and port-only rules may follow.
 - **`macOS` hosts.** The `createContainer` hook runs inside the

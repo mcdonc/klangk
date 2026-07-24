@@ -580,6 +580,7 @@ class TestStartContainer:
         kwargs = p.create_container.call_args.kwargs
         assert "annotations" not in kwargs
         assert "hooks_dir" not in kwargs
+        assert "cap_drop" not in kwargs
 
     async def test_egress_filter_disabled_fail_opens(self, workspace, caplog):
         # allowed_domains set but netfilter disabled (no hooks dir) ->
@@ -613,6 +614,7 @@ class TestStartContainer:
             "klangk.netfilter.rules": "github.com:443,pypi.org"
         }
         assert kwargs["hooks_dir"] == str((tmp_path / "hooks").resolve())
+        assert kwargs["cap_drop"] == ["NET_ADMIN"]
 
     def test_egress_filter_missing_netfilter_state_is_noop(self):
         # Defensive: an app-state without a netfilter subsystem (some
@@ -622,7 +624,7 @@ class TestStartContainer:
             state=types.SimpleNamespace(settings=make_settings({}))
         )
         reg = container.ContainerRegistry(app_state)
-        assert reg._egress_filter(["github.com"]) == (None, None)
+        assert reg._egress_filter(["github.com"]) == (None, None, None)
 
     async def test_sudo_disabled_by_default(self, workspace):
         with patch_podman(self.registry) as p:

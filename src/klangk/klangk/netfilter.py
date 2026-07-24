@@ -12,8 +12,14 @@ so the bundled OCI hook fires at ``createContainer`` time, resolves each
 host to IPs, and installs iptables rules inside the container's network
 namespace that allow only loopback, DNS, the backend gateway, and the
 listed destinations — default-dropping everything else. The hook runs
-before the container process starts, so the ruleset is in place and
-immutable before any user code runs (CAP_NET_ADMIN is dropped afterwards).
+before the container process starts, so the ruleset is in place before
+any user code runs; a filtered container also gets
+:data:`DROPPED_CAPABILITIES` (``NET_ADMIN``) dropped so the entrypoint
+cannot flush the ruleset. The ruleset is immutable **only under the
+runtime's default capability set** — granting ``NET_ADMIN`` (e.g.
+``--cap-add NET_ADMIN``), running ``--privileged``, or a permissive
+seccomp profile lets the entrypoint ``iptables -F OUTPUT`` and exfiltrate
+freely. See issue #1773.
 
 **Backward compatible / fail-open:** a workspace without ``allowed_domains``
 gets no annotation, no ``--hooks-dir``, and unrestricted networking exactly
@@ -47,6 +53,15 @@ ANNOTATION_KEY = "klangk.netfilter.rules"
 # Filenames written into the configured hooks dir.
 HOOK_JSON_NAME = "klangk-netfilter.json"
 HOOK_SCRIPT_NAME = "klangk-netfilter.sh"
+
+# Linux capabilities explicitly dropped from a *filtered* workspace's
+# container. ``NET_ADMIN`` lets a process flush/replace the iptables
+# ruleset the hook installed, defeating the filter. It is already absent
+# from podman's default capability set, so dropping it explicitly is a
+# no-op under defaults and defense-in-depth against an operator who grants
+# it (``--cap-add NET_ADMIN``), runs the deploy ``--privileged``, or uses a
+# permissive seccomp profile. See issue #1773.
+DROPPED_CAPABILITIES = ("NET_ADMIN",)
 
 # A hostname or IP (v4/v6), optionally bracketed for v6, with an optional
 # trailing ``:port``. Deliberately permissive on the host grammar — the
@@ -139,8 +154,10 @@ HOOK_SCRIPT = r"""#!/bin/sh
 # nsenter on the init pid from the OCI state) that allow only loopback,
 # DNS, the backend gateway, and the listed destinations — default-dropping
 # everything else. Runs before the container process starts, so the
-# ruleset is immutable before any user code runs (CAP_NET_ADMIN is dropped
-# afterwards). See issue #1365.
+# ruleset is in place before any user code runs. It is immutable only if
+# the runtime does not grant NET_ADMIN (filtered containers also get
+# NET_ADMIN dropped, but --privileged / --cap-add NET_ADMIN / a permissive
+# seccomp profile defeat the filter). See issues #1365 and #1773.
 set -u
 
 state=$(cat)
@@ -372,17 +389,20 @@ class NetFilter:
 
     def create_kwargs(
         self, allowed_domains: list[str] | None
-    ) -> tuple[dict[str, str] | None, str | None]:
-        """Build ``(annotations, hooks_dir)`` for a workspace's container.
+    ) -> tuple[dict[str, str] | None, str | None, list[str] | None]:
+        """Build ``(annotations, hooks_dir, cap_drop)`` for a container.
 
         Resolution (#1365): a workspace's non-empty ``allowed_domains``
         **overrides** the deploy-wide default; otherwise the default applies.
-        ``(None, None)`` — unrestricted — only when both are empty, or when
-        netfilter is disabled (no hooks dir). When an effective list exists
-        but netfilter is disabled, a loud warning is logged: the container
-        starts unrestricted and the operator must enable netfilter to
-        enforce the policy.
-        """
+        ``(None, None, None)`` — unrestricted — only when both are empty, or
+        when netfilter is disabled (no hooks dir). When an effective list
+        exists but netfilter is disabled, a loud warning is logged: the
+        container starts unrestricted and the operator must enable netfilter
+        to enforce the policy.
+
+        ``cap_drop`` is :data:`DROPPED_CAPABILITIES` (``NET_ADMIN``) for a
+        filtered container, so the entrypoint cannot flush the iptables
+        ruleset (#1773)."""
         # Workspace overrides the deploy default; empty/None inherits it.
         domains = (
             list(allowed_domains)
@@ -390,7 +410,7 @@ class NetFilter:
             else self.default_domains()
         )
         if not domains:
-            return None, None
+            return None, None, None
         path = self.hooks_dir()
         if path is None:
             logger.warning(
@@ -402,6 +422,6 @@ class NetFilter:
                 "enforce the filter (#1365).",
                 domains,
             )
-            return None, None
+            return None, None, None
         annotation = {ANNOTATION_KEY: render_rules_annotation(domains)}
-        return annotation, path
+        return annotation, path, list(DROPPED_CAPABILITIES)

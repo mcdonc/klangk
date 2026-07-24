@@ -270,6 +270,7 @@ class Podman:
         pull: str = "never",
         replace: bool = True,
         userns: str | None = None,
+        cap_drop: list[str] | None = None,
     ) -> str:
         """Create a container and return its id.
 
@@ -279,7 +280,9 @@ class Podman:
         the netfilter egress filter, #1365): each annotation becomes a
         ``--annotation key=value`` flag, and ``hooks_dir`` becomes
         ``--hooks-dir`` (passed only when set so unrestricted workspaces
-        keep podman's default hooks-dir behavior).
+        keep podman's default hooks-dir behavior). ``cap_drop`` becomes one
+        ``--cap-drop`` flag each (used to drop ``NET_ADMIN`` on filtered
+        workspaces, #1773).
         """
         args = ["create", f"--pull={pull}", "--name", name]
         if replace:
@@ -292,6 +295,8 @@ class Podman:
             args.append("-i")
         if userns:
             args += ["--userns", userns]
+        for cap in cap_drop or []:
+            args += ["--cap-drop", cap]
         for key, value in (labels or {}).items():
             args += ["--label", f"{key}={value}"]
         for key, value in (annotations or {}).items():

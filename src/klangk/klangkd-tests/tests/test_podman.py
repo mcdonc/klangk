@@ -290,6 +290,17 @@ class TestCreateContainer:
         args = _args(m)
         assert "--hooks-dir" not in args
         assert "--annotation" not in args
+        assert "--cap-drop" not in args
+
+    async def test_cap_drop_emitted(self):
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n", "img", cap_drop=["NET_ADMIN"], replace=False
+            )
+        args = _args(m)
+        assert ["--cap-drop", "NET_ADMIN"] == args[
+            args.index("--cap-drop") : args.index("--cap-drop") + 2
+        ]
 
 
 class TestStartContainer:
