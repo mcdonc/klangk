@@ -49,6 +49,14 @@ class KlangkApp(App):
         align-horizontal: right;
         height: auto;
     }
+    /* Underline-style entry fields: keep only the bottom border so each
+    field is one row shorter (text sitting on an underline). */
+    Input, Input:focus {
+        height: 2;
+        border-top: none;
+        border-left: none;
+        border-right: none;
+    }
     """
 
     BINDINGS = [("q", "quit", "Quit")]
