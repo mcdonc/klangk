@@ -94,9 +94,6 @@ class LoginScreen(Screen):
             Input(placeholder="Password", id="password", password=True),
             Horizontal(
                 Button("Log in via browser (SSO)", id="oidc"),
-                classes="actions",
-            ),
-            Horizontal(
                 Button("Log in", id="login", variant="primary"),
                 classes="actions",
             ),
