@@ -64,6 +64,12 @@ class KlangkApp(App):
         border-left: none;
         border-right: none;
     }
+    /* Compact buttons: drop the min-width so they hug their labels instead
+    of padding out to a fixed width. */
+    Button {
+        min-width: 0;
+        padding: 0 1;
+    }
     """
 
     BINDINGS = [("q", "quit", "Quit")]
