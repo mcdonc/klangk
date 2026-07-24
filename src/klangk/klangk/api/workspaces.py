@@ -81,12 +81,11 @@ def _validate_allowed_domains(
         domains = netfilter_mod.parse_allowed_domains(values)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if app.state.netfilter.hooks_dir() is None:
+    if not app.state.netfilter.enabled():
         logger.warning(
-            "Workspace configured allowed_domains=%s but netfilter is "
-            "disabled (KLANGKD_NETFILTER_HOOKS_DIR unset); the value is "
-            "persisted but egress will be UNRESTRICTED until netfilter is "
-            "enabled (#1365).",
+            "Workspace configured allowed_domains=%s but netfilter is not "
+            "armed on this server; the value is persisted but egress will "
+            "be UNRESTRICTED until netfilter is enabled (#1365, #1774).",
             domains,
         )
     return domains

@@ -54,6 +54,11 @@ ANNOTATION_KEY = "klangk.netfilter.rules"
 HOOK_JSON_NAME = "klangk-netfilter.json"
 HOOK_SCRIPT_NAME = "klangk-netfilter.sh"
 
+# Subdir under ``state_dir`` used for the hooks dir when the operator
+# doesn't set ``KLANGKD_NETFILTER_HOOKS_DIR`` explicitly — so netfilter is
+# armed out of the box without a second env var (#1774).
+DEFAULT_HOOKS_SUBDIR = "oci-hooks"
+
 # Linux capabilities explicitly dropped from a *filtered* workspace's
 # container. ``NET_ADMIN`` lets a process flush/replace the iptables
 # ruleset the hook installed, defeating the filter. It is already absent
@@ -330,7 +335,19 @@ class NetFilter:
 
     @property
     def _raw_hooks_dir(self) -> str | None:
-        return self.app.state.settings.netfilter_hooks_dir
+        # #1774: netfilter_enabled is the master switch; when False the
+        # feature is fully off (no dir, no install, enabled() False).
+        if not self.app.state.settings.netfilter_enabled:
+            return None
+        raw = self.app.state.settings.netfilter_hooks_dir
+        if raw:
+            return raw
+        # Default to a state_dir subdir so netfilter is armed out of the
+        # box without a second env var (#1774). state_dir is always resolved
+        # at construction (_require_dirs fails fast otherwise, #1461).
+        return os.path.join(
+            self.app.state.settings.state_dir, DEFAULT_HOOKS_SUBDIR
+        )
 
     def default_domains(self) -> list[str]:
         """The deploy-wide default allow-list (#1365), already validated +
@@ -356,11 +373,15 @@ class NetFilter:
         return path is not None and self._hook_files_current(path)
 
     def hooks_dir(self) -> str | None:
-        """Return the configured hooks dir (validated to exist), else ``None``.
+        """Return the effective hooks dir (validated to exist), else ``None``.
 
-        ``None`` (unset, or pointing somewhere that doesn't exist / can't be
-        created) means netfilter is disabled: workspaces start unrestricted
-        regardless of their ``allowed_domains``.
+        With netfilter enabled (the default), an unset ``netfilter_hooks_dir``
+        resolves to ``<state_dir>/oci-hooks`` (#1774). ``None`` — netfilter
+        disabled via the master switch, the dir unset with no ``state_dir``,
+        or pointing somewhere that can't be created — means workspaces start
+        unrestricted regardless of their ``allowed_domains``. This is the
+        *configured* dir; :meth:`enabled` additionally requires the hook to
+        be installed + current (#1771).
         """
         raw = self._raw_hooks_dir
         if not raw:

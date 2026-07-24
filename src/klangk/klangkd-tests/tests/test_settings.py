@@ -206,6 +206,14 @@ class TestConfigFile:
             for r in caplog.records
         )
 
+    def test_netfilter_enabled_defaults_true(self):
+        # #1774: netfilter is armed out of the box.
+        assert make_settings({}).netfilter_enabled is True
+
+    def test_netfilter_enabled_env_override(self):
+        s = make_settings({"KLANGKD_NETFILTER_ENABLED": "false"})
+        assert s.netfilter_enabled is False
+
     def test_file_cmd_resolution_from_yaml(self, tmp_path):
         """file:/cmd: values in YAML resolve at construction (#1461)."""
         secret = tmp_path / "jwt.txt"

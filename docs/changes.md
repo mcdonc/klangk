@@ -63,16 +63,19 @@ operators or integrators to act when upgrading.
 - **Per-workspace network egress filtering via OCI hooks (#1365).**
   Workspaces may now declare an `allowed_domains` allow-list (`host` or
   `host:port` specs) to restrict outbound network to specific destinations.
-  When the deployer sets `KLANGKD_NETFILTER_HOOKS_DIR`, the backend injects
-  an OCI `createContainer` hook that installs a default-deny iptables
-  ruleset in the workspace's network namespace (allowing loopback, DNS, the
-  backend gateway, and the listed destinations) before the container
-  process starts — no proxy, no TLS interception, no microVM. Workspaces
-  without `allowed_domains` keep unrestricted networking exactly as before;
-  if a workspace declares a list but netfilter isn't enabled, it starts
-  unrestricted with a loud operator warning (fail-open). Configurable via
-  the workspace Settings panel or the `allowed_domains` field on the
-  workspace create/update API. See
+  Netfilter is armed by default: the backend injects an OCI `createContainer`
+  hook (materialized into `<state_dir>/oci-hooks` at startup) that installs a
+  default-deny iptables ruleset in the workspace's network namespace
+  (allowing loopback, DNS, the backend gateway, and the listed destinations)
+  before the container process starts — no proxy, no TLS interception, no
+  microVM. The hooks dir defaults to `<state_dir>/oci-hooks`; override
+  `KLANGKD_NETFILTER_HOOKS_DIR` for a split runtime, or disable entirely with
+  `KLANGKD_NETFILTER_ENABLED=false` (#1774). Workspaces without
+  `allowed_domains` keep unrestricted networking exactly as before; if a
+  workspace declares a list but netfilter isn't armed, it starts unrestricted
+  with a loud warning surfaced to the user who set it (fail-open, #1769).
+  Configurable via the workspace Settings panel or the `allowed_domains`
+  field on the workspace create/update API. See
   [Egress Filtering](https://klangk.dev/features/egress-filtering).
 
 - **The `features_config:` block now accepts the stripped, lowercased key form

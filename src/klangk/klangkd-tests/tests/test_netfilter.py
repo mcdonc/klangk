@@ -13,8 +13,11 @@ from klangk import netfilter as nf
 from _helpers import make_settings
 
 
-def _app(hooks_dir=None, default_domains=None, tmp_path=None):
+def _app(hooks_dir=None, default_domains=None, enabled=True, tmp_path=None):
     settings = make_settings({})
+    # #1774: netfilter_enabled defaults True (the production default); pass
+    # enabled=False to exercise the master-switch-off path.
+    settings.netfilter_enabled = enabled
     if hooks_dir is not None:
         settings.netfilter_hooks_dir = hooks_dir
     if default_domains is not None:
@@ -103,8 +106,18 @@ class TestRenderHookJson:
 
 
 class TestNetFilterHooksDir:
-    def test_unset_returns_none(self):
-        assert nf.NetFilter(_app()).hooks_dir() is None
+    def test_disabled_via_setting_returns_none(self):
+        # #1774: netfilter_enabled=False fully disables — no hooks dir.
+        assert nf.NetFilter(_app(enabled=False)).hooks_dir() is None
+
+    def test_unset_hooks_dir_defaults_to_state_dir_subdir(self):
+        # #1774: with netfilter enabled (the default) and no explicit hooks
+        # dir, it resolves to <state_dir>/oci-hooks.
+        app = _app()
+        state_dir = app.state.settings.state_dir
+        assert nf.NetFilter(app).hooks_dir() == os.path.realpath(
+            os.path.join(state_dir, nf.DEFAULT_HOOKS_SUBDIR)
+        )
 
     def test_creates_missing_dir(self, tmp_path):
         path = str(tmp_path / "nested" / "hooks")
@@ -130,7 +143,8 @@ class TestNetFilterHooksDir:
 
 class TestNetFilterInstallHooks:
     def test_disabled_is_noop(self):
-        assert nf.NetFilter(_app()).install_hooks() is None
+        # #1774: netfilter_enabled=False -> install_hooks is a noop.
+        assert nf.NetFilter(_app(enabled=False)).install_hooks() is None
 
     def test_writes_script_and_json(self, tmp_path):
         path = str(tmp_path / "hooks")
@@ -174,8 +188,9 @@ class TestNetFilterCreateKwargs:
         assert nf.NetFilter(_app()).create_kwargs(None) == (None, None, None)
         assert nf.NetFilter(_app()).create_kwargs([]) == (None, None, None)
 
-    def test_domains_without_hooks_dir_warns_and_fail_opens(self, caplog):
-        app = _app()  # netfilter disabled
+    def test_domains_disabled_via_setting_warns_and_fail_opens(self, caplog):
+        # #1774: netfilter_enabled=False -> fail open with a loud warning.
+        app = _app(enabled=False)
         with caplog.at_level("WARNING"):
             result = nf.NetFilter(app).create_kwargs(["github.com:443"])
         assert result == (None, None, None)
@@ -225,7 +240,7 @@ class TestNetFilterCreateKwargs:
         assert ann2 == {nf.ANNOTATION_KEY: "default.com,a.io"}
 
     def test_default_present_but_netfilter_disabled_warns(self, caplog):
-        app = _app(default_domains=["default.com"])  # no hooks dir
+        app = _app(default_domains=["default.com"], enabled=False)
         with caplog.at_level("WARNING"):
             result = nf.NetFilter(app).create_kwargs(None)
         assert result == (None, None, None)
@@ -286,8 +301,9 @@ class TestNetFilterDefaultDomains:
 
 
 class TestNetFilterEnabled:
-    def test_disabled_when_hooks_dir_unset(self):
-        assert nf.NetFilter(_app()).enabled() is False
+    def test_disabled_when_netfilter_enabled_false(self):
+        # #1774: the master switch off -> not armed.
+        assert nf.NetFilter(_app(enabled=False)).enabled() is False
 
     def test_enabled_when_installed(self, tmp_path):
         # #1771: armed requires the hook to be installed, not just the dir

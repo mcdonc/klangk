@@ -37,20 +37,23 @@ by the runtime before the container entrypoint executes.
 
 ## Enabling it (operator)
 
+Netfilter is **armed by default**. At startup klangkd materializes the hook
+script (`klangk-netfilter.sh`) and its config (`klangk-netfilter.json`)
+into a hooks directory and registers the OCI `createContainer` hook — no
+configuration is required for the common case.
+
 1. Ensure `iptables`, `getent`, and `nsenter` are available where the OCI
    runtime executes (the host, or the Docker-in-Docker outer container —
    _not_ the workspace image). The documented DinD deployment already has
    `CAP_SYS_ADMIN` + `seccomp=unconfined`, which provides the necessary
    privileges.
-2. Set `KLANGKD_NETFILTER_HOOKS_DIR` to a directory the OCI runtime can
-   read. At startup klangkd writes the hook script (`klangk-netfilter.sh`)
-   and its config (`klangk-netfilter.json`) into that directory, so it just
-   needs to exist (or be creatable). The path must be resolvable where the
-   runtime executes — for the DinD / bare-Linux deployments this is any
-   host path; for `podman machine` on macOS it must be inside the CoreOS VM
-   (install into the VM or bake into a custom machine image), since
-   `podman machine` does not bind-mount arbitrary host paths the way Docker
-   Desktop does.
+2. The hooks dir defaults to `<state_dir>/oci-hooks`
+   (`KLANGKD_STATE_DIR`/`oci-hooks`). Override
+   `KLANGKD_NETFILTER_HOOKS_DIR` only when the OCI runtime can't see
+   `state_dir` — a split runtime, a DinD outer container, or a
+   `podman machine` CoreOS VM (where it must be inside the VM, since
+   `podman machine` does not bind-mount arbitrary host paths the way
+   Docker Desktop does):
 
    ```bash
    export KLANGKD_NETFILTER_HOOKS_DIR=/var/lib/klangk/netfilter-hooks
@@ -58,6 +61,13 @@ by the runtime before the container entrypoint executes.
 
 3. Restart klangkd. The log shows
    `Netfilter egress filtering enabled: OCI hooks installed in <dir>`.
+
+To **disable** netfilter entirely (e.g. an environment without
+`iptables`/`nsenter`, or where the hook can't be granted `CAP_NET_ADMIN`),
+set `KLANGKD_NETFILTER_ENABLED=false` (or YAML `netfilter_enabled: false`).
+When disabled, `enabled()` reports false, `--hooks-dir` is never passed,
+and workspaces with `allowed_domains` fail open with a loud warning
+(#1769). (#1774)
 
 ## Configuring a workspace
 
@@ -87,13 +97,16 @@ workspace (the ruleset is set at create time).
 
 ## Fail-open behavior
 
-If a workspace declares `allowed_domains` but netfilter is **not** enabled
-on the server (`KLANGKD_NETFILTER_HOOKS_DIR` unset or unwritable), the
-workspace starts **unrestricted** and the server logs a loud warning. The
+If a workspace declares `allowed_domains` but netfilter is **not armed**
+on the server — disabled via `KLANGKD_NETFILTER_ENABLED=false`, the hooks
+dir unwritable, or the hook not installed/current (#1771) — the workspace
+starts **unrestricted** and the server logs a loud warning. The
 `allowed_domains` value is still persisted, so it takes effect the moment
-the operator enables netfilter. This is deliberate: a misconfigured deploy
-degrades to the unrestricted baseline rather than making workspaces
-unusable, but the warning makes the gap visible.
+netfilter is armed. The workspace's Settings panel and list row also badge
+the gap (#1769), so the user who set the list sees it — not just operator
+logs. This is deliberate: a misconfigured deploy degrades to the
+unrestricted baseline rather than making workspaces unusable, but the
+warning makes the gap visible.
 
 ## Caveats
 

@@ -660,7 +660,7 @@ class _SettingsFormState extends State<_SettingsForm> {
         const SizedBox(height: 4),
         Text(
           'Restricts outbound network to these hosts (host or host:port). '
-          'Requires KLANGKD_NETFILTER_HOOKS_DIR on the server; empty '
+          'Requires netfilter to be enabled on the server; empty '
           'means unrestricted.',
           style: TextStyle(
             color: KColors.textSecondary,
@@ -698,7 +698,7 @@ class _SettingsFormState extends State<_SettingsForm> {
               'Egress filtering is not active on this server — the '
               'allowed-domains list above is NOT being enforced. This '
               'workspace will start with unrestricted outbound network '
-              'until an operator sets KLANGKD_NETFILTER_HOOKS_DIR.',
+              'until an operator enables netfilter on the server.',
             ),
           ),
         ],
