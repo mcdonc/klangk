@@ -86,7 +86,7 @@ class LoginScreen(Screen):
                 id="server_input",
             ),
             Horizontal(
-                Button("Use server", id="use_server"),
+                Button("Add server", id="use_server"),
                 classes="actions",
             ),
             Static("", id="notice"),
@@ -112,7 +112,7 @@ class LoginScreen(Screen):
     def _show_no_server(self) -> None:
         self.query_one("#server_line", Static).update(
             "No server selected. Pick one above or enter a URL,"
-            " then press 'Use server'."
+            " then press 'Add server'."
         )
         self._disable_credentials()
 
