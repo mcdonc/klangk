@@ -57,16 +57,26 @@ class ConfirmScreen(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, message: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        yes_label: str = "Delete",
+        yes_variant: str = "error",
+        no_label: str = "Cancel",
+    ) -> None:
         super().__init__()
         self.message = message
+        self._yes_label = yes_label
+        self._yes_variant = yes_variant
+        self._no_label = no_label
 
     def compose(self) -> ComposeResult:
         yield Vertical(
             Static(Text(self.message)),
             Horizontal(
-                Button("Cancel", id="no"),
-                Button("Delete", id="yes", variant="error"),
+                Button(self._no_label, id="no"),
+                Button(self._yes_label, id="yes", variant=self._yes_variant),
             ),
         )
 
@@ -376,8 +386,9 @@ class MainScreen(Screen):
 
     def _on_created(self, name: str | None) -> None:
         """Refresh the list after a create, then offer to open the new
-        workspace (the TUI's shell entry point — a live in-TUI PTY shell is
-        a future step; the detail screen hosts the terminal list)."""
+        workspace's detail screen (its terminal list lives there). A live
+        in-TUI PTY shell is a future step — #1748's 'open shell' bullet is
+        satisfied here as 'open workspace', not a live shell."""
         if not name:
             return
         self.refresh_lists()
@@ -387,7 +398,13 @@ class MainScreen(Screen):
                 self.app.push_screen(WorkspaceDetailScreen(name))
 
         self.app.push_screen(
-            ConfirmScreen(f"Created '{name}'. Open it now?"), _offer
+            ConfirmScreen(
+                f"Created '{name}'. Open workspace now?",
+                yes_label="Open",
+                yes_variant="primary",
+                no_label="Later",
+            ),
+            _offer,
         )
 
     # --- list population ---
@@ -693,7 +710,9 @@ class WorkspaceDetailScreen(Screen):
         self.app.push_screen(
             ConfirmScreen(
                 f"Restart '{self._name}'? This ends active terminal"
-                " sessions and recreates the container."
+                " sessions and recreates the container.",
+                yes_label="Restart",
+                yes_variant="warning",
             ),
             _on_confirm,
         )
@@ -810,20 +829,29 @@ class CreateWorkspaceScreen(Screen):
         self._mounts: list[str] = []
         self._env: dict[str, str] = {}
         if self._allowed:
-            self._select_options = [(img, img) for img in self._allowed]
+            # Select tuples are (prompt, value). Prompts are rich Text so an
+            # image name containing brackets can't trigger markup parsing.
+            self._select_options = [(Text(img), img) for img in self._allowed]
             self._select_value = (
-                self._default
-                if self._default in self._allowed
-                else self._allowed[0]
+                self._default if self._default in self._allowed else None
             )
         else:
             # Couldn't list images — offer a single inert placeholder so the
             # user can still create; the server applies its default image.
-            # Select tuples are (prompt, value).
-            self._select_options = [("(server default)", "(server default)")]
+            self._select_options = [
+                (Text("(server default)"), "(server default)")
+            ]
             self._select_value = "(server default)"
 
     def compose(self) -> ComposeResult:
+        if self._select_value is not None:
+            image_select = Select(
+                self._select_options, value=self._select_value, id="image"
+            )
+        else:
+            # No valid default to preselect — leave the picker unselected
+            # (the server applies its default image if none is chosen).
+            image_select = Select(self._select_options, id="image")
         yield Header(show_clock=False)
         yield Vertical(
             Static("New workspace", classes="title"),
@@ -831,11 +859,7 @@ class CreateWorkspaceScreen(Screen):
             Static("Name"),
             Input(id="name"),
             Static("Container image"),
-            Select(
-                self._select_options,
-                value=self._select_value,
-                id="image",
-            ),
+            image_select,
             Static("Mounts  (source:/container/path[:opts])"),
             OptionList(id="mount_list"),
             Horizontal(
@@ -858,6 +882,10 @@ class CreateWorkspaceScreen(Screen):
             Static("Health check command (optional)"),
             Input(id="health_check"),
             Checkbox("Auto start", id="auto_start"),
+            Static(
+                Text("(start this workspace when the server starts)"),
+                id="auto_caption",
+            ),
             Horizontal(
                 Button("Cancel", id="cancel"),
                 Button("Create", id="create", variant="primary"),
@@ -868,11 +896,13 @@ class CreateWorkspaceScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        # Only show the auto-start checkbox when the server allows it;
-        # ``auto_start`` defaults to off either way.
+        # Only show the auto-start checkbox (and its caption) when the server
+        # allows it; ``auto_start`` defaults to off either way.
+        shown = self._allow_autostart
         cb = self.query_one("#auto_start", Checkbox)
-        cb.display = self._allow_autostart
-        cb.disabled = not self._allow_autostart
+        cb.display = shown
+        cb.disabled = not shown
+        self.query_one("#auto_caption", Static).display = shown
         self._render_mounts()
         self._render_env()
 
@@ -957,9 +987,15 @@ class CreateWorkspaceScreen(Screen):
             self._msg("Name is required.", error=True)
             return
         sel = self.query_one("#image", Select)
+        val = sel.value
+        # Send only a real, non-default selection. When the server's default
+        # isn't in the allowed list we start unselected (Select.BLANK), so an
+        # untouched picker omits the image — matching the Flutter dialog.
         image = (
-            sel.value
-            if (self._allowed and sel.value != self._default)
+            val
+            if (
+                self._allowed and val != self._default and val in self._allowed
+            )
             else None
         )
         command = self.query_one("#command", Input).value.strip() or None
@@ -986,7 +1022,13 @@ class CreateWorkspaceScreen(Screen):
             self._msg("Session expired — please log in again.", error=True)
             return
         except httpx.HTTPStatusError as exc:
-            detail = exc.response.json().get("detail", exc.response.text)
+            # The error body may not be JSON (proxy HTML page, empty body,
+            # plaintext) — parse defensively so a malformed response can't
+            # crash the TUI from inside this handler.
+            try:
+                detail = exc.response.json().get("detail", exc.response.text)
+            except Exception:
+                detail = exc.response.text or str(exc)
             self._msg(f"Failed to create: {detail}", error=True)
             return
         except Exception as exc:

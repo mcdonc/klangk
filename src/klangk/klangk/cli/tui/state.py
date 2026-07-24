@@ -192,7 +192,9 @@ class TuiState:
         config = fetch_config(url)
         if not isinstance(config, dict):
             return False
-        return bool(config.get("allow_autostart"))
+        # Strict: the server serializes a Python bool, so require True exactly
+        # (a string like "false" must not coerce to True).
+        return config.get("allow_autostart") is True
 
     # --- login arms ---
 

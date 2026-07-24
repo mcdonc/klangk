@@ -1712,6 +1712,7 @@ async def test_create_screen_renders_defaults(monkeypatch):
         cb = cs.query_one("#auto_start", Checkbox)
         assert cb.display is True  # shown (autostart allowed)
         assert cb.value is False  # off by default
+        assert cs.query_one("#auto_caption", Static).display is True
         assert cs.query_one("#image", Select).value == "base"  # server default
 
 
@@ -1727,6 +1728,7 @@ async def test_create_screen_autostart_hidden_when_not_allowed(monkeypatch):
         cb = app.screen.query_one("#auto_start", Checkbox)
         assert cb.display is False
         assert cb.disabled is True
+        assert app.screen.query_one("#auto_caption", Static).display is False
 
 
 async def test_create_screen_mount_editor(monkeypatch):
@@ -2104,6 +2106,136 @@ async def test_create_button_routing(monkeypatch):
         cs.on_button_pressed(FakeBtnPress("create"))
         await pilot.pause()
         assert isinstance(app.screen, ConfirmScreen)
+
+
+async def test_create_screen_image_names_markup_safe(monkeypatch):
+    """Image names from the server flow into the Select as rich Text, so a
+    name containing brackets can't raise MarkupError and crash the TUI."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    evil = "py[/]3"
+    app = KlangkApp(
+        _ws(
+            list_images=lambda: {
+                "default": "base",
+                "allowed": ["base", evil, "[red]bad[/]"],
+            },
+            allow_autostart=lambda: False,
+            create_workspace=lambda *a, **k: _wsobj("z"),
+        )
+    )
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        # mounted + initial render without MarkupError
+        assert isinstance(app.screen, CreateWorkspaceScreen)
+        sel = app.screen.query_one("#image", Select)
+        # selecting each evil name renders its prompt (Text) literally — a bare
+        # markup string here would raise MarkupError and fail the test.
+        for name in (evil, "[red]bad[/]"):
+            sel.value = name
+            await pilot.pause()
+        assert sel.value == "[red]bad[/]"  # survived without crashing
+
+
+async def test_create_screen_http_error_non_json(monkeypatch):
+    """A non-JSON error body (proxy HTML page / empty) must not crash the
+    create handler — it should surface a failure message instead."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    resp = httpx.Response(
+        502,
+        text="<html>Bad Gateway</html>",
+        request=httpx.Request("POST", "https://x.example"),
+    )
+
+    def create(name, **k):
+        raise httpx.HTTPStatusError(
+            "boom", request=resp.request, response=resp
+        )
+
+    app = KlangkApp(_create_state(create=create))
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        cs.query_one("#name").value = "ws"
+        cs._create()
+        assert "Failed to create" in str(cs.query_one("#create_msg").render())
+        assert isinstance(app.screen, CreateWorkspaceScreen)  # no crash
+
+
+async def test_create_screen_default_not_in_allowed(monkeypatch):
+    """When the server's default image isn't in the allowed list the picker
+    starts unselected, and an untouched picker omits the image (matching the
+    Flutter dialog); an explicit pick sends that image."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    captured = {}
+
+    def create(name, **k):
+        captured["k"] = k
+        return _wsobj(name)
+
+    app = KlangkApp(
+        _ws(
+            list_images=lambda: {
+                "default": "ghost",
+                "allowed": ["base", "py:3"],
+            },
+            allow_autostart=lambda: False,
+            create_workspace=create,
+        )
+    )
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await pilot.pause()
+        cs = app.screen
+        # default not in allowed -> picker is unselected
+        assert cs.query_one("#image", Select).value is Select.NULL
+        cs.query_one("#name").value = "ws"
+        cs._create()  # nothing picked -> image omitted
+        await pilot.pause()
+        assert captured["k"]["image"] is None
+
+
+async def test_confirm_screen_button_labels(monkeypatch):
+    """ConfirmScreen's affirmative label/variant are parameterizable so the
+    create-offer doesn't show a red 'Delete' button for 'Open'.'"""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws())
+    async with app.run_test() as pilot:
+        # default (delete actions) -> 'Delete'
+        app.push_screen(ConfirmScreen("sure?"))
+        await pilot.pause()
+        btns = {b.id: b for b in app.screen.query(Button)}
+        assert "Delete" in str(btns["yes"].label)
+        # parameterized -> custom labels
+        app.push_screen(
+            ConfirmScreen(
+                "open?",
+                yes_label="Open",
+                yes_variant="primary",
+                no_label="Later",
+            )
+        )
+        await pilot.pause()
+        btns = {b.id: b for b in app.screen.query(Button)}
+        assert "Open" in str(btns["yes"].label)
+        assert "Later" in str(btns["no"].label)
 
 
 # ---------------------------------------------------------------------------

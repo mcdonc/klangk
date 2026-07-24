@@ -84,11 +84,20 @@ operators or integrators to act when upgrading.
   `/api/v1/images`, add/remove mounts and environment-variable editors, an
   optional service shell command and health-check command, and an auto-start
   checkbox (shown only when the server permits it, off by default). Mounts
-  (`source:/container[:opts]`) and env (`KEY=VALUE`) are validated client-side
-  with the same rules as the CLI `create` command. If the image list can't be
-  fetched the form still works (the server applies its default image). After a
+  (`source:/container[:opts]`) and env (`KEY=VALUE`) are validated client-side,
+  matching the Flutter create dialog (the CLI `create` is marginally looser
+  on env keys). All user-facing text — including the image-picker entries
+  (sourced from the server) and the create-result message — renders via rich
+  `Text`, so a name/image/message containing bracket characters can't crash
+  the TUI; a non-JSON server error body is handled gracefully instead of
+  crashing. If the image list can't be
+  fetched the form still works (the server applies its default image; if the
+  server's default isn't in the allowed list the picker starts unselected and
+  an untouched picker omits the image, matching the Flutter dialog). After a
   successful create the list refreshes and the TUI offers to open the new
-  workspace; a live in-TUI shell session is a future step.
+  workspace's detail screen (where its terminals are listed); a live in-TUI
+  PTY shell session is a future step, so #1748's "open shell now" bullet is
+  satisfied as "open workspace" for now.
 
 - **The `features_config:` block now accepts the stripped, lowercased key form
   (`soliplex_url`) in addition to the full declared name
