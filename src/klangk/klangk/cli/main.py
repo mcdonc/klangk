@@ -52,7 +52,12 @@ from .client import (
     reset_terminal,
     _server_mode_is_none,
 )
-from .config import CLIConfig, CLIState, seed_config, _xdg_state_home
+from .config import (
+    CLIConfig,
+    CLIState,
+    default_server_uds_path,
+    seed_config,
+)
 from .mount import validate_mount_spec
 from .transport import ws_connect
 from .sandbox import (
@@ -92,15 +97,6 @@ def _state() -> CLIState:
 
 
 _server_override: str | None = None
-
-# Server-side XDG subdir + socket filename, mirrored from
-# ``settings.py`` (``_XDG_SUBDIR = "klangkd"``; socket =
-# ``<state_dir>/klangk.sock``) so the CLI can locate a co-located
-# ``klangkd``'s default UDS without importing from the server package
-# (``klangk.cli`` isolation rule). Named constants make the mirroring
-# grep-able if the server renames either.
-_SERVER_XDG_SUBDIR = "klangkd"
-_SOCKET_NAME = "klangk.sock"
 
 
 @app.callback()
@@ -143,39 +139,6 @@ def _maybe_launch_tui(ctx: typer.Context) -> None:
         raise typer.Exit(code=1)
 
 
-def _default_server_uds_path() -> str:
-    """Return the UDS path a co-located ``klangkd`` binds by default.
-
-    Mirrors the server's derivation so a single-host ``klangkd`` +
-    ``klangk`` works with no ``klangk login`` step (#1676). Resolution
-    order, matching the server:
-
-    1. ``KLANGK_SOCKET`` — if an explicit *plain absolute* path (not a
-       ``file:``/``cmd:`` indirection, which the server resolves by
-       running a cmd / reading a file and the CLI can't reproduce), the
-       server binds exactly there, so return it directly. This covers the
-       natural way to relocate a socket (``KLANGK_SOCKET=/run/klangk.sock``).
-    2. ``KLANGK_STATE_DIR/klangk.sock`` when ``KLANGK_STATE_DIR`` is set.
-    3. ``$XDG_STATE_HOME/klangkd/klangk.sock`` (→ ``~/.local/state/klangkd/…``).
-
-    Replicated in ``klangk.cli`` — not imported — because the CLI runs in
-    a different environment than the server (``klangk.cli`` isolation
-    rule) and reuses ``config._xdg_state_home`` for the XDG fallback so
-    the two derivations can't drift. The ``file:``/``cmd:``
-    ``KLANGK_SOCKET`` indirection case is not reproduced; operators who
-    relocate the socket that way still need a one-time ``klangk login``.
-    """
-    explicit = os.environ.get("KLANGK_SOCKET")
-    if explicit and explicit.startswith("/"):
-        # An absolute value is a plain path the server binds verbatim;
-        # file:/cmd: indirections don't start with "/" and fall through.
-        return explicit
-    state_dir = os.environ.get("KLANGK_STATE_DIR")
-    if not state_dir:
-        state_dir = os.path.join(str(_xdg_state_home()), _SERVER_XDG_SUBDIR)
-    return os.path.join(state_dir, _SOCKET_NAME)
-
-
 def server_url() -> str:
     if _server_override is not None:
         return _server_override
@@ -190,7 +153,7 @@ def server_url() -> str:
     # passes, and the unreachable connect is then surfaced by
     # ``require_auth`` as a clear "Cannot connect to klangkd" message
     # rather than a misleading "Not logged in".
-    default_uds = _default_server_uds_path()
+    default_uds = default_server_uds_path()
     if Path(default_uds).exists():
         return default_uds
     _err.print(

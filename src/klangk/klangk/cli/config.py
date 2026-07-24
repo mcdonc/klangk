@@ -55,6 +55,47 @@ _STATE_PATH = _xdg_state_home() / _CLI_SUBDIR / "klangk-state.yaml"
 _DEFAULT_WS_MAX_SIZE = 2**24  # 16 MB
 
 
+# Server-side XDG subdir + socket filename, mirrored from
+# ``settings.py`` (``_XDG_SUBDIR = "klangkd"``; socket =
+# ``<state_dir>/klangk.sock``) so the CLI can locate a co-located
+# ``klangkd``'s default UDS without importing from the server package
+# (``klangk.cli`` isolation rule). Named constants make the mirroring
+# grep-able if the server renames either.
+_SERVER_XDG_SUBDIR = "klangkd"
+_SOCKET_NAME = "klangk.sock"
+
+
+def default_server_uds_path() -> str:
+    """Return the UDS path a co-located ``klangkd`` binds by default.
+
+    Mirrors the server's derivation so a single-host ``klangkd`` +
+    ``klangk`` works with no ``klangk login`` step (#1676). Resolution
+    order, matching the server:
+
+    1. ``KLANGK_SOCKET`` — if an explicit *plain absolute* path (not a
+       ``file:``/``cmd:`` indirection, which the server resolves by
+       running a cmd / reading a file and the CLI can't reproduce), the
+       server binds exactly there, so return it directly.
+    2. ``KLANGK_STATE_DIR/klangk.sock`` when ``KLANGK_STATE_DIR`` is set.
+    3. ``$XDG_STATE_HOME/klangkd/klangk.sock`` (→ ~/.local/state/klangkd/…).
+
+    Replicated in ``klangk.cli`` — not imported from the server — because
+    the CLI runs in a different environment (``klangk.cli`` isolation
+    rule). The ``file:``/``cmd:`` ``KLANGK_SOCKET`` indirection case is
+    not reproduced; operators who relocate the socket that way still need
+    a one-time ``klangk login``.
+    """
+    explicit = os.environ.get("KLANGK_SOCKET")
+    if explicit and explicit.startswith("/"):
+        # An absolute value is a plain path the server binds verbatim;
+        # file:/cmd: indirections don't start with "/" and fall through.
+        return explicit
+    state_dir = os.environ.get("KLANGK_STATE_DIR")
+    if not state_dir:
+        state_dir = os.path.join(str(_xdg_state_home()), _SERVER_XDG_SUBDIR)
+    return os.path.join(state_dir, _SOCKET_NAME)
+
+
 @dataclass
 class ServerEntry:
     """A named server in klangk.yaml."""

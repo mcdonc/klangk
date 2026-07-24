@@ -11,6 +11,7 @@ deps, and sibling ``cli`` modules.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 
@@ -25,6 +26,7 @@ from ..config import (
     CLIConfig,
     CLIState,
     add_server_to_config,
+    default_server_uds_path,
 )
 from ..transport import http_request
 
@@ -64,7 +66,21 @@ class TuiState:
     def current_url(self) -> str | None:
         if self._server_override is not None:
             return self._server_override
-        return self.state().active_server
+        active = self.state().active_server
+        if active is not None:
+            return active
+        # Single-host convenience (#1676): a co-located klangkd's default
+        # UDS is usable with no `klangk login` step, so a fresh user can log
+        # in straight from the TUI.
+        uds = default_server_uds_path()
+        if Path(uds).exists():
+            return uds
+        return None
+
+    def default_uds(self) -> str | None:
+        """The co-located klangkd default UDS, if its socket exists."""
+        uds = default_server_uds_path()
+        return uds if Path(uds).exists() else None
 
     def known_servers(self) -> list[ServerInfo]:
         return [

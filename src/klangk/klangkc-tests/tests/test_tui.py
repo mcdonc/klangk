@@ -9,11 +9,16 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from textual.widgets import Input
+from textual.widgets import Button, Input
 
 from klangk.cli import config as cfgmod
 from klangk.cli import tui as tui_pkg
-from klangk.cli.config import CLIConfig, CLIState, add_server_to_config
+from klangk.cli.config import (
+    CLIConfig,
+    CLIState,
+    ServerEntry,
+    add_server_to_config,
+)
 from klangk.cli.tui import screens as scr
 from klangk.cli.tui import state as tui_state_mod
 from klangk.cli.tui import ws as ws_mod
@@ -391,7 +396,8 @@ async def test_app_none_mode_auto_logs_in():
         known_servers=lambda: [],
     )
     app = KlangkApp(st)
-    async with app.run_test():
+    async with app.run_test() as pilot:
+        await pilot.pause()  # let the deferred no-auth login run
         assert isinstance(app.screen, MainScreen)
     assert flag["ok"] is True
 
@@ -409,8 +415,12 @@ async def test_app_none_mode_failure_falls_back_to_login():
         token=lambda: None,
     )
     app = KlangkApp(st)
-    async with app.run_test():
+    async with app.run_test() as pilot:
+        await pilot.pause()  # deferred no-auth attempt runs + fails
         assert isinstance(app.screen, LoginScreen)
+        assert "No-auth login failed" in str(
+            app.screen.query_one("#message").render()
+        )
 
 
 async def test_main_screen_renders_status(monkeypatch):
@@ -717,6 +727,114 @@ async def test_server_switch_and_add(monkeypatch):
 
 # ---------------------------------------------------------------------------
 # run_tui + bare-klangk launch wiring
+# ---------------------------------------------------------------------------
+
+
+def test_current_url_and_default_uds_pick_up_udsk(
+    monkeypatch, redirect_xdg, tmp_path
+):
+    sock = tmp_path / "klangk.sock"
+    sock.touch()
+    monkeypatch.setattr(
+        tui_state_mod, "default_server_uds_path", lambda: str(sock)
+    )
+    # no active server + no override -> the co-located UDS is used
+    assert TuiState().current_url() == str(sock)
+    assert TuiState().default_uds() == str(sock)
+    # override still wins over the UDS fallback
+    assert TuiState("https://other").current_url() == "https://other"
+
+
+def test_derive_alias():
+    assert (
+        LoginScreen._derive_alias("https://newhost.example/x")
+        == "newhost.example"
+    )
+    # scheme but no host -> falls back to the path tail
+    assert LoginScreen._derive_alias("file:///some/path") == "path"
+    # bare socket path -> tail
+    assert LoginScreen._derive_alias("/a/b/sock") == "sock"
+    # bare name -> itself
+    assert LoginScreen._derive_alias("justname") == "justname"
+    # empty after strip -> generic fallback
+    assert LoginScreen._derive_alias("/") == "server"
+
+
+async def test_login_server_picker(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    cfg = CLIConfig()
+    cfg.servers = {"prod": ServerEntry(url="https://prod.example")}
+    calls = {}
+
+    st = _st(
+        current_url=lambda: None,
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod", "https://prod.example")
+        ],
+        default_uds=lambda: "/tmp/klangk.sock",
+        cfg=lambda: cfg,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+        switch_server=lambda url: calls.__setitem__("switch", url),
+        add_server=lambda alias, url, user=None: calls.__setitem__(
+            "add", (alias, url)
+        ),
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        login = app.screen
+        # no-server branch: prompt + disabled credentials
+        assert "No server selected" in str(
+            login.query_one("#server_line").render()
+        )
+        assert login.query_one("#login", Button).disabled
+
+        # empty choice -> error message
+        login._choose_server("   ")
+        await pilot.pause()
+        assert "Enter a server URL" in str(
+            login.query_one("#message").render()
+        )
+
+        # known alias -> switch (routed through the option-selected handler)
+        login.on_option_list_option_selected(FakeOptionSelected("prod"))
+        await pilot.pause()
+        assert calls.get("switch") == "https://prod.example"
+
+        # new URL -> added as an alias derived from its host
+        login._choose_server("https://newhost.example/x")
+        await pilot.pause()
+        assert calls.get("add") == (
+            "newhost.example",
+            "https://newhost.example/x",
+        )
+
+        # UDS path -> switch without persisting an alias
+        srv_input = login.query_one("#server_input", Input)
+        srv_input.value = "/tmp/klangk.sock"
+        login.on_input_submitted(Input.Submitted(srv_input, srv_input.value))
+        await pilot.pause()
+        assert calls.get("switch") == "/tmp/klangk.sock"
+
+        # "Use server" button also dispatches
+        srv_input.value = "prod"
+        login.on_button_pressed(FakeBtnPress("use_server"))
+        await pilot.pause()
+        assert calls.get("switch") == "https://prod.example"
+
+        # after a successful pick the server line + enabled creds reflect it
+        assert "Server:" in str(login.query_one("#server_line").render())
+        assert not login.query_one("#login", Button).disabled
+
+
+# ---------------------------------------------------------------------------
+# run_tui + bare-klangk launch wiring (continued)
 # ---------------------------------------------------------------------------
 
 

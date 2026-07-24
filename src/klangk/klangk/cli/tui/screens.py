@@ -7,6 +7,8 @@ free of cross-screen coupling and reach state through ``self.app.tui_state``.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
@@ -26,19 +28,27 @@ from .ws import listen_for_status
 
 
 class LoginScreen(Screen):
-    """Credential screen that adapts to the server's auth mode.
+    """Credential screen that also picks the server to log into.
 
-    ``none`` → auto no-auth login; ``oidc`` → SSO hand-off (browser);
-    ``password``/``both`` → email/handle + password form; ``unreachable``
-    → diagnostic message. The password form and SSO button are
-    ``disabled`` (not hidden) for non-applicable modes so the screen
-    stays simple to render and test.
+    A fresh user with no server configured can pick a known alias, select
+    the co-located default UDS, or type a URL (which is saved as a new
+    alias) — then authenticate. Once a server is active the screen
+    adapts to its auth mode: ``none`` → auto no-auth login; ``oidc`` →
+    SSO hand-off (browser); ``password``/``both`` → email/handle +
+    password form; ``unreachable`` → diagnostic.
     """
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield Vertical(
             Static("klangk", classes="title"),
+            Static("", id="server_line"),
+            OptionList(id="server_options"),
+            Input(
+                placeholder=("Server URL or alias (e.g. https://host, prod)"),
+                id="server_input",
+            ),
+            Button("Use server", id="use_server"),
             Static("", id="notice"),
             Input(placeholder="Email or handle", id="identifier"),
             Input(placeholder="Password", id="password", password=True),
@@ -50,18 +60,78 @@ class LoginScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._populate_servers()
+        if self.app.tui_state.current_url() is not None:
+            self._setup_auth()
+        else:
+            self.query_one("#server_line", Static).update(
+                "No server selected. Pick one above or enter a URL,"
+                " then press 'Use server'."
+            )
+            self._disable_credentials()
+
+    # --- server picker ---
+
+    def _populate_servers(self) -> None:
+        ol = self.query_one("#server_options", OptionList)
+        ol.clear_options()
+        current = self.app.tui_state.current_url()
+        for s in self.app.tui_state.known_servers():
+            mark = "*" if s.url == current else " "
+            ol.add_option(Option(f"{mark} {s.alias}  ({s.url})", id=s.url))
+        uds = self.app.tui_state.default_uds()
+        if uds and uds != current:
+            ol.add_option(Option(f"  Local klangkd (UDS)  ({uds})", id=uds))
+
+    @staticmethod
+    def _derive_alias(raw: str) -> str:
+        if "://" in raw:
+            host = urlparse(raw).hostname
+            if host:
+                return host
+        name = raw.rstrip("/").split("/")[-1]
+        return name or "server"
+
+    def _choose_server(self, raw: str | None) -> None:
+        raw = (raw or "").strip()
+        if not raw:
+            self._set_message("Enter a server URL or alias.", error=True)
+            return
+        cfg = self.app.tui_state.cfg()
+        if raw in cfg.servers:
+            # Known alias — switch to its URL.
+            self.app.tui_state.switch_server(cfg.servers[raw].url)
+        elif raw.startswith("/"):
+            # A socket path (e.g. the auto-detected UDS): use it without
+            # persisting a throwaway alias.
+            self.app.tui_state.switch_server(raw)
+        else:
+            # A new URL — save it as an alias so it appears next time.
+            self.app.tui_state.add_server(self._derive_alias(raw), raw)
+        self.query_one("#server_input", Input).value = ""
+        self._set_message("")
+        self._populate_servers()
+        self._setup_auth()
+
+    # --- auth-mode setup ---
+
+    def _setup_auth(self) -> None:
         state = self.app.tui_state
         mode = state.auth_mode()
+        self.query_one("#server_line", Static).update(
+            f"Server: {state.current_url()}"
+        )
+        self._enable_credentials()
         notice = self.query_one("#notice", Static)
         if mode == "none":
-            # Reached only if the app-level no-auth auto-login failed.
-            notice.update("No-auth login failed — check the server.")
-            self._disable_form()
+            notice.update("No-auth server — logging in…")
+            # Defer the (possibly screen-pushing) login so we don't push
+            # during this screen's own mount.
+            self.call_after_refresh(self._attempt_none)
             return
         if mode == "unreachable":
             notice.update(
-                "Cannot reach the server. Check the URL or that klangkd"
-                " is running."
+                "Cannot reach the server. Pick another or check klangkd."
             )
             self._disable_form()
             return
@@ -75,7 +145,22 @@ class LoginScreen(Screen):
         notice.update("Enter your credentials.")
         self.query_one("#oidc", Button).disabled = True
 
+    def _disable_credentials(self) -> None:
+        # No server chosen: disable the whole credential area.
+        self.query_one("#identifier", Input).disabled = True
+        self.query_one("#password", Input).disabled = True
+        self.query_one("#login", Button).disabled = True
+        self.query_one("#oidc", Button).disabled = True
+
+    def _enable_credentials(self) -> None:
+        self.query_one("#identifier", Input).disabled = False
+        self.query_one("#password", Input).disabled = False
+        self.query_one("#login", Button).disabled = False
+        self.query_one("#oidc", Button).disabled = False
+
     def _disable_form(self) -> None:
+        # Server set but not password-authable (oidc/unreachable): disable
+        # the password form, leave the SSO button usable.
         self.query_one("#identifier", Input).disabled = True
         self.query_one("#password", Input).disabled = True
         self.query_one("#login", Button).disabled = True
@@ -85,6 +170,14 @@ class LoginScreen(Screen):
         self.query_one("#message", Static).update(rendered)
 
     # --- login arms ---
+
+    def _attempt_none(self) -> None:
+        try:
+            self.app.tui_state.login_none()
+        except LoginError as exc:
+            self._set_message(f"No-auth login failed: {exc}", error=True)
+            return
+        self.app.login_succeeded()
 
     def _attempt_password(self) -> None:
         identifier = self.query_one("#identifier", Input).value.strip()
@@ -119,14 +212,23 @@ class LoginScreen(Screen):
 
     # --- event handlers ---
 
+    def on_option_list_option_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        self._choose_server(event.option.id)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "login":
+        if event.button.id == "use_server":
+            self._choose_server(self.query_one("#server_input", Input).value)
+        elif event.button.id == "login":
             self._attempt_password()
         elif event.button.id == "oidc":
             self._attempt_oidc()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id in ("identifier", "password"):
+        if event.input.id == "server_input":
+            self._choose_server(event.input.value)
+        elif event.input.id in ("identifier", "password"):
             self._attempt_password()
 
 

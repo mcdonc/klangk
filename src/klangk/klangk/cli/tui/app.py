@@ -10,7 +10,7 @@ from .screens import (
     MainScreen,
     ServerSwitchScreen,
 )
-from .state import LoginError, TuiState
+from .state import TuiState
 
 
 class KlangkApp(App):
@@ -52,19 +52,8 @@ class KlangkApp(App):
     def on_mount(self) -> None:
         if self.tui_state.is_authenticated():
             self.push_screen(MainScreen())
-            return
-        # No-auth servers log in for free (#1374); do it before pushing any
-        # screen so we land directly on the main shell instead of flashing a
-        # login screen whose on_mount would have to push mid-mount.
-        if self.tui_state.auth_mode() == "none":
-            try:
-                self.tui_state.login_none()
-            except LoginError:
-                pass
-            if self.tui_state.is_authenticated():
-                self.push_screen(MainScreen())
-                return
-        self.push_screen(LoginScreen())
+        else:
+            self.push_screen(LoginScreen())
 
     # --- navigation hooks used by screens ---
 
