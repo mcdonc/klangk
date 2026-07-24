@@ -30,7 +30,7 @@ operators or integrators to act when upgrading.
 - **Bare `klangk` (no subcommand) launches an interactive textual TUI on a
   real terminal (#1746).** The TUI is the foundation of the terminal client:
   in-TUI login (local/password, with no-auth auto-login and OIDC hand-off to
-  `klangk login`), live server switching including adding a new alias, and a
+  `klangk login`), live server switching, and a
   live workspace/container status feed over the existing WebSocket. Subcommands
   are unchanged; in non-interactive contexts (pipes, CI) bare `klangk` still
   prints help. `textual` is now a runtime dependency.

@@ -320,7 +320,6 @@ class MainScreen(Screen):
 
     BINDINGS = [
         ("s", "switch_server", "Switch server"),
-        ("a", "add_server", "Add server"),
         ("l", "logout", "Logout"),
     ]
 
@@ -339,9 +338,6 @@ class MainScreen(Screen):
 
     def action_switch_server(self) -> None:
         self.app.push_screen(ServerSwitchScreen())
-
-    def action_add_server(self) -> None:
-        self.app.push_screen(AddServerScreen())
 
     def action_logout(self) -> None:
         self.app.do_logout()
