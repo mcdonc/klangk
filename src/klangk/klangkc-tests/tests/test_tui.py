@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from rich.text import Text
 from textual.widgets import Button, Input, OptionList, Static
 
 from klangk.cli import config as cfgmod
@@ -1131,6 +1132,161 @@ async def test_refresh_workspaces_refreshes_main(monkeypatch):
         app.refresh_workspaces()
         await pilot.pause()
         assert calls["n"] > before
+
+
+async def test_main_screen_markup_name_safe(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("x[red]y")
+    app = KlangkApp(_ws(owned=[a]))
+    async with app.run_test():
+        ol = app.screen.query_one("#owned_list")
+        assert ol.option_count == 1
+        prompt = app.screen._fmt(a)
+        assert isinstance(prompt, Text)
+        assert "x[red]y" in str(prompt)  # literal, not markup-parsed
+
+
+async def test_detail_markup_name_safe(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("x[red]y", image="[img]", health_message="[bad]")
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("x[red]y"))
+        await pilot.pause()
+        title = str(app.screen.query_one("#detail_title").render())
+        body = str(app.screen.query_one("#detail_body").render())
+        assert "x[red]y" in title  # literal, not markup-parsed
+        assert "[img]" in body
+        assert "[bad]" in body
+
+
+async def test_detail_apply_status_event(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj(
+        "alpha", running=False, health="unhealthy", health_message="down"
+    )
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        d = app.screen
+        # container_status flips running
+        d.apply_status_event(
+            {
+                "type": "container_status",
+                "workspace_id": "id-alpha",
+                "running": True,
+            }
+        )
+        assert a.running is True
+        assert "running: yes" in str(d.query_one("#detail_body").render())
+        # service_health updates health + message
+        d.apply_status_event(
+            {
+                "type": "service_health",
+                "workspace_id": "id-alpha",
+                "healthy": False,
+                "health_message": "curl fail",
+                "running": True,
+            }
+        )
+        body = str(d.query_one("#detail_body").render())
+        assert "health: unhealthy" in body
+        assert "health note: curl fail" in body
+        # non-matching workspace id is ignored
+        d.apply_status_event(
+            {
+                "type": "container_status",
+                "workspace_id": "other",
+                "running": False,
+            }
+        )
+        assert a.running is True  # unchanged
+        # unknown event type -> no-op, no crash
+        d.apply_status_event(
+            {"type": "service_health_heartbeat", "workspace_id": "id-alpha"}
+        )
+        assert a.running is True  # unchanged
+
+
+async def test_detail_apply_status_event_reload(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=False)
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        d = app.screen
+        a.running = True  # mutated after load
+        d.apply_status_event({"type": "workspaces_changed"})
+        await pilot.pause()
+        assert "running: yes" in str(d.query_one("#detail_body").render())
+
+
+async def test_detail_apply_status_event_ws_none(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _ws()
+    st.find_workspace = lambda n: (_ for _ in ()).throw(RuntimeError("x"))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        # ws is None (load failed) -> safe no-op
+        app.screen.apply_status_event(
+            {
+                "type": "container_status",
+                "workspace_id": "id-alpha",
+                "running": True,
+            }
+        )
+
+
+async def test_status_event_routed_to_detail(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=False)
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        main = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        main._on_status_event(
+            {
+                "type": "container_status",
+                "workspace_id": "id-alpha",
+                "running": True,
+            }
+        )
+        await pilot.pause()
+        assert a.running is True
+        assert "running: yes" in str(
+            app.screen.query_one("#detail_body").render()
+        )
 
 
 # ---------------------------------------------------------------------------

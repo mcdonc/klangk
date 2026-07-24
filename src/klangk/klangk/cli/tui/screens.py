@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
+from rich.text import Text
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
@@ -361,10 +363,10 @@ class MainScreen(Screen):
             return []
 
     @staticmethod
-    def _fmt(ws) -> str:
+    def _fmt(ws) -> Text:
         mark = ">" if ws.running else "."
         health = f" ({ws.health})" if ws.health else ""
-        return f"{mark} {ws.name}{health}"
+        return Text(f"{mark} {ws.name}{health}")
 
     def _populate(self, selector: str, workspaces: list) -> None:
         ol = self.query_one(selector, OptionList)
@@ -409,6 +411,14 @@ class MainScreen(Screen):
         self._refresh_status()
         if etype == "workspaces_changed":
             self.refresh_lists()
+        self._forward_status_to_detail(event)
+
+    def _forward_status_to_detail(self, event: dict) -> None:
+        """Mirror a live status broadcast onto an open detail screen."""
+        for screen in reversed(self.app.screen_stack):
+            if isinstance(screen, WorkspaceDetailScreen):
+                screen.apply_status_event(event)
+                break
 
 
 class WorkspaceDetailScreen(Screen):
@@ -448,12 +458,12 @@ class WorkspaceDetailScreen(Screen):
 
     def _display(self) -> None:
         self.query_one("#detail_title", Static).update(
-            f"Workspace: {self._name}"
+            Text(f"Workspace: {self._name}")
         )
         ws = self._ws
         body = self.query_one("#detail_body", Static)
         if ws is None:
-            body.update("Could not load workspace.")
+            body.update(Text("Could not load workspace."))
             return
         lines = [
             f"running: {'yes' if ws.running else 'no'}",
@@ -476,11 +486,43 @@ class WorkspaceDetailScreen(Screen):
             lines.extend(f"  {k}={v}" for k, v in ws.env.items())
         if ws.owner_email:
             lines.append(f"owner: {ws.owner_email}")
-        body.update("\n".join(lines))
+        body.update(Text("\n".join(lines)))
 
     def _msg(self, text: str, *, error: bool = False) -> None:
-        rendered = f"[red]{text}[/red]" if error else text
-        self.query_one("#detail_msg", Static).update(rendered)
+        self.query_one("#detail_msg", Static).update(
+            Text(text, style="red" if error else "")
+        )
+
+    def apply_status_event(self, event: dict) -> None:
+        """Update running/health from a live status broadcast.
+
+        Only applies when the event is for this workspace; ``workspaces_changed``
+        re-fetches. User-derived text is rendered via ``Text`` so bracket
+        characters in names/messages never trigger markup parsing.
+        """
+        if self._ws is None:
+            return
+        etype = event.get("type")
+        ws_id = str(getattr(self._ws, "id", "") or "")
+        eid = str(event.get("workspace_id") or "")
+        if eid and ws_id and eid != ws_id:
+            return  # event for a different workspace
+        if etype == "workspaces_changed":
+            self._load()
+            return
+        if etype == "container_status":
+            self._ws.running = bool(event.get("running"))
+        elif etype == "service_health":
+            self._ws.running = bool(event.get("running", self._ws.running))
+            self._ws.health = (
+                "healthy" if event.get("healthy") else "unhealthy"
+            )
+            msg = event.get("health_message")
+            if msg is not None:
+                self._ws.health_message = msg
+        else:
+            return
+        self._display()
 
     # --- actions ---
 

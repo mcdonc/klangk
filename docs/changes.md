@@ -38,11 +38,15 @@ operators or integrators to act when upgrading.
 - **The `klangk` TUI now lists workspaces and manages them in-app
   (#1747).** The home screen is a two-page list (Owned by me / Shared to
   me) that refreshes from the live WebSocket status feed. Selecting a
-  workspace opens a read-only detail screen (running/health, image,
-  command, mounts, env, owner) with Restart, Duplicate, and Delete actions
-  — each guarded by a confirmation. Duplicate prompts for a new name
-  (server requires one); Delete is a yes/no confirm that returns to the
-  list. Volume cleanup is deferred.
+  workspace opens a detail screen (running/health, image, command, mounts,
+  env, owner) with Restart, Duplicate, and Delete actions — each guarded by
+  a confirmation. The detail screen mirrors live status (running/health)
+  from `container_status`/`service_health` broadcasts; Duplicate prompts
+  for a new name (server requires one); Delete is a yes/no confirm that
+  returns to the list. All user-facing text is rendered as rich `Text`
+  (never markup-parsed), so workspace names or messages containing bracket
+  characters can't crash the TUI; list/detail load errors degrade to a
+  graceful message. Volume cleanup is deferred.
 
 - **The `features_config:` block now accepts the stripped, lowercased key form
   (`soliplex_url`) in addition to the full declared name
