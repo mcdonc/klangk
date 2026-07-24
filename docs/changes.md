@@ -44,15 +44,20 @@ operators or integrators to act when upgrading.
   from `container_status`/`service_health` broadcasts; Duplicate prompts
   for a new name (server requires one); Delete is a yes/no confirm that
   returns to the list. All user-facing text is rendered as rich `Text`
-  (never markup-parsed), so workspace names or messages containing bracket
-  characters can't crash the TUI; list/detail load errors degrade to a
-  graceful message. Volume cleanup is deferred.
+  (never markup-parsed) — list rows, detail body, confirm dialogs, the
+  duplicate prompt, the status bar, and login messages — so workspace
+  names or messages containing bracket characters can't crash the TUI.
+  Load errors degrade gracefully: an expired session is surfaced as a
+  distinct "session expired" state (not mistaken for an empty list), and
+  if the open workspace is deleted by another client the detail screen
+  returns to the list. Volume cleanup is deferred.
 
 - **The `klangk` TUI detail screen now lists the workspace's terminals and
   lets you delete them (#1747).** The detail page enumerates the terminals
   you own (fetched over the workspace WebSocket) and adds a Delete-key
-  binding to remove the selected one; the last terminal is protected, as
-  in Flutter. Selecting a terminal is wired for a future `klangk shell`
+  binding to remove the selected one; the last terminal is protected by a
+  client-side guard (matching Flutter), and a failed close/refresh is
+  reported rather than silently emptying the list. Selecting a terminal is wired for a future `klangk shell`
   step. The workspace-list page is now titled "Klangk: Workspaces".
 
 - **The `features_config:` block now accepts the stripped, lowercased key form

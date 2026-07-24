@@ -27,6 +27,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from .state import LoginError
+from ..client import AuthError, WorkspaceNotFoundError
 from ..transport import is_valid_server_spec
 from .widgets import StatusBar
 from .ws import listen_for_status
@@ -57,7 +58,7 @@ class ConfirmScreen(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         yield Vertical(
-            Static(self.message),
+            Static(Text(self.message)),
             Horizontal(
                 Button("Cancel", id="no"),
                 Button("Delete", id="yes", variant="error"),
@@ -250,8 +251,9 @@ class LoginScreen(Screen):
         self.query_one("#login", Button).disabled = True
 
     def _set_message(self, text: str, *, error: bool = False) -> None:
-        rendered = f"[red]{text}[/red]" if error else text
-        self.query_one("#message", Static).update(rendered)
+        self.query_one("#message", Static).update(
+            Text(text, style="red" if error else "")
+        )
 
     # --- login arms ---
 
@@ -348,8 +350,21 @@ class MainScreen(Screen):
     # --- list population ---
 
     def refresh_lists(self) -> None:
-        self._populate("#owned_list", self._safe_list(owned=True))
-        self._populate("#shared_list", self._safe_list(owned=False))
+        try:
+            owned = self._safe_list(owned=True)
+            shared = self._safe_list(owned=False)
+        except AuthError:
+            # An expired session is not an empty list — surface it distinctly
+            # instead of misleading the user into thinking their workspaces
+            # are gone.
+            for sel in ("#owned_list", "#shared_list"):
+                self._populate(
+                    sel, [], empty_label="(session expired — re-login)"
+                )
+            self._refresh_status()
+            return
+        self._populate("#owned_list", owned)
+        self._populate("#shared_list", shared)
         self._refresh_status()
 
     def _safe_list(self, *, owned: bool) -> list:
@@ -360,6 +375,8 @@ class MainScreen(Screen):
                 if owned
                 else state.list_shared_workspaces()
             )
+        except AuthError:
+            raise
         except Exception:
             return []
 
@@ -369,11 +386,17 @@ class MainScreen(Screen):
         health = f" ({ws.health})" if ws.health else ""
         return Text(f"{mark} {ws.name}{health}")
 
-    def _populate(self, selector: str, workspaces: list) -> None:
+    def _populate(
+        self,
+        selector: str,
+        workspaces: list,
+        *,
+        empty_label: str = "(no workspaces)",
+    ) -> None:
         ol = self.query_one(selector, OptionList)
         ol.clear_options()
         if not workspaces:
-            ol.add_option(Option("(no workspaces)", id="", disabled=True))
+            ol.add_option(Option(Text(empty_label), id="", disabled=True))
             return
         for ws in workspaces:
             ol.add_option(Option(self._fmt(ws), id=ws.name))
@@ -403,7 +426,9 @@ class MainScreen(Screen):
             await listen_for_status(url, token, on_event=self._on_status_event)
         except Exception:
             # Best-effort: the TUI stays usable if the status stream dies.
-            self.app.live_extra = "status: disconnected"
+            self.app.live_extra = (
+                "status: disconnected (switch server to reconnect)"
+            )
             self._refresh_status()
 
     def _on_status_event(self, event: dict) -> None:
@@ -445,6 +470,8 @@ class WorkspaceDetailScreen(Screen):
         self._name = name
         self._ws = None
         self._terminals: list[dict] = []
+        self._missing = False
+        self._load_error: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -465,8 +492,20 @@ class WorkspaceDetailScreen(Screen):
     def _load(self) -> None:
         try:
             self._ws = self.app.tui_state.find_workspace(self._name)
+            self._missing = False
+            self._load_error = None
+        except WorkspaceNotFoundError:
+            self._ws = None
+            self._missing = True
+            self._load_error = None
+        except AuthError:
+            self._ws = None
+            self._missing = False
+            self._load_error = "Session expired — please log in again."
         except Exception:
             self._ws = None
+            self._missing = False
+            self._load_error = None
         self._display()
 
     def _display(self) -> None:
@@ -476,7 +515,7 @@ class WorkspaceDetailScreen(Screen):
         ws = self._ws
         body = self.query_one("#detail_body", Static)
         if ws is None:
-            body.update(Text("Could not load workspace."))
+            body.update(Text(self._load_error or "Could not load workspace."))
             return
         lines = [
             f"running: {'yes' if ws.running else 'no'}",
@@ -522,6 +561,10 @@ class WorkspaceDetailScreen(Screen):
             return  # event for a different workspace
         if etype == "workspaces_changed":
             self._load()
+            if self._missing:
+                # The workspace was deleted out from under us (e.g. by
+                # another client) — return to the refreshed list.
+                self.app.pop_screen()
             return
         if etype == "container_status":
             self._ws.running = bool(event.get("running"))
@@ -579,7 +622,14 @@ class WorkspaceDetailScreen(Screen):
         except Exception as exc:
             self._msg(f"Delete failed: {exc}", error=True)
             return
-        self._terminals = windows or []
+        if not windows:
+            # The last terminal is protected client-side, so an empty result
+            # here means the close/refresh failed — don't claim success.
+            self._msg(
+                "Delete failed — could not refresh terminals.", error=True
+            )
+            return
+        self._terminals = windows
         self._render_terminals()
         self._msg(f"Deleted terminal {index}.")
 
@@ -660,7 +710,7 @@ class DuplicateScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         yield Vertical(
-            Static(f"Duplicate '{self._source}' as:"),
+            Static(Text(f"Duplicate '{self._source}' as:")),
             Input(value=f"{self._source}-copy", id="dup_name"),
             Horizontal(
                 Button("Cancel", id="cancel"),
@@ -745,6 +795,8 @@ class ServerSwitchScreen(Screen):
         self.app.server_changed()
 
 
+# Retained for the login/auto-add path and pending #1763 (duplicate-alias
+# handling); intentionally not surfaced as a MainScreen action yet.
 class AddServerScreen(Screen):
     """Add a new server alias and switch to it."""
 

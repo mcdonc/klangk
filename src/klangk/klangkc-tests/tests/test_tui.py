@@ -14,7 +14,7 @@ from textual.widgets import Button, Input, OptionList, Static
 
 from klangk.cli import config as cfgmod
 from klangk.cli import tui as tui_pkg
-from klangk.cli.client import Workspace
+from klangk.cli.client import AuthError, Workspace, WorkspaceNotFoundError
 from klangk.cli.tui import screens as scr
 from klangk.cli.tui import state as tui_state_mod
 from klangk.cli.tui import ws as ws_mod
@@ -537,7 +537,7 @@ async def test_status_loop_handles_disconnect(monkeypatch):
     async with app.run_test() as pilot:
         await app.screen._status_loop()
         await pilot.pause()
-        assert app.live_extra == "status: disconnected"
+        assert "status: disconnected" in app.live_extra
 
 
 async def test_login_password_flow_success(monkeypatch):
@@ -1510,6 +1510,135 @@ async def test_main_screen_title(monkeypatch):
     app = KlangkApp(_ws())
     async with app.run_test():
         assert app.title == "Klangk: Workspaces"
+
+
+# --- reviewer findings (#1746/#1747 review) ---
+
+
+async def test_confirm_screen_markup_safe(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws())
+    async with app.run_test() as pilot:
+        app.push_screen(ConfirmScreen("Delete 'wip[/]' and its data?"))
+        await pilot.pause()
+        # message renders literally; no MarkupError
+        rendered = str(app.screen.query_one(Static).render())
+        assert "wip[/]" in rendered
+
+
+async def test_duplicate_screen_markup_safe(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws())
+    async with app.run_test() as pilot:
+        app.push_screen(DuplicateScreen("wip[/]"))
+        await pilot.pause()
+        rendered = str(app.screen.query_one(Static).render())
+        assert "wip[/]" in rendered
+
+
+async def test_status_bar_markup_safe(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws())
+    async with app.run_test() as pilot:
+        app.live_extra = "live: foo[/]bar"
+        app.screen._refresh_status()
+        await pilot.pause()
+        assert "foo[/]bar" in str(app.screen.query_one("#status").render())
+
+
+async def test_main_screen_auth_expired_placeholder(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    def boom():
+        raise AuthError("expired")
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=boom, list_shared_workspaces=boom)
+    )
+    async with app.run_test():
+        ol = app.screen.query_one("#owned_list")
+        assert ol.option_count == 1
+        assert (
+            "session expired" in str(ol.get_option_at_index(0).prompt).lower()
+        )
+
+
+async def test_detail_auth_expired_message(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _ws()
+    st.find_workspace = lambda n: (_ for _ in ()).throw(AuthError("expired"))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        assert "Session expired" in str(
+            app.screen.query_one("#detail_body").render()
+        )
+
+
+async def test_detail_pops_when_workspace_deleted(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(owned=[a])
+    calls = {"n": 0}
+
+    def find(n):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return a
+        raise WorkspaceNotFoundError("gone")
+
+    st.find_workspace = find
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        assert isinstance(app.screen, WorkspaceDetailScreen)
+        app.screen.apply_status_event({"type": "workspaces_changed"})
+        await pilot.pause()
+        assert isinstance(app.screen, MainScreen)  # popped back to the list
+
+
+async def test_detail_delete_terminal_empty_result(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    async def _close(name, index):
+        return []  # close / refresh failed
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=_async_terms, close_terminal=_close)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        await d._do_delete_terminal(1)
+        await pilot.pause()
+        assert "Delete failed" in str(d.query_one("#detail_msg").render())
+        assert d.query_one("#term_list").option_count == 2  # unchanged
 
 
 # ---------------------------------------------------------------------------

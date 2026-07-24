@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from textual.widgets import Static
 
+from rich.text import Text
+
 
 class StatusBar(Static):
     """One-line bottom bar: current server, user, and live-state flag."""
@@ -31,4 +33,6 @@ class StatusBar(Static):
         )
         if extra:
             text += f"   |   {extra}"
-        self.update(text)
+        # Render literally — server URL / user / live `extra` may contain
+        # bracket characters that would otherwise be parsed as markup.
+        self.update(Text(text))
