@@ -277,12 +277,33 @@ class TestCreateContainer:
     async def test_hooks_dir_emitted(self):
         with patch(EXEC, _exec(("id\n", "", 0))) as m:
             await _p.create_container(
-                "n", "img", hooks_dir="/etc/klangk/hooks", replace=False
+                "n", "img", hooks_dir=["/etc/klangk/hooks"], replace=False
             )
         args = _args(m)
         assert ["--hooks-dir", "/etc/klangk/hooks"] == args[
             args.index("--hooks-dir") : args.index("--hooks-dir") + 2
         ]
+
+    async def test_multiple_hooks_dirs_each_emit_a_flag(self):
+        # #1770: --hooks-dir overrides (does not append) podman's default
+        # hook search paths, so a filtered container passes the klangk dir
+        # AND the standard default dirs — one --hooks-dir flag each, in
+        # order, so operator createContainer hooks keep running.
+        dirs = [
+            "/etc/klangk/hooks",
+            "/usr/share/containers/oci/hooks.d",
+            "/etc/containers/oci/hooks.d",
+        ]
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n", "img", hooks_dir=dirs, replace=False
+            )
+        args = _args(m)
+        assert args.count("--hooks-dir") == 3
+        emitted = [
+            args[i + 1] for i, a in enumerate(args) if a == "--hooks-dir"
+        ]
+        assert emitted == dirs
 
     async def test_no_hooks_dir_or_annotation_by_default(self):
         with patch(EXEC, _exec(("id\n", "", 0))) as m:

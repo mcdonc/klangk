@@ -63,6 +63,21 @@ HOOK_SCRIPT_NAME = "klangk-netfilter.sh"
 # permissive seccomp profile. See issue #1773.
 DROPPED_CAPABILITIES = ("NET_ADMIN",)
 
+# The OCI hook search paths podman uses by default. ``--hooks-dir`` on the
+# ``podman create`` command line *overrides* these (it does not append), so
+# passing only klangk's hooks dir for a filtered workspace would silently
+# disable every *other* createContainer hook an operator relies on
+# (monitoring, secrets injection, GPU, corporate integrations). To keep
+# them running, a filtered container passes klangk's dir AND these two
+# standard default dirs (podman tolerates dirs that don't exist — it just
+# finds no hooks in them). A non-standard hooks dir configured only via
+# ``containers.conf`` is still clobbered by an explicit ``--hooks-dir``
+# (documented limitation). See issue #1770.
+STANDARD_HOOK_DIRS = (
+    "/usr/share/containers/oci/hooks.d",
+    "/etc/containers/oci/hooks.d",
+)
+
 # A hostname or IP (v4/v6), optionally bracketed for v6, with an optional
 # trailing ``:port``. Deliberately permissive on the host grammar — the
 # hook does the real DNS resolution; this just rejects gross mistakes
@@ -389,8 +404,8 @@ class NetFilter:
 
     def create_kwargs(
         self, allowed_domains: list[str] | None
-    ) -> tuple[dict[str, str] | None, str | None, list[str] | None]:
-        """Build ``(annotations, hooks_dir, cap_drop)`` for a container.
+    ) -> tuple[dict[str, str] | None, list[str] | None, list[str] | None]:
+        """Build ``(annotations, hooks_dirs, cap_drop)`` for a container.
 
         Resolution (#1365): a workspace's non-empty ``allowed_domains``
         **overrides** the deploy-wide default; otherwise the default applies.
@@ -399,6 +414,12 @@ class NetFilter:
         exists but netfilter is disabled, a loud warning is logged: the
         container starts unrestricted and the operator must enable netfilter
         to enforce the policy.
+
+        ``hooks_dirs`` is klangk's hooks dir followed by
+        :data:`STANDARD_HOOK_DIRS`: ``--hooks-dir`` overrides (does not
+        append) podman's default hook search paths, so the standard dirs are
+        repeated explicitly to keep operator createContainer hooks running
+        for a filtered workspace (#1770).
 
         ``cap_drop`` is :data:`DROPPED_CAPABILITIES` (``NET_ADMIN``) for a
         filtered container, so the entrypoint cannot flush the iptables
@@ -424,4 +445,8 @@ class NetFilter:
             )
             return None, None, None
         annotation = {ANNOTATION_KEY: render_rules_annotation(domains)}
-        return annotation, path, list(DROPPED_CAPABILITIES)
+        return (
+            annotation,
+            [path, *STANDARD_HOOK_DIRS],
+            list(DROPPED_CAPABILITIES),
+        )

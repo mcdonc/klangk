@@ -613,7 +613,11 @@ class TestStartContainer:
         assert kwargs["annotations"] == {
             "klangk.netfilter.rules": "github.com:443,pypi.org"
         }
-        assert kwargs["hooks_dir"] == str((tmp_path / "hooks").resolve())
+        assert kwargs["hooks_dir"] == [
+            str((tmp_path / "hooks").resolve()),
+            "/usr/share/containers/oci/hooks.d",
+            "/etc/containers/oci/hooks.d",
+        ]
         assert kwargs["cap_drop"] == ["NET_ADMIN"]
 
     def test_egress_filter_missing_netfilter_state_is_noop(self):

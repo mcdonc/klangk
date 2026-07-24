@@ -189,7 +189,10 @@ class TestNetFilterCreateKwargs:
             _app(hooks_dir=path)
         ).create_kwargs(["github.com:443", "pypi.org"])
         assert ann == {nf.ANNOTATION_KEY: "github.com:443,pypi.org"}
-        assert hooks == os.path.realpath(path)
+        # #1770: the klangk hooks dir is followed by the standard default
+        # hook dirs so --hooks-dir doesn't silently disable operator
+        # createContainer hooks.
+        assert hooks == [os.path.realpath(path), *nf.STANDARD_HOOK_DIRS]
         # A filtered container drops NET_ADMIN so the entrypoint can't
         # flush the ruleset (#1773).
         assert cap_drop == ["NET_ADMIN"]
@@ -209,7 +212,7 @@ class TestNetFilterCreateKwargs:
             _app(hooks_dir=path, default_domains=["default.com", "a.io"])
         ).create_kwargs(None)
         assert ann == {nf.ANNOTATION_KEY: "default.com,a.io"}
-        assert hooks == os.path.realpath(path)
+        assert hooks == [os.path.realpath(path), *nf.STANDARD_HOOK_DIRS]
 
         # Same for an explicit empty list (None and [] both inherit).
         ann2, _, _ = nf.NetFilter(

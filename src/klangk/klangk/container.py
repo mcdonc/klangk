@@ -1040,8 +1040,8 @@ class ContainerRegistry:
 
     def _egress_filter(
         self, allowed_domains: list[str] | None
-    ) -> tuple[dict[str, str] | None, str | None, list[str] | None]:
-        """Build ``(annotations, hooks_dir, cap_drop)`` for egress (#1365).
+    ) -> tuple[dict[str, str] | None, list[str] | None, list[str] | None]:
+        """Build ``(annotations, hooks_dirs, cap_drop)`` for egress (#1365).
 
         ``(None, None, None)`` when unrestricted (no domains, or netfilter
         disabled). Delegates to ``app.state.netfilter``; defensive for
@@ -1578,12 +1578,17 @@ class ContainerRegistry:
         # + --hooks-dir only when the workspace declares allowed_domains
         # AND netfilter is enabled, so unrestricted workspaces keep
         # podman's default hooks-dir behavior (no behavior change). The
-        # filtered container also drops NET_ADMIN (#1773) so the entrypoint
-        # can't flush the ruleset.
-        annotations, hooks_dir, cap_drop = self._egress_filter(allowed_domains)
+        # klangk hooks dir is passed alongside the standard default hook
+        # dirs (#1770 — --hooks-dir overrides, not appends, so the
+        # standard dirs are repeated to keep operator createContainer
+        # hooks running). The filtered container also drops NET_ADMIN
+        # (#1773) so the entrypoint can't flush the ruleset.
+        annotations, hooks_dirs, cap_drop = self._egress_filter(
+            allowed_domains
+        )
         if annotations is not None:
             create_kwargs["annotations"] = annotations
-            create_kwargs["hooks_dir"] = hooks_dir
+            create_kwargs["hooks_dir"] = hooks_dirs
             create_kwargs["cap_drop"] = cap_drop
 
         logger.info(

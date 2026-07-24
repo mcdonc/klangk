@@ -17,7 +17,8 @@ starts.
    specs).
 2. On container start, if the deploy has enabled netfilter, the backend
    passes `--annotation klangk.netfilter.rules=<host:port,...>` and
-   `--hooks-dir <dir>` to `podman create`.
+   `--hooks-dir <dir>` to `podman create` (see the caveat below on
+   `--hooks-dir` overriding default hook dirs).
 3. The OCI hook (`klangk-netfilter.sh`, materialized by the backend into the
    hooks dir) fires at `createContainer` time, reads the annotation from the
    container state, resolves each host to IPs, and installs an iptables
@@ -119,6 +120,19 @@ unusable, but the warning makes the gap visible.
   permissive seccomp profile hands the entrypoint `iptables -F OUTPUT`,
   which flushes the ruleset and lets it exfiltrate freely. Do not run
   filtered workspaces privileged or grant `NET_ADMIN`.
+- **`--hooks-dir` overrides podman's default hook dirs.** Podman's
+  `--hooks-dir` flag _replaces_ (does not append to) the default OCI hook
+  search paths, so passing only klangk's hooks dir for a filtered
+  workspace would silently disable every _other_ `createContainer` hook
+  an operator relies on (monitoring, secrets injection, GPU, corporate
+  integrations). To avoid that, a filtered container passes klangk's hooks
+  dir **and** the two standard default dirs
+  (`/usr/share/containers/oci/hooks.d`, `/etc/containers/oci/hooks.d`),
+  preserving operator hooks. Podman tolerates a dir that doesn't exist (it
+  simply finds no hooks there). Limitation: a _non-standard_ hooks dir
+  configured only via `containers.conf` is still clobbered by an explicit
+  `--hooks-dir`; unrestricted workspaces are unaffected (the flag isn't
+  passed). See #1770.
 - **Port granularity.** The initial implementation supports `host` and
   `host:port`. CIDR ranges and port-only rules may follow.
 - **`macOS` hosts.** The `createContainer` hook runs inside the
