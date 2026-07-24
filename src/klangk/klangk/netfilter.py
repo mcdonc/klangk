@@ -343,8 +343,17 @@ class NetFilter:
         return list(raw) if raw else []
 
     def enabled(self) -> bool:
-        """Whether netfilter is armed on this deploy (hooks dir configured)."""
-        return self.hooks_dir() is not None
+        """Whether netfilter is armed on this deploy.
+
+        Armed = the hooks dir is configured AND the OCI hook script + JSON
+        are installed and current. A configured-but-not-installed dir (a
+        partial ``install_hooks()`` failure, or a stale hook from an old
+        klangk version) is NOT armed — callers fail open with a loud
+        warning rather than appearing filtered while running unrestricted
+        (#1771).
+        """
+        path = self.hooks_dir()
+        return path is not None and self._hook_files_current(path)
 
     def hooks_dir(self) -> str | None:
         """Return the configured hooks dir (validated to exist), else ``None``.
@@ -368,6 +377,29 @@ class NetFilter:
             )
             return None
         return path
+
+    def _hook_files_current(self, path: str) -> bool:
+        """True iff the hook script + JSON in *path* are present and match
+        the in-tree content.
+
+        Detects a partial ``install_hooks()`` (one file written, the other
+        not), a missing hook, and a stale hook left over from an old klangk
+        version. Stateless — the filesystem is the source of truth, so this
+        survives restarts and doesn't depend on ``install_hooks()`` having
+        run in this process (#1771).
+        """
+        script_path = os.path.join(path, HOOK_SCRIPT_NAME)
+        json_path = os.path.join(path, HOOK_JSON_NAME)
+        try:
+            with open(script_path) as f:
+                if f.read() != HOOK_SCRIPT:
+                    return False
+            with open(json_path) as f:
+                if f.read() != render_hook_json(script_path):
+                    return False
+        except OSError:
+            return False
+        return True
 
     def install_hooks(self) -> str | None:
         """Materialize the hook script + JSON into the hooks dir.
@@ -442,6 +474,23 @@ class NetFilter:
                 "iptables is available where the OCI runtime executes to "
                 "enforce the filter (#1365).",
                 domains,
+            )
+            return None, None, None
+        if not self._hook_files_current(path):
+            # Configured but the OCI hook isn't installed / current: a
+            # partial install_hooks() failure or a stale hook from an old
+            # version. Do NOT hand podman this dir — the runtime would run
+            # no hook and the workspace would appear filtered while running
+            # unrestricted. Fail open with a loud warning instead (#1771).
+            logger.warning(
+                "KLANGKD_NETFILTER_HOOKS_DIR=%s is configured but the OCI "
+                "hook is not installed or is stale (%s / %s missing or out "
+                "of date); the workspace will start with UNRESTRICTED "
+                "egress. Restart the server (install_hooks() runs at "
+                "startup) or confirm the dir is writable (#1771).",
+                path,
+                HOOK_SCRIPT_NAME,
+                HOOK_JSON_NAME,
             )
             return None, None, None
         annotation = {ANNOTATION_KEY: render_rules_annotation(domains)}

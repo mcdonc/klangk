@@ -602,6 +602,9 @@ class TestStartContainer:
             "netfilter_hooks_dir",
             str(tmp_path / "hooks"),
         )
+        # #1771: create_kwargs only trusts a dir whose hook is actually
+        # installed, so arm it before starting the container.
+        self.registry.app.state.netfilter.install_hooks()
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],

@@ -185,9 +185,11 @@ class TestNetFilterCreateKwargs:
         self, tmp_path
     ):
         path = str(tmp_path / "hooks")
-        ann, hooks, cap_drop = nf.NetFilter(
-            _app(hooks_dir=path)
-        ).create_kwargs(["github.com:443", "pypi.org"])
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        nf_obj.install_hooks()  # arm the hook so create_kwargs trusts the dir
+        ann, hooks, cap_drop = nf_obj.create_kwargs(
+            ["github.com:443", "pypi.org"]
+        )
         assert ann == {nf.ANNOTATION_KEY: "github.com:443,pypi.org"}
         # #1770: the klangk hooks dir is followed by the standard default
         # hook dirs so --hooks-dir doesn't silently disable operator
@@ -200,24 +202,26 @@ class TestNetFilterCreateKwargs:
     def test_workspace_overrides_deploy_default(self, tmp_path):
         # A non-empty workspace list replaces the default (no merge).
         path = str(tmp_path / "hooks")
-        ann, _, cap_drop = nf.NetFilter(
+        nf_obj = nf.NetFilter(
             _app(hooks_dir=path, default_domains=["default.com", "a.io"])
-        ).create_kwargs(["ws.com:443"])
+        )
+        nf_obj.install_hooks()
+        ann, _, cap_drop = nf_obj.create_kwargs(["ws.com:443"])
         assert ann == {nf.ANNOTATION_KEY: "ws.com:443"}
         assert cap_drop == ["NET_ADMIN"]
 
     def test_empty_workspace_inherits_deploy_default(self, tmp_path):
         path = str(tmp_path / "hooks")
-        ann, hooks, _ = nf.NetFilter(
+        nf_obj = nf.NetFilter(
             _app(hooks_dir=path, default_domains=["default.com", "a.io"])
-        ).create_kwargs(None)
+        )
+        nf_obj.install_hooks()
+        ann, hooks, _ = nf_obj.create_kwargs(None)
         assert ann == {nf.ANNOTATION_KEY: "default.com,a.io"}
         assert hooks == [os.path.realpath(path), *nf.STANDARD_HOOK_DIRS]
 
         # Same for an explicit empty list (None and [] both inherit).
-        ann2, _, _ = nf.NetFilter(
-            _app(hooks_dir=path, default_domains=["default.com", "a.io"])
-        ).create_kwargs([])
+        ann2, _, _ = nf_obj.create_kwargs([])
         assert ann2 == {nf.ANNOTATION_KEY: "default.com,a.io"}
 
     def test_default_present_but_netfilter_disabled_warns(self, caplog):
@@ -226,6 +230,36 @@ class TestNetFilterCreateKwargs:
             result = nf.NetFilter(app).create_kwargs(None)
         assert result == (None, None, None)
         assert any("UNRESTRICTED" in r.message for r in caplog.records)
+
+    def test_configured_but_not_installed_fail_opens(self, tmp_path, caplog):
+        # #1771: the hooks dir exists but the hook files were never written
+        # (partial install_hooks failure). create_kwargs must NOT hand
+        # podman the dir; it fails open with a distinct loud warning.
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        # hooks_dir() makedirs the dir, but no hook files are installed.
+        with caplog.at_level("WARNING"):
+            result = nf_obj.create_kwargs(["github.com:443"])
+        assert result == (None, None, None)
+        assert any(
+            "not installed or is stale" in r.message for r in caplog.records
+        )
+
+    @pytest.mark.parametrize("fname", [nf.HOOK_SCRIPT_NAME, nf.HOOK_JSON_NAME])
+    def test_stale_hook_files_fail_opens(self, tmp_path, caplog, fname):
+        # #1771: either hook file stale (old version) — script OR json — the
+        # content mismatch must be detected and treated as not-armed.
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        nf_obj.install_hooks()
+        with open(os.path.join(path, fname), "w") as f:
+            f.write("# stale old hook\n")
+        with caplog.at_level("WARNING"):
+            result = nf_obj.create_kwargs(["github.com:443"])
+        assert result == (None, None, None)
+        assert any(
+            "not installed or is stale" in r.message for r in caplog.records
+        )
 
 
 class TestNetFilterDefaultDomains:
@@ -255,10 +289,28 @@ class TestNetFilterEnabled:
     def test_disabled_when_hooks_dir_unset(self):
         assert nf.NetFilter(_app()).enabled() is False
 
-    def test_enabled_when_hooks_dir_set(self, tmp_path):
+    def test_enabled_when_installed(self, tmp_path):
+        # #1771: armed requires the hook to be installed, not just the dir
+        # configured.
+        nf_obj = nf.NetFilter(_app(hooks_dir=str(tmp_path / "h")))
+        nf_obj.install_hooks()
+        assert nf_obj.enabled() is True
+
+    def test_not_enabled_when_configured_but_not_installed(self, tmp_path):
+        # The dir exists but no hook files -> not armed (#1771).
         assert (
-            nf.NetFilter(_app(hooks_dir=str(tmp_path / "h"))).enabled() is True
+            nf.NetFilter(_app(hooks_dir=str(tmp_path / "h"))).enabled()
+            is False
         )
+
+    def test_not_enabled_when_hook_files_stale(self, tmp_path):
+        # Files present but content is stale -> not armed (#1771).
+        path = str(tmp_path / "h")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        nf_obj.install_hooks()
+        with open(os.path.join(path, nf.HOOK_SCRIPT_NAME), "w") as f:
+            f.write("# stale\n")
+        assert nf_obj.enabled() is False
 
 
 # --- the OCI hook script, actually executed ---
