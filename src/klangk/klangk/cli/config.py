@@ -181,13 +181,16 @@ def seed_config(server_url: str, user: str | None = None) -> None:
 def add_server_to_config(
     alias: str, server_url: str, user: str | None = None
 ) -> None:
-    """Add (or replace) a named server entry in klangk.yaml.
+    """Add a named server entry in klangk.yaml.
 
     Unlike ``seed_config`` (one-shot, only when the file is absent), this
     merges into an existing user config so the TUI can add a server alias
     interactively without clobbering the rest of the file. klangk.yaml
     remains user-owned; this is the one managed write, used only by the
     TUI's add-server flow.
+
+    Raises ``AliasConflictError`` if *alias* already exists — callers
+    must catch the error and surface it to the user (#1763).
     """
     _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if _CONFIG_PATH.exists():
@@ -195,6 +198,8 @@ def add_server_to_config(
     else:
         data = {}
     servers = data.get("servers") or {}
+    if alias in servers:
+        raise AliasConflictError(f"Alias '{alias}' already exists.")
     entry: dict = {"url": server_url}
     if user:
         entry["user"] = user

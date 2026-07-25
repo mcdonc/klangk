@@ -46,6 +46,7 @@ from textual.widgets.option_list import Option
 
 from .state import LoginError
 from ..client import AuthError, Workspace, WorkspaceNotFoundError
+from ..config import AliasConflictError
 from ..env import validate_env_entry
 from ..mount import (
     validate_allowed_domain_spec,
@@ -340,9 +341,15 @@ class LoginScreen(SpatialNavScreen):
                 self.app.tui_state.switch_server, cfg.servers[raw].url
             )
         elif is_valid_server_spec(raw):
-            await asyncio.to_thread(
-                self.app.tui_state.add_server, self._derive_alias(raw), raw
-            )
+            try:
+                await asyncio.to_thread(
+                    self.app.tui_state.add_server,
+                    self._derive_alias(raw),
+                    raw,
+                )
+            except AliasConflictError as exc:
+                self._set_message(str(exc), error=True)
+                return
         else:
             self._set_message(
                 "Enter a server URL (https://host), a socket path"
@@ -2308,7 +2315,15 @@ class AddServerScreen(Screen):
         self.run_worker(self._do_add_server(alias, url), exit_on_error=False)
 
     async def _do_add_server(self, alias: str, url: str) -> None:
-        await asyncio.to_thread(self.app.tui_state.add_server, alias, url)
+        try:
+            await asyncio.to_thread(self.app.tui_state.add_server, alias, url)
+        except AliasConflictError:
+            msg = self.query_one("#add_msg", Static)
+            msg.update(
+                f"[red]Alias '{alias}' already exists. Choose a"
+                " different name or edit the existing entry.[/red]"
+            )
+            return
         self.app.server_changed()
 
 
