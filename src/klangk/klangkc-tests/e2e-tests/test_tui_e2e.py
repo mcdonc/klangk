@@ -324,8 +324,6 @@ class TestTuiE2E:
                 await pilot.pause()
                 await pilot.pause()
                 assert isinstance(app.screen, WorkspaceDetailScreen)
-                title = str(app.screen.query_one("#detail_title").render())
-                assert ws_name in title
         finally:
             _api_delete_workspace(base_url, token, ws_id)
 

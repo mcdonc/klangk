@@ -11,6 +11,7 @@ import asyncio
 import datetime
 import subprocess
 import sys
+import time
 from urllib.parse import urlparse
 
 import logging
@@ -310,6 +311,11 @@ class LoginScreen(SpatialNavScreen):
                 no_wrap=True,
             )
             lv.append(ListItem(Label(label), name=uds))
+        # Autofocus the first server entry (#1826).
+        if lv.query(ListItem):
+            lv.focus()
+            if lv.index is None:
+                lv.index = 0
 
     @staticmethod
     def _derive_alias(raw: str) -> str:
@@ -843,7 +849,6 @@ class WorkspaceDetailScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield Vertical(
-            Static("", id="detail_title"),
             Static("Terminals", id="term_label"),
             SpatialListView(id="term_list"),
             Static("", id="detail_body"),
@@ -854,6 +859,7 @@ class WorkspaceDetailScreen(Screen):
 
     def on_mount(self) -> None:
         self.run_worker(self._mount_async, exit_on_error=False)
+        self._uptime_timer = self.set_interval(5, self._tick_uptime)
 
     async def _mount_async(self) -> None:
         await self._load()
@@ -914,9 +920,6 @@ class WorkspaceDetailScreen(Screen):
         ]
 
     def _display(self) -> None:
-        self.query_one("#detail_title", Static).update(
-            Text(f"Workspace: {self._name}")
-        )
         ws = self._ws
         body = self.query_one("#detail_body", Static)
         if ws is None:
@@ -932,6 +935,19 @@ class WorkspaceDetailScreen(Screen):
             f"running: {'yes' if ws.running else 'no'}",
             f"health: {ws.health or '-'}",
         ]
+        if ws.running and ws.service_started_at:
+            elapsed = int(time.time() - ws.service_started_at)
+            if elapsed >= 0:
+                parts = []
+                days, rem = divmod(elapsed, 86400)
+                hours, rem = divmod(rem, 3600)
+                minutes, _ = divmod(rem, 60)
+                if days:
+                    parts.append(f"{days}d")
+                if hours:
+                    parts.append(f"{hours}h")
+                parts.append(f"{minutes}m")
+                lines.append(f"uptime: {' '.join(parts)}")
         if ws.health_message:
             lines.append(f"health note: {ws.health_message}")
         if ws.image:
@@ -953,6 +969,15 @@ class WorkspaceDetailScreen(Screen):
         if ws.owner_email:
             lines.append(f"owner: {ws.owner_email}")
         body.update(Text("\n".join(lines)))
+
+    def _tick_uptime(self) -> None:
+        """Refresh the display periodically to update the uptime counter."""
+        if (
+            self._ws is not None
+            and self._ws.running
+            and self._ws.service_started_at
+        ):
+            self._display()
 
     def _msg(self, text: str, *, error: bool = False) -> None:
         self.query_one("#detail_msg", Static).update(
@@ -1018,6 +1043,8 @@ class WorkspaceDetailScreen(Screen):
             return
         if etype == "container_status":
             self._ws.running = bool(event.get("running"))
+            if "service_started_at" in event:
+                self._ws.service_started_at = event["service_started_at"]
         elif etype == "service_health":
             self._ws.running = bool(event.get("running", self._ws.running))
             self._ws.health = (
@@ -1131,6 +1158,9 @@ class WorkspaceDetailScreen(Screen):
         except Exception as exc:
             self._msg(f"Restart failed: {exc}", error=True)
             return
+        if self._ws is not None:
+            self._ws.service_started_at = time.time()
+            self._display()
         self._msg("Restart requested.")
         self.app.refresh_workspaces()
 
@@ -1165,6 +1195,10 @@ class WorkspaceDetailScreen(Screen):
         except Exception as exc:
             self._msg(f"Stop failed: {exc}", error=True)
             return
+        if self._ws is not None:
+            self._ws.running = False
+            self._ws.service_started_at = None
+            self._display()
         self._msg("Stop requested.")
         self.app.refresh_workspaces()
 
@@ -1176,6 +1210,10 @@ class WorkspaceDetailScreen(Screen):
         except Exception as exc:
             self._msg(f"Start failed: {exc}", error=True)
             return
+        if self._ws is not None:
+            self._ws.running = True
+            self._ws.service_started_at = time.time()
+            self._display()
         self._msg("Start requested.")
         self.app.refresh_workspaces()
 

@@ -901,7 +901,9 @@ class ContainerRegistry:
 
     def _notify_status_changed(self, workspace_id: str, running: bool) -> None:
         if self.on_container_status_changed:
-            self.on_container_status_changed(workspace_id, running)
+            state = self.states.get(workspace_id)
+            started_at = state.service_started_at if state else None
+            self.on_container_status_changed(workspace_id, running, started_at)
 
     async def remove_state(self, workspace_id: str) -> None:
         """Remove tracked state for a workspace.

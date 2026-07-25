@@ -1633,7 +1633,6 @@ async def test_detail_loads_and_renders(monkeypatch):
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
         d = app.screen
-        assert "alpha" in str(d.query_one("#detail_title").render())
         body = str(d.query_one("#detail_body").render())
         for s in [
             "running: yes",
@@ -1669,6 +1668,45 @@ async def test_detail_renders_allowed_domains(monkeypatch):
         assert "allowed domains:" in body
         assert "github.com:443" in body
         assert "pypi.org" in body
+
+
+async def test_detail_shows_uptime(monkeypatch):
+    """#1814: uptime is shown when the container is running."""
+    import time as _time
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    # service_started_at 1 day 2 hours 30 minutes ago
+    started = _time.time() - (86400 + 7200 + 1800)
+    a = _wsobj("alpha", running=True, service_started_at=started)
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        body = str(app.screen.query_one("#detail_body").render())
+        assert "uptime: 1d 2h 30m" in body
+
+
+async def test_detail_no_uptime_when_stopped(monkeypatch):
+    """#1814: uptime is not shown when the container is stopped."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=False)
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        body = str(app.screen.query_one("#detail_body").render())
+        assert "uptime" not in body
 
 
 async def test_detail_action_edit_opens_form_and_refreshes(monkeypatch):
@@ -1779,6 +1817,8 @@ async def test_detail_restart_confirm_cancel_error(monkeypatch):
         assert "Restart requested" in str(
             app.screen.query_one("#detail_msg").render()
         )
+        # service_started_at reset on restart (#1814).
+        assert a.service_started_at is not None
         # error
         st.restart_workspace = lambda n: (_ for _ in ()).throw(
             RuntimeError("boom")
@@ -1857,7 +1897,7 @@ async def test_detail_stop_when_running(monkeypatch):
         return None
 
     monkeypatch.setattr(scr, "listen_for_status", noop)
-    a = _wsobj("alpha", running=True)
+    a = _wsobj("alpha", running=True, service_started_at=1000.0)
     stopped = {}
     st = _ws()
     st.find_workspace = lambda n: a
@@ -1875,6 +1915,14 @@ async def test_detail_stop_when_running(monkeypatch):
         assert stopped.get("s") == "alpha"
         assert "Stop requested" in str(
             app.screen.query_one("#detail_msg").render()
+        )
+        # After stop, binding label should toggle to "Start".
+        labels = [b.description for b in app.screen.BINDINGS if b.key == "s"]
+        assert labels == ["Start"]
+        # service_started_at cleared on stop (#1814).
+        assert a.service_started_at is None
+        assert "uptime" not in str(
+            app.screen.query_one("#detail_body").render()
         )
 
 
@@ -1898,6 +1946,58 @@ async def test_detail_start_when_stopped(monkeypatch):
         assert started.get("s") == "alpha"
         assert "Start requested" in str(
             app.screen.query_one("#detail_msg").render()
+        )
+        # After start, binding label should toggle to "Stop".
+        labels = [b.description for b in app.screen.BINDINGS if b.key == "s"]
+        assert labels == ["Stop"]
+        # service_started_at reset on start (#1814).
+        assert a.service_started_at is not None
+        assert "uptime:" in str(app.screen.query_one("#detail_body").render())
+
+
+async def test_detail_uptime_ticks(monkeypatch):
+    """#1814: uptime display refreshes via the periodic timer."""
+    import time as _time
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    started = _time.time() - 60
+    a = _wsobj("alpha", running=True, service_started_at=started)
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        body1 = str(app.screen.query_one("#detail_body").render())
+        assert "uptime:" in body1
+        # Simulate time passing and trigger the tick.
+        a.service_started_at = _time.time() - 180
+        app.screen._tick_uptime()
+        body2 = str(app.screen.query_one("#detail_body").render())
+        assert "uptime: 3m" in body2
+
+
+async def test_detail_uptime_tick_noop_when_stopped(monkeypatch):
+    """#1814: tick does not crash or re-render when container is stopped."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=False)
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        # Should be a no-op, no crash.
+        app.screen._tick_uptime()
+        assert "uptime" not in str(
+            app.screen.query_one("#detail_body").render()
         )
 
 
@@ -2168,9 +2268,7 @@ async def test_detail_markup_name_safe(monkeypatch):
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("x[red]y"))
         await pilot.pause()
-        title = str(app.screen.query_one("#detail_title").render())
         body = str(app.screen.query_one("#detail_body").render())
-        assert "x[red]y" in title  # literal, not markup-parsed
         assert "[img]" in body
         assert "[bad]" in body
 
@@ -2190,15 +2288,20 @@ async def test_detail_apply_status_event(monkeypatch):
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
         d = app.screen
-        # container_status flips running
+        # container_status flips running and carries service_started_at
+        import time as _time
+
+        started = _time.time() - 120
         d.apply_status_event(
             {
                 "type": "container_status",
                 "workspace_id": "id-alpha",
                 "running": True,
+                "service_started_at": started,
             }
         )
         assert a.running is True
+        assert a.service_started_at == started
         assert "running: yes" in str(d.query_one("#detail_body").render())
         # service_health updates health + message
         d.apply_status_event(
@@ -4130,6 +4233,52 @@ async def test_populate_servers_dedups_default_udsk(monkeypatch):
         ol = app.screen.query_one("#server_options", ListView)
         # only the persisted alias row; no separate "Local klangkd (UDS)" row
         assert len(ol.query(ListItem)) == 1
+
+
+async def test_login_server_list_autofocused(monkeypatch):
+    """#1826: first server in the list is focused on initial display."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _st(
+        current_url=lambda: None,
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod", "https://prod.example")
+        ],
+        default_uds=lambda: None,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+    )
+    app = KlangkApp(st)
+    async with app.run_test():
+        lv = app.screen.query_one("#server_options", ListView)
+        assert lv.index == 0
+
+
+async def test_login_server_list_empty_no_crash(monkeypatch):
+    """#1826: no servers → no crash, focus degrades gracefully."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _st(
+        current_url=lambda: None,
+        known_servers=lambda: [],
+        default_uds=lambda: None,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+    )
+    app = KlangkApp(st)
+    async with app.run_test():
+        lv = app.screen.query_one("#server_options", ListView)
+        assert lv.index is None
 
 
 async def test_login_choose_invalid_server(monkeypatch):

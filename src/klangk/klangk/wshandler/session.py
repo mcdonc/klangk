@@ -593,18 +593,23 @@ class WebSocketState:
         await self.app.state.agents.stop_session(workspace_id)
 
     def notify_container_status(
-        self, workspace_id: str, running: bool
+        self,
+        workspace_id: str,
+        running: bool,
+        service_started_at: float | None = None,
     ) -> None:
         """Broadcast container running/stopped status to all connections.
 
         Sent when a workspace container starts or is killed so the
         workspace list page can update status icons in real time.
         """
-        message = {
+        message: dict = {
             "type": "container_status",
             "workspace_id": workspace_id,
             "running": running,
         }
+        if service_started_at is not None:
+            message["service_started_at"] = service_started_at
         dead = []
         for sock, conn in self.connections.items():
             if conn.user.get("id") is None:
