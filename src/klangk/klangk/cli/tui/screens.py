@@ -97,6 +97,21 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(event.button.id == "yes")
 
 
+class ServerListView(ListView):
+    """Server picker that releases focus downward at the last row, so the
+    user can continue with Down into the URL/input fields without Tab (#1781)."""
+
+    def action_cursor_down(self) -> None:
+        items = list(self.query(ListItem))
+        if self.index is not None and items and self.index >= len(items) - 1:
+            try:
+                self.screen.query_one("#server_input", Input).focus()
+                return
+            except NoMatches:
+                pass
+        super().action_cursor_down()
+
+
 class LoginScreen(Screen):
     """Credential screen that also picks the server to log into.
 
@@ -114,7 +129,7 @@ class LoginScreen(Screen):
         yield Header(show_clock=False)
         yield Vertical(
             Static("", id="server_line"),
-            ListView(id="server_options"),
+            ServerListView(id="server_options"),
             Input(
                 placeholder=("Server URL or alias (e.g. https://host, prod)"),
                 id="server_input",
@@ -143,9 +158,20 @@ class LoginScreen(Screen):
         else:
             self._show_no_server()
 
+    def on_key(self, event) -> None:
+        # Spatial nav: Up from the server-input field returns focus to the
+        # server list above it (#1781).
+        if (
+            event.key == "up"
+            and isinstance(self.focused, Input)
+            and self.focused.id == "server_input"
+        ):
+            event.stop()
+            self.query_one("#server_options", ServerListView).focus()
+
     def _show_no_server(self) -> None:
         self.query_one("#server_line", Static).update(
-            "No server selected. Pick one above or enter a URL,"
+            "No server selected. Pick one below or enter a URL,"
             " then press 'Use server'."
         )
         self._disable_credentials()

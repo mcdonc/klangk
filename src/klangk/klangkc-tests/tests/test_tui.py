@@ -3419,6 +3419,74 @@ async def test_login_delete_clears_to_no_server(monkeypatch):
         )
 
 
+async def test_login_down_from_last_server_to_input(monkeypatch):
+    # Spatial nav: Down at the last server row moves focus to the URL input.
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    cfg = CLIConfig()
+    cfg.servers = {
+        "prod": ServerEntry(url="https://prod.example"),
+        "staging": ServerEntry(url="https://staging.example"),
+    }
+    st = _st(
+        current_url=lambda: None,
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod", "https://prod.example"),
+            tui_state_mod.ServerInfo("staging", "https://staging.example"),
+        ],
+        default_uds=lambda: None,
+        cfg=lambda: cfg,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        login = app.screen
+        lv = login.query_one("#server_options", ListView)
+        lv.focus()
+        lv.index = 1  # last of 2 servers
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        assert isinstance(app.focused, Input)
+        assert app.focused.id == "server_input"
+
+
+async def test_login_up_from_input_to_server_list(monkeypatch):
+    # Spatial nav: Up from the server-input field returns focus to the list.
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    cfg = CLIConfig()
+    cfg.servers = {"prod": ServerEntry(url="https://prod.example")}
+    st = _st(
+        current_url=lambda: None,
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod", "https://prod.example"),
+        ],
+        default_uds=lambda: None,
+        cfg=lambda: cfg,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        login = app.screen
+        srv_input = login.query_one("#server_input", Input)
+        srv_input.focus()
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert isinstance(app.focused, ListView)
+
+
 async def test_switch_screen_delete_server(monkeypatch):
     async def noop(*a, **k):
         return None
