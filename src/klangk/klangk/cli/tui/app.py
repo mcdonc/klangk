@@ -84,6 +84,10 @@ class KlangkApp(App):
     .field-row {
         height: auto;
     }
+    /* Ensure all form Horizontals fit their children (#1783). */
+    #create_box Horizontal, #edit_box Horizontal {
+        height: auto;
+    }
     .field-row > Static {
         width: 14;
         padding: 0 1 0 0;
@@ -98,14 +102,11 @@ class KlangkApp(App):
         height: 4;
         max-height: 6;
     }
-    /* Labeled editor groups: entry row + display list together (#1783). */
-    .editor-group {
-        height: auto;
-        margin-top: 1;
-    }
+    /* Section labels for each editor group (#1783). */
     .editor-label {
         color: $text-muted;
         text-style: bold;
+        margin-top: 1;
     }
     Collapsible {
         height: auto;

@@ -1022,45 +1022,36 @@ class CreateWorkspaceScreen(Screen):
             Static("", id="create_msg"),
             Horizontal(Static("Name"), Input(id="name"), classes="field-row"),
             Horizontal(Static("Image"), image_select, classes="field-row"),
-            Vertical(
-                Static(
-                    "Mounts  (source:/container/path[:opts])",
-                    classes="editor-label",
-                ),
-                Horizontal(
-                    Input(
-                        id="mount_input",
-                        placeholder="/host/path:/container/path",
-                    ),
-                    Button("Add", id="add_mount"),
-                    Button("Remove", id="rm_mount"),
-                ),
-                OptionList(id="mount_list", classes="editor-list"),
-                classes="editor-group",
+            Static(
+                "Mounts  (source:/container/path[:opts])",
+                classes="editor-label",
             ),
-            Vertical(
-                Static("Environment  (KEY=VALUE)", classes="editor-label"),
-                Horizontal(
-                    Input(id="env_input", placeholder="KEY=VALUE"),
-                    Button("Add", id="add_env"),
-                    Button("Remove", id="rm_env"),
+            Horizontal(
+                Input(
+                    id="mount_input",
+                    placeholder="/host/path:/container/path",
                 ),
-                OptionList(id="env_list", classes="editor-list"),
-                classes="editor-group",
+                Button("Add", id="add_mount"),
+                Button("Remove", id="rm_mount"),
             ),
-            Vertical(
-                Static(
-                    "Allowed Domains  (host or host:port; empty = unrestricted)",
-                    classes="editor-label",
-                ),
-                Horizontal(
-                    Input(id="allow_input", placeholder="github.com:443"),
-                    Button("Add", id="add_allow"),
-                    Button("Remove", id="rm_allow"),
-                ),
-                OptionList(id="allow_list", classes="editor-list"),
-                classes="editor-group",
+            OptionList(id="mount_list", classes="editor-list"),
+            Static("Environment  (KEY=VALUE)", classes="editor-label"),
+            Horizontal(
+                Input(id="env_input", placeholder="KEY=VALUE"),
+                Button("Add", id="add_env"),
+                Button("Remove", id="rm_env"),
             ),
+            OptionList(id="env_list", classes="editor-list"),
+            Static(
+                "Allowed Domains  (host or host:port; empty = unrestricted)",
+                classes="editor-label",
+            ),
+            Horizontal(
+                Input(id="allow_input", placeholder="github.com:443"),
+                Button("Add", id="add_allow"),
+                Button("Remove", id="rm_allow"),
+            ),
+            OptionList(id="allow_list", classes="editor-list"),
             Collapsible(
                 Horizontal(
                     Static("Command"),
@@ -1365,45 +1356,36 @@ class EditWorkspaceScreen(Screen):
                 classes="field-row",
             ),
             Horizontal(Static("Image"), image_select, classes="field-row"),
-            Vertical(
-                Static(
-                    "Mounts  (source:/container/path[:opts])",
-                    classes="editor-label",
-                ),
-                Horizontal(
-                    Input(
-                        id="mount_input",
-                        placeholder="/host/path:/container/path",
-                    ),
-                    Button("Add", id="add_mount"),
-                    Button("Remove", id="rm_mount"),
-                ),
-                OptionList(id="mount_list", classes="editor-list"),
-                classes="editor-group",
+            Static(
+                "Mounts  (source:/container/path[:opts])",
+                classes="editor-label",
             ),
-            Vertical(
-                Static("Environment  (KEY=VALUE)", classes="editor-label"),
-                Horizontal(
-                    Input(id="env_input", placeholder="KEY=VALUE"),
-                    Button("Add", id="add_env"),
-                    Button("Remove", id="rm_env"),
+            Horizontal(
+                Input(
+                    id="mount_input",
+                    placeholder="/host/path:/container/path",
                 ),
-                OptionList(id="env_list", classes="editor-list"),
-                classes="editor-group",
+                Button("Add", id="add_mount"),
+                Button("Remove", id="rm_mount"),
             ),
-            Vertical(
-                Static(
-                    "Allowed Domains  (host or host:port; empty = unrestricted)",
-                    classes="editor-label",
-                ),
-                Horizontal(
-                    Input(id="allow_input", placeholder="github.com:443"),
-                    Button("Add", id="add_allow"),
-                    Button("Remove", id="rm_allow"),
-                ),
-                OptionList(id="allow_list", classes="editor-list"),
-                classes="editor-group",
+            OptionList(id="mount_list", classes="editor-list"),
+            Static("Environment  (KEY=VALUE)", classes="editor-label"),
+            Horizontal(
+                Input(id="env_input", placeholder="KEY=VALUE"),
+                Button("Add", id="add_env"),
+                Button("Remove", id="rm_env"),
             ),
+            OptionList(id="env_list", classes="editor-list"),
+            Static(
+                "Allowed Domains  (host or host:port; empty = unrestricted)",
+                classes="editor-label",
+            ),
+            Horizontal(
+                Input(id="allow_input", placeholder="github.com:443"),
+                Button("Add", id="add_allow"),
+                Button("Remove", id="rm_allow"),
+            ),
+            OptionList(id="allow_list", classes="editor-list"),
             Collapsible(
                 Horizontal(
                     Static("Command"),
