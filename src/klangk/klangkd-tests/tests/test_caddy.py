@@ -1548,3 +1548,11 @@ class TestClassifyCaddyLine:
         level, msg = _classify_caddy_line(line)
         assert level == logging.ERROR
         assert msg == line
+
+    def test_http_address_stays_debug(self):
+        line = (
+            '{"level":"debug","ts":1,"logger":"http",'
+            '"msg":"starting server loop","address":":8995","tls":false}'
+        )
+        level, msg = _classify_caddy_line(line)
+        assert level == logging.DEBUG

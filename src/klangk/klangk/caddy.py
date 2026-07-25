@@ -92,6 +92,7 @@ def _classify_caddy_line(line: str) -> tuple[int, str]:
         or caddy_level == "panic"
     ):
         return logging.ERROR, msg
+
     return logging.DEBUG, msg
 
 
@@ -980,6 +981,14 @@ class CaddyWatchdog:
                 try:
                     await self.load_config()
                     load_ok = True
+                    port = self.app.state.settings.port
+                    if port is not None:
+                        listen = self.app.state.settings.listen
+                        logger.info(
+                            "caddy ingress listening on %s:%s",
+                            listen,
+                            port,
+                        )
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
                         "caddy POST /load failed (killing for respawn): %s",
