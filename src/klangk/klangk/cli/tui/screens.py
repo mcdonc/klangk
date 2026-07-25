@@ -632,7 +632,11 @@ class MainScreen(Screen):
 
     def refresh_lists(self) -> None:
         """Kick off an async refresh (non-blocking)."""
-        self.run_worker(self._refresh_lists_async, exit_on_error=False)
+        self.run_worker(
+            self._refresh_lists_async,
+            exit_on_error=False,
+            exclusive=True,
+        )
 
     async def _refresh_lists_async(self) -> None:
         self._ws_by_id: dict[str, object] = {}
