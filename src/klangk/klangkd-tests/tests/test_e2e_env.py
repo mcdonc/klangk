@@ -109,6 +109,36 @@ def test_clean_env_strips_env_at_call_time(monkeypatch):
     assert env.get("SOME_OTHER_VAR") == "kept"
 
 
+def test_clean_env_forwards_infra_vars(monkeypatch):
+    """_INFRA_VARS (image name, version stamp) forward from ambient so the
+    e2e server finds the artifacts devenv built (the workspace image, the
+    version file)."""
+    monkeypatch.setenv("KLANGKD_IMAGE_NAME", "klangk-workspace")
+    monkeypatch.setenv("KLANGKD_VERSION_FILE", "/tmp/version.json")
+    env = clean_env()
+    assert env["KLANGKD_IMAGE_NAME"] == "klangk-workspace"
+    assert env["KLANGKD_VERSION_FILE"] == "/tmp/version.json"
+
+
+def test_clean_env_does_not_forward_frontend_dir(monkeypatch):
+    """KLANGKD_FRONTEND_DIR is deliberately NOT forwarded from ambient.
+
+    Devenv no longer exports it (#1788; it's a klangkd.yaml setting), and each
+    env-only launcher sets it explicitly (_e2e_server.start_server /
+    global-setup.ts / run-demo-backend.sh). Forwarding a stray ambient value
+    could point at a stale or wrong build.
+    """
+    monkeypatch.setenv("KLANGKD_FRONTEND_DIR", "/ambient/frontend")
+    env = clean_env()
+    assert "KLANGKD_FRONTEND_DIR" not in env
+
+
+def test_clean_env_frontend_dir_override_wins():
+    """An explicit KLANGKD_FRONTEND_DIR override reaches the subprocess."""
+    env = clean_env(KLANGKD_FRONTEND_DIR="/explicit/frontend")
+    assert env["KLANGKD_FRONTEND_DIR"] == "/explicit/frontend"
+
+
 # Silence the "imported but unused" lint for the os import (kept for parity
 # with the module's other tests if future tests need it).
 _ = os

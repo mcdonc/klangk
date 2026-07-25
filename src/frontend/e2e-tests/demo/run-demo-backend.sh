@@ -56,20 +56,22 @@ DEMO_LISTEN="${KLANGKD_LISTEN:-127.0.0.1}"
 # demo-helpers.ts demoLogin). Override with KLANGKD_AUTH_MODES if you want a
 # different mode for a one-off run.
 DEMO_AUTH_MODES="${KLANGKD_AUTH_MODES:-both}"
-# Short, stable state dir under /tmp. The worktree-relative default that
-# devenv.nix exports (KLANGKD_STATE_DIR=.devenv/state/klangk) is too long for
-# a UDS path — klangkd binds <state_dir>/klangk.sock, and AF_UNIX caps
-# sun_path at 108 bytes (#1531). A long worktree path (e.g.
-# .worktrees/issue-1505-update-intro-video-demo-to-work-against-latest-main
-# /klangk.sock) overflows it and the backend crashes on boot. /tmp is short
-# and survives across runs (so the demo container images + DB persist).
+# Short, stable state dir under /tmp. The demo runs klangkd --config=none (no
+# klangkd.yaml), so state_dir can't come from there; /tmp survives across runs
+# so the demo container images + DB stay warm for reuse. (AF_UNIX's 108-byte
+# sun_path cap, #1531, is also why a short path matters — klangkd binds
+# <state_dir>/klangk.sock.) Override with KLANGKBUILD_DEMO_STATE_DIR.
 #
-# NOTE: do NOT read KLANGKD_STATE_DIR here — devenv.nix exports it as the
-# long worktree path, which is exactly the value we're trying to avoid.
-# Use KLANGKBUILD_DEMO_STATE_DIR to override. This value is exported in the
-# `start` command's env (it can't go in .demo-env — .demo-env doesn't
-# override devenv.nix's env.KLANGKD_STATE_DIR).
+# NOTE: do NOT read KLANGKD_STATE_DIR from the ambient env — in a devenv
+# shell it's unset post-#1788 (state_dir moved to klangkd.yaml), and the demo
+# wants this stable /tmp value regardless. Set explicitly via .demo-env below.
 DEMO_STATE_DIR="${KLANGKBUILD_DEMO_STATE_DIR:-/tmp/klangk-demo}"
+# Frontend dir: the demo's env-only klangkd (--config=none) can't read
+# klangkd.yaml's frontend_dir, so set it here. Devenv no longer exports
+# KLANGKD_FRONTEND_DIR (#1788) — the demo sets it explicitly, like
+# _e2e_server.start_server / the Playwright global-setup. Needs the main
+# repo's flutter-build output at $WT/src/frontend/build/web.
+DEMO_FRONTEND_DIR="${KLANGKBUILD_DEMO_FRONTEND_DIR:-$WT/src/frontend/build/web}"
 DEMO_INSTANCE=video
 # Fake OIDC provider config. `both` mode requires at least one provider or
 # klangkd refuses to boot; the demo never actually authenticates via OIDC
@@ -109,6 +111,7 @@ _ensure_env() {
     grep -qF "KLANGKD_EGRESS_PORT=$DEMO_PROXY_PORT" .demo-env 2>/dev/null &&
     grep -qF "KLANGKD_LISTEN=$DEMO_LISTEN" .demo-env 2>/dev/null &&
     grep -qF "KLANGKD_STATE_DIR=$DEMO_STATE_DIR" .demo-env 2>/dev/null &&
+    grep -qF "KLANGKD_FRONTEND_DIR=$DEMO_FRONTEND_DIR" .demo-env 2>/dev/null &&
     grep -qF "KLANGKD_OIDC_CONFIG=$DEMO_OIDC_CONFIG" .demo-env 2>/dev/null &&
     grep -qF "KLANGKD_DEFAULT_USER=$DEMO_BOOTSTRAP_EMAIL" .demo-env 2>/dev/null &&
     grep -qF "KLANGKD_LLM_BASE_URL='$DEMO_LLM_BASE_URL'" .demo-env 2>/dev/null &&
@@ -156,12 +159,18 @@ _ensure_env() {
     # The post-#1400 default is a UDS → headless (no browser); the demo needs
     # the browser UI, so this override is load-bearing.
     echo "KLANGKD_LISTEN=$DEMO_LISTEN"
-    # Short state dir under /tmp: klangkd binds <state_dir>/klangk.sock and
-    # AF_UNIX caps sun_path at 108 bytes (#1531). The worktree-relative path
-    # that devenv.nix sets is too long for a deep worktree. .demo-env is sourced
-    # inside the devenv shell (see the `start` command) so this value wins
-    # over devenv.nix's env.KLANGKD_STATE_DIR. /tmp survives across runs.
+    # Short, stable state dir under /tmp: survives across runs so the demo
+    # container images + DB stay warm for reuse. The demo runs klangkd
+    # --config=none (no klangkd.yaml), so state_dir can't come from there;
+    # set it explicitly. .demo-env is sourced inside the devenv shell (see
+    # the `start` command) so this wins.
     echo "KLANGKD_STATE_DIR=$DEMO_STATE_DIR"
+    # Frontend UI: the env-only klangkd (--config=none) serves the browser SPA
+    # from here, so it can't read klangkd.yaml's frontend_dir. Devenv no longer
+    # exports KLANGKD_FRONTEND_DIR (#1788); the demo sets it explicitly (like
+    # _e2e_server / global-setup.ts). Needs the main repo's flutter-build at
+    # $WT/src/frontend/build/web.
+    echo "KLANGKD_FRONTEND_DIR=$DEMO_FRONTEND_DIR"
     # The demo exercises both the password auth flow (login, register,
     # lockout) AND the OIDC button on the login screen (the "Log in with
     # <provider>" surface the web-UI scenes show). Pin to `both` so the
@@ -278,20 +287,20 @@ start)
   # Launch klangkd DIRECTLY (not via `devenv processes up`). The process
   # manager spawns its children in a freshly nix-evaluated environment that
   # ignores the current shell's exports, so sourcing .demo-env around it has no
-  # effect — klangkd would still see devenv.nix's KLANGKD_STATE_DIR (the long
-  # worktree path, which overflows AF_UNIX's 108-byte sun_path, #1531) and
-  # the default ports (racing the main repo's backend on :8997/:8995).
+  # effect: klangkd would fall to its XDG-default state_dir and the default
+  # ports (racing the main repo's backend on :8997/:8995).
   #
   # Source .demo-env INSIDE the devenv shell (after devenv's env setup) so
   # .demo-env's values win, then exec klangkd with --config=none (all config
   # from env). `set -a` makes every assignment in .demo-env an export. nohup + & detaches so
   # the script can return after the port comes up; teardown is stop_all.
   #
-  # The task chain (build-workspace-image, flutter-build) is NOT needed here
-  # — the workspace image is already built (the main repo's devenv builds it
-  # into the shared podman store) and the demo doesn't serve the Flutter UI
-  # from this worktree's build (nginx points elsewhere). klangkd + the image
-  # is all the demo needs.
+  # build-workspace-image is NOT needed here: the workspace image is already
+  # built (the main repo's devenv builds it into the shared podman store).
+  # flutter-build IS needed (or must already exist at
+  # $WT/src/frontend/build/web): the demo's klangkd serves the browser SPA from
+  # there (KLANGKD_FRONTEND_DIR in .demo-env), and nginx proxies `/` straight
+  # to klangkd - there is no "elsewhere" for the UI.
   nohup devenv --quiet shell -- bash -c '
     set -a; . ./.demo-env; set +a
     exec python3 -m klangk.launcher --config=none

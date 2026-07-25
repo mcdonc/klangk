@@ -506,6 +506,17 @@ in
       cp "$DEVENV_ROOT/klangkd.yaml.example" "$DEVENV_ROOT/klangkd.yaml"
       echo "Created klangkd.yaml from klangkd.yaml.example — edit it to taste."
     fi
+    # Ensure the frontend_dir key exists in an existing klangkd.yaml. devenv
+    # used to export KLANGKD_FRONTEND_DIR; it now lives in klangkd.yaml (#1788),
+    # but enterShell only seeds the file when missing, so older checkouts lack
+    # the key and klangkd would fall back to the absent in-package default
+    # (API-only). Append it (non-clobbering) if the key is absent.
+    if [ -f "$DEVENV_ROOT/klangkd.yaml" ] \
+      && ! grep -qE '^[[:space:]]*frontend_dir:' "$DEVENV_ROOT/klangkd.yaml"; then
+      printf '\nfrontend_dir: "cmd:echo $DEVENV_ROOT/src/frontend/build/web"\n' \
+        >> "$DEVENV_ROOT/klangkd.yaml"
+      echo "Added frontend_dir to klangkd.yaml (#1788)."
+    fi
 
     mkdir -p "${dataDir}"
 
