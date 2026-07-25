@@ -66,6 +66,12 @@ def redirect_xdg(monkeypatch, tmp_path):
     spath = tmp_path / "klangk-state.yaml"
     monkeypatch.setattr(cfgmod, "_CONFIG_PATH", cpath)
     monkeypatch.setattr(cfgmod, "_STATE_PATH", spath)
+    # Prevent the local klangkd UDS socket from being detected.
+    monkeypatch.setattr(
+        tui_state_mod,
+        "default_server_uds_path",
+        lambda: str(tmp_path / "nonexistent.sock"),
+    )
     return cpath, spath
 
 
@@ -1151,15 +1157,14 @@ async def test_edit_server_url_change_triggers_server_changed(monkeypatch):
     async with app.run_test() as pilot:
         app.push_screen(ServerSwitchScreen())
         await pilot.pause()
-        # Use the callback-wired push path (action_edit_server flow).
         app.server_changed = lambda: changed.append(True)
-        app.push_screen(
-            EditServerScreen(alias="a", url="https://a.example"),
-            lambda result: (
-                app.server_changed() if result == "url_changed" else None
-            ),
-        )
+        # Go through action_edit_server so the real _on_edit callback is wired.
+        lv = app.screen.query_one("#server_options", ListView)
+        lv.index = 0
         await pilot.pause()
+        app.screen.action_edit_server()
+        await pilot.pause()
+        assert isinstance(app.screen, EditServerScreen)
         app.screen.query_one("#url", Input).value = "https://new.example"
         app.screen._save()
         await app.workers.wait_for_complete()
