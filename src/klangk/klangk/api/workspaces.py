@@ -116,6 +116,9 @@ def _annotate_running(items: list[dict], container_registry) -> list[dict]:
         if state is not None:
             ws["health"] = state.health_status
             ws["health_message"] = state.health_message
+            ws["service_started_at"] = state.service_started_at
+        else:
+            ws["service_started_at"] = None
     return items
 
 

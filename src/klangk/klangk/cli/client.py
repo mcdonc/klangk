@@ -179,6 +179,7 @@ class Workspace:
     running: bool = False
     health: str | None = None
     health_message: str | None = None
+    service_started_at: float | None = None
 
 
 def get_terminal_size() -> tuple[int, int]:
@@ -427,6 +428,7 @@ class KlangkClient:
             health=w.get("health"),
             health_message=w.get("health_message"),
             allowed_domains=w.get("allowed_domains"),
+            service_started_at=w.get("service_started_at"),
         )
 
     def create_workspace(

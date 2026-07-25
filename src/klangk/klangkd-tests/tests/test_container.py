@@ -243,7 +243,9 @@ class TestActivityTracking:
     def test_track_activity_fires_status_changed_on_new(self):
         calls = []
         self.registry.set_on_container_status_changed(
-            lambda ws_id, running: calls.append((ws_id, running))
+            lambda ws_id, running, started_at=None: calls.append(
+                (ws_id, running)
+            )
         )
         try:
             self.registry.track_activity("cid-new", "ws-new")

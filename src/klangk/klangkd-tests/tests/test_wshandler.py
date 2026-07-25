@@ -4043,6 +4043,19 @@ class TestNotifyContainerStatus:
         sock_a.send_json.assert_called_once_with(expected)
         sock_b.send_json.assert_called_once_with(expected)
 
+    def test_includes_service_started_at(self, app_state):
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        sock = _mock_sock()
+        try:
+            self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
+            sockets.notify_container_status("ws-789", True, 1000.0)
+        finally:
+            sockets.connections.pop(sock, None)
+        msg = sock.send_json.call_args[0][0]
+        assert msg["service_started_at"] == 1000.0
+        assert msg["running"] is True
+
     def test_sends_stopped(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
