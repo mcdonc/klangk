@@ -210,6 +210,26 @@ def test_current_url_none_when_unconfigured(redirect_xdg):
     assert t.is_authenticated() is False
 
 
+def test_reentry_auth_persists(redirect_xdg):
+    """Credentials survive TuiState re-creation (#1813)."""
+    add_server_to_config("srv", "https://srv.example")
+    st = CLIState()
+    st.set_credentials("https://srv.example", "me@x", "tok123")
+    st.save()
+
+    # First TuiState instance — authenticated.
+    t1 = TuiState()
+    assert t1.is_authenticated()
+    assert t1.current_url() == "https://srv.example"
+    assert t1.token() == "tok123"
+
+    # New TuiState reads persisted state — should also be authenticated.
+    t2 = TuiState()
+    assert t2.is_authenticated()
+    assert t2.current_url() == "https://srv.example"
+    assert t2.token() == "tok123"
+
+
 def test_known_servers_roundtrip(redirect_xdg):
     add_server_to_config("alpha", "https://a.example")
     add_server_to_config("beta", "https://b.example")
