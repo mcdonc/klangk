@@ -2049,6 +2049,11 @@ class TestWorkspaceRoutes:
                 "notify_workspace_killed",
                 new_callable=AsyncMock,
             ) as mock_killed,
+            patch.object(
+                app.state.agents,
+                "stop_session",
+                new_callable=AsyncMock,
+            ) as mock_stop_session,
         ):
             resp = await client.post(
                 f"/api/v1/workspaces/{ws_id}/stop", headers=headers
@@ -2057,6 +2062,9 @@ class TestWorkspaceRoutes:
         assert resp.json()["status"] == "stopped"
         mock_killed.assert_awaited_once_with(ws_id)
         mock_stop.assert_awaited_once_with("cid-stop")
+        # REST /stop tears down the Pi RPC subprocess for the workspace
+        # (via reset_workspace_state -> reset_workspace); lock the contract.
+        mock_stop_session.assert_awaited_once_with(ws_id)
         registry.states.pop(ws_id, None)
 
     async def test_start_workspace(self, client, app, user):

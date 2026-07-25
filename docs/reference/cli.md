@@ -191,6 +191,8 @@ klangk monitor --type service_health | jq .           # pretty-print health tran
 klangk monitor --type service_health -- sh -c '[ "$KLANGK_HEALTHY" = false ] && notify-send "klangk" "$KLANGK_HEALTH_MESSAGE"'  # alert with the failure reason
 klangk sync ~/src my-project:/home/klangk/work      # sync files to/from the container
 klangk rm my-project                # delete a workspace
+klangk stop my-project              # stop the container for a workspace
+klangk start my-project             # start the container for a workspace
 klangk restart my-project           # restart the container for a workspace (owner only)
 klangk export my-project            # export workspace to my-project.tar.gz (admin only)
 klangk export my-project -o bak.tar.gz  # export to specific file
