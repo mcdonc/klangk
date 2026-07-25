@@ -16,6 +16,7 @@ import httpx
 from rich.text import Text
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.dom import NoMatches
 from textual.screen import ModalScreen, Screen
@@ -148,20 +149,27 @@ class SpatialNavScreen(Screen):
     SPATIAL_CHAIN: list[str] = []
     SPATIAL_UP_EXIT: str | None = None
 
-    def on_key(self, event) -> None:
+    BINDINGS = [
+        Binding("up", "spatial_up", show=False),
+        Binding("down", "spatial_down", show=False),
+    ]
+
+    def action_spatial_up(self) -> None:
         fid = getattr(self.focused, "id", None) if self.focused else None
         if not fid or fid not in self.SPATIAL_CHAIN:
             return
         pos = self.SPATIAL_CHAIN.index(fid)
-        if event.key == "up":
-            if pos > 0:
-                event.stop()
-                self.query_one(f"#{self.SPATIAL_CHAIN[pos - 1]}").focus()
-            elif self.SPATIAL_UP_EXIT:
-                event.stop()
-                self.query_one(f"#{self.SPATIAL_UP_EXIT}").focus()
-        elif event.key == "down" and pos < len(self.SPATIAL_CHAIN) - 1:
-            event.stop()
+        if pos > 0:
+            self.query_one(f"#{self.SPATIAL_CHAIN[pos - 1]}").focus()
+        elif self.SPATIAL_UP_EXIT:
+            self.query_one(f"#{self.SPATIAL_UP_EXIT}").focus()
+
+    def action_spatial_down(self) -> None:
+        fid = getattr(self.focused, "id", None) if self.focused else None
+        if not fid or fid not in self.SPATIAL_CHAIN:
+            return
+        pos = self.SPATIAL_CHAIN.index(fid)
+        if pos < len(self.SPATIAL_CHAIN) - 1:
             self.query_one(f"#{self.SPATIAL_CHAIN[pos + 1]}").focus()
 
 
