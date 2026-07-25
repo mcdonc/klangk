@@ -724,6 +724,7 @@ async def test_login_password_flow_success(monkeypatch):
         login.query_one("#identifier", Input).value = "me@x"
         login.query_one("#password", Input).value = "pw"
         login._attempt_password()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, MainScreen)
 
@@ -737,10 +738,10 @@ async def test_login_password_flow_empty_and_fail():
         token=lambda: None,
     )
     app = KlangkApp(st)
-    async with app.run_test() as pilot:
+    async with app.run_test() as _pilot:
         login = app.screen
         login._attempt_password()  # empty fields
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "required" in str(login.query_one("#message").render())
 
         st.login_password = lambda a, b: (_ for _ in ()).throw(
@@ -749,7 +750,7 @@ async def test_login_password_flow_empty_and_fail():
         login.query_one("#identifier", Input).value = "me@x"
         login.query_one("#password", Input).value = "pw"
         login._attempt_password()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "bad creds" in str(login.query_one("#message").render())
         assert isinstance(app.screen, LoginScreen)
 
@@ -782,6 +783,7 @@ async def test_login_input_submitted_triggers_password(monkeypatch):
         ident.value = "me@x"
         login.query_one("#password", Input).value = "pw"
         login.on_input_submitted(Input.Submitted(ident, ident.value))
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, MainScreen)
 
@@ -810,6 +812,7 @@ async def test_login_oidc_flow(monkeypatch):
     app = KlangkApp(st)
     async with app.run_test() as pilot:
         app.screen._attempt_oidc()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, MainScreen)
 
@@ -825,7 +828,7 @@ async def test_login_oidc_flow(monkeypatch):
     app2 = KlangkApp(st2)
     async with app2.run_test() as pilot:
         app2.screen._attempt_oidc()
-        await pilot.pause()
+        await app2.workers.wait_for_complete()
         assert "SSO provider" in str(
             app2.screen.query_one("#message").render()
         )
@@ -843,7 +846,7 @@ async def test_login_oidc_flow(monkeypatch):
     app3 = KlangkApp(st3)
     async with app3.run_test() as pilot:
         app3.screen._attempt_oidc()
-        await pilot.pause()
+        await app3.workers.wait_for_complete()
         assert "SSO failed" in str(app3.screen.query_one("#message").render())
 
 
@@ -904,7 +907,7 @@ async def test_server_switch_and_add(monkeypatch):
         await pilot.pause()
         assert isinstance(app.screen, ServerSwitchScreen)
         app.screen.on_list_view_selected(FakeSelected("https://b.example"))
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert switched["url"] == "https://b.example"
         assert isinstance(app.screen, MainScreen)
 
@@ -921,7 +924,7 @@ async def test_server_switch_and_add(monkeypatch):
         app1b.push_screen(ServerSwitchScreen())
         await pilot.pause()
         app1b.screen.on_list_view_selected(FakeSelected(""))
-        await pilot.pause()
+        await app1b.workers.wait_for_complete()
         assert switched1b == {}
 
     # switch screen with no servers -> hint message
@@ -947,7 +950,7 @@ async def test_server_switch_and_add(monkeypatch):
         add_screen.query_one("#alias", Input).value = "prod"
         add_screen.query_one("#url", Input).value = "https://p.example"
         add_screen._add()
-        await pilot.pause()
+        await app3.workers.wait_for_complete()
         assert added["a"] == ("prod", "https://p.example")
         assert isinstance(app3.screen, MainScreen)
 
@@ -957,7 +960,7 @@ async def test_server_switch_and_add(monkeypatch):
         app4.push_screen(AddServerScreen())
         await pilot.pause()
         app4.screen._add()
-        await pilot.pause()
+        await app4.workers.wait_for_complete()
         assert "required" in str(app4.screen.query_one("#add_msg").render())
 
     # add server via input submit (Enter key in either field)
@@ -976,7 +979,7 @@ async def test_server_switch_and_add(monkeypatch):
         url_input = s.query_one("#url", Input)
         url_input.value = "https://s.example"
         s.on_input_submitted(Input.Submitted(url_input, url_input.value))
-        await pilot.pause()
+        await app5.workers.wait_for_complete()
         await pilot.pause()
         assert added5["a"] == ("staging", "https://s.example")
 
@@ -1013,7 +1016,7 @@ async def test_edit_server_saves(monkeypatch):
         app.screen.query_one("#alias", Input).value = "production"
         # Keep URL unchanged — no server_changed() call.
         app.screen._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert updated["u"] == (
             "prod",
@@ -1035,7 +1038,7 @@ async def test_edit_server_empty_fields(monkeypatch):
         await pilot.pause()
         app.screen.query_one("#alias", Input).value = ""
         app.screen._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "required" in str(
             app.screen.query_one("#edit_srv_msg").render()
         )
@@ -1052,7 +1055,7 @@ async def test_edit_server_invalid_url(monkeypatch):
         await pilot.pause()
         app.screen.query_one("#url", Input).value = "not-a-url"
         app.screen._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "http(s)://" in str(
             app.screen.query_one("#edit_srv_msg").render()
         )
@@ -1093,7 +1096,7 @@ async def test_edit_server_not_found(monkeypatch):
         )
         await pilot.pause()
         app.screen._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert (
             "not found"
@@ -1122,7 +1125,7 @@ async def test_edit_server_alias_conflict(monkeypatch):
         await pilot.pause()
         app.screen.query_one("#alias", Input).value = "b"
         app.screen._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert (
             "already exists"
@@ -1159,7 +1162,7 @@ async def test_edit_server_url_change_triggers_server_changed(monkeypatch):
         await pilot.pause()
         app.screen.query_one("#url", Input).value = "https://new.example"
         app.screen._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert changed == [True]
 
@@ -1201,7 +1204,7 @@ async def test_edit_server_via_input_submit(monkeypatch):
             Input.Submitted(url_input, url_input.value)
         )
         await pilot.pause()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert updated["u"] == ("a", "a", "https://new.example")
 
 
@@ -1272,7 +1275,7 @@ async def test_edit_server_via_button(monkeypatch):
         s = app.screen
         save_btn = s.query_one("#save", Button)
         s.on_button_pressed(Button.Pressed(save_btn))
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert "u" in updated
 
@@ -1457,7 +1460,7 @@ async def test_focus_visible_list_on_mount(monkeypatch):
     app = KlangkApp(_ws(owned=[_wsobj("alpha"), _wsobj("beta")]))
     async with app.run_test() as pilot:
         await pilot.pause()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert isinstance(app.focused, ListView)
         assert app.focused.index == 0
 
@@ -1650,11 +1653,13 @@ async def test_detail_action_edit_opens_form_and_refreshes(monkeypatch):
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
         app.screen.action_edit()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, EditWorkspaceScreen)
         # Simulate a successful save/disdismiss -> _on_edited refreshes.
         app.screen.dismiss(True)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert isinstance(app.screen, WorkspaceDetailScreen)
         assert finds.count("alpha") >= 2  # initial load + post-edit reload
 
@@ -1679,6 +1684,7 @@ async def test_detail_and_edit_set_window_title(monkeypatch):
         await pilot.pause()
         assert app.title == "Klangk: workspace alpha"
         app.screen.action_edit()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert app.title == "Klangk: workspace alpha"  # edit (same workspace)
         app.pop_screen()  # edit -> detail
@@ -1731,6 +1737,7 @@ async def test_detail_restart_confirm_cancel_error(monkeypatch):
         await pilot.pause()
         app.screen.dismiss(True)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert restarted.get("r") == "alpha"
         assert "Restart requested" in str(
             app.screen.query_one("#detail_msg").render()
@@ -1743,6 +1750,7 @@ async def test_detail_restart_confirm_cancel_error(monkeypatch):
         await pilot.pause()
         app.screen.dismiss(True)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Restart failed" in str(
             app.screen.query_one("#detail_msg").render()
         )
@@ -1826,6 +1834,7 @@ async def test_detail_stop_when_running(monkeypatch):
         assert isinstance(app.screen, ConfirmScreen)
         app.screen.dismiss(True)  # confirm stop
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert stopped.get("s") == "alpha"
         assert "Stop requested" in str(
             app.screen.query_one("#detail_msg").render()
@@ -1848,7 +1857,7 @@ async def test_detail_start_when_stopped(monkeypatch):
         await pilot.pause()
         # No confirm dialog for start — goes straight through.
         app.screen.action_stop()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert started.get("s") == "alpha"
         assert "Start requested" in str(
             app.screen.query_one("#detail_msg").render()
@@ -1870,7 +1879,7 @@ async def test_detail_stop_ws_none(monkeypatch):
         await pilot.pause()
         # _ws is None because find_workspace returned None.
         app.screen.action_stop()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         # No crash, still on detail screen.
         assert isinstance(app.screen, WorkspaceDetailScreen)
 
@@ -1924,6 +1933,7 @@ async def test_detail_stop_error(monkeypatch):
         assert isinstance(app.screen, ConfirmScreen)
         app.screen.dismiss(True)  # confirm
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Stop failed" in str(
             app.screen.query_one("#detail_msg").render()
         )
@@ -1949,7 +1959,7 @@ async def test_detail_start_error(monkeypatch):
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
         app.screen.action_stop()  # ws not running → _do_start
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Start failed" in str(
             app.screen.query_one("#detail_msg").render()
         )
@@ -1982,6 +1992,7 @@ async def test_detail_delete_confirm_cancel_error(monkeypatch):
         await pilot.pause()
         app.screen.dismiss(True)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert deleted.get("d") == "alpha"
         assert isinstance(app.screen, MainScreen)
 
@@ -2003,6 +2014,7 @@ async def test_detail_delete_error(monkeypatch):
         await pilot.pause()
         app.screen.dismiss(True)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Delete failed" in str(
             app.screen.query_one("#detail_msg").render()
         )
@@ -2035,6 +2047,7 @@ async def test_detail_duplicate_ok_cancel_input_error(monkeypatch):
         await pilot.pause()
         app.screen.on_button_pressed(FakeBtnPress("ok"))
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert duped.get("d") == ("alpha", "alpha-copy")
         assert "Duplicated" in str(
             app.screen.query_one("#detail_msg").render()
@@ -2046,6 +2059,7 @@ async def test_detail_duplicate_ok_cancel_input_error(monkeypatch):
         di.value = "alpha-copy2"
         app.screen.on_input_submitted(Input.Submitted(di, di.value))
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert duped.get("d") == ("alpha", "alpha-copy2")
         # empty name -> treated as cancel
         app.screen.action_duplicate()
@@ -2062,6 +2076,7 @@ async def test_detail_duplicate_ok_cancel_input_error(monkeypatch):
         await pilot.pause()
         app.screen.on_button_pressed(FakeBtnPress("ok"))
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Duplicate failed" in str(
             app.screen.query_one("#detail_msg").render()
         )
@@ -2082,10 +2097,10 @@ async def test_refresh_workspaces_refreshes_main(monkeypatch):
     st = _ws(owned=[a])
     st.list_owned_workspaces = owned
     app = KlangkApp(st)
-    async with app.run_test() as pilot:
+    async with app.run_test() as _pilot:
         before = calls["n"]
         app.refresh_workspaces()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert calls["n"] > before
 
 
@@ -2333,7 +2348,7 @@ async def test_detail_delete_terminal_guard_last(monkeypatch):
         d = app.screen
         d.query_one("#term_list").index = 0
         d.action_delete_terminal()  # only terminal -> refused
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Can't delete the last terminal" in str(
             d.query_one("#detail_msg").render()
         )
@@ -2357,7 +2372,7 @@ async def test_detail_delete_terminal_no_selection(monkeypatch):
         # nothing highlighted -> no-op
         d.query_one("#term_list").index = None
         d.action_delete_terminal()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert (
             len(d.query_one("#term_list", ListView).query(ListItem)) == 2
         )  # unchanged
@@ -2380,7 +2395,7 @@ async def test_detail_delete_terminal_placeholder(monkeypatch):
         d = app.screen
         d.query_one("#term_list").index = 0  # the placeholder
         d.action_delete_terminal()  # opt.id == "" -> no-op
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert (
             len(d.query_one("#term_list", ListView).query(ListItem)) == 1
         )  # unchanged
@@ -2435,7 +2450,7 @@ async def test_detail_delete_terminal_failure(monkeypatch):
         await pilot.pause()
         d = app.screen
         await d._do_delete_terminal(1)  # close raises
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Delete failed" in str(d.query_one("#detail_msg").render())
 
 
@@ -2571,7 +2586,7 @@ async def test_detail_delete_terminal_empty_result(monkeypatch):
         await pilot.pause()
         d = app.screen
         await d._do_delete_terminal(1)
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Delete failed" in str(d.query_one("#detail_msg").render())
         assert (
             len(d.query_one("#term_list", ListView).query(ListItem)) == 2
@@ -2605,6 +2620,7 @@ async def test_create_screen_renders_defaults(monkeypatch):
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         assert isinstance(cs, CreateWorkspaceScreen)
@@ -2622,6 +2638,7 @@ async def test_create_screen_autostart_hidden_when_not_allowed(monkeypatch):
     app = KlangkApp(_create_state(allow_autostart=lambda: False))
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cb = app.screen.query_one("#auto_start", Checkbox)
         assert cb.display is False
@@ -2636,6 +2653,7 @@ async def test_create_screen_mount_editor(monkeypatch):
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         # valid add
@@ -2664,6 +2682,7 @@ async def test_create_screen_env_editor(monkeypatch):
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         cs.query_one("#env_input").value = "FOO=bar"
@@ -2695,6 +2714,7 @@ async def test_create_screen_name_required(monkeypatch):
     )
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         app.screen._create()  # name empty
         assert called == []
@@ -2721,11 +2741,12 @@ async def test_create_screen_submit_omits_default_image(monkeypatch):
     )
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         cs.query_one("#name").value = "myws"
         cs._create()  # default image kept -> omitted
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert captured["name"] == "myws"
         assert captured["k"]["image"] is None
         assert captured["k"]["auto_start"] is False
@@ -2748,6 +2769,7 @@ async def test_create_screen_submit_custom_fields(monkeypatch):
     app = KlangkApp(_create_state(create=create))
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         cs.query_one("#name").value = "myws"
@@ -2760,7 +2782,7 @@ async def test_create_screen_submit_custom_fields(monkeypatch):
         cs._add_env()
         cs.query_one("#auto_start", Checkbox).value = True
         cs._create()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert captured["k"]["image"] == "py:3"
         assert captured["k"]["service_command"] == "sleep 1"
         assert captured["k"]["health_check"] == "curl localhost"
@@ -2788,12 +2810,12 @@ async def test_create_screen_http_error_shows_detail(monkeypatch):
     app = KlangkApp(_create_state(create=create))
     async with app.run_test() as pilot:
         app.screen.action_create()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         cs.query_one("#name").value = "dup"
         cs._create()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "name taken" in str(cs.query_one("#create_msg").render())
         assert isinstance(app.screen, CreateWorkspaceScreen)  # still on form
 
@@ -2810,12 +2832,12 @@ async def test_create_screen_auth_error(monkeypatch):
     app = KlangkApp(_create_state(create=create))
     async with app.run_test() as pilot:
         app.screen.action_create()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         cs.query_one("#name").value = "ws"
         cs._create()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Session expired" in str(cs.query_one("#create_msg").render())
 
 
@@ -2838,13 +2860,14 @@ async def test_create_screen_images_unavailable(monkeypatch):
     )
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         assert cs._allowed == []
         assert cs.query_one("#auto_start", Checkbox).display is False
         cs.query_one("#name").value = "ws"
         cs._create()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert captured["k"]["image"] is None  # omitted
 
 
@@ -2856,6 +2879,7 @@ async def test_create_screen_cancel_button(monkeypatch):
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         app.screen.on_button_pressed(FakeBtnPress("cancel"))
         await pilot.pause()
@@ -2870,6 +2894,7 @@ async def test_create_screen_input_submit_routing(monkeypatch):
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         # empty name submit -> required error (no dismiss)
@@ -2901,14 +2926,16 @@ async def test_create_flow_offer_opens_detail(monkeypatch):
     app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("new")))
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         cs.query_one("#name").value = "new"
         cs._create()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)  # "Open it now?"
         app.screen.dismiss(True)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert isinstance(app.screen, WorkspaceDetailScreen)
         assert app.screen._name == "new"
 
@@ -2921,11 +2948,12 @@ async def test_create_flow_offer_declined(monkeypatch):
     app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("new")))
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         cs.query_one("#name").value = "new"
         cs._create()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)
         app.screen.dismiss(False)
         await pilot.pause()
@@ -2942,6 +2970,7 @@ async def test_create_editor_guards(monkeypatch):
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         # empty input -> no-op for both editors
@@ -2970,12 +2999,12 @@ async def test_create_screen_generic_error(monkeypatch):
     app = KlangkApp(_create_state(create=create))
     async with app.run_test() as pilot:
         app.screen.action_create()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         cs.query_one("#name").value = "ws"
         cs._create()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Failed to create: boom" in str(
             cs.query_one("#create_msg").render()
         )
@@ -2991,6 +3020,7 @@ async def test_create_button_routing(monkeypatch):
     app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("ws")))
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         # add mount via button
@@ -3020,7 +3050,7 @@ async def test_create_button_routing(monkeypatch):
         # create via button -> success -> offer
         cs.query_one("#name").value = "ws"
         cs.on_button_pressed(FakeBtnPress("create"))
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)
 
 
@@ -3045,6 +3075,7 @@ async def test_create_screen_image_names_markup_safe(monkeypatch):
     )
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         # mounted + initial render without MarkupError
         assert isinstance(app.screen, CreateWorkspaceScreen)
@@ -3079,12 +3110,12 @@ async def test_create_screen_http_error_non_json(monkeypatch):
     app = KlangkApp(_create_state(create=create))
     async with app.run_test() as pilot:
         app.screen.action_create()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         cs.query_one("#name").value = "ws"
         cs._create()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Failed to create" in str(cs.query_one("#create_msg").render())
         assert isinstance(app.screen, CreateWorkspaceScreen)  # no crash
 
@@ -3116,13 +3147,14 @@ async def test_create_screen_default_not_in_allowed(monkeypatch):
     )
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         # default not in allowed -> picker is unselected
         assert cs.query_one("#image", Select).value is Select.NULL
         cs.query_one("#name").value = "ws"
         cs._create()  # nothing picked -> image omitted
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert captured["k"]["image"] is None
 
 
@@ -3162,6 +3194,7 @@ async def test_create_screen_allowed_domains_editor(monkeypatch):
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.screen.action_create()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         # valid add
@@ -3270,7 +3303,7 @@ async def test_edit_screen_save_calls_update(monkeypatch):
         es.query_one("#allow_input").value = "github.com:443"
         es._add_allowed_domain()
         es._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert captured["id"] == ws.id
         assert captured["name"] == "renamed"
         assert captured["allowed_domains"] == ["github.com:443"]
@@ -3297,11 +3330,12 @@ async def test_edit_screen_restart_needed_when_running_and_changed(
         es = app.screen
         es.query_one("#image", Select).value = "py:3"  # create-time change
         es._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)  # restart offered
         # accept -> restart_workspace called + edit screen dismissed
         app.screen.dismiss(True)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert restarted
         assert not isinstance(app.screen, EditWorkspaceScreen)
 
@@ -3320,7 +3354,7 @@ async def test_edit_screen_no_restart_when_create_field_unchanged(monkeypatch):
         # No create-time field changed (only a live-propagating field).
         es.query_one("#health_check").value = "curl x"
         es._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert not isinstance(app.screen, ConfirmScreen)
         assert not isinstance(app.screen, EditWorkspaceScreen)
 
@@ -3366,7 +3400,7 @@ async def test_edit_screen_save_http_error_shows_detail(monkeypatch):
         await pilot.pause()
         es = app.screen
         es._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "name taken" in str(es.query_one("#edit_msg").render())
         assert isinstance(app.screen, EditWorkspaceScreen)  # still on form
 
@@ -3501,7 +3535,7 @@ async def test_edit_button_and_input_routing(monkeypatch):
         assert es._allowed_domains == ["pypi.org"]
         # save via button + name submit
         es.on_button_pressed(FakeBtnPress("save"))
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert not isinstance(app.screen, EditWorkspaceScreen)
 
 
@@ -3522,7 +3556,7 @@ async def test_edit_screen_save_auth_error(monkeypatch):
         await pilot.pause()
         es = app.screen
         es._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Session expired" in str(es.query_one("#edit_msg").render())
 
 
@@ -3542,7 +3576,7 @@ async def test_edit_screen_save_generic_error(monkeypatch):
         await pilot.pause()
         es = app.screen
         es._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Failed to save: boom" in str(
             es.query_one("#edit_msg").render()
         )
@@ -3571,7 +3605,7 @@ async def test_edit_screen_save_http_error_non_json(monkeypatch):
         await pilot.pause()
         es = app.screen
         es._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "proxy" in str(es.query_one("#edit_msg").render())
 
 
@@ -3589,7 +3623,7 @@ async def test_edit_screen_field_submit_saves(monkeypatch):
         es = app.screen
         name = es.query_one("#name")
         es.on_input_submitted(Input.Submitted(name, name.value))  # -> _save
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert updated  # update_workspace called
         assert not isinstance(app.screen, EditWorkspaceScreen)
 
@@ -3610,7 +3644,7 @@ async def test_edit_screen_restart_declined(monkeypatch):
         es = app.screen
         es.query_one("#image", Select).value = "py:3"
         es._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)
         app.screen.dismiss(False)  # decline restart
         await pilot.pause()
@@ -3635,10 +3669,11 @@ async def test_edit_screen_restart_failure(monkeypatch):
         es = app.screen
         es.query_one("#image", Select).value = "py:3"
         es._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)
         app.screen.dismiss(True)  # accept restart -> fails
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "restart failed" in str(es.query_one("#edit_msg").render())
 
 
@@ -3660,6 +3695,7 @@ async def test_detail_action_edit_no_workspace(monkeypatch):
         d = app.screen
         d._ws = None  # nothing loaded
         d.action_edit()  # early no-op
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, WorkspaceDetailScreen)
 
@@ -3681,6 +3717,7 @@ async def test_detail_action_edit_fetch_failure(monkeypatch):
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
         app.screen.action_edit()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         # form still opens, with no images + autostart off
         assert isinstance(app.screen, EditWorkspaceScreen)
@@ -3801,11 +3838,12 @@ async def test_edit_rename_propagates_to_detail_and_list(monkeypatch):
         await pilot.pause()
         assert app.screen._name == "alpha"
         app.screen.action_edit()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         es = app.screen
         es.query_one("#name").value = "renamed"
         es._save()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         # back on detail; name adopted + reloaded by the new name
         assert isinstance(app.screen, WorkspaceDetailScreen)
         assert app.screen._name == "renamed"
@@ -3826,6 +3864,7 @@ async def test_create_screen_no_server_does_not_crash(monkeypatch):
     app = KlangkApp(_create_state(list_images=boom, allow_autostart=boom))
     async with app.run_test() as pilot:
         app.screen.action_create()  # must not raise
+        await app.workers.wait_for_complete()
         await pilot.pause()
         cs = app.screen
         assert isinstance(cs, CreateWorkspaceScreen)
@@ -3924,7 +3963,7 @@ async def test_login_server_picker(monkeypatch):
         ),
     )
     app = KlangkApp(st)
-    async with app.run_test() as pilot:
+    async with app.run_test() as _pilot:
         login = app.screen
         # no-server branch: prompt + disabled credentials
         assert "No server selected" in str(
@@ -3934,19 +3973,19 @@ async def test_login_server_picker(monkeypatch):
 
         # empty choice -> error message
         login._choose_server("   ")
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Enter a server URL" in str(
             login.query_one("#message").render()
         )
 
         # known alias -> switch (routed through the option-selected handler)
         login.on_list_view_selected(FakeSelected("prod"))
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert calls.get("switch") == "https://prod.example"
 
         # new URL -> added as an alias derived from its host
         login._choose_server("https://newhost.example/x")
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert calls.get("add") == (
             "newhost.example",
             "https://newhost.example/x",
@@ -3956,13 +3995,13 @@ async def test_login_server_picker(monkeypatch):
         srv_input = login.query_one("#server_input", Input)
         srv_input.value = "/var/run/other.sock"
         login.on_input_submitted(Input.Submitted(srv_input, srv_input.value))
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert calls.get("add") == ("other.sock", "/var/run/other.sock")
 
         # "Use server" button also dispatches
         srv_input.value = "prod"
         login.on_button_pressed(FakeBtnPress("use_server"))
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert calls.get("switch") == "https://prod.example"
 
         # after a successful pick the server line + enabled creds reflect it
@@ -4015,10 +4054,10 @@ async def test_login_choose_invalid_server(monkeypatch):
         ),
     )
     app = KlangkApp(st)
-    async with app.run_test() as pilot:
+    async with app.run_test() as _pilot:
         login = app.screen
         login._choose_server("sdfsdf")
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         # not persisted, and a sensible message is shown
         assert added.get("a") is None
         assert "URL" in str(login.query_one("#message").render())
@@ -4043,7 +4082,7 @@ async def test_add_server_rejects_invalid_url(monkeypatch):
         s.query_one("#alias", Input).value = "x"
         s.query_one("#url", Input).value = "sdfsdf"
         s._add()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert added.get("a") is None
         assert "http" in str(s.query_one("#add_msg").render()).lower()
 
@@ -4126,6 +4165,7 @@ async def test_login_delete_server(monkeypatch):
         await pilot.pause()
         app.screen.dismiss(True)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert deleted.get("u") == "https://prod.example"
         assert "Server deleted" in str(login.query_one("#message").render())
         # confirm but delete returns False -> "Not a saved alias"
@@ -4135,6 +4175,7 @@ async def test_login_delete_server(monkeypatch):
         await pilot.pause()
         app.screen.dismiss(True)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "Not a saved alias" in str(login.query_one("#message").render())
 
 
@@ -4171,6 +4212,7 @@ async def test_login_delete_clears_to_no_server(monkeypatch):
         await pilot.pause()
         app.screen.dismiss(True)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert "No server selected" in str(
             login.query_one("#server_line").render()
         )
@@ -4389,6 +4431,7 @@ async def test_switch_screen_delete_server(monkeypatch):
         await pilot.pause()
         app.screen.dismiss(True)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert deleted.get("u") == "https://prod.example"
 
@@ -4426,6 +4469,7 @@ async def test_login_button_dispatch_and_oidc_incomplete(monkeypatch):
         login.query_one("#identifier", Input).value = "me@x"
         login.query_one("#password", Input).value = "pw"
         login.on_button_pressed(FakeBtnPress("login"))
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, MainScreen)
 
@@ -4442,7 +4486,7 @@ async def test_login_button_dispatch_and_oidc_incomplete(monkeypatch):
     app2 = KlangkApp(st2)
     async with app2.run_test() as pilot:
         app2.screen.on_button_pressed(FakeBtnPress("oidc"))
-        await pilot.pause()
+        await app2.workers.wait_for_complete()
         assert "did not complete" in str(
             app2.screen.query_one("#message").render()
         )
@@ -4495,7 +4539,7 @@ async def test_add_server_event_handlers(monkeypatch):
         url_in.value = "https://p.example"
         # button press dispatch
         add_screen.on_button_pressed(FakeBtnPress("add"))
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert added["a"] == ("prod", "https://p.example")
         assert isinstance(app.screen, MainScreen)
 
@@ -4514,7 +4558,7 @@ async def test_add_server_event_handlers(monkeypatch):
         url_in.value = "https://q.example"
         add_screen.query_one("#alias", Input).value = "qa"
         add_screen.on_input_submitted(Input.Submitted(url_in, url_in.value))
-        await pilot.pause()
+        await app2.workers.wait_for_complete()
         assert added2["a"] == ("qa", "https://q.example")
 
 
