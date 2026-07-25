@@ -184,6 +184,15 @@ def test_add_server_merges_existing(redirect_xdg):
     assert loaded.servers["a"].url == "https://a.example"
 
 
+def test_add_server_rejects_duplicate_alias(redirect_xdg):
+    add_server_to_config("a", "https://a.example")
+    with pytest.raises(AliasConflictError, match="'a' already exists"):
+        add_server_to_config("a", "https://a2.example")
+    # Original entry is preserved.
+    loaded = CLIConfig.load()
+    assert loaded.servers["a"].url == "https://a.example"
+
+
 def test_remove_server_from_config(redirect_xdg):
     add_server_to_config("a", "https://a.example")
     add_server_to_config("b", "https://b.example")
@@ -4281,6 +4290,35 @@ async def test_login_server_list_empty_no_crash(monkeypatch):
         assert lv.index is None
 
 
+async def test_login_choose_server_duplicate_alias(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    def _raise_conflict(alias, url, user=None):
+        raise AliasConflictError(f"Alias '{alias}' already exists.")
+
+    st = _st(
+        current_url=lambda: None,
+        known_servers=lambda: [],
+        default_uds=lambda: None,
+        cfg=lambda: CLIConfig(),
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+        add_server=_raise_conflict,
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as _pilot:
+        login = app.screen
+        login._choose_server("https://dup.example")
+        await app.workers.wait_for_complete()
+        rendered = str(login.query_one("#message").render()).lower()
+        assert "already exists" in rendered
+
+
 async def test_login_choose_invalid_server(monkeypatch):
     async def noop(*a, **k):
         return None
@@ -4332,6 +4370,29 @@ async def test_add_server_rejects_invalid_url(monkeypatch):
         await app.workers.wait_for_complete()
         assert added.get("a") is None
         assert "http" in str(s.query_one("#add_msg").render()).lower()
+
+
+async def test_add_server_rejects_duplicate_alias_screen(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    def _raise_conflict(alias, url, user=None):
+        raise AliasConflictError(f"Alias '{alias}' already exists.")
+
+    st = _authed_state(add_server=_raise_conflict)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(AddServerScreen())
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#alias", Input).value = "prod"
+        s.query_one("#url", Input).value = "https://prod.example"
+        s._add()
+        await app.workers.wait_for_complete()
+        rendered = str(s.query_one("#add_msg").render()).lower()
+        assert "already exists" in rendered
 
 
 async def test_confirm_screen(monkeypatch):
