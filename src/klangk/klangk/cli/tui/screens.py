@@ -2103,6 +2103,7 @@ class ServerSwitchScreen(Screen):
 
     BINDINGS = [
         ("escape", "app.pop_screen", "Back"),
+        ("e", "edit_server", "Edit"),
         ("d", "delete_server", "Delete"),
     ]
 
@@ -2131,9 +2132,25 @@ class ServerSwitchScreen(Screen):
         current = self.app.tui_state.current_url()
         for s in servers:
             mark = "*" if s.url == current else " "
-            lv.append(
-                ListItem(Label(f"{mark} {s.alias}  ({s.url})"), name=s.url)
-            )
+            item = ListItem(Label(f"{mark} {s.alias}  ({s.url})"), name=s.url)
+            item.server_alias = s.alias
+            lv.append(item)
+
+    def action_edit_server(self) -> None:
+        lv = self.query_one("#server_options", ListView)
+        child = lv.highlighted_child
+        if child is None:
+            return
+        alias = getattr(child, "server_alias", "") or ""
+        url = child.name or ""
+        if not alias:
+            return
+
+        def _on_edit(changed: bool) -> None:
+            if changed:
+                self._populate()
+
+        self.app.push_screen(EditServerScreen(alias=alias, url=url), _on_edit)
 
     def action_delete_server(self) -> None:
         lv = self.query_one("#server_options", ListView)
@@ -2217,3 +2234,78 @@ class AddServerScreen(Screen):
     async def _do_add_server(self, alias: str, url: str) -> None:
         await asyncio.to_thread(self.app.tui_state.add_server, alias, url)
         self.app.server_changed()
+
+
+class EditServerScreen(ModalScreen):
+    """Edit an existing server alias and/or URL (#1762)."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, *, alias: str, url: str) -> None:
+        super().__init__()
+        self._old_alias = alias
+        self._old_url = url
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(f"Edit server: {self._old_alias}", classes="title"),
+            Horizontal(
+                Static("Alias"),
+                Input(value=self._old_alias, id="alias"),
+                classes="field-row",
+            ),
+            Horizontal(
+                Static("URL"),
+                Input(value=self._old_url, id="url"),
+                classes="field-row",
+            ),
+            Static("", id="edit_srv_msg"),
+            Horizontal(
+                Button("Cancel", id="cancel"),
+                Button("Save", id="save", variant="primary"),
+                classes="actions",
+            ),
+            id="edit_srv_box",
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save":
+            self._save()
+        elif event.button.id == "cancel":
+            self.dismiss(False)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id in ("alias", "url"):
+            self._save()
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+    def _save(self) -> None:
+        alias = self.query_one("#alias", Input).value.strip()
+        url = self.query_one("#url", Input).value.strip()
+        msg = self.query_one("#edit_srv_msg", Static)
+        if not alias or not url:
+            msg.update("[red]Alias and URL are required.[/red]")
+            return
+        if not is_valid_server_spec(url):
+            msg.update(
+                "[red]URL must be http(s)://host or an absolute socket"
+                " path (/...).[/red]"
+            )
+            return
+        self.run_worker(self._do_save(alias, url), exit_on_error=False)
+
+    async def _do_save(self, alias: str, url: str) -> None:
+        ok = await asyncio.to_thread(
+            self.app.tui_state.update_server,
+            self._old_alias,
+            alias,
+            url,
+        )
+        if not ok:
+            self.query_one("#edit_srv_msg", Static).update(
+                "[red]Server not found.[/red]"
+            )
+            return
+        self.dismiss(True)

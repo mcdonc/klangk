@@ -35,12 +35,14 @@ from klangk.cli.config import (
     ServerEntry,
     add_server_to_config,
     remove_server_from_config,
+    update_server_in_config,
 )
 from klangk.cli.tui.screens import (
     AddServerScreen,
     ConfirmScreen,
     CreateWorkspaceScreen,
     DuplicateScreen,
+    EditServerScreen,
     EditWorkspaceScreen,
     LoginScreen,
     MainScreen,
@@ -182,6 +184,33 @@ def test_remove_server_from_config(redirect_xdg):
     assert set(CLIConfig.load().servers) == {"b"}
     # removing an absent alias is a no-op (False)
     assert remove_server_from_config("zzz") is False
+
+
+def test_update_server_in_config(redirect_xdg):
+    add_server_to_config("a", "https://a.example")
+    assert update_server_in_config("a", "a", "https://a2.example") is True
+    loaded = CLIConfig.load()
+    assert loaded.servers["a"].url == "https://a2.example"
+
+
+def test_update_server_rename(redirect_xdg):
+    add_server_to_config("old", "https://old.example")
+    assert update_server_in_config("old", "new", "https://new.example") is True
+    loaded = CLIConfig.load()
+    assert "old" not in loaded.servers
+    assert loaded.servers["new"].url == "https://new.example"
+
+
+def test_update_server_not_found(redirect_xdg):
+    add_server_to_config("a", "https://a.example")
+    assert (
+        update_server_in_config("missing", "m", "https://m.example") is False
+    )
+
+
+def test_update_server_no_config_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(cfgmod, "_CONFIG_PATH", tmp_path / "nope.yaml")
+    assert update_server_in_config("a", "a", "https://x.example") is False
 
 
 def test_remove_server_no_config_file(monkeypatch, tmp_path):
@@ -417,6 +446,31 @@ def test_delete_server(redirect_xdg):
 
     # not found
     assert TuiState().delete_server("https://nope.example") is False
+
+
+def test_update_server(redirect_xdg):
+    add_server_to_config("a", "https://a.example")
+    TuiState().switch_server("https://a.example")  # make 'a' active
+    assert TuiState().state().active_server == "https://a.example"
+
+    # update URL -> alias stays, active pointer updated
+    assert TuiState().update_server("a", "a", "https://a2.example") is True
+    loaded = CLIConfig.load()
+    assert loaded.servers["a"].url == "https://a2.example"
+    assert TuiState().state().active_server == "https://a2.example"
+
+    # rename alias -> old gone, new present
+    assert (
+        TuiState().update_server("a", "renamed", "https://a2.example") is True
+    )
+    loaded = CLIConfig.load()
+    assert "a" not in loaded.servers
+    assert loaded.servers["renamed"].url == "https://a2.example"
+
+    # not found
+    assert (
+        TuiState().update_server("missing", "m", "https://m.example") is False
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -894,6 +948,235 @@ async def test_server_switch_and_add(monkeypatch):
         await pilot.pause()
         await pilot.pause()
         assert added5["a"] == ("staging", "https://s.example")
+
+
+# --- edit server (#1762) ---
+
+
+async def test_edit_server_saves(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _authed_state(
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod", "https://prod.example"),
+        ],
+        current_url=lambda: "https://prod.example",
+    )
+    updated = {}
+    st.update_server = lambda old, new, url, user=None: (
+        updated.__setitem__("u", (old, new, url)) or True
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(ServerSwitchScreen())
+        await pilot.pause()
+        # Highlight the first server and edit it.
+        lv = app.screen.query_one("#server_options", ListView)
+        lv.index = 0
+        await pilot.pause()
+        app.screen.action_edit_server()
+        await pilot.pause()
+        assert isinstance(app.screen, EditServerScreen)
+        app.screen.query_one("#alias", Input).value = "production"
+        app.screen.query_one("#url", Input).value = "https://new.example"
+        app.screen._save()
+        await pilot.pause()
+        await pilot.pause()
+        assert updated["u"] == ("prod", "production", "https://new.example")
+        # Dismissed back to ServerSwitchScreen.
+        assert isinstance(app.screen, ServerSwitchScreen)
+
+
+async def test_edit_server_empty_fields(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
+        await pilot.pause()
+        app.screen.query_one("#alias", Input).value = ""
+        app.screen._save()
+        await pilot.pause()
+        assert "required" in str(
+            app.screen.query_one("#edit_srv_msg").render()
+        )
+
+
+async def test_edit_server_invalid_url(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
+        await pilot.pause()
+        app.screen.query_one("#url", Input).value = "not-a-url"
+        app.screen._save()
+        await pilot.pause()
+        assert "http(s)://" in str(
+            app.screen.query_one("#edit_srv_msg").render()
+        )
+
+
+async def test_edit_server_cancel(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _authed_state(
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("a", "https://a.example"),
+        ],
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(ServerSwitchScreen())
+        await pilot.pause()
+        app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
+        await pilot.pause()
+        app.screen.action_cancel()
+        await pilot.pause()
+        assert isinstance(app.screen, ServerSwitchScreen)
+
+
+async def test_edit_server_not_found(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _authed_state()
+    st.update_server = lambda *a, **k: False
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(
+            EditServerScreen(alias="gone", url="https://g.example")
+        )
+        await pilot.pause()
+        app.screen._save()
+        await pilot.pause()
+        await pilot.pause()
+        assert (
+            "not found"
+            in str(app.screen.query_one("#edit_srv_msg").render()).lower()
+        )
+
+
+async def test_edit_server_no_highlight(monkeypatch):
+    """action_edit_server is a no-op when no server is highlighted."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_authed_state(known_servers=lambda: []))
+    async with app.run_test() as pilot:
+        app.push_screen(ServerSwitchScreen())
+        await pilot.pause()
+        app.screen.action_edit_server()
+        await pilot.pause()
+        # Still on switch screen — no crash, no edit screen.
+        assert isinstance(app.screen, ServerSwitchScreen)
+
+
+async def test_edit_server_via_input_submit(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _authed_state()
+    updated = {}
+    st.update_server = lambda old, new, url, user=None: (
+        updated.__setitem__("u", (old, new, url)) or True
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
+        await pilot.pause()
+        url_input = app.screen.query_one("#url", Input)
+        url_input.value = "https://new.example"
+        app.screen.on_input_submitted(
+            Input.Submitted(url_input, url_input.value)
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert updated["u"] == ("a", "a", "https://new.example")
+
+
+async def test_edit_server_cancel_button(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _authed_state(
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("a", "https://a.example"),
+        ],
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(ServerSwitchScreen())
+        await pilot.pause()
+        app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
+        await pilot.pause()
+        cancel_btn = app.screen.query_one("#cancel", Button)
+        app.screen.on_button_pressed(Button.Pressed(cancel_btn))
+        await pilot.pause()
+        assert isinstance(app.screen, ServerSwitchScreen)
+
+
+async def test_edit_server_no_alias_on_item(monkeypatch):
+    """action_edit_server is a no-op when the item has no server_alias."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _authed_state(
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("a", "https://a.example"),
+        ],
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(ServerSwitchScreen())
+        await pilot.pause()
+        lv = app.screen.query_one("#server_options", ListView)
+        lv.index = 0
+        await pilot.pause()
+        # Remove the server_alias attribute to hit the early return.
+        child = lv.highlighted_child
+        if hasattr(child, "server_alias"):
+            del child.server_alias
+        app.screen.action_edit_server()
+        await pilot.pause()
+        assert isinstance(app.screen, ServerSwitchScreen)
+
+
+async def test_edit_server_via_button(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _authed_state()
+    updated = {}
+    st.update_server = lambda old, new, url, user=None: (
+        updated.__setitem__("u", (old, new, url)) or True
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
+        await pilot.pause()
+        s = app.screen
+        save_btn = s.query_one("#save", Button)
+        s.on_button_pressed(Button.Pressed(save_btn))
+        await pilot.pause()
+        await pilot.pause()
+        assert "u" in updated
 
 
 # --- workspace list / detail / actions (#1747) ---

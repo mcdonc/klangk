@@ -203,6 +203,34 @@ def add_server_to_config(
     _CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
 
 
+def update_server_in_config(
+    old_alias: str,
+    new_alias: str,
+    server_url: str,
+    user: str | None = None,
+) -> bool:
+    """Update an existing server entry in klangk.yaml.
+
+    If *old_alias* differs from *new_alias* the entry is renamed.
+    Returns True if the alias was found and updated, False otherwise.
+    """
+    if not _CONFIG_PATH.exists():
+        return False
+    data = yaml.safe_load(_CONFIG_PATH.read_text()) or {}
+    servers = data.get("servers") or {}
+    if old_alias not in servers:
+        return False
+    if old_alias != new_alias:
+        del servers[old_alias]
+    entry: dict = {"url": server_url}
+    if user:
+        entry["user"] = user
+    servers[new_alias] = entry
+    data["servers"] = servers
+    _CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
+    return True
+
+
 def remove_server_from_config(alias: str) -> bool:
     """Remove a named server entry from klangk.yaml.
 
