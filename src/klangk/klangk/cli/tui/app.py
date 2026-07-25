@@ -111,6 +111,7 @@ class KlangkApp(App):
     Collapsible {
         height: auto;
         padding: 0;
+        margin-bottom: 1;
     }
     /* Match the collapsed Collapsible header to the 3-row input height (#1783). */
     Collapsible.-collapsed {
@@ -118,6 +119,7 @@ class KlangkApp(App):
         border-top: none;
         padding: 0;
         margin-top: 1;
+        margin-bottom: 1;
     }
     """
 
