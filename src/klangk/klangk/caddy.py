@@ -920,6 +920,15 @@ class CaddyWatchdog:
             level, msg = _classify_caddy_line(line)
             logger.log(level, "caddy: %s", msg)
 
+    def _log_listeners(self) -> None:
+        """Log which addresses Caddy is serving after a successful config load."""
+        s = self.app.state.settings
+        if s.port is not None:
+            logger.info("caddy browser listening on %s:%s", s.listen, s.port)
+        logger.info(
+            "caddy egress listening on %s:%s", s.egress_listen, s.egress_port
+        )
+
     async def _watch(
         self, bin_path: str
     ) -> None:  # pragma: no cover  – covered by the e2e suite
@@ -981,14 +990,7 @@ class CaddyWatchdog:
                 try:
                     await self.load_config()
                     load_ok = True
-                    port = self.app.state.settings.port
-                    if port is not None:
-                        listen = self.app.state.settings.listen
-                        logger.info(
-                            "caddy ingress listening on %s:%s",
-                            listen,
-                            port,
-                        )
+                    self._log_listeners()
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
                         "caddy POST /load failed (killing for respawn): %s",
