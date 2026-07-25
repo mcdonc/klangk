@@ -1540,9 +1540,17 @@ class ContainerRegistry:
                         pid,
                     )
                     continue
+                logger.warning(
+                    "Found orphaned %s (pid %d) still holding port %d"
+                    " after podman stop — podman did not clean up"
+                    " pasta (see podman#14276)",
+                    comm,
+                    pid,
+                    port,
+                )
                 try:
                     os.kill(pid, signal.SIGKILL)
-                    logger.info(
+                    logger.warning(
                         "Killed orphaned %s (pid %d) holding port %d",
                         comm,
                         pid,
