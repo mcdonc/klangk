@@ -1444,7 +1444,8 @@ class ContainerRegistry:
         publish: list[tuple[int, int]],
         podman,
     ) -> None:
-        """Remove stale containers holding conflicting ports."""
+        """Remove stale containers and orphaned pasta processes
+        holding conflicting ports."""
         logger.warning(
             "Port conflict starting %s, cleaning stale containers",
             container_name,

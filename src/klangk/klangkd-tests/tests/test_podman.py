@@ -614,9 +614,11 @@ class TestExecContainerStream:
 
 class TestRemoveContainer:
     async def test_force_default(self):
-        with patch(EXEC, _exec(("", "", 0))) as m:
+        # stop + rm -f
+        with patch(EXEC, _exec(("", "", 0), ("", "", 0))) as m:
             await _p.remove_container("cid")
-        assert _args(m) == ["rm", "-f", "cid"]
+        assert _args(m, 0) == ["stop", "-t", "5", "cid"]
+        assert _args(m, 1) == ["rm", "-f", "cid"]
 
     async def test_no_force(self):
         with patch(EXEC, _exec(("", "", 0))) as m:
@@ -624,17 +626,20 @@ class TestRemoveContainer:
         assert _args(m) == ["rm", "cid"]
 
     async def test_missing_is_ignored(self):
+        # stop returns 404 → skip rm
         with patch(EXEC, _exec(("", "no such container", 1))):
             await _p.remove_container("cid")  # no raise
 
-    async def test_other_error_raises(self):
-        with patch(EXEC, _exec(("", "in use", 1))):
+    async def test_stop_then_rm_error_raises(self):
+        # stop ok, rm fails with 409
+        with patch(EXEC, _exec(("", "", 0), ("", "in use", 1))):
             with pytest.raises(podman.PodmanError) as exc:
                 await _p.remove_container("cid")
         assert exc.value.status == 409
 
-    async def test_other_error_empty_stderr_fallback(self):
-        with patch(EXEC, _exec(("", "", 1))):
+    async def test_rm_error_empty_stderr_fallback(self):
+        # stop ok, rm fails with empty stderr
+        with patch(EXEC, _exec(("", "", 0), ("", "", 1))):
             with pytest.raises(podman.PodmanError) as exc:
                 await _p.remove_container("cid")
         assert exc.value.message == "podman rm"
