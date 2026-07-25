@@ -1182,23 +1182,7 @@ class WorkspaceDetailScreen(Screen):
             return
         self._terminals = windows
         self._render_terminals()
-
-        # Find the index of the newly created terminal and shell into it.
-        match = next((w for w in windows if w.get("name") == candidate), None)
-        if match is None:  # pragma: no cover
-            self._msg(f"Created terminal '{candidate}'.")
-            return
-        terminal_index = str(match.get("index", ""))
-        if not terminal_index:  # pragma: no cover
-            self._msg(f"Created terminal '{candidate}'.")
-            return
-        cmd = [sys.executable, "-m", "klangk.cli.main"]
-        server = self.app.tui_state.current_url()
-        if server:
-            cmd += ["--server", server]
-        cmd += ["shell", self._name, terminal_index]
-        with self.app.suspend():
-            subprocess.run(cmd)
+        self._msg(f"Created terminal '{candidate}'.")
 
     # --- actions ---
 
