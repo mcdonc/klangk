@@ -16,12 +16,14 @@ import httpx
 from rich.text import Text
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.dom import NoMatches
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
     Checkbox,
+    Collapsible,
     Footer,
     Header,
     Input,
@@ -147,21 +149,72 @@ class SpatialNavScreen(Screen):
     SPATIAL_CHAIN: list[str] = []
     SPATIAL_UP_EXIT: str | None = None
 
-    def on_key(self, event) -> None:
+    BINDINGS = [
+        Binding("up", "spatial_up", show=False),
+        Binding("down", "spatial_down", show=False),
+    ]
+
+    def action_spatial_up(self) -> None:
         fid = getattr(self.focused, "id", None) if self.focused else None
         if not fid or fid not in self.SPATIAL_CHAIN:
             return
         pos = self.SPATIAL_CHAIN.index(fid)
-        if event.key == "up":
-            if pos > 0:
-                event.stop()
-                self.query_one(f"#{self.SPATIAL_CHAIN[pos - 1]}").focus()
-            elif self.SPATIAL_UP_EXIT:
-                event.stop()
-                self.query_one(f"#{self.SPATIAL_UP_EXIT}").focus()
-        elif event.key == "down" and pos < len(self.SPATIAL_CHAIN) - 1:
-            event.stop()
+        if pos > 0:
+            self.query_one(f"#{self.SPATIAL_CHAIN[pos - 1]}").focus()
+        elif self.SPATIAL_UP_EXIT:
+            self.query_one(f"#{self.SPATIAL_UP_EXIT}").focus()
+
+    def action_spatial_down(self) -> None:
+        fid = getattr(self.focused, "id", None) if self.focused else None
+        if not fid or fid not in self.SPATIAL_CHAIN:
+            return
+        pos = self.SPATIAL_CHAIN.index(fid)
+        if pos < len(self.SPATIAL_CHAIN) - 1:
             self.query_one(f"#{self.SPATIAL_CHAIN[pos + 1]}").focus()
+
+
+class NonFocusableVerticalScroll(VerticalScroll):
+    """VerticalScroll that stays out of the keyboard-focus cycle.
+
+    Plain ``VerticalScroll`` has ``can_focus = True``, which inserts the
+    container itself into the Tab order.  We only want the form *fields*
+    focusable, not the scroll pane.  (#1783)
+    """
+
+    can_focus = False
+
+
+class TabSkipMixin:
+    """Cycle Tab through a primary field set, skipping editor buttons/lists.
+
+    Editor OptionLists remain focusable (for Delete / "e" keyboard actions)
+    but are mapped to their entry-input position so Tab jumps input-to-input.
+    (#1783)
+    """
+
+    _TAB_ORDER: list[str] = []
+    _LIST_TO_INPUT: dict[str, str] = {}
+
+    def on_key(self, event) -> None:
+        if event.key not in ("tab", "shift+tab"):
+            return
+        fid = getattr(self.focused, "id", None) if self.focused else None
+        base = self._LIST_TO_INPUT.get(fid, fid)
+        if base not in self._TAB_ORDER:
+            return
+        event.stop()
+        idx = self._TAB_ORDER.index(base)
+        step = 1 if event.key == "tab" else -1
+        n = len(self._TAB_ORDER)
+        for i in range(1, n):
+            nxt = (idx + step * i) % n
+            target = self.query_one(f"#{self._TAB_ORDER[nxt]}")
+            if target.display and not target.disabled:
+                target.focus()
+                return
+
+
+# Aliased for readability at call-sites that don't care about focusability.
 
 
 class LoginScreen(SpatialNavScreen):
@@ -950,7 +1003,7 @@ class DuplicateScreen(ModalScreen):
             self._commit()
 
 
-class CreateWorkspaceScreen(Screen):
+class CreateWorkspaceScreen(TabSkipMixin, Screen):
     """Full-screen workspace create form (parity with Flutter
     ``CreateWorkspaceDialog``).
 
@@ -968,6 +1021,22 @@ class CreateWorkspaceScreen(Screen):
     """
 
     BINDINGS = [("escape", "app.pop_screen", "Back")]
+
+    _TAB_ORDER = [
+        "name",
+        "image",
+        "mount_input",
+        "env_input",
+        "allow_input",
+        "auto_start",
+        "cancel",
+        "create",
+    ]
+    _LIST_TO_INPUT = {
+        "mount_list": "mount_input",
+        "env_list": "env_input",
+        "allow_list": "allow_input",
+    }
 
     def __init__(
         self,
@@ -1008,15 +1077,15 @@ class CreateWorkspaceScreen(Screen):
             # (the server applies its default image if none is chosen).
             image_select = Select(self._select_options, id="image")
         yield Header(show_clock=False)
-        yield Vertical(
+        yield NonFocusableVerticalScroll(
             Static("New workspace", classes="title"),
             Static("", id="create_msg"),
-            Static("Name"),
-            Input(id="name"),
-            Static("Container image"),
-            image_select,
-            Static("Mounts  (source:/container/path[:opts])"),
-            OptionList(id="mount_list"),
+            Horizontal(Static("Name"), Input(id="name"), classes="field-row"),
+            Horizontal(Static("Image"), image_select, classes="field-row"),
+            Static(
+                "Mounts  (source:/container/path[:opts])",
+                classes="editor-label",
+            ),
             Horizontal(
                 Input(
                     id="mount_input",
@@ -1025,31 +1094,38 @@ class CreateWorkspaceScreen(Screen):
                 Button("Add", id="add_mount"),
                 Button("Remove", id="rm_mount"),
             ),
-            Static("Environment  (KEY=VALUE)"),
-            OptionList(id="env_list"),
+            OptionList(id="mount_list", classes="editor-list"),
+            Static("Environment  (KEY=VALUE)", classes="editor-label"),
             Horizontal(
                 Input(id="env_input", placeholder="KEY=VALUE"),
                 Button("Add", id="add_env"),
                 Button("Remove", id="rm_env"),
             ),
+            OptionList(id="env_list", classes="editor-list"),
             Static(
-                "Allowed Domains  (host or host:port; empty = unrestricted)"
+                "Allowed Domains  (host or host:port; empty = unrestricted)",
+                classes="editor-label",
             ),
-            OptionList(id="allow_list"),
             Horizontal(
                 Input(id="allow_input", placeholder="github.com:443"),
                 Button("Add", id="add_allow"),
                 Button("Remove", id="rm_allow"),
             ),
-            Static("Service shell command (optional)"),
-            Input(id="command"),
-            Static("Health check command (optional)"),
-            Input(id="health_check"),
-            Checkbox("Auto start", id="auto_start"),
-            Static(
-                Text("(start this workspace when the server starts)"),
-                id="auto_caption",
+            OptionList(id="allow_list", classes="editor-list"),
+            Collapsible(
+                Horizontal(
+                    Static("Command"),
+                    Input(id="command"),
+                    classes="field-row",
+                ),
+                Horizontal(
+                    Static("Health"),
+                    Input(id="health_check"),
+                    classes="field-row",
+                ),
+                title="Advanced",
             ),
+            Checkbox("Auto start", id="auto_start"),
             Horizontal(
                 Button("Cancel", id="cancel"),
                 Button("Create", id="create", variant="primary"),
@@ -1060,16 +1136,31 @@ class CreateWorkspaceScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        # Only show the auto-start checkbox (and its caption) when the server
-        # allows it; ``auto_start`` defaults to off either way.
         shown = self._allow_autostart
         cb = self.query_one("#auto_start", Checkbox)
         cb.display = shown
         cb.disabled = not shown
-        self.query_one("#auto_caption", Static).display = shown
+        self._skip_editors_on_tab()
         self._render_mounts()
         self._render_env()
         self._render_allowed_domains()
+
+    def _skip_editors_on_tab(self) -> None:
+        """Editor buttons stay out of the Tab cycle (#1783).
+
+        Add is reachable via Enter in the input; Remove via mouse click.
+        Lists stay focusable for Delete/"e" keyboard actions but Tab skips
+        them via :class:`TabSkipMixin`.
+        """
+        for wid in (
+            "add_mount",
+            "rm_mount",
+            "add_env",
+            "rm_env",
+            "add_allow",
+            "rm_allow",
+        ):
+            self.query_one(f"#{wid}").can_focus = False
 
     def _msg(self, text: str, *, error: bool = False) -> None:
         self.query_one("#create_msg", Static).update(
@@ -1272,7 +1363,7 @@ class CreateWorkspaceScreen(Screen):
             self._create()
 
 
-class EditWorkspaceScreen(Screen):
+class EditWorkspaceScreen(TabSkipMixin, Screen):
     """Full-screen workspace edit form (parity with Flutter
     ``WorkspaceSettingsPanel``).
 
@@ -1289,6 +1380,22 @@ class EditWorkspaceScreen(Screen):
         ("delete", "remove_item", "Remove"),
         ("e", "edit_item", "Edit"),
     ]
+
+    _TAB_ORDER = [
+        "name",
+        "image",
+        "mount_input",
+        "env_input",
+        "allow_input",
+        "auto_start",
+        "cancel",
+        "save",
+    ]
+    _LIST_TO_INPUT = {
+        "mount_list": "mount_input",
+        "env_list": "env_input",
+        "allow_list": "allow_input",
+    }
 
     def __init__(
         self,
@@ -1321,7 +1428,9 @@ class EditWorkspaceScreen(Screen):
             opts.append(cur)
         if opts:
             self._select_options = [(Text(i), i) for i in opts]
-            self._select_value = cur if cur in opts else None
+            self._select_value = (
+                cur if cur in opts else (opts[0] if opts else None)
+            )
         else:
             self._select_options = [(Text("(none)"), "(none)")]
             self._select_value = "(none)"
@@ -1334,15 +1443,19 @@ class EditWorkspaceScreen(Screen):
         else:
             image_select = Select(self._select_options, id="image")
         yield Header(show_clock=False)
-        yield Vertical(
+        yield NonFocusableVerticalScroll(
             Static(Text(f"Edit workspace: {self._ws.name}"), classes="title"),
             Static("", id="edit_msg"),
-            Static("Name"),
-            Input(value=self._ws.name or "", id="name"),
-            Static("Container image"),
-            image_select,
-            Static("Mounts  (source:/container/path[:opts])"),
-            OptionList(id="mount_list"),
+            Horizontal(
+                Static("Name"),
+                Input(value=self._ws.name or "", id="name"),
+                classes="field-row",
+            ),
+            Horizontal(Static("Image"), image_select, classes="field-row"),
+            Static(
+                "Mounts  (source:/container/path[:opts])",
+                classes="editor-label",
+            ),
             Horizontal(
                 Input(
                     id="mount_input",
@@ -1351,31 +1464,40 @@ class EditWorkspaceScreen(Screen):
                 Button("Add", id="add_mount"),
                 Button("Remove", id="rm_mount"),
             ),
-            Static("Environment  (KEY=VALUE)"),
-            OptionList(id="env_list"),
+            OptionList(id="mount_list", classes="editor-list"),
+            Static("Environment  (KEY=VALUE)", classes="editor-label"),
             Horizontal(
                 Input(id="env_input", placeholder="KEY=VALUE"),
                 Button("Add", id="add_env"),
                 Button("Remove", id="rm_env"),
             ),
+            OptionList(id="env_list", classes="editor-list"),
             Static(
-                "Allowed Domains  (host or host:port; empty = unrestricted)"
+                "Allowed Domains  (host or host:port; empty = unrestricted)",
+                classes="editor-label",
             ),
-            OptionList(id="allow_list"),
             Horizontal(
                 Input(id="allow_input", placeholder="github.com:443"),
                 Button("Add", id="add_allow"),
                 Button("Remove", id="rm_allow"),
             ),
-            Static("Service shell command (optional)"),
-            Input(value=self._ws.service_command or "", id="command"),
-            Static("Health check command (optional)"),
-            Input(value=self._ws.health_check or "", id="health_check"),
-            Checkbox("Auto start", value=self._ws.auto_start, id="auto_start"),
-            Static(
-                Text("(start this workspace when the server starts)"),
-                id="auto_caption",
+            OptionList(id="allow_list", classes="editor-list"),
+            Collapsible(
+                Horizontal(
+                    Static("Command"),
+                    Input(value=self._ws.service_command or "", id="command"),
+                    classes="field-row",
+                ),
+                Horizontal(
+                    Static("Health"),
+                    Input(
+                        value=self._ws.health_check or "", id="health_check"
+                    ),
+                    classes="field-row",
+                ),
+                title="Advanced",
             ),
+            Checkbox("Auto start", value=self._ws.auto_start, id="auto_start"),
             Horizontal(
                 Button("Cancel", id="cancel"),
                 Button("Save", id="save", variant="primary"),
@@ -1390,10 +1512,27 @@ class EditWorkspaceScreen(Screen):
         cb = self.query_one("#auto_start", Checkbox)
         cb.display = shown
         cb.disabled = not shown
-        self.query_one("#auto_caption", Static).display = shown
+        self._skip_editors_on_tab()
         self._render_mounts()
         self._render_env()
         self._render_allowed_domains()
+
+    def _skip_editors_on_tab(self) -> None:
+        """Editor buttons stay out of the Tab cycle (#1783).
+
+        Add is reachable via Enter in the input; Remove via mouse click.
+        Lists stay focusable for Delete/"e" keyboard actions but Tab skips
+        them via :class:`TabSkipMixin`.
+        """
+        for wid in (
+            "add_mount",
+            "rm_mount",
+            "add_env",
+            "rm_env",
+            "add_allow",
+            "rm_allow",
+        ):
+            self.query_one(f"#{wid}").can_focus = False
 
     def _msg(self, text: str, *, error: bool = False) -> None:
         self.query_one("#edit_msg", Static).update(

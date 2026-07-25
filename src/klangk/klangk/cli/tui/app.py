@@ -28,10 +28,19 @@ class KlangkApp(App):
     Screen {
         align: center top;
     }
-    #login_box, #switch_box, #add_box, #detail_box, #dup_box, #create_box, #edit_box {
+    #login_box, #switch_box, #add_box, #detail_box, #dup_box {
         width: 96;
         max-width: 90%;
         padding: 0 2;
+    }
+    /* Create/edit forms are scrollable: they fill the viewport and scroll
+    when content overflows (mouse wheel, Page Up/Down). (#1783) */
+    #create_box, #edit_box {
+        width: 96;
+        max-width: 90%;
+        height: 1fr;
+        padding: 0 1;
+        overflow-y: auto;
     }
     /* A little air under the server status line, before the picker. */
     #server_line {
@@ -51,6 +60,13 @@ class KlangkApp(App):
         border-left: none;
         border-right: none;
     }
+    /* Match the Select dropdown to the underline-style inputs: drop the
+    side borders (the "shadows") so it aligns cleanly with adjacent fields. */
+    SelectCurrent, Select:focus > SelectCurrent {
+        border-top: blank;
+        border-left: none;
+        border-right: none;
+    }
     /* Give the server picker a visible top/bottom rule (no side borders) so
     its width matches the fields without inset side bars. */
     OptionList {
@@ -63,6 +79,47 @@ class KlangkApp(App):
     Button {
         min-width: 0;
         padding: 0 1;
+    }
+    /* Compact form rows: label + field side-by-side (#1783). */
+    .field-row {
+        height: auto;
+    }
+    /* Ensure all form Horizontals fit their children (#1783). */
+    #create_box Horizontal, #edit_box Horizontal {
+        height: auto;
+    }
+    .field-row > Static {
+        width: 14;
+        padding: 0 1 0 0;
+        content-align: right middle;
+        color: $text-muted;
+    }
+    .field-row > Input, .field-row > Select {
+        width: 1fr;
+    }
+    /* Bounded list editors (#1783). */
+    .editor-list {
+        height: 4;
+        max-height: 6;
+    }
+    /* Section labels for each editor group (#1783). */
+    .editor-label {
+        color: $text-muted;
+        text-style: bold;
+        margin-top: 1;
+    }
+    Collapsible {
+        height: auto;
+        padding: 0;
+        margin-bottom: 1;
+    }
+    /* Match the collapsed Collapsible header to the 3-row input height (#1783). */
+    Collapsible.-collapsed {
+        height: 3;
+        border-top: none;
+        padding: 0;
+        margin-top: 1;
+        margin-bottom: 1;
     }
     """
 
