@@ -557,15 +557,24 @@ class MainScreen(Screen):
         color: $text-muted;
     }
     #filter_bar {
-        height: auto;
-        max-height: 3;
+        dock: bottom;
+        height: 1;
+        background: $boost;
     }
     #filter_input {
         width: 1fr;
+        border: none;
+        height: 1;
+        padding: 0;
+        background: $boost;
     }
     #sort_btn {
         width: auto;
         min-width: 20;
+        border: none;
+        height: 1;
+        padding: 0 1;
+        background: $boost;
     }
     """
 
