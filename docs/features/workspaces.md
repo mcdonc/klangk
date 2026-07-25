@@ -29,6 +29,9 @@ optionally configure:
   paths), only directories under those roots can be bind-mounted.
   Protected paths like the Docker/Podman socket are always blocked.
 - **Environment variables** — set custom env vars for the container
+- **Allowed egress domains** — restrict outbound network access to a
+  list of hosts (e.g., `github.com:443`, `pypi.org`). See
+  [Egress Filtering](egress-filtering.md).
 
 You can change all of these later from the workspace **Settings** tab.
 

@@ -72,8 +72,29 @@ and workspaces with `allowed_domains` fail open with a loud warning
 ## Configuring a workspace
 
 Set `allowed_domains` via the workspace **Settings** panel (an
-"Allowed Domains" list editor under Mounts / Environment Variables) or the
-API:
+"Allowed Domains" list editor under Mounts / Environment Variables), the
+CLI, or the API.
+
+### CLI
+
+Use the `--allow` flag (repeatable) on `klangk create` or `klangk edit`:
+
+```bash
+# At creation time
+klangk create my-project --allow github.com:443 --allow pypi.org
+
+# On an existing workspace (flags mode)
+klangk edit my-project --allow github.com:443 --allow registry.npmjs.org
+
+# Interactive mode — prompts to add/remove domains one at a time
+klangk edit my-project
+```
+
+In interactive mode, `klangk edit` shows the current allowlist (if any),
+then prompts to add or remove entries. Domains are validated before they
+are accepted.
+
+### API
 
 ```bash
 curl -X PUT https://klangkd/api/v1/workspaces/<id> \
