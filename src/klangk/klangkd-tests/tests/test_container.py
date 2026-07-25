@@ -1456,6 +1456,97 @@ class TestStartContainerPortConflict:
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
 
+    async def test_port_conflict_pasta_bind_error(self, workspace, app_state):
+        """Pasta-style 'Address already in use' errors trigger retry (#1810)."""
+        allocated = await app_state.state.model.ports.find_and_allocate_ports(
+            workspace["id"], 5, self.registry.port_range_start
+        )
+        conflict_port = allocated[0]
+
+        start_calls = []
+
+        async def start_side_effect(cid):
+            start_calls.append(cid)
+            if len(start_calls) == 1:
+                raise podman.PodmanError(
+                    409,
+                    f"Failed to bind port {conflict_port} "
+                    "(Address already in use)",
+                )
+
+        with patch_podman(
+            self.registry,
+            start_container=AsyncMock(side_effect=start_side_effect),
+            list_containers=AsyncMock(return_value=[]),
+            inspect_container=AsyncMock(return_value=None),
+        ):
+            cid, status = await self.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert status == "created"
+        assert len(start_calls) == 2
+
+    async def test_port_conflict_retries_exhausted(self, workspace, app_state):
+        """All retries exhausted re-raises the last PodmanError."""
+        allocated = await app_state.state.model.ports.find_and_allocate_ports(
+            workspace["id"], 5, self.registry.port_range_start
+        )
+        conflict_port = allocated[0]
+
+        async def always_fail(cid):
+            raise podman.PodmanError(
+                409,
+                f"Failed to bind port {conflict_port} "
+                "(Address already in use)",
+            )
+
+        with (
+            patch_podman(
+                self.registry,
+                start_container=AsyncMock(side_effect=always_fail),
+                list_containers=AsyncMock(return_value=[]),
+                inspect_container=AsyncMock(return_value=None),
+            ),
+            pytest.raises(podman.PodmanError, match="Address already in use"),
+        ):
+            await self.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+
+    async def test_port_conflict_retry_non_conflict_error(
+        self, workspace, app_state
+    ):
+        """Non-port-conflict error during retry is raised immediately."""
+        allocated = await app_state.state.model.ports.find_and_allocate_ports(
+            workspace["id"], 5, self.registry.port_range_start
+        )
+        conflict_port = allocated[0]
+
+        start_calls = []
+
+        async def start_side_effect(cid):
+            start_calls.append(cid)
+            if len(start_calls) == 1:
+                raise podman.PodmanError(
+                    409,
+                    f"Failed to bind port {conflict_port} "
+                    "(Address already in use)",
+                )
+            raise podman.PodmanError(500, "container vanished")
+
+        with (
+            patch_podman(
+                self.registry,
+                start_container=AsyncMock(side_effect=start_side_effect),
+                list_containers=AsyncMock(return_value=[]),
+                inspect_container=AsyncMock(return_value=None),
+            ),
+            pytest.raises(podman.PodmanError, match="container vanished"),
+        ):
+            await self.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+
 
 class TestValidateMountSpec:
     def setup_method(self):
