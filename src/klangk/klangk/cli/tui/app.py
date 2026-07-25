@@ -41,15 +41,6 @@ class KlangkApp(App):
         height: 1fr;
         padding: 0 2;
         overflow-y: auto;
-        /* Uniform spacing between rows to give the form breathing room (#1783).
-           Labels override this with a top-only margin so they stay grouped
-           with the entry below them. */
-        & > * {
-            margin: 0 0 2 0;
-        }
-        & > .editor-label {
-            margin: 2 0 0 0;
-        }
     }
     /* A little air under the server status line, before the picker. */
     #server_line {
