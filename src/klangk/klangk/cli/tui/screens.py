@@ -7,6 +7,7 @@ free of cross-screen coupling and reach state through ``self.app.tui_state``.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 from urllib.parse import urlparse
 
@@ -364,8 +365,11 @@ class LoginScreen(SpatialNavScreen):
     # --- auth-mode setup ---
 
     def _setup_auth(self) -> None:
+        self.run_worker(self._setup_auth_async, exit_on_error=False)
+
+    async def _setup_auth_async(self) -> None:
         state = self.app.tui_state
-        mode = state.auth_mode()
+        mode = await asyncio.to_thread(state.auth_mode)
         self.query_one("#server_line", Static).update(
             f"Server: {state.current_url()}"
         )
@@ -373,8 +377,6 @@ class LoginScreen(SpatialNavScreen):
         notice = self.query_one("#notice", Static)
         if mode == "none":
             notice.update("No-auth server — logging in…")
-            # Defer the (possibly screen-pushing) login so we don't push
-            # during this screen's own mount.
             self.call_after_refresh(self._attempt_none)
             return
         if mode == "unreachable":
@@ -520,7 +522,6 @@ class MainScreen(Screen):
     def on_mount(self) -> None:
         self.app.title = "Klangk: Workspaces"
         self.refresh_lists()
-        self._focus_visible_list()
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(self._status_loop, name="status-ws")
 
@@ -555,16 +556,19 @@ class MainScreen(Screen):
         self.app.do_logout()
 
     def action_create(self) -> None:
+        self.run_worker(self._do_create, exit_on_error=False)
+
+    async def _do_create(self) -> None:
         state = self.app.tui_state
         try:
-            data = state.list_images()
+            data = await asyncio.to_thread(state.list_images)
             default = data.get("default", "") or ""
             allowed = list(data.get("allowed") or [])
         except (httpx.HTTPError, OSError, ValueError) as exc:
             logger.debug("Could not fetch image list: %s", exc)
             default, allowed = "", []
         try:
-            allow_autostart = state.allow_autostart()
+            allow_autostart = await asyncio.to_thread(state.allow_autostart)
         except (httpx.HTTPError, OSError, ValueError) as exc:
             logger.debug("Could not fetch autostart config: %s", exc)
             allow_autostart = False
@@ -603,14 +607,15 @@ class MainScreen(Screen):
     # --- list population ---
 
     def refresh_lists(self) -> None:
+        """Kick off an async refresh (non-blocking)."""
+        self.run_worker(self._refresh_lists_async, exit_on_error=False)
+
+    async def _refresh_lists_async(self) -> None:
         self._ws_by_id: dict[str, object] = {}
         try:
-            owned = self._safe_list(owned=True)
-            shared = self._safe_list(owned=False)
+            owned = await self._safe_list(owned=True)
+            shared = await self._safe_list(owned=False)
         except AuthError:
-            # An expired session is not an empty list — surface it distinctly
-            # instead of misleading the user into thinking their workspaces
-            # are gone.
             for sel in ("#owned_list", "#shared_list"):
                 self._populate(
                     sel, [], empty_label="(session expired — re-login)"
@@ -628,14 +633,15 @@ class MainScreen(Screen):
             if wid:
                 self._ws_by_id[wid] = ws
         self._refresh_status()
+        self._focus_visible_list()
 
-    def _safe_list(self, *, owned: bool) -> list:
+    async def _safe_list(self, *, owned: bool) -> list:
         state = self.app.tui_state
         try:
-            return (
-                state.list_owned_workspaces()
+            return await asyncio.to_thread(
+                state.list_owned_workspaces
                 if owned
-                else state.list_shared_workspaces()
+                else state.list_shared_workspaces
             )
         except AuthError:
             raise
@@ -804,14 +810,19 @@ class WorkspaceDetailScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        self._load()
+        self.run_worker(self._mount_async, exit_on_error=False)
+
+    async def _mount_async(self) -> None:
+        await self._load()
         if self._ws is not None and not self._ws.running:
-            self.run_worker(self._start_if_stopped, exit_on_error=False)
+            await self._start_if_stopped()
         self.run_worker(self._load_terminals, exit_on_error=False)
 
-    def _load(self) -> None:
+    async def _load(self) -> None:
         try:
-            self._ws = self.app.tui_state.find_workspace(self._name)
+            self._ws = await asyncio.to_thread(
+                self.app.tui_state.find_workspace, self._name
+            )
             self._missing = False
             self._load_error = None
         except WorkspaceNotFoundError:
@@ -836,11 +847,13 @@ class WorkspaceDetailScreen(Screen):
         """
         self._msg("Starting container…")
         try:
-            self.app.tui_state.restart_workspace(self._name)
+            await asyncio.to_thread(
+                self.app.tui_state.restart_workspace, self._name
+            )
         except Exception as exc:
             self._msg(f"Auto-start failed: {exc}", error=True)
             return
-        self._load()
+        await self._load()
         self._msg("Container started.")
         self.app.refresh_workspaces()
 
@@ -904,20 +917,20 @@ class WorkspaceDetailScreen(Screen):
         )
 
     def action_edit(self) -> None:
-        # Open the edit form pre-populated from this workspace (#1778).
-        # Images + allow_autostart are fetched here (sync, #1766 debt) so the
-        # form has them at mount time.
         if self._ws is None:
             return
+        self.run_worker(self._do_edit, exit_on_error=False)
+
+    async def _do_edit(self) -> None:
         state = self.app.tui_state
         try:
-            data = state.list_images()
+            data = await asyncio.to_thread(state.list_images)
             default = data.get("default", "") or ""
             allowed = list(data.get("allowed") or [])
         except Exception:
             default, allowed = "", []
         try:
-            allow_autostart = state.allow_autostart()
+            allow_autostart = await asyncio.to_thread(state.allow_autostart)
         except Exception:
             allow_autostart = False
         self.app.push_screen(
@@ -931,18 +944,17 @@ class WorkspaceDetailScreen(Screen):
         )
 
     def _on_edited(self, result: str | bool | None) -> None:
-        # The edit form dismisses with the workspace's (possibly new) name on
-        # save, or False/None on cancel. A rename leaves self._name stale —
-        # adopt the new name before reloading so _load() resolves, and refresh
-        # the list so the rename shows up there too (#1778).
         if isinstance(result, str):
             self._name = result
         if result:
-            self._load()
-            try:
-                self.app.query_one(MainScreen).refresh_lists()
-            except NoMatches:
-                pass
+            self.run_worker(self._reload_after_edit, exit_on_error=False)
+
+    async def _reload_after_edit(self) -> None:
+        await self._load()
+        try:
+            self.app.query_one(MainScreen).refresh_lists()
+        except NoMatches:
+            pass
 
     def apply_status_event(self, event: dict) -> None:
         """Update running/health from a live status broadcast.
@@ -959,11 +971,7 @@ class WorkspaceDetailScreen(Screen):
         if eid and ws_id and eid != ws_id:
             return  # event for a different workspace
         if etype == "workspaces_changed":
-            self._load()
-            if self._missing:
-                # The workspace was deleted out from under us (e.g. by
-                # another client) — return to the refreshed list.
-                self.app.pop_screen()
+            self.run_worker(self._reload_on_status, exit_on_error=False)
             return
         if etype == "container_status":
             self._ws.running = bool(event.get("running"))
@@ -978,6 +986,11 @@ class WorkspaceDetailScreen(Screen):
         else:
             return
         self._display()
+
+    async def _reload_on_status(self) -> None:
+        await self._load()
+        if self._missing:
+            self.app.pop_screen()
 
     # --- terminals (own) ---
 
@@ -1038,13 +1051,7 @@ class WorkspaceDetailScreen(Screen):
         def _on_confirm(confirmed: bool) -> None:
             if not confirmed:
                 return
-            try:
-                self.app.tui_state.restart_workspace(self._name)
-            except Exception as exc:
-                self._msg(f"Restart failed: {exc}", error=True)
-                return
-            self._msg("Restart requested.")
-            self.app.refresh_workspaces()
+            self.run_worker(self._do_restart, exit_on_error=False)
 
         self.app.push_screen(
             ConfirmScreen(
@@ -1056,25 +1063,30 @@ class WorkspaceDetailScreen(Screen):
             _on_confirm,
         )
 
+    async def _do_restart(self) -> None:
+        try:
+            await asyncio.to_thread(
+                self.app.tui_state.restart_workspace, self._name
+            )
+        except Exception as exc:
+            self._msg(f"Restart failed: {exc}", error=True)
+            return
+        self._msg("Restart requested.")
+        self.app.refresh_workspaces()
+
     def action_stop(self) -> None:
         if self._ws is None:
             return
         if self._ws.running:
             self._confirm_stop()
         else:
-            self._do_start()
+            self.run_worker(self._do_start, exit_on_error=False)
 
     def _confirm_stop(self) -> None:
         def _on_confirm(confirmed: bool) -> None:
             if not confirmed:
                 return
-            try:
-                self.app.tui_state.stop_workspace(self._name)
-            except Exception as exc:
-                self._msg(f"Stop failed: {exc}", error=True)
-                return
-            self._msg("Stop requested.")
-            self.app.refresh_workspaces()
+            self.run_worker(self._do_stop, exit_on_error=False)
 
         self.app.push_screen(
             ConfirmScreen(
@@ -1085,9 +1097,22 @@ class WorkspaceDetailScreen(Screen):
             _on_confirm,
         )
 
-    def _do_start(self) -> None:
+    async def _do_stop(self) -> None:
         try:
-            self.app.tui_state.start_workspace(self._name)
+            await asyncio.to_thread(
+                self.app.tui_state.stop_workspace, self._name
+            )
+        except Exception as exc:
+            self._msg(f"Stop failed: {exc}", error=True)
+            return
+        self._msg("Stop requested.")
+        self.app.refresh_workspaces()
+
+    async def _do_start(self) -> None:
+        try:
+            await asyncio.to_thread(
+                self.app.tui_state.start_workspace, self._name
+            )
         except Exception as exc:
             self._msg(f"Start failed: {exc}", error=True)
             return
@@ -1098,13 +1123,7 @@ class WorkspaceDetailScreen(Screen):
         def _on_confirm(confirmed: bool) -> None:
             if not confirmed:
                 return
-            try:
-                self.app.tui_state.delete_workspace(self._name)
-            except Exception as exc:
-                self._msg(f"Delete failed: {exc}", error=True)
-                return
-            self.app.pop_screen()  # back to the list
-            self.app.refresh_workspaces()
+            self.run_worker(self._do_delete, exit_on_error=False)
 
         self.app.push_screen(
             ConfirmScreen(
@@ -1114,14 +1133,30 @@ class WorkspaceDetailScreen(Screen):
             _on_confirm,
         )
 
+    async def _do_delete(self) -> None:
+        try:
+            await asyncio.to_thread(
+                self.app.tui_state.delete_workspace, self._name
+            )
+        except Exception as exc:
+            self._msg(f"Delete failed: {exc}", error=True)
+            return
+        self.app.pop_screen()  # back to the list
+        self.app.refresh_workspaces()
+
     def action_duplicate(self) -> None:
         self.app.push_screen(DuplicateScreen(self._name), self._on_duplicate)
 
     def _on_duplicate(self, new_name: str | None) -> None:
         if not new_name:
             return
+        self.run_worker(self._do_duplicate(new_name), exit_on_error=False)
+
+    async def _do_duplicate(self, new_name: str) -> None:
         try:
-            self.app.tui_state.duplicate_workspace(self._name, new_name)
+            await asyncio.to_thread(
+                self.app.tui_state.duplicate_workspace, self._name, new_name
+            )
         except Exception as exc:
             self._msg(f"Duplicate failed: {exc}", error=True)
             return
@@ -1471,8 +1506,34 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         mounts = list(self._mounts) or None
         env = dict(self._env) or None
         allowed_domains = list(self._allowed_domains) or None
+        self.run_worker(
+            self._do_create_workspace(
+                name,
+                image,
+                command,
+                auto,
+                mounts,
+                env,
+                health_check,
+                allowed_domains,
+            ),
+            exit_on_error=False,
+        )
+
+    async def _do_create_workspace(
+        self,
+        name,
+        image,
+        command,
+        auto,
+        mounts,
+        env,
+        health_check,
+        allowed_domains,
+    ) -> None:
         try:
-            ws = self.app.tui_state.create_workspace(
+            ws = await asyncio.to_thread(
+                self.app.tui_state.create_workspace,
                 name,
                 image=image,
                 service_command=command,
@@ -1486,9 +1547,6 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
             self._msg("Session expired — please log in again.", error=True)
             return
         except httpx.HTTPStatusError as exc:
-            # The error body may not be JSON (proxy HTML page, empty body,
-            # plaintext) — parse defensively so a malformed response can't
-            # crash the TUI from inside this handler.
             try:
                 detail = exc.response.json().get("detail", exc.response.text)
             except (ValueError, KeyError):
@@ -1911,9 +1969,6 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             "env": env,
             "allowed_domains": allowed_domains,
         }
-        # Restart needed iff a container-create-time field changed on a
-        # running workspace (#1749). setup_state/health_check propagate
-        # live and are intentionally excluded from this check.
         ws = self._ws
         orig_mounts = list(ws.mounts or []) or None
         orig_env = dict(ws.env or {}) or None
@@ -1925,8 +1980,16 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             or (command or None) != (ws.service_command or None)
             or allowed_domains != orig_domains
         )
+        self.run_worker(
+            self._do_save(name, body, ws, restart_needed),
+            exit_on_error=False,
+        )
+
+    async def _do_save(self, name, body, ws, restart_needed) -> None:
         try:
-            self.app.tui_state.update_workspace(ws.id, **body)
+            await asyncio.to_thread(
+                self.app.tui_state.update_workspace, ws.id, **body
+            )
         except AuthError:
             self._msg("Session expired — please log in again.", error=True)
             return
@@ -1944,14 +2007,12 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
 
             def _after(restart: bool) -> None:
                 if restart:
-                    try:
-                        self.app.tui_state.restart_workspace(ws.name)
-                    except Exception as exc:
-                        self._msg(
-                            f"Saved, but restart failed: {exc}", error=True
-                        )
-                        return
-                self.dismiss(name)
+                    self.run_worker(
+                        self._do_restart_after_save(ws.name, name),
+                        exit_on_error=False,
+                    )
+                else:
+                    self.dismiss(name)
 
             self.app.push_screen(
                 ConfirmScreen(
@@ -1965,6 +2026,16 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             )
         else:
             self.dismiss(name)
+
+    async def _do_restart_after_save(self, ws_name, dismiss_name) -> None:
+        try:
+            await asyncio.to_thread(
+                self.app.tui_state.restart_workspace, ws_name
+            )
+        except Exception as exc:
+            self._msg(f"Saved, but restart failed: {exc}", error=True)
+            return
+        self.dismiss(dismiss_name)
 
     # --- event handlers ---
 

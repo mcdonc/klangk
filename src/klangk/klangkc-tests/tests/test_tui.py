@@ -1040,6 +1040,7 @@ async def test_focus_visible_list_on_mount(monkeypatch):
     app = KlangkApp(_ws(owned=[_wsobj("alpha"), _wsobj("beta")]))
     async with app.run_test() as pilot:
         await pilot.pause()
+        await pilot.pause()
         assert isinstance(app.focused, ListView)
         assert app.focused.index == 0
 
@@ -2371,9 +2372,11 @@ async def test_create_screen_http_error_shows_detail(monkeypatch):
     async with app.run_test() as pilot:
         app.screen.action_create()
         await pilot.pause()
+        await pilot.pause()
         cs = app.screen
         cs.query_one("#name").value = "dup"
         cs._create()
+        await pilot.pause()
         assert "name taken" in str(cs.query_one("#create_msg").render())
         assert isinstance(app.screen, CreateWorkspaceScreen)  # still on form
 
@@ -2391,9 +2394,11 @@ async def test_create_screen_auth_error(monkeypatch):
     async with app.run_test() as pilot:
         app.screen.action_create()
         await pilot.pause()
+        await pilot.pause()
         cs = app.screen
         cs.query_one("#name").value = "ws"
         cs._create()
+        await pilot.pause()
         assert "Session expired" in str(cs.query_one("#create_msg").render())
 
 
@@ -2549,9 +2554,11 @@ async def test_create_screen_generic_error(monkeypatch):
     async with app.run_test() as pilot:
         app.screen.action_create()
         await pilot.pause()
+        await pilot.pause()
         cs = app.screen
         cs.query_one("#name").value = "ws"
         cs._create()
+        await pilot.pause()
         assert "Failed to create: boom" in str(
             cs.query_one("#create_msg").render()
         )
@@ -2656,9 +2663,11 @@ async def test_create_screen_http_error_non_json(monkeypatch):
     async with app.run_test() as pilot:
         app.screen.action_create()
         await pilot.pause()
+        await pilot.pause()
         cs = app.screen
         cs.query_one("#name").value = "ws"
         cs._create()
+        await pilot.pause()
         assert "Failed to create" in str(cs.query_one("#create_msg").render())
         assert isinstance(app.screen, CreateWorkspaceScreen)  # no crash
 
@@ -2940,6 +2949,7 @@ async def test_edit_screen_save_http_error_shows_detail(monkeypatch):
         await pilot.pause()
         es = app.screen
         es._save()
+        await pilot.pause()
         assert "name taken" in str(es.query_one("#edit_msg").render())
         assert isinstance(app.screen, EditWorkspaceScreen)  # still on form
 
@@ -3095,6 +3105,7 @@ async def test_edit_screen_save_auth_error(monkeypatch):
         await pilot.pause()
         es = app.screen
         es._save()
+        await pilot.pause()
         assert "Session expired" in str(es.query_one("#edit_msg").render())
 
 
@@ -3114,6 +3125,7 @@ async def test_edit_screen_save_generic_error(monkeypatch):
         await pilot.pause()
         es = app.screen
         es._save()
+        await pilot.pause()
         assert "Failed to save: boom" in str(
             es.query_one("#edit_msg").render()
         )
@@ -3142,6 +3154,7 @@ async def test_edit_screen_save_http_error_non_json(monkeypatch):
         await pilot.pause()
         es = app.screen
         es._save()
+        await pilot.pause()
         assert "proxy" in str(es.query_one("#edit_msg").render())
 
 
