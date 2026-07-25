@@ -3487,6 +3487,57 @@ async def test_login_up_from_input_to_server_list(monkeypatch):
         assert isinstance(app.focused, ListView)
 
 
+async def test_login_spatial_nav_full_chain(monkeypatch):
+    # Down/Up traverses the entire login form including buttons (#1781):
+    # server_input → use_server → identifier → password → login.
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    cfg = CLIConfig()
+    cfg.servers = {"prod": ServerEntry(url="https://prod.example")}
+    st = _st(
+        current_url=lambda: "https://prod.example",
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod", "https://prod.example"),
+        ],
+        default_uds=lambda: None,
+        cfg=lambda: cfg,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        login = app.screen
+        await pilot.pause()
+        login.query_one("#server_input", Input).focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused.id == "use_server"
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused.id == "identifier"
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused.id == "password"
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused.id == "login"
+        # Up back
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused.id == "password"
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused.id == "identifier"
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused.id == "use_server"
+
+
 async def test_switch_screen_delete_server(monkeypatch):
     async def noop(*a, **k):
         return None

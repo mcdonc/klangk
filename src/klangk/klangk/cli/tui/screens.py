@@ -159,15 +159,31 @@ class LoginScreen(Screen):
             self._show_no_server()
 
     def on_key(self, event) -> None:
-        # Spatial nav: Up from the server-input field returns focus to the
-        # server list above it (#1781).
-        if (
-            event.key == "up"
-            and isinstance(self.focused, Input)
-            and self.focused.id == "server_input"
-        ):
+        # Spatial navigation: Up/Down traverse the login form in reading
+        # order — server list → URL → Use server → email → password →
+        # Log in — without Tab/Shift-Tab (#1781).
+        fid = getattr(self.focused, "id", None) if self.focused else None
+        if not fid:
+            return
+        _chain = [
+            "server_input",
+            "use_server",
+            "identifier",
+            "password",
+            "login",
+        ]
+        if fid not in _chain:
+            return
+        pos = _chain.index(fid)
+        if event.key == "up":
             event.stop()
-            self.query_one("#server_options", ServerListView).focus()
+            if pos == 0:
+                self.query_one("#server_options", ServerListView).focus()
+            else:
+                self.query_one(f"#{_chain[pos - 1]}").focus()
+        elif event.key == "down" and pos < len(_chain) - 1:
+            event.stop()
+            self.query_one(f"#{_chain[pos + 1]}").focus()
 
     def _show_no_server(self) -> None:
         self.query_one("#server_line", Static).update(
