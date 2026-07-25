@@ -1547,6 +1547,49 @@ class TestStartContainerPortConflict:
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
 
+    async def test_kill_orphaned_pasta_called_on_conflict(
+        self, workspace, app_state
+    ):
+        """_resolve_port_conflict calls _kill_orphaned_pasta for stuck ports."""
+        allocated = await app_state.state.model.ports.find_and_allocate_ports(
+            workspace["id"], 5, self.registry.port_range_start
+        )
+        conflict_port = allocated[0]
+
+        start_calls = []
+
+        async def start_side_effect(cid):
+            start_calls.append(cid)
+            if len(start_calls) == 1:
+                raise podman.PodmanError(
+                    409,
+                    f"Failed to bind port {conflict_port} "
+                    "(Address already in use)",
+                )
+
+        killed_ports = []
+
+        async def mock_kill(ports):
+            killed_ports.extend(ports)
+
+        with (
+            patch_podman(
+                self.registry,
+                start_container=AsyncMock(side_effect=start_side_effect),
+                list_containers=AsyncMock(return_value=[]),
+                inspect_container=AsyncMock(return_value=None),
+            ),
+            patch.object(
+                type(self.registry),
+                "_kill_orphaned_pasta",
+                new=staticmethod(mock_kill),
+            ),
+        ):
+            cid, status = await self.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert conflict_port in killed_ports
+
 
 class TestValidateMountSpec:
     def setup_method(self):

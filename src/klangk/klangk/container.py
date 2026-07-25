@@ -3,7 +3,9 @@
 import asyncio
 import logging
 import os
+import signal
 import time
+from pathlib import Path
 
 from . import podman
 from .podman import PodmanError
@@ -1444,7 +1446,8 @@ class ContainerRegistry:
         publish: list[tuple[int, int]],
         podman,
     ) -> None:
-        """Remove stale containers holding conflicting ports."""
+        """Remove stale containers and orphaned pasta processes
+        holding conflicting ports."""
         logger.warning(
             "Port conflict starting %s, cleaning stale containers",
             container_name,
@@ -1482,6 +1485,62 @@ class ContainerRegistry:
                         stale_id[:12],
                         del_exc,
                     )
+        # Kill orphaned passt/pasta processes still bound to our ports.
+        # These can survive ``podman rm -f`` and hold ports indefinitely.
+        await self._kill_orphaned_pasta(wanted_ports)
+
+    @staticmethod
+    async def _kill_orphaned_pasta(ports: set[int]) -> None:
+        """Kill orphaned passt/pasta processes bound to the given ports.
+
+        Only targets processes whose name contains "past" (passt, pasta,
+        passt.avx2, etc.) to avoid killing legitimate containers or
+        unrelated services.
+        """
+        for port in ports:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "fuser",
+                    f"{port}/tcp",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                stdout, _ = await proc.communicate()
+            except FileNotFoundError:
+                logger.debug("fuser not available, skipping pasta cleanup")
+                return
+            except OSError as exc:
+                logger.debug("fuser failed for port %d: %s", port, exc)
+                continue
+            if proc.returncode != 0 or not stdout:
+                continue
+            for pid_str in stdout.decode().split():
+                pid_str = pid_str.strip()
+                if not pid_str.isdigit():
+                    continue
+                pid = int(pid_str)
+                try:
+                    cmdline = Path(f"/proc/{pid}/comm").read_text().strip()
+                except OSError:
+                    continue
+                if "past" not in cmdline.lower():
+                    logger.debug(
+                        "Port %d held by %s (pid %d), not pasta — skipping",
+                        port,
+                        cmdline,
+                        pid,
+                    )
+                    continue
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    logger.info(
+                        "Killed orphaned %s (pid %d) holding port %d",
+                        cmdline,
+                        pid,
+                        port,
+                    )
+                except OSError as exc:
+                    logger.debug("Could not kill pid %d: %s", pid, exc)
 
     async def _start_container_inner(
         self,
