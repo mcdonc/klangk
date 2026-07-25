@@ -978,6 +978,52 @@ class TestMainCLI:
         with pytest.raises(typer.Exit):
             main.restart("nope")
 
+    def test_stop_workspace(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+
+        client = MagicMock()
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with patch("typer.echo"):
+            main.stop("my-ws")
+        client.stop_workspace.assert_called_once_with("my-ws")
+
+    def test_stop_workspace_not_found(self, logged_in_cfg, monkeypatch):
+        import typer
+
+        from klangk.cli.client import WorkspaceNotFoundError
+        from klangk.cli import main
+
+        client = MagicMock()
+        client.stop_workspace.side_effect = WorkspaceNotFoundError("nope")
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with pytest.raises(typer.Exit):
+            main.stop("nope")
+
+    def test_start_workspace(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+
+        client = MagicMock()
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with patch("typer.echo"):
+            main.start("my-ws")
+        client.start_workspace.assert_called_once_with("my-ws")
+
+    def test_start_workspace_not_found(self, logged_in_cfg, monkeypatch):
+        import typer
+
+        from klangk.cli.client import WorkspaceNotFoundError
+        from klangk.cli import main
+
+        client = MagicMock()
+        client.start_workspace.side_effect = WorkspaceNotFoundError("nope")
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        with pytest.raises(typer.Exit):
+            main.start("nope")
+
     def test_shell_requires_auth(self, tmp_path, monkeypatch):
         import typer
         from klangk.cli import main

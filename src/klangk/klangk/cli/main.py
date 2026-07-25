@@ -643,6 +643,34 @@ def restart(
     typer.echo(f"Restarted workspace {name}")
 
 
+@app.command("stop")
+def stop(
+    name: str = typer.Argument(..., help="Workspace name"),
+) -> None:
+    """Stop the container for a workspace."""
+    require_auth()
+    try:
+        _client().stop_workspace(name)
+    except WorkspaceNotFoundError:
+        _err.print(f"[red]No workspace named[/red] '{name}'")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Stopped workspace {name}")
+
+
+@app.command("start")
+def start(
+    name: str = typer.Argument(..., help="Workspace name"),
+) -> None:
+    """Start the container for a workspace."""
+    require_auth()
+    try:
+        _client().start_workspace(name)
+    except WorkspaceNotFoundError:
+        _err.print(f"[red]No workspace named[/red] '{name}'")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Started workspace {name}")
+
+
 @app.command("export")
 def export_workspace(
     name: str = typer.Argument(..., help="Workspace name"),

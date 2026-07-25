@@ -27,6 +27,12 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`klangk stop` and `klangk start` commands** stop and (re)start a
+  workspace container (#1750), closing the CLI parity gap with the TUI and
+  Flutter app (which already reach shutdown via `POST /api/v1/workspaces/{id}/stop`).
+  Both are thin wrappers over the existing REST endpoints, mirroring
+  `klangk restart`.
+
 - **Bare `klangk` (no subcommand) launches an interactive textual TUI on a
   real terminal (#1746).** The TUI is the foundation of the terminal client:
   in-TUI login (local/password, with no-auth auto-login and OIDC hand-off to
