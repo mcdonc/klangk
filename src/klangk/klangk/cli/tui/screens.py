@@ -819,9 +819,16 @@ class WorkspaceDetailScreen(Screen):
     ]
 
     DEFAULT_CSS = """
+    WorkspaceDetailScreen #term_label {
+        text-style: bold;
+        margin-bottom: 0;
+    }
     WorkspaceDetailScreen #term_list {
         height: auto;
         max-height: 14;
+    }
+    WorkspaceDetailScreen #detail_body {
+        margin-top: 1;
     }
     """
 
@@ -837,9 +844,9 @@ class WorkspaceDetailScreen(Screen):
         yield Header(show_clock=False)
         yield Vertical(
             Static("", id="detail_title"),
-            Static("", id="detail_body"),
-            Static("Terminals (own):", id="term_label"),
+            Static("Terminals", id="term_label"),
             SpatialListView(id="term_list"),
+            Static("", id="detail_body"),
             Static("", id="detail_msg"),
             id="detail_box",
         )
@@ -1048,6 +1055,10 @@ class WorkspaceDetailScreen(Screen):
             idx = w.get("index", "")
             name = w.get("name") or idx
             lv.append(ListItem(Label(Text(f"{idx}  {name}")), name=str(idx)))
+        # Autofocus the first terminal (#1808).
+        lv.focus()
+        if lv.index is None:
+            lv.index = 0
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Suspend the TUI and spawn ``klangk shell`` for the selected terminal."""
