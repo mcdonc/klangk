@@ -249,6 +249,18 @@ def test_update_server_no_config_file(monkeypatch, tmp_path):
     assert update_server_in_config("a", "a", "https://x.example") is False
 
 
+def test_update_server_bare_string_entry(redirect_xdg):
+    """A hand-edited YAML with a bare-string entry is promoted to a dict."""
+    cpath, _ = redirect_xdg
+    cpath.write_text("servers:\n  legacy: https://old.example\n")
+    assert (
+        update_server_in_config("legacy", "legacy", "https://new.example")
+        is True
+    )
+    loaded = CLIConfig.load()
+    assert loaded.servers["legacy"].url == "https://new.example"
+
+
 def test_remove_server_no_config_file(monkeypatch, tmp_path):
     monkeypatch.setattr(cfgmod, "_CONFIG_PATH", tmp_path / "nope.yaml")
     assert remove_server_from_config("a") is False

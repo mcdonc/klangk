@@ -232,10 +232,10 @@ def update_server_in_config(
     existing = servers[old_alias]
     if isinstance(existing, dict):
         entry = dict(existing)
-    else:  # pragma: no cover
+    else:
         entry = {}
     entry["url"] = server_url
-    if user is not None:
+    if user:
         entry["user"] = user
     if old_alias != new_alias:
         del servers[old_alias]

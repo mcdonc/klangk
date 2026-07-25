@@ -2171,18 +2171,16 @@ class ServerSwitchScreen(Screen):
         if child is None:
             return
         url = child.name
-        self._pending_delete_url = url
-        self.app.push_screen(
-            ConfirmScreen(f"Delete server {url}?"),
-            self._on_delete_confirmed,
-        )
 
-    def _on_delete_confirmed(self, confirmed: bool) -> None:
-        if confirmed:
-            self.run_worker(
-                self._do_delete_and_refresh(self._pending_delete_url),
-                exit_on_error=False,
-            )
+        def _on_confirm(confirmed: bool) -> None:
+            if confirmed:
+                self.run_worker(
+                    self._do_delete_and_refresh(url), exit_on_error=False
+                )
+
+        self.app.push_screen(
+            ConfirmScreen(f"Delete server {url}?"), _on_confirm
+        )
 
     async def _do_delete_and_refresh(self, url: str) -> None:
         await asyncio.to_thread(self.app.tui_state.delete_server, url)
@@ -2319,7 +2317,9 @@ class EditServerScreen(ModalScreen):
                 url,
             )
         except Exception as exc:
-            self.query_one("#edit_srv_msg", Static).update(f"[red]{exc}[/red]")
+            self.query_one("#edit_srv_msg", Static).update(
+                Text(str(exc), style="red")
+            )
             return
         if not ok:
             self.query_one("#edit_srv_msg", Static).update(
