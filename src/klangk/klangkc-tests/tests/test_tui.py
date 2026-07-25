@@ -823,6 +823,22 @@ async def test_server_switch_and_add(monkeypatch):
         assert switched["url"] == "https://b.example"
         assert isinstance(app.screen, MainScreen)
 
+    # selecting an item with empty name is a no-op (no switch_server call)
+    st1b = _authed_state(
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("a", "https://a.example"),
+        ],
+    )
+    switched1b = {}
+    st1b.switch_server = lambda url: switched1b.setdefault("url", url)
+    app1b = KlangkApp(st1b)
+    async with app1b.run_test() as pilot:
+        app1b.push_screen(ServerSwitchScreen())
+        await pilot.pause()
+        app1b.screen.on_list_view_selected(FakeSelected(""))
+        await pilot.pause()
+        assert switched1b == {}
+
     # switch screen with no servers -> hint message
     app2 = KlangkApp(_authed_state(known_servers=lambda: []))
     async with app2.run_test() as pilot:

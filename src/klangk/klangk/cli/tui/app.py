@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from textual.app import App
+from textual.theme import Theme
 
 from .screens import (
     AddServerScreen,
@@ -16,6 +17,35 @@ from .screens import (
     WorkspaceDetailScreen,
 )
 from .state import TuiState
+
+# ---------------------------------------------------------------------------
+# Klangk theme — echoes the Flutter web UI's GitHub-dark-inspired palette
+# (src/frontend/lib/theme/colors.dart).
+#
+# Tokens:
+#   primary   — green (#238636): primary actions (login, create, start)
+#   secondary — blue (#58A6FF): links, focus, informational
+#   accent    — yellow (#F5C518): brand highlight
+#   warning   — amber (#D29922): caution actions (restart, stop)
+#   error     — red (#F85149): destructive actions (delete), errors
+#   success   — green (#238636): healthy / running indicators
+#   background — dark canvas (#0D1117)
+#   surface   — card/panel surface (#161B22)
+#   panel     — overlay panels (#1C2128)
+# ---------------------------------------------------------------------------
+KLANGK_THEME = Theme(
+    name="klangk",
+    primary="#238636",
+    secondary="#58A6FF",
+    accent="#F5C518",
+    warning="#D29922",
+    error="#F85149",
+    success="#238636",
+    background="#0D1117",
+    surface="#161B22",
+    panel="#1C2128",
+    dark=True,
+)
 
 
 class KlangkApp(App):
@@ -134,8 +164,9 @@ class KlangkApp(App):
     def __init__(self, state: TuiState) -> None:
         super().__init__()
         self.tui_state = state
-        # Latest live-status annotation shown in the status bar.
         self.live_extra = ""
+        self.register_theme(KLANGK_THEME)
+        self.theme = "klangk"
 
     def on_mount(self) -> None:
         self.title = "Klangk"
