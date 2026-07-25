@@ -60,6 +60,13 @@ class KlangkApp(App):
         border-left: none;
         border-right: none;
     }
+    /* Match the Select dropdown to the underline-style inputs: drop the
+    side borders (the "shadows") so it aligns cleanly with adjacent fields. */
+    SelectCurrent, Select:focus > SelectCurrent {
+        border-top: blank;
+        border-left: none;
+        border-right: none;
+    }
     /* Give the server picker a visible top/bottom rule (no side borders) so
     its width matches the fields without inset side bars. */
     OptionList {
@@ -90,6 +97,15 @@ class KlangkApp(App):
     .editor-list {
         height: 4;
         max-height: 6;
+    }
+    /* Labeled editor groups: entry row + display list together (#1783). */
+    .editor-group {
+        height: auto;
+        margin-top: 1;
+    }
+    .editor-label {
+        color: $text-muted;
+        text-style: bold;
     }
     Collapsible {
         height: auto;
