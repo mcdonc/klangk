@@ -9,6 +9,7 @@ caddy, so nothing here shells out to it).
 """
 
 import asyncio
+import logging
 import os
 import signal
 import types
@@ -20,6 +21,7 @@ import pytest
 from klangk.caddy import (
     CaddyRenderer,
     CaddyWatchdog,
+    _classify_caddy_line,
 )
 from klangk.caddy import (
     CADDYFILE_CONTENT_TYPE,
@@ -1487,3 +1489,62 @@ class TestWatchdogReconfigure:
         wd.load_config = AsyncMock(side_effect=httpx.ConnectError("down"))
         await wd.apply_pending_reload()  # must not raise
         assert wd._pending_reload is False
+
+
+# ---------------------------------------------------------------------------
+# _classify_caddy_line
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyCaddyLine:
+    """Caddy stderr JSON lines are classified into Python log levels."""
+
+    def test_info_maps_to_debug(self):
+        line = '{"level":"info","ts":1,"msg":"serving initial configuration"}'
+        level, msg = _classify_caddy_line(line)
+        assert level == logging.DEBUG
+        assert "serving initial configuration" in msg
+
+    def test_warn_maps_to_debug(self):
+        line = '{"level":"warn","ts":1,"msg":"HTTP/2 skipped because it requires TLS"}'
+        level, msg = _classify_caddy_line(line)
+        assert level == logging.DEBUG
+
+    def test_error_maps_to_error(self):
+        line = '{"level":"error","ts":1,"msg":"listener closed"}'
+        level, msg = _classify_caddy_line(line)
+        assert level == logging.ERROR
+        assert "listener closed" in msg
+
+    def test_fatal_maps_to_error(self):
+        line = '{"level":"fatal","ts":1,"msg":"caddy process crash"}'
+        level, msg = _classify_caddy_line(line)
+        assert level == logging.ERROR
+
+    def test_panic_maps_to_error(self):
+        line = '{"level":"panic","ts":1,"msg":"unexpected nil pointer"}'
+        level, msg = _classify_caddy_line(line)
+        assert level == logging.ERROR
+
+    def test_logger_field_included_in_message(self):
+        line = '{"level":"info","ts":1,"logger":"admin.api","msg":"received request"}'
+        level, msg = _classify_caddy_line(line)
+        assert level == logging.DEBUG
+        assert "[admin.api] received request" == msg
+
+    def test_non_json_treated_as_error(self):
+        line = "panic: runtime error: index out of range"
+        level, msg = _classify_caddy_line(line)
+        assert level == logging.ERROR
+        assert msg == line
+
+    def test_missing_level_defaults_to_debug(self):
+        line = '{"ts":1,"msg":"something"}'
+        level, msg = _classify_caddy_line(line)
+        assert level == logging.DEBUG
+
+    def test_missing_msg_falls_back_to_raw_line(self):
+        line = '{"level":"error","ts":1}'
+        level, msg = _classify_caddy_line(line)
+        assert level == logging.ERROR
+        assert msg == line

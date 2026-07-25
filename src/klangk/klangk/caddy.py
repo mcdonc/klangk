@@ -39,6 +39,7 @@ Out of scope here (tracked in #1559): the ``caddy-l4`` layer-4 plugin
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import contextlib
 import os
@@ -62,6 +63,36 @@ from klangk.proxy import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _classify_caddy_line(line: str) -> tuple[int, str]:
+    """Parse a Caddy JSON log line and return ``(log_level, message)``.
+
+    Caddy emits structured JSON to stderr with ``level``, ``msg``, and
+    optional ``logger`` fields.  This function maps them to Python log
+    levels so klangkd can surface errors while suppressing routine
+    startup noise (info/warn about TLS, HTTP/2, admin API, etc.).
+
+    Non-JSON lines (e.g. panic stack traces) are treated as errors.
+    """
+    try:
+        obj = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return logging.ERROR, line
+
+    caddy_level = obj.get("level", "info")
+    msg = obj.get("msg", line)
+    caddy_logger = obj.get("logger", "")
+    if caddy_logger:
+        msg = f"[{caddy_logger}] {msg}"
+
+    if (
+        caddy_level == "error"
+        or caddy_level == "fatal"
+        or caddy_level == "panic"
+    ):
+        return logging.ERROR, msg
+    return logging.DEBUG, msg
 
 
 # ---------------------------------------------------------------------------
@@ -868,6 +899,26 @@ class CaddyWatchdog:
                 await asyncio.sleep(0.2)
         return False
 
+    @staticmethod
+    async def _relay_stderr(
+        stream: asyncio.StreamReader,
+    ) -> None:  # pragma: no cover  – covered by the e2e suite
+        """Read Caddy's stderr line-by-line and relay through Python logging.
+
+        Errors are logged at ERROR; routine info/warn messages are logged at
+        DEBUG so they're hidden by default but accessible via
+        ``KLANGKD_LOG_LEVEL=DEBUG``.
+        """
+        while True:
+            raw = await stream.readline()
+            if not raw:
+                break
+            line = raw.decode("utf-8", errors="replace").rstrip()
+            if not line:
+                continue
+            level, msg = _classify_caddy_line(line)
+            logger.log(level, "caddy: %s", msg)
+
     async def _watch(
         self, bin_path: str
     ) -> None:  # pragma: no cover  – covered by the e2e suite
@@ -911,10 +962,13 @@ class CaddyWatchdog:
                 str(bootstrap_cfg),
                 "--adapter",
                 "caddyfile",
-                stdout=None,
-                stderr=None,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
                 env=env,
                 preexec_fn=_caddy_preexec,
+            )
+            stderr_task = asyncio.create_task(
+                self._relay_stderr(self._proc.stderr)
             )
             logger.info(
                 "caddy started (pid %d), admin UDS %s",
@@ -945,6 +999,9 @@ class CaddyWatchdog:
                 except ProcessLookupError:
                     pass
             rc = await self._proc.wait()
+            stderr_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stderr_task
             self._proc = None
             if self._stopping:
                 return
