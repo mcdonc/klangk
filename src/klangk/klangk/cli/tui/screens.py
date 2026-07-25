@@ -559,10 +559,6 @@ class MainScreen(Screen):
     #filter_bar {
         height: auto;
         max-height: 3;
-        display: none;
-    }
-    #filter_bar.visible {
-        display: block;
     }
     #filter_input {
         width: 1fr;
@@ -606,6 +602,7 @@ class MainScreen(Screen):
         self._owned_all: list = []
         self._shared_all: list = []
         self._filter_text = ""
+        self.query_one("#filter_bar").display = False
         self.refresh_lists()
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(self._status_loop, name="status-ws")
@@ -617,8 +614,7 @@ class MainScreen(Screen):
     # --- filter / sort ---
 
     def action_focus_filter(self) -> None:
-        bar = self.query_one("#filter_bar")
-        bar.add_class("visible")
+        self.query_one("#filter_bar").display = True
         self.query_one("#filter_input", Input).focus()
 
     def action_cycle_sort(self) -> None:
@@ -713,7 +709,7 @@ class MainScreen(Screen):
             if inp.value:
                 inp.value = ""
             else:
-                self.query_one("#filter_bar").remove_class("visible")
+                self.query_one("#filter_bar").display = False
                 self._focus_visible_list()
             event.stop()
             return
