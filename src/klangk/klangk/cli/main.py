@@ -1030,12 +1030,32 @@ def edit(
         typer.echo("No changes.")
         return
 
+    # Detect if any create-time field changed on a running workspace.
+    _CREATE_TIME_KEYS = {
+        "image",
+        "mounts",
+        "env",
+        "service_command",
+        "allowed_domains",
+    }
+    restart_needed = ws.running and bool(body.keys() & _CREATE_TIME_KEYS)
+
     resp = client.put(f"/api/v1/workspaces/{ws.id}", json=body)
     if resp.status_code == 404:
         _err.print("[red]Workspace not found[/red]")
         raise typer.Exit(code=1)
     resp.raise_for_status()
     typer.echo(f"Updated workspace {ws.name}")
+
+    if restart_needed:
+        _err.print(
+            "[yellow]The running container is not affected by this "
+            "edit — restart the workspace to apply.[/yellow]"
+        )
+        answer = input("Restart now? [y/N] ").strip().lower()
+        if answer in ("y", "yes"):
+            client.restart_workspace(ws.name)
+            typer.echo(f"Restarted workspace {ws.name}")
 
 
 def resolve_forward_agent(

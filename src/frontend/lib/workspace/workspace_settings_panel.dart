@@ -29,11 +29,11 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   String? _error;
   String? _saveMessage;
   Timer? _saveMessageTimer;
-  // #1365: set when a successful save changed allowed_domains on a
-  // workspace whose container is running — the egress filter is baked at
-  // container create time, so the new ruleset won't take effect until the
-  // container is restarted. Surfaced as a notice under the save message.
-  bool _pendingEgressRestart = false;
+  // Set when a successful save changed a create-time field (image, mounts,
+  // env, service_command, allowed_domains) on a running workspace.  These
+  // fields are baked into the container at create time, so the change won't
+  // take effect until the container is restarted (#1749, #1365).
+  bool _pendingRestart = false;
 
   @override
   void initState() {
@@ -117,19 +117,16 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     );
     if (!mounted) return;
     if (resp.statusCode == 200) {
-      // #1365: the egress filter is applied at container create time (the
-      // OCI hook runs at createContainer), so a change to allowed_domains
-      // only takes effect on the next (re)start. Detect the change before
-      // _loadData() reassigns _workspace, and only nag when a container is
-      // actually running (a stopped workspace picks the new rules up on
-      // its next start — no action needed).
-      final prevDomains = _workspace?['allowed_domains'];
-      final egressChanged =
-          !_domainListsEqual(prevDomains, fields['allowed_domains']);
+      // Create-time fields (image, mounts, env, service_command,
+      // allowed_domains) are baked into the container at creation.  Detect
+      // changes before _loadData() reassigns _workspace, and only nag when
+      // a container is actually running (#1749, #1365).
       final running = (_workspace?['running'] as bool?) ?? false;
+      final createTimeChanged =
+          running && (_hasCreateTimeFieldChanged(_workspace, fields));
       setState(() {
         _saveMessage = 'Settings saved';
-        _pendingEgressRestart = egressChanged && running;
+        _pendingRestart = createTimeChanged;
       });
       _loadData();
       _saveMessageTimer?.cancel();
@@ -162,7 +159,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       allowAutostart:
           context.select<AuthService, bool>((a) => a.allowAutostart),
       saveMessage: _saveMessage,
-      pendingEgressRestart: _pendingEgressRestart,
+      pendingRestart: _pendingRestart,
       netfilterEnabled:
           context.select<AuthService, bool>((a) => a.netfilterEnabled),
       onSave: _saveSettings,
@@ -182,6 +179,51 @@ bool _domainListsEqual(Object? a, Object? b) {
   return <String>{...la}.difference(<String>{...lb}).isEmpty;
 }
 
+/// Return ``true`` when any create-time field in *fields* differs from the
+/// previous workspace snapshot *prev*.  Only meaningful when the workspace is
+/// running — callers gate on that before invoking this (#1749).
+bool _hasCreateTimeFieldChanged(
+  Map<String, dynamic>? prev,
+  Map<String, dynamic> fields,
+) {
+  if (prev == null) return false;
+  // image
+  if ((fields['image'] ?? '') != (prev['image'] ?? '')) return true;
+  // service_command (null ↔ empty treated as equal)
+  if ((fields['service_command'] ?? '') != (prev['service_command'] ?? '')) {
+    return true;
+  }
+  // mounts — ordered list comparison (null ↔ empty)
+  if (!_stringListsEqual(prev['mounts'], fields['mounts'])) return true;
+  // env — map comparison (null ↔ empty)
+  if (!_envMapsEqual(prev['env'], fields['env'])) return true;
+  // allowed_domains — set comparison
+  if (!_domainListsEqual(prev['allowed_domains'], fields['allowed_domains'])) {
+    return true;
+  }
+  return false;
+}
+
+bool _stringListsEqual(Object? a, Object? b) {
+  final la = (a is List ? a.cast<String>() : const <String>[]);
+  final lb = (b is List ? b.cast<String>() : const <String>[]);
+  if (la.length != lb.length) return false;
+  for (var i = 0; i < la.length; i++) {
+    if (la[i] != lb[i]) return false;
+  }
+  return true;
+}
+
+bool _envMapsEqual(Object? a, Object? b) {
+  final ma = (a is Map ? a.cast<String, String>() : const <String, String>{});
+  final mb = (b is Map ? b.cast<String, String>() : const <String, String>{});
+  if (ma.length != mb.length) return false;
+  for (final key in ma.keys) {
+    if (ma[key] != mb[key]) return false;
+  }
+  return true;
+}
+
 class _SettingsForm extends StatefulWidget {
   final String workspaceId;
   final Map<String, dynamic> workspace;
@@ -189,7 +231,7 @@ class _SettingsForm extends StatefulWidget {
   final String defaultImage;
   final bool allowAutostart;
   final String? saveMessage;
-  final bool pendingEgressRestart;
+  final bool pendingRestart;
   final bool netfilterEnabled;
   final Future<void> Function(Map<String, dynamic>) onSave;
 
@@ -200,7 +242,7 @@ class _SettingsForm extends StatefulWidget {
     required this.defaultImage,
     required this.allowAutostart,
     required this.saveMessage,
-    required this.pendingEgressRestart,
+    required this.pendingRestart,
     required this.netfilterEnabled,
     required this.onSave,
   });
@@ -401,9 +443,9 @@ class _SettingsFormState extends State<_SettingsForm> {
             children: [
               if (widget.saveMessage != null) ...[
                 _buildSaveMessage(),
-                if (widget.pendingEgressRestart) ...[
+                if (widget.pendingRestart) ...[
                   const SizedBox(height: 8),
-                  _buildEgressRestartNotice(),
+                  _buildRestartNotice(),
                 ],
                 const SizedBox(height: 16),
               ],
@@ -434,12 +476,11 @@ class _SettingsFormState extends State<_SettingsForm> {
     );
   }
 
-  /// #1365: the egress filter is baked into the container at create time
-  /// (the OCI createContainer hook installs the iptables ruleset before the
-  /// entrypoint runs), so a saved allowed_domains change has no effect on a
-  /// running container until it's restarted. Shown under the save message
-  /// only when the change landed and a container is live.
-  Widget _buildEgressRestartNotice() {
+  /// Shown under the save message when a create-time field (image, mounts,
+  /// env, service_command, allowed_domains) was changed on a running
+  /// workspace — the change won't take effect until the container is
+  /// restarted (#1749, #1365).
+  Widget _buildRestartNotice() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
@@ -453,8 +494,8 @@ class _SettingsFormState extends State<_SettingsForm> {
           const SizedBox(width: 8),
           const Expanded(
             child: Text(
-              'Restart the workspace container to apply the new egress '
-              'filter — the ruleset is set at container create time.',
+              'Restart the workspace to apply these changes — '
+              'they take effect at container create time.',
             ),
           ),
         ],

@@ -2787,6 +2787,116 @@ class TestMainCLI:
         body = client.put.call_args[1]["json"]
         assert body["auto_start"] is True
 
+    def test_edit_restart_needed_decline(self, logged_in_cfg, monkeypatch):
+        """Running ws + create-time field → warn, user declines restart."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            running=True,
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch("builtins.input", return_value="n"):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(
+                    main.app,
+                    ["edit", "my-ws", "--image", "new-img"],
+                )
+                assert result.exit_code == 0
+                assert "Updated" in result.stdout
+
+        client.restart_workspace.assert_not_called()
+
+    def test_edit_restart_needed_accept(self, logged_in_cfg, monkeypatch):
+        """Running ws + create-time field → warn, user accepts restart."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            running=True,
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch("builtins.input", return_value="y"):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(
+                    main.app,
+                    ["edit", "my-ws", "--image", "new-img"],
+                )
+                assert result.exit_code == 0
+                assert "Restarted" in result.stdout
+
+        client.restart_workspace.assert_called_once_with("my-ws")
+
+    def test_edit_no_restart_when_stopped(self, logged_in_cfg, monkeypatch):
+        """Stopped ws + create-time field → no restart prompt."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            running=False,
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["edit", "my-ws", "--image", "new-img"],
+            )
+            assert result.exit_code == 0
+            assert "Restart" not in result.stdout
+
+        client.restart_workspace.assert_not_called()
+
+    def test_edit_no_restart_for_name(self, logged_in_cfg, monkeypatch):
+        """Running ws + non-create-time field (name) → no restart prompt."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            running=True,
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["edit", "my-ws", "--name", "renamed"],
+            )
+            assert result.exit_code == 0
+            assert "Restart" not in result.stdout
+
+        client.restart_workspace.assert_not_called()
+
     def test_dup_workspace(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
 
