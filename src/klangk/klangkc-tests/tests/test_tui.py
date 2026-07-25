@@ -357,6 +357,97 @@ def test_auth_mode_variants(monkeypatch, redirect_xdg):
     assert TuiState().auth_mode() == "password"
 
 
+def test_validate_server_for_switch_unreachable(monkeypatch, redirect_xdg):
+    t = TuiState("https://x.example")
+    monkeypatch.setattr(
+        tui_state_mod, "fetch_config", lambda url: tui_state_mod._UNREACHABLE
+    )
+    assert t.validate_server_for_switch("https://x.example") == "unreachable"
+
+
+def test_validate_server_for_switch_not_klangk(monkeypatch, redirect_xdg):
+    t = TuiState("https://x.example")
+    monkeypatch.setattr(tui_state_mod, "fetch_config", lambda url: None)
+    assert t.validate_server_for_switch("https://x.example") == "unreachable"
+
+
+def test_validate_server_for_switch_none_auth(monkeypatch, redirect_xdg):
+    t = TuiState("https://x.example")
+    monkeypatch.setattr(
+        tui_state_mod,
+        "fetch_config",
+        lambda url: {"auth_modes": "none"},
+    )
+    assert t.validate_server_for_switch("https://x.example") == "ok"
+
+
+def test_validate_server_for_switch_no_token(monkeypatch, redirect_xdg):
+    t = TuiState("https://x.example")
+    monkeypatch.setattr(
+        tui_state_mod,
+        "fetch_config",
+        lambda url: {"auth_modes": "password"},
+    )
+    assert t.validate_server_for_switch("https://x.example") == "auth_required"
+
+
+def test_validate_server_for_switch_token_valid(monkeypatch, redirect_xdg):
+    add_server_to_config("x", "https://x.example")
+    st = CLIState()
+    st.set_credentials("https://x.example", "me@test", "tok123")
+    st.save()
+    t = TuiState("https://x.example")
+    monkeypatch.setattr(
+        tui_state_mod,
+        "fetch_config",
+        lambda url: {"auth_modes": "password"},
+    )
+    monkeypatch.setattr(
+        tui_state_mod,
+        "http_request",
+        lambda *a, **kw: FakeResp(200, {"email": "me@test"}),
+    )
+    assert t.validate_server_for_switch("https://x.example") == "ok"
+
+
+def test_validate_server_for_switch_token_expired(monkeypatch, redirect_xdg):
+    add_server_to_config("x", "https://x.example")
+    st = CLIState()
+    st.set_credentials("https://x.example", "me@test", "old-tok")
+    st.save()
+    t = TuiState("https://x.example")
+    monkeypatch.setattr(
+        tui_state_mod,
+        "fetch_config",
+        lambda url: {"auth_modes": "password"},
+    )
+    monkeypatch.setattr(
+        tui_state_mod,
+        "http_request",
+        lambda *a, **kw: FakeResp(401, {}),
+    )
+    assert t.validate_server_for_switch("https://x.example") == "auth_required"
+
+
+def test_validate_server_for_switch_http_error(monkeypatch, redirect_xdg):
+    add_server_to_config("x", "https://x.example")
+    st = CLIState()
+    st.set_credentials("https://x.example", "me@test", "tok123")
+    st.save()
+    t = TuiState("https://x.example")
+    monkeypatch.setattr(
+        tui_state_mod,
+        "fetch_config",
+        lambda url: {"auth_modes": "password"},
+    )
+
+    def raise_error(*a, **kw):
+        raise httpx.ConnectError("fail")
+
+    monkeypatch.setattr(tui_state_mod, "http_request", raise_error)
+    assert t.validate_server_for_switch("https://x.example") == "unreachable"
+
+
 def test_oidc_providers(monkeypatch, redirect_xdg):
     monkeypatch.setattr(
         tui_state_mod,
@@ -970,6 +1061,7 @@ async def test_server_switch_and_add(monkeypatch):
     )
     switched = {}
     st.switch_server = lambda url: switched.setdefault("url", url)
+    st.validate_server_for_switch = lambda url: "ok"
     app = KlangkApp(st)
     async with app.run_test() as pilot:
         app.push_screen(ServerSwitchScreen())
@@ -1051,6 +1143,68 @@ async def test_server_switch_and_add(monkeypatch):
         await app5.workers.wait_for_complete()
         await pilot.pause()
         assert added5["a"] == ("staging", "https://s.example")
+
+
+# --- server switch validation (#1842) ---
+
+
+async def test_server_switch_unreachable(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    st = _authed_state(
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("a", "https://a.example"),
+            tui_state_mod.ServerInfo("b", "https://b.example"),
+        ],
+        current_url=lambda: "https://a.example",
+    )
+    switched = {}
+    st.switch_server = lambda url: switched.setdefault("url", url)
+    st.validate_server_for_switch = lambda url: "unreachable"
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(ServerSwitchScreen())
+        await pilot.wait_for_scheduled_animations()
+        app.screen.on_list_view_selected(FakeSelected("https://b.example"))
+        await app.workers.wait_for_complete()
+        # switch_server should NOT have been called
+        assert switched == {}
+        # should still be on ServerSwitchScreen with error message
+        assert isinstance(app.screen, ServerSwitchScreen)
+        msg = str(app.screen.query_one("#switch_msg").render())
+        assert "Cannot reach" in msg
+
+
+async def test_server_switch_auth_required(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    st = _authed_state(
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("a", "https://a.example"),
+            tui_state_mod.ServerInfo("b", "https://b.example"),
+        ],
+        current_url=lambda: "https://a.example",
+    )
+    switched = {}
+    st.switch_server = lambda url: switched.setdefault("url", url)
+    st.validate_server_for_switch = lambda url: "auth_required"
+    app = KlangkApp(st)
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(ServerSwitchScreen())
+        await pilot.wait_for_scheduled_animations()
+        app.screen.on_list_view_selected(FakeSelected("https://b.example"))
+        await app.workers.wait_for_complete()
+        await pilot.wait_for_scheduled_animations()
+        # switch_server IS called (server changed)
+        assert switched["url"] == "https://b.example"
+        # should land on LoginScreen
+        assert isinstance(app.screen, scr.LoginScreen)
 
 
 # --- edit server (#1762) ---

@@ -286,6 +286,36 @@ class TuiState:
 
     # --- server switching / adding ---
 
+    def validate_server_for_switch(self, url: str) -> str:
+        """Pre-flight check before switching to *url*.
+
+        Returns ``"ok"``, ``"unreachable"``, or ``"auth_required"``.
+        """
+        config = fetch_config(url)
+        if config == _UNREACHABLE:
+            return "unreachable"
+        if not isinstance(config, dict):
+            return "unreachable"
+        auth_mode = config.get("auth_modes", "password")
+        if auth_mode == "none":
+            return "ok"
+        token = self.state().get_token(url)
+        if token is None:
+            return "auth_required"
+        try:
+            resp = http_request(
+                url,
+                "GET",
+                "/api/v1/auth/me",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5.0,
+            )
+            if resp.status_code == 401:
+                return "auth_required"
+        except httpx.HTTPError:
+            return "unreachable"
+        return "ok"
+
     def switch_server(self, url: str) -> None:
         state = self.state()
         state.active_server = url

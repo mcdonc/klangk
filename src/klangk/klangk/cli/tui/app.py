@@ -227,6 +227,16 @@ class KlangkApp(App):
         if isinstance(top, MainScreen):
             top.refresh_lists()
 
+    def server_changed_needs_login(self) -> None:
+        """Switch server then show LoginScreen (invalid/missing creds)."""
+        while self.screen_stack and not isinstance(
+            self.screen_stack[-1], MainScreen
+        ):
+            self.pop_screen()
+        if self.screen_stack and isinstance(self.screen_stack[-1], MainScreen):
+            self.pop_screen()
+        self.push_screen(LoginScreen())
+
     def refresh_workspaces(self) -> None:
         """Refresh the workspace list on the MainScreen (if present)."""
         for screen in reversed(self.screen_stack):
