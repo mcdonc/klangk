@@ -566,6 +566,7 @@ class MainScreen(Screen):
 
     def on_mount(self) -> None:
         self.app.title = "Klangk: Workspaces"
+        self._initial_focus_done = False
         self.refresh_lists()
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(self._status_loop, name="status-ws")
@@ -682,7 +683,9 @@ class MainScreen(Screen):
             if wid:
                 self._ws_by_id[wid] = ws
         self._refresh_status()
-        self._focus_visible_list()
+        if not self._initial_focus_done:
+            self._initial_focus_done = True
+            self._focus_visible_list()
 
     async def _safe_list(self, *, owned: bool) -> list:
         state = self.app.tui_state
