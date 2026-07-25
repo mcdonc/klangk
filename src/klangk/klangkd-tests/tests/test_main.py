@@ -1722,6 +1722,139 @@ class TestPidFile:
         assert path.name == f"klangk-{monkeypatch_id}.pid"
 
 
+class TestCheckPidPreflight:
+    """Tests for launcher._check_pid_preflight (#1837)."""
+
+    def test_no_instance_id_file(self, tmp_path):
+        from klangk.launcher import _check_pid_preflight
+
+        settings = make_settings(
+            {
+                "KLANGKD_STATE_DIR": str(tmp_path / "state"),
+                "KLANGKD_DATA_DIR": str(tmp_path / "data"),
+            }
+        )
+        assert _check_pid_preflight(settings) is None
+
+    def test_empty_instance_id(self, tmp_path):
+        from klangk.launcher import _check_pid_preflight
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "instance-id").write_text("")
+        settings = make_settings(
+            {
+                "KLANGKD_STATE_DIR": str(tmp_path / "state"),
+                "KLANGKD_DATA_DIR": str(data_dir),
+            }
+        )
+        assert _check_pid_preflight(settings) is None
+
+    def test_no_pid_file(self, tmp_path):
+        from klangk.launcher import _check_pid_preflight
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "instance-id").write_text("test-id")
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        settings = make_settings(
+            {
+                "KLANGKD_STATE_DIR": str(state_dir),
+                "KLANGKD_DATA_DIR": str(data_dir),
+            }
+        )
+        assert _check_pid_preflight(settings) is None
+
+    def test_stale_pid(self, tmp_path):
+        from klangk.launcher import _check_pid_preflight
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "instance-id").write_text("test-id")
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        pid_file = state_dir / "klangk-test-id.pid"
+        pid_file.write_text("2000000")
+        settings = make_settings(
+            {
+                "KLANGKD_STATE_DIR": str(state_dir),
+                "KLANGKD_DATA_DIR": str(data_dir),
+            }
+        )
+        assert _check_pid_preflight(settings) is None
+        assert not pid_file.exists()
+
+    def test_own_pid(self, tmp_path):
+        from klangk.launcher import _check_pid_preflight
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "instance-id").write_text("test-id")
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "klangk-test-id.pid").write_text(str(os.getpid()))
+        settings = make_settings(
+            {
+                "KLANGKD_STATE_DIR": str(state_dir),
+                "KLANGKD_DATA_DIR": str(data_dir),
+            }
+        )
+        assert _check_pid_preflight(settings) is None
+
+    def test_live_foreign_pid(self, tmp_path):
+        from klangk.launcher import _check_pid_preflight
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "instance-id").write_text("test-id")
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        ppid = os.getppid()
+        (state_dir / "klangk-test-id.pid").write_text(str(ppid))
+        settings = make_settings(
+            {
+                "KLANGKD_STATE_DIR": str(state_dir),
+                "KLANGKD_DATA_DIR": str(data_dir),
+            }
+        )
+        assert _check_pid_preflight(settings) == ppid
+
+    def test_permission_error_pid(self, tmp_path):
+        from klangk.launcher import _check_pid_preflight
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "instance-id").write_text("test-id")
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "klangk-test-id.pid").write_text("1")
+        settings = make_settings(
+            {
+                "KLANGKD_STATE_DIR": str(state_dir),
+                "KLANGKD_DATA_DIR": str(data_dir),
+            }
+        )
+        assert _check_pid_preflight(settings) == 1
+
+    def test_invalid_pid_content(self, tmp_path):
+        from klangk.launcher import _check_pid_preflight
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "instance-id").write_text("test-id")
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "klangk-test-id.pid").write_text("not-a-number")
+        settings = make_settings(
+            {
+                "KLANGKD_STATE_DIR": str(state_dir),
+                "KLANGKD_DATA_DIR": str(data_dir),
+            }
+        )
+        assert _check_pid_preflight(settings) is None
+
+
 class TestBuildApp:
     """Tests for build_app() composition root (#1426)."""
 
