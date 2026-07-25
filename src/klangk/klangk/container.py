@@ -1375,12 +1375,26 @@ class ContainerRegistry:
         try:
             await self.app.state.podman.start_container(cid)
         except podman.PodmanError as exc:
-            if "port is already allocated" not in exc.message:
+            if not self._is_port_conflict(exc):
                 raise
             await self._resolve_port_conflict(
                 cid, container_name, publish, self.app.state.podman
             )
-            await self.app.state.podman.start_container(cid)
+            # Retry with back-off; ports may linger in TIME_WAIT after
+            # the previous container's pasta process exits.
+            last_exc = exc
+            for delay in (0.5, 1.5):
+                await asyncio.sleep(delay)
+                try:
+                    await self.app.state.podman.start_container(cid)
+                    last_exc = None
+                    break
+                except podman.PodmanError as retry_exc:
+                    if not self._is_port_conflict(retry_exc):
+                        raise
+                    last_exc = retry_exc
+            if last_exc is not None:
+                raise last_exc
         logger.info(
             "workspace-open: boot container (podman start): %.3fs",
             time.monotonic() - t_podman_start,
@@ -1414,6 +1428,14 @@ class ContainerRegistry:
         await self.app.state.podman.wait_for_container_ready(cid)
 
         return cid
+
+    @staticmethod
+    def _is_port_conflict(exc: podman.PodmanError) -> bool:
+        """True if the error indicates a port bind / allocation conflict."""
+        if exc.status == 409:
+            return True
+        low = exc.message.lower()
+        return "port" in low and "already" in low
 
     async def _resolve_port_conflict(
         self,
