@@ -97,16 +97,41 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(event.button.id == "yes")
 
 
-class ServerListView(ListView):
-    """Server picker that releases focus downward at the last row, so the
-    user can continue with Down into the URL/input fields without Tab (#1781)."""
+class SpatialListView(ListView):
+    """A ListView that releases focus at its top/bottom boundaries to a
+    target widget, enabling spatial navigation without Tab (#1781).
+
+    Subclasses (or instances) declare ``SPATIAL_UP_TARGET`` and/or
+    ``SPATIAL_DOWN_TARGET`` — a widget type or CSS selector that receives
+    focus when Up is pressed at the first row or Down at the last.
+    """
+
+    SPATIAL_UP_TARGET = None
+    SPATIAL_DOWN_TARGET = None
+
+    def action_cursor_up(self) -> None:
+        if self.index in (0, None) and self.SPATIAL_UP_TARGET:
+            self.screen.query_one(self.SPATIAL_UP_TARGET).focus()
+        else:
+            super().action_cursor_up()
 
     def action_cursor_down(self) -> None:
         items = list(self.query(ListItem))
-        if self.index is not None and items and self.index >= len(items) - 1:
-            self.screen.query_one("#server_input", Input).focus()
+        if (
+            self.index is not None
+            and items
+            and self.index >= len(items) - 1
+            and self.SPATIAL_DOWN_TARGET
+        ):
+            self.screen.query_one(self.SPATIAL_DOWN_TARGET).focus()
         else:
             super().action_cursor_down()
+
+
+class ServerListView(SpatialListView):
+    """Server picker — Down from the last row enters the URL input."""
+
+    SPATIAL_DOWN_TARGET = "#server_input"
 
 
 class SpatialNavScreen(Screen):
@@ -400,19 +425,10 @@ class LoginScreen(SpatialNavScreen):
             self._attempt_password()
 
 
-class WorkspaceListView(ListView):
-    """A workspace list that hands focus back to the tab strip when the
-    cursor is at the top and Up is pressed (#1781).
+class WorkspaceListView(SpatialListView):
+    """Workspace list — Up from the first row returns to the tab strip."""
 
-    This lets the user move between the “Owned by me” / “Shared to me” tabs
-    and the workspace list with just Up/Down — no Tab/Shift-Tab needed.
-    """
-
-    def action_cursor_up(self) -> None:
-        if self.index in (0, None):
-            self.screen.query_one(Tabs).focus()
-        else:
-            super().action_cursor_up()
+    SPATIAL_UP_TARGET = Tabs
 
 
 class MainScreen(Screen):
@@ -633,7 +649,7 @@ class WorkspaceDetailScreen(Screen):
             Static("", id="detail_title"),
             Static("", id="detail_body"),
             Static("Terminals (own):", id="term_label"),
-            ListView(id="term_list"),
+            SpatialListView(id="term_list"),
             Static("", id="detail_msg"),
             id="detail_box",
         )
@@ -1687,7 +1703,7 @@ class ServerSwitchScreen(Screen):
         yield Vertical(
             Static("Switch server", classes="title"),
             Static("", id="switch_msg"),
-            ListView(id="server_options"),
+            SpatialListView(id="server_options"),
             id="switch_box",
         )
         yield Footer()
