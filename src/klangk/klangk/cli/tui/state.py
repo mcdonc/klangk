@@ -10,6 +10,7 @@ deps, and sibling ``cli`` modules.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,6 +31,8 @@ from ..config import (
     remove_server_from_config,
 )
 from ..transport import http_request
+
+logger = logging.getLogger(__name__)
 
 
 class LoginError(Exception):
@@ -102,7 +105,15 @@ class TuiState:
         return self.state().get_email(url)
 
     def is_authenticated(self) -> bool:
-        return self.token() is not None
+        url = self.current_url()
+        tok = self.token()
+        if tok is None:
+            logger.debug(
+                "is_authenticated=False: url=%s, token=%s",
+                url,
+                "present" if tok else "None",
+            )
+        return tok is not None
 
     def client(self) -> KlangkClient:
         return KlangkClient(self.current_url(), self.token())

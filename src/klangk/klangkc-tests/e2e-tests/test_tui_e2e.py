@@ -189,6 +189,39 @@ class TestTuiE2E:
             msg = str(app.screen.query_one("#message").render())
             assert "required" in msg.lower()
 
+    async def test_reentry_preserves_auth(
+        self, base_url, token, tmp_path, monkeypatch
+    ):
+        """Quitting and re-launching skips the login screen (#1813)."""
+        config_path = tmp_path / "klangk.yaml"
+        state_path = tmp_path / "state.yaml"
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+
+        # First launch: seed credentials (simulates a prior login session).
+        add_server_to_config("e2e", base_url)
+        st = CLIState.load()
+        st.set_credentials(base_url, "tuiuser@example.com", token)
+        st.save()
+
+        # First TUI instance: should go straight to MainScreen.
+        state1 = TuiState()
+        app1 = KlangkApp(state1)
+        async with app1.run_test() as pilot:
+            await pilot.pause()
+            await pilot.pause()
+            assert isinstance(app1.screen, MainScreen)
+
+        # Second TUI instance (simulates re-entry): new TuiState reads
+        # persisted state — should also skip login.
+        state2 = TuiState()
+        assert state2.is_authenticated()
+        app2 = KlangkApp(state2)
+        async with app2.run_test() as pilot:
+            await pilot.pause()
+            await pilot.pause()
+            assert isinstance(app2.screen, MainScreen)
+
     # -- workspace list --
 
     async def test_authenticated_shows_workspace_list(self, tui_state):
