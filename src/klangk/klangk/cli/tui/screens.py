@@ -281,8 +281,7 @@ class LoginScreen(SpatialNavScreen):
 
     def _show_no_server(self) -> None:
         self.query_one("#server_line", Static).update(
-            "No server selected. Pick one below or enter a URL,"
-            " then press 'Use server'."
+            "No server selected — pick one or enter a URL below."
         )
         self._disable_credentials()
 
