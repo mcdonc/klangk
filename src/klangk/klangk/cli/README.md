@@ -26,6 +26,7 @@ klangk shell my-project               # drop into a shell
 - `exec` — run a command in a container
 - `sync` — sync files to/from a container
 - `create` / `rm` / `edit` / `dup` — manage workspaces
+- `stop` / `start` / `restart` — stop, start, or restart a workspace container
 - `export` / `import` — archive and restore workspaces
 - `terminals` / `share` / `unshare` — shared terminal management
 - `volumes` — manage named volumes
