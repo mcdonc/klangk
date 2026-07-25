@@ -10,7 +10,17 @@ from __future__ import annotations
 import httpx
 import pytest
 from rich.text import Text
-from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    Select,
+    Static,
+    Tabs,
+)
 
 from klangk.cli import config as cfgmod
 from klangk.cli import tui as tui_pkg
@@ -70,6 +80,18 @@ class FakeOptionSelected:
 
     def __init__(self, option_id):
         self.option = type("Opt", (), {"id": option_id})()
+
+
+class FakeSelected:
+    """Stand-in for ListView.Selected carrying an item name."""
+
+    def __init__(self, name):
+        self.item = type("Item", (), {"name": name})()
+
+
+def _lv_texts(list_view):
+    """Rendered text of each Label in a ListView (content assertions)."""
+    return [str(lab.render()) for lab in list_view.query(Label)]
 
 
 class FakeBtnPress:
@@ -769,9 +791,7 @@ async def test_server_switch_and_add(monkeypatch):
         app.push_screen(ServerSwitchScreen())
         await pilot.pause()
         assert isinstance(app.screen, ServerSwitchScreen)
-        app.screen.on_option_list_option_selected(
-            FakeOptionSelected("https://b.example")
-        )
+        app.screen.on_list_view_selected(FakeSelected("https://b.example"))
         await pilot.pause()
         assert switched["url"] == "https://b.example"
         assert isinstance(app.screen, MainScreen)
@@ -892,8 +912,8 @@ async def test_main_screen_lists_and_status(monkeypatch):
     )
     async with app.run_test():
         m = app.screen
-        assert m.query_one("#owned_list").option_count == 2
-        assert m.query_one("#shared_list").option_count == 1
+        assert len(m.query_one("#owned_list", ListView).query(ListItem)) == 2
+        assert len(m.query_one("#shared_list", ListView).query(ListItem)) == 1
         status = str(m.query_one("#status").render())
         assert "https://x.example" in status
         assert "me@x.example" in status
@@ -913,8 +933,48 @@ async def test_main_screen_list_error_shows_placeholder(monkeypatch):
     )
     async with app.run_test():
         m = app.screen
-        assert m.query_one("#owned_list").option_count == 1
-        assert m.query_one("#shared_list").option_count == 1
+        assert len(m.query_one("#owned_list", ListView).query(ListItem)) == 1
+        assert len(m.query_one("#shared_list", ListView).query(ListItem)) == 1
+
+
+async def test_down_from_tabs_enters_workspace_list(monkeypatch):
+    # Down arrow from the tab strip focuses the workspace list (#1781).
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    b = _wsobj("beta")
+    app = KlangkApp(_ws(owned=[a, b]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        m = app.screen
+        m.query_one(Tabs).focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        assert isinstance(app.focused, ListView)
+        assert app.focused.index == 0  # first row, not the second
+
+
+async def test_up_from_list_returns_to_tabs(monkeypatch):
+    # Up arrow from the first workspace row returns focus to the tab strip.
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    app = KlangkApp(_ws(owned=[a]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        m = app.screen
+        lv = m.query_one("#owned_list", ListView)
+        lv.focus()
+        lv.index = 0
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert isinstance(app.focused, Tabs)
 
 
 async def test_main_screen_select_opens_detail(monkeypatch):
@@ -927,7 +987,7 @@ async def test_main_screen_select_opens_detail(monkeypatch):
     st.find_workspace = lambda n: a
     app = KlangkApp(st)
     async with app.run_test() as pilot:
-        app.screen.on_option_list_option_selected(FakeOptionSelected("alpha"))
+        app.screen.on_list_view_selected(FakeSelected("alpha"))
         await pilot.pause()
         assert isinstance(app.screen, WorkspaceDetailScreen)
 
@@ -939,7 +999,7 @@ async def test_main_screen_select_empty_no_push(monkeypatch):
     monkeypatch.setattr(scr, "listen_for_status", noop)
     app = KlangkApp(_ws())  # empty lists -> placeholder rows
     async with app.run_test() as pilot:
-        app.screen.on_option_list_option_selected(FakeOptionSelected(""))
+        app.screen.on_list_view_selected(FakeSelected(""))
         await pilot.pause()
         assert isinstance(app.screen, MainScreen)
 
@@ -1290,8 +1350,8 @@ async def test_main_screen_markup_name_safe(monkeypatch):
     a = _wsobj("x[red]y")
     app = KlangkApp(_ws(owned=[a]))
     async with app.run_test():
-        ol = app.screen.query_one("#owned_list")
-        assert ol.option_count == 1
+        lv = app.screen.query_one("#owned_list", ListView)
+        assert len(lv.query(ListItem)) == 1
         prompt = app.screen._fmt(a)
         assert isinstance(prompt, Text)
         assert "x[red]y" in str(prompt)  # literal, not markup-parsed
@@ -1459,10 +1519,10 @@ async def test_detail_terminals_listed(monkeypatch):
         await pilot.pause()
         await app.screen._load_terminals()  # deterministic render
         await pilot.pause()
-        tl = app.screen.query_one("#term_list")
-        assert tl.option_count == 2
-        assert "main" in str(tl.get_option_at_index(0).prompt)
-        assert "build" in str(tl.get_option_at_index(1).prompt)
+        tl = app.screen.query_one("#term_list", ListView)
+        assert len(tl.query(ListItem)) == 2
+        assert "main" in _lv_texts(tl)[0]
+        assert "build" in _lv_texts(tl)[1]
 
 
 async def test_detail_terminals_empty_placeholder(monkeypatch):
@@ -1479,8 +1539,8 @@ async def test_detail_terminals_empty_placeholder(monkeypatch):
         await pilot.pause()
         await app.screen._load_terminals()
         await pilot.pause()
-        tl = app.screen.query_one("#term_list")
-        assert tl.option_count == 1  # the (no terminals) placeholder
+        tl = app.screen.query_one("#term_list", ListView)
+        assert len(tl.query(ListItem)) == 1  # the (no terminals) placeholder
 
 
 async def test_detail_terminal_load_failure(monkeypatch):
@@ -1500,7 +1560,10 @@ async def test_detail_terminal_load_failure(monkeypatch):
         await pilot.pause()
         await app.screen._load_terminals()  # swallows the error
         await pilot.pause()
-        assert app.screen.query_one("#term_list").option_count == 1
+        assert (
+            len(app.screen.query_one("#term_list", ListView).query(ListItem))
+            == 1
+        )
 
 
 async def test_detail_delete_terminal_guard_last(monkeypatch):
@@ -1521,7 +1584,7 @@ async def test_detail_delete_terminal_guard_last(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
-        d.query_one("#term_list").highlighted = 0
+        d.query_one("#term_list").index = 0
         d.action_delete_terminal()  # only terminal -> refused
         await pilot.pause()
         assert "Can't delete the last terminal" in str(
@@ -1545,10 +1608,12 @@ async def test_detail_delete_terminal_no_selection(monkeypatch):
         await pilot.pause()
         d = app.screen
         # nothing highlighted -> no-op
-        d.query_one("#term_list").highlighted = None
+        d.query_one("#term_list").index = None
         d.action_delete_terminal()
         await pilot.pause()
-        assert d.query_one("#term_list").option_count == 2  # unchanged
+        assert (
+            len(d.query_one("#term_list", ListView).query(ListItem)) == 2
+        )  # unchanged
 
 
 async def test_detail_delete_terminal_placeholder(monkeypatch):
@@ -1566,10 +1631,12 @@ async def test_detail_delete_terminal_placeholder(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
-        d.query_one("#term_list").highlighted = 0  # the placeholder
+        d.query_one("#term_list").index = 0  # the placeholder
         d.action_delete_terminal()  # opt.id == "" -> no-op
         await pilot.pause()
-        assert d.query_one("#term_list").option_count == 1  # unchanged
+        assert (
+            len(d.query_one("#term_list", ListView).query(ListItem)) == 1
+        )  # unchanged
 
 
 async def test_detail_delete_terminal(monkeypatch):
@@ -1593,13 +1660,13 @@ async def test_detail_delete_terminal(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
-        d.query_one("#term_list").highlighted = 1
+        d.query_one("#term_list").index = 1
         d.action_delete_terminal()
         for _ in range(3):
             await pilot.pause()
         assert closed.get("i") == 1
         assert "Deleted terminal 1" in str(d.query_one("#detail_msg").render())
-        assert d.query_one("#term_list").option_count == 1
+        assert len(d.query_one("#term_list", ListView).query(ListItem)) == 1
 
 
 async def test_detail_delete_terminal_failure(monkeypatch):
@@ -1691,11 +1758,9 @@ async def test_main_screen_auth_expired_placeholder(monkeypatch):
         _ws(list_owned_workspaces=boom, list_shared_workspaces=boom)
     )
     async with app.run_test():
-        ol = app.screen.query_one("#owned_list")
-        assert ol.option_count == 1
-        assert (
-            "session expired" in str(ol.get_option_at_index(0).prompt).lower()
-        )
+        lv = app.screen.query_one("#owned_list", ListView)
+        assert len(lv.query(ListItem)) == 1
+        assert "session expired" in _lv_texts(lv)[0].lower()
 
 
 async def test_detail_auth_expired_message(monkeypatch):
@@ -1761,7 +1826,9 @@ async def test_detail_delete_terminal_empty_result(monkeypatch):
         await d._do_delete_terminal(1)
         await pilot.pause()
         assert "Delete failed" in str(d.query_one("#detail_msg").render())
-        assert d.query_one("#term_list").option_count == 2  # unchanged
+        assert (
+            len(d.query_one("#term_list", ListView).query(ListItem)) == 2
+        )  # unchanged
 
 
 # ---------------------------------------------------------------------------
@@ -3116,7 +3183,7 @@ async def test_login_server_picker(monkeypatch):
         )
 
         # known alias -> switch (routed through the option-selected handler)
-        login.on_option_list_option_selected(FakeOptionSelected("prod"))
+        login.on_list_view_selected(FakeSelected("prod"))
         await pilot.pause()
         assert calls.get("switch") == "https://prod.example"
 
@@ -3166,9 +3233,9 @@ async def test_populate_servers_dedups_default_udsk(monkeypatch):
     )
     app = KlangkApp(st)
     async with app.run_test():
-        ol = app.screen.query_one("#server_options", OptionList)
+        ol = app.screen.query_one("#server_options", ListView)
         # only the persisted alias row; no separate "Local klangkd (UDS)" row
-        assert len(ol._options) == 1
+        assert len(ol.query(ListItem)) == 1
 
 
 async def test_login_choose_invalid_server(monkeypatch):
@@ -3277,14 +3344,14 @@ async def test_login_delete_server(monkeypatch):
     app = KlangkApp(st)
     async with app.run_test() as pilot:
         login = app.screen
-        ol = login.query_one("#server_options", OptionList)
+        ol = login.query_one("#server_options", ListView)
         # nothing highlighted -> prompt to select (no dialog)
-        ol.highlighted = None
+        ol.index = None
         login.action_delete_server()
         await pilot.pause()
         assert "Select a server" in str(login.query_one("#message").render())
         # highlight + action -> confirm dialog (not yet deleted)
-        ol.highlighted = 0
+        ol.index = 0
         login.action_delete_server()
         await pilot.pause()
         assert isinstance(app.screen, ConfirmScreen)
@@ -3297,7 +3364,7 @@ async def test_login_delete_server(monkeypatch):
         await pilot.pause()
         assert "u" not in deleted
         # confirm -> deleted
-        ol.highlighted = 0
+        ol.index = 0
         login.action_delete_server()
         await pilot.pause()
         app.screen.dismiss(True)
@@ -3306,7 +3373,7 @@ async def test_login_delete_server(monkeypatch):
         assert "Server deleted" in str(login.query_one("#message").render())
         # confirm but delete returns False -> "Not a saved alias"
         st.delete_server = lambda url: False
-        ol.highlighted = 0
+        ol.index = 0
         login.action_delete_server()
         await pilot.pause()
         app.screen.dismiss(True)
@@ -3341,8 +3408,8 @@ async def test_login_delete_clears_to_no_server(monkeypatch):
     app = KlangkApp(st)
     async with app.run_test() as pilot:
         login = app.screen
-        ol = login.query_one("#server_options", OptionList)
-        ol.highlighted = 0
+        ol = login.query_one("#server_options", ListView)
+        ol.index = 0
         login.action_delete_server()
         await pilot.pause()
         app.screen.dismiss(True)
@@ -3369,15 +3436,15 @@ async def test_switch_screen_delete_server(monkeypatch):
         app.push_screen(ServerSwitchScreen())
         await pilot.pause()
         switch = app.screen
-        ol = switch.query_one("#server_options", OptionList)
+        ol = switch.query_one("#server_options", ListView)
         # nothing highlighted -> no dialog, no delete
-        ol.highlighted = None
+        ol.index = None
         switch.action_delete_server()
         await pilot.pause()
         assert app.screen is switch
         assert "u" not in deleted
         # highlight + action -> dialog; cancel -> not deleted
-        ol.highlighted = 0
+        ol.index = 0
         switch.action_delete_server()
         await pilot.pause()
         assert isinstance(app.screen, ConfirmScreen)
@@ -3385,7 +3452,7 @@ async def test_switch_screen_delete_server(monkeypatch):
         await pilot.pause()
         assert "u" not in deleted
         # confirm -> deleted
-        ol.highlighted = 0
+        ol.index = 0
         switch.action_delete_server()
         await pilot.pause()
         app.screen.dismiss(True)

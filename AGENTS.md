@@ -99,6 +99,24 @@ the same wheel but runs in the user's environment against a remote backend;
 it has no access to the server's `app.state`, settings, or process-local
 singletons.
 
+## TUI spatial navigation (no focus traps)
+
+The textual TUI must use **spatial navigation** — arrow keys move focus
+between logical areas (tab strips, lists, form fields) without requiring
+Tab/Shift-Tab to cross boundaries. Never create **focus traps** (a
+composite widget that swallows all keys and won't release focus without
+Tab). Specifically:
+
+- Down from a tab strip or section header enters the list/pane below it.
+- Up from the first row of a list returns focus to the tab strip above.
+- Left/Right move between sibling columns or tab pages.
+- Tab/Shift-Tab still works as a fallback, but arrows must always be
+  sufficient to reach any element in reading order (top-to-bottom,
+  left-to-right).
+- When implementing a new screen or widget, add the key bridges that let
+  arrows cross its boundaries (see `WorkspaceListView.action_cursor_up`
+  and `MainScreen.on_key` for the pattern).
+
 Practical consequence: anything centralized on the server side as an
 `app.state.*` object (e.g. logging via a `Logger(app)` state object) is
 **not** shared with the CLI — the client keeps its own setup and reaches the
