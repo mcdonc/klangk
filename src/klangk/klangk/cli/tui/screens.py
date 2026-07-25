@@ -559,6 +559,10 @@ class MainScreen(Screen):
     #filter_bar {
         height: auto;
         max-height: 3;
+        display: none;
+    }
+    #filter_bar.visible {
+        display: block;
     }
     #filter_input {
         width: 1fr;
@@ -613,6 +617,8 @@ class MainScreen(Screen):
     # --- filter / sort ---
 
     def action_focus_filter(self) -> None:
+        bar = self.query_one("#filter_bar")
+        bar.add_class("visible")
         self.query_one("#filter_input", Input).focus()
 
     def action_cycle_sort(self) -> None:
@@ -701,12 +707,13 @@ class MainScreen(Screen):
                 return
 
     def on_key(self, event) -> None:
-        # Escape in the filter input: clear text or return focus to list.
+        # Escape in the filter input: clear text or hide bar and return.
         if event.key == "escape" and isinstance(self.focused, Input):
             inp = self.query_one("#filter_input", Input)
             if inp.value:
                 inp.value = ""
             else:
+                self.query_one("#filter_bar").remove_class("visible")
                 self._focus_visible_list()
             event.stop()
             return
