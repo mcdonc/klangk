@@ -3032,25 +3032,12 @@ async def test_detail_new_terminal(monkeypatch):
         create_terminal=_create,
     )
     st.find_workspace = lambda n: a
-    st.current_url = lambda: "https://x.example"
-    spawned = []
-    monkeypatch.setattr(
-        scr.subprocess, "run", lambda cmd, **k: spawned.append(cmd)
-    )
-
-    from contextlib import contextmanager
-
-    @contextmanager
-    def fake_suspend():
-        yield
-
     app = KlangkApp(st)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
         await app.screen._load_terminals()
         await pilot.pause()
-        monkeypatch.setattr(app, "suspend", fake_suspend)
         d = app.screen
         d.action_new_terminal()
         for _ in range(5):
@@ -3058,17 +3045,7 @@ async def test_detail_new_terminal(monkeypatch):
         await app.workers.wait_for_complete()
         assert created["name"] == "term-2"
         assert len(d.query_one("#term_list", ListView).query(ListItem)) == 3
-        assert len(spawned) == 1
-        assert spawned[0] == [
-            scr.sys.executable,
-            "-m",
-            "klangk.cli.main",
-            "--server",
-            "https://x.example",
-            "shell",
-            "alpha",
-            "2",
-        ]
+        assert "Created terminal" in str(d.query_one("#detail_msg").render())
 
 
 async def test_detail_new_terminal_failure(monkeypatch):
