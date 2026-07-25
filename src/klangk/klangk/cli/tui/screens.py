@@ -104,15 +104,42 @@ class ServerListView(ListView):
     def action_cursor_down(self) -> None:
         items = list(self.query(ListItem))
         if self.index is not None and items and self.index >= len(items) - 1:
-            try:
-                self.screen.query_one("#server_input", Input).focus()
-                return
-            except NoMatches:
-                pass
-        super().action_cursor_down()
+            self.screen.query_one("#server_input", Input).focus()
+        else:
+            super().action_cursor_down()
 
 
-class LoginScreen(Screen):
+class SpatialNavScreen(Screen):
+    """Screen mixin for spatial Up/Down navigation between a chain of
+    widgets (inputs, buttons) in reading order (#1781).
+
+    Declare ``SPATIAL_CHAIN`` (widget ids, top-to-bottom) and optionally
+    ``SPATIAL_UP_EXIT`` (the widget id to focus when Up is pressed at the
+    top of the chain). The mixin handles the rest — no per-screen
+    ``on_key`` body needed.
+    """
+
+    SPATIAL_CHAIN: list[str] = []
+    SPATIAL_UP_EXIT: str | None = None
+
+    def on_key(self, event) -> None:
+        fid = getattr(self.focused, "id", None) if self.focused else None
+        if not fid or fid not in self.SPATIAL_CHAIN:
+            return
+        pos = self.SPATIAL_CHAIN.index(fid)
+        if event.key == "up":
+            if pos > 0:
+                event.stop()
+                self.query_one(f"#{self.SPATIAL_CHAIN[pos - 1]}").focus()
+            elif self.SPATIAL_UP_EXIT:
+                event.stop()
+                self.query_one(f"#{self.SPATIAL_UP_EXIT}").focus()
+        elif event.key == "down" and pos < len(self.SPATIAL_CHAIN) - 1:
+            event.stop()
+            self.query_one(f"#{self.SPATIAL_CHAIN[pos + 1]}").focus()
+
+
+class LoginScreen(SpatialNavScreen):
     """Credential screen that also picks the server to log into.
 
     A fresh user with no server configured can pick a known alias, select
@@ -123,7 +150,17 @@ class LoginScreen(Screen):
     password form; ``unreachable`` → diagnostic.
     """
 
-    BINDINGS = [("d", "delete_server", "Delete server")]
+    BINDINGS = [
+        ("d", "delete_server", "Delete server")
+    ]  # spatial nav via SpatialNavScreen mixin
+    SPATIAL_CHAIN = [
+        "server_input",
+        "use_server",
+        "identifier",
+        "password",
+        "login",
+    ]
+    SPATIAL_UP_EXIT = "server_options"
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -157,33 +194,6 @@ class LoginScreen(Screen):
             self._setup_auth()
         else:
             self._show_no_server()
-
-    def on_key(self, event) -> None:
-        # Spatial navigation: Up/Down traverse the login form in reading
-        # order — server list → URL → Use server → email → password →
-        # Log in — without Tab/Shift-Tab (#1781).
-        fid = getattr(self.focused, "id", None) if self.focused else None
-        if not fid:
-            return
-        _chain = [
-            "server_input",
-            "use_server",
-            "identifier",
-            "password",
-            "login",
-        ]
-        if fid not in _chain:
-            return
-        pos = _chain.index(fid)
-        if event.key == "up":
-            event.stop()
-            if pos == 0:
-                self.query_one("#server_options", ServerListView).focus()
-            else:
-                self.query_one(f"#{_chain[pos - 1]}").focus()
-        elif event.key == "down" and pos < len(_chain) - 1:
-            event.stop()
-            self.query_one(f"#{_chain[pos + 1]}").focus()
 
     def _show_no_server(self) -> None:
         self.query_one("#server_line", Static).update(
@@ -400,12 +410,9 @@ class WorkspaceListView(ListView):
 
     def action_cursor_up(self) -> None:
         if self.index in (0, None):
-            try:
-                self.screen.query_one(Tabs).focus()
-                return
-            except NoMatches:
-                pass
-        super().action_cursor_up()
+            self.screen.query_one(Tabs).focus()
+        else:
+            super().action_cursor_up()
 
 
 class MainScreen(Screen):

@@ -3538,6 +3538,62 @@ async def test_login_spatial_nav_full_chain(monkeypatch):
         assert app.focused.id == "use_server"
 
 
+async def test_workspace_list_up_from_nonzero_stays(monkeypatch):
+    # Up from index 1 moves to index 0 (within the list — super path).
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha"), _wsobj("beta")]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        lv = app.screen.query_one("#owned_list", ListView)
+        lv.focus()
+        lv.index = 1
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert lv.index == 0
+        assert isinstance(app.focused, ListView)
+
+
+async def test_login_server_down_from_nonlast_stays(monkeypatch):
+    # Down from index 0 (of 2) stays in the list — super path.
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    cfg = CLIConfig()
+    cfg.servers = {
+        "prod": ServerEntry(url="https://prod.example"),
+        "staging": ServerEntry(url="https://staging.example"),
+    }
+    st = _st(
+        current_url=lambda: None,
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod", "https://prod.example"),
+            tui_state_mod.ServerInfo("staging", "https://staging.example"),
+        ],
+        default_uds=lambda: None,
+        cfg=lambda: cfg,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        login = app.screen
+        lv = login.query_one("#server_options", ListView)
+        lv.focus()
+        lv.index = 0
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        assert lv.index == 1
+        assert isinstance(app.focused, ListView)
+
+
 async def test_switch_screen_delete_server(monkeypatch):
     async def noop(*a, **k):
         return None
