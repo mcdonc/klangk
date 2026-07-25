@@ -28,10 +28,19 @@ class KlangkApp(App):
     Screen {
         align: center top;
     }
-    #login_box, #switch_box, #add_box, #detail_box, #dup_box, #create_box, #edit_box {
+    #login_box, #switch_box, #add_box, #detail_box, #dup_box {
         width: 96;
         max-width: 90%;
         padding: 0 2;
+    }
+    /* Create/edit forms are scrollable: they fill the viewport and scroll
+    when content overflows (mouse wheel, Page Up/Down). (#1783) */
+    #create_box, #edit_box {
+        width: 96;
+        max-width: 90%;
+        height: 1fr;
+        padding: 0 2;
+        overflow-y: auto;
     }
     /* A little air under the server status line, before the picker. */
     #server_line {
@@ -79,8 +88,8 @@ class KlangkApp(App):
     }
     /* Bounded list editors (#1783). */
     .editor-list {
-        height: 3;
-        max-height: 5;
+        height: 4;
+        max-height: 6;
     }
     Collapsible {
         height: auto;

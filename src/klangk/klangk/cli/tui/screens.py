@@ -17,7 +17,7 @@ from rich.text import Text
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.dom import NoMatches
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
@@ -1017,7 +1017,7 @@ class CreateWorkspaceScreen(Screen):
             # (the server applies its default image if none is chosen).
             image_select = Select(self._select_options, id="image")
         yield Header(show_clock=False)
-        yield Vertical(
+        yield VerticalScroll(
             Static("New workspace", classes="title"),
             Static("", id="create_msg"),
             Horizontal(Static("Name"), Input(id="name"), classes="field-row"),
@@ -1341,7 +1341,7 @@ class EditWorkspaceScreen(Screen):
         else:
             image_select = Select(self._select_options, id="image")
         yield Header(show_clock=False)
-        yield Vertical(
+        yield VerticalScroll(
             Static(Text(f"Edit workspace: {self._ws.name}"), classes="title"),
             Static("", id="edit_msg"),
             Horizontal(
