@@ -173,6 +173,20 @@ class SpatialNavScreen(Screen):
             self.query_one(f"#{self.SPATIAL_CHAIN[pos + 1]}").focus()
 
 
+class NonFocusableVerticalScroll(VerticalScroll):
+    """VerticalScroll that stays out of the keyboard-focus cycle.
+
+    Plain ``VerticalScroll`` has ``can_focus = True``, which inserts the
+    container itself into the Tab order.  We only want the form *fields*
+    focusable, not the scroll pane.  (#1783)
+    """
+
+    can_focus = False
+
+
+# Aliased for readability at call-sites that don't care about focusability.
+
+
 class LoginScreen(SpatialNavScreen):
     """Credential screen that also picks the server to log into.
 
@@ -1017,7 +1031,7 @@ class CreateWorkspaceScreen(Screen):
             # (the server applies its default image if none is chosen).
             image_select = Select(self._select_options, id="image")
         yield Header(show_clock=False)
-        yield VerticalScroll(
+        yield NonFocusableVerticalScroll(
             Static("New workspace", classes="title"),
             Static("", id="create_msg"),
             Horizontal(Static("Name"), Input(id="name"), classes="field-row"),
@@ -1347,7 +1361,7 @@ class EditWorkspaceScreen(Screen):
         else:
             image_select = Select(self._select_options, id="image")
         yield Header(show_clock=False)
-        yield VerticalScroll(
+        yield NonFocusableVerticalScroll(
             Static(Text(f"Edit workspace: {self._ws.name}"), classes="title"),
             Static("", id="edit_msg"),
             Horizontal(
