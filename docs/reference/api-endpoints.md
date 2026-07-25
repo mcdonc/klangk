@@ -1376,6 +1376,48 @@ No request body.
 
 ---
 
+### POST `/api/v1/workspaces/{id}/stop`
+
+Stop a running workspace container. Emits terminal status/death frames,
+stops and removes the container, and closes active terminal sessions.
+Idempotent — returns 200 even if the container is already stopped.
+
+**Auth:** JWT required. User must have `terminal` permission on
+`/workspaces/{id}`.
+
+No request body.
+
+```json
+{ "status": "stopped" }
+```
+
+---
+
+### POST `/api/v1/workspaces/{id}/start`
+
+Start a stopped workspace container. Creates a fresh container from the
+workspace config (the service command re-fires via the create choke
+point). No-op if already running.
+
+**Auth:** JWT required. User must have `terminal` permission on
+`/workspaces/{id}`.
+
+No request body.
+
+**Response when started:**
+
+```json
+{ "status": "started" }
+```
+
+**Response when already running:**
+
+```json
+{ "status": "already_running" }
+```
+
+---
+
 ### GET `/api/v1/workspaces/{id}/status`
 
 Return the container status for a workspace.

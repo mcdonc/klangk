@@ -449,6 +449,57 @@ async def restart_workspace(
     return {"status": "restarted"}
 
 
+@router.post("/workspaces/{workspace_id}/stop")
+async def stop_workspace(
+    workspace_id: str,
+    user: dict = Depends(acl.has_permission("terminal", workspace_resource)),
+    app=Depends(get_app_dep),
+):
+    """Stop a running workspace container.
+
+    Emits the terminal status/death frames, stops and removes the
+    container, and closes active terminal sessions.  Idempotent — a
+    404 is returned if the workspace doesn't exist; a no-op (200) if
+    it isn't running.
+    """
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    live_state = app.state.container_registry.get_state(workspace_id)
+    cid = (
+        live_state.container_id
+        if live_state
+        else workspace.get("container_id")
+    )
+    if cid:
+        await app.state.container_registry.notify_workspace_killed(
+            workspace_id
+        )
+        await app.state.container_registry.stop_and_remove_container(cid)
+    await wshandler.reset_workspace_state(app.state.sockets, workspace_id)
+    return {"status": "stopped"}
+
+
+@router.post("/workspaces/{workspace_id}/start")
+async def start_workspace(
+    workspace_id: str,
+    user: dict = Depends(acl.has_permission("terminal", workspace_resource)),
+    app=Depends(get_app_dep),
+):
+    """Start a stopped workspace container.
+
+    Creates a fresh container from the workspace config (service command
+    re-fires via the create choke point).  No-op if already running.
+    """
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if app.state.container_registry.get_state(workspace_id) is not None:
+        return {"status": "already_running"}
+    await app.state.workspaces.start_workspace(workspace)
+    return {"status": "started"}
+
+
 @router.get("/workspaces/{workspace_id}/status")
 async def workspace_status(
     workspace_id: str,

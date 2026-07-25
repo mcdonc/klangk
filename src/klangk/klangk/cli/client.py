@@ -555,6 +555,18 @@ class KlangkClient:
         self.check_auth(resp)
         self._raise_for_status(resp)
 
+    def stop_workspace(self, name: str) -> None:
+        ws = self.resolve_workspace(name)
+        resp = self.post(f"/api/v1/workspaces/{ws.id}/stop")
+        self.check_auth(resp)
+        self._raise_for_status(resp)
+
+    def start_workspace(self, name: str) -> None:
+        ws = self.resolve_workspace(name)
+        resp = self.post(f"/api/v1/workspaces/{ws.id}/start")
+        self.check_auth(resp)
+        self._raise_for_status(resp)
+
     def duplicate_workspace(self, name: str, new_name: str) -> dict:
         ws = self.resolve_workspace(name)
         resp = self.post(

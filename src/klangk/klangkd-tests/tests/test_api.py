@@ -2030,6 +2030,107 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 404
 
+    async def test_stop_workspace(self, client, app, user, registry):
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "stop-me"}
+        )
+        ws_id = create_resp.json()["id"]
+        registry.track_activity("cid-stop", ws_id)
+
+        with (
+            patch.object(
+                registry,
+                "stop_and_remove_container",
+                new_callable=AsyncMock,
+            ) as mock_stop,
+            patch.object(
+                registry,
+                "notify_workspace_killed",
+                new_callable=AsyncMock,
+            ) as mock_killed,
+        ):
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/stop", headers=headers
+            )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "stopped"
+        mock_killed.assert_awaited_once_with(ws_id)
+        mock_stop.assert_awaited_once_with("cid-stop")
+        registry.states.pop(ws_id, None)
+
+    async def test_start_workspace(self, client, app, user):
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "start-me"}
+        )
+        ws_id = create_resp.json()["id"]
+
+        with patch.object(
+            app.state.workspaces,
+            "start_workspace",
+            new_callable=AsyncMock,
+        ) as mock_start:
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/start", headers=headers
+            )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "started"
+        mock_start.assert_awaited_once()
+
+    async def test_start_already_running(self, client, app, user, registry):
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "running"}
+        )
+        ws_id = create_resp.json()["id"]
+        registry.track_activity("cid-run", ws_id)
+
+        with patch.object(
+            app.state.workspaces,
+            "start_workspace",
+            new_callable=AsyncMock,
+        ) as mock_start:
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/start", headers=headers
+            )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "already_running"
+        mock_start.assert_not_awaited()
+        registry.states.pop(ws_id, None)
+
+    async def test_stop_not_found(self, client, user, app_state):
+        headers = await _auth_headers(client)
+        fake_id = "fake-stop-id"
+        await app_state.state.model.acl.add_acl_entry(
+            f"/workspaces/{fake_id}",
+            0,
+            model.ACTION_ALLOW,
+            "terminal",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        resp = await client.post(
+            f"/api/v1/workspaces/{fake_id}/stop", headers=headers
+        )
+        assert resp.status_code == 404
+
+    async def test_start_not_found(self, client, user, app_state):
+        headers = await _auth_headers(client)
+        fake_id = "fake-start-id"
+        await app_state.state.model.acl.add_acl_entry(
+            f"/workspaces/{fake_id}",
+            0,
+            model.ACTION_ALLOW,
+            "terminal",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        resp = await client.post(
+            f"/api/v1/workspaces/{fake_id}/start", headers=headers
+        )
+        assert resp.status_code == 404
+
     async def test_workspace_status_running(self, client, user, registry, app):
         headers = await _auth_headers(client)
         create_resp = await client.post(

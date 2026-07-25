@@ -1081,6 +1081,58 @@ class TestClientLines:
 
         mock_post.assert_called_once_with("/api/v1/workspaces/ws1/restart")
 
+    def test_stop_workspace_calls_post(self):
+        from klangk.cli.client import KlangkClient
+
+        client = KlangkClient("http://test:8995", "tok")
+        list_resp = MagicMock()
+        list_resp.status_code = 200
+        list_resp.json.return_value = {
+            "items": [
+                {
+                    "id": "ws1",
+                    "name": "ws1",
+                    "created_at": "2025-01-01T00:00:00Z",
+                }
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
+        stop_resp = MagicMock()
+        stop_resp.status_code = 200
+        with patch.object(client, "get", return_value=list_resp):
+            with patch.object(
+                client, "post", return_value=stop_resp
+            ) as mock_post:
+                client.stop_workspace("ws1")
+        mock_post.assert_called_once_with("/api/v1/workspaces/ws1/stop")
+
+    def test_start_workspace_calls_post(self):
+        from klangk.cli.client import KlangkClient
+
+        client = KlangkClient("http://test:8995", "tok")
+        list_resp = MagicMock()
+        list_resp.status_code = 200
+        list_resp.json.return_value = {
+            "items": [
+                {
+                    "id": "ws1",
+                    "name": "ws1",
+                    "created_at": "2025-01-01T00:00:00Z",
+                }
+            ],
+            "has_more": False,
+            "next_offset": None,
+        }
+        start_resp = MagicMock()
+        start_resp.status_code = 200
+        with patch.object(client, "get", return_value=list_resp):
+            with patch.object(
+                client, "post", return_value=start_resp
+            ) as mock_post:
+                client.start_workspace("ws1")
+        mock_post.assert_called_once_with("/api/v1/workspaces/ws1/start")
+
     def test_list_workspaces_all_pages_traverses_pagination(self):
         from klangk.cli.client import KlangkClient
 
