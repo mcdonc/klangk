@@ -184,6 +184,36 @@ class NonFocusableVerticalScroll(VerticalScroll):
     can_focus = False
 
 
+class TabSkipMixin:
+    """Cycle Tab through a primary field set, skipping editor buttons/lists.
+
+    Editor OptionLists remain focusable (for Delete / "e" keyboard actions)
+    but are mapped to their entry-input position so Tab jumps input-to-input.
+    (#1783)
+    """
+
+    _TAB_ORDER: list[str] = []
+    _LIST_TO_INPUT: dict[str, str] = {}
+
+    def on_key(self, event) -> None:
+        if event.key not in ("tab", "shift+tab"):
+            return
+        fid = getattr(self.focused, "id", None) if self.focused else None
+        base = self._LIST_TO_INPUT.get(fid, fid)
+        if base not in self._TAB_ORDER:
+            return
+        event.stop()
+        idx = self._TAB_ORDER.index(base)
+        step = 1 if event.key == "tab" else -1
+        n = len(self._TAB_ORDER)
+        for i in range(1, n):
+            nxt = (idx + step * i) % n
+            target = self.query_one(f"#{self._TAB_ORDER[nxt]}")
+            if target.display and not target.disabled:
+                target.focus()
+                return
+
+
 # Aliased for readability at call-sites that don't care about focusability.
 
 
@@ -973,7 +1003,7 @@ class DuplicateScreen(ModalScreen):
             self._commit()
 
 
-class CreateWorkspaceScreen(Screen):
+class CreateWorkspaceScreen(TabSkipMixin, Screen):
     """Full-screen workspace create form (parity with Flutter
     ``CreateWorkspaceDialog``).
 
@@ -991,6 +1021,22 @@ class CreateWorkspaceScreen(Screen):
     """
 
     BINDINGS = [("escape", "app.pop_screen", "Back")]
+
+    _TAB_ORDER = [
+        "name",
+        "image",
+        "mount_input",
+        "env_input",
+        "allow_input",
+        "auto_start",
+        "cancel",
+        "create",
+    ]
+    _LIST_TO_INPUT = {
+        "mount_list": "mount_input",
+        "env_list": "env_input",
+        "allow_list": "allow_input",
+    }
 
     def __init__(
         self,
@@ -1094,9 +1140,27 @@ class CreateWorkspaceScreen(Screen):
         cb = self.query_one("#auto_start", Checkbox)
         cb.display = shown
         cb.disabled = not shown
+        self._skip_editors_on_tab()
         self._render_mounts()
         self._render_env()
         self._render_allowed_domains()
+
+    def _skip_editors_on_tab(self) -> None:
+        """Editor buttons stay out of the Tab cycle (#1783).
+
+        Add is reachable via Enter in the input; Remove via mouse click.
+        Lists stay focusable for Delete/"e" keyboard actions but Tab skips
+        them via :class:`TabSkipMixin`.
+        """
+        for wid in (
+            "add_mount",
+            "rm_mount",
+            "add_env",
+            "rm_env",
+            "add_allow",
+            "rm_allow",
+        ):
+            self.query_one(f"#{wid}").can_focus = False
 
     def _msg(self, text: str, *, error: bool = False) -> None:
         self.query_one("#create_msg", Static).update(
@@ -1299,7 +1363,7 @@ class CreateWorkspaceScreen(Screen):
             self._create()
 
 
-class EditWorkspaceScreen(Screen):
+class EditWorkspaceScreen(TabSkipMixin, Screen):
     """Full-screen workspace edit form (parity with Flutter
     ``WorkspaceSettingsPanel``).
 
@@ -1316,6 +1380,22 @@ class EditWorkspaceScreen(Screen):
         ("delete", "remove_item", "Remove"),
         ("e", "edit_item", "Edit"),
     ]
+
+    _TAB_ORDER = [
+        "name",
+        "image",
+        "mount_input",
+        "env_input",
+        "allow_input",
+        "auto_start",
+        "cancel",
+        "save",
+    ]
+    _LIST_TO_INPUT = {
+        "mount_list": "mount_input",
+        "env_list": "env_input",
+        "allow_list": "allow_input",
+    }
 
     def __init__(
         self,
@@ -1430,9 +1510,27 @@ class EditWorkspaceScreen(Screen):
         cb = self.query_one("#auto_start", Checkbox)
         cb.display = shown
         cb.disabled = not shown
+        self._skip_editors_on_tab()
         self._render_mounts()
         self._render_env()
         self._render_allowed_domains()
+
+    def _skip_editors_on_tab(self) -> None:
+        """Editor buttons stay out of the Tab cycle (#1783).
+
+        Add is reachable via Enter in the input; Remove via mouse click.
+        Lists stay focusable for Delete/"e" keyboard actions but Tab skips
+        them via :class:`TabSkipMixin`.
+        """
+        for wid in (
+            "add_mount",
+            "rm_mount",
+            "add_env",
+            "rm_env",
+            "add_allow",
+            "rm_allow",
+        ):
+            self.query_one(f"#{wid}").can_focus = False
 
     def _msg(self, text: str, *, error: bool = False) -> None:
         self.query_one("#edit_msg", Static).update(
