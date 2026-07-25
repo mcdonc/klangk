@@ -120,6 +120,7 @@ def _authed_state(**extra):
         list_shared_workspaces=lambda: [],
         list_terminals=_async_empty,
         close_terminal=_async_empty,
+        restart_workspace=lambda n: None,
     )
     base.update(extra)
     return _st(**base)
@@ -137,6 +138,7 @@ def _ws(owned=None, shared=None, **extra):
         list_shared_workspaces=lambda: shared or [],
         list_terminals=_async_empty,
         close_terminal=_async_empty,
+        restart_workspace=lambda n: None,
     )
     base.update(extra)
     return _st(**base)
@@ -1170,7 +1172,7 @@ async def test_detail_restart_confirm_cancel_error(monkeypatch):
         return None
 
     monkeypatch.setattr(scr, "listen_for_status", noop)
-    a = _wsobj("alpha")
+    a = _wsobj("alpha", running=True)
     restarted = {}
     st = _ws()
     st.find_workspace = lambda n: a
@@ -1206,6 +1208,43 @@ async def test_detail_restart_confirm_cancel_error(monkeypatch):
         assert "Restart failed" in str(
             app.screen.query_one("#detail_msg").render()
         )
+
+
+async def test_detail_auto_starts_stopped_workspace(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=False)
+    started = []
+    st = _ws()
+    st.find_workspace = lambda n: a
+    st.restart_workspace = lambda n: started.append(n)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        assert started == ["alpha"]
+        assert "Container started" in str(
+            app.screen.query_one("#detail_msg").render()
+        )
+
+
+async def test_detail_auto_start_skipped_when_running(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    started = []
+    st = _ws()
+    st.find_workspace = lambda n: a
+    st.restart_workspace = lambda n: started.append(n)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        assert started == []
 
 
 async def test_detail_delete_confirm_cancel_error(monkeypatch):
@@ -1784,7 +1823,7 @@ async def test_detail_pops_when_workspace_deleted(monkeypatch):
         return None
 
     monkeypatch.setattr(scr, "listen_for_status", noop)
-    a = _wsobj("alpha")
+    a = _wsobj("alpha", running=True)
     st = _ws(owned=[a])
     calls = {"n": 0}
 
