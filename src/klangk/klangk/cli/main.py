@@ -58,7 +58,7 @@ from .config import (
     default_server_uds_path,
     seed_config,
 )
-from .mount import validate_mount_spec
+from .mount import validate_allowed_domain_spec, validate_mount_spec
 from .transport import ws_connect
 from .sandbox import (
     build_all_mounts,
@@ -514,12 +514,23 @@ def create(
         "--env",
         help="Environment variable, repeatable (e.g. KEY=VALUE)",
     ),
+    allow: list[str] | None = typer.Option(
+        None,
+        "--allow",
+        help="Allowed egress domain, repeatable (e.g. github.com:443, pypi.org)",
+    ),
 ) -> None:
     """Create a new workspace."""
     require_auth()
     if isinstance(mount, list):
         for m in mount:
             err = validate_mount_spec(m)
+            if err:
+                _err.print(f"[red]{err}[/red]")
+                raise typer.Exit(code=1)
+    if isinstance(allow, list):
+        for spec in allow:
+            err = validate_allowed_domain_spec(spec)
             if err:
                 _err.print(f"[red]{err}[/red]")
                 raise typer.Exit(code=1)
@@ -533,6 +544,7 @@ def create(
             mounts=mount or None,
             env=env_dict,
             health_check=health_check,
+            allowed_domains=allow or None,
         )
     except httpx.HTTPStatusError as exc:
         detail = exc.response.json().get("detail", exc.response.text)
@@ -802,6 +814,11 @@ def edit(
         "--env",
         help="Environment variable, repeatable (e.g. KEY=VALUE)",
     ),
+    allow: list[str] | None = typer.Option(
+        None,
+        "--allow",
+        help="Allowed egress domain, repeatable (e.g. github.com:443, pypi.org)",
+    ),
 ) -> None:
     """Edit workspace settings.
 
@@ -824,6 +841,7 @@ def edit(
         or health_check is not None
         or isinstance(mount, list)
         or isinstance(env, list)
+        or isinstance(allow, list)
     )
     if not has_flags:
         # Interactive mode
@@ -921,6 +939,48 @@ def edit(
 
             break  # both add and remove were skipped
 
+        # Interactive allowed-domains editing loop
+        current_domains = list(ws.allowed_domains or [])
+        domains_changed = False
+        while True:
+            if current_domains:
+                typer.echo("\nAllowed egress domains:")
+                for i, d in enumerate(current_domains, 1):
+                    typer.echo(f"  {i}. {d}")
+            else:
+                typer.echo("\nNo egress allowlist (unrestricted networking).")
+
+            add = input(
+                "\nAdd domain (e.g. github.com:443, or Enter to skip): "
+            ).strip()
+            if add:
+                err = validate_allowed_domain_spec(add)
+                if err:
+                    typer.echo(err)
+                    continue
+                current_domains.append(add)
+                domains_changed = True
+                continue
+
+            if current_domains:
+                rm = input("Remove domain number (or Enter to skip): ").strip()
+                if rm:
+                    try:
+                        idx = int(rm) - 1
+                        if 0 <= idx < len(current_domains):
+                            removed = current_domains.pop(idx)
+                            typer.echo(f"Removed: {removed}")
+                            domains_changed = True
+                            continue
+                        else:
+                            typer.echo("Invalid number.")
+                            continue
+                    except ValueError:
+                        typer.echo("Invalid number.")
+                        continue
+
+            break  # both add and remove were skipped
+
         body: dict = {}
         if new_name is not _SENTINEL:
             body["name"] = new_name or ws.name  # don't allow empty name
@@ -934,6 +994,8 @@ def edit(
             body["mounts"] = current_mounts or None
         if env_changed:
             body["env"] = current_env or None
+        if domains_changed:
+            body["allowed_domains"] = current_domains or None
     else:
         # Flags mode — only send provided fields
         body = {}
@@ -956,6 +1018,13 @@ def edit(
             body["mounts"] = mount or None
         if isinstance(env, list):
             body["env"] = _parse_env_list(env) or None
+        if isinstance(allow, list):
+            for spec in allow:
+                err = validate_allowed_domain_spec(spec)
+                if err:
+                    _err.print(f"[red]{err}[/red]")
+                    raise typer.Exit(code=1)
+            body["allowed_domains"] = allow or None
 
     if not body:
         typer.echo("No changes.")

@@ -1841,7 +1841,7 @@ class TestMainCLI:
         # keep name, keep image, change command, skip add mount, skip add env
         with patch.object(main, "_client", return_value=client):
             with patch(
-                "builtins.input", side_effect=["", "", "pi", "", "", ""]
+                "builtins.input", side_effect=["", "", "pi", "", "", "", ""]
             ):
                 from typer.testing import CliRunner
 
@@ -1873,7 +1873,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "curl -sf http://x/h", "", ""],
+                side_effect=["", "", "", "curl -sf http://x/h", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -1903,7 +1903,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["renamed", "klangk-custom", "pi", "", "", ""],
+                side_effect=["renamed", "klangk-custom", "pi", "", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -1933,7 +1933,17 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "/host:/container", "", "", ""],
+                side_effect=[
+                    "",
+                    "",
+                    "",
+                    "",
+                    "/host:/container",
+                    "",
+                    "",
+                    "",
+                    "",
+                ],
             ):
                 from typer.testing import CliRunner
 
@@ -1961,7 +1971,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "1", "", "", ""],
+                side_effect=["", "", "", "", "", "1", "", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -1992,7 +2002,19 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "/new:/new", "", "1", "", "", ""],
+                side_effect=[
+                    "",
+                    "",
+                    "",
+                    "",
+                    "/new:/new",
+                    "",
+                    "1",
+                    "",
+                    "",
+                    "",
+                    "",
+                ],
             ):
                 from typer.testing import CliRunner
 
@@ -2023,7 +2045,20 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "99", "", "abc", "", "", ""],
+                side_effect=[
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "99",
+                    "",
+                    "abc",
+                    "",
+                    "",
+                    "",
+                    "",
+                ],
             ):
                 from typer.testing import CliRunner
 
@@ -2053,7 +2088,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "1", "", ""],
+                side_effect=["", "", "", "", "", "1", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -2083,7 +2118,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "bad", "/a:/b", "", "", ""],
+                side_effect=["", "", "", "", "bad", "/a:/b", "", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -2198,7 +2233,9 @@ class TestMainCLI:
 
         # keep name, image, command; skip add mount (no mounts, no remove prompt)
         with patch.object(main, "_client", return_value=client):
-            with patch("builtins.input", side_effect=["", "", "", "", "", ""]):
+            with patch(
+                "builtins.input", side_effect=["", "", "", "", "", "", ""]
+            ):
                 from typer.testing import CliRunner
 
                 runner = CliRunner()
@@ -2224,7 +2261,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "FOO=bar", "", ""],
+                side_effect=["", "", "", "", "", "FOO=bar", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -2253,7 +2290,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "bad", "A=1", "", ""],
+                side_effect=["", "", "", "", "", "bad", "A=1", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -2290,6 +2327,7 @@ class TestMainCLI:
             mounts=None,
             env={"FOO": "bar", "X": "1"},
             health_check=None,
+            allowed_domains=None,
         )
 
     def test_create_with_command_flag(self, logged_in_cfg, monkeypatch):
@@ -2315,6 +2353,7 @@ class TestMainCLI:
             mounts=None,
             env=None,
             health_check=None,
+            allowed_domains=None,
         )
 
     def test_create_with_invalid_env_flag(self, logged_in_cfg, monkeypatch):
@@ -2327,6 +2366,112 @@ class TestMainCLI:
         runner = CliRunner()
         result = runner.invoke(
             main.app, ["create", "ws", "--env", "NOEQUALSSIGN"]
+        )
+        assert result.exit_code == 1
+
+    def test_create_with_allow_flag(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="new-id", name="ws", created_at="2025-01-01T00:00:00Z"
+        )
+        client = MagicMock()
+        client.create_workspace.return_value = ws
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main.app,
+            [
+                "create",
+                "ws",
+                "--allow",
+                "github.com:443",
+                "--allow",
+                "pypi.org",
+            ],
+        )
+        assert result.exit_code == 0
+        client.create_workspace.assert_called_once_with(
+            "ws",
+            image=None,
+            service_command=None,
+            auto_start=False,
+            mounts=None,
+            env=None,
+            health_check=None,
+            allowed_domains=["github.com:443", "pypi.org"],
+        )
+
+    def test_create_with_invalid_allow_flag(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+
+        monkeypatch.setattr(main, "_client", lambda: MagicMock())
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main.app, ["create", "ws", "--allow", "not a valid domain!"]
+        )
+        assert result.exit_code == 1
+
+    def test_edit_with_allow_flag(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        resp = MagicMock()
+        resp.status_code = 200
+        client.put.return_value = resp
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main.app,
+            [
+                "edit",
+                "my-ws",
+                "--allow",
+                "github.com:443",
+                "--allow",
+                "pypi.org",
+            ],
+        )
+        assert result.exit_code == 0
+        call_body = client.put.call_args
+        assert call_body[1]["json"]["allowed_domains"] == [
+            "github.com:443",
+            "pypi.org",
+        ]
+
+    def test_edit_with_invalid_allow_flag(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main.app,
+            ["edit", "my-ws", "--allow", "not valid!"],
         )
         assert result.exit_code == 1
 
@@ -2347,7 +2492,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "", "1", "", ""],
+                side_effect=["", "", "", "", "", "", "1", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -2377,7 +2522,20 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "", "99", "", "abc", "", ""],
+                side_effect=[
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "99",
+                    "",
+                    "abc",
+                    "",
+                    "",
+                    "",
+                ],
             ):
                 from typer.testing import CliRunner
 
