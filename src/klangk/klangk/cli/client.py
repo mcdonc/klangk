@@ -258,8 +258,9 @@ class KlangkClient:
     def _headers(self) -> dict[str, str]:
         if self.token and token_expires_soon(self.token):
             self._try_refresh()
-        token = self.token or ""
-        return {"Authorization": f"Bearer {token}"}
+        if self.token:
+            return {"Authorization": f"Bearer {self.token}"}
+        return {}
 
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         resp = request_with_retry(
