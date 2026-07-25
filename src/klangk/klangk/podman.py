@@ -482,10 +482,23 @@ class Podman:
     async def remove_container(
         self, container_id: str, *, force: bool = True
     ) -> None:
-        """Remove a container; never raises on 404."""
+        """Stop (if running) and remove a container; never raises on 404.
+
+        Uses ``podman stop`` before ``podman rm`` so the full cleanup path
+        runs — including pasta/passt network teardown.  A bare
+        ``podman rm -f`` skips cleanup and can leave orphaned pasta
+        processes holding ports indefinitely (podman#14276).
+        """
+        if force:
+            # Graceful stop triggers conmon cleanup (kills pasta).
+            rc, _out, err = await self.run(
+                ["stop", "-t", "5", container_id], check=False
+            )
+            if rc != 0 and classify(err) == 404:
+                return  # already gone
         args = ["rm"]
         if force:
-            args.append("-f")
+            args.append("-f")  # catch stragglers
         args.append(container_id)
         rc, _out, err = await self.run(args, check=False)
         if rc != 0 and classify(err) != 404:
