@@ -1148,9 +1148,15 @@ async def test_edit_server_url_change_triggers_server_changed(monkeypatch):
     async with app.run_test() as pilot:
         app.push_screen(ServerSwitchScreen())
         await pilot.pause()
-        app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
-        await pilot.pause()
+        # Use the callback-wired push path (action_edit_server flow).
         app.server_changed = lambda: changed.append(True)
+        app.push_screen(
+            EditServerScreen(alias="a", url="https://a.example"),
+            lambda result: (
+                app.server_changed() if result == "url_changed" else None
+            ),
+        )
+        await pilot.pause()
         app.screen.query_one("#url", Input).value = "https://new.example"
         app.screen._save()
         await pilot.pause()

@@ -2157,8 +2157,10 @@ class ServerSwitchScreen(Screen):
         if not alias:
             return
 
-        def _on_edit(changed: bool) -> None:
-            if changed:
+        def _on_edit(result: str | bool) -> None:
+            if result == "url_changed":
+                self.app.server_changed()
+            elif result:
                 self._populate()
 
         self.app.push_screen(EditServerScreen(alias=alias, url=url), _on_edit)
@@ -2323,7 +2325,6 @@ class EditServerScreen(ModalScreen):
                 "[red]Server not found.[/red]"
             )
             return
-        url_changed = url != self._old_url
-        self.dismiss(True)
-        if url_changed:
-            self.app.server_changed()
+        # Signal whether server_changed() should follow (URL changed →
+        # the server list and main screen need a full refresh).
+        self.dismiss("url_changed" if url != self._old_url else True)
