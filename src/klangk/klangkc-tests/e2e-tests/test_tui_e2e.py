@@ -30,6 +30,7 @@ from klangk.cli.tui.app import KlangkApp  # noqa: E402
 from klangk.cli.tui.screens import (  # noqa: E402
     ConfirmScreen,
     CreateWorkspaceScreen,
+    EditWorkspaceScreen,
     LoginScreen,
     MainScreen,
     WorkspaceDetailScreen,
@@ -37,6 +38,19 @@ from klangk.cli.tui.screens import (  # noqa: E402
 from klangk.cli.tui.state import TuiState  # noqa: E402
 from klangk.cli.config import add_server_to_config, CLIState  # noqa: E402
 from klangk.model import free_port  # noqa: E402
+
+
+async def _settle(app, pilot):
+    """Wait for short-lived workers to complete.
+
+    The TUI has a long-running _status_loop worker that never finishes,
+    so we can't use app.workers.wait_for_complete() unconditionally.
+    Instead, pause twice to let short-lived workers (refresh, load, etc.)
+    complete within the event loop.
+    """
+    await pilot.pause()
+    await pilot.pause()
+
 
 # ── server fixture ──────────────────────────────────────────────────────
 
@@ -110,6 +124,19 @@ def _api_delete_workspace(base_url, token, ws_id):
         f"{base_url}/api/v1/workspaces/{ws_id}",
         headers={"Authorization": f"Bearer {token}"},
     )
+
+
+def _api_get_workspace(base_url, token, ws_id):
+    """Get a workspace by id via API (from the list endpoint)."""
+    r = httpx.get(
+        f"{base_url}/api/v1/workspaces",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    r.raise_for_status()
+    for ws in r.json():
+        if ws["id"] == ws_id:
+            return ws
+    raise ValueError(f"Workspace {ws_id} not found")
 
 
 # ── tests ───────────────────────────────────────────────────────────────
@@ -412,5 +439,121 @@ class TestTuiE2E:
                         break
                 else:
                     pytest.fail(f"{ws_name} not found in list")
+        finally:
+            _api_delete_workspace(base_url, token, ws_id)
+
+    # -- workspace edit form --
+
+    async def test_edit_form_prepopulated(self, tui_state, base_url, token):
+        """Edit form opens with current workspace values."""
+        ws_name = f"tui-edit-{free_port()}"
+        ws_id = _api_create_workspace(base_url, token, ws_name)
+
+        app = KlangkApp(tui_state)
+        try:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await _settle(app, pilot)
+                # Navigate to detail screen.
+                app.push_screen(WorkspaceDetailScreen(ws_name))
+                await pilot.pause()
+                await _settle(app, pilot)
+                assert isinstance(app.screen, WorkspaceDetailScreen)
+                # Open edit form.
+                app.screen.action_edit()
+                await _settle(app, pilot)
+                await pilot.pause()
+                assert isinstance(app.screen, EditWorkspaceScreen)
+                # Name should be pre-populated.
+                name_val = app.screen.query_one("#name", Input).value
+                assert name_val == ws_name
+        finally:
+            _api_delete_workspace(base_url, token, ws_id)
+
+    async def test_edit_rename_persists(self, tui_state, base_url, token):
+        """Renaming a workspace via the edit form persists to the server."""
+        ws_name = f"tui-ren-{free_port()}"
+        new_name = f"tui-renamed-{free_port()}"
+        ws_id = _api_create_workspace(base_url, token, ws_name)
+
+        app = KlangkApp(tui_state)
+        try:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await _settle(app, pilot)
+                app.push_screen(WorkspaceDetailScreen(ws_name))
+                await pilot.pause()
+                await _settle(app, pilot)
+                # Open edit form.
+                app.screen.action_edit()
+                await _settle(app, pilot)
+                await pilot.pause()
+                assert isinstance(app.screen, EditWorkspaceScreen)
+                # Change the name.
+                app.screen.query_one("#name", Input).value = new_name
+                # Submit.
+                app.screen._save()
+                await _settle(app, pilot)
+                await pilot.pause()
+
+            # Verify via API.
+            ws = _api_get_workspace(base_url, token, ws_id)
+            assert ws["name"] == new_name
+        finally:
+            _api_delete_workspace(base_url, token, ws_id)
+
+    async def test_edit_cancel_no_change(self, tui_state, base_url, token):
+        """Cancelling the edit form persists no changes."""
+        ws_name = f"tui-cancel-{free_port()}"
+        ws_id = _api_create_workspace(base_url, token, ws_name)
+
+        app = KlangkApp(tui_state)
+        try:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await _settle(app, pilot)
+                app.push_screen(WorkspaceDetailScreen(ws_name))
+                await pilot.pause()
+                await _settle(app, pilot)
+                app.screen.action_edit()
+                await _settle(app, pilot)
+                await pilot.pause()
+                assert isinstance(app.screen, EditWorkspaceScreen)
+                # Change the name but cancel.
+                app.screen.query_one("#name", Input).value = "should-not-save"
+                app.screen.dismiss(False)
+                await pilot.pause()
+
+            # Verify name unchanged via API.
+            ws = _api_get_workspace(base_url, token, ws_id)
+            assert ws["name"] == ws_name
+        finally:
+            _api_delete_workspace(base_url, token, ws_id)
+
+    async def test_edit_empty_name_rejected(self, tui_state, base_url, token):
+        """Submitting with an empty name shows a validation error."""
+        ws_name = f"tui-empty-{free_port()}"
+        ws_id = _api_create_workspace(base_url, token, ws_name)
+
+        app = KlangkApp(tui_state)
+        try:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await _settle(app, pilot)
+                app.push_screen(WorkspaceDetailScreen(ws_name))
+                await pilot.pause()
+                await _settle(app, pilot)
+                app.screen.action_edit()
+                await _settle(app, pilot)
+                await pilot.pause()
+                assert isinstance(app.screen, EditWorkspaceScreen)
+                # Clear name and submit.
+                app.screen.query_one("#name", Input).value = ""
+                app.screen._save()
+                await pilot.pause()
+                # Should still be on edit screen with error.
+                assert isinstance(app.screen, EditWorkspaceScreen)
+                msg = str(app.screen.query_one("#edit_msg", Static).render())
+                assert "required" in msg.lower()
         finally:
             _api_delete_workspace(base_url, token, ws_id)
