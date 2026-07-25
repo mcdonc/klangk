@@ -839,6 +839,7 @@ class WorkspaceDetailScreen(Screen):
         ("s", "stop", "Stop"),
         ("d", "duplicate", "Duplicate"),
         ("x", "delete", "Delete"),
+        ("n", "new_terminal", "New term"),
         ("delete", "delete_terminal", "Del term"),
     ]
 
@@ -934,6 +935,7 @@ class WorkspaceDetailScreen(Screen):
             ("s", "stop", stop_label),
             ("d", "duplicate", "Duplicate"),
             ("x", "delete", "Delete"),
+            ("n", "new_terminal", "New term"),
             ("delete", "delete_terminal", "Del term"),
         ]
 
@@ -1149,6 +1151,54 @@ class WorkspaceDetailScreen(Screen):
         self._terminals = windows
         self._render_terminals()
         self._msg(f"Deleted terminal {index}.")
+
+    def action_new_terminal(self) -> None:
+        if self._ws is None:
+            return
+        self.run_worker(self._do_new_terminal, exit_on_error=False)
+
+    async def _do_new_terminal(self) -> None:
+        # Pick a name that doesn't collide with existing terminal names.
+        existing = {w.get("name", "") for w in self._terminals}
+        for i in range(len(self._terminals), 100):
+            candidate = f"term-{i}"
+            if candidate not in existing:
+                break
+        else:
+            candidate = f"term-{len(self._terminals)}"  # pragma: no cover
+
+        self._msg(f"Creating terminal '{candidate}'…")
+        try:
+            windows = await self.app.tui_state.create_terminal(
+                self._name, candidate
+            )
+        except Exception as exc:
+            self._msg(f"Create failed: {exc}", error=True)
+            return
+        if not windows:
+            self._msg(
+                "Create failed — could not refresh terminals.", error=True
+            )
+            return
+        self._terminals = windows
+        self._render_terminals()
+
+        # Find the index of the newly created terminal and shell into it.
+        match = next((w for w in windows if w.get("name") == candidate), None)
+        if match is None:  # pragma: no cover
+            self._msg(f"Created terminal '{candidate}'.")
+            return
+        terminal_index = str(match.get("index", ""))
+        if not terminal_index:  # pragma: no cover
+            self._msg(f"Created terminal '{candidate}'.")
+            return
+        cmd = [sys.executable, "-m", "klangk.cli.main"]
+        server = self.app.tui_state.current_url()
+        if server:
+            cmd += ["--server", server]
+        cmd += ["shell", self._name, terminal_index]
+        with self.app.suspend():
+            subprocess.run(cmd)
 
     # --- actions ---
 

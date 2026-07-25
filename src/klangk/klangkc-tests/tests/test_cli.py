@@ -1208,6 +1208,51 @@ class TestKlangkClient:
         ):
             assert asyncio.run(client.close_terminal("alpha", 0)) == []
 
+    def test_create_terminal(self):
+        client = KlangkClient("http://test:8995", "token")
+        ws = Workspace(id="ws" + "0" * 60, name="alpha", created_at="x")
+        client.resolve_workspace = MagicMock(return_value=ws)
+        messages = [
+            json.dumps({"type": "container_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"index": 0, "name": "main", "id": "@0"},
+                    ],
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"index": 0, "name": "main", "id": "@0"},
+                        {"index": 1, "name": "term-1", "id": "@1"},
+                    ],
+                }
+            ),
+        ]
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "klangk.cli.transport.websockets.connect",
+            return_value=mock_ws,
+        ):
+            windows = asyncio.run(client.create_terminal("alpha", "term-1"))
+        assert len(windows) == 2
+        assert windows[1]["name"] == "term-1"
+        # Verify terminal_new_window was sent
+        sent = [json.loads(c.args[0]) for c in mock_ws.send.call_args_list]
+        new_cmds = [s for s in sent if s.get("cmd") == "terminal_new_window"]
+        assert len(new_cmds) == 1
+        assert new_cmds[0]["name"] == "term-1"
+
     def test_list_workspaces_parses_response(self):
         client = KlangkClient("http://test:8995", "valid-token")
         mock_resp = MagicMock()
