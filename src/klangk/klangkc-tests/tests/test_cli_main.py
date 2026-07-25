@@ -2475,6 +2475,204 @@ class TestMainCLI:
         )
         assert result.exit_code == 1
 
+    def test_edit_interactive_add_domain(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch(
+                "builtins.input",
+                side_effect=[
+                    "",  # name
+                    "",  # image
+                    "",  # command
+                    "",  # health_check
+                    "",  # mount add
+                    "",  # env add
+                    "github.com:443",  # domain add
+                    "",  # domain add (skip)
+                    "",  # done
+                ],
+            ):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(main.app, ["edit", "my-ws"])
+                assert result.exit_code == 0
+
+        body = client.put.call_args[1]["json"]
+        assert body["allowed_domains"] == ["github.com:443"]
+
+    def test_edit_interactive_add_domain_with_existing(
+        self, logged_in_cfg, monkeypatch
+    ):
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            allowed_domains=["pypi.org"],
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch(
+                "builtins.input",
+                side_effect=[
+                    "",  # name
+                    "",  # image
+                    "",  # command
+                    "",  # health_check
+                    "",  # mount add
+                    "",  # env add
+                    "github.com:443",  # domain add
+                    "",  # domain add (skip)
+                    "",  # domain remove (skip)
+                    "",  # done
+                ],
+            ):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(main.app, ["edit", "my-ws"])
+                assert result.exit_code == 0
+
+        body = client.put.call_args[1]["json"]
+        assert body["allowed_domains"] == ["pypi.org", "github.com:443"]
+        assert "Allowed egress domains" in result.output
+
+    def test_edit_interactive_remove_domain(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            allowed_domains=["pypi.org", "github.com:443"],
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch(
+                "builtins.input",
+                side_effect=[
+                    "",  # name
+                    "",  # image
+                    "",  # command
+                    "",  # health_check
+                    "",  # mount add
+                    "",  # env add
+                    "",  # domain add (skip)
+                    "1",  # domain remove pypi.org
+                    "",  # domain add (skip)
+                    "",  # domain remove (skip)
+                    "",  # done
+                ],
+            ):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(main.app, ["edit", "my-ws"])
+                assert result.exit_code == 0
+
+        body = client.put.call_args[1]["json"]
+        assert body["allowed_domains"] == ["github.com:443"]
+        assert "Removed: pypi.org" in result.output
+
+    def test_edit_interactive_invalid_domain_rejected(
+        self, logged_in_cfg, monkeypatch
+    ):
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch(
+                "builtins.input",
+                side_effect=[
+                    "",  # name
+                    "",  # image
+                    "",  # command
+                    "",  # health_check
+                    "",  # mount add
+                    "",  # env add
+                    "not valid!",  # invalid domain
+                    "github.com",  # valid domain
+                    "",  # domain add (skip)
+                    "",  # done
+                ],
+            ):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(main.app, ["edit", "my-ws"])
+                assert result.exit_code == 0
+
+        body = client.put.call_args[1]["json"]
+        assert body["allowed_domains"] == ["github.com"]
+
+    def test_edit_interactive_invalid_domain_remove_number(
+        self, logged_in_cfg, monkeypatch
+    ):
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            allowed_domains=["pypi.org"],
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch(
+                "builtins.input",
+                side_effect=[
+                    "",  # name
+                    "",  # image
+                    "",  # command
+                    "",  # health_check
+                    "",  # mount add
+                    "",  # env add
+                    "",  # domain add (skip)
+                    "99",  # invalid number
+                    "",  # domain add (skip)
+                    "abc",  # non-numeric
+                    "",  # domain add (skip)
+                    "",  # domain remove (skip)
+                    "",  # done
+                ],
+            ):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(main.app, ["edit", "my-ws"])
+                assert result.exit_code == 0
+
+        assert "Invalid number." in result.output
+
     def test_edit_interactive_remove_env(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
 
