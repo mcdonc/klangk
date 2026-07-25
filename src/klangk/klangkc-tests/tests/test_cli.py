@@ -1544,10 +1544,10 @@ class TestKlangkClient:
         resp.status_code = 200
         client._raise_for_status(resp)  # should not raise
 
-    def test_no_token_uses_empty_string(self):
+    def test_no_token_omits_authorization(self):
         client = KlangkClient("http://test:8995")
         headers = client._headers()
-        assert headers["Authorization"] == "Bearer "
+        assert "Authorization" not in headers
 
 
 # --- Token refresh ---
