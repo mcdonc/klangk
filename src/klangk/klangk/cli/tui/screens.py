@@ -557,9 +557,8 @@ class MainScreen(Screen):
         color: $text-muted;
     }
     #filter_bar {
-        height: 1;
-        dock: bottom;
-        margin: 0 0 2 0;
+        height: auto;
+        max-height: 3;
     }
     #filter_input {
         width: 1fr;
@@ -567,7 +566,7 @@ class MainScreen(Screen):
     #sort_label {
         width: auto;
         color: $text-muted;
-        padding: 0 1;
+        padding: 1 1 0 1;
     }
     """
 
