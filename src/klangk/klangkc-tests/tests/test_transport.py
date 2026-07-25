@@ -65,6 +65,14 @@ class TestResolveTransport:
         with pytest.raises(ValueError, match="socket path must be absolute"):
             resolve_transport("example.com")
 
+    def test_none_or_empty_raises_valueerror(self):
+        # No server configured must raise ValueError (caught by callers'
+        # `except ValueError`) rather than crashing on None.startswith.
+        with pytest.raises(ValueError, match="no server configured"):
+            resolve_transport(None)
+        with pytest.raises(ValueError, match="no server configured"):
+            resolve_transport("")
+
 
 class TestHttpRequest:
     def test_tcp_delegates_to_httpx_request(self):

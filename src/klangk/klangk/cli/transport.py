@@ -35,8 +35,14 @@ class ServerTransport:
 def resolve_transport(server_spec: str) -> ServerTransport:
     """Classify *server_spec* as TCP (URL) or UDS (socket path).
 
-    Raises ``ValueError`` on a relative / bare non-URL value.
+    Raises ``ValueError`` on a relative / bare non-URL value, or when no
+    server is configured (``None`` / empty) — so callers' ``except ValueError``
+    handlers catch the no-server case instead of crashing on ``None.startswith``.
     """
+    if not isinstance(server_spec, str) or not server_spec:
+        raise ValueError(
+            "no server configured — run `klangk login` or pass --server."
+        )
     if server_spec.startswith("http://") or server_spec.startswith("https://"):
         # TCP — derive WS URI from the URL.
         if server_spec.startswith("http://"):

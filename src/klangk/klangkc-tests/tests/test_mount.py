@@ -1,6 +1,10 @@
 """Tests for client-side mount spec validation."""
 
-from klangk.cli.mount import validate_mount_spec
+from klangk.cli.env import validate_env_entry
+from klangk.cli.mount import (
+    validate_allowed_domain_spec,
+    validate_mount_spec,
+)
 
 
 class TestValidateMountSpec:
@@ -38,3 +42,60 @@ class TestValidateMountSpec:
         result = validate_mount_spec("/host:/container:bogus")
         assert result is not None
         assert "unknown option" in result
+
+
+class TestValidateEnvEntry:
+    def test_valid_key_value(self):
+        assert validate_env_entry("FOO=bar") is None
+
+    def test_valid_empty_value(self):
+        assert validate_env_entry("EMPTY=") is None
+
+    def test_value_may_contain_equals(self):
+        # only the first '=' splits key from value
+        assert validate_env_entry("PATH=/usr:/bin") is None
+
+    def test_missing_equals(self):
+        result = validate_env_entry("NOEQUALS")
+        assert result is not None
+        assert "KEY=VALUE" in result
+
+    def test_empty_key(self):
+        result = validate_env_entry("=val")
+        assert result is not None
+        assert "key cannot be empty" in result
+
+
+class TestValidateAllowedDomainSpec:
+    def test_valid_host(self):
+        assert validate_allowed_domain_spec("github.com") is None
+
+    def test_valid_host_port(self):
+        assert validate_allowed_domain_spec("github.com:443") is None
+        assert validate_allowed_domain_spec("pypi.org:80") is None
+
+    def test_valid_ipv4(self):
+        assert validate_allowed_domain_spec("10.0.0.1") is None
+        assert validate_allowed_domain_spec("10.0.0.1:53") is None
+
+    def test_valid_bracketed_ipv6(self):
+        assert validate_allowed_domain_spec("[::1]") is None
+        assert validate_allowed_domain_spec("[2001:db8::1]:443") is None
+
+    def test_rejects_empty(self):
+        assert validate_allowed_domain_spec("") is not None
+        assert "empty" in validate_allowed_domain_spec("")
+        assert validate_allowed_domain_spec("   ") is not None
+
+    def test_rejects_whitespace(self):
+        assert validate_allowed_domain_spec("bad spec") is not None
+
+    def test_rejects_slash(self):
+        # no CIDR yet (#1365)
+        assert validate_allowed_domain_spec("10.0.0.0/24") is not None
+
+    def test_rejects_non_numeric_port(self):
+        assert validate_allowed_domain_spec("a.com:abc") is not None
+
+    def test_strips_whitespace(self):
+        assert validate_allowed_domain_spec("  github.com:443  ") is None
