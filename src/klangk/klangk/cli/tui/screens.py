@@ -636,7 +636,7 @@ class MainScreen(Screen):
             self.query_one(
                 "#sort_btn", Button
             ).label = f"sort: {self._sort_key} {arrow}"
-        except NoMatches:
+        except NoMatches:  # pragma: no cover
             pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
