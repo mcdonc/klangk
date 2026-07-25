@@ -563,10 +563,9 @@ class MainScreen(Screen):
     #filter_input {
         width: 1fr;
     }
-    #sort_label {
+    #sort_btn {
         width: auto;
-        color: $text-muted;
-        padding: 1 1 0 1;
+        min-width: 20;
     }
     """
 
@@ -588,7 +587,7 @@ class MainScreen(Screen):
                 placeholder="Filter by name… (/ to focus, Esc to clear)",
                 id="filter_input",
             )
-            yield Label("sort: created ▼", id="sort_label")
+            yield Button("sort: created ▼", id="sort_btn", variant="default")
         yield StatusBar(id="status")
         yield Footer()
 
@@ -634,11 +633,15 @@ class MainScreen(Screen):
     def _update_sort_label(self) -> None:
         arrow = "▲" if self._sort_asc else "▼"
         try:
-            self.query_one("#sort_label", Label).update(
-                f"sort: {self._sort_key} {arrow}"
-            )
+            self.query_one(
+                "#sort_btn", Button
+            ).label = f"sort: {self._sort_key} {arrow}"
         except NoMatches:
             pass
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "sort_btn":
+            self.action_cycle_sort()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "filter_input":

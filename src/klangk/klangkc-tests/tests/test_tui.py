@@ -1838,14 +1838,14 @@ async def test_cycle_sort(monkeypatch):
         m.action_cycle_sort()
         await pilot.pause()
         assert names() == ["alpha", "beta"]
-        assert "created" in str(m.query_one("#sort_label").render())
-        assert "▲" in str(m.query_one("#sort_label").render())
+        assert "created" in str(m.query_one("#sort_btn", Button).label)
+        assert "▲" in str(m.query_one("#sort_btn", Button).label)
 
         # 2nd press: name asc.
         m.action_cycle_sort()
         await pilot.pause()
         assert names() == ["alpha", "beta"]
-        assert "name" in str(m.query_one("#sort_label").render())
+        assert "name" in str(m.query_one("#sort_btn", Button).label)
 
         # 3rd press: name desc.
         m.action_cycle_sort()
@@ -1856,8 +1856,8 @@ async def test_cycle_sort(monkeypatch):
         m.action_cycle_sort()
         await pilot.pause()
         assert names() == ["beta", "alpha"]
-        assert "created" in str(m.query_one("#sort_label").render())
-        assert "▼" in str(m.query_one("#sort_label").render())
+        assert "created" in str(m.query_one("#sort_btn", Button).label)
+        assert "▼" in str(m.query_one("#sort_btn", Button).label)
 
 
 async def test_filter_preserved_on_refresh(monkeypatch):
@@ -1905,6 +1905,34 @@ async def test_focus_filter_action(monkeypatch):
         await pilot.pause()
         assert isinstance(app.focused, Input)
         assert app.focused.id == "filter_input"
+
+
+async def test_sort_button_click_cycles(monkeypatch):
+    """Clicking the sort button cycles sort mode (#1764)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = Workspace(id="id-a", name="alpha", created_at="2025-01-01T00:00:00")
+    b = Workspace(id="id-b", name="beta", created_at="2025-06-01T00:00:00")
+    app = KlangkApp(_ws(owned=[a, b]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        lv = m.query_one("#owned_list", ListView)
+
+        # Default: created desc.
+        assert [i.name for i in lv.query(ListItem)] == ["beta", "alpha"]
+
+        # Click the sort button → created asc.
+        btn = m.query_one("#sort_btn", Button)
+        btn.press()
+        await pilot.pause()
+        assert [i.name for i in lv.query(ListItem)] == ["alpha", "beta"]
+        assert "▲" in str(btn.label)
 
 
 async def test_filter_submitted_returns_to_list(monkeypatch):
