@@ -574,6 +574,7 @@ class MainScreen(Screen):
     # --- list population ---
 
     def refresh_lists(self) -> None:
+        self._ws_by_id: dict[str, object] = {}
         try:
             owned = self._safe_list(owned=True)
             shared = self._safe_list(owned=False)
@@ -588,7 +589,15 @@ class MainScreen(Screen):
             self._refresh_status()
             return
         self._populate("#owned_list", owned)
+        for ws in owned:
+            wid = str(getattr(ws, "id", "") or "")
+            if wid:
+                self._ws_by_id[wid] = ws
         self._populate("#shared_list", shared)
+        for ws in shared:
+            wid = str(getattr(ws, "id", "") or "")
+            if wid:
+                self._ws_by_id[wid] = ws
         self._refresh_status()
 
     def _safe_list(self, *, owned: bool) -> list:
@@ -606,9 +615,10 @@ class MainScreen(Screen):
 
     @staticmethod
     def _fmt(ws) -> Text:
-        mark = ">" if ws.running else "."
         health = f" ({ws.health})" if ws.health else ""
-        return Text(f"{mark} {ws.name}{health}")
+        if ws.running:
+            return Text.assemble(("●", "green"), f" {ws.name}{health}")
+        return Text.assemble(("●", "red"), f" {ws.name}{health}")
 
     def _populate(
         self,
@@ -623,7 +633,11 @@ class MainScreen(Screen):
             lv.append(ListItem(Label(Text(empty_label)), name=""))
             return
         for ws in workspaces:
-            lv.append(ListItem(Label(self._fmt(ws)), name=ws.name))
+            item = ListItem(Label(self._fmt(ws)), name=ws.name)
+            wid = str(getattr(ws, "id", "") or "")
+            if wid:
+                item.workspace_id = wid  # for live status updates
+            lv.append(item)
 
     def _refresh_status(self) -> None:
         state = self.app.tui_state
@@ -659,7 +673,33 @@ class MainScreen(Screen):
         self._refresh_status()
         if etype == "workspaces_changed":
             self.refresh_lists()
+        elif etype == "container_status":
+            self._update_running(
+                str(event.get("workspace_id") or ""),
+                bool(event.get("running")),
+            )
         self._forward_status_to_detail(event)
+
+    def _update_running(self, workspace_id: str, running: bool) -> None:
+        """Update a single workspace's ● icon in-place (#1791).
+
+        ``container_status`` events fire on start/stop; we patch the
+        list item's label without re-fetching the whole list (which
+        would lose selection and scroll position).
+        """
+        ws = getattr(self, "_ws_by_id", {}).get(workspace_id)
+        if ws is None:
+            return
+        ws.running = running
+        for sel in ("#owned_list", "#shared_list"):
+            lv = self.query_one(sel, ListView)
+            for item in lv.query(ListItem):
+                if getattr(item, "workspace_id", None) == workspace_id:
+                    try:
+                        item.query_one(Label).update(self._fmt(ws))
+                    except NoMatches:
+                        pass
+                    return
 
     def _forward_status_to_detail(self, event: dict) -> None:
         """Mirror a live status broadcast onto an open detail screen."""
