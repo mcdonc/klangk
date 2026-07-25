@@ -1145,7 +1145,7 @@ async def test_server_switch_unreachable(monkeypatch):
     app = KlangkApp(st)
     async with app.run_test() as pilot:
         app.push_screen(ServerSwitchScreen())
-        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
         app.screen.on_list_view_selected(FakeSelected("https://b.example"))
         await app.workers.wait_for_complete()
         # switch_server should NOT have been called
@@ -1175,10 +1175,10 @@ async def test_server_switch_auth_required(monkeypatch):
     app = KlangkApp(st)
     async with app.run_test(size=(80, 24)) as pilot:
         app.push_screen(ServerSwitchScreen())
-        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
         app.screen.on_list_view_selected(FakeSelected("https://b.example"))
         await app.workers.wait_for_complete()
-        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
         # switch_server IS called (server changed)
         assert switched["url"] == "https://b.example"
         # should land on LoginScreen
