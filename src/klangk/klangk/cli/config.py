@@ -203,6 +203,10 @@ def add_server_to_config(
     _CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
 
 
+class AliasConflictError(Exception):
+    """Raised when renaming a server alias to one that already exists."""
+
+
 def update_server_in_config(
     old_alias: str,
     new_alias: str,
@@ -213,6 +217,8 @@ def update_server_in_config(
 
     If *old_alias* differs from *new_alias* the entry is renamed.
     Returns True if the alias was found and updated, False otherwise.
+    Raises ``AliasConflictError`` if *new_alias* already exists under
+    a different key.
     """
     if not _CONFIG_PATH.exists():
         return False
@@ -220,11 +226,19 @@ def update_server_in_config(
     servers = data.get("servers") or {}
     if old_alias not in servers:
         return False
+    if old_alias != new_alias and new_alias in servers:
+        raise AliasConflictError(f"Alias '{new_alias}' already exists.")
+    # Preserve fields not shown in the edit form (forward_agent, ws_max_size).
+    existing = servers[old_alias]
+    if isinstance(existing, dict):
+        entry = dict(existing)
+    else:
+        entry = {}
+    entry["url"] = server_url
+    if user is not None:
+        entry["user"] = user
     if old_alias != new_alias:
         del servers[old_alias]
-    entry: dict = {"url": server_url}
-    if user:
-        entry["user"] = user
     servers[new_alias] = entry
     data["servers"] = servers
     _CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))

@@ -292,16 +292,22 @@ class LoginScreen(SpatialNavScreen):
         known_urls = {s.url for s in known}
         for s in known:
             mark = "*" if s.url == current else " "
-            lv.append(
-                ListItem(Label(f"{mark} {s.alias}  ({s.url})"), name=s.url)
+            label = Text(
+                f"{mark} {s.alias}  ({s.url})",
+                overflow="ellipsis",
+                no_wrap=True,
             )
+            lv.append(ListItem(Label(label), name=s.url))
         uds = self.app.tui_state.default_uds()
         # Only offer the auto-detected default UDS if no alias already covers
         # it (otherwise it would duplicate the persisted alias row).
         if uds and uds != current and uds not in known_urls:
-            lv.append(
-                ListItem(Label(f"  Local klangkd (UDS)  ({uds})"), name=uds)
+            label = Text(
+                f"  Local klangkd (UDS)  ({uds})",
+                overflow="ellipsis",
+                no_wrap=True,
             )
+            lv.append(ListItem(Label(label), name=uds))
 
     @staticmethod
     def _derive_alias(raw: str) -> str:
@@ -2132,7 +2138,12 @@ class ServerSwitchScreen(Screen):
         current = self.app.tui_state.current_url()
         for s in servers:
             mark = "*" if s.url == current else " "
-            item = ListItem(Label(f"{mark} {s.alias}  ({s.url})"), name=s.url)
+            label = Text(
+                f"{mark} {s.alias}  ({s.url})",
+                overflow="ellipsis",
+                no_wrap=True,
+            )
+            item = ListItem(Label(label), name=s.url)
             item.server_alias = s.alias
             lv.append(item)
 
@@ -2248,7 +2259,7 @@ class EditServerScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         yield Vertical(
-            Static(f"Edit server: {self._old_alias}", classes="title"),
+            Static(Text(f"Edit server: {self._old_alias}"), classes="title"),
             Horizontal(
                 Static("Alias"),
                 Input(value=self._old_alias, id="alias"),
@@ -2297,15 +2308,22 @@ class EditServerScreen(ModalScreen):
         self.run_worker(self._do_save(alias, url), exit_on_error=False)
 
     async def _do_save(self, alias: str, url: str) -> None:
-        ok = await asyncio.to_thread(
-            self.app.tui_state.update_server,
-            self._old_alias,
-            alias,
-            url,
-        )
+        try:
+            ok = await asyncio.to_thread(
+                self.app.tui_state.update_server,
+                self._old_alias,
+                alias,
+                url,
+            )
+        except Exception as exc:
+            self.query_one("#edit_srv_msg", Static).update(f"[red]{exc}[/red]")
+            return
         if not ok:
             self.query_one("#edit_srv_msg", Static).update(
                 "[red]Server not found.[/red]"
             )
             return
+        url_changed = url != self._old_url
         self.dismiss(True)
+        if url_changed:
+            self.app.server_changed()

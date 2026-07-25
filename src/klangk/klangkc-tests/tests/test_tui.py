@@ -30,6 +30,7 @@ from klangk.cli.tui import state as tui_state_mod
 from klangk.cli.tui import ws as ws_mod
 from klangk.cli.tui.app import KlangkApp, run_tui
 from klangk.cli.config import (
+    AliasConflictError,
     CLIConfig,
     CLIState,
     ServerEntry,
@@ -206,6 +207,25 @@ def test_update_server_not_found(redirect_xdg):
     assert (
         update_server_in_config("missing", "m", "https://m.example") is False
     )
+
+
+def test_update_server_alias_collision(redirect_xdg):
+    add_server_to_config("a", "https://a.example")
+    add_server_to_config("b", "https://b.example")
+    with pytest.raises(AliasConflictError):
+        update_server_in_config("a", "b", "https://a.example")
+    # Both entries untouched.
+    loaded = CLIConfig.load()
+    assert loaded.servers["a"].url == "https://a.example"
+    assert loaded.servers["b"].url == "https://b.example"
+
+
+def test_update_server_preserves_fields(redirect_xdg):
+    add_server_to_config("a", "https://a.example", user="me@x")
+    assert update_server_in_config("a", "a", "https://a2.example") is True
+    loaded = CLIConfig.load()
+    assert loaded.servers["a"].url == "https://a2.example"
+    assert loaded.servers["a"].user == "me@x"
 
 
 def test_update_server_no_config_file(monkeypatch, tmp_path):
@@ -459,13 +479,14 @@ def test_update_server(redirect_xdg):
     assert loaded.servers["a"].url == "https://a2.example"
     assert TuiState().state().active_server == "https://a2.example"
 
-    # rename alias -> old gone, new present
+    # rename alias -> old gone, new present, active pointer preserved
     assert (
         TuiState().update_server("a", "renamed", "https://a2.example") is True
     )
     loaded = CLIConfig.load()
     assert "a" not in loaded.servers
     assert loaded.servers["renamed"].url == "https://a2.example"
+    assert TuiState().state().active_server == "https://a2.example"
 
     # not found
     assert (
@@ -980,12 +1001,16 @@ async def test_edit_server_saves(monkeypatch):
         await pilot.pause()
         assert isinstance(app.screen, EditServerScreen)
         app.screen.query_one("#alias", Input).value = "production"
-        app.screen.query_one("#url", Input).value = "https://new.example"
+        # Keep URL unchanged — no server_changed() call.
         app.screen._save()
         await pilot.pause()
         await pilot.pause()
-        assert updated["u"] == ("prod", "production", "https://new.example")
-        # Dismissed back to ServerSwitchScreen.
+        assert updated["u"] == (
+            "prod",
+            "production",
+            "https://prod.example",
+        )
+        # Dismissed back to ServerSwitchScreen (URL unchanged).
         assert isinstance(app.screen, ServerSwitchScreen)
 
 
@@ -1064,6 +1089,63 @@ async def test_edit_server_not_found(monkeypatch):
             "not found"
             in str(app.screen.query_one("#edit_srv_msg").render()).lower()
         )
+
+
+async def test_edit_server_alias_conflict(monkeypatch):
+    """Renaming to an existing alias shows an error."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _authed_state()
+
+    def conflict(*a, **k):
+        from klangk.cli.config import AliasConflictError
+
+        raise AliasConflictError("Alias 'b' already exists.")
+
+    st.update_server = conflict
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
+        await pilot.pause()
+        app.screen.query_one("#alias", Input).value = "b"
+        app.screen._save()
+        await pilot.pause()
+        await pilot.pause()
+        assert (
+            "already exists"
+            in str(app.screen.query_one("#edit_srv_msg").render()).lower()
+        )
+
+
+async def test_edit_server_url_change_triggers_server_changed(monkeypatch):
+    """Changing the URL of a server calls server_changed()."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _authed_state(
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("a", "https://a.example"),
+        ],
+    )
+    st.update_server = lambda *a, **k: True
+    changed = []
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(ServerSwitchScreen())
+        await pilot.pause()
+        app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
+        await pilot.pause()
+        app.server_changed = lambda: changed.append(True)
+        app.screen.query_one("#url", Input).value = "https://new.example"
+        app.screen._save()
+        await pilot.pause()
+        await pilot.pause()
+        assert changed == [True]
 
 
 async def test_edit_server_no_highlight(monkeypatch):
