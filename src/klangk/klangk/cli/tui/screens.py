@@ -17,6 +17,7 @@ from rich.text import Text
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.dom import NoMatches
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
@@ -646,11 +647,19 @@ class WorkspaceDetailScreen(Screen):
             self._on_edited,
         )
 
-    def _on_edited(self, saved: bool | None) -> None:
-        # Refresh the workspace after a successful edit (fields may have
-        # changed; create-time changes need a restart, offered in the form).
-        if saved:
+    def _on_edited(self, result: str | bool | None) -> None:
+        # The edit form dismisses with the workspace's (possibly new) name on
+        # save, or False/None on cancel. A rename leaves self._name stale —
+        # adopt the new name before reloading so _load() resolves, and refresh
+        # the list so the rename shows up there too (#1778).
+        if isinstance(result, str):
+            self._name = result
+        if result:
             self._load()
+            try:
+                self.app.query_one(MainScreen).refresh_lists()
+            except NoMatches:
+                pass
 
     def apply_status_event(self, event: dict) -> None:
         """Update running/health from a live status broadcast.
@@ -1177,7 +1186,11 @@ class EditWorkspaceScreen(Screen):
     live and never trigger it.
     """
 
-    BINDINGS = [("escape", "app.pop_screen", "Back")]
+    BINDINGS = [
+        ("escape", "app.pop_screen", "Back"),
+        ("delete", "remove_item", "Remove"),
+        ("e", "edit_item", "Edit"),
+    ]
 
     def __init__(
         self,
@@ -1196,6 +1209,11 @@ class EditWorkspaceScreen(Screen):
         self._allowed_domains: list[str] = list(
             workspace.allowed_domains or []
         )
+        # In-place editor state (#1778): when set, the next Add *replaces*
+        # the item at this index/key instead of appending. Cleared on Add.
+        self._editing_mount: int | None = None
+        self._editing_env: str | None = None
+        self._editing_allow: int | None = None
         # Image picker: include the workspace's current image even if it
         # isn't in the server's allowed list, pre-selected (untouched = no
         # change). Prompts are rich Text so bracket-laden names can't crash.
@@ -1284,7 +1302,7 @@ class EditWorkspaceScreen(Screen):
             Text(text, style="red" if error else "")
         )
 
-    # --- list editors (same pattern as CreateWorkspaceScreen) ---
+    # --- list editors: add / remove / in-place edit (#1778) ---
 
     def _render_mounts(self) -> None:
         ol = self.query_one("#mount_list", OptionList)
@@ -1304,7 +1322,12 @@ class EditWorkspaceScreen(Screen):
         if err:
             self._msg(err, error=True)
             return
-        self._mounts.append(v)
+        idx = self._editing_mount
+        if idx is not None and 0 <= idx < len(self._mounts):
+            self._mounts[idx] = v
+            self._editing_mount = None
+        else:
+            self._mounts.append(v)
         inp.value = ""
         self._msg("")
         self._render_mounts()
@@ -1315,6 +1338,7 @@ class EditWorkspaceScreen(Screen):
         if idx is None or not 0 <= idx < len(self._mounts):
             return
         del self._mounts[idx]
+        self._editing_mount = None
         self._render_mounts()
 
     def _render_env(self) -> None:
@@ -1336,6 +1360,10 @@ class EditWorkspaceScreen(Screen):
             self._msg(err, error=True)
             return
         key, _, value = v.partition("=")
+        old = self._editing_env
+        if old is not None:
+            self._env.pop(old, None)
+            self._editing_env = None
         self._env[key] = value
         inp.value = ""
         self._msg("")
@@ -1348,6 +1376,7 @@ class EditWorkspaceScreen(Screen):
         if idx is None or not 0 <= idx < len(keys):
             return
         del self._env[keys[idx]]
+        self._editing_env = None
         self._render_env()
 
     def _render_allowed_domains(self) -> None:
@@ -1368,7 +1397,11 @@ class EditWorkspaceScreen(Screen):
         if err:
             self._msg(err, error=True)
             return
-        if v not in self._allowed_domains:
+        idx = self._editing_allow
+        if idx is not None and 0 <= idx < len(self._allowed_domains):
+            self._allowed_domains[idx] = v
+            self._editing_allow = None
+        elif v not in self._allowed_domains:
             self._allowed_domains.append(v)
         inp.value = ""
         self._msg("")
@@ -1380,7 +1413,65 @@ class EditWorkspaceScreen(Screen):
         if idx is None or not 0 <= idx < len(self._allowed_domains):
             return
         del self._allowed_domains[idx]
+        self._editing_allow = None
         self._render_allowed_domains()
+
+    # --- in-place edit: load the highlighted item into the input (#1778) ---
+
+    def _edit_mount(self) -> None:
+        ol = self.query_one("#mount_list", OptionList)
+        idx = ol.highlighted
+        if idx is None or not 0 <= idx < len(self._mounts):
+            return
+        self._editing_mount = idx
+        inp = self.query_one("#mount_input", Input)
+        inp.value = self._mounts[idx]
+        inp.focus()
+        self._msg("Editing mount — press Add to update.")
+
+    def _edit_env(self) -> None:
+        ol = self.query_one("#env_list", OptionList)
+        idx = ol.highlighted
+        keys = list(self._env)
+        if idx is None or not 0 <= idx < len(keys):
+            return
+        key = keys[idx]
+        self._editing_env = key
+        inp = self.query_one("#env_input", Input)
+        inp.value = f"{key}={self._env[key]}"
+        inp.focus()
+        self._msg("Editing env var — press Add to update.")
+
+    def _edit_allowed_domain(self) -> None:
+        ol = self.query_one("#allow_list", OptionList)
+        idx = ol.highlighted
+        if idx is None or not 0 <= idx < len(self._allowed_domains):
+            return
+        self._editing_allow = idx
+        inp = self.query_one("#allow_input", Input)
+        inp.value = self._allowed_domains[idx]
+        inp.focus()
+        self._msg("Editing allowed-domain — press Add to update.")
+
+    # --- keyboard remove/edit of the focused OptionList (#1778) ---
+
+    def action_remove_item(self) -> None:
+        fid = getattr(self.focused, "id", None) if self.focused else None
+        if fid == "mount_list":
+            self._remove_mount()
+        elif fid == "env_list":
+            self._remove_env()
+        elif fid == "allow_list":
+            self._remove_allowed_domain()
+
+    def action_edit_item(self) -> None:
+        fid = getattr(self.focused, "id", None) if self.focused else None
+        if fid == "mount_list":
+            self._edit_mount()
+        elif fid == "env_list":
+            self._edit_env()
+        elif fid == "allow_list":
+            self._edit_allowed_domain()
 
     # --- save ---
 
@@ -1453,7 +1544,7 @@ class EditWorkspaceScreen(Screen):
                             f"Saved, but restart failed: {exc}", error=True
                         )
                         return
-                self.dismiss(True)
+                self.dismiss(name)
 
             self.app.push_screen(
                 ConfirmScreen(
@@ -1466,7 +1557,7 @@ class EditWorkspaceScreen(Screen):
                 _after,
             )
         else:
-            self.dismiss(True)
+            self.dismiss(name)
 
     # --- event handlers ---
 

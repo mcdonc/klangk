@@ -2863,6 +2863,151 @@ async def test_detail_action_edit_fetch_failure(monkeypatch):
         assert app.screen._select_value == "(none)"
 
 
+async def test_edit_screen_keyboard_remove(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    ws = _wsobj(
+        "alpha",
+        mounts=["/h:/c"],
+        env={"K": "v"},
+        allowed_domains=["github.com:443"],
+    )
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        # Delete/remove dispatches to the focused OptionList.
+        for lid, attr in (
+            ("#mount_list", "_mounts"),
+            ("#env_list", "_env"),
+            ("#allow_list", "_allowed_domains"),
+        ):
+            ol = es.query_one(lid)
+            ol.focus()
+            await pilot.pause()
+            ol.highlighted = 0
+            es.action_remove_item()
+            assert not getattr(es, attr)  # [] or {}
+        # Not focused on a list -> no-op.
+        es.query_one("#name").focus()
+        await pilot.pause()
+        es.action_remove_item()
+
+
+async def test_edit_screen_edit_in_place(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    ws = _wsobj(
+        "alpha",
+        mounts=["/h:/c"],
+        env={"K": "v"},
+        allowed_domains=["github.com:443"],
+    )
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        # 'e' on the focused mount loads it into the input (edit mode).
+        ol = es.query_one("#mount_list")
+        ol.focus()
+        await pilot.pause()
+        ol.highlighted = 0
+        es.action_edit_item()
+        assert es.query_one("#mount_input").value == "/h:/c"
+        assert es._editing_mount == 0
+        es.query_one("#mount_input").value = "/h:/c2"
+        es._add_mount()  # replaces, not appends
+        assert es._mounts == ["/h:/c2"]
+        assert es._editing_mount is None
+        # env edit (key tracked)
+        ol = es.query_one("#env_list")
+        ol.focus()
+        await pilot.pause()
+        ol.highlighted = 0
+        es.action_edit_item()
+        assert es.query_one("#env_input").value == "K=v"
+        es.query_one("#env_input").value = "K=changed"
+        es._add_env()
+        assert es._env == {"K": "changed"}
+        # allowed-domain edit
+        ol = es.query_one("#allow_list")
+        ol.focus()
+        await pilot.pause()
+        ol.highlighted = 0
+        es.action_edit_item()
+        assert es.query_one("#allow_input").value == "github.com:443"
+        es.query_one("#allow_input").value = "pypi.org"
+        es._add_allowed_domain()
+        assert es._allowed_domains == ["pypi.org"]
+        # nothing highlighted -> each _edit_* is a no-op (guard returns)
+        es.query_one("#mount_list").highlighted = None
+        es._edit_mount()
+        es.query_one("#env_list").highlighted = None
+        es._edit_env()
+        es.query_one("#allow_list").highlighted = None
+        es.action_edit_item()
+
+
+async def test_edit_rename_propagates_to_detail_and_list(monkeypatch):
+    # #1778/#1768: renaming via the edit form must update the detail screen's
+    # name (so it doesn't 404) and refresh the list (so the new name shows).
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    original = _wsobj("alpha", image="base", running=False)
+    renamed = _wsobj("renamed", image="base")
+    returns = [original, renamed]
+    finds = []
+    st = _ws(
+        list_images=lambda: {"default": "base", "allowed": ["base", "py:3"]},
+        allow_autostart=lambda: True,
+        update_workspace=lambda wid, **f: None,
+    )
+    st.find_workspace = lambda n: finds.append(n) or returns.pop(0)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        assert app.screen._name == "alpha"
+        app.screen.action_edit()
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#name").value = "renamed"
+        es._save()
+        await pilot.pause()
+        # back on detail; name adopted + reloaded by the new name
+        assert isinstance(app.screen, WorkspaceDetailScreen)
+        assert app.screen._name == "renamed"
+        assert finds[-1] == "renamed"  # _load resolved the new name
+
+
+async def test_create_screen_no_server_does_not_crash(monkeypatch):
+    # `klangk` with no server configured: pressing `n` must not crash the TUI
+    # (list_images raises ValueError, caught -> form opens with no images).
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    def boom():
+        raise ValueError("no server configured")
+
+    app = KlangkApp(_create_state(list_images=boom, allow_autostart=boom))
+    async with app.run_test() as pilot:
+        app.screen.action_create()  # must not raise
+        await pilot.pause()
+        cs = app.screen
+        assert isinstance(cs, CreateWorkspaceScreen)
+        assert cs._allowed == []
+
+
 async def test_confirm_screen_button_labels(monkeypatch):
     """ConfirmScreen's affirmative label/variant are parameterizable so the
     create-offer doesn't show a red 'Delete' button for 'Open'.'"""
