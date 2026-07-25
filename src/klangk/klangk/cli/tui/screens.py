@@ -2173,11 +2173,10 @@ class ServerSwitchScreen(Screen):
         url = child.name
 
         def _on_confirm(confirmed: bool) -> None:
-            if not confirmed:
-                return
-            self.run_worker(
-                self._do_delete_and_refresh(url), exit_on_error=False
-            )
+            if confirmed:
+                self.run_worker(
+                    self._do_delete_and_refresh(url), exit_on_error=False
+                )
 
         self.app.push_screen(
             ConfirmScreen(f"Delete server {url}?"), _on_confirm
