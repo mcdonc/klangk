@@ -64,6 +64,28 @@ class KlangkApp(App):
         min-width: 0;
         padding: 0 1;
     }
+    /* Compact form rows: label + field side-by-side (#1783). */
+    .field-row {
+        height: auto;
+    }
+    .field-row > Static {
+        width: 14;
+        padding: 0 1 0 0;
+        content-align: right middle;
+        color: $text-muted;
+    }
+    .field-row > Input, .field-row > Select {
+        width: 1fr;
+    }
+    /* Bounded list editors (#1783). */
+    .editor-list {
+        height: 3;
+        max-height: 5;
+    }
+    Collapsible {
+        height: auto;
+        padding: 0;
+    }
     """
 
     BINDINGS = [

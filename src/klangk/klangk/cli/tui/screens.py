@@ -22,6 +22,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
     Checkbox,
+    Collapsible,
     Footer,
     Header,
     Input,
@@ -1011,45 +1012,46 @@ class CreateWorkspaceScreen(Screen):
         yield Vertical(
             Static("New workspace", classes="title"),
             Static("", id="create_msg"),
-            Static("Name"),
-            Input(id="name"),
-            Static("Container image"),
-            image_select,
-            Static("Mounts  (source:/container/path[:opts])"),
-            OptionList(id="mount_list"),
+            Horizontal(Static("Name"), Input(id="name"), classes="field-row"),
+            Horizontal(Static("Image"), image_select, classes="field-row"),
             Horizontal(
                 Input(
                     id="mount_input",
-                    placeholder="/host/path:/container/path",
+                    placeholder="Mount (source:/container[:opts])",
                 ),
                 Button("Add", id="add_mount"),
                 Button("Remove", id="rm_mount"),
             ),
-            Static("Environment  (KEY=VALUE)"),
-            OptionList(id="env_list"),
+            OptionList(id="mount_list", classes="editor-list"),
             Horizontal(
-                Input(id="env_input", placeholder="KEY=VALUE"),
+                Input(id="env_input", placeholder="Env (KEY=VALUE)"),
                 Button("Add", id="add_env"),
                 Button("Remove", id="rm_env"),
             ),
-            Static(
-                "Allowed Domains  (host or host:port; empty = unrestricted)"
-            ),
-            OptionList(id="allow_list"),
+            OptionList(id="env_list", classes="editor-list"),
             Horizontal(
-                Input(id="allow_input", placeholder="github.com:443"),
+                Input(
+                    id="allow_input",
+                    placeholder="Allowed (host or host:port)",
+                ),
                 Button("Add", id="add_allow"),
                 Button("Remove", id="rm_allow"),
             ),
-            Static("Service shell command (optional)"),
-            Input(id="command"),
-            Static("Health check command (optional)"),
-            Input(id="health_check"),
-            Checkbox("Auto start", id="auto_start"),
-            Static(
-                Text("(start this workspace when the server starts)"),
-                id="auto_caption",
+            OptionList(id="allow_list", classes="editor-list"),
+            Collapsible(
+                Horizontal(
+                    Static("Command"),
+                    Input(id="command"),
+                    classes="field-row",
+                ),
+                Horizontal(
+                    Static("Health"),
+                    Input(id="health_check"),
+                    classes="field-row",
+                ),
+                title="Advanced",
             ),
+            Checkbox("Auto start", id="auto_start"),
             Horizontal(
                 Button("Cancel", id="cancel"),
                 Button("Create", id="create", variant="primary"),
@@ -1060,13 +1062,10 @@ class CreateWorkspaceScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        # Only show the auto-start checkbox (and its caption) when the server
-        # allows it; ``auto_start`` defaults to off either way.
         shown = self._allow_autostart
         cb = self.query_one("#auto_start", Checkbox)
         cb.display = shown
         cb.disabled = not shown
-        self.query_one("#auto_caption", Static).display = shown
         self._render_mounts()
         self._render_env()
         self._render_allowed_domains()
@@ -1337,45 +1336,52 @@ class EditWorkspaceScreen(Screen):
         yield Vertical(
             Static(Text(f"Edit workspace: {self._ws.name}"), classes="title"),
             Static("", id="edit_msg"),
-            Static("Name"),
-            Input(value=self._ws.name or "", id="name"),
-            Static("Container image"),
-            image_select,
-            Static("Mounts  (source:/container/path[:opts])"),
-            OptionList(id="mount_list"),
+            Horizontal(
+                Static("Name"),
+                Input(value=self._ws.name or "", id="name"),
+                classes="field-row",
+            ),
+            Horizontal(Static("Image"), image_select, classes="field-row"),
             Horizontal(
                 Input(
                     id="mount_input",
-                    placeholder="/host/path:/container/path",
+                    placeholder="Mount (source:/container[:opts])",
                 ),
                 Button("Add", id="add_mount"),
                 Button("Remove", id="rm_mount"),
             ),
-            Static("Environment  (KEY=VALUE)"),
-            OptionList(id="env_list"),
+            OptionList(id="mount_list", classes="editor-list"),
             Horizontal(
-                Input(id="env_input", placeholder="KEY=VALUE"),
+                Input(id="env_input", placeholder="Env (KEY=VALUE)"),
                 Button("Add", id="add_env"),
                 Button("Remove", id="rm_env"),
             ),
-            Static(
-                "Allowed Domains  (host or host:port; empty = unrestricted)"
-            ),
-            OptionList(id="allow_list"),
+            OptionList(id="env_list", classes="editor-list"),
             Horizontal(
-                Input(id="allow_input", placeholder="github.com:443"),
+                Input(
+                    id="allow_input",
+                    placeholder="Allowed (host or host:port)",
+                ),
                 Button("Add", id="add_allow"),
                 Button("Remove", id="rm_allow"),
             ),
-            Static("Service shell command (optional)"),
-            Input(value=self._ws.service_command or "", id="command"),
-            Static("Health check command (optional)"),
-            Input(value=self._ws.health_check or "", id="health_check"),
-            Checkbox("Auto start", value=self._ws.auto_start, id="auto_start"),
-            Static(
-                Text("(start this workspace when the server starts)"),
-                id="auto_caption",
+            OptionList(id="allow_list", classes="editor-list"),
+            Collapsible(
+                Horizontal(
+                    Static("Command"),
+                    Input(value=self._ws.service_command or "", id="command"),
+                    classes="field-row",
+                ),
+                Horizontal(
+                    Static("Health"),
+                    Input(
+                        value=self._ws.health_check or "", id="health_check"
+                    ),
+                    classes="field-row",
+                ),
+                title="Advanced",
             ),
+            Checkbox("Auto start", value=self._ws.auto_start, id="auto_start"),
             Horizontal(
                 Button("Cancel", id="cancel"),
                 Button("Save", id="save", variant="primary"),
@@ -1390,7 +1396,6 @@ class EditWorkspaceScreen(Screen):
         cb = self.query_one("#auto_start", Checkbox)
         cb.display = shown
         cb.disabled = not shown
-        self.query_one("#auto_caption", Static).display = shown
         self._render_mounts()
         self._render_env()
         self._render_allowed_domains()

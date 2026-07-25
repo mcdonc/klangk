@@ -1864,7 +1864,6 @@ async def test_create_screen_renders_defaults(monkeypatch):
         cb = cs.query_one("#auto_start", Checkbox)
         assert cb.display is True  # shown (autostart allowed)
         assert cb.value is False  # off by default
-        assert cs.query_one("#auto_caption", Static).display is True
         assert cs.query_one("#image", Select).value == "base"  # server default
 
 
@@ -1880,7 +1879,6 @@ async def test_create_screen_autostart_hidden_when_not_allowed(monkeypatch):
         cb = app.screen.query_one("#auto_start", Checkbox)
         assert cb.display is False
         assert cb.disabled is True
-        assert app.screen.query_one("#auto_caption", Static).display is False
 
 
 async def test_create_screen_mount_editor(monkeypatch):
