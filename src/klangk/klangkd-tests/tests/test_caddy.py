@@ -1585,7 +1585,7 @@ class TestLogListeners:
         wd = self._make_watchdog(port="8997", egress_port="8995")
         with caplog.at_level(logging.INFO, logger="klangk.caddy"):
             wd._log_listeners()
-        assert "caddy browser listening on 127.0.0.1:8997" in caplog.text
+        assert "caddy ingress listening on 127.0.0.1:8997" in caplog.text
         assert "caddy egress listening on 0.0.0.0:8995" in caplog.text
 
     def test_logs_egress_only_when_port_is_none(self, caplog):
