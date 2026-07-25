@@ -180,6 +180,9 @@ class TuiState:
     async def close_terminal(self, name: str, index: int) -> list[dict]:
         return await self.client().close_terminal(name, index)
 
+    async def create_terminal(self, name: str, window_name: str) -> list[dict]:
+        return await self.client().create_terminal(name, window_name)
+
     # --- auth mode (probed live via /config) ---
 
     def auth_mode(self) -> str:

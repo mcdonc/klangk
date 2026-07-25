@@ -596,8 +596,16 @@ class KlangkClient:
         """Close terminal window *index* in *name*; return the updated list."""
         return await self._terminals(name, close_index=index)
 
+    async def create_terminal(self, name: str, window_name: str) -> list[dict]:
+        """Create a new terminal window in workspace *name*; return updated list."""
+        return await self._terminals(name, new_window=window_name)
+
     async def _terminals(
-        self, name: str, *, close_index: int | None = None
+        self,
+        name: str,
+        *,
+        close_index: int | None = None,
+        new_window: str | None = None,
     ) -> list[dict]:
         try:
             ws = self.resolve_workspace(name)
@@ -624,6 +632,16 @@ class KlangkClient:
                             {
                                 "cmd": "terminal_close_window",
                                 "index": close_index,
+                            }
+                        )
+                    )
+                    windows = await self._recv_windows(conn)
+                if new_window is not None:
+                    await conn.send(
+                        json.dumps(
+                            {
+                                "cmd": "terminal_new_window",
+                                "name": new_window,
                             }
                         )
                     )

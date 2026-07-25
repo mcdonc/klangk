@@ -390,6 +390,28 @@ def test_allow_autostart(monkeypatch, redirect_xdg):
     assert TuiState().allow_autostart() is False
 
 
+async def test_create_terminal_delegates(monkeypatch, redirect_xdg):
+
+    created = {}
+
+    async def fake_create(name, window_name):
+        created.update(name=name, window=window_name)
+        return [
+            {"index": 0, "name": "main"},
+            {"index": 1, "name": window_name},
+        ]
+
+    from unittest.mock import MagicMock
+
+    fake_client = MagicMock()
+    fake_client.create_terminal = fake_create
+    t = TuiState("https://x.example")
+    monkeypatch.setattr(t, "client", lambda: fake_client)
+    result = await t.create_terminal("ws1", "term-1")
+    assert created == {"name": "ws1", "window": "term-1"}
+    assert len(result) == 2
+
+
 def test_login_password_success(monkeypatch, redirect_xdg):
     captured = {}
 
@@ -2801,6 +2823,140 @@ async def test_detail_delete_terminal_empty_result(monkeypatch):
         assert (
             len(d.query_one("#term_list", ListView).query(ListItem)) == 2
         )  # unchanged
+
+
+async def test_detail_new_terminal(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    created = {}
+
+    async def _create(name, window_name):
+        created["name"] = window_name
+        return [
+            {"index": 0, "name": "main", "id": "@0"},
+            {"index": 1, "name": "build", "id": "@1"},
+            {"index": 2, "name": window_name, "id": "@2"},
+        ]
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(
+        list_terminals=_async_terms,
+        close_terminal=_async_empty,
+        create_terminal=_create,
+    )
+    st.find_workspace = lambda n: a
+    st.current_url = lambda: "https://x.example"
+    spawned = []
+    monkeypatch.setattr(
+        scr.subprocess, "run", lambda cmd, **k: spawned.append(cmd)
+    )
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake_suspend():
+        yield
+
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        monkeypatch.setattr(app, "suspend", fake_suspend)
+        d = app.screen
+        d.action_new_terminal()
+        for _ in range(5):
+            await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert created["name"] == "term-2"
+        assert len(d.query_one("#term_list", ListView).query(ListItem)) == 3
+        assert len(spawned) == 1
+        assert spawned[0] == [
+            scr.sys.executable,
+            "-m",
+            "klangk.cli.main",
+            "--server",
+            "https://x.example",
+            "shell",
+            "alpha",
+            "2",
+        ]
+
+
+async def test_detail_new_terminal_failure(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    async def _create(name, window_name):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(
+        list_terminals=_async_terms,
+        close_terminal=_async_empty,
+        create_terminal=_create,
+    )
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        await d._do_new_terminal()
+        await app.workers.wait_for_complete()
+        assert "Create failed" in str(d.query_one("#detail_msg").render())
+
+
+async def test_detail_new_terminal_empty_result(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    async def _create(name, window_name):
+        return []
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(
+        list_terminals=_async_terms,
+        close_terminal=_async_empty,
+        create_terminal=_create,
+    )
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        await d._do_new_terminal()
+        await app.workers.wait_for_complete()
+        assert "Create failed" in str(d.query_one("#detail_msg").render())
+
+
+async def test_detail_new_terminal_no_workspace(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    def _raise(n):
+        raise RuntimeError("gone")
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _ws(list_terminals=_async_terms, close_terminal=_async_empty)
+    st.find_workspace = _raise
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        d = app.screen
+        d.action_new_terminal()  # _ws is None -> no-op
+        await app.workers.wait_for_complete()
 
 
 # ---------------------------------------------------------------------------
