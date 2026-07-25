@@ -92,6 +92,15 @@ class KlangkApp(App):
         border-left: none;
         border-right: none;
     }
+    /* The workspace-list filter input is a borderless single-line field
+    (height 1), not an underlined form input. App CSS outranks widget
+    DEFAULT_CSS by origin, so this override must live here: without it the
+    global `Input { border-top: blank }` above gives the field a 1-row top
+    border and — at height:1 — zero rows for its text, so the field renders
+    nothing even though filtering works (#1764). */
+    #filter_input, #filter_input:focus {
+        border: none;
+    }
     /* Match the Select dropdown to the underline-style inputs: drop the
     side borders (the "shadows") so it aligns cleanly with adjacent fields. */
     SelectCurrent, Select:focus > SelectCurrent {

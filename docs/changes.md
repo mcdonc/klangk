@@ -60,6 +60,14 @@ operators or integrators to act when upgrading.
   reported rather than silently emptying the list. Selecting a terminal is wired for a future `klangk shell`
   step. The workspace-list page is now titled "Klangk: Workspaces".
 
+- **The `klangk` TUI workspace list supports filter and sort (#1764).**
+  Press `/` to open a single-line filter bar that narrows the visible
+  workspaces by name (applied locally over cached data, per tab); `Esc`
+  clears the text, then hides the bar. Press `o` (or click the sort button)
+  to cycle sort order — created ↓ → created ↑ → name ↑ → name ↓ (matching
+  Flutter defaults). Showing or hiding the filter bar does not resize the
+  workspace list.
+
 - **Per-workspace network egress filtering via OCI hooks (#1365).**
   Workspaces may now declare an `allowed_domains` allow-list (`host` or
   `host:port` specs) to restrict outbound network to specific destinations.

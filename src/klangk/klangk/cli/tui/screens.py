@@ -591,14 +591,17 @@ class MainScreen(Screen):
         with TabbedContent(id="ws_tabs"):
             yield TabPane("Owned by me", WorkspaceListView(id="owned_list"))
             yield TabPane("Shared to me", WorkspaceListView(id="shared_list"))
+        yield StatusBar(id="status")
+        yield Footer()
+        # Filter bar is yielded LAST so that — since docked-bottom widgets
+        # overlap rather than stack — it paints on top of the Footer row
+        # when shown. It is hidden by default and toggled by `/` (#1764).
         with Horizontal(id="filter_bar"):
             yield Input(
                 placeholder="Filter by name… (/ to focus, Esc to clear)",
                 id="filter_input",
             )
             yield Button("sort: created ▼", id="sort_btn", variant="default")
-        yield StatusBar(id="status")
-        yield Footer()
 
     # Sort keys matching Flutter defaults: created desc.
     SORT_KEYS = ("created", "name")

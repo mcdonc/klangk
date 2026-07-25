@@ -1907,6 +1907,57 @@ async def test_focus_filter_action(monkeypatch):
         assert app.focused.id == "filter_input"
 
 
+async def test_filter_bar_renders_input_without_impacting_list(monkeypatch):
+    """When the filter bar is shown, the filter input must actually have room
+    to render its text, and the workspace list viewport must be unchanged
+    whether the bar is hidden or shown (#1764).
+
+    Two regressions this guards:
+      (a) The global `Input { border-top: blank }` app-CSS rule used to win
+          over `#filter_input { border: none }` (app CSS outranks widget
+          DEFAULT_CSS by origin), giving the field a 1-row top border and —
+          at height:1 — a content area of height 0, so the field painted
+          nothing even though filtering worked.
+      (b) Showing/hiding the docked filter bar must not resize the list.
+    """
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha"), _wsobj("beta")]))
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        bar = m.query_one("#filter_bar")
+        inp = m.query_one("#filter_input", Input)
+        owned = m.query_one("#owned_list", ListView)
+
+        # Hidden by default; list has a real viewport.
+        assert bar.display is False
+        list_height_hidden = owned.content_region.height
+        assert list_height_hidden > 0
+
+        # Show via the '/' action.
+        m.action_focus_filter()
+        await pilot.pause()
+        assert bar.display is True
+        assert isinstance(app.focused, Input)
+
+        # (a) The input's top border is neutralized (not 'blank'), so its
+        #     content area is non-empty and its text can render.
+        assert inp.styles.border_top[0] != "blank"
+        assert inp.content_size.height > 0
+        # And the bar occupies the bottom row on top of the docked chrome.
+        assert bar.region.height == 1
+        assert bar.region.y == app.size.height - 1
+
+        # (b) The workspace list viewport is unchanged.
+        assert owned.content_region.height == list_height_hidden
+
+
 async def test_sort_button_click_cycles(monkeypatch):
     """Clicking the sort button cycles sort mode (#1764)."""
 
