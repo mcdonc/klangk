@@ -317,14 +317,18 @@ class LoginScreen(SpatialNavScreen):
         if not raw:
             self._set_message("Enter a server URL or alias.", error=True)
             return
-        cfg = self.app.tui_state.cfg()
+        self.run_worker(self._do_choose_server(raw), exit_on_error=False)
+
+    async def _do_choose_server(self, raw: str) -> None:
+        cfg = await asyncio.to_thread(self.app.tui_state.cfg)
         if raw in cfg.servers:
-            # Known alias — switch to its URL.
-            self.app.tui_state.switch_server(cfg.servers[raw].url)
+            await asyncio.to_thread(
+                self.app.tui_state.switch_server, cfg.servers[raw].url
+            )
         elif is_valid_server_spec(raw):
-            # A new server (URL or UDS path) — save it as an alias so it can
-            # be re-selected later.
-            self.app.tui_state.add_server(self._derive_alias(raw), raw)
+            await asyncio.to_thread(
+                self.app.tui_state.add_server, self._derive_alias(raw), raw
+            )
         else:
             self._set_message(
                 "Enter a server URL (https://host), a socket path"
@@ -348,19 +352,25 @@ class LoginScreen(SpatialNavScreen):
         def _on_confirm(confirmed: bool) -> None:
             if not confirmed:
                 return
-            if self.app.tui_state.delete_server(url):
-                self._set_message("Server deleted.")
-            else:
-                self._set_message("Not a saved alias.", error=True)
-            self._populate_servers()
-            if self.app.tui_state.current_url() is None:
-                self._show_no_server()
-            else:
-                self._setup_auth()
+            self.run_worker(self._do_delete_server(url), exit_on_error=False)
 
         self.app.push_screen(
             ConfirmScreen(f"Delete server {url}?"), _on_confirm
         )
+
+    async def _do_delete_server(self, url: str) -> None:
+        deleted = await asyncio.to_thread(
+            self.app.tui_state.delete_server, url
+        )
+        if deleted:
+            self._set_message("Server deleted.")
+        else:
+            self._set_message("Not a saved alias.", error=True)
+        self._populate_servers()
+        if self.app.tui_state.current_url() is None:
+            self._show_no_server()
+        else:
+            self._setup_auth()
 
     # --- auth-mode setup ---
 
@@ -423,8 +433,11 @@ class LoginScreen(SpatialNavScreen):
     # --- login arms ---
 
     def _attempt_none(self) -> None:
+        self.run_worker(self._do_login_none, exit_on_error=False)
+
+    async def _do_login_none(self) -> None:
         try:
-            self.app.tui_state.login_none()
+            await asyncio.to_thread(self.app.tui_state.login_none)
         except LoginError as exc:
             self._set_message(f"No-auth login failed: {exc}", error=True)
             return
@@ -438,21 +451,32 @@ class LoginScreen(SpatialNavScreen):
                 "Email/handle and password are required.", error=True
             )
             return
+        self.run_worker(
+            self._do_login_password(identifier, password),
+            exit_on_error=False,
+        )
+
+    async def _do_login_password(self, identifier: str, password: str) -> None:
         try:
-            self.app.tui_state.login_password(identifier, password)
+            await asyncio.to_thread(
+                self.app.tui_state.login_password, identifier, password
+            )
         except LoginError as exc:
             self._set_message(f"Login failed: {exc}", error=True)
             return
         self.app.login_succeeded()
 
     def _attempt_oidc(self) -> None:
-        providers = self.app.tui_state.oidc_providers()
+        self.run_worker(self._do_login_oidc, exit_on_error=False)
+
+    async def _do_login_oidc(self) -> None:
+        providers = await asyncio.to_thread(self.app.tui_state.oidc_providers)
         if not providers:
             self._set_message("No SSO provider configured.", error=True)
             return
         provider_id = providers[0]["id"]
         try:
-            self.app.tui_state.oidc_login(provider_id)
+            await asyncio.to_thread(self.app.tui_state.oidc_login, provider_id)
         except LoginError as exc:
             self._set_message(f"SSO failed: {exc}", error=True)
             return
@@ -2117,17 +2141,27 @@ class ServerSwitchScreen(Screen):
         def _on_confirm(confirmed: bool) -> None:
             if not confirmed:
                 return
-            self.app.tui_state.delete_server(url)
-            self._populate()
+            self.run_worker(
+                self._do_delete_and_refresh(url), exit_on_error=False
+            )
 
         self.app.push_screen(
             ConfirmScreen(f"Delete server {url}?"), _on_confirm
         )
 
+    async def _do_delete_and_refresh(self, url: str) -> None:
+        await asyncio.to_thread(self.app.tui_state.delete_server, url)
+        self._populate()
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         url = getattr(event.item, "name", "") or ""
         if url:
-            self.app.tui_state.switch_server(url)
+            self.run_worker(self._do_switch_server(url), exit_on_error=False)
+        else:
+            self.app.server_changed()
+
+    async def _do_switch_server(self, url: str) -> None:
+        await asyncio.to_thread(self.app.tui_state.switch_server, url)
         self.app.server_changed()
 
 
@@ -2174,5 +2208,8 @@ class AddServerScreen(Screen):
                 " path (/...).[/red]"
             )
             return
-        self.app.tui_state.add_server(alias, url)
+        self.run_worker(self._do_add_server(alias, url), exit_on_error=False)
+
+    async def _do_add_server(self, alias: str, url: str) -> None:
+        await asyncio.to_thread(self.app.tui_state.add_server, alias, url)
         self.app.server_changed()

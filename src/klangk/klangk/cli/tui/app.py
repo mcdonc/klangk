@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from textual.app import App
 
 from .screens import (
@@ -176,10 +178,13 @@ class KlangkApp(App):
         self.push_screen(MainScreen())
 
     def do_logout(self) -> None:
-        self.tui_state.logout()
-        self.pop_screen()  # MainScreen
-        self.live_extra = ""
-        self.push_screen(LoginScreen())
+        async def _logout() -> None:
+            await asyncio.to_thread(self.tui_state.logout)
+            self.pop_screen()  # MainScreen
+            self.live_extra = ""
+            self.push_screen(LoginScreen())
+
+        self.run_worker(_logout, exit_on_error=False)
 
     def server_changed(self) -> None:
         """Pop back to the MainScreen and refresh it after a server change."""
