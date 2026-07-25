@@ -3,10 +3,7 @@
 import asyncio
 import logging
 import os
-import signal
-import sys
 import time
-from pathlib import Path
 
 from . import podman
 from .podman import PodmanError
@@ -1485,84 +1482,6 @@ class ContainerRegistry:
                         "Could not remove stale container %s: %s",
                         stale_id[:12],
                         del_exc,
-                    )
-        # Kill orphaned passt/pasta processes still bound to our ports.
-        # These can survive ``podman rm -f`` and hold ports indefinitely.
-        await self._kill_orphaned_pasta(wanted_ports)
-
-    # Process names that indicate an orphaned pasta/passt networking
-    # backend.  Checked against /proc/PID/comm (max 15 chars, no path).
-    _PASTA_NAMES = frozenset({"pasta", "passt", "passt.avx2"})
-
-    @staticmethod
-    async def _kill_orphaned_pasta(ports: set[int]) -> None:
-        """Kill orphaned passt/pasta processes bound to the given ports.
-
-        Only runs on Linux (requires ``/proc``).  Only targets processes
-        whose ``/proc/PID/comm`` matches a known pasta binary name.
-        """
-        if sys.platform != "linux":
-            return
-        for port in ports:
-            try:
-                # fuser prints PIDs to stdout when given a protocol spec.
-                proc = await asyncio.create_subprocess_exec(
-                    "fuser",
-                    f"{port}/tcp",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, stderr = await proc.communicate()
-            except FileNotFoundError:
-                logger.debug("fuser not available, skipping pasta cleanup")
-                return
-            except OSError as exc:
-                logger.debug("fuser failed for port %d: %s", port, exc)
-                continue
-            # fuser may output PIDs to stdout or stderr depending on
-            # version; merge both.
-            raw = (stdout or b"") + b" " + (stderr or b"")
-            pids: list[int] = []
-            for tok in raw.decode(errors="replace").split():
-                tok = tok.strip()
-                if tok.isdigit():
-                    pids.append(int(tok))
-            for pid in pids:
-                try:
-                    comm = Path(f"/proc/{pid}/comm").read_text().strip()
-                except OSError:
-                    continue
-                if comm not in ContainerRegistry._PASTA_NAMES:
-                    logger.debug(
-                        "Port %d held by %s (pid %d), not pasta — skipping",
-                        port,
-                        comm,
-                        pid,
-                    )
-                    continue
-                logger.warning(
-                    "Found orphaned %s (pid %d) still holding port %d"
-                    " after podman stop — podman did not clean up"
-                    " pasta (see podman#14276)",
-                    comm,
-                    pid,
-                    port,
-                )
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                    logger.warning(
-                        "Killed orphaned %s (pid %d) holding port %d",
-                        comm,
-                        pid,
-                        port,
-                    )
-                except OSError as exc:
-                    logger.warning(
-                        "Could not kill %s (pid %d) on port %d: %s",
-                        comm,
-                        pid,
-                        port,
-                        exc,
                     )
 
     async def _start_container_inner(

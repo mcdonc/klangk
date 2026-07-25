@@ -67,7 +67,6 @@ in
       else
         [
           iproute2
-          psmisc # fuser — kill orphaned pasta processes on port conflicts
           su
           util-linux
           matchbox # kiosk WM for the demo video recorder (record-demo.sh)
