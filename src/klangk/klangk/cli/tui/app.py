@@ -66,7 +66,11 @@ class KlangkApp(App):
     }
     """
 
-    BINDINGS = [("q", "quit", "Quit")]
+    BINDINGS = [
+        ("q", "quit", "Quit"),
+        ("ctrl+q", "quit", "Quit"),
+        ("ctrl+c", "quit", "Quit"),
+    ]
 
     def __init__(self, state: TuiState) -> None:
         super().__init__()

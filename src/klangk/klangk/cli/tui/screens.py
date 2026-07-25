@@ -25,11 +25,15 @@ from textual.widgets import (
     Footer,
     Header,
     Input,
+    Label,
+    ListItem,
+    ListView,
     OptionList,
     Select,
     Static,
     TabbedContent,
     TabPane,
+    Tabs,
 )
 from textual.widgets.option_list import Option
 
@@ -93,7 +97,74 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(event.button.id == "yes")
 
 
-class LoginScreen(Screen):
+class SpatialListView(ListView):
+    """A ListView that releases focus at its top/bottom boundaries to a
+    target widget, enabling spatial navigation without Tab (#1781).
+
+    Subclasses (or instances) declare ``SPATIAL_UP_TARGET`` and/or
+    ``SPATIAL_DOWN_TARGET`` — a widget type or CSS selector that receives
+    focus when Up is pressed at the first row or Down at the last.
+    """
+
+    SPATIAL_UP_TARGET = None
+    SPATIAL_DOWN_TARGET = None
+
+    def action_cursor_up(self) -> None:
+        if self.index in (0, None) and self.SPATIAL_UP_TARGET:
+            self.screen.query_one(self.SPATIAL_UP_TARGET).focus()
+        else:
+            super().action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        items = list(self.query(ListItem))
+        if (
+            self.index is not None
+            and items
+            and self.index >= len(items) - 1
+            and self.SPATIAL_DOWN_TARGET
+        ):
+            self.screen.query_one(self.SPATIAL_DOWN_TARGET).focus()
+        else:
+            super().action_cursor_down()
+
+
+class ServerListView(SpatialListView):
+    """Server picker — Down from the last row enters the URL input."""
+
+    SPATIAL_DOWN_TARGET = "#server_input"
+
+
+class SpatialNavScreen(Screen):
+    """Screen mixin for spatial Up/Down navigation between a chain of
+    widgets (inputs, buttons) in reading order (#1781).
+
+    Declare ``SPATIAL_CHAIN`` (widget ids, top-to-bottom) and optionally
+    ``SPATIAL_UP_EXIT`` (the widget id to focus when Up is pressed at the
+    top of the chain). The mixin handles the rest — no per-screen
+    ``on_key`` body needed.
+    """
+
+    SPATIAL_CHAIN: list[str] = []
+    SPATIAL_UP_EXIT: str | None = None
+
+    def on_key(self, event) -> None:
+        fid = getattr(self.focused, "id", None) if self.focused else None
+        if not fid or fid not in self.SPATIAL_CHAIN:
+            return
+        pos = self.SPATIAL_CHAIN.index(fid)
+        if event.key == "up":
+            if pos > 0:
+                event.stop()
+                self.query_one(f"#{self.SPATIAL_CHAIN[pos - 1]}").focus()
+            elif self.SPATIAL_UP_EXIT:
+                event.stop()
+                self.query_one(f"#{self.SPATIAL_UP_EXIT}").focus()
+        elif event.key == "down" and pos < len(self.SPATIAL_CHAIN) - 1:
+            event.stop()
+            self.query_one(f"#{self.SPATIAL_CHAIN[pos + 1]}").focus()
+
+
+class LoginScreen(SpatialNavScreen):
     """Credential screen that also picks the server to log into.
 
     A fresh user with no server configured can pick a known alias, select
@@ -104,13 +175,23 @@ class LoginScreen(Screen):
     password form; ``unreachable`` → diagnostic.
     """
 
-    BINDINGS = [("d", "delete_server", "Delete server")]
+    BINDINGS = [
+        ("d", "delete_server", "Delete server")
+    ]  # spatial nav via SpatialNavScreen mixin
+    SPATIAL_CHAIN = [
+        "server_input",
+        "use_server",
+        "identifier",
+        "password",
+        "login",
+    ]
+    SPATIAL_UP_EXIT = "server_options"
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield Vertical(
             Static("", id="server_line"),
-            OptionList(id="server_options"),
+            ServerListView(id="server_options"),
             Input(
                 placeholder=("Server URL or alias (e.g. https://host, prod)"),
                 id="server_input",
@@ -141,7 +222,7 @@ class LoginScreen(Screen):
 
     def _show_no_server(self) -> None:
         self.query_one("#server_line", Static).update(
-            "No server selected. Pick one above or enter a URL,"
+            "No server selected. Pick one below or enter a URL,"
             " then press 'Use server'."
         )
         self._disable_credentials()
@@ -149,19 +230,23 @@ class LoginScreen(Screen):
     # --- server picker ---
 
     def _populate_servers(self) -> None:
-        ol = self.query_one("#server_options", OptionList)
-        ol.clear_options()
+        lv = self.query_one("#server_options", ListView)
+        lv.clear()
         current = self.app.tui_state.current_url()
         known = self.app.tui_state.known_servers()
         known_urls = {s.url for s in known}
         for s in known:
             mark = "*" if s.url == current else " "
-            ol.add_option(Option(f"{mark} {s.alias}  ({s.url})", id=s.url))
+            lv.append(
+                ListItem(Label(f"{mark} {s.alias}  ({s.url})"), name=s.url)
+            )
         uds = self.app.tui_state.default_uds()
         # Only offer the auto-detected default UDS if no alias already covers
         # it (otherwise it would duplicate the persisted alias row).
         if uds and uds != current and uds not in known_urls:
-            ol.add_option(Option(f"  Local klangkd (UDS)  ({uds})", id=uds))
+            lv.append(
+                ListItem(Label(f"  Local klangkd (UDS)  ({uds})"), name=uds)
+            )
 
     @staticmethod
     def _derive_alias(raw: str) -> str:
@@ -198,12 +283,12 @@ class LoginScreen(Screen):
         self._setup_auth()
 
     def action_delete_server(self) -> None:
-        ol = self.query_one("#server_options", OptionList)
-        idx = ol.highlighted
-        if idx is None:
+        lv = self.query_one("#server_options", ListView)
+        child = lv.highlighted_child
+        if child is None:
             self._set_message("Select a server to delete.", error=True)
             return
-        url = ol.get_option_at_index(idx).id
+        url = child.name
 
         def _on_confirm(confirmed: bool) -> None:
             if not confirmed:
@@ -322,10 +407,8 @@ class LoginScreen(Screen):
 
     # --- event handlers ---
 
-    def on_option_list_option_selected(
-        self, event: OptionList.OptionSelected
-    ) -> None:
-        self._choose_server(event.option.id)
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        self._choose_server(getattr(event.item, "name", "") or "")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "use_server":
@@ -342,6 +425,12 @@ class LoginScreen(Screen):
             self._attempt_password()
 
 
+class WorkspaceListView(SpatialListView):
+    """Workspace list — Up from the first row returns to the tab strip."""
+
+    SPATIAL_UP_TARGET = Tabs
+
+
 class MainScreen(Screen):
     """The TUI home: a two-page workspace list (owned / shared) + status bar,
     with a live WS feed. Selecting a workspace opens its detail screen."""
@@ -355,8 +444,8 @@ class MainScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with TabbedContent(id="ws_tabs"):
-            yield TabPane("Owned by me", OptionList(id="owned_list"))
-            yield TabPane("Shared to me", OptionList(id="shared_list"))
+            yield TabPane("Owned by me", WorkspaceListView(id="owned_list"))
+            yield TabPane("Shared to me", WorkspaceListView(id="shared_list"))
         yield StatusBar(id="status")
         yield Footer()
 
@@ -365,6 +454,17 @@ class MainScreen(Screen):
         self.refresh_lists()
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(self._status_loop, name="status-ws")
+
+    def on_key(self, event) -> None:
+        # Down from the tab strip drops into the active workspace list (#1781).
+        if event.key == "down" and isinstance(self.focused, Tabs):
+            for lv in self.query(WorkspaceListView):
+                if lv.display:
+                    event.stop()
+                    lv.focus()
+                    if lv.index is None:
+                        lv.index = 0
+                    break
 
     def action_switch_server(self) -> None:
         self.app.push_screen(ServerSwitchScreen())
@@ -464,13 +564,13 @@ class MainScreen(Screen):
         *,
         empty_label: str = "(no workspaces)",
     ) -> None:
-        ol = self.query_one(selector, OptionList)
-        ol.clear_options()
+        lv = self.query_one(selector, ListView)
+        lv.clear()
         if not workspaces:
-            ol.add_option(Option(Text(empty_label), id="", disabled=True))
+            lv.append(ListItem(Label(Text(empty_label)), name=""))
             return
         for ws in workspaces:
-            ol.add_option(Option(self._fmt(ws), id=ws.name))
+            lv.append(ListItem(Label(self._fmt(ws)), name=ws.name))
 
     def _refresh_status(self) -> None:
         state = self.app.tui_state
@@ -480,10 +580,8 @@ class MainScreen(Screen):
             extra=self.app.live_extra,
         )
 
-    def on_option_list_option_selected(
-        self, event: OptionList.OptionSelected
-    ) -> None:
-        name = event.option.id
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        name = getattr(event.item, "name", "") or ""
         if name:
             self.app.push_screen(WorkspaceDetailScreen(name))
 
@@ -551,7 +649,7 @@ class WorkspaceDetailScreen(Screen):
             Static("", id="detail_title"),
             Static("", id="detail_body"),
             Static("Terminals (own):", id="term_label"),
-            OptionList(id="term_list"),
+            SpatialListView(id="term_list"),
             Static("", id="detail_msg"),
             id="detail_box",
         )
@@ -707,27 +805,27 @@ class WorkspaceDetailScreen(Screen):
         self._render_terminals()
 
     def _render_terminals(self) -> None:
-        ol = self.query_one("#term_list", OptionList)
-        ol.clear_options()
+        lv = self.query_one("#term_list", ListView)
+        lv.clear()
         if not self._terminals:
-            ol.add_option(Option(Text("(no terminals)"), id="", disabled=True))
+            lv.append(ListItem(Label(Text("(no terminals)")), name=""))
             return
         for w in self._terminals:
             idx = w.get("index", "")
             name = w.get("name") or idx
-            ol.add_option(Option(Text(f"{idx}  {name}"), id=str(idx)))
+            lv.append(ListItem(Label(Text(f"{idx}  {name}")), name=str(idx)))
 
     def action_delete_terminal(self) -> None:
-        ol = self.query_one("#term_list", OptionList)
-        if ol.highlighted is None:
+        lv = self.query_one("#term_list", ListView)
+        child = lv.highlighted_child
+        if child is None:
             return
-        opt = ol.get_option_at_index(ol.highlighted)
-        if not opt.id:
+        if not child.name:
             return
         if len(self._terminals) <= 1:
             self._msg("Can't delete the last terminal.", error=True)
             return
-        index = int(opt.id)
+        index = int(child.name)
         self.run_worker(self._do_delete_terminal(index), exit_on_error=False)
 
     async def _do_delete_terminal(self, index: int) -> None:
@@ -1605,7 +1703,7 @@ class ServerSwitchScreen(Screen):
         yield Vertical(
             Static("Switch server", classes="title"),
             Static("", id="switch_msg"),
-            OptionList(id="server_options"),
+            SpatialListView(id="server_options"),
             id="switch_box",
         )
         yield Footer()
@@ -1614,8 +1712,8 @@ class ServerSwitchScreen(Screen):
         self._populate()
 
     def _populate(self) -> None:
-        ol = self.query_one("#server_options", OptionList)
-        ol.clear_options()
+        lv = self.query_one("#server_options", ListView)
+        lv.clear()
         servers = self.app.tui_state.known_servers()
         msg = self.query_one("#switch_msg", Static)
         if not servers:
@@ -1625,14 +1723,16 @@ class ServerSwitchScreen(Screen):
         current = self.app.tui_state.current_url()
         for s in servers:
             mark = "*" if s.url == current else " "
-            ol.add_option(Option(f"{mark} {s.alias}  ({s.url})", id=s.url))
+            lv.append(
+                ListItem(Label(f"{mark} {s.alias}  ({s.url})"), name=s.url)
+            )
 
     def action_delete_server(self) -> None:
-        ol = self.query_one("#server_options", OptionList)
-        idx = ol.highlighted
-        if idx is None:
+        lv = self.query_one("#server_options", ListView)
+        child = lv.highlighted_child
+        if child is None:
             return
-        url = ol.get_option_at_index(idx).id
+        url = child.name
 
         def _on_confirm(confirmed: bool) -> None:
             if not confirmed:
@@ -1644,10 +1744,8 @@ class ServerSwitchScreen(Screen):
             ConfirmScreen(f"Delete server {url}?"), _on_confirm
         )
 
-    def on_option_list_option_selected(
-        self, event: OptionList.OptionSelected
-    ) -> None:
-        url = event.option.id
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        url = getattr(event.item, "name", "") or ""
         if url:
             self.app.tui_state.switch_server(url)
         self.app.server_changed()
