@@ -33,6 +33,7 @@ proxy ownership), and #1645 (first-run generation) for the full rationale.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import typer
@@ -98,6 +99,43 @@ def _resolve_config_path(config: str | None) -> str:
     return str(path)
 
 
+def _check_pid_preflight(settings: KlangkSettings) -> int | None:
+    """Return the PID of a live klangkd for this instance, or ``None``.
+
+    Mirrors :meth:`Util.check_pid_file` but runs *before* the app is
+    built so the launcher can abort before touching the UDS (#1837).
+    """
+    # Read the instance ID the same way Util.resolve_instance_id does,
+    # but read-only — don't generate one; if the file is missing there
+    # is no running instance to collide with.
+    instance_id_path = Path(settings.data_dir) / "instance-id"
+    try:
+        instance_id = instance_id_path.read_text().strip()
+    except (FileNotFoundError, ValueError):
+        return None
+    if not instance_id:
+        return None
+
+    pid_path = Path(settings.state_dir) / f"klangk-{instance_id}.pid"
+    try:
+        pid = int(pid_path.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        return None
+
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, OverflowError):
+        # Stale PID file — clean it up.
+        pid_path.unlink(missing_ok=True)
+        return None
+    except PermissionError:
+        return pid
+
+    if pid == os.getpid():
+        return None
+    return pid
+
+
 @app.command()
 def main(  # pragma: no cover
     config: str | None = typer.Option(
@@ -134,6 +172,21 @@ def main(  # pragma: no cover
 
     # Read ws_max_size through the typed config (default 16 MiB, #1394/#1395).
     ws_max_size = int(settings.websocket_msg_size_max)
+
+    # Pre-flight PID check: abort *before* touching the UDS so a second
+    # klangkd doesn't destroy the first instance's socket (#1837).
+    # The lifespan has its own authoritative check, but that runs after
+    # uvicorn binds — too late to protect the socket file.
+    existing = _check_pid_preflight(settings)
+    if existing is not None:
+        from klangk.logger import logger  # noqa: allow-deferred-import
+
+        logger.error(
+            "Another klangk instance (PID %d) is already running — "
+            "refusing to start",
+            existing,
+        )
+        sys.exit(1)
 
     # Bind the UDS. A stale socket from a kill -9'd process makes the
     # bind fail with EADDRINUSE — unlink first (the pidfile guard in the
