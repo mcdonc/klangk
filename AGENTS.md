@@ -208,3 +208,11 @@ devenv --quiet -O dotenv.enable:bool false shell -- node --experimental-strip-ty
 
 `record-cli.sh`'s Scene 2 prep also calls `--reset`, but do NOT rely on that
 alone — run the destroy consciously and explicitly every time.
+
+## Worktrees
+
+- When asked to create a worktree, put the worktree inside the repository
+  root's `.worktrees` subdirectory. When using a worktree, do not commit
+  anything to the main branch or use the main repository to commit anything —
+  all commits go on the worktree's own branch within the worktree.
+- Worktrees should have a directory name no longer than 12 characters.
