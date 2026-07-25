@@ -117,6 +117,7 @@ class KlangkApp(App):
         height: 3;
         border-top: none;
         padding: 0;
+        margin-top: 1;
     }
     """
 
