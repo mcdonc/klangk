@@ -1556,3 +1556,41 @@ class TestClassifyCaddyLine:
         )
         level, msg = _classify_caddy_line(line)
         assert level == logging.DEBUG
+
+
+# ---------------------------------------------------------------------------
+# CaddyWatchdog._log_listeners
+# ---------------------------------------------------------------------------
+
+
+class TestLogListeners:
+    """_log_listeners logs browser and/or egress ports at INFO."""
+
+    def _make_watchdog(
+        self,
+        *,
+        port=None,
+        listen="127.0.0.1",
+        egress_port="8995",
+        egress_listen="0.0.0.0",
+    ):
+        app = Mock()
+        app.state.settings.port = port
+        app.state.settings.listen = listen
+        app.state.settings.egress_port = egress_port
+        app.state.settings.egress_listen = egress_listen
+        return CaddyWatchdog(app)
+
+    def test_logs_both_ports(self, caplog):
+        wd = self._make_watchdog(port="8997", egress_port="8995")
+        with caplog.at_level(logging.INFO, logger="klangk.caddy"):
+            wd._log_listeners()
+        assert "caddy browser listening on 127.0.0.1:8997" in caplog.text
+        assert "caddy egress listening on 0.0.0.0:8995" in caplog.text
+
+    def test_logs_egress_only_when_port_is_none(self, caplog):
+        wd = self._make_watchdog(port=None, egress_port="8995")
+        with caplog.at_level(logging.INFO, logger="klangk.caddy"):
+            wd._log_listeners()
+        assert "browser" not in caplog.text
+        assert "caddy egress listening on 0.0.0.0:8995" in caplog.text
