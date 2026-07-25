@@ -710,6 +710,8 @@ class WorkspaceDetailScreen(Screen):
 
     def on_mount(self) -> None:
         self._load()
+        if self._ws is not None and not self._ws.running:
+            self.run_worker(self._start_if_stopped, exit_on_error=False)
         self.run_worker(self._load_terminals, exit_on_error=False)
 
     def _load(self) -> None:
@@ -730,6 +732,22 @@ class WorkspaceDetailScreen(Screen):
             self._missing = False
             self._load_error = None
         self._display()
+
+    async def _start_if_stopped(self) -> None:
+        """Auto-start a stopped workspace container on visit.
+
+        The Flutter UI does this via its WebSocket ``connectWorkspace``
+        call; the TUI replicates the behaviour with a restart request.
+        """
+        self._msg("Starting container…")
+        try:
+            self.app.tui_state.restart_workspace(self._name)
+        except Exception as exc:
+            self._msg(f"Auto-start failed: {exc}", error=True)
+            return
+        self._load()
+        self._msg("Container started.")
+        self.app.refresh_workspaces()
 
     def _display(self) -> None:
         self.query_one("#detail_title", Static).update(
