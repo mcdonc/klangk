@@ -228,6 +228,16 @@ def test_update_server_preserves_fields(redirect_xdg):
     assert loaded.servers["a"].user == "me@x"
 
 
+def test_update_server_sets_user(redirect_xdg):
+    add_server_to_config("a", "https://a.example")
+    assert (
+        update_server_in_config("a", "a", "https://a.example", user="new@x")
+        is True
+    )
+    loaded = CLIConfig.load()
+    assert loaded.servers["a"].user == "new@x"
+
+
 def test_update_server_no_config_file(monkeypatch, tmp_path):
     monkeypatch.setattr(cfgmod, "_CONFIG_PATH", tmp_path / "nope.yaml")
     assert update_server_in_config("a", "a", "https://x.example") is False
