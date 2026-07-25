@@ -882,7 +882,17 @@ class TerminalController:
         session_name = self.tmux_session_name()
         index = msg.get("index", 0)
         try:
-            windows = await self._conn.app.state.terminal.close_window(
+            terminal = self._conn.app.state.terminal
+            windows = await terminal.list_windows(
+                self._conn.container_id, session_name
+            )
+            if len(windows) <= 1:
+                send_error(
+                    self._conn.sock,
+                    "Cannot close the last terminal window.",
+                )
+                return
+            windows = await terminal.close_window(
                 self._conn.container_id,
                 session_name,
                 index,

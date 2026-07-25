@@ -5441,16 +5441,37 @@ class TestTerminalWindowHandlers:
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
-        with patch.object(
-            _mock_term,
-            "close_window",
-            return_value=[
-                {"id": "@0", "index": 0, "name": "bash", "active": True}
-            ],
+        two_windows = [
+            {"id": "@0", "index": 0, "name": "bash", "active": True},
+            {"id": "@1", "index": 1, "name": "aux", "active": False},
+        ]
+        with (
+            patch.object(_mock_term, "list_windows", return_value=two_windows),
+            patch.object(
+                _mock_term,
+                "close_window",
+                return_value=[
+                    {"id": "@0", "index": 0, "name": "bash", "active": True}
+                ],
+            ),
         ):
             await conn.handle_terminal_close_window({"index": 1})
         sent = sock.send_json.call_args[0][0]
         assert sent["type"] == "terminal_windows"
+
+    async def test_close_last_window_refused(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        one_window = [
+            {"id": "@0", "index": 0, "name": "bash", "active": True},
+        ]
+        with patch.object(_mock_term, "list_windows", return_value=one_window):
+            await conn.handle_terminal_close_window({"index": 0})
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "error"
+        assert "last terminal" in sent["message"].lower()
 
     async def test_close_shared_window_broadcasts(self, user, app_state):
         """Closing a shared window broadcasts updated shared_terminals."""
@@ -5461,12 +5482,21 @@ class TestTerminalWindowHandlers:
                 {"name": "bash", "index": 0, "id": "@0", "shared": True},
                 {"name": "1", "index": 1, "id": "@1", "shared": False},
             ]
-            with patch.object(
-                _mock_term,
-                "close_window",
-                return_value=[
-                    {"id": "@1", "index": 1, "name": "1", "active": True}
-                ],
+            two_windows = [
+                {"id": "@0", "index": 0, "name": "bash", "active": True},
+                {"id": "@1", "index": 1, "name": "1", "active": False},
+            ]
+            with (
+                patch.object(
+                    _mock_term, "list_windows", return_value=two_windows
+                ),
+                patch.object(
+                    _mock_term,
+                    "close_window",
+                    return_value=[
+                        {"id": "@1", "index": 1, "name": "1", "active": True}
+                    ],
+                ),
             ):
                 await conn.handle_terminal_close_window({"index": 0})
             # shared "bash" was removed — broadcast should have fired
@@ -5483,10 +5513,17 @@ class TestTerminalWindowHandlers:
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
-        with patch.object(
-            _mock_term,
-            "close_window",
-            side_effect=TerminalError("no such window"),
+        two_windows = [
+            {"id": "@0", "index": 0, "name": "bash", "active": True},
+            {"id": "@1", "index": 1, "name": "aux", "active": False},
+        ]
+        with (
+            patch.object(_mock_term, "list_windows", return_value=two_windows),
+            patch.object(
+                _mock_term,
+                "close_window",
+                side_effect=TerminalError("no such window"),
+            ),
         ):
             await conn.handle_terminal_close_window({"index": 99})
         sent = sock.send_json.call_args[0][0]
