@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import subprocess
+import sys
 from urllib.parse import urlparse
 
 import logging
@@ -1040,6 +1042,19 @@ class WorkspaceDetailScreen(Screen):
             idx = w.get("index", "")
             name = w.get("name") or idx
             lv.append(ListItem(Label(Text(f"{idx}  {name}")), name=str(idx)))
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Suspend the TUI and spawn ``klangk shell`` for the selected terminal."""
+        terminal = getattr(event.item, "name", "") or ""
+        if not terminal or self._ws is None:
+            return
+        cmd = [sys.executable, "-m", "klangk.cli.main"]
+        server = self.app.tui_state.current_url()
+        if server:
+            cmd += ["--server", server]
+        cmd += ["shell", self._name, terminal]
+        with self.app.suspend():
+            subprocess.run(cmd)
 
     def action_delete_terminal(self) -> None:
         lv = self.query_one("#term_list", ListView)
