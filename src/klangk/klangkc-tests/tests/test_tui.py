@@ -2058,6 +2058,67 @@ async def test_detail_delete_terminal_failure(monkeypatch):
         assert "Delete failed" in str(d.query_one("#detail_msg").render())
 
 
+async def test_detail_terminal_select_spawns_shell(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(list_terminals=_async_terms)
+    st.find_workspace = lambda n: a
+    st.current_url = lambda: "https://x.example"
+    spawned = []
+    monkeypatch.setattr(
+        scr.subprocess, "run", lambda cmd, **k: spawned.append(cmd)
+    )
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake_suspend():
+        yield
+
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        monkeypatch.setattr(app, "suspend", fake_suspend)
+        app.screen.on_list_view_selected(FakeSelected("0"))
+        assert len(spawned) == 1
+        assert spawned[0] == [
+            scr.sys.executable,
+            "-m",
+            "klangk.cli.main",
+            "--server",
+            "https://x.example",
+            "shell",
+            "alpha",
+            "0",
+        ]
+
+
+async def test_detail_terminal_select_empty_name_ignored(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(list_terminals=_async_terms)
+    st.find_workspace = lambda n: a
+    spawned = []
+    monkeypatch.setattr(
+        scr.subprocess, "run", lambda cmd, **k: spawned.append(cmd)
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        app.screen.on_list_view_selected(FakeSelected(""))
+        assert spawned == []
+
+
 async def test_main_screen_title(monkeypatch):
     async def noop(*a, **k):
         return None
