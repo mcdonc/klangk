@@ -15,7 +15,6 @@ let
   featuresDir = config.devenv.root + "/.devenv/state/klangk/features";
   dataDir = config.devenv.root + "/.devenv/state/klangk/data";
   versionFile = config.devenv.state + "/klangk/version.json";
-  stateDir = config.devenv.state + "/klangk";
   # Browser (ingress) and container-egress ports — the proxy listens on both
   # (#1542). kill-port-holders frees both before startup.
   browserPort = "8997";
@@ -202,17 +201,11 @@ in
       config.devenv.state + "/klangk/podman/policy.json"
   );
   env.KLANGKD_VERSION_FILE = versionFile;
-  # state_dir: runtime state (UDS, rendered Caddyfile, pid). Devenv pins it
-  # to $DEVENV_STATE/klangk; the field default is $XDG_STATE_HOME/klangkd
-  # (→ ~/.local/state/klangkd; #1459, #1644, #1646).
-  env.KLANGKD_STATE_DIR = stateDir;
-  # Frontend dir: the backend runs editable in devenv (PYTHONPATH on the
-  # source tree), so the in-package default (klangk/frontend, #1600) does
-  # not exist. Point at the repo's Flutter web build output instead --
-  # produced by scripts/flutterbuildweb.sh before `devenv up`. Operators
-  # running an installed wheel leave this unset and get the in-package
-  # default (#1456, #1600).
-  env.KLANGKD_FRONTEND_DIR = config.devenv.root + "/src/frontend/build/web";
+  # state_dir / frontend_dir live in klangkd.yaml (cmd:-indirected to
+  # $DEVENV_STATE / $DEVENV_ROOT) — see klangkd.yaml.example. IMAGE_NAME and
+  # VERSION_FILE stay as env because the build scripts
+  # (build-workspace-image.sh, build-host-image.sh) read them and don't parse
+  # the YAML (#1788).
   # Docker build platform for klangk images. On Linux, default to the host
   # architecture so arm64 machines build/run natively instead of under amd64
   # emulation. The published GHCR base (klangk-workspace-base:latest) is

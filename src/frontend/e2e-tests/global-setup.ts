@@ -81,6 +81,13 @@ async function globalSetup() {
         KLANGKD_EGRESS_PORT: proxyPort,
         KLANGKD_DATA_DIR: dataDir,
         KLANGKD_STATE_DIR: stateDir,
+        KLANGKD_FRONTEND_DIR: join(
+          projectRoot,
+          "src",
+          "frontend",
+          "build",
+          "web",
+        ),
         KLANGKD_CUSTOMIZE_DIR: join(dataDir, "customize"),
         KLANGKD_LOGIN_LOCKOUT_FAILURES: "5",
         KLANGKD_JWT_SECRET: "e2e-test-secret",
