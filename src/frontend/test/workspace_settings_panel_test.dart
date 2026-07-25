@@ -586,7 +586,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('Settings saved'), findsOneWidget);
-      expect(find.textContaining('Restart the workspace container'),
+      expect(find.textContaining('Restart the workspace to apply'),
           findsOneWidget);
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
@@ -609,7 +609,7 @@ void main() {
 
       expect(find.text('Settings saved'), findsOneWidget);
       expect(
-          find.textContaining('Restart the workspace container'), findsNothing);
+          find.textContaining('Restart the workspace to apply'), findsNothing);
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
     });
@@ -637,7 +637,7 @@ void main() {
 
       expect(find.text('Settings saved'), findsOneWidget);
       expect(
-          find.textContaining('Restart the workspace container'), findsNothing);
+          find.textContaining('Restart the workspace to apply'), findsNothing);
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
     });
