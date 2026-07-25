@@ -4389,6 +4389,7 @@ async def test_switch_screen_delete_server(monkeypatch):
         await pilot.pause()
         app.screen.dismiss(True)
         await pilot.pause()
+        await pilot.pause()
         assert deleted.get("u") == "https://prod.example"
 
 
