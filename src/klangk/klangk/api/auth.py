@@ -39,7 +39,7 @@ async def verify_workspace_token(request: Request):
     fwd_uri = request.headers.get("x-forwarded-uri", "?")
     fwd_method = request.headers.get("x-forwarded-method", "?")
     if not authorization.startswith("Bearer "):
-        logger.debug(
+        logger.info(
             "workspace token missing: from=%s method=%s uri=%s",
             fwd_for,
             fwd_method,
@@ -53,7 +53,7 @@ async def verify_workspace_token(request: Request):
     token = authorization[7:]
     result = request.app.state.auth.decode_workspace_token(token)
     if result is auth.Auth.WORKSPACE_TOKEN_EXPIRED:
-        logger.debug(
+        logger.info(
             "workspace token expired: from=%s method=%s uri=%s",
             fwd_for,
             fwd_method,
@@ -65,7 +65,7 @@ async def verify_workspace_token(request: Request):
             headers={"X-Token-Error": "expired"},
         )
     if result is None:
-        logger.debug(
+        logger.info(
             "workspace token invalid: from=%s method=%s uri=%s",
             fwd_for,
             fwd_method,
