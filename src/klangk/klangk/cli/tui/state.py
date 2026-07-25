@@ -29,6 +29,7 @@ from ..config import (
     add_server_to_config,
     default_server_uds_path,
     remove_server_from_config,
+    update_server_in_config,
 )
 from ..transport import http_request
 
@@ -294,6 +295,29 @@ class TuiState:
         state = self.state()
         state.active_server = url
         state.save()
+
+    def update_server(
+        self,
+        old_alias: str,
+        new_alias: str,
+        url: str,
+        user: str | None = None,
+    ) -> bool:
+        """Update an existing server entry.
+
+        Returns True if the alias was found and updated. If the URL changed
+        and this was the active server, the active pointer is updated too.
+        """
+        cfg = self.cfg()
+        old_entry = cfg.servers.get(old_alias)
+        old_url = old_entry.url if old_entry else None
+        if not update_server_in_config(old_alias, new_alias, url, user):
+            return False
+        state = self.state()
+        if old_url and state.active_server == old_url:
+            state.active_server = url
+            state.save()
+        return True
 
     def delete_server(self, url: str) -> bool:
         """Delete the alias pointing at *url*.
