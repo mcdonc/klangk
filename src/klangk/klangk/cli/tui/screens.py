@@ -556,12 +556,34 @@ class MainScreen(Screen):
         text-align: right;
         color: $text-muted;
     }
+    #filter_bar {
+        dock: bottom;
+        height: 1;
+        background: $boost;
+    }
+    #filter_input {
+        width: 1fr;
+        border: none;
+        height: 1;
+        padding: 0;
+        background: $boost;
+    }
+    #sort_btn {
+        width: auto;
+        min-width: 20;
+        border: none;
+        height: 1;
+        padding: 0 1;
+        background: $boost;
+    }
     """
 
     BINDINGS = [
         ("s", "switch_server", "Switch server"),
         ("n", "create", "New"),
         ("l", "logout", "Logout"),
+        ("slash", "focus_filter", "Filter"),
+        ("o", "cycle_sort", "Sort"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -571,10 +593,28 @@ class MainScreen(Screen):
             yield TabPane("Shared to me", WorkspaceListView(id="shared_list"))
         yield StatusBar(id="status")
         yield Footer()
+        # Filter bar is yielded LAST so that — since docked-bottom widgets
+        # overlap rather than stack — it paints on top of the Footer row
+        # when shown. It is hidden by default and toggled by `/` (#1764).
+        with Horizontal(id="filter_bar"):
+            yield Input(
+                placeholder="Filter by name… (/ to focus, Esc to clear)",
+                id="filter_input",
+            )
+            yield Button("sort: created ▼", id="sort_btn", variant="default")
+
+    # Sort keys matching Flutter defaults: created desc.
+    SORT_KEYS = ("created", "name")
 
     def on_mount(self) -> None:
         self.app.title = "Klangk: Workspaces"
         self._initial_focus_done = False
+        self._sort_key = "created"
+        self._sort_asc = False
+        self._owned_all: list = []
+        self._shared_all: list = []
+        self._filter_text = ""
+        self.query_one("#filter_bar").display = False
         self.refresh_lists()
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(self._status_loop, name="status-ws")
@@ -582,6 +622,88 @@ class MainScreen(Screen):
     def on_tabbed_content_tab_activated(self, event) -> None:
         """Focus the first workspace row when switching tabs (#1792)."""
         self._focus_visible_list()
+
+    # --- filter / sort ---
+
+    def action_focus_filter(self) -> None:
+        self.query_one("#filter_bar").display = True
+        self.query_one("#filter_input", Input).focus()
+
+    def action_cycle_sort(self) -> None:
+        """Cycle through sort modes: created↓ → created↑ → name↑ → name↓."""
+        if self._sort_key == "created" and not self._sort_asc:
+            self._sort_asc = True
+        elif self._sort_key == "created" and self._sort_asc:
+            self._sort_key = "name"
+            self._sort_asc = True
+        elif self._sort_key == "name" and self._sort_asc:
+            self._sort_asc = False
+        else:
+            self._sort_key = "created"
+            self._sort_asc = False
+        self._update_sort_label()
+        self._apply_filter()
+
+    def _update_sort_label(self) -> None:
+        arrow = "▲" if self._sort_asc else "▼"
+        try:
+            self.query_one(
+                "#sort_btn", Button
+            ).label = f"sort: {self._sort_key} {arrow}"
+        except NoMatches:  # pragma: no cover
+            pass
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "sort_btn":
+            self.action_cycle_sort()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "filter_input":
+            self._filter_text = event.value.strip().lower()
+            self._apply_filter()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "filter_input":
+            self._focus_visible_list()
+
+    @staticmethod
+    def _sort_key_name(ws) -> str:
+        return (getattr(ws, "name", "") or "").lower()
+
+    @staticmethod
+    def _sort_key_created(ws) -> str:
+        return getattr(ws, "created_at", "") or ""
+
+    def _sort_workspaces(self, workspaces: list) -> list:
+        """Sort workspace list according to current sort state."""
+        key = (
+            self._sort_key_name
+            if self._sort_key == "name"
+            else self._sort_key_created
+        )
+        return sorted(workspaces, key=key, reverse=not self._sort_asc)
+
+    def _apply_filter(self) -> None:
+        """Re-populate both lists from cached data with filter + sort."""
+        q = self._filter_text
+        owned = self._owned_all
+        shared = self._shared_all
+        if q:
+            owned = [
+                ws
+                for ws in owned
+                if q in (getattr(ws, "name", "") or "").lower()
+            ]
+            shared = [
+                ws
+                for ws in shared
+                if q in (getattr(ws, "name", "") or "").lower()
+            ]
+        owned = self._sort_workspaces(owned)
+        shared = self._sort_workspaces(shared)
+        empty = "(no matches)" if q else "(no workspaces)"
+        self._populate("#owned_list", owned, empty_label=empty)
+        self._populate("#shared_list", shared, empty_label=empty)
 
     def _focus_visible_list(self) -> None:
         """Focus the first item in the visible workspace list (#1792)."""
@@ -593,6 +715,16 @@ class MainScreen(Screen):
                 return
 
     def on_key(self, event) -> None:
+        # Escape in the filter input: clear text or hide bar and return.
+        if event.key == "escape" and isinstance(self.focused, Input):
+            inp = self.query_one("#filter_input", Input)
+            if inp.value:
+                inp.value = ""
+            else:
+                self.query_one("#filter_bar").display = False
+                self._focus_visible_list()
+            event.stop()
+            return
         # Down from the tab strip drops into the active workspace list (#1781).
         if event.key == "down" and isinstance(self.focused, Tabs):
             for lv in self.query(WorkspaceListView):
@@ -674,22 +806,21 @@ class MainScreen(Screen):
             owned = await self._safe_list(owned=True)
             shared = await self._safe_list(owned=False)
         except AuthError:
+            self._owned_all = []
+            self._shared_all = []
             for sel in ("#owned_list", "#shared_list"):
                 self._populate(
                     sel, [], empty_label="(session expired — re-login)"
                 )
             self._refresh_status()
             return
-        self._populate("#owned_list", owned)
-        for ws in owned:
+        self._owned_all = owned
+        self._shared_all = shared
+        for ws in owned + shared:
             wid = str(getattr(ws, "id", "") or "")
             if wid:
                 self._ws_by_id[wid] = ws
-        self._populate("#shared_list", shared)
-        for ws in shared:
-            wid = str(getattr(ws, "id", "") or "")
-            if wid:
-                self._ws_by_id[wid] = ws
+        self._apply_filter()
         self._refresh_status()
         if not self._initial_focus_done:
             self._initial_focus_done = True

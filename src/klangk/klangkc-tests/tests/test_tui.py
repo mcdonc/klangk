@@ -1731,6 +1731,283 @@ async def test_shared_tab_stays_when_empty(monkeypatch):
         assert tc.active == shared_pane_id
 
 
+async def test_filter_narrows_workspace_list(monkeypatch):
+    """Typing in the filter input narrows the visible workspace list (#1764)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(
+        _ws(owned=[_wsobj("alpha"), _wsobj("beta"), _wsobj("alphabet")])
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        lv = m.query_one("#owned_list", ListView)
+        assert len(lv.query(ListItem)) == 3
+
+        # Type "alph" into the filter.
+        inp = m.query_one("#filter_input", Input)
+        inp.value = "alph"
+        await pilot.pause()
+        items = lv.query(ListItem)
+        assert len(items) == 2
+        names = {i.name for i in items}
+        assert names == {"alpha", "alphabet"}
+
+
+async def test_filter_no_matches_shows_placeholder(monkeypatch):
+    """A filter with no matches shows '(no matches)' placeholder (#1764)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        inp = m.query_one("#filter_input", Input)
+        inp.value = "zzz"
+        await pilot.pause()
+        items = m.query_one("#owned_list", ListView).query(ListItem)
+        assert len(items) == 1
+        assert "no matches" in str(items[0].query_one(Label).render()).lower()
+
+
+async def test_filter_escape_clears_then_returns(monkeypatch):
+    """Escape in filter clears text first, then returns focus to list (#1764)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha"), _wsobj("beta")]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        inp = m.query_one("#filter_input", Input)
+        inp.focus()
+        inp.value = "alph"
+        await pilot.pause()
+
+        # First Escape clears the text.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert inp.value == ""
+        # List is restored (both items visible again).
+        assert len(m.query_one("#owned_list", ListView).query(ListItem)) == 2
+
+        # Second Escape returns focus to the workspace list.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.focused, ListView)
+
+
+async def test_cycle_sort(monkeypatch):
+    """Pressing 'o' cycles sort: created↓ → created↑ → name↑ → name↓ (#1764)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = Workspace(id="id-a", name="alpha", created_at="2025-01-01T00:00:00")
+    b = Workspace(id="id-b", name="beta", created_at="2025-06-01T00:00:00")
+    app = KlangkApp(_ws(owned=[a, b]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        lv = m.query_one("#owned_list", ListView)
+
+        def names():
+            return [i.name for i in lv.query(ListItem)]
+
+        # Default: created desc (newest first).
+        assert names() == ["beta", "alpha"]
+
+        # 1st press: created asc.
+        m.action_cycle_sort()
+        await pilot.pause()
+        assert names() == ["alpha", "beta"]
+        assert "created" in str(m.query_one("#sort_btn", Button).label)
+        assert "▲" in str(m.query_one("#sort_btn", Button).label)
+
+        # 2nd press: name asc.
+        m.action_cycle_sort()
+        await pilot.pause()
+        assert names() == ["alpha", "beta"]
+        assert "name" in str(m.query_one("#sort_btn", Button).label)
+
+        # 3rd press: name desc.
+        m.action_cycle_sort()
+        await pilot.pause()
+        assert names() == ["beta", "alpha"]
+
+        # 4th press: back to created desc.
+        m.action_cycle_sort()
+        await pilot.pause()
+        assert names() == ["beta", "alpha"]
+        assert "created" in str(m.query_one("#sort_btn", Button).label)
+        assert "▼" in str(m.query_one("#sort_btn", Button).label)
+
+
+async def test_filter_preserved_on_refresh(monkeypatch):
+    """A live refresh re-applies the active filter (#1764)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha"), _wsobj("beta")]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        inp = m.query_one("#filter_input", Input)
+        inp.value = "alph"
+        await pilot.pause()
+        lv = m.query_one("#owned_list", ListView)
+        assert len(lv.query(ListItem)) == 1
+
+        # Simulate a workspaces_changed refresh.
+        m.refresh_lists()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(lv.query(ListItem)) == 1
+        assert lv.query(ListItem)[0].name == "alpha"
+
+
+async def test_focus_filter_action(monkeypatch):
+    """The '/' keybinding focuses the filter input (#1764)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        m.action_focus_filter()
+        await pilot.pause()
+        assert isinstance(app.focused, Input)
+        assert app.focused.id == "filter_input"
+
+
+async def test_filter_bar_renders_input_without_impacting_list(monkeypatch):
+    """When the filter bar is shown, the filter input must actually have room
+    to render its text, and the workspace list viewport must be unchanged
+    whether the bar is hidden or shown (#1764).
+
+    Two regressions this guards:
+      (a) The global `Input { border-top: blank }` app-CSS rule used to win
+          over `#filter_input { border: none }` (app CSS outranks widget
+          DEFAULT_CSS by origin), giving the field a 1-row top border and —
+          at height:1 — a content area of height 0, so the field painted
+          nothing even though filtering worked.
+      (b) Showing/hiding the docked filter bar must not resize the list.
+    """
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha"), _wsobj("beta")]))
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        bar = m.query_one("#filter_bar")
+        inp = m.query_one("#filter_input", Input)
+        owned = m.query_one("#owned_list", ListView)
+
+        # Hidden by default; list has a real viewport.
+        assert bar.display is False
+        list_height_hidden = owned.content_region.height
+        assert list_height_hidden > 0
+
+        # Show via the '/' action.
+        m.action_focus_filter()
+        await pilot.pause()
+        assert bar.display is True
+        assert isinstance(app.focused, Input)
+
+        # (a) The input's top border is neutralized (not 'blank'), so its
+        #     content area is non-empty and its text can render.
+        assert inp.styles.border_top[0] != "blank"
+        assert inp.content_size.height > 0
+        # And the bar occupies the bottom row on top of the docked chrome.
+        assert bar.region.height == 1
+        assert bar.region.y == app.size.height - 1
+
+        # (b) The workspace list viewport is unchanged.
+        assert owned.content_region.height == list_height_hidden
+
+
+async def test_sort_button_click_cycles(monkeypatch):
+    """Clicking the sort button cycles sort mode (#1764)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = Workspace(id="id-a", name="alpha", created_at="2025-01-01T00:00:00")
+    b = Workspace(id="id-b", name="beta", created_at="2025-06-01T00:00:00")
+    app = KlangkApp(_ws(owned=[a, b]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        lv = m.query_one("#owned_list", ListView)
+
+        # Default: created desc.
+        assert [i.name for i in lv.query(ListItem)] == ["beta", "alpha"]
+
+        # Click the sort button → created asc.
+        btn = m.query_one("#sort_btn", Button)
+        btn.press()
+        await pilot.pause()
+        assert [i.name for i in lv.query(ListItem)] == ["alpha", "beta"]
+        assert "▲" in str(btn.label)
+
+
+async def test_filter_submitted_returns_to_list(monkeypatch):
+    """Pressing Enter in the filter returns focus to the workspace list (#1764)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        inp = m.query_one("#filter_input", Input)
+        inp.focus()
+        inp.value = "alph"
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.focused, ListView)
+
+
 async def test_down_from_tabs_enters_workspace_list(monkeypatch):
     # Down arrow from the tab strip focuses the workspace list (#1781).
     async def noop(*a, **k):
