@@ -341,15 +341,23 @@ class LoginScreen(SpatialNavScreen):
                 self.app.tui_state.switch_server, cfg.servers[raw].url
             )
         elif is_valid_server_spec(raw):
-            try:
+            # If a server with the derived alias already exists, switch to it
+            # instead of trying to add a duplicate (#1849).
+            alias = self._derive_alias(raw)
+            if alias in cfg.servers:
                 await asyncio.to_thread(
-                    self.app.tui_state.add_server,
-                    self._derive_alias(raw),
-                    raw,
+                    self.app.tui_state.switch_server, cfg.servers[alias].url
                 )
-            except AliasConflictError as exc:
-                self._set_message(str(exc), error=True)
-                return
+            else:
+                try:
+                    await asyncio.to_thread(
+                        self.app.tui_state.add_server,
+                        alias,
+                        raw,
+                    )
+                except AliasConflictError as exc:
+                    self._set_message(str(exc), error=True)
+                    return
         else:
             self._set_message(
                 "Enter a server URL (https://host), a socket path"

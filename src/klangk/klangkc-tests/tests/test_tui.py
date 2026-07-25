@@ -4350,6 +4350,44 @@ async def test_login_choose_server_duplicate_alias(monkeypatch):
         assert "already exists" in rendered
 
 
+async def test_login_url_switches_to_existing_alias(monkeypatch):
+    """Entering a URL whose derived alias already exists switches to it (#1849)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    cfg = CLIConfig()
+    cfg.servers = {"prod.example": ServerEntry(url="https://prod.example")}
+    calls = {}
+
+    st = _st(
+        current_url=lambda: None,
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod.example", "https://prod.example")
+        ],
+        default_uds=lambda: None,
+        cfg=lambda: cfg,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+        switch_server=lambda url: calls.__setitem__("switch", url),
+        add_server=lambda alias, url, user=None: calls.__setitem__(
+            "add", (alias, url)
+        ),
+    )
+    app = KlangkApp(st)
+    async with app.run_test():
+        login = app.screen
+        # Entering the URL should switch, not try to add a duplicate.
+        login._choose_server("https://prod.example")
+        await app.workers.wait_for_complete()
+        assert calls.get("switch") == "https://prod.example"
+        assert "add" not in calls
+
+
 async def test_login_choose_invalid_server(monkeypatch):
     async def noop(*a, **k):
         return None
