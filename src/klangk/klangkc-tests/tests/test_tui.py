@@ -565,6 +565,31 @@ async def test_main_screen_status_event_updates_live_extra(monkeypatch):
         )
 
 
+async def test_refresh_status_no_widget(monkeypatch):
+    """_refresh_status is a no-op when #status is not mounted yet."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_authed_state())
+    async with app.run_test():
+        screen = app.screen
+        # Simulate the #status widget being absent (e.g. before mount).
+        orig = screen.query_one
+        from textual.dom import NoMatches as _NM
+
+        def raise_no_status(sel, *a):
+            if sel == "#status":
+                raise _NM("no #status")
+            return orig(sel, *a)
+
+        screen.query_one = raise_no_status
+        # Should not raise — the except NoMatches guard handles it.
+        screen._refresh_status()
+        screen.query_one = orig
+
+
 async def test_status_loop_no_token_returns_early(monkeypatch):
     async def noop(*a, **k):
         return None
@@ -852,9 +877,13 @@ def test_tui_state_workspace_methods(monkeypatch, redirect_xdg):
     assert st.list_shared_workspaces()[0].name == "b"
     assert st.find_workspace("a").name == "a"
     st.restart_workspace("a")
+    st.stop_workspace("a")
+    st.start_workspace("a")
     st.delete_workspace("a")
     assert st.duplicate_workspace("a", "c") == {"id": "3", "name": "c"}
     fake.restart_workspace.assert_called_once_with("a")
+    fake.stop_workspace.assert_called_once_with("a")
+    fake.start_workspace.assert_called_once_with("a")
     fake.delete_workspace.assert_called_once_with("a")
     fake.duplicate_workspace.assert_called_once_with("a", "c")
 
@@ -921,6 +950,68 @@ async def test_main_screen_lists_and_status(monkeypatch):
         assert "me@x.example" in status
 
 
+async def test_main_screen_shows_created_date(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    ws = Workspace(
+        id="id-alpha",
+        name="alpha",
+        created_at="2025-06-15T10:30:00",
+        running=True,
+    )
+    app = KlangkApp(_ws(owned=[ws]))
+    async with app.run_test():
+        m = app.screen
+        items = m.query_one("#owned_list", ListView).query(ListItem)
+        date_label = items[0].query_one(".ws-date")
+        assert "2025-06-15" in str(date_label.render())
+
+
+async def test_update_running_unknown_workspace(monkeypatch):
+    """_update_running returns early for unknown workspace_id (line 692)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha", running=True)]))
+    async with app.run_test():
+        m = app.screen
+        # Call with an ID that isn't in _ws_by_id — should not raise.
+        m._update_running("nonexistent-id", False)
+        # Alpha is still shown as running (no change).
+        items = m.query_one("#owned_list", ListView).query(ListItem)
+        assert len(items) == 1
+
+
+async def test_update_running_no_label(monkeypatch):
+    """_update_running handles NoMatches when Label is missing (lines 700-701)."""
+    from textual.dom import NoMatches as _NM
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    app = KlangkApp(_ws(owned=[a]))
+    async with app.run_test():
+        m = app.screen
+        items = m.query_one("#owned_list", ListView).query(ListItem)
+        # Patch query_one on the matching item so it raises NoMatches.
+        orig = items[0].query_one
+
+        def raise_no_matches(sel, *a):
+            if sel == ".ws-name":
+                raise _NM("no label")
+            return orig(sel, *a)
+
+        items[0].query_one = raise_no_matches
+        # Should not raise — the except NoMatches: pass handles it.
+        m._update_running(a.id, False)
+
+
 async def test_main_screen_list_error_shows_placeholder(monkeypatch):
     async def noop(*a, **k):
         return None
@@ -939,6 +1030,33 @@ async def test_main_screen_list_error_shows_placeholder(monkeypatch):
         assert len(m.query_one("#shared_list", ListView).query(ListItem)) == 1
 
 
+async def test_focus_visible_list_on_mount(monkeypatch):
+    """Focus lands on the first workspace row, not the tab strip (#1792)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha"), _wsobj("beta")]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert isinstance(app.focused, ListView)
+        assert app.focused.index == 0
+
+
+async def test_focus_visible_list_empty(monkeypatch):
+    """When the workspace list is empty, focus degrades gracefully (#1792)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[], shared=[]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # No crash — focus stays elsewhere (not on a list with no items).
+
+
 async def test_down_from_tabs_enters_workspace_list(monkeypatch):
     # Down arrow from the tab strip focuses the workspace list (#1781).
     async def noop(*a, **k):
@@ -951,6 +1069,8 @@ async def test_down_from_tabs_enters_workspace_list(monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         m = app.screen
+        lv = m.query_one("#owned_list", ListView)
+        lv.index = None  # Reset so the Down handler sets it
         m.query_one(Tabs).focus()
         await pilot.pause()
         await pilot.press("down")
@@ -1247,6 +1367,176 @@ async def test_detail_auto_start_skipped_when_running(monkeypatch):
         assert started == []
 
 
+async def test_detail_auto_start_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=False)
+    st = _ws()
+    st.find_workspace = lambda n: a
+
+    def boom(n):
+        raise RuntimeError("podman down")
+
+    st.restart_workspace = boom
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        assert "Auto-start failed" in str(
+            app.screen.query_one("#detail_msg").render()
+        )
+
+
+async def test_detail_stop_when_running(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    stopped = {}
+    st = _ws()
+    st.find_workspace = lambda n: a
+    st.stop_workspace = lambda n: stopped.__setitem__("s", n)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        app.screen.action_stop()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(True)  # confirm stop
+        await pilot.pause()
+        assert stopped.get("s") == "alpha"
+        assert "Stop requested" in str(
+            app.screen.query_one("#detail_msg").render()
+        )
+
+
+async def test_detail_start_when_stopped(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=False)
+    started = {}
+    st = _ws()
+    st.find_workspace = lambda n: a
+    st.start_workspace = lambda n: started.__setitem__("s", n)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        # No confirm dialog for start — goes straight through.
+        app.screen.action_stop()
+        await pilot.pause()
+        assert started.get("s") == "alpha"
+        assert "Start requested" in str(
+            app.screen.query_one("#detail_msg").render()
+        )
+
+
+async def test_detail_stop_ws_none(monkeypatch):
+    """action_stop is a no-op when _ws is None (line 989)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _ws()
+    st.find_workspace = lambda n: None
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("gone"))
+        await pilot.pause()
+        # _ws is None because find_workspace returned None.
+        app.screen.action_stop()
+        await pilot.pause()
+        # No crash, still on detail screen.
+        assert isinstance(app.screen, WorkspaceDetailScreen)
+
+
+async def test_detail_stop_cancel(monkeypatch):
+    """Cancelling the stop confirm dialog is a no-op (line 998)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    stopped = {}
+    st = _ws()
+    st.find_workspace = lambda n: a
+    st.stop_workspace = lambda n: stopped.__setitem__("s", n)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        app.screen.action_stop()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(False)  # cancel
+        await pilot.pause()
+        assert "s" not in stopped
+        assert isinstance(app.screen, WorkspaceDetailScreen)
+
+
+async def test_detail_stop_error(monkeypatch):
+    """Stop failure shows error message (lines 1001-1003)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws()
+    st.find_workspace = lambda n: a
+
+    def boom(n):
+        raise RuntimeError("container locked")
+
+    st.stop_workspace = boom
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        app.screen.action_stop()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(True)  # confirm
+        await pilot.pause()
+        assert "Stop failed" in str(
+            app.screen.query_one("#detail_msg").render()
+        )
+
+
+async def test_detail_start_error(monkeypatch):
+    """Start failure shows error message (lines 1020-1022)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha", running=False)
+    st = _ws()
+    st.find_workspace = lambda n: a
+
+    def boom(n):
+        raise RuntimeError("image missing")
+
+    st.start_workspace = boom
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        app.screen.action_stop()  # ws not running → _do_start
+        await pilot.pause()
+        assert "Start failed" in str(
+            app.screen.query_one("#detail_msg").render()
+        )
+
+
 async def test_detail_delete_confirm_cancel_error(monkeypatch):
     async def noop(*a, **k):
         return None
@@ -1391,7 +1681,7 @@ async def test_main_screen_markup_name_safe(monkeypatch):
     async with app.run_test():
         lv = app.screen.query_one("#owned_list", ListView)
         assert len(lv.query(ListItem)) == 1
-        prompt = app.screen._fmt(a)
+        prompt = app.screen._fmt_name(a)
         assert isinstance(prompt, Text)
         assert "x[red]y" in str(prompt)  # literal, not markup-parsed
 
@@ -3888,3 +4178,157 @@ def test_subcommand_does_not_launch_tui(monkeypatch):
     )
     CliRunner().invoke(app, ["logout"])
     assert launched["v"] is False
+
+
+# ---------------------------------------------------------------------------
+# SpatialNavScreen early returns (lines 160, 170)
+# ---------------------------------------------------------------------------
+
+
+async def test_spatial_up_early_return_no_chain_match(monkeypatch):
+    """action_spatial_up returns early when focused widget not in chain."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    cfg = CLIConfig()
+    cfg.servers = {"prod": ServerEntry(url="https://prod.example")}
+    st = _st(
+        current_url=lambda: None,
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod", "https://prod.example"),
+        ],
+        default_uds=lambda: None,
+        cfg=lambda: cfg,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        login = app.screen
+        # Focus the server_options list which is NOT in the SPATIAL_CHAIN.
+        lv = login.query_one("#server_options", ListView)
+        lv.focus()
+        await pilot.pause()
+        # action_spatial_up should return early (line 160), no crash.
+        login.action_spatial_up()
+        await pilot.pause()
+        # Focus didn't change — still on server_options.
+        assert app.focused is lv
+
+
+async def test_spatial_down_early_return_no_chain_match(monkeypatch):
+    """action_spatial_down returns early when focused widget not in chain."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    cfg = CLIConfig()
+    cfg.servers = {"prod": ServerEntry(url="https://prod.example")}
+    st = _st(
+        current_url=lambda: None,
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod", "https://prod.example"),
+        ],
+        default_uds=lambda: None,
+        cfg=lambda: cfg,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        login = app.screen
+        lv = login.query_one("#server_options", ListView)
+        lv.focus()
+        await pilot.pause()
+        # action_spatial_down should return early (line 170), no crash.
+        login.action_spatial_down()
+        await pilot.pause()
+        assert app.focused is lv
+
+
+# ---------------------------------------------------------------------------
+# TabSkipMixin on_key branches (lines 199–214)
+# ---------------------------------------------------------------------------
+
+
+async def test_tab_skip_non_tab_key_returns(monkeypatch):
+    """TabSkipMixin.on_key returns immediately for non-tab keys (line 200)."""
+    from textual.events import Key
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test() as pilot:
+        app.push_screen(
+            CreateWorkspaceScreen(
+                allowed=["base", "py:3"], default="base", allow_autostart=True
+            )
+        )
+        await pilot.pause()
+        name_input = app.screen.query_one("#name", Input)
+        name_input.focus()
+        await pilot.pause()
+        # Call on_key directly with a non-tab key — hits line 200.
+        app.screen.on_key(Key("a", "a"))
+        await pilot.pause()
+        assert app.focused.id == "name"
+
+
+async def test_tab_skip_not_in_order(monkeypatch):
+    """TabSkipMixin.on_key returns when focused widget not in _TAB_ORDER (line 204)."""
+    from textual.events import Key
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test() as pilot:
+        app.push_screen(
+            CreateWorkspaceScreen(
+                allowed=["base", "py:3"], default="base", allow_autostart=True
+            )
+        )
+        await pilot.pause()
+        # Simulate focus on a widget not in _TAB_ORDER by patching focused.
+        btn = app.screen.query_one("#add_mount", Button)
+        orig_focused = type(app.screen).focused
+        monkeypatch.setattr(
+            type(app.screen), "focused", property(lambda self: btn)
+        )
+        # Call on_key directly with tab — hits line 204 (base not in TAB_ORDER).
+        app.screen.on_key(Key("tab", "\t"))
+        monkeypatch.setattr(type(app.screen), "focused", orig_focused)
+
+
+async def test_tab_skip_cycles_fields(monkeypatch):
+    """Tab cycles through _TAB_ORDER fields (lines 205-214)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test() as pilot:
+        app.push_screen(
+            CreateWorkspaceScreen(
+                allowed=["base", "py:3"], default="base", allow_autostart=True
+            )
+        )
+        await pilot.pause()
+        name_input = app.screen.query_one("#name", Input)
+        name_input.focus()
+        await pilot.pause()
+        # Tab should advance to the next field in _TAB_ORDER.
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused.id != "name"

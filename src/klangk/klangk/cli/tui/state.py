@@ -121,6 +121,12 @@ class TuiState:
     def restart_workspace(self, name: str) -> None:
         self.client().restart_workspace(name)
 
+    def stop_workspace(self, name: str) -> None:
+        self.client().stop_workspace(name)
+
+    def start_workspace(self, name: str) -> None:
+        self.client().start_workspace(name)
+
     def delete_workspace(self, name: str) -> None:
         self.client().delete_workspace(name)
 

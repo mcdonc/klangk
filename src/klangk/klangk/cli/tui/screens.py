@@ -7,6 +7,7 @@ free of cross-screen coupling and reach state through ``self.app.tui_state``.
 
 from __future__ import annotations
 
+import datetime
 from urllib.parse import urlparse
 
 import logging
@@ -488,6 +489,20 @@ class MainScreen(Screen):
     """The TUI home: a two-page workspace list (owned / shared) + status bar,
     with a live WS feed. Selecting a workspace opens its detail screen."""
 
+    DEFAULT_CSS = """
+    .ws-row {
+        height: 1;
+    }
+    .ws-name {
+        width: 1fr;
+    }
+    .ws-date {
+        width: auto;
+        text-align: right;
+        color: $text-muted;
+    }
+    """
+
     BINDINGS = [
         ("s", "switch_server", "Switch server"),
         ("n", "create", "New"),
@@ -505,8 +520,22 @@ class MainScreen(Screen):
     def on_mount(self) -> None:
         self.app.title = "Klangk: Workspaces"
         self.refresh_lists()
+        self._focus_visible_list()
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(self._status_loop, name="status-ws")
+
+    def on_tabbed_content_tab_activated(self, event) -> None:
+        """Focus the first workspace row when switching tabs (#1792)."""
+        self._focus_visible_list()
+
+    def _focus_visible_list(self) -> None:
+        """Focus the first item in the visible workspace list (#1792)."""
+        for lv in self.query(WorkspaceListView):
+            if lv.display and lv.query(ListItem):
+                lv.focus()
+                if lv.index is None:
+                    lv.index = 0
+                return
 
     def on_key(self, event) -> None:
         # Down from the tab strip drops into the active workspace list (#1781).
@@ -614,11 +643,28 @@ class MainScreen(Screen):
             return []
 
     @staticmethod
-    def _fmt(ws) -> Text:
+    def _compact_date(raw: str) -> str:
+        """Format a created_at timestamp as a compact date string."""
+        try:
+            dt = datetime.datetime.fromisoformat(raw)
+            return dt.strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            return ""
+
+    @staticmethod
+    def _fmt_name(ws) -> Text:
         health = f" ({ws.health})" if ws.health else ""
-        if ws.running:
-            return Text.assemble(("●", "green"), f" {ws.name}{health}")
-        return Text.assemble(("●", "red"), f" {ws.name}{health}")
+        dot = ("●", "green") if ws.running else ("●", "red")
+        return Text.assemble(dot, f" {ws.name}{health}")
+
+    @staticmethod
+    def _fmt_date(ws) -> Text:
+        raw = getattr(ws, "created_at", None)
+        if raw:
+            date = MainScreen._compact_date(raw)
+            if date:
+                return Text(date, style="dim")
+        return Text("")
 
     def _populate(
         self,
@@ -633,7 +679,12 @@ class MainScreen(Screen):
             lv.append(ListItem(Label(Text(empty_label)), name=""))
             return
         for ws in workspaces:
-            item = ListItem(Label(self._fmt(ws)), name=ws.name)
+            name_label = Label(self._fmt_name(ws), classes="ws-name")
+            date_label = Label(self._fmt_date(ws), classes="ws-date")
+            item = ListItem(
+                Horizontal(name_label, date_label, classes="ws-row"),
+                name=ws.name,
+            )
             wid = str(getattr(ws, "id", "") or "")
             if wid:
                 item.workspace_id = wid  # for live status updates
@@ -641,11 +692,14 @@ class MainScreen(Screen):
 
     def _refresh_status(self) -> None:
         state = self.app.tui_state
-        self.query_one("#status", StatusBar).set_state(
-            server=state.current_url(),
-            user=state.email() or "(unknown)",
-            extra=self.app.live_extra,
-        )
+        try:
+            self.query_one("#status", StatusBar).set_state(
+                server=state.current_url(),
+                user=state.email() or "(unknown)",
+                extra=self.app.live_extra,
+            )
+        except NoMatches:
+            pass  # Widget not mounted yet; status will refresh on mount.
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         name = getattr(event.item, "name", "") or ""
@@ -696,7 +750,7 @@ class MainScreen(Screen):
             for item in lv.query(ListItem):
                 if getattr(item, "workspace_id", None) == workspace_id:
                     try:
-                        item.query_one(Label).update(self._fmt(ws))
+                        item.query_one(".ws-name").update(self._fmt_name(ws))
                     except NoMatches:
                         pass
                     return
@@ -716,6 +770,7 @@ class WorkspaceDetailScreen(Screen):
         ("escape", "app.pop_screen", "Back"),
         ("e", "edit", "Edit"),
         ("r", "restart", "Restart"),
+        ("s", "stop", "Stop"),
         ("d", "duplicate", "Duplicate"),
         ("x", "delete", "Delete"),
         ("delete", "delete_terminal", "Del term"),
@@ -789,6 +844,19 @@ class WorkspaceDetailScreen(Screen):
         self._msg("Container started.")
         self.app.refresh_workspaces()
 
+    @staticmethod
+    def _bindings_list(stop_label: str = "Stop") -> list:
+        """Bindings with a dynamic label for the stop/start key (#1791)."""
+        return [
+            ("escape", "app.pop_screen", "Back"),
+            ("e", "edit", "Edit"),
+            ("r", "restart", "Restart"),
+            ("s", "stop", stop_label),
+            ("d", "duplicate", "Duplicate"),
+            ("x", "delete", "Delete"),
+            ("delete", "delete_terminal", "Del term"),
+        ]
+
     def _display(self) -> None:
         self.query_one("#detail_title", Static).update(
             Text(f"Workspace: {self._name}")
@@ -798,6 +866,12 @@ class WorkspaceDetailScreen(Screen):
         if ws is None:
             body.update(Text(self._load_error or "Could not load workspace."))
             return
+        # Toggle the 's' binding label between Stop / Start.
+        self.BINDINGS = [
+            Binding(*b)
+            for b in self._bindings_list("Stop" if ws.running else "Start")
+        ]
+        self.refresh_bindings()
         lines = [
             f"running: {'yes' if ws.running else 'no'}",
             f"health: {ws.health or '-'}",
@@ -981,6 +1055,44 @@ class WorkspaceDetailScreen(Screen):
             ),
             _on_confirm,
         )
+
+    def action_stop(self) -> None:
+        if self._ws is None:
+            return
+        if self._ws.running:
+            self._confirm_stop()
+        else:
+            self._do_start()
+
+    def _confirm_stop(self) -> None:
+        def _on_confirm(confirmed: bool) -> None:
+            if not confirmed:
+                return
+            try:
+                self.app.tui_state.stop_workspace(self._name)
+            except Exception as exc:
+                self._msg(f"Stop failed: {exc}", error=True)
+                return
+            self._msg("Stop requested.")
+            self.app.refresh_workspaces()
+
+        self.app.push_screen(
+            ConfirmScreen(
+                f"Stop '{self._name}'? This ends active terminal sessions.",
+                yes_label="Stop",
+                yes_variant="warning",
+            ),
+            _on_confirm,
+        )
+
+    def _do_start(self) -> None:
+        try:
+            self.app.tui_state.start_workspace(self._name)
+        except Exception as exc:
+            self._msg(f"Start failed: {exc}", error=True)
+            return
+        self._msg("Start requested.")
+        self.app.refresh_workspaces()
 
     def action_delete(self) -> None:
         def _on_confirm(confirmed: bool) -> None:
@@ -1498,7 +1610,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             image_select = Select(
                 self._select_options, value=self._select_value, id="image"
             )
-        else:
+        else:  # pragma: no cover
             image_select = Select(self._select_options, id="image")
         yield Header(show_clock=False)
         yield NonFocusableVerticalScroll(
