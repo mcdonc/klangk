@@ -1428,7 +1428,9 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             opts.append(cur)
         if opts:
             self._select_options = [(Text(i), i) for i in opts]
-            self._select_value = cur if cur in opts else None
+            self._select_value = (
+                cur if cur in opts else (opts[0] if opts else None)
+            )
         else:
             self._select_options = [(Text("(none)"), "(none)")]
             self._select_value = "(none)"
