@@ -924,7 +924,7 @@ class CaddyWatchdog:
         """Log which addresses Caddy is serving after a successful config load."""
         s = self.app.state.settings
         if s.port is not None:
-            logger.info("caddy browser listening on %s:%s", s.listen, s.port)
+            logger.info("caddy ingress listening on %s:%s", s.listen, s.port)
         logger.info(
             "caddy egress listening on %s:%s", s.egress_listen, s.egress_port
         )
