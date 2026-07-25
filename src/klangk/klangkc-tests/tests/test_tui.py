@@ -1524,6 +1524,37 @@ async def test_focus_visible_list_empty(monkeypatch):
         # No crash — focus stays elsewhere (not on a list with no items).
 
 
+async def test_shared_tab_stays_when_empty(monkeypatch):
+    """Switching to 'Shared to me' stays there even when the list is empty (#1843)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha")], shared=[]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        tc = app.screen.query_one("#ws_tabs")
+
+        # Switch to the "Shared to me" tab by finding its pane ID.
+        panes = list(tc.query("TabPane"))
+        shared_pane_id = panes[1].id
+        tc.active = shared_pane_id
+        await pilot.pause()
+        assert tc.active == shared_pane_id
+
+        # A subsequent refresh must not drag focus back to "Owned by me".
+        app.screen.refresh_lists()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert tc.active == shared_pane_id
+
+
 async def test_down_from_tabs_enters_workspace_list(monkeypatch):
     # Down arrow from the tab strip focuses the workspace list (#1781).
     async def noop(*a, **k):
