@@ -172,10 +172,12 @@ klangk create my-project --env FOO=bar                      # with env vars
 klangk create my-project --health-check 'curl -sf http://localhost:8080/health'  # with a service health check
 klangk create my-project --command 'npm run dev'  # with a service command
 klangk create my-project -c 'npm run dev'         # short form of --command
-klangk edit my-project                  # interactive edit (name, image, command, health check, mounts, env)
+klangk create my-project --allow github.com:443 --allow pypi.org  # with egress allowlist
+klangk edit my-project                  # interactive edit (name, image, command, health check, mounts, env, allowed domains)
 klangk edit my-project --auto-start     # enable auto-start on server boot
 klangk edit my-project --no-auto-start  # disable auto-start
 klangk edit my-project --env FOO=bar    # set env var via flag
+klangk edit my-project --allow github.com:443     # set allowed egress domain via flag
 klangk dup my-project my-copy           # duplicate a workspace
 klangk shell my-project                 # drop into bash inside the container
 klangk shell my-project debug           # attach to the "debug" terminal window (created if it doesn't exist)
