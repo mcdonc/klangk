@@ -39,7 +39,7 @@ class KlangkApp(App):
         width: 96;
         max-width: 90%;
         height: 1fr;
-        padding: 0 2;
+        padding: 0 1;
         overflow-y: auto;
     }
     /* A little air under the server status line, before the picker. */
