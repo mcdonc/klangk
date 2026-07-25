@@ -596,6 +596,16 @@ test.describe("Klangk E2E", () => {
               KLANGKD_PORT: backendPort,
               KLANGKD_DATA_DIR: dataDir,
               KLANGKD_STATE_DIR: stateDir,
+              // The reconnect path restarts klangkd --config=none (env-only),
+              // so it can't read frontend_dir from klangkd.yaml. Set it
+              // explicitly to mirror global-setup.ts (#1788).
+              KLANGKD_FRONTEND_DIR: join(
+                projectRoot,
+                "src",
+                "frontend",
+                "build",
+                "web",
+              ),
               KLANGKD_JWT_SECRET: "e2e-test-secret",
               KLANGKD_DEFAULT_USER: "admin@example.com",
               KLANGKD_DEFAULT_PASSWORD: "admin",

@@ -45,7 +45,7 @@ applies when the package is installed non-editable; source-tree deployments set
 | Mode                                | Runs from                    | Frontend dir                                                                                   |
 | ----------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------- |
 | **Packaged** (`pip install klangk`) | installed wheel              | in-package `klangk/frontend/` (default)                                                        |
-| **devenv / checkout**               | editable source tree         | `KLANGKD_FRONTEND_DIR` → repo `src/frontend/build/web` (set in `devenv.nix`)                   |
+| **devenv / checkout**               | editable source tree         | `frontend_dir` → repo `src/frontend/build/web` (via `klangkd.yaml`)                            |
 | **Host container**                  | source tree via `PYTHONPATH` | `KLANGKD_FRONTEND_DIR` → `/home/klangk/src/frontend/build/web` (set in the image `Dockerfile`) |
 
 Operators running their own build of the UI (e.g. a custom Flutter build) set

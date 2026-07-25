@@ -48,6 +48,14 @@ from klangk.model import free_port
 # test assets identically.
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
 
+# The repo's built Flutter web output. The e2e klangkd runs --config=none
+# (env-vars-only), so it can't pick frontend_dir up from klangkd.yaml —
+# provide it explicitly. Devenv no longer exports KLANGKD_FRONTEND_DIR
+# (it lives in klangkd.yaml for the dev server, #1788).
+FRONTEND_DIR = os.path.normpath(
+    os.path.join(BACKEND_DIR, "..", "..", "frontend", "build", "web")
+)
+
 # A dummy host for UDS clients: the UDS transport ignores it for the
 # connection, but httpx/websockets still need a syntactically valid URL
 # (and the Host header value is irrelevant over a same-uid socket).
@@ -166,6 +174,7 @@ def start_server(
     overrides = dict(env_overrides)
     overrides.setdefault("KLANGKD_DATA_DIR", data_dir)
     overrides.setdefault("KLANGKD_STATE_DIR", state_dir)
+    overrides.setdefault("KLANGKD_FRONTEND_DIR", FRONTEND_DIR)
     overrides.setdefault("KLANGKD_PORT_RANGE_START", str(free_port()))
 
     uds_path: str | None

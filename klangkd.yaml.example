@@ -24,12 +24,16 @@ egress_port: "8995"
 idle_timeout_seconds: "300"
 
 # --- Storage ---
-# Both are required (no defaults, #1461). Devenv sets KLANGKD_STATE_DIR /
-# KLANGKD_DATA_DIR in the env (see devenv.nix), so these config-file values
-# are redundant in dev but shown for reference. In a real deployment set
-# them here or via the env vars.
+# state_dir/data_dir are required (no defaults, #1461). In dev these resolve
+# via cmd: to devenv's paths ($DEVENV_STATE); in a real deployment set them
+# here or via the env vars.
 state_dir: "cmd:echo $DEVENV_STATE/klangk"
 data_dir: "cmd:echo $DEVENV_STATE/klangk/data"
+# The built Flutter web UI is served from here. In dev (editable source tree)
+# the in-package default (klangk/frontend) doesn't exist, so point at the
+# repo build output; an installed wheel leaves this unset for the in-package
+# default (#1456, #1600).
+frontend_dir: "cmd:echo $DEVENV_ROOT/src/frontend/build/web"
 
 # --- Container / workspace ---
 image_name: klangk-workspace

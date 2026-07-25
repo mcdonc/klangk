@@ -10,16 +10,17 @@
 const STRIP_PREFIXES = ["KLANGK", "_KLANGK", "KLANGKC", "LOGFIRE"];
 
 // Build-infra vars that locate artifacts the test must use (the workspace
-// container image, the compiled frontend, version stamp) — produced by
-// devenv's klangk:build-workspace-image / klangk:flutter-build tasks, not
-// by any test. Forwarded deliberately so the server finds the built
-// image/frontend. (KLANGKBUILD_PLUGINS_DIR was removed in #1660/#1665 — the
-// runtime reads features.json from the frontend bundle, not feature trees.)
-const INFRA_VARS = [
-  "KLANGKD_IMAGE_NAME",
-  "KLANGKD_VERSION_FILE",
-  "KLANGKD_FRONTEND_DIR",
-];
+// container image, version stamp) — produced by devenv's
+// klangk:build-workspace-image task, not by any test. Forwarded deliberately
+// so the server finds the built image. (KLANGKBUILD_PLUGINS_DIR was removed
+// in #1660/#1665 — the runtime reads features.json from the frontend bundle,
+// not feature trees.)
+//
+// KLANGKD_FRONTEND_DIR is NOT here: devenv no longer exports it (#1788; it's
+// a klangkd.yaml setting), so each env-only launcher sets it explicitly
+// (global-setup.ts, run-demo-backend.sh). Forwarding a stray ambient value
+// risks pointing at a stale/wrong build.
+const INFRA_VARS = ["KLANGKD_IMAGE_NAME", "KLANGKD_VERSION_FILE"];
 
 export function cleanEnv(
   overrides: Record<string, string> = {},

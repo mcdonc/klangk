@@ -10,7 +10,7 @@ A plain ``force-include`` in ``pyproject.toml`` would be strict for *every*
 build mode, including editable installs — but editable installs (devenv, CI)
 run against a source tree where the artifact is often absent (CI never builds
 the frontend) and they don't need it in the wheel anyway (they point
-``KLANGKD_FRONTEND_DIR`` at the repo build, see ``devenv.nix`` /
+``KLANGKD_FRONTEND_DIR`` at the repo build, see ``klangkd.yaml`` /
 the host ``Dockerfile``). So instead this hook:
 
 - includes the artifact when present (release wheel built after
