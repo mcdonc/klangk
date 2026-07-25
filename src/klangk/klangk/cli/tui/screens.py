@@ -2265,7 +2265,21 @@ class ServerSwitchScreen(Screen):
             self.app.server_changed()
 
     async def _do_switch_server(self, url: str) -> None:
+        msg = self.query_one("#switch_msg", Static)
+        msg.update("Checking server…")
+        status = await asyncio.to_thread(
+            self.app.tui_state.validate_server_for_switch, url
+        )
+        if status == "unreachable":
+            msg.update(
+                "[red]Cannot reach the server. "
+                "Check that klangkd is running.[/red]"
+            )
+            return
         await asyncio.to_thread(self.app.tui_state.switch_server, url)
+        if status == "auth_required":
+            self.app.server_changed_needs_login()
+            return
         self.app.server_changed()
 
 
