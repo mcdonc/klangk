@@ -1028,6 +1028,14 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **TUI: workspace id and date are now separate, fixed-width columns with
+  clear spacing between them in the workspaces list (#1907).** Both were
+  `width: auto` and the date had no left padding, so a row's short id and
+  created date rendered flush against each other (`a1b2c3d42025-06-15`) and
+  didn't line up across rows of varying name length. The id is now a fixed
+  10-cell column and the date a fixed 12-cell column with `padding-left: 2`,
+  so ids/dates align vertically regardless of name length.
+
 - **TUI workspace form: Add/Remove buttons in the mounts / environment /
   netfilter editors are now clickable (#1891).** The editor `Input`'s greedy
   default width consumed the whole row, pushing the Add/Remove buttons past

@@ -2385,6 +2385,37 @@ async def test_main_screen_shared_list_shows_short_id(monkeypatch):
         assert "abcdef12" in str(id_label.render())
 
 
+async def test_main_screen_row_id_and_date_are_separate_columns(monkeypatch):
+    """#1907: the workspace id and date render as separate, fixed-width
+    columns (not two auto-width labels stuck together), with clear left
+    spacing on the date column so the date never runs flush against the id."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = Workspace(
+        id="3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        name="alpha",
+        created_at="2025-06-15T10:30:00",
+        running=True,
+    )
+    app = KlangkApp(_ws(owned=[ws], shared=[]))
+    async with app.run_test():
+        m = app.screen
+        items = m.query_one("#owned_list", ListView).query(ListItem)
+        id_label = items[0].query_one(".ws-id")
+        date_label = items[0].query_one(".ws-date")
+        # Fixed (cell) widths, not auto: ids/dates line up across rows of
+        # varying name length (.ws-name absorbs the slack at width: 1fr).
+        assert id_label.styles.width.is_cells
+        assert date_label.styles.width.is_cells
+        assert not id_label.styles.width.is_auto
+        assert not date_label.styles.width.is_auto
+        # Clear space between the id and date columns.
+        assert date_label.styles.padding.left >= 2
+
+
 async def test_update_running_unknown_workspace(monkeypatch):
     """_update_running returns early for unknown workspace_id (line 692)."""
 
