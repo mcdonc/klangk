@@ -1077,6 +1077,23 @@ class TestKlangkClient:
                 json={"name": "src-copy"},
             )
 
+    def test_config_returns_authed_payload(self):
+        # #1931: config() GETs /api/v1/config through the authed client
+        # (self.get -> _request attaches the Bearer token), so the response
+        # carries the auth-gated netfilter_default_domains that the pre-auth
+        # fetch_config helper can't see.
+        client = KlangkClient("http://test:8995", "token")
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "auth_modes": "password",
+            "netfilter_default_domains": ["github.com:443"],
+            "netfilter_enabled": True,
+        }
+        with patch.object(client, "get", return_value=mock_resp):
+            cfg = client.config()
+            assert cfg["netfilter_default_domains"] == ["github.com:443"]
+            client.get.assert_called_once_with("/api/v1/config")
+
     def test_create_workspace_includes_allowed_domains(self):
         client = KlangkClient("http://test:8995", "token")
         mock_resp = MagicMock(status_code=200)

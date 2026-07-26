@@ -553,6 +553,20 @@ class KlangkClient:
         self._raise_for_status(resp)
         return resp.json()
 
+    def config(self) -> dict:
+        """Authed ``GET /api/v1/config``.
+
+        Sends the persisted token, so the response includes the auth-gated
+        fields (``netfilter_default_domains``, ``netfilter_enabled``) that
+        the pre-auth :func:`fetch_config` helper can't see — the
+        create-workspace form seeds its Netfilter tab from
+        ``netfilter_default_domains`` (#1931).
+        """
+        resp = self.get("/api/v1/config")
+        self.check_auth(resp)
+        self._raise_for_status(resp)
+        return resp.json()
+
     def resolve_workspace(self, name: str) -> Workspace:
         """Find a workspace by name (owned or shared).
 

@@ -27,6 +27,15 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **TUI create form pre-fills the Netfilter list with the deploy default
+  (#1931).** When `KLANGKD_NETFILTER_DEFAULT_DOMAINS` is set, opening the
+  TUI create-workspace dialog now seeds its Netfilter (allowed-domains)
+  tab with those domains — matching the Flutter web UI, which already
+  pre-fills them. The seeded entries are a starting set the user can edit
+  or remove before creating; with no deploy default the list still starts
+  empty. The edit form is unaffected (it shows the workspace's persisted
+  allow-list).
+
 - **TUI workspaces-list filter now also matches the workspace id (#1911).**
   Typing into the filter (`/`) narrows by name **or** id — so a workspace
   matches whether you type part of its name or the short id prefix shown
