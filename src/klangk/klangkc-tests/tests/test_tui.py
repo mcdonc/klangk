@@ -4175,6 +4175,118 @@ async def test_detail_apply_status_event(monkeypatch):
         assert a.running is True  # unchanged
 
 
+async def test_detail_container_restart_refreshes_terminals(monkeypatch):
+    """#1924: a container restart re-fetches the terminal list so the
+    detail screen reflects the new container's state."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True, service_started_at=1000.0)
+    fetched = {"n": 0}
+
+    async def track_terms(*_a, **_k):
+        fetched["n"] += 1
+        return [{"index": 0, "name": "main", "id": "@0"}]
+
+    st = _ws(list_terminals=track_terms)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        before = fetched["n"]
+        # Simulate a container restart (new service_started_at).
+        app.screen.apply_status_event(
+            {
+                "type": "container_status",
+                "workspace_id": "id-alpha",
+                "running": True,
+                "service_started_at": 2000.0,
+            }
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert fetched["n"] > before
+
+
+async def test_detail_container_start_refreshes_terminals(monkeypatch):
+    """#1924: a stopped container starting up fetches the terminal list."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=False)
+    fetched = {"n": 0}
+
+    async def track_terms(*_a, **_k):
+        fetched["n"] += 1
+        return [{"index": 0, "name": "main", "id": "@0"}]
+
+    st = _ws(list_terminals=track_terms)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        before = fetched["n"]
+        # Container starts (was not running).
+        app.screen.apply_status_event(
+            {
+                "type": "container_status",
+                "workspace_id": "id-alpha",
+                "running": True,
+                "service_started_at": 1000.0,
+            }
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert fetched["n"] > before
+
+
+async def test_detail_container_status_no_refetch_when_unchanged(monkeypatch):
+    """container_status with same service_started_at does not re-fetch."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True, service_started_at=1000.0)
+    fetched = {"n": 0}
+
+    async def track_terms(*_a, **_k):
+        fetched["n"] += 1
+        return [{"index": 0, "name": "main", "id": "@0"}]
+
+    st = _ws(list_terminals=track_terms)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        before = fetched["n"]
+        # Same service_started_at — not a restart, no re-fetch.
+        app.screen.apply_status_event(
+            {
+                "type": "container_status",
+                "workspace_id": "id-alpha",
+                "running": True,
+                "service_started_at": 1000.0,
+            }
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert fetched["n"] == before
+
+
 async def test_detail_apply_status_event_reload(monkeypatch):
     async def noop(*a, **k):
         return None

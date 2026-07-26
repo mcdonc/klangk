@@ -362,9 +362,18 @@ class WorkspaceDetailScreen(Screen):
                 self.run_worker(self._load_terminals, exit_on_error=False)
             return
         if etype == "container_status":
+            was_running = self._ws.running
+            old_started = self._ws.service_started_at
             self._ws.running = bool(event.get("running"))
             if "service_started_at" in event:
                 self._ws.service_started_at = event["service_started_at"]
+            # A container (re)start invalidates the old terminal list —
+            # the previous tmux sessions are gone. Re-fetch so the detail
+            # screen reflects the new container's state (#1924).
+            if self._ws.running and (
+                not was_running or self._ws.service_started_at != old_started
+            ):
+                self.run_worker(self._load_terminals, exit_on_error=False)
         elif etype == "service_health":
             self._ws.running = bool(event.get("running", self._ws.running))
             self._ws.health = (
