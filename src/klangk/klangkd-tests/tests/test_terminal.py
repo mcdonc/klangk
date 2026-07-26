@@ -917,13 +917,15 @@ class TestSelectWindow:
         )
 
     async def test_selects_by_window_id(self):
+        """Window IDs are qualified with session name so grouped sessions
+        are addressed independently (#1883)."""
         with patch.object(
             _terminal,
             "tmux_command",
         ) as mock_cmd:
             await _terminal.select_window("cid", "sess", "@5")
         mock_cmd.assert_called_once_with(
-            "cid", "sess", ["select-window", "-t", "@5"]
+            "cid", "sess", ["select-window", "-t", "sess:@5"]
         )
 
 
