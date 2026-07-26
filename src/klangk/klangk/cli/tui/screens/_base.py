@@ -41,7 +41,7 @@ class ConfirmScreen(ModalScreen[bool]):
         self,
         message: str,
         *,
-        yes_label: str = "Delete",
+        yes_label: str = "Del",
         yes_variant: str = "error",
         no_label: str = "Cancel",
     ) -> None:
@@ -205,11 +205,11 @@ class DuplicateScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         yield Vertical(
-            Static(Text(f"Duplicate '{self._source}' as:")),
+            Static(Text(f"Dup '{self._source}' as:")),
             Input(value=f"{self._source}-copy", id="dup_name"),
             Horizontal(
                 Button("Cancel", id="cancel"),
-                Button("Duplicate", id="ok", variant="primary"),
+                Button("Dup", id="ok", variant="primary"),
             ),
             id="dup_box",
         )

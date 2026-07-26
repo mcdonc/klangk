@@ -35,7 +35,7 @@ class WorkspaceDetailScreen(Screen):
         Binding("e", "edit", "Edit"),
         Binding("r", "restart", "Restart"),
         Binding("s", "stop", "Stop"),
-        Binding("u", "duplicate", "Duplicate"),
+        Binding("u", "duplicate", "Dup"),
         Binding("d", "delete", "Del ws"),
         # Terminal-scoped keys are hidden from the Footer — their hints
         # are shown inline on the Terminals list header instead (#1860).
@@ -151,7 +151,7 @@ class WorkspaceDetailScreen(Screen):
             Binding("e", "edit", "Edit"),
             Binding("r", "restart", "Restart"),
             Binding("s", "stop", stop_label),
-            Binding("u", "duplicate", "Duplicate"),
+            Binding("u", "duplicate", "Dup"),
             Binding("d", "delete", "Del ws"),
             Binding("n", "new_terminal", "New term", show=False),
             Binding("delete", "delete_terminal", "Del term", show=False),

@@ -34,7 +34,7 @@ class ServerSwitchScreen(Screen):
         # Server-scoped keys are hidden from the Footer — their hints render
         # inline on the servers list header instead (#1872).
         Binding("e", "edit_server", "Edit", show=False),
-        Binding("d", "delete_server", "Delete", show=False),
+        Binding("d", "delete_server", "Del", show=False),
     ]
 
     DEFAULT_CSS = """

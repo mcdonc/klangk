@@ -1740,8 +1740,8 @@ async def test_main_screen_action_hints_toggle_stop_start(monkeypatch):
         m = await _highlight_first(pilot, app)
         hints = str(m.query_one(".ws_hints", Static).render())
         assert "restart" in hints and "s stop" in hints
-        assert "open" in hints and "duplicate" in hints
-        assert "delete" in hints and "edit" in hints
+        assert "open" in hints and "dup" in hints
+        assert "del" in hints and "edit" in hints
         # Highlight the stopped row -> label flips to 'start'.
         lv = m.query_one("#owned_list", ListView)
         lv.index = 1
@@ -2176,7 +2176,7 @@ async def test_main_screen_u_duplicate_d_delete_bindings(monkeypatch):
         await pilot.pause()
         # The inline hint bar advertises the new keys.
         hints = str(m.query_one(".ws_hints", Static).render())
-        assert "[u duplicate]" in hints and "[d delete]" in hints
+        assert "[u dup]" in hints and "[d del]" in hints
 
 
 async def test_main_screen_action_targets_active_tab(monkeypatch):
@@ -5421,11 +5421,11 @@ async def test_confirm_screen_button_labels(monkeypatch):
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws())
     async with app.run_test() as pilot:
-        # default (delete actions) -> 'Delete'
+        # default (delete actions) -> 'Del'
         app.push_screen(ConfirmScreen("sure?"))
         await pilot.pause()
         btns = {b.id: b for b in app.screen.query(Button)}
-        assert "Delete" in str(btns["yes"].label)
+        assert "Del" in str(btns["yes"].label)
         # parameterized -> custom labels
         app.push_screen(
             ConfirmScreen(
