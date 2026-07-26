@@ -215,4 +215,4 @@ alone — run the destroy consciously and explicitly every time.
   root's `.worktrees` subdirectory. When using a worktree, do not commit
   anything to the main branch or use the main repository to commit anything —
   all commits go on the worktree's own branch within the worktree.
-- Worktrees should have a directory name no longer than 12 characters.
+- Worktrees should have a directory name no longer than 16 characters.

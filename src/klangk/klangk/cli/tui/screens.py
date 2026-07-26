@@ -281,9 +281,9 @@ class LoginScreen(SpatialNavScreen):
 
     def _show_no_server(self) -> None:
         self.query_one("#server_line", Static).update(
-            "No server selected. Pick one below or enter a URL,"
-            " then press 'Use server'."
+            "No server selected — pick one or enter a URL below."
         )
+        self._set_oidc_visible(False)
         self._disable_credentials()
 
     # --- server picker ---
@@ -404,6 +404,9 @@ class LoginScreen(SpatialNavScreen):
     # --- auth-mode setup ---
 
     def _setup_auth(self) -> None:
+        # Hide the SSO button during the probe so it doesn't flash on then
+        # off when the server turns out not to offer OIDC (#1864).
+        self._set_oidc_visible(False)
         self.run_worker(self._setup_auth_async, exit_on_error=False)
 
     async def _setup_auth_async(self) -> None:
@@ -414,6 +417,8 @@ class LoginScreen(SpatialNavScreen):
         )
         self._enable_credentials()
         notice = self.query_one("#notice", Static)
+        # The SSO button is only meaningful when the server offers OIDC.
+        self._set_oidc_visible(mode in {"oidc", "both"})
         if mode == "none":
             notice.update("No-auth server — logging in…")
             self.call_after_refresh(self._attempt_none)
@@ -432,7 +437,11 @@ class LoginScreen(SpatialNavScreen):
             return
         # password / both
         notice.update("Enter your credentials.")
-        self.query_one("#oidc", Button).disabled = True
+
+    def _set_oidc_visible(self, visible: bool) -> None:
+        # Show/hide the SSO button. Hidden entirely (not just disabled) when
+        # the server doesn't offer OIDC, so it takes no layout space (#1864).
+        self.query_one("#oidc", Button).display = visible
 
     def _disable_credentials(self) -> None:
         # No server chosen: disable the whole credential area.
@@ -964,20 +973,31 @@ class WorkspaceDetailScreen(Screen):
     """Read-only workspace detail + restart / duplicate / delete actions."""
 
     BINDINGS = [
-        ("escape", "app.pop_screen", "Back"),
-        ("e", "edit", "Edit"),
-        ("r", "restart", "Restart"),
-        ("s", "stop", "Stop"),
-        ("d", "duplicate", "Duplicate"),
-        ("x", "delete", "Delete"),
-        ("n", "new_terminal", "New term"),
-        ("delete", "delete_terminal", "Del term"),
+        Binding("escape", "app.pop_screen", "Back"),
+        Binding("e", "edit", "Edit"),
+        Binding("r", "restart", "Restart"),
+        Binding("s", "stop", "Stop"),
+        Binding("d", "duplicate", "Duplicate"),
+        Binding("x", "delete", "Del ws"),
+        # Terminal-scoped keys are hidden from the Footer — their hints
+        # are shown inline on the Terminals list header instead (#1860).
+        Binding("n", "new_terminal", "New term", show=False),
+        Binding("delete", "delete_terminal", "Del term", show=False),
     ]
 
     DEFAULT_CSS = """
+    WorkspaceDetailScreen #term_header {
+        height: 1;
+        margin-bottom: 0;
+    }
     WorkspaceDetailScreen #term_label {
         text-style: bold;
-        margin-bottom: 0;
+        width: auto;
+    }
+    WorkspaceDetailScreen #term_hints {
+        width: 1fr;
+        text-align: right;
+        color: $text-muted;
     }
     WorkspaceDetailScreen #term_list {
         height: auto;
@@ -999,7 +1019,11 @@ class WorkspaceDetailScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield Vertical(
-            Static("Terminals", id="term_label"),
+            Horizontal(
+                Static("Terminals", id="term_label"),
+                Static("[n] new  [⌿] delete", id="term_hints", markup=False),
+                id="term_header",
+            ),
             SpatialListView(id="term_list"),
             Static("", id="detail_body"),
             Static("", id="detail_msg"),
@@ -1057,17 +1081,22 @@ class WorkspaceDetailScreen(Screen):
         self.app.refresh_workspaces()
 
     @staticmethod
-    def _bindings_list(stop_label: str = "Stop") -> list:
-        """Bindings with a dynamic label for the stop/start key (#1791)."""
+    def _bindings_list(stop_label: str = "Stop") -> list[Binding]:
+        """Workspace-scoped keybindings for the Footer.
+
+        The ``s`` label toggles Stop/Start (#1791). Terminal-scoped keys
+        (new / delete term) are hidden here — their hints render inline on
+        the Terminals list header instead (#1860).
+        """
         return [
-            ("escape", "app.pop_screen", "Back"),
-            ("e", "edit", "Edit"),
-            ("r", "restart", "Restart"),
-            ("s", "stop", stop_label),
-            ("d", "duplicate", "Duplicate"),
-            ("x", "delete", "Delete"),
-            ("n", "new_terminal", "New term"),
-            ("delete", "delete_terminal", "Del term"),
+            Binding("escape", "app.pop_screen", "Back"),
+            Binding("e", "edit", "Edit"),
+            Binding("r", "restart", "Restart"),
+            Binding("s", "stop", stop_label),
+            Binding("d", "duplicate", "Duplicate"),
+            Binding("x", "delete", "Del ws"),
+            Binding("n", "new_terminal", "New term", show=False),
+            Binding("delete", "delete_terminal", "Del term", show=False),
         ]
 
     def _display(self) -> None:
@@ -1077,10 +1106,7 @@ class WorkspaceDetailScreen(Screen):
             body.update(Text(self._load_error or "Could not load workspace."))
             return
         # Toggle the 's' binding label between Stop / Start.
-        self.BINDINGS = [
-            Binding(*b)
-            for b in self._bindings_list("Stop" if ws.running else "Start")
-        ]
+        self.BINDINGS = self._bindings_list("Stop" if ws.running else "Start")
         self.refresh_bindings()
         lines = [
             f"running: {'yes' if ws.running else 'no'}",
@@ -1265,6 +1291,7 @@ class WorkspaceDetailScreen(Screen):
         self.run_worker(self._do_delete_terminal(index), exit_on_error=False)
 
     async def _do_delete_terminal(self, index: int) -> None:
+        self._msg(f"Deleting terminal {index}…")
         try:
             windows = await self.app.tui_state.close_terminal(
                 self._name, index

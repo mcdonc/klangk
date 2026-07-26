@@ -1023,6 +1023,59 @@ async def test_login_unreachable_mode():
         assert "Cannot reach" in str(app.screen.query_one("#notice").render())
 
 
+async def test_login_oidc_button_visibility_by_auth_mode(monkeypatch):
+    """#1864: the "Log in via browser" button renders only when the server
+    offers OIDC (auth mode ``oidc`` or ``both``); otherwise it's hidden
+    entirely (``display``, not just ``disabled``)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    async def oidc_display(mode, **extra):
+        st = _st(
+            is_authenticated=lambda: False,
+            auth_mode=lambda: mode,
+            current_url=lambda: "https://x.example",
+            email=lambda: None,
+            token=lambda: None,
+            **extra,
+        )
+        app = KlangkApp(st)
+        async with app.run_test() as pilot:
+            await pilot.pause()  # let the deferred no-auth attempt schedule
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return app.screen.query_one("#oidc", Button).display
+
+    assert await oidc_display("oidc") is True
+    assert await oidc_display("both") is True
+    assert await oidc_display("password") is False
+    assert await oidc_display("unreachable") is False
+    # none: force the deferred no-auth attempt to fail so the screen stays on
+    # LoginScreen and the button can be read.
+    assert (
+        await oidc_display(
+            "none",
+            login_none=lambda: (_ for _ in ()).throw(LoginError("nope")),
+        )
+        is False
+    )
+
+    # No server selected at all -> hidden too.
+    st = _st(
+        is_authenticated=lambda: False,
+        current_url=lambda: None,
+        known_servers=lambda: [],
+        email=lambda: None,
+        token=lambda: None,
+    )
+    app = KlangkApp(st)
+    async with app.run_test():
+        assert app.screen.query_one("#oidc", Button).display is False
+
+
 async def test_logout_returns_to_login(monkeypatch):
     async def noop(*a, **k):
         return None
@@ -2448,6 +2501,46 @@ async def test_detail_start_when_stopped(monkeypatch):
         assert "uptime:" in str(app.screen.query_one("#detail_body").render())
 
 
+async def test_detail_terminal_actions_inline_not_in_footer(monkeypatch):
+    """#1860: terminal-scoped keys are hinted inline on the list header and
+    hidden from the Footer; the workspace-delete key is labeled 'Del ws'."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _ws()
+    st.find_workspace = lambda n: _wsobj("alpha", running=True)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # (a) Terminal action hints render on the list header, with the
+        # literal `[n]` keycap intact (not eaten as Rich markup).
+        hints = str(app.screen.query_one("#term_hints").render())
+        assert "[n]" in hints
+        assert "new" in hints
+        assert "delete" in hints
+
+        bindings = {b.key: b for b in app.screen.BINDINGS}
+
+        # (b) Terminal keys still exist (so the keys work) but are hidden
+        # from the Footer.
+        assert "n" in bindings and "delete" in bindings
+        assert bindings["n"].show is False
+        assert bindings["delete"].show is False
+
+        # (c) Workspace-scoped keys remain visible ...
+        for key in ("e", "r", "s", "d", "x"):
+            assert bindings[key].show is True
+
+        # (d) ... and the workspace-delete key is labeled 'Del ws' (#1860).
+        assert bindings["x"].description == "Del ws"
+
+
 async def test_detail_uptime_ticks(monkeypatch):
     """#1814: uptime display refreshes via the periodic timer."""
     import time as _time
@@ -3062,6 +3155,48 @@ async def test_detail_delete_terminal(monkeypatch):
         assert closed.get("i") == 1
         assert "Deleted terminal 1" in str(d.query_one("#detail_msg").render())
         assert len(d.query_one("#term_list", ListView).query(ListItem)) == 1
+
+
+async def test_detail_delete_terminal_shows_inflight_msg(monkeypatch):
+    """A 'Deleting terminal …' message shows while the close call is in
+    flight, so the screen doesn't appear hung (#1863)."""
+
+    import asyncio
+
+    async def noop(*a, **k):
+        return None
+
+    gate = asyncio.Event()
+
+    async def _close(name, index):
+        await gate.wait()
+        return [{"index": 0, "name": "main", "id": "@0"}]
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=_async_terms, close_terminal=_close)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        d.query_one("#term_list").index = 1
+        d.action_delete_terminal()
+        # While close_terminal is blocked on the gate, the in-flight
+        # message must already be visible.
+        for _ in range(3):
+            await pilot.pause()
+        assert "Deleting terminal 1" in str(
+            d.query_one("#detail_msg").render()
+        )
+        # Releasing the close call replaces it with the success message.
+        gate.set()
+        for _ in range(3):
+            await pilot.pause()
+        assert "Deleted terminal 1" in str(d.query_one("#detail_msg").render())
 
 
 async def test_detail_delete_terminal_failure(monkeypatch):
@@ -4861,6 +4996,47 @@ async def test_login_server_list_autofocused(monkeypatch):
     async with app.run_test():
         lv = app.screen.query_one("#server_options", ListView)
         assert lv.index == 0
+
+
+async def test_login_server_line_hugs_list_and_headers_styled(monkeypatch):
+    """#1865: no blank row between the 'Server:' status line and the server
+    picker, and the 'Server:' / notice headers are emphasized (accent color +
+    bold) so they read as headers."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _st(
+        current_url=lambda: "http://localhost:8997",
+        known_servers=lambda: [],
+        default_uds=lambda: None,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+    )
+    app = KlangkApp(st)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        login = app.screen
+        line = login.query_one("#server_line")
+        notice = login.query_one("#notice")
+        opts = login.query_one("#server_options", ListView)
+        message = login.query_one("#message")
+
+        # No blank row: the picker's top edge meets the status line's bottom.
+        assert opts.region.y == line.region.y + line.region.height
+
+        # Both headers are emphasized as headers (bold + a non-default,
+        # accent-derived color; exact rgb is fragile because Textual rounds
+        # the resolved design token, so compare against the unstyled line).
+        assert line.styles.text_style.bold
+        assert notice.styles.text_style.bold
+        assert line.styles.color != message.styles.color
+        assert notice.styles.color != message.styles.color
 
 
 async def test_login_server_list_empty_no_crash(monkeypatch):

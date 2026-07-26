@@ -420,6 +420,18 @@ invitations send` stay email-only (a deliverable address is required);
   broadcasts `container_stopped` to live viewers so the "stopped" overlay
   still appears.
 
+- **TUI login headers recolored as accent + bold (#1865).** The
+  "Server: …" status line and the notice line beneath it (e.g.
+  "Cannot reach the server…") now render in the theme accent color, bold,
+  so they read as headers rather than body text.
+
+- **TUI workspace detail: terminal-scoped keybindings moved inline (#1860).**
+  The `n` (new terminal) and `delete` (delete terminal) keys no longer appear
+  in the bottom Footer — their hints now render on the Terminals list header
+  (`[n] new  [⌫] delete`), next to the list they act on. The Footer is now
+  workspace-scoped only. The workspace-delete key `x` is relabeled `Delete` →
+  `Del ws` to disambiguate it from deleting a terminal.
+
 - **Environment variables are now split into four prefixed families
   (#1653).** The single `KLANGK_` prefix is repointed at the component each
   var targets:
@@ -930,6 +942,23 @@ set-password <email>` (set a known password for the default user — whose
   over TCP directly but are unused under `klangkd`.
 
 ### Fixed
+
+- **TUI login: no blank row between the server status line and the server
+  list (#1865).** Dropped a 1-row bottom margin on the "Server: …"
+  status line so the server picker renders directly beneath it.
+
+- **TUI workspace detail: terminal delete now shows in-flight feedback (#1863).**
+  Pressing `delete` on a selected terminal now shows a `Deleting terminal …`
+  status message while the close request is in flight (mirroring the existing
+  "Creating terminal …" feedback), instead of the screen appearing hung
+  until the list updates.
+
+- **The `klangk` TUI login screen only shows the "Log in via browser (SSO)"
+  button when the selected server actually offers OIDC (#1864).**
+  Previously the button was always rendered — disabled (greyed-out) for
+  `password`/`both` servers and still clickable for `none`/`unreachable` ones
+  with no SSO backend behind it. It now hides entirely (via `display`, not
+  just `disabled`) unless the server's auth mode is `oidc` or `both`.
 
 - **The nginx proxy engine stays up under a plain `systemctl start` with no
   operator log workaround (#1550).** nginx's `access_log` directive has no
