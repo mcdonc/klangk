@@ -19,6 +19,8 @@ from textual.widgets import (
     ListView,
     Select,
     Static,
+    TabbedContent,
+    TabPane,
     Tabs,
 )
 
@@ -5394,22 +5396,34 @@ async def test_edit_screen_keyboard_remove(monkeypatch):
         _edit_screen(app, ws)
         await pilot.pause()
         es = app.screen
-        # Delete/remove dispatches to the focused OptionList.
-        for lid, attr in (
-            ("#mount_list", "_mounts"),
-            ("#env_list", "_env"),
-            ("#allow_list", "_allowed_domains"),
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        # Delete/remove acts on the list under the active tab (#1891). Switch
+        # to each pane by focusing its input (TabbedContent syncs `active` to
+        # the focused pane, so this is also the realistic path).
+        for inp_id, lid, attr in (
+            ("#mount_input", "#mount_list", "_mounts"),
+            ("#env_input", "#env_list", "_env"),
+            ("#allow_input", "#allow_list", "_allowed_domains"),
         ):
-            ol = es.query_one(lid)
-            ol.focus()
+            es.query_one(inp_id).focus()
             await pilot.pause()
-            ol.highlighted = 0
+            assert (
+                tabs.active
+                == {
+                    "#mount_input": "mounts_pane",
+                    "#env_input": "env_pane",
+                    "#allow_input": "netfilter_pane",
+                }[inp_id]
+            )
+            es.query_one(lid).highlighted = 0
             es.action_remove_item()
             assert not getattr(es, attr)  # [] or {}
-        # Not focused on a list -> no-op.
+        # Active tab has no list (General) -> remove/edit are no-ops.
         es.query_one("#name").focus()
         await pilot.pause()
+        assert tabs.active == "general_pane"
         es.action_remove_item()
+        es.action_edit_item()
 
 
 async def test_edit_screen_edit_in_place(monkeypatch):
@@ -5428,11 +5442,13 @@ async def test_edit_screen_edit_in_place(monkeypatch):
         _edit_screen(app, ws)
         await pilot.pause()
         es = app.screen
-        # 'e' on the focused mount loads it into the input (edit mode).
-        ol = es.query_one("#mount_list")
-        ol.focus()
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        # Switch panes by focusing each editor's input (TabbedContent syncs
+        # `active` to the focused pane). 'e' loads the highlighted row.
+        es.query_one("#mount_input").focus()
         await pilot.pause()
-        ol.highlighted = 0
+        assert tabs.active == "mounts_pane"
+        es.query_one("#mount_list").highlighted = 0
         es.action_edit_item()
         assert es.query_one("#mount_input").value == "/h:/c"
         assert es._editing_mount == 0
@@ -5441,20 +5457,20 @@ async def test_edit_screen_edit_in_place(monkeypatch):
         assert es._mounts == ["/h:/c2"]
         assert es._editing_mount is None
         # env edit (key tracked)
-        ol = es.query_one("#env_list")
-        ol.focus()
+        es.query_one("#env_input").focus()
         await pilot.pause()
-        ol.highlighted = 0
+        assert tabs.active == "env_pane"
+        es.query_one("#env_list").highlighted = 0
         es.action_edit_item()
         assert es.query_one("#env_input").value == "K=v"
         es.query_one("#env_input").value = "K=changed"
         es._add_env()
         assert es._env == {"K": "changed"}
         # allowed-domain edit
-        ol = es.query_one("#allow_list")
-        ol.focus()
+        es.query_one("#allow_input").focus()
         await pilot.pause()
-        ol.highlighted = 0
+        assert tabs.active == "netfilter_pane"
+        es.query_one("#allow_list").highlighted = 0
         es.action_edit_item()
         assert es.query_one("#allow_input").value == "github.com:443"
         es.query_one("#allow_input").value = "pypi.org"
@@ -5467,6 +5483,115 @@ async def test_edit_screen_edit_in_place(monkeypatch):
         es._edit_env()
         es.query_one("#allow_list").highlighted = None
         es.action_edit_item()
+
+
+async def test_edit_screen_tabbed_layout(monkeypatch):
+    """Edit form groups fields under five tabs; Save/Cancel + #edit_msg stay
+    pinned outside the tab content, always visible (#1891)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha", image="py:3", service_command="sh", health_check="hc")
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        # Five panes in the proposed order; General active on entry.
+        assert tabs.active == "general_pane"
+        for pane in (
+            "general_pane",
+            "mounts_pane",
+            "env_pane",
+            "netfilter_pane",
+            "advanced_pane",
+        ):
+            es.query_one(f"#{pane}", TabPane)
+        # No field dropped — a representative field per group is present.
+        es.query_one("#name", Input)
+        es.query_one("#image", Select)
+        es.query_one("#auto_start", Checkbox)
+        es.query_one("#mount_input", Input)
+        es.query_one("#mount_list")
+        es.query_one("#env_input", Input)
+        es.query_one("#allow_input", Input)
+        es.query_one("#command", Input)
+        es.query_one("#health_check", Input)
+        # Pinned outside the tab content: #edit_msg, #cancel, #save are
+        # siblings of the TabbedContent (never inside a TabPane).
+        for wid in ("#edit_msg", "#cancel", "#save"):
+            assert not isinstance(es.query_one(wid).parent, TabPane)
+        # Name is auto-focused on entry (General tab active).
+        assert app.focused is es.query_one("#name")
+
+
+async def test_edit_screen_tab_spatial_nav(monkeypatch):
+    """Down from the strip enters the active pane; Up from the first field
+    returns to the strip; Tab still cycles fields (#1891, #1781, #1783)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha")
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        # Up from Name (General's first field) -> focus the tab strip.
+        es.query_one("#name").focus()
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert isinstance(app.focused, Tabs)
+        # Down from the strip -> back into the active pane's first field.
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is es.query_one("#name")
+        # Tab from Name advances to the next General field (Image).
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is es.query_one("#image")
+        # Up from a non-first Input (Health, on the Advanced tab) is a no-op:
+        # it doesn't match the pane's first field (Command), so focus stays.
+        tabs.active = "advanced_pane"
+        es.query_one("#command").focus()  # switch to Advanced via focus-sync
+        await pilot.pause()
+        es.query_one("#health_check").focus()
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is es.query_one("#health_check")
+
+
+async def test_edit_screen_tab_left_right_switches(monkeypatch):
+    """Left/Right on the tab strip switches the active pane (#1891)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha")
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        assert tabs.active == "general_pane"
+        es.query_one(Tabs).focus()
+        await pilot.pause()
+        await pilot.press("right")
+        await pilot.pause()
+        assert tabs.active == "mounts_pane"
+        await pilot.press("left")
+        await pilot.pause()
+        assert tabs.active == "general_pane"
 
 
 async def test_edit_rename_propagates_to_detail_and_list(monkeypatch):

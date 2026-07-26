@@ -448,6 +448,15 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **TUI: tabbed workspace edit form (#1891).** The workspace edit screen
+  now groups its fields under five tabs — General (name / image /
+  auto-start), Mounts, Environment, Netfilter (allowed domains), and
+  Advanced (service command / health check) — instead of one long scroll.
+  Save / Cancel, the status line, and the restart-needed prompt stay
+  pinned outside the tab content so they remain visible on every tab.
+  Left/Right switch tabs, Up/Down move between the tab strip and a pane's
+  fields, and Delete / `e` act on whichever list is under the active tab.
+
 - **TUI login: the server-list delete key is hinted inline (#1890).**
   The `d` (delete server) key no longer appears in the bottom Footer — its
   hint now renders on the server picker header (`[d] delete`), next to the
