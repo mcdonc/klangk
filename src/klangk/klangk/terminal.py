@@ -690,13 +690,13 @@ class Terminal:
 
         *target* can be a window index (int), window name (str), or
         window id (``@N`` string — preferred, globally unique).
+
+        Always qualifies the target with ``session_name`` so that in a
+        session group the command affects only the caller's grouped
+        session, not whichever session tmux considers "most recent"
+        (#1883).
         """
-        # Window IDs (@N) can be used directly as targets without
-        # a session prefix.
-        if isinstance(target, str) and target.startswith("@"):
-            t = target
-        else:
-            t = f"{session_name}:{target}"
+        t = f"{session_name}:{target}"
         await self.tmux_command(
             container_id,
             session_name,
