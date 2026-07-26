@@ -229,6 +229,18 @@ klangk volumes rm nix-store         # delete a volume (must be yours)
 you hold site-wide admin privileges (derived from the server's
 `/my-permissions` — the same source the web UI uses).
 
+The `klangk account` group lets a logged-in user manage their own
+credentials: `klangk account show` prints your current handle and email;
+`passwd`, `handle`, and `email` prompt for the new value plus a password
+confirmation (handle and email changes) or your current password (password
+change). Validation matches the web UI: handles are lowercase
+`[a-z0-9._-]+` (≤32 chars), emails must be well-formed, and the password
+minimum is read from the server (`KLANGKD_MIN_PASSWORD_LENGTH`, surfaced at
+`/api/v1/config`) rather than hardcoded. After an email change the CLI
+re-keys your cached token under the new address — the token's subject is
+your user id, so it stays valid. See
+[Authentication § Account self-service](../features/authentication.md#account-self-service).
+
 The CLI connects to the running Klangk backend over HTTP + WebSocket — it works locally and against remote servers.
 
 ## Exiting the shell

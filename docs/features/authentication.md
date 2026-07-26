@@ -58,6 +58,36 @@ the SSO flow and receives the token via a temporary localhost callback.
 
 See [OIDC Configuration](../reference/oidc.md) for setup instructions.
 
+## Account self-service
+
+Logged-in users can change their own **password**, **handle**, and
+**email** without an admin. All three are available from:
+
+- the web UI **Settings** page,
+- the TUI **Account** screen (press `a` from the workspace list), and
+- the CLI `klangk account` group (`show`, `passwd`, `handle`, `email`).
+
+Handle and email changes require your current password to confirm; a
+password change requires your current password. Validation is enforced the
+same way on every surface (and again, authoritatively, on the server):
+
+- **handle** — lowercase, `[a-z0-9._-]+`, at most 32 characters. Changing
+  it affects your terminal home directory and how others see you in chat,
+  so the TUI and CLI confirm before applying it.
+- **email** — must be a well-formed address. The account is marked
+  unverified and a verification email is sent to the new address; verify it
+  to fully activate the change. The address must not already be in use.
+- **password** — must meet the server's minimum length
+  (`KLANGKD_MIN_PASSWORD_LENGTH`, default 8).
+
+Because the session JWT's subject is your user id (not your email), an
+email change does **not** invalidate your current session — the CLI simply
+re-files its cached token under the new address.
+
+> Accounts with no password (OIDC-only users, whose credentials are
+> managed by their identity provider) cannot use these routes — change
+> your password, handle, and email through your IdP instead.
+
 ## Sessions
 
 Klangk uses JWT tokens for sessions. Token lifetime defaults to 24
