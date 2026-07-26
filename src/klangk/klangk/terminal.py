@@ -356,6 +356,28 @@ class Terminal:
             container_id, session_name, user_home, ssh_agent_socket
         )
 
+    async def set_workspace_name(
+        self, container_id: str, workspace_name: str
+    ) -> None:
+        """Set ``@workspace_name`` globally so the tmux status bar shows it.
+
+        Uses ``set -g`` (global) because each connection creates a grouped
+        session that does not inherit session-level options from the base
+        session.  Called on every ``terminal_start`` — idempotent (#1880).
+        """
+        try:
+            await self.podman.exec_container(
+                container_id,
+                ["tmux", "set", "-g", "@workspace_name", workspace_name],
+                user=CONTAINER_USER,
+                timeout=5,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to set @workspace_name for container %s",
+                container_id,
+            )
+
     async def ensure_service_session(
         self,
         container_id: str,
@@ -853,6 +875,7 @@ class TerminalSession:
         user_handle: str | None = None,
         ssh_agent_socket: str | None = None,
         terminal: Terminal | None = None,
+        workspace_name: str | None = None,
     ):
         self.container_id = container_id
         self._terminal = terminal
@@ -864,6 +887,7 @@ class TerminalSession:
         self.user_id = user_id
         self.user_handle = user_handle
         self.ssh_agent_socket = ssh_agent_socket
+        self.workspace_name = workspace_name
         self._shell: ShellProcess | None = None
         self._output_queue: BoundedOutputQueue[str] = BoundedOutputQueue(
             maxsize=64
@@ -898,6 +922,14 @@ class TerminalSession:
                 self.session_name,
                 user_home=self.user_home,
                 ssh_agent_socket=self.ssh_agent_socket,
+            )
+        # Set @workspace_name globally so every grouped session's status
+        # bar picks it up.  Runs on every terminal_start (idempotent)
+        # because the base session may have been created by older code
+        # that didn't set it (#1880).
+        if self.workspace_name and self._terminal.tmux_enabled():
+            await self._terminal.set_workspace_name(
+                self.container_id, self.workspace_name
             )
         env = build_environment(
             self.user_home,
