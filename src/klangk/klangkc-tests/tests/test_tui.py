@@ -2309,6 +2309,54 @@ async def test_main_screen_shows_created_date(monkeypatch):
         assert "2025-06-15" in str(date_label.render())
 
 
+async def test_main_screen_shows_short_id_on_row(monkeypatch):
+    """#1899: each list row shows the first 8 chars of the workspace id,
+    a prefix of the full id on the detail screen, so a row can be matched
+    to its workspace."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = Workspace(
+        id="3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        name="alpha",
+        created_at="2025-06-15T10:30:00",
+        running=True,
+    )
+    app = KlangkApp(_ws(owned=[ws], shared=[]))
+    async with app.run_test():
+        m = app.screen
+        items = m.query_one("#owned_list", ListView).query(ListItem)
+        id_label = items[0].query_one(".ws-id")
+        rendered = str(id_label.render())
+        assert "3fa85f64" in rendered  # first 8 chars of the full id
+        assert "3fa85f64-5717-4562-b3fc-2c963f66afa6" not in rendered
+        # The full id is NOT on the row (only its 8-char prefix is).
+
+
+async def test_main_screen_shared_list_shows_short_id(monkeypatch):
+    """#1899: the shared-workspaces list also shows the short id — no
+    regression from the row-population path that the Owned list uses."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = Workspace(
+        id="abcdef12-3456-7890-abcd-ef1234567890",
+        name="shared-ws",
+        created_at="2025-06-15T10:30:00",
+        running=False,
+    )
+    app = KlangkApp(_ws(owned=[], shared=[ws]))
+    async with app.run_test():
+        m = app.screen
+        items = m.query_one("#shared_list", ListView).query(ListItem)
+        id_label = items[0].query_one(".ws-id")
+        assert "abcdef12" in str(id_label.render())
+
+
 async def test_update_running_unknown_workspace(monkeypatch):
     """_update_running returns early for unknown workspace_id (line 692)."""
 
@@ -2840,6 +2888,33 @@ async def test_detail_loads_and_renders(monkeypatch):
             "owner: o@x",
         ]:
             assert s in body, s
+
+
+async def test_detail_shows_full_id(monkeypatch):
+    """#1899: the detail screen shows the full server-assigned workspace id,
+    so it can be copied for CLI / log / support correlation."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    full_id = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+    a = Workspace(
+        id=full_id,
+        name="alpha",
+        created_at="x",
+        running=True,
+    )
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        body = str(app.screen.query_one("#detail_body").render())
+        assert f"id: {full_id}" in body
+        # The id line appears before the running/health lines (near the top).
+        assert body.index(f"id: {full_id}") < body.index("running:")
 
 
 async def test_detail_renders_allowed_domains(monkeypatch):
