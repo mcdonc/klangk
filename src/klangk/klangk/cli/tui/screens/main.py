@@ -66,6 +66,13 @@ async def run_token_refresh_loop(state) -> str:
         if new:
             logger.debug("Token refreshed proactively")
         else:
+            # Refresh failed — but a concurrent refresher (e.g. the CLI's
+            # background thread) may already have rotated the token and got
+            # this one blocklisted. Re-read state: if the token changed,
+            # keep running instead of forcing a logout (#1882 review).
+            if state.token() != token:
+                logger.debug("Token rotated concurrently; not expiring")
+                continue
             logger.warning("Proactive token refresh failed")
             return "expired"
 
@@ -727,6 +734,7 @@ class MainScreen(Screen):
                 await listen_for_status(
                     url, token, on_event=self._on_status_event
                 )
+                # Clean close (server restart, idle timeout) — reconnect.
                 retries += 1
                 self.app.live_extra = "status: reconnecting…"
                 self._refresh_status()
@@ -736,6 +744,7 @@ class MainScreen(Screen):
                 self.app.session_expired()
                 return
             except Exception as exc:
+                # Transient error — back off (exponential) and retry.
                 retries += 1
                 if retries > max_retries:
                     logger.debug(
@@ -746,7 +755,8 @@ class MainScreen(Screen):
                     break
                 self.app.live_extra = "status: reconnecting…"
                 self._refresh_status()
-                await asyncio.sleep(2)
+                await asyncio.sleep(min(2 * (2 ** (retries - 1)), 30))
+                continue
         self.app.live_extra = (
             "status: disconnected (switch server to reconnect)"
         )
@@ -755,7 +765,7 @@ class MainScreen(Screen):
     async def _token_refresh_loop(self) -> None:
         """Proactively refresh the access token before it expires."""
         result = await run_token_refresh_loop(self.app.tui_state)
-        if result == "expired":
+        if result in ("expired", "no_token"):
             self.app.session_expired()
 
     def _on_status_event(self, event: dict) -> None:

@@ -7391,23 +7391,19 @@ async def test_run_token_refresh_loop_returns_expired_on_failure(monkeypatch):
     assert result == "expired"
 
 
-async def test_run_token_refresh_loop_returns_no_token():
+async def test_run_token_refresh_loop_returns_no_token(monkeypatch):
     """run_token_refresh_loop returns 'no_token' when token disappears."""
-    original_poll = scr_main._TOKEN_REFRESH_POLL
-    scr_main._TOKEN_REFRESH_POLL = 0
-    try:
+    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
 
-        class FakeState:
-            def current_url(self):
-                return "https://x.example"
+    class FakeState:
+        def current_url(self):
+            return "https://x.example"
 
-            def token(self):
-                return None
+        def token(self):
+            return None
 
-        result = await scr_main.run_token_refresh_loop(FakeState())
-        assert result == "no_token"
-    finally:
-        scr_main._TOKEN_REFRESH_POLL = original_poll
+    result = await scr_main.run_token_refresh_loop(FakeState())
+    assert result == "no_token"
 
 
 def _fake_jwt(exp=None):
@@ -7421,71 +7417,57 @@ def _fake_jwt(exp=None):
     return f"{header.decode()}.{body.decode()}.sig"
 
 
-async def test_run_token_refresh_loop_skips_when_exp_missing():
+async def test_run_token_refresh_loop_skips_when_exp_missing(monkeypatch):
     """A token with no ``exp`` claim is skipped (continue); exits on no-token."""
-    original_poll = scr_main._TOKEN_REFRESH_POLL
-    scr_main._TOKEN_REFRESH_POLL = 0
-    try:
-        tokens = iter([_fake_jwt(exp=None), None])
+    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    tokens = iter([_fake_jwt(exp=None), None])
 
-        class FakeState:
-            def current_url(self):
-                return "https://x.example"
+    class FakeState:
+        def current_url(self):
+            return "https://x.example"
 
-            def token(self):
-                return next(tokens)
+        def token(self):
+            return next(tokens)
 
-        result = await scr_main.run_token_refresh_loop(FakeState())
-        assert result == "no_token"
-    finally:
-        scr_main._TOKEN_REFRESH_POLL = original_poll
+    result = await scr_main.run_token_refresh_loop(FakeState())
+    assert result == "no_token"
 
 
-async def test_run_token_refresh_loop_skips_when_far_from_expiry():
+async def test_run_token_refresh_loop_skips_when_far_from_expiry(monkeypatch):
     """A token not near expiry is skipped (continue); exits on no-token."""
     import time as _time
 
-    original_poll = scr_main._TOKEN_REFRESH_POLL
-    scr_main._TOKEN_REFRESH_POLL = 0
-    try:
-        tokens = iter([_fake_jwt(exp=int(_time.time()) + 3600), None])
+    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    tokens = iter([_fake_jwt(exp=int(_time.time()) + 3600), None])
 
-        class FakeState:
-            def current_url(self):
-                return "https://x.example"
+    class FakeState:
+        def current_url(self):
+            return "https://x.example"
 
-            def token(self):
-                return next(tokens)
+        def token(self):
+            return next(tokens)
 
-        result = await scr_main.run_token_refresh_loop(FakeState())
-        assert result == "no_token"
-    finally:
-        scr_main._TOKEN_REFRESH_POLL = original_poll
+    result = await scr_main.run_token_refresh_loop(FakeState())
+    assert result == "no_token"
 
 
 async def test_run_token_refresh_loop_refreshes_near_expiry(monkeypatch):
     """A near-expiry token is refreshed (success branch); exits on no-token."""
     import time as _time
 
-    original_poll = scr_main._TOKEN_REFRESH_POLL
-    scr_main._TOKEN_REFRESH_POLL = 0
-    try:
-        tokens = iter([_fake_jwt(exp=int(_time.time()) + 60), None])
+    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    tokens = iter([_fake_jwt(exp=int(_time.time()) + 60), None])
 
-        class FakeState:
-            def current_url(self):
-                return "https://x.example"
+    class FakeState:
+        def current_url(self):
+            return "https://x.example"
 
-            def token(self):
-                return next(tokens)
+        def token(self):
+            return next(tokens)
 
-        monkeypatch.setattr(
-            scr_main, "_refresh_token", lambda url, tok: "newtok"
-        )
-        result = await scr_main.run_token_refresh_loop(FakeState())
-        assert result == "no_token"
-    finally:
-        scr_main._TOKEN_REFRESH_POLL = original_poll
+    monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: "newtok")
+    result = await scr_main.run_token_refresh_loop(FakeState())
+    assert result == "no_token"
 
 
 async def test_status_loop_token_disappears_mid_retry(monkeypatch):
@@ -7548,3 +7530,46 @@ async def test_token_refresh_loop_expires_session(monkeypatch):
     async with app.run_test():
         await app.screen._token_refresh_loop()
     assert fired
+
+
+async def test_session_expired_is_re_entrant_safe(monkeypatch):
+    """Concurrent session_expired() calls fire the redirect exactly once."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    st = _authed_state()
+    st.logout = lambda: None  # avoid real credential I/O
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.session_expired()  # first call: sets _expiring, spawns worker
+        app.session_expired()  # second call: bails on _expiring
+        await pilot.pause()
+        logins = [
+            s for s in app.screen_stack if isinstance(s, scr.LoginScreen)
+        ]
+        assert len(logins) == 1
+
+
+async def test_run_token_refresh_loop_concurrent_rotation(monkeypatch):
+    """If the token was rotated concurrently, don't expire — keep running."""
+    import time as _time
+
+    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    near = _fake_jwt(exp=int(_time.time()) + 60)
+    # token() returns: the near-expiry token, then a *different* one (the
+    # mitigation re-reads state and sees the rotation), then None (exit).
+    tokens = iter([near, "rotated-by-other-refresher", None])
+
+    class FakeState:
+        def current_url(self):
+            return "https://x.example"
+
+        def token(self):
+            return next(tokens)
+
+    monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: None)
+    result = await scr_main.run_token_refresh_loop(FakeState())
+    assert result == "no_token"
