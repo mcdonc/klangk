@@ -4939,7 +4939,7 @@ async def test_login_server_picker(monkeypatch):
         await app.workers.wait_for_complete()
         assert calls.get("add") == ("other.sock", "/var/run/other.sock")
 
-        # "Use server" button also dispatches
+        # "Add server" button also dispatches
         srv_input.value = "prod"
         login.on_button_pressed(FakeBtnPress("use_server"))
         await app.workers.wait_for_complete()
