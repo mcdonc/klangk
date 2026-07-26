@@ -4173,6 +4173,137 @@ async def test_detail_apply_status_event(monkeypatch):
         assert a.running is True  # unchanged
 
 
+async def test_detail_container_restart_full_reload(monkeypatch):
+    """#1924: a container restart does a full reload (workspace metadata
+    + terminal list), not just a terminal re-fetch."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True, service_started_at=1000.0)
+    calls = {"find": 0, "terms": 0}
+
+    def track_find(name):
+        calls["find"] += 1
+        return a
+
+    async def track_terms(*_a, **_k):
+        calls["terms"] += 1
+        return [{"index": 0, "name": "main", "id": "@0"}]
+
+    st = _ws(list_terminals=track_terms)
+    st.find_workspace = track_find
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        before_find = calls["find"]
+        before_terms = calls["terms"]
+        # Simulate a container restart (new service_started_at).
+        app.screen.apply_status_event(
+            {
+                "type": "container_status",
+                "workspace_id": "id-alpha",
+                "running": True,
+                "service_started_at": 2000.0,
+            }
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # Both workspace metadata and terminal list re-fetched.
+        assert calls["find"] > before_find
+        assert calls["terms"] > before_terms
+
+
+async def test_detail_container_start_full_reload(monkeypatch):
+    """#1924: a stopped container starting up does a full reload."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=False)
+    calls = {"find": 0, "terms": 0}
+
+    def track_find(name):
+        calls["find"] += 1
+        return a
+
+    async def track_terms(*_a, **_k):
+        calls["terms"] += 1
+        return [{"index": 0, "name": "main", "id": "@0"}]
+
+    st = _ws(list_terminals=track_terms)
+    st.find_workspace = track_find
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        before_find = calls["find"]
+        before_terms = calls["terms"]
+        # Container starts (was not running).
+        app.screen.apply_status_event(
+            {
+                "type": "container_status",
+                "workspace_id": "id-alpha",
+                "running": True,
+                "service_started_at": 1000.0,
+            }
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert calls["find"] > before_find
+        assert calls["terms"] > before_terms
+
+
+async def test_detail_container_status_no_reload_when_unchanged(monkeypatch):
+    """container_status with same service_started_at does not reload."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True, service_started_at=1000.0)
+    calls = {"find": 0, "terms": 0}
+
+    def track_find(name):
+        calls["find"] += 1
+        return a
+
+    async def track_terms(*_a, **_k):
+        calls["terms"] += 1
+        return [{"index": 0, "name": "main", "id": "@0"}]
+
+    st = _ws(list_terminals=track_terms)
+    st.find_workspace = track_find
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        before_find = calls["find"]
+        before_terms = calls["terms"]
+        # Same service_started_at — not a restart, no reload.
+        app.screen.apply_status_event(
+            {
+                "type": "container_status",
+                "workspace_id": "id-alpha",
+                "running": True,
+                "service_started_at": 1000.0,
+            }
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert calls["find"] == before_find
+        assert calls["terms"] == before_terms
+
+
 async def test_detail_apply_status_event_reload(monkeypatch):
     async def noop(*a, **k):
         return None
