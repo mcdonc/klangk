@@ -27,14 +27,6 @@ Finder _allowedDomainsInput() => find.byWidgetPredicate(
       (w) => w is TextField && w.decoration?.hintText == 'github.com:443',
     );
 
-/// A WsClient whose sendShutdownContainer we can observe, for the danger-zone
-/// confirm dialog test.
-class _MockWsClient extends WsClient {
-  bool shutdownSent = false;
-  @override
-  void sendShutdownContainer() => shutdownSent = true;
-}
-
 /// JWT with sub=test-user (logged in) so AuthService.isLoggedIn is true.
 String _jwt() {
   final header = base64Url
@@ -71,6 +63,7 @@ http.Client _client({
   Map<String, dynamic>? transferResponse,
   List<Map<String, dynamic>>? searchResults,
   bool netfilterEnabled = false,
+  List<String>? stopRecorder,
 }) {
   final ws = (workspace ?? _workspace);
   return MockClient((request) async {
@@ -119,14 +112,18 @@ http.Client _client({
         200,
       );
     }
+    if (p == '/api/v1/workspaces/$_wsId/stop' && request.method == 'POST') {
+      stopRecorder?.add(p);
+      return http.Response(jsonEncode({'status': 'stopped'}), 200);
+    }
     return http.Response('not found', 404);
   });
 }
 
-Widget _buildPanel({WsClient? wsClient}) => MultiProvider(
+Widget _buildPanel() => MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
-        ChangeNotifierProvider.value(value: wsClient ?? WsClient()),
+        ChangeNotifierProvider.value(value: WsClient()),
       ],
       // Non-const so that the Dart VM's coverage instrumentation observes
       // the constructor call at runtime.  Const constructors are evaluated
@@ -760,8 +757,9 @@ void main() {
 
     testWidgets('cancel dismisses the dialog without shutting down',
         (tester) async {
-      final ws = _MockWsClient();
-      await tester.pumpWidget(_buildPanel(wsClient: ws));
+      final posts = <String>[];
+      testAuthHttpClientOverride = _client(stopRecorder: posts);
+      await tester.pumpWidget(_buildPanel());
       await tester.pumpAndSettle();
 
       await _scrollToAndTap(tester, find.text('Shut Down Container'));
@@ -770,15 +768,16 @@ void main() {
       await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
 
-      // Dialog gone, no shutdown sent.
+      // Dialog gone, no shutdown POST.
       expect(find.text('Shut Down'), findsNothing);
-      expect(ws.shutdownSent, isFalse);
+      expect(posts, isEmpty);
     });
 
     testWidgets('confirm sends shutdown and dismisses the dialog',
         (tester) async {
-      final ws = _MockWsClient();
-      await tester.pumpWidget(_buildPanel(wsClient: ws));
+      final posts = <String>[];
+      testAuthHttpClientOverride = _client(stopRecorder: posts);
+      await tester.pumpWidget(_buildPanel());
       await tester.pumpAndSettle();
 
       await _scrollToAndTap(tester, find.text('Shut Down Container'));
@@ -787,7 +786,7 @@ void main() {
       await tester.tap(find.text('Shut Down').last);
       await tester.pumpAndSettle();
 
-      expect(ws.shutdownSent, isTrue);
+      expect(posts, contains('/api/v1/workspaces/$_wsId/stop'));
       expect(find.text('Cancel'), findsNothing);
     });
   });

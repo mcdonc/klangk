@@ -2038,6 +2038,8 @@ class TestWorkspaceRoutes:
         ws_id = create_resp.json()["id"]
         registry.track_activity("cid-stop", ws_id)
 
+        mock_session = MagicMock()
+        mock_session.full_reset = AsyncMock()
         with (
             patch.object(
                 registry,
@@ -2054,6 +2056,9 @@ class TestWorkspaceRoutes:
                 "stop_session",
                 new_callable=AsyncMock,
             ) as mock_stop_session,
+            patch.object(
+                app.state.sockets, "get_session", return_value=mock_session
+            ),
         ):
             resp = await client.post(
                 f"/api/v1/workspaces/{ws_id}/stop", headers=headers
@@ -2065,6 +2070,12 @@ class TestWorkspaceRoutes:
         # REST /stop tears down the Pi RPC subprocess for the workspace
         # (via reset_workspace_state -> reset_workspace); lock the contract.
         mock_stop_session.assert_awaited_once_with(ws_id)
+        # Re-homed from the retired WS shutdown_container handler: REST /stop
+        # broadcasts container_stopped so live viewers show "stopped".
+        mock_session.broadcast.assert_called_once()
+        event = mock_session.broadcast.call_args[0][0]
+        assert event["type"] == "event"
+        assert event["event"]["name"] == "container_stopped"
         registry.states.pop(ws_id, None)
 
     async def test_start_workspace(self, client, app, user):

@@ -43,7 +43,6 @@ _WS_CONNECTION_COMMANDS: dict[str, tuple[str, bool]] = {
     "delete_shared_terminal": ("handle_delete_shared_terminal", True),
     "list_shared_terminals": ("handle_list_shared_terminals", False),
     "restart_container": ("handle_restart_container", False),
-    "shutdown_container": ("handle_shutdown_container", False),
     "exec_start": ("handle_exec_start", True),
     "exec_input": ("handle_exec_input", True),
     "exec_close_stdin": ("handle_exec_close_stdin", False),

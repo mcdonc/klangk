@@ -7,7 +7,6 @@ import '../auth/auth_service.dart';
 import '../theme/colors.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
-import '../ws/ws_client.dart';
 import 'workspace_list_page.dart' show validateAllowedDomainSpec;
 
 /// Workspace settings panel: config editing only.
@@ -1105,7 +1104,7 @@ class _SettingsFormState extends State<_SettingsForm> {
           FilledButton(
             onPressed: () {
               Navigator.of(ctx).pop();
-              context.read<WsClient>().sendShutdownContainer();
+              _shutdownContainer();
             },
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Shut Down'),
@@ -1113,5 +1112,17 @@ class _SettingsFormState extends State<_SettingsForm> {
         ],
       ),
     );
+  }
+
+  Future<void> _shutdownContainer() async {
+    // Route through REST /stop (the WS shutdown_container handler was
+    // retired). The backend broadcasts container_stopped so the workspace
+    // page shows the "stopped" overlay.
+    final auth = context.read<AuthService>();
+    try {
+      await auth.authPost('/api/v1/workspaces/${widget.workspaceId}/stop');
+    } catch (_) {
+      // Best-effort; the stop is surfaced via the container_stopped event.
+    }
   }
 }
