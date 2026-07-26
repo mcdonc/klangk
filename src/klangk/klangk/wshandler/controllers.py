@@ -596,6 +596,7 @@ class TerminalController:
         # interactive shell now; the service command is fired separately
         # in ``_start_terminal`` (after the shell session is up) so a
         # post-setup ``terminal_start`` still triggers it (#1033).
+        ws = self._conn.workspace
         session = TerminalSession(
             self._conn.container_id,
             session_name=self._conn.user["id"],
@@ -604,6 +605,7 @@ class TerminalController:
             user_handle=self._conn.user.get("handle"),
             ssh_agent_socket=self._conn._ssh_agent_socket,
             terminal=self._conn.app.state.terminal,
+            workspace_name=ws.get("name") if ws else None,
         )
 
         browser_id = msg.get("browser_id")

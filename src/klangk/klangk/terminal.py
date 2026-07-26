@@ -306,6 +306,7 @@ class Terminal:
         session_name: str,
         user_home: str | None = None,
         ssh_agent_socket: str | None = None,
+        workspace_name: str | None = None,
     ) -> bool:
         """Ensure a detached base tmux session exists for *session_name*.
 
@@ -334,6 +335,28 @@ class Terminal:
                 "Failed to create base tmux session %s", session_name
             )
             return False
+        # Set the workspace name as a tmux user option on the session so
+        # the status bar can display it via #{@workspace_name} (#1880).
+        if workspace_name:
+            try:
+                await self.podman.exec_container(
+                    container_id,
+                    [
+                        "tmux",
+                        "set",
+                        "-t",
+                        session_name,
+                        "@workspace_name",
+                        workspace_name,
+                    ],
+                    user=CONTAINER_USER,
+                    timeout=5,
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to set @workspace_name on session %s",
+                    session_name,
+                )
         return True
 
     async def ensure_base_session(
@@ -342,6 +365,7 @@ class Terminal:
         session_name: str,
         user_home: str | None = None,
         ssh_agent_socket: str | None = None,
+        workspace_name: str | None = None,
     ) -> bool:
         """Ensure the firing user's base tmux session + window 0 exist.
 
@@ -353,7 +377,11 @@ class Terminal:
         regardless of setup state (#1133).
         """
         return await self._ensure_tmux_session(
-            container_id, session_name, user_home, ssh_agent_socket
+            container_id,
+            session_name,
+            user_home,
+            ssh_agent_socket,
+            workspace_name=workspace_name,
         )
 
     async def ensure_service_session(
@@ -853,6 +881,7 @@ class TerminalSession:
         user_handle: str | None = None,
         ssh_agent_socket: str | None = None,
         terminal: Terminal | None = None,
+        workspace_name: str | None = None,
     ):
         self.container_id = container_id
         self._terminal = terminal
@@ -864,6 +893,7 @@ class TerminalSession:
         self.user_id = user_id
         self.user_handle = user_handle
         self.ssh_agent_socket = ssh_agent_socket
+        self.workspace_name = workspace_name
         self._shell: ShellProcess | None = None
         self._output_queue: BoundedOutputQueue[str] = BoundedOutputQueue(
             maxsize=64
@@ -898,6 +928,7 @@ class TerminalSession:
                 self.session_name,
                 user_home=self.user_home,
                 ssh_agent_socket=self.ssh_agent_socket,
+                workspace_name=self.workspace_name,
             )
         env = build_environment(
             self.user_home,

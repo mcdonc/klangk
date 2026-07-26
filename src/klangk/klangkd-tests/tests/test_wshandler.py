@@ -781,6 +781,7 @@ class TestHandleTerminalStart:
             user_handle="testuser",
             ssh_agent_socket=None,
             terminal=_mock_term,
+            workspace_name=None,
         )
         # Should have sent terminal_windows and shared_terminals
         sent = [c[0][0] for c in sock.send_json.call_args_list]
@@ -1294,6 +1295,7 @@ class TestHandleTerminalStart:
             user_handle="testuser",
             ssh_agent_socket=None,
             terminal=_mock_term,
+            workspace_name=None,
         )
         mock_ess.assert_awaited_once_with(
             "cid",
@@ -3191,6 +3193,7 @@ class TestSSHAgentHandlers:
             user_handle="testuser",
             ssh_agent_socket="/tmp/klangk-ssh-agent-uid.sock",
             terminal=_mock_term,
+            workspace_name=None,
         )
 
 

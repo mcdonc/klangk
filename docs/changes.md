@@ -27,6 +27,11 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Tmux status bar in workspace shells (#1880).** Shells now display a
+  subtle status bar at the bottom showing the workspace name (left) and
+  current terminal name (right). The workspace name is set as a tmux user
+  option (`@workspace_name`) when the base session is created.
+
 - **Account self-service from the CLI and TUI (#1753).** A new
   `klangk account` group (`show`, `passwd`, `handle`, `email`) changes your
   password, handle, or email from the command line, and a new TUI **Account**
