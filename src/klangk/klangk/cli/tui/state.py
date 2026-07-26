@@ -145,6 +145,34 @@ class TuiState:
     def duplicate_workspace(self, name: str, new_name: str) -> dict:
         return self.client().duplicate_workspace(name, new_name)
 
+    def export_workspace(
+        self,
+        name: str,
+        output: Path,
+        on_progress=None,
+    ) -> None:
+        """Export a workspace to ``output`` (a .tar.gz path).
+
+        ``on_progress(bytes_so_far, total_bytes_or_None)`` fires per chunk;
+        ``total_bytes`` is ``None`` when the server omits ``Content-Length``.
+        """
+        ws = self.client().resolve_workspace(name)
+        self.client().export_workspace(ws.id, output, on_progress=on_progress)
+
+    def import_workspace(
+        self,
+        archive: Path,
+        name: str | None = None,
+        on_progress=None,
+    ) -> Workspace:
+        """Upload ``archive`` (a .tar.gz) and return the created workspace.
+
+        ``on_progress(bytes_so_far, total_bytes)`` fires as bytes are read.
+        """
+        return self.client().import_workspace(
+            archive, name=name, on_progress=on_progress
+        )
+
     def create_workspace(
         self,
         name: str,

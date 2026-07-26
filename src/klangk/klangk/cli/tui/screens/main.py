@@ -6,6 +6,7 @@ import asyncio
 import datetime
 import logging
 import time
+from pathlib import Path
 
 import httpx
 
@@ -34,7 +35,12 @@ from ...client import AuthError, WorkspaceNotFoundError, decode_token_claims
 from ...auth import refresh_token as _refresh_token
 from ..widgets import StatusBar
 from ..ws import listen_for_status
-from ._base import ConfirmScreen, WorkspaceListView
+from ._base import (
+    ConfirmScreen,
+    InputScreen,
+    TransferScreen,
+    WorkspaceListView,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +135,7 @@ class MainScreen(Screen):
     BINDINGS = [
         ("c", "switch_server", "Switch server"),
         ("n", "create", "New"),
+        ("i", "import", "Import"),
         ("a", "account", "Account"),
         ("l", "logout", "Logout"),
         ("slash", "focus_filter", "Filter"),
@@ -556,6 +563,43 @@ class MainScreen(Screen):
 
     def action_create(self) -> None:
         self.run_worker(self._do_create, exit_on_error=False)
+
+    def action_import(self) -> None:
+        """Import a workspace from a .tar.gz archive with upload progress (#1758)."""
+        self.app.push_screen(
+            InputScreen(
+                "Import workspace from (.tar.gz):",
+                ok_label="Import",
+            ),
+            self._on_import_path,
+        )
+
+    def _on_import_path(self, path: str | None) -> None:
+        if not path:
+            return
+        archive = Path(path)
+        if not archive.exists():
+            self._flash(f"Import failed: file not found: {path}")
+            return
+        state = self.app.tui_state
+
+        def make_call(on_progress):
+            return state.import_workspace(archive, on_progress=on_progress)
+
+        self.app.push_screen(
+            TransferScreen(
+                f"Importing '{archive.name}'…",
+                make_call,
+                f"Imported '{archive.name}'",
+            ),
+            self._on_import_done,
+        )
+
+    def _on_import_done(self, result: tuple[bool, str]) -> None:
+        ok, msg = result
+        self._flash(msg)
+        if ok:
+            self.refresh_lists()
 
     async def _do_create(self) -> None:
         from .workspace_form import CreateWorkspaceScreen  # noqa: allow-deferred-import
