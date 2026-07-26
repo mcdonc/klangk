@@ -19,6 +19,8 @@ from textual.widgets import (
     ListView,
     Select,
     Static,
+    TabbedContent,
+    TabPane,
     Tabs,
 )
 
@@ -4272,7 +4274,7 @@ async def test_create_screen_renders_defaults(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4290,7 +4292,7 @@ async def test_create_screen_autostart_hidden_when_not_allowed(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state(allow_autostart=lambda: False))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4305,7 +4307,7 @@ async def test_create_screen_mount_editor(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4334,7 +4336,7 @@ async def test_create_screen_env_editor(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4366,7 +4368,7 @@ async def test_create_screen_name_required(monkeypatch):
     app = KlangkApp(
         _create_state(create=lambda *a, **k: called.append(k) or _wsobj("z"))
     )
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4393,7 +4395,7 @@ async def test_create_screen_submit_omits_default_image(monkeypatch):
     app = KlangkApp(
         _create_state(create=create, allow_autostart=lambda: False)
     )
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4421,7 +4423,7 @@ async def test_create_screen_submit_custom_fields(monkeypatch):
         return _wsobj(name)
 
     app = KlangkApp(_create_state(create=create))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4462,7 +4464,7 @@ async def test_create_screen_http_error_shows_detail(monkeypatch):
         )
 
     app = KlangkApp(_create_state(create=create))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4484,7 +4486,7 @@ async def test_create_screen_auth_error(monkeypatch):
         raise AuthError("expired")
 
     app = KlangkApp(_create_state(create=create))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4512,7 +4514,7 @@ async def test_create_screen_images_unavailable(monkeypatch):
     app = KlangkApp(
         _create_state(create=create, list_images=boom, allow_autostart=boom)
     )
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4531,7 +4533,7 @@ async def test_create_screen_cancel_button(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4546,7 +4548,7 @@ async def test_create_screen_input_submit_routing(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4578,7 +4580,7 @@ async def test_create_flow_offer_opens_detail(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("new")))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4600,7 +4602,7 @@ async def test_create_flow_offer_declined(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("new")))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4622,7 +4624,7 @@ async def test_create_editor_guards(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4651,7 +4653,7 @@ async def test_create_screen_generic_error(monkeypatch):
         raise RuntimeError("boom")
 
     app = KlangkApp(_create_state(create=create))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4672,7 +4674,7 @@ async def test_create_button_routing(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("ws")))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4727,7 +4729,7 @@ async def test_create_screen_image_names_markup_safe(monkeypatch):
             create_workspace=lambda *a, **k: _wsobj("z"),
         )
     )
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4762,7 +4764,7 @@ async def test_create_screen_http_error_non_json(monkeypatch):
         )
 
     app = KlangkApp(_create_state(create=create))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4799,7 +4801,7 @@ async def test_create_screen_default_not_in_allowed(monkeypatch):
             create_workspace=create,
         )
     )
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4846,7 +4848,7 @@ async def test_create_screen_allowed_domains_editor(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -5394,22 +5396,34 @@ async def test_edit_screen_keyboard_remove(monkeypatch):
         _edit_screen(app, ws)
         await pilot.pause()
         es = app.screen
-        # Delete/remove dispatches to the focused OptionList.
-        for lid, attr in (
-            ("#mount_list", "_mounts"),
-            ("#env_list", "_env"),
-            ("#allow_list", "_allowed_domains"),
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        # Delete/remove acts on the list under the active tab (#1891). Switch
+        # to each pane by focusing its input (TabbedContent syncs `active` to
+        # the focused pane, so this is also the realistic path).
+        for inp_id, lid, attr in (
+            ("#mount_input", "#mount_list", "_mounts"),
+            ("#env_input", "#env_list", "_env"),
+            ("#allow_input", "#allow_list", "_allowed_domains"),
         ):
-            ol = es.query_one(lid)
-            ol.focus()
+            es.query_one(inp_id).focus()
             await pilot.pause()
-            ol.highlighted = 0
+            assert (
+                tabs.active
+                == {
+                    "#mount_input": "mounts_pane",
+                    "#env_input": "env_pane",
+                    "#allow_input": "netfilter_pane",
+                }[inp_id]
+            )
+            es.query_one(lid).highlighted = 0
             es.action_remove_item()
             assert not getattr(es, attr)  # [] or {}
-        # Not focused on a list -> no-op.
+        # Active tab has no list (General) -> remove/edit are no-ops.
         es.query_one("#name").focus()
         await pilot.pause()
+        assert tabs.active == "general_pane"
         es.action_remove_item()
+        es.action_edit_item()
 
 
 async def test_edit_screen_edit_in_place(monkeypatch):
@@ -5428,11 +5442,13 @@ async def test_edit_screen_edit_in_place(monkeypatch):
         _edit_screen(app, ws)
         await pilot.pause()
         es = app.screen
-        # 'e' on the focused mount loads it into the input (edit mode).
-        ol = es.query_one("#mount_list")
-        ol.focus()
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        # Switch panes by focusing each editor's input (TabbedContent syncs
+        # `active` to the focused pane). 'e' loads the highlighted row.
+        es.query_one("#mount_input").focus()
         await pilot.pause()
-        ol.highlighted = 0
+        assert tabs.active == "mounts_pane"
+        es.query_one("#mount_list").highlighted = 0
         es.action_edit_item()
         assert es.query_one("#mount_input").value == "/h:/c"
         assert es._editing_mount == 0
@@ -5441,20 +5457,20 @@ async def test_edit_screen_edit_in_place(monkeypatch):
         assert es._mounts == ["/h:/c2"]
         assert es._editing_mount is None
         # env edit (key tracked)
-        ol = es.query_one("#env_list")
-        ol.focus()
+        es.query_one("#env_input").focus()
         await pilot.pause()
-        ol.highlighted = 0
+        assert tabs.active == "env_pane"
+        es.query_one("#env_list").highlighted = 0
         es.action_edit_item()
         assert es.query_one("#env_input").value == "K=v"
         es.query_one("#env_input").value = "K=changed"
         es._add_env()
         assert es._env == {"K": "changed"}
         # allowed-domain edit
-        ol = es.query_one("#allow_list")
-        ol.focus()
+        es.query_one("#allow_input").focus()
         await pilot.pause()
-        ol.highlighted = 0
+        assert tabs.active == "netfilter_pane"
+        es.query_one("#allow_list").highlighted = 0
         es.action_edit_item()
         assert es.query_one("#allow_input").value == "github.com:443"
         es.query_one("#allow_input").value = "pypi.org"
@@ -5467,6 +5483,224 @@ async def test_edit_screen_edit_in_place(monkeypatch):
         es._edit_env()
         es.query_one("#allow_list").highlighted = None
         es.action_edit_item()
+
+
+async def test_edit_screen_tabbed_layout(monkeypatch):
+    """Edit form groups fields under five tabs; Save/Cancel + #edit_msg stay
+    pinned outside the tab content, always visible (#1891)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha", image="py:3", service_command="sh", health_check="hc")
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        # Five panes in the proposed order; General active on entry.
+        assert tabs.active == "general_pane"
+        for pane in (
+            "general_pane",
+            "mounts_pane",
+            "env_pane",
+            "netfilter_pane",
+            "advanced_pane",
+        ):
+            es.query_one(f"#{pane}", TabPane)
+        # No field dropped — a representative field per group is present.
+        es.query_one("#name", Input)
+        es.query_one("#image", Select)
+        es.query_one("#auto_start", Checkbox)
+        es.query_one("#mount_input", Input)
+        es.query_one("#mount_list")
+        es.query_one("#env_input", Input)
+        es.query_one("#allow_input", Input)
+        es.query_one("#command", Input)
+        es.query_one("#health_check", Input)
+        # Pinned outside the tab content: #edit_msg, #cancel, #save are
+        # siblings of the TabbedContent (never inside a TabPane).
+        for wid in ("#edit_msg", "#cancel", "#save"):
+            assert not isinstance(es.query_one(wid).parent, TabPane)
+        # Name is auto-focused on entry (General tab active).
+        assert app.focused is es.query_one("#name")
+
+
+async def test_edit_screen_tab_spatial_nav(monkeypatch):
+    """Down from the strip enters the active pane; Up from the first field
+    returns to the strip; Tab still cycles fields (#1891, #1781, #1783)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha")
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        # Up from Name (General's first field) -> focus the tab strip.
+        es.query_one("#name").focus()
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert isinstance(app.focused, Tabs)
+        # Down from the strip -> back into the active pane's first field.
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is es.query_one("#name")
+        # Tab from Name advances to the next General field (Image).
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is es.query_one("#image")
+        # Up from a non-first Input (Health, on the Advanced tab) is a no-op:
+        # it doesn't match the pane's first field (Command), so focus stays.
+        tabs.active = "advanced_pane"
+        es.query_one("#command").focus()  # switch to Advanced via focus-sync
+        await pilot.pause()
+        es.query_one("#health_check").focus()
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is es.query_one("#health_check")
+
+
+async def test_edit_screen_tab_left_right_switches(monkeypatch):
+    """Left/Right on the tab strip switches the active pane (#1891)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha")
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        assert tabs.active == "general_pane"
+        es.query_one(Tabs).focus()
+        await pilot.pause()
+        await pilot.press("right")
+        await pilot.pause()
+        assert tabs.active == "mounts_pane"
+        await pilot.press("left")
+        await pilot.pause()
+        assert tabs.active == "general_pane"
+
+
+async def test_create_screen_tabbed_layout(monkeypatch):
+    """Create form groups fields under five tabs; Cancel/Create +
+    #create_msg stay pinned outside the tab content, always visible (#1891)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        tabs = cs.query_one("#form_tabs", TabbedContent)
+        # Five panes in the proposed order; General active on entry.
+        assert tabs.active == "general_pane"
+        for pane in (
+            "general_pane",
+            "mounts_pane",
+            "env_pane",
+            "netfilter_pane",
+            "advanced_pane",
+        ):
+            cs.query_one(f"#{pane}", TabPane)
+        # No field dropped — a representative field per group is present.
+        cs.query_one("#name", Input)
+        cs.query_one("#image", Select)
+        cs.query_one("#auto_start", Checkbox)
+        cs.query_one("#mount_input", Input)
+        cs.query_one("#mount_list")
+        cs.query_one("#env_input", Input)
+        cs.query_one("#allow_input", Input)
+        cs.query_one("#command", Input)
+        cs.query_one("#health_check", Input)
+        # Pinned outside the tab content: #create_msg, #cancel, #create are
+        # siblings of the TabbedContent (never inside a TabPane).
+        for wid in ("#create_msg", "#cancel", "#create"):
+            assert not isinstance(cs.query_one(wid).parent, TabPane)
+        # Name is auto-focused on entry (General tab active).
+        assert app.focused is cs.query_one("#name")
+
+
+async def test_create_screen_tab_spatial_nav(monkeypatch):
+    """Down from the strip enters the active pane; Up from the first field
+    returns to the strip; Tab still cycles fields (#1891, #1781, #1783)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        tabs = cs.query_one("#form_tabs", TabbedContent)
+        # Up from Name (General's first field) -> focus the tab strip.
+        cs.query_one("#name").focus()
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert isinstance(app.focused, Tabs)
+        # Down from the strip -> back into the active pane's first field.
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is cs.query_one("#name")
+        # Tab from Name advances to the next General field (Image).
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is cs.query_one("#image")
+        # Up from a non-first Input (Health, on the Advanced tab) is a no-op:
+        # it doesn't match the pane's first field (Command), so focus stays.
+        tabs.active = "advanced_pane"
+        cs.query_one("#command").focus()  # switch to Advanced via focus-sync
+        await pilot.pause()
+        cs.query_one("#health_check").focus()
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is cs.query_one("#health_check")
+
+
+async def test_create_screen_tab_left_right_switches(monkeypatch):
+    """Left/Right on the tab strip switches the active pane (#1891)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        tabs = cs.query_one("#form_tabs", TabbedContent)
+        assert tabs.active == "general_pane"
+        cs.query_one(Tabs).focus()
+        await pilot.pause()
+        await pilot.press("right")
+        await pilot.pause()
+        assert tabs.active == "mounts_pane"
+        await pilot.press("left")
+        await pilot.pause()
+        assert tabs.active == "general_pane"
 
 
 async def test_edit_rename_propagates_to_detail_and_list(monkeypatch):
@@ -5516,7 +5750,7 @@ async def test_create_screen_no_server_does_not_crash(monkeypatch):
         raise ValueError("no server configured")
 
     app = KlangkApp(_create_state(list_images=boom, allow_autostart=boom))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()  # must not raise
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -7687,3 +7921,156 @@ async def test_run_token_refresh_loop_concurrent_rotation(monkeypatch):
     monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: None)
     result = await _real_run_token_refresh_loop(FakeState())
     assert result == "no_token"
+
+
+async def test_create_screen_editor_add_buttons_clickable(monkeypatch):
+    """Regression (#1891): the Add buttons inside each editor tab must be
+    reachable by mouse. A greedy default-width Input used to push Add/Remove
+    past the tab pane's clip region, so clicks silently missed — typing a
+    mount/env/domain and clicking Add then Create saved nothing. Also covers
+    the Advanced-tab text inputs (command/health)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def fake_create(*a, **k):
+        captured["k"] = k
+        return _wsobj("zzz")
+
+    app = KlangkApp(_create_state(create=fake_create))
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        tabs = cs.query_one("#form_tabs", TabbedContent)
+        # General tab is active on entry — set the required name first.
+        cs.query_one("#name", Input).value = "myws"
+        await pilot.pause()
+        # Mounts tab: input + Add button must both be inside the pane.
+        tabs.active = "mounts_pane"
+        await pilot.pause()
+        cs.query_one("#mount_input", Input).value = "/host:/c"
+        await pilot.pause()
+        assert await pilot.click("#add_mount")  # True == landed on the button
+        await pilot.pause()
+        # Environment tab
+        tabs.active = "env_pane"
+        await pilot.pause()
+        cs.query_one("#env_input", Input).value = "A=1"
+        await pilot.pause()
+        assert await pilot.click("#add_env")
+        await pilot.pause()
+        # Netfilter tab
+        tabs.active = "netfilter_pane"
+        await pilot.pause()
+        cs.query_one("#allow_input", Input).value = "github.com:443"
+        await pilot.pause()
+        assert await pilot.click("#add_allow")
+        await pilot.pause()
+        # Advanced tab text inputs (field-row; never had the overflow, but
+        # confirm they're reachable and flow through to Create).
+        tabs.active = "advanced_pane"
+        await pilot.pause()
+        cs.query_one("#command", Input).value = "./run"
+        cs.query_one("#health_check", Input).value = "curl localhost"
+        await pilot.pause()
+        # Create — every field must be persisted.
+        assert await pilot.click("#create")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert captured["k"]["mounts"] == ["/host:/c"]
+        assert captured["k"]["env"] == {"A": "1"}
+        assert captured["k"]["allowed_domains"] == ["github.com:443"]
+        assert captured["k"]["service_command"] == "./run"
+        assert captured["k"]["health_check"] == "curl localhost"
+
+
+async def test_edit_screen_editor_add_buttons_clickable(monkeypatch):
+    """Regression (#1891): same as the create-screen case but for the edit
+    form — Add buttons inside each editor tab must be clickable and the
+    entries must reach the PUT on Save."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha", running=False)  # not running -> no restart prompt
+    captured = {}
+
+    def fake_update(*a, **k):
+        captured["k"] = k
+
+    app = KlangkApp(_edit_state(ws, update=fake_update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        tabs.active = "mounts_pane"
+        await pilot.pause()
+        es.query_one("#mount_input", Input).value = "/host:/c"
+        await pilot.pause()
+        assert await pilot.click("#add_mount")
+        await pilot.pause()
+        tabs.active = "env_pane"
+        await pilot.pause()
+        es.query_one("#env_input", Input).value = "A=1"
+        await pilot.pause()
+        assert await pilot.click("#add_env")
+        await pilot.pause()
+        tabs.active = "netfilter_pane"
+        await pilot.pause()
+        es.query_one("#allow_input", Input).value = "github.com:443"
+        await pilot.pause()
+        assert await pilot.click("#add_allow")
+        await pilot.pause()
+        assert await pilot.click("#save")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert captured["k"]["mounts"] == ["/host:/c"]
+        assert captured["k"]["env"] == {"A": "1"}
+        assert captured["k"]["allowed_domains"] == ["github.com:443"]
+
+
+async def test_edit_running_env_saved_before_restart_prompt(monkeypatch):
+    """Editing a RUNNING workspace's env persists the change *before* the
+    restart-needed prompt appears; dismissing the prompt (Skip) must not
+    drop it (#1891). The update PUT fires unconditionally in _do_save,
+    ahead of the ConfirmScreen."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha", running=True, env={"OLD": "x"})
+    captured = {}
+
+    def fake_update(*a, **k):
+        captured["k"] = k
+
+    app = KlangkApp(_edit_state(ws, update=fake_update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        tabs.active = "env_pane"
+        await pilot.pause()
+        es.query_one("#env_input", Input).value = "a=1"
+        await pilot.pause()
+        assert await pilot.click("#add_env")  # Add button reachable
+        await pilot.pause()
+        assert es._env == {"OLD": "x", "a": "1"}
+        assert await pilot.click("#save")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # The PUT fired with the merged env before any prompt.
+        assert captured["k"]["env"] == {"OLD": "x", "a": "1"}
+        # Restart-needed prompt is on top — Skip it.
+        assert await pilot.click("#no")
+        await pilot.pause()
+        assert captured["k"]["env"] == {"OLD": "x", "a": "1"}  # unchanged

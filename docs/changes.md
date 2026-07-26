@@ -448,6 +448,16 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **TUI: tabbed workspace create/edit forms (#1891).** The workspace
+  create and edit screens now group their fields under five tabs — General
+  (name / image / auto-start), Mounts, Environment, Netfilter (allowed
+  domains), and Advanced (service command / health check) — instead of one
+  long scroll. Save / Create / Cancel, the status line, and the
+  restart-needed prompt stay pinned outside the tab content so they remain
+  visible on every tab. Left/Right switch tabs, Up/Down move between the
+  tab strip and a pane's fields, and (edit only) Delete / `e` act on
+  whichever list is under the active tab.
+
 - **TUI login: the server-list delete key is hinted inline (#1890).**
   The `d` (delete server) key no longer appears in the bottom Footer — its
   hint now renders on the server picker header (`[d] delete`), next to the
@@ -1000,6 +1010,15 @@ set-password <email>` (set a known password for the default user — whose
   over TCP directly but are unused under `klangkd`.
 
 ### Fixed
+
+- **TUI workspace form: Add/Remove buttons in the mounts / environment /
+  netfilter editors are now clickable (#1891).** The editor `Input`'s greedy
+  default width consumed the whole row, pushing the Add/Remove buttons past
+  the editor row's clip region (and, under the new tabbed layout, past the
+  tab pane's narrower clip) — so a mouse click on Add silently missed and
+  the entry was never added; typing a mount/env/domain and clicking Add then
+  Create/Save persisted nothing (Enter still worked). The Input is now
+  fractional width, leaving room for the buttons on every tab.
 
 - **TUI workspace detail now reflects terminal add/remove from other
   surfaces in realtime (#1885).** The detail screen's terminal list now

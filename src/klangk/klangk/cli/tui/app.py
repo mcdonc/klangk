@@ -144,6 +144,13 @@ class KlangkApp(App):
     .field-row > Input, .field-row > Select {
         width: 1fr;
     }
+    /* Editor rows (Input + Add/Remove buttons): keep the Input fractional so
+    the buttons always fit inside the pane (#1891) — a greedy default-width
+    Input otherwise pushes Add/Remove past the tab pane's clip region, where
+    they render but can't be clicked. */
+    #mount_input, #env_input, #allow_input {
+        width: 1fr;
+    }
     /* Bounded list editors (#1783). */
     .editor-list {
         height: 4;
