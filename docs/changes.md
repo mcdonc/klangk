@@ -27,6 +27,12 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **TUI workspaces-list filter now also matches the workspace id (#1911).**
+  Typing into the filter (`/`) narrows by name **or** id — so a workspace
+  matches whether you type part of its name or the short id prefix shown
+  on its row (#1899). Name matching is unchanged; the empty filter still
+  shows all workspaces.
+
 - **TUI workspace import/export with progress (#1758).** The workspace
   detail screen gains `x` → Export (downloads a `.tar.gz` via
   `GET /api/v1/workspaces/{id}/export`, admin-only) and the workspaces

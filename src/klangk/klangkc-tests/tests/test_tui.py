@@ -2853,6 +2853,77 @@ async def test_filter_narrows_workspace_list(monkeypatch):
         assert names == {"alpha", "alphabet"}
 
 
+def test_main_screen_matches_name_or_id():
+    """_matches narrows by name or id (and the 8-char id prefix) (#1911)."""
+    ws = Workspace(
+        id="3fa85f64-1b2c-4d5e-8f9a-0123456789ab",
+        name="alpha",
+        created_at="x",
+    )
+    # name substring
+    assert MainScreen._matches(ws, "alph")
+    # full id
+    assert MainScreen._matches(ws, "3fa85f64-1b2c-4d5e-8f9a-0123456789ab")
+    # 8-char row prefix (a substring of the id)
+    assert MainScreen._matches(ws, "3fa85f64")
+    # case-insensitive: queries are lowercased before _matches is called
+    assert MainScreen._matches(ws, "alpha")
+    # neither name nor id
+    assert not MainScreen._matches(ws, "zzz")
+    # missing attrs don't crash; empty id never matches on its own
+    bare = type("W", (), {"name": "x", "id": ""})()
+    assert MainScreen._matches(bare, "x")
+    assert not MainScreen._matches(bare, "y")
+
+
+async def test_filter_matches_workspace_id(monkeypatch):
+    """Typing a workspace's id (or prefix) into the filter matches it (#1911)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = Workspace(
+        id="3fa85f64-1b2c-4d5e-8f9a-0123456789ab", name="alpha", created_at="x"
+    )
+    b = Workspace(
+        id="11111111-2222-3333-4444-555555555555", name="beta", created_at="x"
+    )
+    app = KlangkApp(_ws(owned=[a, b]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        lv = m.query_one("#owned_list", ListView)
+        assert len(lv.query(ListItem)) == 2
+
+        # Type the 8-char prefix of alpha's id -> only alpha matches.
+        inp = m.query_one("#filter_input", Input)
+        inp.value = "3fa85f64"
+        await pilot.pause()
+        items = lv.query(ListItem)
+        assert len(items) == 1
+        assert items[0].name == "alpha"
+
+        # Full id also narrows to alpha.
+        inp.value = "3fa85f64-1b2c-4d5e-8f9a-0123456789ab"
+        await pilot.pause()
+        assert len(lv.query(ListItem)) == 1
+
+        # Clearing the filter shows both again (empty filter = all).
+        inp.value = ""
+        await pilot.pause()
+        assert len(lv.query(ListItem)) == 2
+
+        # Name matching still works unchanged.
+        inp.value = "bet"
+        await pilot.pause()
+        items = lv.query(ListItem)
+        assert len(items) == 1
+        assert items[0].name == "beta"
+
+
 async def test_filter_no_matches_shows_placeholder(monkeypatch):
     """A filter with no matches shows '(no matches)' placeholder (#1764)."""
 
