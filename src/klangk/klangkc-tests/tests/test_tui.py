@@ -7242,3 +7242,149 @@ async def test_detail_terminal_refresh_survives_error(monkeypatch):
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert len(lv.query(ListItem)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Session expiry / token refresh (#1877)
+# ---------------------------------------------------------------------------
+
+
+async def test_session_expired_redirects_to_login(monkeypatch):
+    """KlangkApp.session_expired() pops to login with a notification."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    st = _authed_state()
+    logged_out = []
+    st.logout = lambda: logged_out.append(True)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        assert isinstance(app.screen, MainScreen)
+        app.session_expired()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, LoginScreen)
+        assert logged_out == [True]
+
+
+async def test_session_expired_noop_on_login_screen(monkeypatch):
+    """session_expired() is a no-op when already on the login screen."""
+    st = TuiState()
+    st.current_url = lambda: None
+    st.cfg = lambda: type("C", (), {"servers": {}})()
+    st.state = lambda: type(
+        "S",
+        (),
+        {
+            "active_server": None,
+            "get_token": lambda self, u: None,
+        },
+    )()
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        assert isinstance(app.screen, LoginScreen)
+        app.session_expired()
+        await pilot.pause()
+        assert isinstance(app.screen, LoginScreen)
+
+
+async def test_workspace_load_auth_error_triggers_session_expired(monkeypatch):
+    """WorkspaceDetailScreen._load() calls session_expired on AuthError."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    st = _ws()
+
+    def _raise_auth(*a, **k):
+        raise AuthError("expired")
+
+    st.find_workspace = _raise_auth
+    expired_calls = []
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.session_expired = lambda: expired_calls.append(True)
+        app.push_screen(WorkspaceDetailScreen("ws"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert expired_calls == [True]
+
+
+async def test_workspace_load_generic_error_surfaces_message(monkeypatch):
+    """WorkspaceDetailScreen._load() shows the error for non-auth failures."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    st = _ws()
+
+    def _raise_rt(*a, **k):
+        raise RuntimeError("db connection lost")
+
+    st.find_workspace = _raise_rt
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("ws"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        body = str(app.screen.query_one("#detail_body").render())
+        assert "db connection lost" in body
+
+
+async def test_run_token_refresh_loop_returns_expired_on_failure(monkeypatch):
+    """run_token_refresh_loop returns 'expired' when refresh fails."""
+    import time as _time
+
+    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_MARGIN", 99999)
+
+    fake_token_payload = {
+        "sub": "uid",
+        "exp": int(_time.time()) + 60,
+    }
+    import base64
+    import json
+
+    header = base64.urlsafe_b64encode(b'{"alg":"HS256"}').rstrip(b"=")
+    payload = base64.urlsafe_b64encode(
+        json.dumps(fake_token_payload).encode()
+    ).rstrip(b"=")
+    fake_jwt = f"{header.decode()}.{payload.decode()}.sig"
+
+    class FakeState:
+        def current_url(self):
+            return "https://x.example"
+
+        def token(self):
+            return fake_jwt
+
+    monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: None)
+    result = await scr_main.run_token_refresh_loop(FakeState())
+    assert result == "expired"
+
+
+async def test_run_token_refresh_loop_returns_no_token():
+    """run_token_refresh_loop returns 'no_token' when token disappears."""
+    original_poll = scr_main._TOKEN_REFRESH_POLL
+    scr_main._TOKEN_REFRESH_POLL = 0
+    try:
+
+        class FakeState:
+            def current_url(self):
+                return "https://x.example"
+
+            def token(self):
+                return None
+
+        result = await scr_main.run_token_refresh_loop(FakeState())
+        assert result == "no_token"
+    finally:
+        scr_main._TOKEN_REFRESH_POLL = original_poll

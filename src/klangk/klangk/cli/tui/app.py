@@ -252,6 +252,25 @@ class KlangkApp(App):
             self.pop_screen()
         self.push_screen(LoginScreen())
 
+    def session_expired(self) -> None:
+        """Redirect to login when the access token is irrecoverably dead."""
+        if isinstance(self.screen, LoginScreen):
+            return
+
+        async def _expire() -> None:
+            await asyncio.to_thread(self.tui_state.logout)
+            while len(self.screen_stack) > 1:
+                self.pop_screen()
+            self.live_extra = ""
+            self.push_screen(LoginScreen())
+            self.notify(
+                "Session expired — please log in again.",
+                severity="warning",
+                timeout=8,
+            )
+
+        self.run_worker(_expire, exit_on_error=False)
+
     def refresh_workspaces(self) -> None:
         """Refresh the workspace list on the MainScreen (if present)."""
         for screen in reversed(self.screen_stack):
