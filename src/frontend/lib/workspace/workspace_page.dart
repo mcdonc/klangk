@@ -507,7 +507,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
       chatUnread: _chatUnread,
       chatMentioned: _chatMentioned,
       settings: _hasPerm('edit')
-          ? WorkspaceSettingsPanel(workspaceId: widget.workspaceId)
+          ? WorkspaceSettingsPanel(
+              workspaceId: widget.workspaceId,
+              onRestart: _restartContainer,
+            )
           : null,
       sharing: _hasPerm('share')
           ? WorkspaceSharingPanel(workspaceId: widget.workspaceId)

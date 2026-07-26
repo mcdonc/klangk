@@ -123,7 +123,7 @@ http.Client _client({
   });
 }
 
-Widget _buildPanel() => MultiProvider(
+Widget _buildPanel({VoidCallback? onRestart}) => MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
         ChangeNotifierProvider.value(value: WsClient()),
@@ -132,7 +132,12 @@ Widget _buildPanel() => MultiProvider(
       // the constructor call at runtime.  Const constructors are evaluated
       // at compile time and invisible to coverage (dart-lang/sdk#38934).
       child: MaterialApp(
-        home: Scaffold(body: WorkspaceSettingsPanel(workspaceId: _wsId)),
+        home: Scaffold(
+          body: WorkspaceSettingsPanel(
+            workspaceId: _wsId,
+            onRestart: onRestart ?? () {},
+          ),
+        ),
       ),
     );
 
@@ -639,6 +644,159 @@ void main() {
       expect(
           find.textContaining('Restart the workspace to apply'), findsNothing);
       await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('image change on a running container shows restart notice',
+        (tester) async {
+      // #1780: the restart notice is generalized to ALL create-time fields,
+      // not just allowed_domains. Changing the image on a running workspace
+      // must prompt a restart.
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'running': true,
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Change the image via the dropdown (klangk-pi -> other:latest).
+      await _scrollToAndTap(tester, find.text('klangk-pi'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('other:latest').last);
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(find.textContaining('Restart the workspace to apply'),
+          findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+        'service_command change on a running container shows restart notice',
+        (tester) async {
+      // #1780: changing the shell command on a running workspace prompts a
+      // restart.
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'running': true,
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Replace the loaded service_command ('pi') so the save differs.
+      await tester.enterText(
+        find.byWidgetPredicate(
+          (w) =>
+              w is TextField &&
+              w.decoration?.hintText == 'Optional — runs on terminal open',
+        ),
+        'pi --updated',
+      );
+      await tester.pump();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(find.textContaining('Restart the workspace to apply'),
+          findsOneWidget);
+      // The offer-to-restart action is present (#1780).
+      expect(find.text('Restart now'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('mounts change on a running container shows restart notice',
+        (tester) async {
+      // #1780: removing a mount on a running workspace prompts a restart.
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'running': true,
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Remove the existing mount (/host:/cont) — the first close icon.
+      await tester.tap(find.byIcon(Icons.close).first);
+      await tester.pump();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(find.textContaining('Restart the workspace to apply'),
+          findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('env change on a running container shows restart notice',
+        (tester) async {
+      // #1780: removing an env var on a running workspace prompts a restart.
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'running': true,
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Remove the existing env var (FOO=bar) — the last close icon.
+      await tester.tap(find.byIcon(Icons.close).last);
+      await tester.pump();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(find.textContaining('Restart the workspace to apply'),
+          findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('"Restart now" invokes onRestart and dismisses the notice',
+        (tester) async {
+      // #1780: the notice offers to restart now. Tapping it routes through
+      // the workspace page's restart callback and clears the notice.
+      var restartRequested = 0;
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'mounts': <String>[],
+        'env': <String, String>{},
+        'allowed_domains': <String>['old.example:443'],
+        'running': true,
+      });
+      await tester.pumpWidget(_buildPanel(onRestart: () => restartRequested++));
+      await tester.pumpAndSettle();
+
+      // Trigger the notice by removing the existing domain.
+      await tester.tap(find.byIcon(Icons.close).first);
+      await tester.pump();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.textContaining('Restart the workspace to apply'),
+          findsOneWidget);
+      expect(find.text('Restart now'), findsOneWidget);
+
+      await _scrollToAndTap(tester, find.text('Restart now'));
+      await tester.pump();
+
+      expect(restartRequested, 1);
+      // The notice (and its button) are dismissed once restart is requested.
+      expect(
+          find.textContaining('Restart the workspace to apply'), findsNothing);
+      expect(find.text('Restart now'), findsNothing);
       await tester.pumpAndSettle();
     });
   });

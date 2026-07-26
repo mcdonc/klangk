@@ -14,7 +14,16 @@ import 'workspace_list_page.dart' show validateAllowedDomainSpec;
 class WorkspaceSettingsPanel extends StatefulWidget {
   final String workspaceId;
 
-  const WorkspaceSettingsPanel({super.key, required this.workspaceId});
+  /// Invoked when the user accepts the "restart needed" notice from inside
+  /// the panel. Routed through the workspace page so it owns the restart
+  /// lifecycle (in-flight indicator + container_ready handling) (#1780).
+  final VoidCallback onRestart;
+
+  const WorkspaceSettingsPanel({
+    super.key,
+    required this.workspaceId,
+    required this.onRestart,
+  });
 
   @override
   State<WorkspaceSettingsPanel> createState() => WorkspaceSettingsPanelState();
@@ -144,6 +153,14 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     }
   }
 
+  /// The user accepted the restart-needed notice: delegate to the workspace
+  /// page's restart (it owns the in-flight indicator + container_ready
+  /// handling) and clear the notice (#1780).
+  void _restartNow() {
+    widget.onRestart();
+    setState(() => _pendingRestart = false);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
@@ -162,6 +179,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       netfilterEnabled:
           context.select<AuthService, bool>((a) => a.netfilterEnabled),
       onSave: _saveSettings,
+      onRestart: _restartNow,
     );
   }
 }
@@ -233,6 +251,7 @@ class _SettingsForm extends StatefulWidget {
   final bool pendingRestart;
   final bool netfilterEnabled;
   final Future<void> Function(Map<String, dynamic>) onSave;
+  final VoidCallback onRestart;
 
   const _SettingsForm({
     required this.workspaceId,
@@ -244,6 +263,7 @@ class _SettingsForm extends StatefulWidget {
     required this.pendingRestart,
     required this.netfilterEnabled,
     required this.onSave,
+    required this.onRestart,
   });
 
   @override
@@ -496,6 +516,10 @@ class _SettingsFormState extends State<_SettingsForm> {
               'Restart the workspace to apply these changes — '
               'they take effect at container create time.',
             ),
+          ),
+          TextButton(
+            onPressed: widget.onRestart,
+            child: const Text('Restart now'),
           ),
         ],
       ),
