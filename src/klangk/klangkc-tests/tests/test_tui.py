@@ -166,6 +166,29 @@ async def _async_empty(*a, **k):
     return []
 
 
+# Capture the real refresh loop before any test stubs it, so direct-call
+# coverage tests can still exercise it despite the autouse stub below.
+_real_run_token_refresh_loop = scr_main.run_token_refresh_loop
+
+
+@pytest.fixture(autouse=True)
+def _stub_tui_bg_workers(monkeypatch):
+    """Stub MainScreen's on-mount bg workers for every TUI test.
+
+    #1882's on_mount spawns a status-WS worker and a proactive token-refresh
+    worker (a 60s-sleep loop). The refresh loop never completes during a
+    test, wedging ``wait_for_complete()`` for any test that mounts a
+    MainScreen without stubbing it. Tests that need the real refresh loop
+    call ``_real_run_token_refresh_loop`` directly.
+    """
+
+    async def _noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", _noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", _noop)
+
+
 # ---------------------------------------------------------------------------
 # config.add_server_to_config
 # ---------------------------------------------------------------------------
@@ -1728,6 +1751,7 @@ async def test_main_screen_action_hints_toggle_stop_start(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     app = KlangkApp(
         _ws(
             owned=[
@@ -1755,6 +1779,7 @@ async def test_main_screen_action_requires_highlight(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1783,6 +1808,7 @@ async def test_main_screen_action_stop_cancel(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     stopped = {}
     st = _ws(owned=[_wsobj("alpha", running=True)])
     st.stop_workspace = lambda n: stopped.__setitem__("s", n)
@@ -1802,6 +1828,7 @@ async def test_main_screen_action_delete_cancel(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     deleted = {}
     st = _ws(owned=[_wsobj("alpha")])
     st.delete_workspace = lambda n: deleted.__setitem__("d", n)
@@ -1821,6 +1848,7 @@ async def test_main_screen_action_duplicate_cancel(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     duped = {}
     st = _ws(owned=[_wsobj("alpha")])
     st.duplicate_workspace = lambda n, nn: duped.__setitem__("d", (n, nn))
@@ -1842,6 +1870,7 @@ async def test_main_screen_action_edit_load_fallbacks(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     a = _wsobj("alpha")
     # Generic load error -> flashed, no screen pushed.
     st = _ws(owned=[a])
@@ -1874,6 +1903,7 @@ async def test_main_screen_on_edited_refreshes(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1895,6 +1925,7 @@ async def test_main_screen_update_running_refreshes_hints(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     a = _wsobj("alpha", running=True)
     app = KlangkApp(_ws(owned=[a]))
     async with app.run_test() as pilot:
@@ -1912,6 +1943,7 @@ async def test_main_screen_highlighted_ws_falls_back_to_name(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     # A workspace with an empty id is never entered into _ws_by_id, so the
     # name fallback path is exercised.
     no_id = Workspace(id="", name="gamma", created_at="x")
@@ -1926,6 +1958,7 @@ async def test_main_screen_action_restart_success_cancel_error(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     a = _wsobj("alpha", running=True)
     restarted = {}
     st = _ws(owned=[a])
@@ -1969,6 +2002,7 @@ async def test_main_screen_action_stop_running_success_error(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     a = _wsobj("alpha", running=True)
     stopped = {}
     st = _ws(owned=[a])
@@ -2002,6 +2036,7 @@ async def test_main_screen_action_start_stopped(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     a = _wsobj("alpha", running=False)
     started = []
     st = _ws(owned=[a])
@@ -2020,6 +2055,7 @@ async def test_main_screen_action_start_error(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     a = _wsobj("alpha", running=False)
     st = _ws(owned=[a])
     st.start_workspace = lambda n: (_ for _ in ()).throw(RuntimeError("boom"))
@@ -2036,6 +2072,7 @@ async def test_main_screen_action_delete_success_error(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     deleted = {}
     st = _ws(owned=[_wsobj("alpha")])
     st.delete_workspace = lambda n: deleted.__setitem__("d", n)
@@ -2068,6 +2105,7 @@ async def test_main_screen_action_duplicate_success_error(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     duped = {}
     st = _ws(owned=[_wsobj("alpha")])
     st.duplicate_workspace = lambda n, nn: duped.__setitem__("d", (n, nn))
@@ -2100,6 +2138,7 @@ async def test_main_screen_action_edit_pushes_screen(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     a = _wsobj("alpha")
     st = _ws(owned=[a])
     st.find_workspace = lambda n: a
@@ -2119,6 +2158,7 @@ async def test_main_screen_action_edit_not_found(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     from klangk.cli.client import WorkspaceNotFoundError
 
     st = _ws(owned=[_wsobj("alpha")])
@@ -2141,6 +2181,7 @@ async def test_main_screen_c_key_switches_server(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -2189,6 +2230,7 @@ async def test_main_screen_action_targets_active_tab(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     restarted = {}
     app = KlangkApp(
         _ws(
@@ -2227,6 +2269,7 @@ async def test_main_screen_hints_refresh_on_tab_switch(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha", running=True)], shared=[]))
     async with app.run_test() as pilot:
         await _settle(app)
@@ -7242,3 +7285,290 @@ async def test_detail_terminal_refresh_survives_error(monkeypatch):
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert len(lv.query(ListItem)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Session expiry / token refresh (#1877)
+# ---------------------------------------------------------------------------
+
+
+async def test_session_expired_redirects_to_login(monkeypatch):
+    """KlangkApp.session_expired() pops to login with a notification."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    st = _authed_state()
+    logged_out = []
+    st.logout = lambda: logged_out.append(True)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        assert isinstance(app.screen, MainScreen)
+        app.session_expired()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, LoginScreen)
+        assert logged_out == [True]
+
+
+async def test_session_expired_noop_on_login_screen(monkeypatch):
+    """session_expired() is a no-op when already on the login screen."""
+    st = TuiState()
+    st.current_url = lambda: None
+    st.cfg = lambda: type("C", (), {"servers": {}})()
+    st.state = lambda: type(
+        "S",
+        (),
+        {
+            "active_server": None,
+            "get_token": lambda self, u: None,
+        },
+    )()
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        assert isinstance(app.screen, LoginScreen)
+        app.session_expired()
+        await pilot.pause()
+        assert isinstance(app.screen, LoginScreen)
+
+
+async def test_workspace_load_generic_error_surfaces_message(monkeypatch):
+    """WorkspaceDetailScreen._load() shows the error for non-auth failures."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    st = _ws()
+
+    def _raise_rt(*a, **k):
+        raise RuntimeError("db connection lost")
+
+    st.find_workspace = _raise_rt
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("ws"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        body = str(app.screen.query_one("#detail_body").render())
+        assert "db connection lost" in body
+
+
+async def test_run_token_refresh_loop_returns_expired_on_failure(monkeypatch):
+    """run_token_refresh_loop returns 'expired' when refresh fails."""
+    import time as _time
+
+    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_MARGIN", 99999)
+
+    fake_token_payload = {
+        "sub": "uid",
+        "exp": int(_time.time()) + 60,
+    }
+    import base64
+    import json
+
+    header = base64.urlsafe_b64encode(b'{"alg":"HS256"}').rstrip(b"=")
+    payload = base64.urlsafe_b64encode(
+        json.dumps(fake_token_payload).encode()
+    ).rstrip(b"=")
+    fake_jwt = f"{header.decode()}.{payload.decode()}.sig"
+
+    class FakeState:
+        def current_url(self):
+            return "https://x.example"
+
+        def token(self):
+            return fake_jwt
+
+    monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: None)
+    result = await _real_run_token_refresh_loop(FakeState())
+    assert result == "expired"
+
+
+async def test_run_token_refresh_loop_returns_no_token(monkeypatch):
+    """run_token_refresh_loop returns 'no_token' when token disappears."""
+    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+
+    class FakeState:
+        def current_url(self):
+            return "https://x.example"
+
+        def token(self):
+            return None
+
+    result = await _real_run_token_refresh_loop(FakeState())
+    assert result == "no_token"
+
+
+def _fake_jwt(exp=None):
+    """Build a fake JWT with the given ``exp`` claim (or none)."""
+    import base64
+    import json
+
+    payload = {} if exp is None else {"exp": exp}
+    header = base64.urlsafe_b64encode(b'{"alg":"HS256"}').rstrip(b"=")
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=")
+    return f"{header.decode()}.{body.decode()}.sig"
+
+
+async def test_run_token_refresh_loop_skips_when_exp_missing(monkeypatch):
+    """A token with no ``exp`` claim is skipped (continue); exits on no-token."""
+    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    tokens = iter([_fake_jwt(exp=None), None])
+
+    class FakeState:
+        def current_url(self):
+            return "https://x.example"
+
+        def token(self):
+            return next(tokens)
+
+    result = await _real_run_token_refresh_loop(FakeState())
+    assert result == "no_token"
+
+
+async def test_run_token_refresh_loop_skips_when_far_from_expiry(monkeypatch):
+    """A token not near expiry is skipped (continue); exits on no-token."""
+    import time as _time
+
+    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    tokens = iter([_fake_jwt(exp=int(_time.time()) + 3600), None])
+
+    class FakeState:
+        def current_url(self):
+            return "https://x.example"
+
+        def token(self):
+            return next(tokens)
+
+    result = await _real_run_token_refresh_loop(FakeState())
+    assert result == "no_token"
+
+
+async def test_run_token_refresh_loop_refreshes_near_expiry(monkeypatch):
+    """A near-expiry token is refreshed (success branch); exits on no-token."""
+    import time as _time
+
+    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    tokens = iter([_fake_jwt(exp=int(_time.time()) + 60), None])
+
+    class FakeState:
+        def current_url(self):
+            return "https://x.example"
+
+        def token(self):
+            return next(tokens)
+
+    monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: "newtok")
+    result = await _real_run_token_refresh_loop(FakeState())
+    assert result == "no_token"
+
+
+async def test_status_loop_token_disappears_mid_retry(monkeypatch):
+    """Token vanishing between retries redirects to login (inner no-token)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    calls = {"n": 0}
+
+    def token():
+        calls["n"] += 1
+        return "tok" if calls["n"] == 1 else None
+
+    app = KlangkApp(_authed_state(token=token))
+    expired = []
+    monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
+    async with app.run_test() as pilot:
+        await app.screen._status_loop()
+        await pilot.pause()
+    assert expired
+
+
+async def test_status_loop_auth_error_expires_session(monkeypatch):
+    """An AuthError from the status WS redirects to login."""
+
+    async def auth_err(*a, **k):
+        raise AuthError("401")
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", auth_err)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    app = KlangkApp(_authed_state())
+    expired = []
+    monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
+    async with app.run_test() as pilot:
+        await app.screen._status_loop()
+        await pilot.pause()
+    assert expired
+
+
+async def test_token_refresh_loop_expires_session(monkeypatch):
+    """_token_refresh_loop redirects to login when refresh fails ('expired')."""
+
+    async def expired(*a, **k):
+        return "expired"
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", expired)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_authed_state())
+    fired = []
+    monkeypatch.setattr(app, "session_expired", lambda: fired.append(1))
+    async with app.run_test():
+        await app.screen._token_refresh_loop()
+    assert fired
+
+
+async def test_session_expired_is_re_entrant_safe(monkeypatch):
+    """Concurrent session_expired() calls fire the redirect exactly once."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    st = _authed_state()
+    st.logout = lambda: None  # avoid real credential I/O
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.session_expired()  # first call: sets _expiring, spawns worker
+        app.session_expired()  # second call: bails on _expiring
+        await pilot.pause()
+        logins = [
+            s for s in app.screen_stack if isinstance(s, scr.LoginScreen)
+        ]
+        assert len(logins) == 1
+
+
+async def test_run_token_refresh_loop_concurrent_rotation(monkeypatch):
+    """If the token was rotated concurrently, don't expire — keep running."""
+    import time as _time
+
+    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    near = _fake_jwt(exp=int(_time.time()) + 60)
+    # token() returns: the near-expiry token, then a *different* one (the
+    # mitigation re-reads state and sees the rotation), then None (exit).
+    tokens = iter([near, "rotated-by-other-refresher", None])
+
+    class FakeState:
+        def current_url(self):
+            return "https://x.example"
+
+        def token(self):
+            return next(tokens)
+
+    monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: None)
+    result = await _real_run_token_refresh_loop(FakeState())
+    assert result == "no_token"

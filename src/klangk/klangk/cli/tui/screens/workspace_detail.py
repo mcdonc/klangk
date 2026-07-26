@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import subprocess
 import sys
 import time
@@ -25,6 +26,8 @@ from textual.widgets import (
 
 from ...client import AuthError, WorkspaceNotFoundError
 from ._base import ConfirmScreen, DuplicateScreen, SpatialListView
+
+logger = logging.getLogger(__name__)
 
 
 class WorkspaceDetailScreen(Screen):
@@ -115,10 +118,11 @@ class WorkspaceDetailScreen(Screen):
             self._ws = None
             self._missing = False
             self._load_error = "Session expired — please log in again."
-        except Exception:
+        except Exception as exc:
             self._ws = None
             self._missing = False
-            self._load_error = None
+            self._load_error = f"Could not load workspace: {exc}"
+            logger.warning("Workspace load failed: %s", exc)
         self._display()
 
     async def _start_if_stopped(self) -> None:

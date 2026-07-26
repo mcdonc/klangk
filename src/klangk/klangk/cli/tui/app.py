@@ -180,6 +180,7 @@ class KlangkApp(App):
         super().__init__()
         self.tui_state = state
         self.live_extra = ""
+        self._expiring = False
         self.register_theme(KLANGK_THEME)
         self.theme = "klangk"
 
@@ -251,6 +252,35 @@ class KlangkApp(App):
         if self.screen_stack and isinstance(self.screen_stack[-1], MainScreen):
             self.pop_screen()
         self.push_screen(LoginScreen())
+
+    def session_expired(self) -> None:
+        """Redirect to login when the access token is irrecoverably dead.
+
+        Re-entrancy-safe: the status loop, token-refresh loop, and
+        workspace loads can all detect auth failure near-simultaneously.
+        ``_expiring`` is set synchronously before the worker spawns, so
+        only the first call runs the redirect; the rest bail out.
+        """
+        if self._expiring or isinstance(self.screen, LoginScreen):
+            return
+        self._expiring = True
+
+        async def _expire() -> None:
+            try:
+                await asyncio.to_thread(self.tui_state.logout)
+                while len(self.screen_stack) > 1:
+                    self.pop_screen()
+                self.live_extra = ""
+                self.push_screen(LoginScreen())
+                self.notify(
+                    "Session expired — please log in again.",
+                    severity="warning",
+                    timeout=8,
+                )
+            finally:
+                self._expiring = False
+
+        self.run_worker(_expire, exit_on_error=False)
 
     def refresh_workspaces(self) -> None:
         """Refresh the workspace list on the MainScreen (if present)."""

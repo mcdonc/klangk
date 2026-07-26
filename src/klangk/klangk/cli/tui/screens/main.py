@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import time
 
 import httpx
 
@@ -29,12 +30,51 @@ from textual.widgets import (
     Tabs,
 )
 
-from ...client import AuthError, WorkspaceNotFoundError
+from ...client import AuthError, WorkspaceNotFoundError, decode_token_claims
+from ...auth import refresh_token as _refresh_token
 from ..widgets import StatusBar
 from ..ws import listen_for_status
 from ._base import ConfirmScreen, WorkspaceListView
 
 logger = logging.getLogger(__name__)
+
+_TOKEN_REFRESH_MARGIN = 600  # refresh 10 minutes before expiry
+_TOKEN_REFRESH_POLL = 60  # check every 60 seconds
+
+
+async def run_token_refresh_loop(state) -> str:
+    """Proactively refresh the access token before it expires.
+
+    Returns ``"expired"`` if the refresh failed (caller should redirect
+    to login), or ``"no_token"`` if credentials disappeared.
+    Runs indefinitely until the token can't be refreshed.
+    """
+    while True:
+        await asyncio.sleep(_TOKEN_REFRESH_POLL)
+        url = state.current_url()
+        token = state.token()
+        if not url or not token:
+            return "no_token"
+        exp = decode_token_claims(token).get("exp")
+        if exp is None:
+            continue
+        remaining = exp - time.time()
+        if remaining > _TOKEN_REFRESH_MARGIN:
+            continue
+        logger.debug("Token expires in %.0fs, refreshing", remaining)
+        new = await asyncio.to_thread(_refresh_token, url, token)
+        if new:
+            logger.debug("Token refreshed proactively")
+        else:
+            # Refresh failed — but a concurrent refresher (e.g. the CLI's
+            # background thread) may already have rotated the token and got
+            # this one blocklisted. Re-read state: if the token changed,
+            # keep running instead of forcing a logout (#1882 review).
+            if state.token() != token:
+                logger.debug("Token rotated concurrently; not expiring")
+                continue
+            logger.warning("Proactive token refresh failed")
+            return "expired"
 
 
 class MainScreen(Screen):
@@ -135,6 +175,7 @@ class MainScreen(Screen):
         self.refresh_lists()
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(self._status_loop, name="status-ws")
+            self.app.run_worker(self._token_refresh_loop, name="token-refresh")
 
     def on_tabbed_content_tab_activated(self, event) -> None:
         """Focus the first workspace row when switching tabs (#1792)."""
@@ -681,14 +722,50 @@ class MainScreen(Screen):
         token = state.token()
         if not url or not token:
             return
-        try:
-            await listen_for_status(url, token, on_event=self._on_status_event)
-        except Exception:
-            # Best-effort: the TUI stays usable if the status stream dies.
-            self.app.live_extra = (
-                "status: disconnected (switch server to reconnect)"
-            )
-            self._refresh_status()
+        retries = 0
+        max_retries = 3
+        while retries <= max_retries:
+            token = state.token()
+            if not token:
+                self.app.session_expired()
+                return
+            try:
+                await listen_for_status(
+                    url, token, on_event=self._on_status_event
+                )
+                # Clean close (server restart, idle timeout) — reconnect.
+                retries += 1
+                self.app.live_extra = "status: reconnecting…"
+                self._refresh_status()
+                await asyncio.sleep(2)
+                continue
+            except AuthError:
+                self.app.session_expired()
+                return
+            except Exception as exc:
+                # Transient error — back off (exponential) and retry.
+                retries += 1
+                if retries > max_retries:
+                    logger.debug(
+                        "Status WS gave up after %d retries: %s",
+                        max_retries,
+                        exc,
+                    )
+                    break
+                self.app.live_extra = "status: reconnecting…"
+                self._refresh_status()
+                await asyncio.sleep(min(2 * (2 ** (retries - 1)), 30))
+                continue
+        self.app.live_extra = (
+            "status: disconnected (switch server to reconnect)"
+        )
+        self._refresh_status()
+
+    async def _token_refresh_loop(self) -> None:
+        """Proactively refresh the access token before it expires."""
+        result = await run_token_refresh_loop(self.app.tui_state)
+        if result in ("expired", "no_token"):
+            self.app.session_expired()
 
     def _on_status_event(self, event: dict) -> None:
         etype = event.get("type", "event")

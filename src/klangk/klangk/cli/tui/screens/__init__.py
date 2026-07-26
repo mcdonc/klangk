@@ -16,7 +16,7 @@ from ._base import (
     WorkspaceListView,
 )
 from .login import LoginScreen
-from .main import MainScreen
+from .main import MainScreen, run_token_refresh_loop
 from .server import AddServerScreen, EditServerScreen, ServerSwitchScreen
 from .workspace_detail import WorkspaceDetailScreen
 from .workspace_form import CreateWorkspaceScreen, EditWorkspaceScreen
@@ -31,6 +31,7 @@ __all__ = [
     "EditWorkspaceScreen",
     "LoginScreen",
     "MainScreen",
+    "run_token_refresh_loop",
     "NonFocusableVerticalScroll",
     "ServerListView",
     "ServerSwitchScreen",
