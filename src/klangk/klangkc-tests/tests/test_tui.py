@@ -1307,6 +1307,43 @@ async def test_edit_server_saves(monkeypatch):
         assert isinstance(app.screen, ServerSwitchScreen)
 
 
+async def test_server_switch_hints_inline_not_in_footer(monkeypatch):
+    """#1872: server-scoped keys (e/d) are hinted inline on the servers list
+    header and hidden from the Footer."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    st = _authed_state(
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod", "https://prod.example"),
+        ],
+        current_url=lambda: "https://prod.example",
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(ServerSwitchScreen())
+        await pilot.pause()
+
+        # (a) Server action hints render on the list header, with the literal
+        # [e] / [d] keycaps intact (not eaten as Rich markup).
+        hints = str(app.screen.query_one("#server_hints").render())
+        assert "[e]" in hints
+        assert "[d]" in hints
+        assert "edit" in hints
+        assert "delete" in hints
+
+        bindings = {b.key: b for b in app.screen.BINDINGS}
+
+        # (b) Server keys still exist (so the keys work) but are hidden.
+        assert bindings["e"].show is False
+        assert bindings["d"].show is False
+
+        # (c) The screen-level Back key remains visible.
+        assert bindings["escape"].show is True
+
+
 async def test_edit_server_empty_fields(monkeypatch):
     async def noop(*a, **k):
         return None

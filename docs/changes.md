@@ -420,6 +420,12 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **TUI switch-server: server-scoped keybindings moved inline (#1872).**
+  The `e` (edit) and `d` (delete) keys no longer appear in the bottom Footer —
+  their hints now render on the servers list header (`[e] edit  [d] delete`),
+  next to the list they act on. The Footer is now screen-level only (`Back`).
+  Mirrors the term-header pattern shipped for workspace detail in #1863.
+
 - **TUI login: the server-input button is relabeled "Use server" →
   "Add server" (#1871)** — clearer that typing a new server URL/alias and
   pressing it adds the server (rather than just selecting an existing one).
