@@ -257,6 +257,25 @@ class TestSeedConfig:
         cfg = CLIConfig.load()
         assert "myhost" in cfg.servers
 
+    def test_includes_commented_forward_agent_opt_in(
+        self, tmp_path, monkeypatch
+    ):
+        """#1923: a freshly generated klangk.yaml includes forward-agent as a
+        commented-out opt-in line; it stays OFF by default (forwarding only
+        happens when the user uncomments it, passes -A, or sets it
+        per-server), since a forwarded agent can be abused by an untrusted
+        host."""
+        config_path = tmp_path / "klangk.yaml"
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        seed_config("http://localhost:8995", "admin@example.com")
+        text = config_path.read_text()
+        # Present as a commented-out, discoverable opt-in line...
+        assert "# forward-agent: true" in text
+        # ...and inactive (off by default).
+        cfg = CLIConfig.load()
+        assert cfg.forward_agent is None
+        assert "localhost" in cfg.servers
+
 
 # --- CLIState tests ---
 

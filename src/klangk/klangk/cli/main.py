@@ -1213,7 +1213,7 @@ def resolve_forward_agent(
     if result:
         if not os.environ.get("SSH_AUTH_SOCK"):
             _err.print(
-                "[yellow]Warning: --forward-agent set but SSH_AUTH_SOCK"
+                "[yellow]Warning: forward-agent is enabled but SSH_AUTH_SOCK"
                 " is not set. Agent forwarding will be skipped.[/yellow]"
             )
     return result

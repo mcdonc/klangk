@@ -470,6 +470,15 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **Generated `klangk.yaml` now includes `forward-agent` as a commented-out
+  opt-in line (#1923).** A freshly created config (written on first `klangk
+login`) ships a `# forward-agent: true` line at the top, commented out, so
+  SSH agent forwarding can be enabled by uncommenting it instead of having to
+  discover the option. It remains **off by default**: a forwarded agent can
+  be driven by anyone with access to the socket on the remote host for the
+  session, so forwarding is opt-in and recommended only for hosts you trust.
+  Existing configs are unchanged.
+
 - **TUI export completion now toasts the full filesystem path (#1758).**
   When a workspace export finishes, a toast notification shows the
   resolved absolute path the archive was written to (e.g.

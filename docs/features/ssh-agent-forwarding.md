@@ -37,8 +37,10 @@ ssh -T git@github.com               # authenticates with your key
 git clone git@github.com:user/repo  # works without any credentials
 ```
 
-To enable forwarding by default, add `forward-agent: true` to your
-CLI config file (`~/.config/klangk/klangk.yaml`):
+Agent forwarding is **off by default**. A freshly generated `klangk.yaml`
+(created on first `klangk login`) includes it as a commented-out opt-in
+line; uncomment that line, or set `forward-agent` in your CLI config file
+(`~/.config/klangk/klangk.yaml`), to enable it:
 
 ```yaml
 # Enable for all servers
@@ -59,7 +61,8 @@ The resolution priority is:
 1. CLI flag (`--forward-agent` / `--no-forward-agent`) — highest
 2. Per-server setting in `klangk.yaml`
 3. Global setting in `klangk.yaml`
-4. Default: `false`
+4. Default: `false` (a freshly generated `klangk.yaml` includes
+   `forward-agent` as a commented-out opt-in line)
 
 See [CLI Configuration](../reference/cli.md#configuration) for full
 config file documentation.

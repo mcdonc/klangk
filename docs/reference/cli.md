@@ -73,6 +73,7 @@ hostname as the alias and the login user as the default:
 ```bash
 klangk login http://myhost:8995 admin@example.com
 # Creates ~/.config/klangk/klangk.yaml with:
+#   # forward-agent: true   # opt-in: uncomment to enable
 #   servers:
 #     myhost:
 #       url: http://myhost:8995
