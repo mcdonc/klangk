@@ -831,19 +831,21 @@ class TerminalController:
             if conn and conn.user.get("id") == user_id:
                 sock.send_json(msg)
 
-    def _notify_terminals_changed(self) -> None:
+    def _notify_terminals_changed(
+        self, windows: list[dict] | None = None
+    ) -> None:
         """Nudge all of this user's status connections to refresh terminals.
 
-        Complements ``notify_user_terminal_windows`` (which pushes the full
-        window list to workspace-WS subscribers for the Flutter UI) by
-        pinging pure status-feed consumers like the TUI detail screen,
-        which re-enumerates on receipt (#1885).
+        Carries ``windows`` so push-fed consumers (e.g. the TUI detail screen)
+        can update without re-enumerating -- complementing
+        ``notify_user_terminal_windows`` (which pushes the full list to
+        workspace-WS subscribers for the Flutter UI) (#1894).
         """
         ws_id = self._conn.workspace_id
         if not ws_id:
             return
         self._conn.app.state.sockets.notify_user_terminals_changed(
-            self._conn.user["id"], ws_id
+            self._conn.user["id"], ws_id, windows
         )
 
     async def new_window(self, msg: dict) -> None:
@@ -865,7 +867,7 @@ class TerminalController:
             )
             self.sync_terminal_windows(windows)
             self.notify_user_terminal_windows(windows)
-            self._notify_terminals_changed()
+            self._notify_terminals_changed(windows)
         except Exception as e:
             send_error(self._conn.sock, f"Failed to create window: {e}")
 
@@ -922,7 +924,7 @@ class TerminalController:
             )
             self.sync_terminal_windows(windows)
             self.notify_user_terminal_windows(windows)
-            self._notify_terminals_changed()
+            self._notify_terminals_changed(windows)
         except Exception as e:
             send_error(self._conn.sock, f"Failed to close window: {e}")
 
@@ -949,7 +951,7 @@ class TerminalController:
             )
             self.sync_terminal_windows(windows)
             self.notify_user_terminal_windows(windows)
-            self._notify_terminals_changed()
+            self._notify_terminals_changed(windows)
         except Exception as e:
             send_error(self._conn.sock, f"Failed to rename window: {e}")
 

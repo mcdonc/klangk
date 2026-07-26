@@ -776,18 +776,24 @@ class WebSocketState:
             self.connections.pop(sock, None)
 
     def notify_user_terminals_changed(
-        self, user_id: str, workspace_id: str
+        self,
+        user_id: str,
+        workspace_id: str,
+        windows: list[dict] | None = None,
     ) -> None:
         """Send ``terminals_changed`` to all of a user's connections.
 
-        A payload-free nudge the TUI workspace-detail screen listens for
-        over its ``/ws`` status feed, so it re-fetches the terminal list
-        when terminals are added / removed / renamed from another surface
-        (e.g. the Flutter UI) — mirroring ``notify_user_workspaces_changed``.
-        The TUI re-enumerates rather than trusting a payload, the same way
-        it handles ``workspaces_changed`` (#1885).
+        Carries the current ``windows`` list so push-fed consumers (e.g. the
+        TUI workspace-detail screen) can update directly, the way the Flutter
+        UI receives ``terminal_windows`` over its workspace WS -- avoiding a
+        ``terminal_start`` re-enumeration round-trip per change (#1894).
+        ``windows`` is optional for backward compatibility with older callers;
+        the key is omitted entirely when it is ``None`` so legacy consumers
+        that test ``"windows" in event`` are not misled.
         """
         message = {"type": "terminals_changed", "workspace_id": workspace_id}
+        if windows is not None:
+            message["windows"] = windows
         dead = []
         for sock, conn in self.connections.items():
             if conn.user.get("id") != user_id:

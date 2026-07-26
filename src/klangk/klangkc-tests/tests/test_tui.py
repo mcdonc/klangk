@@ -3583,7 +3583,9 @@ async def test_detail_apply_status_event_reload(monkeypatch):
 
 
 async def test_detail_apply_status_event_terminals_changed(monkeypatch):
-    """#1885: a terminals_changed nudge re-fetches the terminal list."""
+    """terminals_changed without a windows payload (older server) falls
+    back to a fetch — #1885's re-fetch behavior, now the backward-compat
+    path under #1894's push."""
 
     async def noop(*a, **k):
         return None
@@ -3651,6 +3653,97 @@ async def test_detail_apply_status_event_terminals_changed_other_ws(
         await pilot.pause()
         # Not for this workspace -> no re-fetch.
         assert len(calls) == after_mount
+
+
+async def test_detail_apply_status_event_terminals_changed_other_ws_with_windows(
+    monkeypatch,
+):
+    """A terminals_changed push for a different workspace is ignored even
+    when it carries a windows payload — the ws filter gates the push path
+    too, not just the fallback (#1896)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws()
+    st.find_workspace = lambda n: a
+
+    calls = []
+
+    async def terms(name):
+        calls.append(name)
+        return [{"index": 0, "name": "main", "id": "@0"}]
+
+    st.list_terminals = terms
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        d = app.screen
+        after_mount = len(calls)  # _load_terminals ran once on mount
+        # Push carries a windows payload but for a different workspace.
+        d.apply_status_event(
+            {
+                "type": "terminals_changed",
+                "workspace_id": "other-ws",
+                "windows": [{"index": 9, "name": "impostor", "id": "@9"}],
+            }
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # Rejected at the ws filter -> no extra fetch, no impostor row.
+        assert len(calls) == after_mount
+        lv = d.query_one("#term_list", ListView)
+        assert not any(
+            "impostor" in str(it.render()) for it in lv.query(Label)
+        )
+
+
+async def test_detail_terminal_push_falls_back_on_malformed_windows(
+    monkeypatch,
+):
+    """A non-list windows payload falls back to a fetch instead of crashing
+    — the push path validates the payload (#1896, restoring the resilience
+    the old poll path had)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+
+    calls = []
+
+    async def fetch_terms(name):
+        calls.append(name)
+        return [{"index": 0, "name": "fetched", "id": "@0"}]
+
+    st = _ws(list_terminals=fetch_terms)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        after_mount = len(calls)
+        # Malformed payload (not a list) -> isinstance check fails -> fetch.
+        app.screen.apply_status_event(
+            {
+                "type": "terminals_changed",
+                "workspace_id": "id-alpha",
+                "windows": "not-a-list",
+            }
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(calls) == after_mount + 1  # fell back to a fetch
+        lv = app.screen.query_one("#term_list", ListView)
+        assert any("fetched" in str(it.render()) for it in lv.query(Label))
 
 
 async def test_detail_apply_status_event_ws_none(monkeypatch):
@@ -7513,19 +7606,55 @@ async def test_main_screen_action_account_opens_screen(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Terminal list polling (#1884)
+# Terminal list push (#1894)
 # ---------------------------------------------------------------------------
 
 
-async def test_detail_terminal_poll_updates_on_change(monkeypatch):
-    """_poll_terminals refreshes the list when terminals are added
-    externally (e.g. via the Flutter UI)."""
+async def test_detail_terminal_push_updates_list(monkeypatch):
+    """terminals_changed carrying the window list updates the detail
+    screen directly, with no terminal_start re-enumeration (#1894)."""
 
     async def noop(*a, **k):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
+    a = _wsobj("alpha", running=True)
+    st = _ws(list_terminals=_async_terms)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        # Server pushes a new window list (e.g. a terminal was added in
+        # the Flutter UI). The detail screen adopts it verbatim, no fetch.
+        app.screen.apply_status_event(
+            {
+                "type": "terminals_changed",
+                "windows": [
+                    {"index": 0, "name": "main", "id": "@0"},
+                    {"index": 1, "name": "build", "id": "@1"},
+                    {"index": 2, "name": "logs", "id": "@2"},
+                ],
+            }
+        )
+        await pilot.pause()
+        lv = app.screen.query_one("#term_list", ListView)
+        assert len(lv.query(ListItem)) == 3
+
+
+async def test_detail_terminal_push_falls_back_when_no_windows(monkeypatch):
+    """terminals_changed without a payload falls back to a fetch
+    (backward compat with older servers) (#1894)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+
+    a = _wsobj("alpha", running=True)
     added = {"extra": False}
 
     async def growing_terms(*a, **k):
@@ -7534,7 +7663,6 @@ async def test_detail_terminal_poll_updates_on_change(monkeypatch):
             terms.append({"index": 1, "name": "build", "id": "@1"})
         return terms
 
-    a = _wsobj("alpha", running=True)
     st = _ws(list_terminals=growing_terms)
     st.find_workspace = lambda n: a
     app = KlangkApp(st)
@@ -7543,97 +7671,14 @@ async def test_detail_terminal_poll_updates_on_change(monkeypatch):
         await pilot.pause()
         await app.screen._load_terminals()
         await pilot.pause()
-        # Initially one terminal.
         lv = app.screen.query_one("#term_list", ListView)
         assert len(lv.query(ListItem)) == 1
-        # Simulate a terminal being added externally.
+        # Older server: no windows payload -> re-fetch.
         added["extra"] = True
-        app.screen._poll_terminals()
+        app.screen.apply_status_event({"type": "terminals_changed"})
         await app.workers.wait_for_complete()
         await pilot.pause()
-        # Now two terminals.
         assert len(lv.query(ListItem)) == 2
-
-
-async def test_detail_terminal_poll_noop_when_unchanged(monkeypatch):
-    """_poll_terminals does not re-render if the list hasn't changed."""
-
-    async def noop(*a, **k):
-        return None
-
-    monkeypatch.setattr(scr_main, "listen_for_status", noop)
-
-    a = _wsobj("alpha", running=True)
-    st = _ws(list_terminals=_async_terms)
-    st.find_workspace = lambda n: a
-    app = KlangkApp(st)
-    async with app.run_test() as pilot:
-        app.push_screen(WorkspaceDetailScreen("alpha"))
-        await pilot.pause()
-        await app.screen._load_terminals()
-        await pilot.pause()
-        lv = app.screen.query_one("#term_list", ListView)
-        initial_count = len(lv.query(ListItem))
-        # Poll with same data — should not re-render.
-        app.screen._poll_terminals()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        assert len(lv.query(ListItem)) == initial_count
-
-
-async def test_detail_terminal_poll_skips_when_not_running(monkeypatch):
-    """_poll_terminals is a no-op when the workspace is not running."""
-
-    async def noop(*a, **k):
-        return None
-
-    monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    a = _wsobj("alpha", running=False)
-    st = _ws(list_terminals=_async_terms)
-    st.find_workspace = lambda n: a
-    app = KlangkApp(st)
-    async with app.run_test() as pilot:
-        app.push_screen(WorkspaceDetailScreen("alpha"))
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        # _poll_terminals should return early without launching a worker.
-        app.screen._poll_terminals()
-        await pilot.pause()
-
-
-async def test_detail_terminal_refresh_survives_error(monkeypatch):
-    """_refresh_terminals swallows exceptions and keeps the current list."""
-
-    async def noop(*a, **k):
-        return None
-
-    monkeypatch.setattr(scr_main, "listen_for_status", noop)
-
-    calls = {"n": 0}
-
-    async def flaky_terms(*a, **k):
-        calls["n"] += 1
-        if calls["n"] > 1:
-            raise RuntimeError("connection reset")
-        return [{"index": 0, "name": "main", "id": "@0"}]
-
-    a = _wsobj("alpha", running=True)
-    st = _ws(list_terminals=flaky_terms)
-    st.find_workspace = lambda n: a
-    app = KlangkApp(st)
-    async with app.run_test() as pilot:
-        app.push_screen(WorkspaceDetailScreen("alpha"))
-        await pilot.pause()
-        await app.screen._load_terminals()
-        await pilot.pause()
-        lv = app.screen.query_one("#term_list", ListView)
-        assert len(lv.query(ListItem)) == 1
-        # Second call raises — list should be unchanged.
-        app.screen._poll_terminals()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        assert len(lv.query(ListItem)) == 1
 
 
 # ---------------------------------------------------------------------------

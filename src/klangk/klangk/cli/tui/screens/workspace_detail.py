@@ -95,7 +95,6 @@ class WorkspaceDetailScreen(Screen):
     def on_mount(self) -> None:
         self.run_worker(self._mount_async, exit_on_error=False)
         self._uptime_timer = self.set_interval(5, self._tick_uptime)
-        self._terminal_poll_timer = self.set_interval(10, self._poll_terminals)
 
     async def _mount_async(self) -> None:
         await self._load()
@@ -286,10 +285,23 @@ class WorkspaceDetailScreen(Screen):
             self.run_worker(self._reload_on_status, exit_on_error=False)
             return
         if etype == "terminals_changed":
-            # A terminal was added / removed / renamed from another surface
-            # (e.g. the Flutter UI); re-enumerate this workspace's windows
-            # so the list reflects it without a navigate-away (#1885).
-            self.run_worker(self._load_terminals, exit_on_error=False)
+            # A terminal was added / removed / renamed from another surface.
+            # The event carries the window list (like the Flutter UI's
+            # terminal_windows push), so update directly instead of
+            # re-enumerating via a terminal_start round-trip (#1894).
+            windows = event.get("windows")
+            if isinstance(windows, list):
+                # Adopt the pushed list verbatim. Events are serialized
+                # per status-WS connection, so out-of-order arrival (a
+                # close broadcast beating its create) is not expected;
+                # the payload type check above also makes the push path
+                # resilient to a malformed payload (fall back to fetch).
+                self._terminals = windows
+                self._render_terminals()
+            else:
+                # No payload (older server) or malformed -- fall back to a
+                # fetch, preserving the resilience of the old poll path.
+                self.run_worker(self._load_terminals, exit_on_error=False)
             return
         if etype == "container_status":
             self._ws.running = bool(event.get("running"))
@@ -313,29 +325,6 @@ class WorkspaceDetailScreen(Screen):
             self.app.pop_screen()
 
     # --- terminals (own) ---
-
-    def _poll_terminals(self) -> None:
-        """Periodically re-fetch the terminal list so changes made in
-        other clients (Flutter, CLI) appear without manual refresh."""
-        if self._ws is None or not self._ws.running:
-            return
-        self.run_worker(
-            self._refresh_terminals, exit_on_error=False, exclusive=True
-        )
-
-    async def _refresh_terminals(self) -> None:
-        """Re-fetch terminals and update only if the list changed."""
-        try:
-            windows = await self.app.tui_state.list_terminals(self._name)
-        except Exception:
-            return  # transient failure — keep the current list
-        windows = windows or []
-        old_keys = [(w.get("index"), w.get("name")) for w in self._terminals]
-        new_keys = [(w.get("index"), w.get("name")) for w in windows]
-        if old_keys == new_keys:
-            return
-        self._terminals = windows
-        self._render_terminals()
 
     async def _load_terminals(self) -> None:
         try:
