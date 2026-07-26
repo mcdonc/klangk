@@ -1117,12 +1117,23 @@ class _SettingsFormState extends State<_SettingsForm> {
   Future<void> _shutdownContainer() async {
     // Route through REST /stop (the WS shutdown_container handler was
     // retired). The backend broadcasts container_stopped so the workspace
-    // page shows the "stopped" overlay.
+    // page shows the "stopped" overlay. Surface failures (non-2xx or
+    // network errors) as a snackbar rather than silently swallowing them.
+    final messenger = ScaffoldMessenger.of(context);
     final auth = context.read<AuthService>();
     try {
-      await auth.authPost('/api/v1/workspaces/${widget.workspaceId}/stop');
+      final resp = await auth.authPost(
+        '/api/v1/workspaces/${widget.workspaceId}/stop',
+      );
+      if (resp.statusCode >= 400) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Shut down failed (${resp.statusCode})')),
+        );
+      }
     } catch (_) {
-      // Best-effort; the stop is surfaced via the container_stopped event.
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Shut down failed: network error')),
+      );
     }
   }
 }

@@ -479,23 +479,25 @@ async def stop_workspace(
             workspace_id
         )
         await app.state.container_registry.stop_and_remove_container(cid)
-    # Notify live WS viewers that the container was stopped on purpose so
-    # the UI shows "stopped" rather than "disconnected" (re-homed from the
-    # retired WS ``shutdown_container`` handler). Safe before
-    # reset_workspace_state: a session with subscribers survives reset
-    # (remove_session is a no-op while subscribers remain).
-    session = app.state.sockets.get_session(workspace_id)
-    if session:
-        session.broadcast(
-            {
-                "type": "event",
-                "event": {
-                    "type": "CUSTOM",
-                    "name": "container_stopped",
-                    "value": {"reason": "shut down by user"},
-                },
-            }
-        )
+        # Notify live WS viewers that the container was stopped on purpose
+        # so the UI shows "stopped" rather than "disconnected" (re-homed
+        # from the retired WS ``shutdown_container`` handler). Only when a
+        # container was actually stopped — a no-op /stop on an
+        # already-stopped workspace must not broadcast. Safe before
+        # reset_workspace_state: a session with subscribers survives reset
+        # (remove_session is a no-op while subscribers remain).
+        session = app.state.sockets.get_session(workspace_id)
+        if session:
+            session.broadcast(
+                {
+                    "type": "event",
+                    "event": {
+                        "type": "CUSTOM",
+                        "name": "container_stopped",
+                        "value": {"reason": "shut down by user"},
+                    },
+                }
+            )
     await wshandler.reset_workspace_state(app.state.sockets, workspace_id)
     return {"status": "stopped"}
 

@@ -409,12 +409,16 @@ invitations send` stay email-only (a deliverable address is required);
 
 - **Workspace shutdown is now uniformly REST-backed across Flutter, TUI,
   and CLI (#1858).** The redundant WebSocket `shutdown_container` handler
-  (which required `admin`) is retired; the Flutter settings panel's
-  "Shut Down" button now calls the existing `POST /api/v1/workspaces/{id}/stop`
-  endpoint (`terminal` permission), matching the TUI and CLI. The REST
-  endpoint also broadcasts `container_stopped` to live viewers so the
-  "stopped" overlay still appears. No user-visible shutdown behavior
-  changes beyond the permission alignment.
+  is retired; the Flutter settings panel's "Shut Down" button now calls
+  the existing `POST /api/v1/workspaces/{id}/stop` endpoint, matching the
+  TUI and CLI. **Permission change:** the Flutter button previously
+  required the workspace `admin` role (via the WS handler); it now requires
+  only `terminal` (matching the TUI/CLI REST path). Non-admin members with
+  `terminal` access can now shut down from the Flutter UI — they already
+  could from the TUI and CLI. Deployments that relied on the Flutter-only
+  `admin` gate as a safety net should take note. The REST endpoint also
+  broadcasts `container_stopped` to live viewers so the "stopped" overlay
+  still appears.
 
 - **Environment variables are now split into four prefixed families
   (#1653).** The single `KLANGK_` prefix is repointed at the component each

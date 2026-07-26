@@ -64,6 +64,8 @@ http.Client _client({
   List<Map<String, dynamic>>? searchResults,
   bool netfilterEnabled = false,
   List<String>? stopRecorder,
+  int stopStatus = 200,
+  bool stopThrows = false,
 }) {
   final ws = (workspace ?? _workspace);
   return MockClient((request) async {
@@ -114,7 +116,8 @@ http.Client _client({
     }
     if (p == '/api/v1/workspaces/$_wsId/stop' && request.method == 'POST') {
       stopRecorder?.add(p);
-      return http.Response(jsonEncode({'status': 'stopped'}), 200);
+      if (stopThrows) throw Exception('network down');
+      return http.Response(jsonEncode({'status': 'stopped'}), stopStatus);
     }
     return http.Response('not found', 404);
   });
@@ -788,6 +791,34 @@ void main() {
 
       expect(posts, contains('/api/v1/workspaces/$_wsId/stop'));
       expect(find.text('Cancel'), findsNothing);
+    });
+
+    testWidgets('shut down failure shows a snackbar', (tester) async {
+      testAuthHttpClientOverride = _client(stopStatus: 500);
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(tester, find.text('Shut Down Container'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Shut Down').last);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Shut down failed'), findsOneWidget);
+    });
+
+    testWidgets('shut down network error shows a snackbar', (tester) async {
+      testAuthHttpClientOverride = _client(stopThrows: true);
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(tester, find.text('Shut Down Container'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Shut Down').last);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('network error'), findsOneWidget);
     });
   });
 

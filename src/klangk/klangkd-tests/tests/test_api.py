@@ -2078,6 +2078,34 @@ class TestWorkspaceRoutes:
         assert event["event"]["name"] == "container_stopped"
         registry.states.pop(ws_id, None)
 
+    async def test_stop_workspace_no_container(self, client, app, user):
+        # /stop on a workspace with no running container is a no-op and
+        # must NOT broadcast container_stopped (#1868 review: the broadcast
+        # is gated on a container actually being stopped).
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "no-cid"}
+        )
+        ws_id = create_resp.json()["id"]
+        # No registry.track_activity -> no running container (cid is None).
+
+        mock_session = MagicMock()
+        mock_session.full_reset = AsyncMock()
+        with (
+            patch.object(
+                app.state.agents, "stop_session", new_callable=AsyncMock
+            ),
+            patch.object(
+                app.state.sockets, "get_session", return_value=mock_session
+            ),
+        ):
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/stop", headers=headers
+            )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "stopped"
+        mock_session.broadcast.assert_not_called()
+
     async def test_start_workspace(self, client, app, user):
         headers = await _auth_headers(client)
         create_resp = await client.post(
