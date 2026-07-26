@@ -69,6 +69,40 @@ When disabled, `enabled()` reports false, `--hooks-dir` is never passed,
 and workspaces with `allowed_domains` fail open with a loud warning
 (#1769). (#1774)
 
+### Deploy-wide default allow-list
+
+Set a deploy-wide allow-list applied to **every workspace that doesn't
+declare its own** `allowed_domains` (#1365) — e.g. to permit a curated
+set (package registries, a git host) by default across the whole deploy:
+
+```bash
+export KLANGKD_NETFILTER_DEFAULT_DOMAINS=github.com:443,pypi.org,registry.npmjs.org
+```
+
+…or, durably in the YAML config file (`klangkd --config`):
+
+```yaml
+netfilter_default_domains:
+  - github.com:443
+  - pypi.org
+  - registry.npmjs.org
+```
+
+Entries use the same `host` / `host:port` spec as a workspace allow-list
+(`host` allows all ports; `host:port` allows a single TCP port,
+1–65535) and are validated server-side at startup. A malformed value
+logs a warning and falls back to "no default" rather than aborting the
+server (#1772). Read at boot and on SIGHUP (reloadable).
+
+**Override semantics.** A workspace with a non-empty `allowed_domains`
+**replaces** the default (it does _not_ merge); a workspace with an empty
+list (or `null`) **inherits** the default; if no default is configured,
+the workspace is unrestricted. There is currently **no per-workspace
+opt-out** into truly-unrestricted egress when a default is set — clear
+the default server-side to permit unrestricted workspaces. The Flutter
+create-workspace dialog pre-fills its Netfilter list with this default
+as a starting set (the TUI does not yet — #1931).
+
 ## Configuring a workspace
 
 Set `allowed_domains` via the workspace **Settings** panel (an

@@ -289,6 +289,9 @@ port: "8997"
 | `userns`                     |                                 | `KLANGKD_USERNS`                     |
 | `podman_bin`                 | `podman`                        | `KLANGKD_PODMAN_BIN`                 |
 | `disable_tmux`               |                                 | `KLANGKD_DISABLE_TMUX`               |
+| `netfilter_enabled`          | `true`                          | `KLANGKD_NETFILTER_ENABLED`          |
+| `netfilter_hooks_dir`        | `<state_dir>/oci-hooks`         | `KLANGKD_NETFILTER_HOOKS_DIR`        |
+| `netfilter_default_domains`  | _(unset)_                       | `KLANGKD_NETFILTER_DEFAULT_DOMAINS`  |
 | `health_check_interval`      |                                 | `KLANGKD_HEALTH_CHECK_INTERVAL`      |
 | `health_check_startup_grace` |                                 | `KLANGKD_HEALTH_CHECK_STARTUP_GRACE` |
 | `health_check_timeout`       |                                 | `KLANGKD_HEALTH_CHECK_TIMEOUT`       |
