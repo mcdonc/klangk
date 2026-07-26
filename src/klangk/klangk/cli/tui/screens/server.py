@@ -7,6 +7,7 @@ import asyncio
 from rich.text import Text
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
@@ -29,15 +30,40 @@ class ServerSwitchScreen(Screen):
     """Pick a known server alias to switch to."""
 
     BINDINGS = [
-        ("escape", "app.pop_screen", "Back"),
-        ("e", "edit_server", "Edit"),
-        ("d", "delete_server", "Delete"),
+        Binding("escape", "app.pop_screen", "Back"),
+        # Server-scoped keys are hidden from the Footer — their hints render
+        # inline on the servers list header instead (#1872).
+        Binding("e", "edit_server", "Edit", show=False),
+        Binding("d", "delete_server", "Delete", show=False),
     ]
+
+    DEFAULT_CSS = """
+    ServerSwitchScreen #server_header {
+        height: auto;
+        padding: 1 0;
+    }
+    ServerSwitchScreen #server_title {
+        text-style: bold;
+        color: $primary;
+        width: auto;
+    }
+    ServerSwitchScreen #server_hints {
+        width: 1fr;
+        text-align: right;
+        color: $text-muted;
+    }
+    """
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield Vertical(
-            Static("Switch server", classes="title"),
+            Horizontal(
+                Static("Switch server", id="server_title"),
+                Static(
+                    "[e] edit  [d] delete", id="server_hints", markup=False
+                ),
+                id="server_header",
+            ),
             Static("", id="switch_msg"),
             SpatialListView(id="server_options"),
             id="switch_box",
