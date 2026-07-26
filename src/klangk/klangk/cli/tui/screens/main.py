@@ -89,12 +89,13 @@ class MainScreen(Screen):
         width: 1fr;
     }
     .ws-id {
-        width: auto;
+        width: 10;
         padding-left: 1;
         color: $text-muted;
     }
     .ws-date {
-        width: auto;
+        width: 12;
+        padding-left: 2;
         text-align: right;
         color: $text-muted;
     }
