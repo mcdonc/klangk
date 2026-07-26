@@ -110,7 +110,9 @@ def _is_bind_error(line: str) -> bool:
     except (json.JSONDecodeError, ValueError):
         return False
     msg = (obj.get("msg") or "").lower()
-    return "bind:" in msg or "address already in use" in msg
+    # Go's net package formats socket bind errors as
+    # "bind: address already in use" or "bind: permission denied".
+    return "address already in use" in msg or "bind: permission denied" in msg
 
 
 # ---------------------------------------------------------------------------
