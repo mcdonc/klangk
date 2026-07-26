@@ -1740,8 +1740,8 @@ async def test_main_screen_action_hints_toggle_stop_start(monkeypatch):
         m = await _highlight_first(pilot, app)
         hints = str(m.query_one(".ws_hints", Static).render())
         assert "restart" in hints and "s stop" in hints
-        assert "open" in hints and "duplicate" in hints
-        assert "delete" in hints and "edit" in hints
+        assert "open" in hints and "dup" in hints
+        assert "del" in hints and "edit" in hints
         # Highlight the stopped row -> label flips to 'start'.
         lv = m.query_one("#owned_list", ListView)
         lv.index = 1
@@ -2149,6 +2149,34 @@ async def test_main_screen_c_key_switches_server(monkeypatch):
         await pilot.press("c")
         await pilot.pause()
         assert isinstance(app.screen, ServerSwitchScreen)
+
+
+async def test_main_screen_u_duplicate_d_delete_bindings(monkeypatch):
+    """#1888: 'u' triggers Duplicate and 'd' triggers Delete (not the old
+    'd'/'x'). Locks in the keybinding wiring, not just the action methods."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        # 'u' -> DuplicateScreen
+        await pilot.press("u")
+        await pilot.pause()
+        assert isinstance(app.screen, DuplicateScreen)
+        app.screen.on_button_pressed(FakeBtnPress("cancel"))
+        await pilot.pause()
+        # 'd' -> Delete confirm
+        await pilot.press("d")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(False)
+        await pilot.pause()
+        # The inline hint bar advertises the new keys.
+        hints = str(m.query_one(".ws_hints", Static).render())
+        assert "[u dup]" in hints and "[d del]" in hints
 
 
 async def test_main_screen_action_targets_active_tab(monkeypatch):
@@ -3106,11 +3134,11 @@ async def test_detail_terminal_actions_inline_not_in_footer(monkeypatch):
         assert bindings["delete"].show is False
 
         # (c) Workspace-scoped keys remain visible ...
-        for key in ("e", "r", "s", "d", "x"):
+        for key in ("e", "r", "s", "u", "d"):
             assert bindings[key].show is True
 
-        # (d) ... and the workspace-delete key is labeled 'Del ws' (#1860).
-        assert bindings["x"].description == "Del ws"
+        # (d) ... and the workspace-delete key is labeled 'Del ws' (#1860, #1888).
+        assert bindings["d"].description == "Del ws"
 
 
 async def test_detail_uptime_ticks(monkeypatch):
@@ -5393,11 +5421,11 @@ async def test_confirm_screen_button_labels(monkeypatch):
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws())
     async with app.run_test() as pilot:
-        # default (delete actions) -> 'Delete'
+        # default (delete actions) -> 'Del'
         app.push_screen(ConfirmScreen("sure?"))
         await pilot.pause()
         btns = {b.id: b for b in app.screen.query(Button)}
-        assert "Delete" in str(btns["yes"].label)
+        assert "Del" in str(btns["yes"].label)
         # parameterized -> custom labels
         app.push_screen(
             ConfirmScreen(

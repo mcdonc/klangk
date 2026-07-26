@@ -93,8 +93,8 @@ class MainScreen(Screen):
         # screen (#1860). `s` matches the detail screen's Stop/Start.
         Binding("r", "restart", "Restart", show=False),
         Binding("s", "stop", "Stop/Start", show=False),
-        Binding("d", "duplicate", "Duplicate", show=False),
-        Binding("x", "delete", "Delete", show=False),
+        Binding("u", "duplicate", "Dup", show=False),
+        Binding("d", "delete", "Del", show=False),
         Binding("e", "edit", "Edit", show=False),
     ]
 
@@ -318,7 +318,7 @@ class MainScreen(Screen):
         toggle = "stop" if (ws is not None and ws.running) else "start"
         text = (
             f"[\u21b5 open]  [r restart]  [s {toggle}]"
-            "  [d duplicate]  [x delete]  [e edit]"
+            "  [u dup]  [d del]  [e edit]"
         )
         for hints in self.query(".ws_hints"):
             hints.update(Text(text))
