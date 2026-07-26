@@ -19,6 +19,7 @@ from klangk import (
     files as files_mod,
     model,
     podman,
+    terminal as terminal_mod,
     workspaces as ws_mod,
 )
 from klangk.container import ContainerRegistry
@@ -85,6 +86,7 @@ async def app(db, temp_data_dir):
     app.state.netfilter = netfilter_mod.NetFilter(app)
 
     app.state.auth = auth_mod.Auth(app)
+    app.state.terminal = terminal_mod.Terminal(app)
     # #1572: wire DB + Model so converted domains (tokens,
     # login_attempts, invitations, ports) reached via app.state.model.*
     # resolve the same per-test DB.
@@ -2344,6 +2346,66 @@ class TestWorkspaceRoutes:
             assert live.health_message is None
         finally:
             await registry.remove_state(ws_id)
+
+    async def test_update_workspace_rename_propagates_to_status_bar(
+        self, client, app, user, registry
+    ):
+        # Renaming a workspace whose container is live pushes the new
+        # name into tmux so the status bar updates without a restart
+        # (#1880): open terminals would otherwise keep showing the old
+        # name until a new terminal_start fires.
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "old-name"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+
+        registry.track_activity("cid-rename", ws_id, setup_state="complete")
+        called = []
+
+        async def _fake_set(cid, name):
+            called.append((cid, name))
+
+        app.state.terminal.set_workspace_name = _fake_set
+        try:
+            resp = await client.put(
+                f"/api/v1/workspaces/{ws_id}",
+                json={"name": "new-name"},
+                headers=headers,
+            )
+            assert resp.status_code == 200
+            assert called == [("cid-rename", "new-name")]
+        finally:
+            await registry.remove_state(ws_id)
+
+    async def test_update_workspace_rename_skipped_when_no_live_state(
+        self, client, app, user, registry
+    ):
+        # Renaming a workspace that has no live container must not call
+        # set_workspace_name (#1880).
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "stale-name"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+
+        called = []
+
+        async def _fake_set(cid, name):
+            called.append((cid, name))
+
+        app.state.terminal.set_workspace_name = _fake_set
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"name": "renamed"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert called == []
 
     async def test_update_workspace_no_permission(self, client, user):
         headers = await _auth_headers(client)

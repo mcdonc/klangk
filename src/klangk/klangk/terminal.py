@@ -373,7 +373,7 @@ class Terminal:
                 timeout=5,
             )
         except Exception:
-            logger.debug(
+            logger.warning(
                 "Failed to set @workspace_name for container %s",
                 container_id,
             )

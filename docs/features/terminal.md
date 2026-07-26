@@ -43,12 +43,14 @@ bottom showing the workspace and terminal name.
 
 Every terminal displays a thin status bar at the bottom of the screen.
 The left side shows the **workspace name** and the right side shows the
-current **terminal name** (tab name). This helps you keep track of which
-workspace and terminal you are in, especially when you have multiple
-shells open across different workspaces.
+current **terminal name** (the active tab's window name — until you
+rename a tab it shows the shell program, e.g. `bash`). This helps you
+keep track of which workspace and terminal you are in, especially when
+you have multiple shells open across different workspaces.
 
-The status bar is managed by tmux and cannot be dismissed. It uses one
-row of terminal height.
+The status bar is managed by tmux and cannot be dismissed through
+normal interaction (the tmux prefix key is disabled). It uses one row
+of terminal height.
 
 ## Using the terminal
 

@@ -367,6 +367,28 @@ class TestStart:
         mock_set_ws.assert_not_awaited()
         await s.stop()
 
+    async def test_start_skips_workspace_name_when_tmux_disabled(self):
+        """start() does not call set_workspace_name when tmux is disabled."""
+        _mock_settings.disable_tmux = "1"
+        fake = FakeShell(block_after_chunks=True)
+        with (
+            patch(SHELL_FACTORY, return_value=fake),
+            patch.object(
+                _terminal,
+                "set_workspace_name",
+                new_callable=AsyncMock,
+            ) as mock_set_ws,
+        ):
+            s = TerminalSession(
+                "cid",
+                session_name="uid",
+                terminal=_terminal,
+                workspace_name="my-workspace",
+            )
+            await s.start()
+        mock_set_ws.assert_not_awaited()
+        await s.stop()
+
 
 class TestAttachBrowser:
     async def test_runs_klangk_attach_browser(self):

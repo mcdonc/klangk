@@ -29,8 +29,10 @@ operators or integrators to act when upgrading.
 
 - **Tmux status bar in workspace shells (#1880).** Shells now display a
   subtle status bar at the bottom showing the workspace name (left) and
-  current terminal name (right). The workspace name is set as a tmux user
-  option (`@workspace_name`) when the base session is created.
+  current terminal name (right). The workspace name is set as a tmux
+  global user option (`@workspace_name`) on every terminal start, and is
+  also pushed live when a workspace is renamed, so open terminals update
+  without a reconnect.
 
 - **Per-workspace quick actions on the TUI workspaces list (#1878).** The
   workspaces page now acts on the highlighted row: `r` restart, `s` stop /

@@ -332,6 +332,13 @@ async def update_workspace(
             live_state.health_status = None
             live_state.health_checked_at = None
             live_state.health_message = None
+        # Keep the tmux status bar in sync when the workspace is renamed
+        # (#1880): open terminals would otherwise keep showing the old
+        # name until a new terminal_start fires. Idempotent + non-fatal.
+        if "name" in fields and app.state.terminal.tmux_enabled():
+            await app.state.terminal.set_workspace_name(
+                live_state.container_id, fields["name"]
+            )
 
     return {"status": "updated"}
 
