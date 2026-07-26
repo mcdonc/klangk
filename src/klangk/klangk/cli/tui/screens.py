@@ -283,6 +283,7 @@ class LoginScreen(SpatialNavScreen):
         self.query_one("#server_line", Static).update(
             "No server selected — pick one or enter a URL below."
         )
+        self._set_oidc_visible(False)
         self._disable_credentials()
 
     # --- server picker ---
@@ -403,6 +404,9 @@ class LoginScreen(SpatialNavScreen):
     # --- auth-mode setup ---
 
     def _setup_auth(self) -> None:
+        # Hide the SSO button during the probe so it doesn't flash on then
+        # off when the server turns out not to offer OIDC (#1864).
+        self._set_oidc_visible(False)
         self.run_worker(self._setup_auth_async, exit_on_error=False)
 
     async def _setup_auth_async(self) -> None:
@@ -413,6 +417,8 @@ class LoginScreen(SpatialNavScreen):
         )
         self._enable_credentials()
         notice = self.query_one("#notice", Static)
+        # The SSO button is only meaningful when the server offers OIDC.
+        self._set_oidc_visible(mode in {"oidc", "both"})
         if mode == "none":
             notice.update("No-auth server — logging in…")
             self.call_after_refresh(self._attempt_none)
@@ -431,7 +437,11 @@ class LoginScreen(SpatialNavScreen):
             return
         # password / both
         notice.update("Enter your credentials.")
-        self.query_one("#oidc", Button).disabled = True
+
+    def _set_oidc_visible(self, visible: bool) -> None:
+        # Show/hide the SSO button. Hidden entirely (not just disabled) when
+        # the server doesn't offer OIDC, so it takes no layout space (#1864).
+        self.query_one("#oidc", Button).display = visible
 
     def _disable_credentials(self) -> None:
         # No server chosen: disable the whole credential area.

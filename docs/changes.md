@@ -931,6 +931,13 @@ set-password <email>` (set a known password for the default user — whose
   "Creating terminal …" feedback), instead of the screen appearing hung
   until the list updates.
 
+- **The `klangk` TUI login screen only shows the "Log in via browser (SSO)"
+  button when the selected server actually offers OIDC (#1864).**
+  Previously the button was always rendered — disabled (greyed-out) for
+  `password`/`both` servers and still clickable for `none`/`unreachable` ones
+  with no SSO backend behind it. It now hides entirely (via `display`, not
+  just `disabled`) unless the server's auth mode is `oidc` or `both`.
+
 - **The nginx proxy engine stays up under a plain `systemctl start` with no
   operator log workaround (#1550).** nginx's `access_log` directive has no
   `stdout` keyword, so it always `open(2)`s its destination by path; under

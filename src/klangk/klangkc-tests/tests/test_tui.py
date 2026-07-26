@@ -1023,6 +1023,59 @@ async def test_login_unreachable_mode():
         assert "Cannot reach" in str(app.screen.query_one("#notice").render())
 
 
+async def test_login_oidc_button_visibility_by_auth_mode(monkeypatch):
+    """#1864: the "Log in via browser" button renders only when the server
+    offers OIDC (auth mode ``oidc`` or ``both``); otherwise it's hidden
+    entirely (``display``, not just ``disabled``)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+
+    async def oidc_display(mode, **extra):
+        st = _st(
+            is_authenticated=lambda: False,
+            auth_mode=lambda: mode,
+            current_url=lambda: "https://x.example",
+            email=lambda: None,
+            token=lambda: None,
+            **extra,
+        )
+        app = KlangkApp(st)
+        async with app.run_test() as pilot:
+            await pilot.pause()  # let the deferred no-auth attempt schedule
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return app.screen.query_one("#oidc", Button).display
+
+    assert await oidc_display("oidc") is True
+    assert await oidc_display("both") is True
+    assert await oidc_display("password") is False
+    assert await oidc_display("unreachable") is False
+    # none: force the deferred no-auth attempt to fail so the screen stays on
+    # LoginScreen and the button can be read.
+    assert (
+        await oidc_display(
+            "none",
+            login_none=lambda: (_ for _ in ()).throw(LoginError("nope")),
+        )
+        is False
+    )
+
+    # No server selected at all -> hidden too.
+    st = _st(
+        is_authenticated=lambda: False,
+        current_url=lambda: None,
+        known_servers=lambda: [],
+        email=lambda: None,
+        token=lambda: None,
+    )
+    app = KlangkApp(st)
+    async with app.run_test():
+        assert app.screen.query_one("#oidc", Button).display is False
+
+
 async def test_logout_returns_to_login(monkeypatch):
     async def noop(*a, **k):
         return None
