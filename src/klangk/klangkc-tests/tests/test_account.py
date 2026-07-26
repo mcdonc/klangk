@@ -28,8 +28,23 @@ class TestValidateHandle:
     def test_invalid_chars_rejected(self):
         assert "lowercase letters" in account.validate_handle("me!")
 
-    def test_too_long(self):
-        msg = account.validate_handle("a" * (account.MAX_HANDLE_LEN + 1))
+    def test_leading_dot_rejected(self):
+        assert (
+            account.validate_handle(".hidden")
+            == "Handle cannot start with a dot"
+        )
+
+    def test_reserved_rejected(self):
+        # "work" reaches the reserved check; ".users" is caught first by the
+        # leading-dot rule (same order as the server).
+        msg = account.validate_handle("work")
+        assert msg is not None and "reserved" in msg
+        assert "dot" in account.validate_handle(".users")
+
+    def test_too_long_beats_lowercase_check(self):
+        # Server checks length before casing; the CLI copy matches that order
+        # so an over-long mixed-case handle reports length, not casing.
+        msg = account.validate_handle("A" * (account.MAX_HANDLE_LEN + 1))
         assert msg is not None and "characters" in msg
 
     def test_strips_whitespace(self):

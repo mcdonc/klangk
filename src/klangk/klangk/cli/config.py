@@ -364,6 +364,9 @@ class CLIState:
         The JWT's subject is the user id (not the email), so the stored
         token stays valid across an email change — only the key it's filed
         under changes. No parallel store: the entry moves in place (#1753).
+
+        Mutates the in-memory state only; the caller must ``save()`` to
+        persist (same convention as ``set_credentials``).
         """
         ss = self.servers.get(server_url)
         if not ss or old_user not in ss.users:

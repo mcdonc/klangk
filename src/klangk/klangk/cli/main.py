@@ -381,8 +381,15 @@ def account_passwd() -> None:
     try:
         client.change_password(current, new)
     except httpx.HTTPStatusError as exc:
+        # The server surfaces a 401 for a wrong current password and a 400
+        # for policy violations (e.g. too short) — the detail is printed
+        # verbatim. change-password doesn't itself trigger the /auth/login
+        # brute-force lockout; a future global rate limit (429) would show
+        # up here as a raw HTTP error until given dedicated handling.
         _err.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
+    # Success goes to stdout (scripting-friendly: `klangk account passwd &&
+    # ...`); errors above go to stderr via _err.
     Console().print("[green]Password updated.[/green]")
 
 

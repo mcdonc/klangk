@@ -741,8 +741,15 @@ class AccountScreen(SpatialNavScreen):
         if new != confirm:
             self._set_msg("pw", "Passwords do not match.", error=True)
             return
+        # The minimum-length check needs /api/v1/config (a network call),
+        # so it runs in the worker rather than blocking the event loop (#1869).
+        self.run_worker(
+            self._do_change_password(current, new), exit_on_error=False
+        )
+
+    async def _do_change_password(self, current: str, new: str) -> None:
         url = self.app.tui_state.current_url() or ""
-        min_len = account.password_min_length(url)
+        min_len = await asyncio.to_thread(account.password_min_length, url)
         if len(new) < min_len:
             self._set_msg(
                 "pw",
@@ -750,11 +757,6 @@ class AccountScreen(SpatialNavScreen):
                 error=True,
             )
             return
-        self.run_worker(
-            self._do_change_password(current, new), exit_on_error=False
-        )
-
-    async def _do_change_password(self, current: str, new: str) -> None:
         try:
             await asyncio.to_thread(
                 self.app.tui_state.change_password, current, new
@@ -778,20 +780,23 @@ class AccountScreen(SpatialNavScreen):
         if not pw:
             self._set_msg("handle", "Password is required.", error=True)
             return
+        # Don't capture the password in the closure — re-read it in the
+        # callback so it isn't held while the confirm dialog is open, and
+        # clear the field if the user cancels (#1869).
         self.app.push_screen(
             ConfirmScreen(
                 f"Change your handle from @{self._current_handle} to @{new}?",
                 yes_label="Change",
                 yes_variant="warning",
             ),
-            lambda confirmed: self._on_handle_confirmed(confirmed, new, pw),
+            lambda confirmed: self._on_handle_confirmed(confirmed, new),
         )
 
-    def _on_handle_confirmed(
-        self, confirmed: bool, new: str, password: str
-    ) -> None:
+    def _on_handle_confirmed(self, confirmed: bool, new: str) -> None:
         if not confirmed:
+            self.query_one("#handle_pw", Input).value = ""
             return
+        password = self.query_one("#handle_pw", Input).value
         self.run_worker(
             self._do_change_handle(new, password), exit_on_error=False
         )

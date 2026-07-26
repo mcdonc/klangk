@@ -334,9 +334,13 @@ class KlangkClient:
     def get_me(self) -> dict:
         """Return the current user's profile via ``GET /auth/me``.
 
-        A dict with ``id``, ``email`` and ``handle``.
+        A dict with ``id``, ``email`` and ``handle``. Unlike the
+        ``change_*`` methods, a 401 here genuinely means the session has
+        expired, so ``check_auth`` maps it to the friendly
+        "Session expired" error (mirroring ``get_handle``).
         """
         resp = self.get("/api/v1/auth/me")
+        self.check_auth(resp)
         self._raise_for_status(resp)
         return resp.json()
 

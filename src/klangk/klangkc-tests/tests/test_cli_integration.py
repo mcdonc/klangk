@@ -1208,6 +1208,18 @@ class TestClientLines:
             me = client.get_me()
         assert me == {"id": "u1", "email": "me@x.example", "handle": "me"}
 
+    def test_get_me_raises_auth_error_on_401(self):
+        # /auth/me 401 means the session expired — get_me uses check_auth so
+        # it surfaces as AuthError (the global CLI handler prints it nicely).
+        from klangk.cli.client import AuthError, KlangkClient
+
+        client = KlangkClient("http://test:8995", "tok")
+        resp = MagicMock()
+        resp.status_code = 401
+        with patch.object(client, "get", return_value=resp):
+            with pytest.raises(AuthError):
+                client.get_me()
+
     def test_change_password_posts_payload(self):
         from klangk.cli.client import KlangkClient
 

@@ -22,7 +22,7 @@ from ..auth import (
     fetch_config,
     local_login,
 )
-from ..client import KlangkClient, Workspace
+from ..client import AuthError, KlangkClient, Workspace
 from ..config import (
     CLIConfig,
     CLIState,
@@ -286,6 +286,10 @@ class TuiState:
             raise LoginError("No server configured")
         try:
             return self.client().get_me()
+        except AuthError as exc:
+            # /auth/me 401 means the session has expired (client.get_me uses
+            # check_auth, unlike the change_* methods where 401 = wrong pw).
+            raise LoginError(str(exc)) from None
         except httpx.HTTPStatusError as exc:
             raise LoginError(str(exc)) from None
         except httpx.HTTPError as exc:

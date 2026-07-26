@@ -20,6 +20,7 @@ from .auth import fetch_config
 # because the CLI must not depend on the server package.
 HANDLE_RE = re.compile(r"^[a-z0-9._-]+$")
 MAX_HANDLE_LEN = 32
+RESERVED_HANDLES = frozenset({"work", ".users"})
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _DEFAULT_MIN_PASSWORD = 8
 
@@ -27,16 +28,23 @@ _DEFAULT_MIN_PASSWORD = 8
 def validate_handle(handle: str) -> str | None:
     """Return an error message if *handle* is invalid, else ``None``.
 
-    Same rules as the Flutter client and the server's static check:
-    non-empty, lowercase, ``[a-z0-9._-]+``, and within the length cap.
+    Same rules as the Flutter client and the server's static check
+    (``klangk.model.users.validate_handle``): non-empty, length cap, no
+    leading dot, not reserved, lowercase, ``[a-z0-9._-]+``. The checks are
+    applied in the same order as the server so the error message for any
+    given input matches.
     """
     handle = (handle or "").strip()
     if not handle:
         return "Handle cannot be empty"
-    if handle != handle.lower():
-        return "Handle must be lowercase"
     if len(handle) > MAX_HANDLE_LEN:
         return f"Handle must be {MAX_HANDLE_LEN} characters or fewer"
+    if handle.startswith("."):
+        return "Handle cannot start with a dot"
+    if handle in RESERVED_HANDLES:
+        return f"'{handle}' is reserved"
+    if handle != handle.lower():
+        return "Handle must be lowercase"
     if not HANDLE_RE.match(handle):
         return (
             "Handle may only contain lowercase letters, digits,"

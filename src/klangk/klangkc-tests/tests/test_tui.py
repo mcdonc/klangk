@@ -5964,6 +5964,22 @@ def test_tuistate_get_me_success():
     assert st.get_me() == {"id": "u1", "email": "e", "handle": "h"}
 
 
+def test_tuistate_get_me_session_expired():
+    # get_me uses check_auth, so a 401 surfaces as AuthError — the wrapper
+    # converts it to a friendly LoginError (not a raw traceback).
+    from unittest.mock import MagicMock
+
+    from klangk.cli.client import AuthError
+
+    client = MagicMock()
+    client.get_me.side_effect = AuthError(
+        "Session expired — run `klangk login`"
+    )
+    st = _tuistate_with_client(client)
+    with pytest.raises(LoginError, match="Session expired"):
+        st.get_me()
+
+
 def test_tuistate_change_password_success():
     from unittest.mock import MagicMock
 
@@ -6113,6 +6129,8 @@ async def test_account_screen_password_too_short(monkeypatch):
         s.query_one("#pw_new", Input).value = "short"
         s.query_one("#pw_confirm", Input).value = "short"
         s.on_button_pressed(FakeBtnPress("pw_submit"))
+        # min-length is now checked in the worker (off the event loop).
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert "at least 12" in str(s.query_one("#pw_msg").render())
 
@@ -6173,8 +6191,33 @@ async def test_account_screen_change_handle_success(monkeypatch):
         assert "Handle updated to @newhandle" in str(
             s.query_one("#handle_msg").render()
         )
-        # Profile refreshed with the new handle.
-        assert "@newhandle" in str(s.query_one("#profile").render())
+
+
+async def test_account_screen_handle_uses_server_accepted(monkeypatch):
+    """#1869 review: the TUI must adopt the server's accepted handle, not
+    the user's input, when they differ (e.g. uniqueness suffixing)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _account_state(change_handle=lambda handle, pw: "accepted")
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#handle_new", Input).value = "newhandle"
+        s.query_one("#handle_pw", Input).value = "pw"
+        s.on_button_pressed(FakeBtnPress("handle_submit"))
+        await pilot.pause()
+        app.screen.dismiss(True)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # Server returned "accepted", not the requested "newhandle".
+        assert "@accepted" in str(s.query_one("#handle_msg").render())
+        assert "@accepted" in str(s.query_one("#profile").render())
 
 
 async def test_account_screen_handle_invalid(monkeypatch):
