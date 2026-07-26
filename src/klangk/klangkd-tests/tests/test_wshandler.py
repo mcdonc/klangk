@@ -8568,7 +8568,7 @@ class TestChatFollowUp:
                 return_value=mock_session,
             ):
                 await conn.handle_chat_send({"message": "what about now?"})
-                await asyncio.sleep(0.1)
+                await _await_agent_run(workspace["id"])
             agent_msgs = [
                 c[0][0]
                 for c in sock.send_json.call_args_list
@@ -8610,7 +8610,7 @@ class TestChatFollowUp:
                 return_value=mock_session,
             ):
                 await conn.handle_chat_send({"message": "still here?"})
-                await asyncio.sleep(0.1)
+                await _await_agent_run(workspace["id"])
             agent_msgs = [
                 c[0][0]
                 for c in sock.send_json.call_args_list
@@ -8643,7 +8643,7 @@ class TestChatFollowUp:
                 "interjected": True,
             }
             await conn.handle_chat_send({"message": "hello?"})
-            await asyncio.sleep(0.1)
+            await _await_agent_run(workspace["id"])
             agent_msgs = [
                 c[0][0]
                 for c in sock.send_json.call_args_list
@@ -8677,7 +8677,7 @@ class TestChatFollowUp:
                 "interjected": False,
             }
             await conn.handle_chat_send({"message": "hey everyone"})
-            await asyncio.sleep(0.1)
+            await _await_agent_run(workspace["id"])
             assert agent_conversations[workspace["id"]]["interjected"]
         finally:
             agent_conversations.pop(workspace["id"], None)
@@ -8704,7 +8704,7 @@ class TestChatFollowUp:
                 "interjected": False,
             }
             await conn.handle_chat_send({"message": "@bob hey"})
-            await asyncio.sleep(0.1)
+            await _await_agent_run(workspace["id"])
             assert workspace["id"] not in agent_conversations
         finally:
             agent_conversations.pop(workspace["id"], None)
