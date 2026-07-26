@@ -764,6 +764,34 @@ async def test_app_opens_login_when_unauthenticated():
         assert isinstance(app.screen, LoginScreen)
 
 
+async def test_app_uses_ansi_light_theme():
+    """#1904: the TUI defaults to Textual's built-in ansi-light theme
+    (terminal-palette-aware) instead of the hard-coded klangk palette. The
+    klangk theme stays registered so it remains selectable."""
+    from klangk.cli.tui.app import KLANGK_THEME
+
+    st = _st(
+        is_authenticated=lambda: False,
+        auth_mode=lambda: "password",
+        current_url=lambda: "https://x.example",
+        email=lambda: None,
+        token=lambda: None,
+    )
+    app = KlangkApp(st)
+    # The default is set in __init__, before run_test mounts the app.
+    assert app.theme == "ansi-light"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Still ansi-light after mount (no on_mount override flips it).
+        assert app.theme == "ansi-light"
+        # The klangk theme stays registered — switching to it must not raise
+        # (Textual raises ThemeError for an unknown theme name).
+        app.theme = "klangk"
+        await pilot.pause()
+        assert app.theme == "klangk"
+        assert KLANGK_THEME.name == "klangk"
+
+
 async def test_app_none_mode_auto_logs_in():
     flag = {"ok": False}
 

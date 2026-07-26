@@ -19,10 +19,18 @@ from .screens import (
 from .state import TuiState
 
 # ---------------------------------------------------------------------------
-# Klangk theme — echoes the Flutter web UI's GitHub-dark-inspired palette
-# (src/frontend/lib/theme/colors.dart).
+# Theme.
 #
-# Tokens:
+# The custom `klangk` theme echoes the Flutter web UI's GitHub-dark-inspired
+# palette (src/frontend/lib/theme/colors.dart) and stays registered so a user
+# (or a future theme toggle) can switch to it. The app DEFAULT, however, is
+# Textual's built-in `ansi-light`: unlike the hard-coded klangk palette, the
+# `ansi-*` themes restrict themselves to the terminal's 16 ANSI colors, so the
+# TUI respects the user's actual terminal palette / shell theme instead of
+# imposing fixed RGB values, and renders correctly on a light-background
+# terminal (#1904).
+#
+# klangk theme tokens:
 #   primary   — green (#238636): primary actions (login, create, start)
 #   secondary — blue (#58A6FF): links, focus, informational
 #   accent    — yellow (#F5C518): brand highlight
@@ -189,7 +197,7 @@ class KlangkApp(App):
         self.live_extra = ""
         self._expiring = False
         self.register_theme(KLANGK_THEME)
-        self.theme = "klangk"
+        self.theme = "ansi-light"
 
     def on_mount(self) -> None:
         self.title = "Klangk"

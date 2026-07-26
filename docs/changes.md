@@ -456,6 +456,15 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **TUI now defaults to Textual's built-in `ansi-light` theme (#1904).**
+  The app default switched from the custom hard-coded `klangk` palette
+  (fixed RGB background `#0D1117`, `dark=True`) to Textual's built-in
+  `ansi-light`, which uses only the terminal's 16 ANSI colors — so it
+  respects the user's actual terminal palette / shell theme instead of
+  imposing fixed RGB values, and renders correctly on a light-background
+  terminal. The `klangk` theme is still registered and remains selectable
+  for users who want the original GitHub-dark-inspired palette.
+
 - **TUI: tabbed workspace create/edit forms (#1891).** The workspace
   create and edit screens now group their fields under five tabs — General
   (name / image / auto-start), Mounts, Environment, Netfilter (allowed
