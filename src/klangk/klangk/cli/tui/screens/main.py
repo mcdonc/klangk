@@ -257,22 +257,26 @@ class MainScreen(Screen):
         )
         return sorted(workspaces, key=key, reverse=not self._sort_asc)
 
+    @staticmethod
+    def _matches(ws, q: str) -> bool:
+        """Whether a workspace matches the filter query — by name or id.
+
+        Matching the full id also covers the 8-char prefix shown on the row
+        (the prefix is a substring of the id) (#1911).
+        """
+        return (
+            q in (getattr(ws, "name", "") or "").lower()
+            or q in (str(getattr(ws, "id", "") or "")).lower()
+        )
+
     def _apply_filter(self) -> None:
         """Re-populate both lists from cached data with filter + sort."""
         q = self._filter_text
         owned = self._owned_all
         shared = self._shared_all
         if q:
-            owned = [
-                ws
-                for ws in owned
-                if q in (getattr(ws, "name", "") or "").lower()
-            ]
-            shared = [
-                ws
-                for ws in shared
-                if q in (getattr(ws, "name", "") or "").lower()
-            ]
+            owned = [ws for ws in owned if self._matches(ws, q)]
+            shared = [ws for ws in shared if self._matches(ws, q)]
         owned = self._sort_workspaces(owned)
         shared = self._sort_workspaces(shared)
         empty = "(no matches)" if q else "(no workspaces)"
