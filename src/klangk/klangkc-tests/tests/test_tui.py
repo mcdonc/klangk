@@ -3537,6 +3537,77 @@ async def test_detail_apply_status_event_reload(monkeypatch):
         assert "running: yes" in str(d.query_one("#detail_body").render())
 
 
+async def test_detail_apply_status_event_terminals_changed(monkeypatch):
+    """#1885: a terminals_changed nudge re-fetches the terminal list."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws()
+    st.find_workspace = lambda n: a
+    st.list_terminals = _async_empty  # initially no terminals
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        d = app.screen
+        lv = d.query_one("#term_list", ListView)
+        assert any(
+            "(no terminals)" in str(it.render()) for it in lv.query(Label)
+        )
+        # Another surface adds a terminal; the nudge arrives over /ws.
+        from unittest.mock import AsyncMock
+
+        st.list_terminals = AsyncMock(
+            return_value=[{"index": 0, "name": "build"}]
+        )
+        d.apply_status_event(
+            {"type": "terminals_changed", "workspace_id": "id-alpha"}
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        lv = d.query_one("#term_list", ListView)
+        assert any("build" in str(it.render()) for it in lv.query(Label))
+
+
+async def test_detail_apply_status_event_terminals_changed_other_ws(
+    monkeypatch,
+):
+    """A terminals_changed nudge for a different workspace is ignored."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws()
+    st.find_workspace = lambda n: a
+    from unittest.mock import AsyncMock
+
+    calls = []
+    st.list_terminals = AsyncMock(
+        side_effect=lambda name: calls.append(name) or []
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        d = app.screen
+        after_mount = len(calls)  # _load_terminals ran once on mount
+        d.apply_status_event(
+            {"type": "terminals_changed", "workspace_id": "other-ws"}
+        )
+        await pilot.pause()
+        # Not for this workspace -> no re-fetch.
+        assert len(calls) == after_mount
+
+
 async def test_detail_apply_status_event_ws_none(monkeypatch):
     async def noop(*a, **k):
         return None

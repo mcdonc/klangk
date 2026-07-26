@@ -994,6 +994,14 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **TUI workspace detail now reflects terminal add/remove from other
+  surfaces in realtime (#1885).** The detail screen's terminal list now
+  updates when terminals are added, closed, or renamed from the Flutter web
+  UI (or any other client), without a navigate-away. The server broadcasts a
+  payload-free `terminals_changed` nudge to the user's `/ws` status
+  connections on those operations; the TUI re-fetches the list on receipt,
+  mirroring the existing `workspaces_changed` pattern.
+
 - **TUI login: no blank row between the server status line and the server
   list (#1865).** Dropped a 1-row bottom margin on the "Server: …"
   status line so the server picker renders directly beneath it.
