@@ -1686,6 +1686,537 @@ async def test_main_screen_lists_and_status(monkeypatch):
         assert "me@x.example" in status
 
 
+# ---------------------------------------------------------------------------
+# MainScreen per-workspace actions (act on the highlighted row, #1878)
+# ---------------------------------------------------------------------------
+
+
+async def _settle(app):
+    """Deterministically drain pending workers.
+
+    ``pilot.pause()`` is a one-tick, nondeterministic wait. The proper
+    primitive is ``app.workers.wait_for_complete()`` — but
+    ``MainScreen.refresh_lists`` registers its worker ``exclusive=True``, so
+    a refresh spawned mid-test (e.g. after an action) cancels a still-pending
+    one, and ``wait_for_complete()`` raises ``WorkerCancelled`` on the
+    cancelled worker. That cancellation is *expected* (it's how exclusive
+    workers avoid overlapping fetches), so retry until the pool drains.
+    """
+    from textual.worker import WorkerCancelled, WorkerFailed
+
+    while app.workers:
+        try:
+            await app.workers.wait_for_complete()
+        except (WorkerCancelled, WorkerFailed):
+            continue
+        break
+
+
+async def _highlight_first(pilot, app, *, pane="#owned_list"):
+    """Populate the MainScreen, highlight row 0, return the screen."""
+    await _settle(app)
+    m = app.screen
+    lv = m.query_one(pane, ListView)
+    lv.focus()
+    lv.index = 0
+    await pilot.pause()  # let the Highlighted event propagate
+    return m
+
+
+async def test_main_screen_action_hints_toggle_stop_start(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(
+        _ws(
+            owned=[
+                _wsobj("alpha", running=True),
+                _wsobj("beta", running=False),
+            ]
+        )
+    )
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        hints = str(m.query_one(".ws_hints", Static).render())
+        assert "restart" in hints and "s stop" in hints
+        assert "open" in hints and "duplicate" in hints
+        assert "delete" in hints and "edit" in hints
+        # Highlight the stopped row -> label flips to 'start'.
+        lv = m.query_one("#owned_list", ListView)
+        lv.index = 1
+        await pilot.pause()
+        m._refresh_action_hints()
+        assert "s start" in str(m.query_one(".ws_hints", Static).render())
+
+
+async def test_main_screen_action_requires_highlight(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        lv = m.query_one("#owned_list", ListView)
+        lv.index = None  # nothing highlighted
+        await pilot.pause()
+        # Every per-workspace action guards on a highlighted row.
+        for action in (
+            "action_restart",
+            "action_stop",
+            "action_duplicate",
+            "action_delete",
+            "action_edit",
+        ):
+            getattr(m, action)()
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfirmScreen)
+        assert "Select a workspace" in (app.live_extra or "")
+
+
+async def test_main_screen_action_stop_cancel(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    stopped = {}
+    st = _ws(owned=[_wsobj("alpha", running=True)])
+    st.stop_workspace = lambda n: stopped.__setitem__("s", n)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_stop()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(False)  # cancel
+        await pilot.pause()
+        assert "s" not in stopped
+
+
+async def test_main_screen_action_delete_cancel(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    deleted = {}
+    st = _ws(owned=[_wsobj("alpha")])
+    st.delete_workspace = lambda n: deleted.__setitem__("d", n)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_delete()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(False)  # cancel
+        await pilot.pause()
+        assert "d" not in deleted
+
+
+async def test_main_screen_action_duplicate_cancel(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    duped = {}
+    st = _ws(owned=[_wsobj("alpha")])
+    st.duplicate_workspace = lambda n, nn: duped.__setitem__("d", (n, nn))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_duplicate()
+        await pilot.pause()
+        assert isinstance(app.screen, DuplicateScreen)
+        app.screen.on_button_pressed(FakeBtnPress("cancel"))  # cancel
+        await pilot.pause()
+        assert "d" not in duped
+
+
+async def test_main_screen_action_edit_load_fallbacks(monkeypatch):
+    """_do_edit tolerates find_workspace/list_images/allow_autostart errors."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    # Generic load error -> flashed, no screen pushed.
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: (_ for _ in ()).throw(RuntimeError("boom"))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_edit()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "Could not load workspace" in (app.live_extra or "")
+
+    # find_workspace ok but list_images / allow_autostart raise -> the edit
+    # screen still opens with empty/default fallbacks.
+    st2 = _ws(owned=[a])
+    st2.find_workspace = lambda n: a
+    st2.list_images = lambda: (_ for _ in ()).throw(RuntimeError("img"))
+    st2.allow_autostart = lambda: (_ for _ in ()).throw(RuntimeError("auto"))
+    app2 = KlangkApp(st2)
+    async with app2.run_test() as pilot:
+        m = await _highlight_first(pilot, app2)
+        m.action_edit()
+        await app2.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app2.screen, EditWorkspaceScreen)
+
+
+async def test_main_screen_on_edited_refreshes(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        called = {}
+        m.refresh_lists = lambda: called.__setitem__("r", True)
+        m._on_edited(True)  # truthy result -> refresh
+        assert called.get("r") is True
+        m._on_edited(None)  # falsy -> no refresh
+        assert called.get("r") is True  # unchanged
+
+
+async def test_main_screen_update_running_refreshes_hints(monkeypatch):
+    """_update_running reaches the hint-refresh tail for a known workspace."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    app = KlangkApp(_ws(owned=[a]))
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        # Highlight alpha, then flip its running state via a status event.
+        m._update_running("id-alpha", False)
+        await pilot.pause()
+        assert "s start" in str(m.query_one(".ws_hints", Static).render())
+
+
+async def test_main_screen_highlighted_ws_falls_back_to_name(monkeypatch):
+    """_highlighted_ws resolves by name when the row has no workspace_id."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    # A workspace with an empty id is never entered into _ws_by_id, so the
+    # name fallback path is exercised.
+    no_id = Workspace(id="", name="gamma", created_at="x")
+    app = KlangkApp(_ws(owned=[no_id]))
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        assert m._highlighted_ws() is no_id
+
+
+async def test_main_screen_action_restart_success_cancel_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    restarted = {}
+    st = _ws(owned=[a])
+    st.restart_workspace = lambda n: restarted.__setitem__("r", n)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        # cancel -> not restarted
+        m.action_restart()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(False)
+        await pilot.pause()
+        assert "r" not in restarted
+        # confirm -> restarted
+        m.action_restart()
+        await pilot.pause()
+        app.screen.dismiss(True)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert restarted.get("r") == "alpha"
+        assert "Restart requested" in (app.live_extra or "")
+        # The success path refreshed the list and cleared the highlight;
+        # re-select the row before re-triggering.
+        m.query_one("#owned_list", ListView).index = 0
+        await pilot.pause()
+        # error
+        st.restart_workspace = lambda n: (_ for _ in ()).throw(
+            RuntimeError("boom")
+        )
+        m.action_restart()
+        await pilot.pause()
+        app.screen.dismiss(True)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "Restart failed" in (app.live_extra or "")
+
+
+async def test_main_screen_action_stop_running_success_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    stopped = {}
+    st = _ws(owned=[a])
+    st.stop_workspace = lambda n: stopped.__setitem__("s", n)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_stop()  # running -> confirm
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(True)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert stopped.get("s") == "alpha"
+        m.query_one("#owned_list", ListView).index = 0
+        await pilot.pause()
+        # error
+        st.stop_workspace = lambda n: (_ for _ in ()).throw(
+            RuntimeError("boom")
+        )
+        m.action_stop()
+        await pilot.pause()
+        app.screen.dismiss(True)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "Stop failed" in (app.live_extra or "")
+
+
+async def test_main_screen_action_start_stopped(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=False)
+    started = []
+    st = _ws(owned=[a])
+    st.start_workspace = lambda n: started.append(n)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_stop()  # stopped -> start, no confirm
+        await _settle(app)
+        assert started == ["alpha"]
+        assert not isinstance(app.screen, ConfirmScreen)
+
+
+async def test_main_screen_action_start_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=False)
+    st = _ws(owned=[a])
+    st.start_workspace = lambda n: (_ for _ in ()).throw(RuntimeError("boom"))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_stop()
+        await _settle(app)
+        assert "Start failed" in (app.live_extra or "")
+
+
+async def test_main_screen_action_delete_success_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    deleted = {}
+    st = _ws(owned=[_wsobj("alpha")])
+    st.delete_workspace = lambda n: deleted.__setitem__("d", n)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_delete()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(True)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert deleted.get("d") == "alpha"
+        m.query_one("#owned_list", ListView).index = 0
+        await pilot.pause()
+        # error
+        st.delete_workspace = lambda n: (_ for _ in ()).throw(
+            RuntimeError("boom")
+        )
+        m.action_delete()
+        await pilot.pause()
+        app.screen.dismiss(True)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "Delete failed" in (app.live_extra or "")
+
+
+async def test_main_screen_action_duplicate_success_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    duped = {}
+    st = _ws(owned=[_wsobj("alpha")])
+    st.duplicate_workspace = lambda n, nn: duped.__setitem__("d", (n, nn))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_duplicate()
+        await pilot.pause()
+        assert isinstance(app.screen, DuplicateScreen)
+        app.screen.on_button_pressed(FakeBtnPress("ok"))  # prefilled copy
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert duped.get("d") == ("alpha", "alpha-copy")
+        m.query_one("#owned_list", ListView).index = 0
+        await pilot.pause()
+        # error
+        st.duplicate_workspace = lambda n, nn: (_ for _ in ()).throw(
+            RuntimeError("boom")
+        )
+        m.action_duplicate()
+        await pilot.pause()
+        app.screen.on_button_pressed(FakeBtnPress("ok"))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "Duplicate failed" in (app.live_extra or "")
+
+
+async def test_main_screen_action_edit_pushes_screen(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    st.list_images = lambda: {"default": "base", "allowed": ["base"]}
+    st.allow_autostart = lambda: True
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_edit()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, EditWorkspaceScreen)
+
+
+async def test_main_screen_action_edit_not_found(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    from klangk.cli.client import WorkspaceNotFoundError
+
+    st = _ws(owned=[_wsobj("alpha")])
+    st.find_workspace = lambda n: (_ for _ in ()).throw(
+        WorkspaceNotFoundError("nope")
+    )
+    st.list_images = lambda: {}
+    st.allow_autostart = lambda: False
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_edit()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "not found" in (app.live_extra or "")
+
+
+async def test_main_screen_c_key_switches_server(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        assert isinstance(app.screen, ServerSwitchScreen)
+
+
+async def test_main_screen_action_targets_active_tab(monkeypatch):
+    """#1879 review: per-workspace actions act on the highlighted row of the
+    ACTIVE tab. TabbedContent toggles display on the TabPane (the list's
+    parent), not on the list, so naively checking lv.display silently targets
+    the Owned list even on the Shared tab — destructive actions included."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    restarted = {}
+    app = KlangkApp(
+        _ws(
+            owned=[_wsobj("alpha", running=True)],
+            shared=[_wsobj("beta", running=True)],
+            restart_workspace=lambda n: restarted.__setitem__("r", n),
+        )
+    )
+    async with app.run_test() as pilot:
+        await _settle(app)
+        m = app.screen
+        # Switch to the Shared tab and highlight beta.
+        m.query_one("#ws_tabs").active = "shared_pane"
+        await pilot.pause()
+        shared = m.query_one("#shared_list", ListView)
+        shared.focus()
+        shared.index = 0
+        await pilot.pause()
+        assert m._active_list().id == "shared_list"
+        assert m._highlighted_item().name == "beta"
+        # The confirm dialog must name beta, and the request must target beta.
+        m.action_restart()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(True)
+        await pilot.pause()  # let the dismiss callback spawn the worker
+        await _settle(app)
+        assert restarted.get("r") == "beta"
+
+
+async def test_main_screen_hints_refresh_on_tab_switch(monkeypatch):
+    """#1879 review: the hint bar re-renders on tab switch even when the new
+    pane has no highlight yet (no Highlighted event would fire)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha", running=True)], shared=[]))
+    async with app.run_test() as pilot:
+        await _settle(app)
+        m = app.screen
+        # Highlight alpha on the Owned tab -> hint says 'stop'.
+        owned = m.query_one("#owned_list", ListView)
+        owned.focus()
+        owned.index = 0
+        await pilot.pause()
+        m._refresh_action_hints()
+        assert "s stop" in str(m.query_one(".ws_hints", Static).render())
+        # Switch to the empty Shared tab -> no highlight, label defaults to
+        # 'start', not the stale 'stop' from the hidden Owned row.
+        m.query_one("#ws_tabs").active = "shared_pane"
+        await pilot.pause()
+        assert "s start" in str(m.query_one(".ws_hints", Static).render())
+
+
 async def test_main_screen_shows_created_date(monkeypatch):
     async def noop(*a, **k):
         return None
