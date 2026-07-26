@@ -25,8 +25,9 @@ Klangk uses tmux for three reasons:
    the same terminal in real time. One user's session group can have
    spectators or collaborators attached.
 
-Tmux runs with no status bar, no prefix key, and no keybindings beyond
-scrollback — it looks and feels like a plain terminal.
+Tmux runs with no prefix key and no keybindings beyond scrollback — it
+looks and feels like a plain terminal, with a subtle status bar at the
+bottom showing the workspace and terminal name.
 
 ## How it maps to what you see
 
@@ -37,6 +38,17 @@ scrollback — it looks and feels like a plain terminal.
 | Joining a shared terminal | New tmux session in the owner's session group          |
 | Tab name                  | tmux window name (persists, visible to other users)    |
 | Shell exit + respawn      | `remain-on-exit` + `pane-died` hook respawns the shell |
+
+## Status bar
+
+Every terminal displays a thin status bar at the bottom of the screen.
+The left side shows the **workspace name** and the right side shows the
+current **terminal name** (tab name). This helps you keep track of which
+workspace and terminal you are in, especially when you have multiple
+shells open across different workspaces.
+
+The status bar is managed by tmux and cannot be dismissed. It uses one
+row of terminal height.
 
 ## Using the terminal
 
