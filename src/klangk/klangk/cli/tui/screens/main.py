@@ -136,7 +136,6 @@ class MainScreen(Screen):
         ("c", "switch_server", "Switch server"),
         ("n", "create", "New"),
         ("i", "import", "Import"),
-        ("a", "account", "Account"),
         ("l", "logout", "Logout"),
         ("slash", "focus_filter", "Filter"),
         ("o", "cycle_sort", "Sort"),
@@ -316,11 +315,6 @@ class MainScreen(Screen):
         from .server import ServerSwitchScreen  # noqa: allow-deferred-import
 
         self.app.push_screen(ServerSwitchScreen())
-
-    def action_account(self) -> None:
-        from .account import AccountScreen  # noqa: allow-deferred-import
-
-        self.app.push_screen(AccountScreen())
 
     # --- per-workspace actions (act on the highlighted row, #1878) ---
 

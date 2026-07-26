@@ -4,7 +4,6 @@ Existing ``from klangk.cli.tui.screens import FooScreen`` imports
 continue to work unchanged.
 """
 
-from .account import AccountScreen
 from ._base import (
     ConfirmScreen,
     DuplicateScreen,
@@ -24,7 +23,6 @@ from .workspace_detail import WorkspaceDetailScreen
 from .workspace_form import CreateWorkspaceScreen, EditWorkspaceScreen
 
 __all__ = [
-    "AccountScreen",
     "AddServerScreen",
     "ConfirmScreen",
     "CreateWorkspaceScreen",
