@@ -787,13 +787,13 @@ class WebSocketState:
         TUI workspace-detail screen) can update directly, the way the Flutter
         UI receives ``terminal_windows`` over its workspace WS -- avoiding a
         ``terminal_start`` re-enumeration round-trip per change (#1894).
-        ``windows`` is optional for backward compatibility with older callers.
+        ``windows`` is optional for backward compatibility with older callers;
+        the key is omitted entirely when it is ``None`` so legacy consumers
+        that test ``"windows" in event`` are not misled.
         """
-        message = {
-            "type": "terminals_changed",
-            "workspace_id": workspace_id,
-            "windows": windows,
-        }
+        message = {"type": "terminals_changed", "workspace_id": workspace_id}
+        if windows is not None:
+            message["windows"] = windows
         dead = []
         for sock, conn in self.connections.items():
             if conn.user.get("id") != user_id:

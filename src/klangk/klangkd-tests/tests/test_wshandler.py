@@ -4042,13 +4042,30 @@ class TestNotifyUserTerminalsChanged:
             sockets.connections.pop(sock_a, None)
             sockets.connections.pop(sock_other, None)
         sock_a.send_json.assert_called_once_with(
+            {"type": "terminals_changed", "workspace_id": "ws-9"}
+        )
+        sock_other.send_json.assert_not_called()
+
+    def test_includes_windows_when_provided(self, app_state):
+        # A windows payload is included verbatim (push path); the key is
+        # omitted entirely when None (above) so legacy consumers that test
+        # `"windows" in event` aren't misled (#1896).
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        sock = _mock_sock()
+        payload = [{"id": "@0", "index": 0, "name": "bash"}]
+        try:
+            self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
+            sockets.notify_user_terminals_changed("uid-1", "ws-9", payload)
+        finally:
+            sockets.connections.pop(sock, None)
+        sock.send_json.assert_called_once_with(
             {
                 "type": "terminals_changed",
                 "workspace_id": "ws-9",
-                "windows": None,
+                "windows": payload,
             }
         )
-        sock_other.send_json.assert_not_called()
 
     def test_no_connections_is_noop(self, app_state):
         app_state = _make_app_state()

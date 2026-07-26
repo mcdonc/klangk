@@ -290,11 +290,17 @@ class WorkspaceDetailScreen(Screen):
             # terminal_windows push), so update directly instead of
             # re-enumerating via a terminal_start round-trip (#1894).
             windows = event.get("windows")
-            if windows is not None:
+            if isinstance(windows, list):
+                # Adopt the pushed list verbatim. Events are serialized
+                # per status-WS connection, so out-of-order arrival (a
+                # close broadcast beating its create) is not expected;
+                # the payload type check above also makes the push path
+                # resilient to a malformed payload (fall back to fetch).
                 self._terminals = windows
                 self._render_terminals()
             else:
-                # Older server without the payload -- fall back to a fetch.
+                # No payload (older server) or malformed -- fall back to a
+                # fetch, preserving the resilience of the old poll path.
                 self.run_worker(self._load_terminals, exit_on_error=False)
             return
         if etype == "container_status":

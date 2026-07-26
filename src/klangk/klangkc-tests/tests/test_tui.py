@@ -3581,7 +3581,9 @@ async def test_detail_apply_status_event_reload(monkeypatch):
 
 
 async def test_detail_apply_status_event_terminals_changed(monkeypatch):
-    """#1885: a terminals_changed nudge re-fetches the terminal list."""
+    """terminals_changed without a windows payload (older server) falls
+    back to a fetch — #1885's re-fetch behavior, now the backward-compat
+    path under #1894's push."""
 
     async def noop(*a, **k):
         return None
@@ -3649,6 +3651,97 @@ async def test_detail_apply_status_event_terminals_changed_other_ws(
         await pilot.pause()
         # Not for this workspace -> no re-fetch.
         assert len(calls) == after_mount
+
+
+async def test_detail_apply_status_event_terminals_changed_other_ws_with_windows(
+    monkeypatch,
+):
+    """A terminals_changed push for a different workspace is ignored even
+    when it carries a windows payload — the ws filter gates the push path
+    too, not just the fallback (#1896)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws()
+    st.find_workspace = lambda n: a
+
+    calls = []
+
+    async def terms(name):
+        calls.append(name)
+        return [{"index": 0, "name": "main", "id": "@0"}]
+
+    st.list_terminals = terms
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        d = app.screen
+        after_mount = len(calls)  # _load_terminals ran once on mount
+        # Push carries a windows payload but for a different workspace.
+        d.apply_status_event(
+            {
+                "type": "terminals_changed",
+                "workspace_id": "other-ws",
+                "windows": [{"index": 9, "name": "impostor", "id": "@9"}],
+            }
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # Rejected at the ws filter -> no extra fetch, no impostor row.
+        assert len(calls) == after_mount
+        lv = d.query_one("#term_list", ListView)
+        assert not any(
+            "impostor" in str(it.render()) for it in lv.query(Label)
+        )
+
+
+async def test_detail_terminal_push_falls_back_on_malformed_windows(
+    monkeypatch,
+):
+    """A non-list windows payload falls back to a fetch instead of crashing
+    — the push path validates the payload (#1896, restoring the resilience
+    the old poll path had)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+
+    calls = []
+
+    async def fetch_terms(name):
+        calls.append(name)
+        return [{"index": 0, "name": "fetched", "id": "@0"}]
+
+    st = _ws(list_terminals=fetch_terms)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        after_mount = len(calls)
+        # Malformed payload (not a list) -> isinstance check fails -> fetch.
+        app.screen.apply_status_event(
+            {
+                "type": "terminals_changed",
+                "workspace_id": "id-alpha",
+                "windows": "not-a-list",
+            }
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(calls) == after_mount + 1  # fell back to a fetch
+        lv = app.screen.query_one("#term_list", ListView)
+        assert any("fetched" in str(it.render()) for it in lv.query(Label))
 
 
 async def test_detail_apply_status_event_ws_none(monkeypatch):
