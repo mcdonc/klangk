@@ -3104,6 +3104,48 @@ async def test_detail_delete_terminal(monkeypatch):
         assert len(d.query_one("#term_list", ListView).query(ListItem)) == 1
 
 
+async def test_detail_delete_terminal_shows_inflight_msg(monkeypatch):
+    """A 'Deleting terminal …' message shows while the close call is in
+    flight, so the screen doesn't appear hung (#1863)."""
+
+    import asyncio
+
+    async def noop(*a, **k):
+        return None
+
+    gate = asyncio.Event()
+
+    async def _close(name, index):
+        await gate.wait()
+        return [{"index": 0, "name": "main", "id": "@0"}]
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=_async_terms, close_terminal=_close)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        d.query_one("#term_list").index = 1
+        d.action_delete_terminal()
+        # While close_terminal is blocked on the gate, the in-flight
+        # message must already be visible.
+        for _ in range(3):
+            await pilot.pause()
+        assert "Deleting terminal 1" in str(
+            d.query_one("#detail_msg").render()
+        )
+        # Releasing the close call replaces it with the success message.
+        gate.set()
+        for _ in range(3):
+            await pilot.pause()
+        assert "Deleted terminal 1" in str(d.query_one("#detail_msg").render())
+
+
 async def test_detail_delete_terminal_failure(monkeypatch):
     async def noop(*a, **k):
         return None

@@ -925,6 +925,12 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **TUI workspace detail: terminal delete now shows in-flight feedback (#1863).**
+  Pressing `delete` on a selected terminal now shows a `Deleting terminal …`
+  status message while the close request is in flight (mirroring the existing
+  "Creating terminal …" feedback), instead of the screen appearing hung
+  until the list updates.
+
 - **The nginx proxy engine stays up under a plain `systemctl start` with no
   operator log workaround (#1550).** nginx's `access_log` directive has no
   `stdout` keyword, so it always `open(2)`s its destination by path; under

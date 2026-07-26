@@ -1281,6 +1281,7 @@ class WorkspaceDetailScreen(Screen):
         self.run_worker(self._do_delete_terminal(index), exit_on_error=False)
 
     async def _do_delete_terminal(self, index: int) -> None:
+        self._msg(f"Deleting terminal {index}…")
         try:
             windows = await self.app.tui_state.close_terminal(
                 self._name, index
