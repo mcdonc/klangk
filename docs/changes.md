@@ -33,6 +33,18 @@ operators or integrators to act when upgrading.
   on its row (#1899). Name matching is unchanged; the empty filter still
   shows all workspaces.
 
+- **TUI account screen is now tabbed (Password / Handle / Email)
+  (#1898).** The three self-service forms — change password, change
+  handle, change email — now live in a `TabbedContent` with one tab per
+  credential concern, mirroring the workspace editor's tabbed layout
+  (#1891) so the two editor screens share one interaction model. The
+  current `@handle` / email profile header is pinned above the tabs and
+  stays visible on every tab. Keyboard nav: Left/Right switch tabs on the
+  strip, Down enters the active tab, Up returns to the strip, and Up/Down
+  walks the active tab's fields — no focus traps. Per-field validation
+  (handle charset, email format, password minimum) and the handle-change
+  confirm dialog are unchanged.
+
 - **TUI workspace import/export with progress (#1758).** The workspace
   detail screen gains `x` → Export (downloads a `.tar.gz` via
   `GET /api/v1/workspaces/{id}/export`, admin-only) and the workspaces
@@ -480,6 +492,14 @@ invitations send` stay email-only (a deliverable address is required);
   imposing fixed RGB values, and renders correctly on a light-background
   terminal. The `klangk` theme is still registered and remains selectable
   for users who want the original GitHub-dark-inspired palette.
+
+- **TUI: tabbed account screen (#1898).** The account screen now groups
+  its three self-service forms under tabs — Password / Handle / Email —
+  instead of one long scroll, mirroring the tabbed workspace forms (#1891).
+  The `@handle` / email profile header stays pinned above the tabs so it is
+  visible on every tab. Left/Right switch tabs, Up/Down move between the
+  tab strip and a pane's fields, and Up from the first field returns to the
+  strip — no focus traps.
 
 - **TUI: tabbed workspace create/edit forms (#1891).** The workspace
   create and edit screens now group their fields under five tabs — General

@@ -8100,6 +8100,286 @@ async def test_main_screen_action_account_opens_screen(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Account screen tabbed DOM (#1898): three tabs (Password / Handle /
+# Email), profile pinned above the tabs, spatial nav across tabs.
+# ---------------------------------------------------------------------------
+
+
+def _acct_pane_ids(screen):
+    """Ids of the TabPanes inside the account TabbedContent, in order."""
+    tc = screen.query_one("#acct_tabs", TabbedContent)
+    return [p.id for p in tc.query(TabPane)]
+
+
+async def test_account_screen_has_three_tabs_with_all_fields(monkeypatch):
+    """Three tabs (Password / Handle / Email); no field dropped (#1898)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(
+        scr_account._account_mod, "password_min_length", lambda url: 4
+    )
+    app = KlangkApp(_account_state())
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        tc = s.query_one("#acct_tabs", TabbedContent)
+        # Exactly three panes, in the documented order.
+        assert _acct_pane_ids(s) == ["pw_pane", "handle_pane", "email_pane"]
+        # Every per-section field/button is mounted (under its own pane).
+        for fid, pane_id in [
+            ("pw_current", "pw_pane"),
+            ("pw_new", "pw_pane"),
+            ("pw_confirm", "pw_pane"),
+            ("pw_msg", "pw_pane"),
+            ("pw_submit", "pw_pane"),
+            ("handle_new", "handle_pane"),
+            ("handle_pw", "handle_pane"),
+            ("handle_msg", "handle_pane"),
+            ("handle_submit", "handle_pane"),
+            ("email_new", "email_pane"),
+            ("email_pw", "email_pane"),
+            ("email_msg", "email_pane"),
+            ("email_submit", "email_pane"),
+        ]:
+            field = s.query_one(f"#{fid}")
+            pane = s.query_one(f"#{pane_id}", TabPane)
+            assert pane in field.ancestors, f"{fid} not under {pane_id}"
+        # The submit flows still resolve (handlers unchanged).
+        assert tc.active == "pw_pane"  # Password is the initial tab
+
+
+async def test_account_screen_profile_pinned_above_tabs(monkeypatch):
+    """#profile sits above the TabbedContent, not inside any tab pane, so
+    the current @handle / email stays visible on every tab (#1898)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_account_state())
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        profile = s.query_one("#profile")
+        tc = s.query_one("#acct_tabs", TabbedContent)
+        # Profile is a sibling of the TabbedContent, both inside #account_box.
+        assert profile.parent.id == "account_box"
+        assert tc.parent.id == "account_box"
+        # And profile is NOT a descendant of the TabbedContent.
+        with pytest.raises(Exception):
+            tc.query_one("#profile")
+
+
+async def test_account_screen_left_right_switch_tabs(monkeypatch):
+    """Left/Right on the tab strip switches the active tab; switching
+    drops focus into the new tab's first field (#1898)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_account_state())
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        tc = s.query_one("#acct_tabs", TabbedContent)
+        s.query_one(Tabs).focus()
+        await pilot.pause()
+
+        await pilot.press("right")
+        await pilot.pause()
+        assert tc.active == "handle_pane"
+        assert app.focused is s.query_one("#handle_new", Input)
+
+        s.query_one(Tabs).focus()
+        await pilot.pause()
+        await pilot.press("right")
+        await pilot.pause()
+        assert tc.active == "email_pane"
+        assert app.focused is s.query_one("#email_new", Input)
+
+        s.query_one(Tabs).focus()
+        await pilot.pause()
+        await pilot.press("left")
+        await pilot.pause()
+        assert tc.active == "handle_pane"
+        assert app.focused is s.query_one("#handle_new", Input)
+
+
+async def test_account_screen_spatial_chain_follows_active_tab(monkeypatch):
+    """SPATIAL_CHAIN returns the active tab's fields, so the inherited
+    Up/Down handler walks only the visible tab (#1898).
+
+    Tab switches are driven via the keyboard (Left/Right on the strip)
+    rather than assigning ``tc.active`` directly: the programmatic set
+    races the TabActivated message under load, while the keyboard path
+    settles reliably (it's the real user interaction)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_account_state())
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+
+        # Password tab is active on mount.
+        assert s.SPATIAL_CHAIN == [
+            "pw_current",
+            "pw_new",
+            "pw_confirm",
+            "pw_submit",
+        ]
+
+        s.query_one(Tabs).focus()
+        await pilot.pause()
+        await pilot.press("right")  # -> handle_pane
+        await pilot.pause()
+        assert s._active_tab_id() == "handle_pane"
+        assert s.SPATIAL_CHAIN == ["handle_new", "handle_pw", "handle_submit"]
+
+        s.query_one(Tabs).focus()
+        await pilot.pause()
+        await pilot.press("right")  # -> email_pane
+        await pilot.pause()
+        assert s._active_tab_id() == "email_pane"
+        assert s.SPATIAL_CHAIN == ["email_new", "email_pw", "email_submit"]
+
+
+async def test_account_screen_down_from_strip_enters_tab(monkeypatch):
+    """Down from the tab strip focuses the first field of the active tab
+    (#1781, #1898)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_account_state())
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+
+        # Password tab (default).
+        s.query_one(Tabs).focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is s.query_one("#pw_current", Input)
+
+        # Handle tab — switch via the keyboard (reliable settling).
+        s.query_one(Tabs).focus()
+        await pilot.pause()
+        await pilot.press("right")  # -> handle_pane
+        await pilot.pause()
+        s.query_one(Tabs).focus()  # back to the strip
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is s.query_one("#handle_new", Input)
+
+
+async def test_account_screen_up_from_first_field_returns_to_strip(
+    monkeypatch,
+):
+    """Up from the first field of a tab returns focus to the tab strip so
+    Left/Right can switch tabs — no focus trap (#1781, #1898)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_account_state())
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+
+        s.query_one("#pw_current", Input).focus()
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert isinstance(app.focused, Tabs)
+
+        # Non-first field: Up stays inside the chain (no jump to strip).
+        s.query_one("#pw_new", Input).focus()
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is s.query_one("#pw_current", Input)
+
+
+async def test_account_screen_spatial_up_down_within_tab(monkeypatch):
+    """Up/Down walks the active tab's chain top-to-bottom and stops at the
+    last field (no trap downward) (#1898)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_account_state())
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+
+        s.query_one("#pw_current", Input).focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is s.query_one("#pw_new", Input)
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is s.query_one("#pw_confirm", Input)
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is s.query_one("#pw_submit", Button)
+        # Past the last field: focus stays put (no trap, no wrap).
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is s.query_one("#pw_submit", Button)
+
+
+async def test_account_screen_spatial_up_noop_off_chain(monkeypatch):
+    """action_spatial_up is a no-op when focus isn't on a chain widget
+    (e.g. on the tab strip itself) — the early-return branch (#1898)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_account_state())
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+
+        # The tab strip is not in any tab's SPATIAL_CHAIN, so Up from it
+        # returns early without crashing or moving focus.
+        s.query_one(Tabs).focus()
+        await pilot.pause()
+        s.action_spatial_up()
+        await pilot.pause()
+        assert isinstance(app.focused, Tabs)
+
+
+# ---------------------------------------------------------------------------
 # Terminal list push (#1894)
 # ---------------------------------------------------------------------------
 
