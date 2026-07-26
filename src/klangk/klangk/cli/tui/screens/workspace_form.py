@@ -14,7 +14,6 @@ from textual.screen import Screen
 from textual.widgets import (
     Button,
     Checkbox,
-    Collapsible,
     Footer,
     Header,
     Input,
@@ -40,13 +39,17 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
     """Full-screen workspace create form (parity with Flutter
     ``CreateWorkspaceDialog``).
 
-    Fields, top to bottom: name, container image (``Select`` populated
-    from ``/api/v1/images``), a mounts list editor, an env list editor,
-    an optional service shell command, an optional health-check command,
-    and — only when the server permits it — an auto-start checkbox.
-    Mounts/env are validated client-side (``validate_mount_spec`` /
-    ``validate_env_entry``) exactly as the Flutter dialog and the CLI
-    ``create`` command do.
+    Fields are grouped under a ``TabbedContent`` with five panes — General
+    (name / image / auto-start), Mounts, Environment, Netfilter (allowed
+    domains), and Advanced (service command / health check) — so each
+    logical category has its own tab instead of one long scroll (#1891).
+    Cancel / Create and the ``#create_msg`` status line live *outside* the
+    tab content so they stay visible regardless of which tab is active.
+
+    The container image comes from a ``Select`` populated from
+    ``/api/v1/images``; mounts/env are validated client-side
+    (``validate_mount_spec`` / ``validate_env_entry``) exactly as the
+    Flutter dialog and the CLI ``create`` command do.
 
     Images and the ``allow_autostart`` flag are fetched by the caller
     (``MainScreen.action_create``) and passed in, because ``self.app`` is
@@ -58,10 +61,12 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
     _TAB_ORDER = [
         "name",
         "image",
+        "auto_start",
         "mount_input",
         "env_input",
         "allow_input",
-        "auto_start",
+        "command",
+        "health_check",
         "cancel",
         "create",
     ]
@@ -69,6 +74,15 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         "mount_list": "mount_input",
         "env_list": "env_input",
         "allow_list": "allow_input",
+    }
+    # Spatial nav around the form tab strip (#1891): the first focusable
+    # field of each pane — Down from the strip lands here, Up returns.
+    _PANE_FIRST_FIELD = {
+        "general_pane": "name",
+        "mounts_pane": "mount_input",
+        "env_pane": "env_input",
+        "netfilter_pane": "allow_input",
+        "advanced_pane": "command",
     }
 
     def __init__(
@@ -110,62 +124,70 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
             # (the server applies its default image if none is chosen).
             image_select = Select(self._select_options, id="image")
         yield Header(show_clock=False)
-        yield NonFocusableVerticalScroll(
-            Static("New workspace", classes="title"),
-            Static("", id="create_msg"),
-            Horizontal(Static("Name"), Input(id="name"), classes="field-row"),
-            Horizontal(Static("Image"), image_select, classes="field-row"),
-            Static(
-                "Mounts  (source:/container/path[:opts])",
-                classes="editor-label",
-            ),
-            Horizontal(
-                Input(
-                    id="mount_input",
-                    placeholder="/host/path:/container/path",
-                ),
-                Button("Add", id="add_mount"),
-                Button("Remove", id="rm_mount"),
-            ),
-            OptionList(id="mount_list", classes="editor-list"),
-            Static("Environment  (KEY=VALUE)", classes="editor-label"),
-            Horizontal(
-                Input(id="env_input", placeholder="KEY=VALUE"),
-                Button("Add", id="add_env"),
-                Button("Remove", id="rm_env"),
-            ),
-            OptionList(id="env_list", classes="editor-list"),
-            Static(
-                "Allowed Domains  (host or host:port; empty = unrestricted)",
-                classes="editor-label",
-            ),
-            Horizontal(
-                Input(id="allow_input", placeholder="github.com:443"),
-                Button("Add", id="add_allow"),
-                Button("Remove", id="rm_allow"),
-            ),
-            OptionList(id="allow_list", classes="editor-list"),
-            Collapsible(
-                Horizontal(
-                    Static("Command"),
-                    Input(id="command"),
-                    classes="field-row",
-                ),
-                Horizontal(
-                    Static("Health"),
-                    Input(id="health_check"),
-                    classes="field-row",
-                ),
-                title="Advanced",
-            ),
-            Checkbox("Auto start", id="auto_start"),
-            Horizontal(
+        with NonFocusableVerticalScroll(id="create_box"):
+            yield Static("New workspace", classes="title")
+            yield Static("", id="create_msg")
+            with TabbedContent(id="form_tabs"):
+                with TabPane("General", id="general_pane"):
+                    yield Horizontal(
+                        Static("Name"), Input(id="name"), classes="field-row"
+                    )
+                    yield Horizontal(
+                        Static("Image"), image_select, classes="field-row"
+                    )
+                    yield Checkbox("Auto start", id="auto_start")
+                with TabPane("Mounts", id="mounts_pane"):
+                    yield Static(
+                        "Mounts  (source:/container/path[:opts])",
+                        classes="editor-label",
+                    )
+                    yield Horizontal(
+                        Input(
+                            id="mount_input",
+                            placeholder="/host/path:/container/path",
+                        ),
+                        Button("Add", id="add_mount"),
+                        Button("Remove", id="rm_mount"),
+                    )
+                    yield OptionList(id="mount_list", classes="editor-list")
+                with TabPane("Environment", id="env_pane"):
+                    yield Static(
+                        "Environment  (KEY=VALUE)", classes="editor-label"
+                    )
+                    yield Horizontal(
+                        Input(id="env_input", placeholder="KEY=VALUE"),
+                        Button("Add", id="add_env"),
+                        Button("Remove", id="rm_env"),
+                    )
+                    yield OptionList(id="env_list", classes="editor-list")
+                with TabPane("Netfilter", id="netfilter_pane"):
+                    yield Static(
+                        "Allowed Domains  "
+                        "(host or host:port; empty = unrestricted)",
+                        classes="editor-label",
+                    )
+                    yield Horizontal(
+                        Input(id="allow_input", placeholder="github.com:443"),
+                        Button("Add", id="add_allow"),
+                        Button("Remove", id="rm_allow"),
+                    )
+                    yield OptionList(id="allow_list", classes="editor-list")
+                with TabPane("Advanced", id="advanced_pane"):
+                    yield Horizontal(
+                        Static("Command"),
+                        Input(id="command"),
+                        classes="field-row",
+                    )
+                    yield Horizontal(
+                        Static("Health"),
+                        Input(id="health_check"),
+                        classes="field-row",
+                    )
+            yield Horizontal(
                 Button("Cancel", id="cancel"),
                 Button("Create", id="create", variant="primary"),
                 classes="actions",
-            ),
-            id="create_box",
-        )
+            )
         yield Footer()
 
     def on_mount(self) -> None:
@@ -177,6 +199,9 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         self._render_mounts()
         self._render_env()
         self._render_allowed_domains()
+        # General tab is active on entry — focus Name so the user can start
+        # typing immediately (the tab strip is one Up away, #1891).
+        self.query_one("#name", Input).focus()
 
     def _skip_editors_on_tab(self) -> None:
         """Editor buttons stay out of the Tab cycle (#1783).
@@ -301,6 +326,37 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
             return
         del self._allowed_domains[idx]
         self._render_allowed_domains()
+
+    # --- tab + keyboard navigation (#1891) ---
+
+    def _active_tab(self) -> str:
+        """The id of the currently active form tab pane."""
+        return self.query_one("#form_tabs", TabbedContent).active
+
+    def _focus_first_in_active_pane(self) -> None:
+        """Focus the first field of the active tab pane (Down from strip)."""
+        first = self._PANE_FIRST_FIELD.get(self._active_tab(), "name")
+        self.query_one(f"#{first}").focus()
+
+    def on_key(self, event) -> None:
+        # Spatial nav around the form tab strip (AGENTS.md "TUI spatial
+        # navigation"): Down from the strip drops into the active pane's
+        # first field; Up from that field returns to the strip. Left/Right
+        # on the strip switch tabs (Textual built-in). Tab/Shift-Tab still
+        # cycles fields via TabSkipMixin (#1783).
+        focused = self.focused
+        if isinstance(focused, Tabs) and event.key == "down":
+            event.stop()
+            self._focus_first_in_active_pane()
+            return
+        if event.key == "up":
+            fid = getattr(focused, "id", None)
+            first = self._PANE_FIRST_FIELD.get(self._active_tab(), "name")
+            if fid == first:
+                event.stop()
+                self.query_one(Tabs).focus()
+                return
+        super().on_key(event)
 
     # --- create ---
 

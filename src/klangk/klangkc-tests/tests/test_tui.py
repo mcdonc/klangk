@@ -5594,6 +5594,115 @@ async def test_edit_screen_tab_left_right_switches(monkeypatch):
         assert tabs.active == "general_pane"
 
 
+async def test_create_screen_tabbed_layout(monkeypatch):
+    """Create form groups fields under five tabs; Cancel/Create +
+    #create_msg stay pinned outside the tab content, always visible (#1891)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        tabs = cs.query_one("#form_tabs", TabbedContent)
+        # Five panes in the proposed order; General active on entry.
+        assert tabs.active == "general_pane"
+        for pane in (
+            "general_pane",
+            "mounts_pane",
+            "env_pane",
+            "netfilter_pane",
+            "advanced_pane",
+        ):
+            cs.query_one(f"#{pane}", TabPane)
+        # No field dropped — a representative field per group is present.
+        cs.query_one("#name", Input)
+        cs.query_one("#image", Select)
+        cs.query_one("#auto_start", Checkbox)
+        cs.query_one("#mount_input", Input)
+        cs.query_one("#mount_list")
+        cs.query_one("#env_input", Input)
+        cs.query_one("#allow_input", Input)
+        cs.query_one("#command", Input)
+        cs.query_one("#health_check", Input)
+        # Pinned outside the tab content: #create_msg, #cancel, #create are
+        # siblings of the TabbedContent (never inside a TabPane).
+        for wid in ("#create_msg", "#cancel", "#create"):
+            assert not isinstance(cs.query_one(wid).parent, TabPane)
+        # Name is auto-focused on entry (General tab active).
+        assert app.focused is cs.query_one("#name")
+
+
+async def test_create_screen_tab_spatial_nav(monkeypatch):
+    """Down from the strip enters the active pane; Up from the first field
+    returns to the strip; Tab still cycles fields (#1891, #1781, #1783)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        tabs = cs.query_one("#form_tabs", TabbedContent)
+        # Up from Name (General's first field) -> focus the tab strip.
+        cs.query_one("#name").focus()
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert isinstance(app.focused, Tabs)
+        # Down from the strip -> back into the active pane's first field.
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is cs.query_one("#name")
+        # Tab from Name advances to the next General field (Image).
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is cs.query_one("#image")
+        # Up from a non-first Input (Health, on the Advanced tab) is a no-op:
+        # it doesn't match the pane's first field (Command), so focus stays.
+        tabs.active = "advanced_pane"
+        cs.query_one("#command").focus()  # switch to Advanced via focus-sync
+        await pilot.pause()
+        cs.query_one("#health_check").focus()
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is cs.query_one("#health_check")
+
+
+async def test_create_screen_tab_left_right_switches(monkeypatch):
+    """Left/Right on the tab strip switches the active pane (#1891)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        tabs = cs.query_one("#form_tabs", TabbedContent)
+        assert tabs.active == "general_pane"
+        cs.query_one(Tabs).focus()
+        await pilot.pause()
+        await pilot.press("right")
+        await pilot.pause()
+        assert tabs.active == "mounts_pane"
+        await pilot.press("left")
+        await pilot.pause()
+        assert tabs.active == "general_pane"
+
+
 async def test_edit_rename_propagates_to_detail_and_list(monkeypatch):
     # #1778/#1768: renaming via the edit form must update the detail screen's
     # name (so it doesn't 404) and refresh the list (so the new name shows).
