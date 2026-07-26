@@ -334,3 +334,51 @@ class TestStoreAndErase:
         )
         # store/erase are best-effort
         assert result.returncode == 0
+
+
+class TestDebugRedaction:
+    """Debug output must never leak the password (code-scanning alert 172)."""
+
+    def test_get_does_not_log_bridge_password(
+        self, bridge_server, fake_browser_id
+    ):
+        server, port = bridge_server
+        _BridgeHandler.response_body = json.dumps(
+            {"username": "octocat", "password": "ghp_SUPERSECRET"}
+        ).encode()
+
+        result = run_helper(
+            "get",
+            "protocol=https\nhost=github.com\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                "GIT_CREDENTIAL_KLANGK_DEBUG": "1",
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+        # The credential is still delivered to git via stdout...
+        assert "password=ghp_SUPERSECRET" in result.stdout
+        # ...but never appears in the debug output on stderr.
+        assert "ghp_SUPERSECRET" not in result.stderr
+        assert '"password": "***"' in result.stderr
+
+    def test_store_does_not_log_input_password(
+        self, bridge_server, fake_browser_id
+    ):
+        server, port = bridge_server
+
+        result = run_helper(
+            "store",
+            "protocol=https\nhost=github.com\n"
+            "username=octocat\npassword=ghp_SUPERSECRET\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                "GIT_CREDENTIAL_KLANGK_DEBUG": "1",
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+        assert result.returncode == 0
+        assert "ghp_SUPERSECRET" not in result.stderr
+        assert "'password': '***'" in result.stderr
