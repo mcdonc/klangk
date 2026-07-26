@@ -88,6 +88,11 @@ class MainScreen(Screen):
     .ws-name {
         width: 1fr;
     }
+    .ws-id {
+        width: auto;
+        padding-left: 1;
+        color: $text-muted;
+    }
     .ws-date {
         width: auto;
         text-align: right;
@@ -674,6 +679,14 @@ class MainScreen(Screen):
                 return Text(date, style="dim")
         return Text("")
 
+    @staticmethod
+    def _fmt_id(ws) -> Text:
+        """Short id (first 8 chars) for list rows — a prefix of the full
+        id shown on the detail screen, so a row can be matched to its
+        detail without consuming much horizontal space (#1899)."""
+        wid = str(getattr(ws, "id", "") or "")
+        return Text(wid[:8], style="dim") if wid else Text("")
+
     def _populate(
         self,
         selector: str,
@@ -688,9 +701,10 @@ class MainScreen(Screen):
             return
         for ws in workspaces:
             name_label = Label(self._fmt_name(ws), classes="ws-name")
+            id_label = Label(self._fmt_id(ws), classes="ws-id")
             date_label = Label(self._fmt_date(ws), classes="ws-date")
             item = ListItem(
-                Horizontal(name_label, date_label, classes="ws-row"),
+                Horizontal(name_label, id_label, date_label, classes="ws-row"),
                 name=ws.name,
             )
             wid = str(getattr(ws, "id", "") or "")

@@ -27,6 +27,14 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **TUI shows workspace id on the detail screen and a short id on each
+  workspaces-list row (#1899).** The full server-assigned `id` is now
+  shown on the workspace detail screen (top line, `id: <id>`), and the
+  first 8 chars of it are appended (muted) to each row on the Owned and
+  Shared workspaces lists. The short id is a prefix of the full id, so a
+  row can be matched to its detail screen and copied for `klangk` CLI /
+  server-log / support correlation without leaving the TUI.
+
 - **TUI keybinding + label change: Duplicate is now `u` / "Dup", Delete is
   now `d` / "Del" (#1888).** On both the workspaces list and the workspace
   detail screen, Duplicate moved from `d` to `u` and Delete moved from `x`

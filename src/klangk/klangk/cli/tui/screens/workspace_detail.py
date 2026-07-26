@@ -171,6 +171,7 @@ class WorkspaceDetailScreen(Screen):
         self.BINDINGS = self._bindings_list("Stop" if ws.running else "Start")
         self.refresh_bindings()
         lines = [
+            f"id: {ws.id}",
             f"running: {'yes' if ws.running else 'no'}",
             f"health: {ws.health or '-'}",
         ]
