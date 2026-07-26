@@ -826,6 +826,21 @@ class TerminalController:
             if conn and conn.user.get("id") == user_id:
                 sock.send_json(msg)
 
+    def _notify_terminals_changed(self) -> None:
+        """Nudge all of this user's status connections to refresh terminals.
+
+        Complements ``notify_user_terminal_windows`` (which pushes the full
+        window list to workspace-WS subscribers for the Flutter UI) by
+        pinging pure status-feed consumers like the TUI detail screen,
+        which re-enumerates on receipt (#1885).
+        """
+        ws_id = self._conn.workspace_id
+        if not ws_id:
+            return
+        self._conn.app.state.sockets.notify_user_terminals_changed(
+            self._conn.user["id"], ws_id
+        )
+
     async def new_window(self, msg: dict) -> None:
         t0 = time.monotonic()
         if not self._conn.container_id or not self._conn._user_home:
@@ -845,6 +860,7 @@ class TerminalController:
             )
             self.sync_terminal_windows(windows)
             self.notify_user_terminal_windows(windows)
+            self._notify_terminals_changed()
         except Exception as e:
             send_error(self._conn.sock, f"Failed to create window: {e}")
 
@@ -901,6 +917,7 @@ class TerminalController:
             )
             self.sync_terminal_windows(windows)
             self.notify_user_terminal_windows(windows)
+            self._notify_terminals_changed()
         except Exception as e:
             send_error(self._conn.sock, f"Failed to close window: {e}")
 
@@ -927,6 +944,7 @@ class TerminalController:
             )
             self.sync_terminal_windows(windows)
             self.notify_user_terminal_windows(windows)
+            self._notify_terminals_changed()
         except Exception as e:
             send_error(self._conn.sock, f"Failed to rename window: {e}")
 

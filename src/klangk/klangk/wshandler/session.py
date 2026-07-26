@@ -775,6 +775,30 @@ class WebSocketState:
         for sock, _ in dead:
             self.connections.pop(sock, None)
 
+    def notify_user_terminals_changed(
+        self, user_id: str, workspace_id: str
+    ) -> None:
+        """Send ``terminals_changed`` to all of a user's connections.
+
+        A payload-free nudge the TUI workspace-detail screen listens for
+        over its ``/ws`` status feed, so it re-fetches the terminal list
+        when terminals are added / removed / renamed from another surface
+        (e.g. the Flutter UI) — mirroring ``notify_user_workspaces_changed``.
+        The TUI re-enumerates rather than trusting a payload, the same way
+        it handles ``workspaces_changed`` (#1885).
+        """
+        message = {"type": "terminals_changed", "workspace_id": workspace_id}
+        dead = []
+        for sock, conn in self.connections.items():
+            if conn.user.get("id") != user_id:
+                continue
+            try:
+                sock.send_json(message)
+            except WS_ERRORS:
+                dead.append((sock, conn))
+        for sock, _ in dead:
+            self.connections.pop(sock, None)
+
     def handle_browser_response(
         self, msg: dict, sender: SafeWebSocket | None = None
     ) -> None:

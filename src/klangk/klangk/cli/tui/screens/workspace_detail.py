@@ -285,6 +285,12 @@ class WorkspaceDetailScreen(Screen):
         if etype == "workspaces_changed":
             self.run_worker(self._reload_on_status, exit_on_error=False)
             return
+        if etype == "terminals_changed":
+            # A terminal was added / removed / renamed from another surface
+            # (e.g. the Flutter UI); re-enumerate this workspace's windows
+            # so the list reflects it without a navigate-away (#1885).
+            self.run_worker(self._load_terminals, exit_on_error=False)
+            return
         if etype == "container_status":
             self._ws.running = bool(event.get("running"))
             if "service_started_at" in event:

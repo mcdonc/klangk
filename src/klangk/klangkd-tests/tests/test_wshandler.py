@@ -4018,6 +4018,54 @@ class TestNotifyUserWorkspacesChanged:
             sockets.connections.pop(sock, None)
 
 
+class TestNotifyUserTerminalsChanged:
+    """notify_user_terminals_changed nudges a user's status connections
+    (e.g. the TUI's /ws feed) to re-fetch terminals (#1885)."""
+
+    def _register(self, sock, user, app_state):
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
+        app_state.state.sockets.connections[sock] = conn
+        return conn
+
+    def test_sends_to_matching_user_with_workspace_id(self, app_state):
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        sock_a = _mock_sock()
+        sock_other = _mock_sock()
+        try:
+            self._register(sock_a, {"id": "uid-1", "email": "a@x"}, app_state)
+            self._register(
+                sock_other, {"id": "uid-2", "email": "c@x"}, app_state
+            )
+            sockets.notify_user_terminals_changed("uid-1", "ws-9")
+        finally:
+            sockets.connections.pop(sock_a, None)
+            sockets.connections.pop(sock_other, None)
+        sock_a.send_json.assert_called_once_with(
+            {"type": "terminals_changed", "workspace_id": "ws-9"}
+        )
+        sock_other.send_json.assert_not_called()
+
+    def test_no_connections_is_noop(self, app_state):
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        sockets.notify_user_terminals_changed("nobody", "ws-9")  # no raise
+
+    def test_dead_socket_is_pruned(self, app_state):
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        from klangk.wshandler import WS_ERRORS
+
+        sock = _mock_sock()
+        sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
+        try:
+            self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
+            sockets.notify_user_terminals_changed("uid-1", "ws-9")
+            assert sock not in sockets.connections
+        finally:
+            sockets.connections.pop(sock, None)
+
+
 class TestNotifyContainerStatus:
     """notify_container_status broadcasts to all authenticated connections."""
 
@@ -5109,6 +5157,30 @@ class TestTerminalWindowHandlers:
         sent = sock.send_json.call_args[0][0]
         assert sent["type"] == "terminal_windows"
         assert len(sent["windows"]) == 2
+
+    async def test_new_window_nudges_status_connections(self):
+        # #1885: creating a window pings the user's /ws status connections
+        # (e.g. the TUI) so they re-fetch terminals. Guarded on workspace_id.
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        conn.workspace_id = "ws-1"
+        sockets = conn.app.state.sockets
+        with (
+            patch.object(
+                _mock_term,
+                "new_window",
+                return_value=[
+                    {"id": "@0", "index": 0, "name": "bash", "active": True}
+                ],
+            ),
+            patch.object(
+                sockets, "notify_user_terminals_changed"
+            ) as mock_nudge,
+        ):
+            await conn.handle_terminal_new_window({})
+        mock_nudge.assert_called_once_with(conn.user["id"], "ws-1")
 
     async def test_new_window_with_name(self):
         sock = _mock_sock()
