@@ -466,6 +466,13 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **TUI export completion now toasts the full filesystem path (#1758).**
+  When a workspace export finishes, a toast notification shows the
+  resolved absolute path the archive was written to (e.g.
+  `/home/user/alpha.tar.gz`), so a relative input like `alpha.tar.gz` —
+  written under the TUI's CWD — is no longer ambiguous. Export failures
+  still report the error inline on the detail screen.
+
 - **TUI now defaults to Textual's built-in `ansi-light` theme (#1904).**
   The app default switched from the custom hard-coded `klangk` palette
   (fixed RGB background `#0D1117`, `dark=True`) to Textual's built-in

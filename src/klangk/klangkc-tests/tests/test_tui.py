@@ -2060,6 +2060,16 @@ async def test_detail_export_flow_with_progress(monkeypatch):
     st.find_workspace = lambda n: a
     st.export_workspace = fake_export
     app = KlangkApp(st)
+    # Spy on app.notify so we can assert the completion toast (#1758):
+    # a resolved absolute filesystem path is toasted on success.
+    notified = []
+    orig_notify = app.notify
+
+    def spy_notify(message="", *a, **k):
+        notified.append(message)
+        return orig_notify(message, *a, **k)
+
+    app.notify = spy_notify
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
@@ -2074,9 +2084,47 @@ async def test_detail_export_flow_with_progress(monkeypatch):
         await app.workers.wait_for_complete()
         await pilot.pause()
         await pilot.pause()
-        # Transfer ran (mock completes instantly) -> back on detail, msg set.
-        assert exported["args"] == ("alpha", str(Path("alpha.tar.gz")))
-        assert "Exported" in str(d.query_one("#detail_msg", Static).render())
+        # Transfer ran (mock completes instantly) -> back on detail. The
+        # export is written to the *resolved absolute* path (the relative
+        # default is resolved against the TUI's CWD).
+        resolved = str(Path("alpha.tar.gz").resolve())
+        assert exported["args"] == ("alpha", resolved)
+        # A completion toast fired carrying the full filesystem path.
+        assert any(resolved in m for m in notified), notified
+
+
+async def test_detail_export_failure_shows_inline_error(monkeypatch):
+    """#1758: on export failure the error text is shown inline on the
+    detail screen (not toasted) — the error path of _on_export_done."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    a = _wsobj("alpha", running=True)
+
+    def fake_export(name, out, on_progress=None):
+        raise RuntimeError("disk full")
+
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    st.export_workspace = fake_export
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        d = app.screen
+        d.action_export()
+        await pilot.pause()
+        app.screen.on_button_pressed(FakeBtnPress("ok"))  # accept default
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.pause()
+        # Failure -> error text rendered inline on the detail screen.
+        assert "disk full" in str(d.query_one("#detail_msg", Static).render())
 
 
 async def test_detail_export_cancel_aborts(monkeypatch):

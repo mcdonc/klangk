@@ -580,19 +580,30 @@ class WorkspaceDetailScreen(Screen):
         if not path:
             return
         state = self.app.tui_state
+        # Resolve to an absolute path so the completion toast reports
+        # exactly where the archive landed on disk — a relative input
+        # like "x.tar.gz" is written under the TUI's CWD, which isn't
+        # obvious without the resolved path (#1758).
+        full_path = str(Path(path).expanduser().resolve())
 
         def make_call(on_progress):
-            state.export_workspace(self._name, Path(path), on_progress)
+            state.export_workspace(self._name, Path(full_path), on_progress)
 
         self.app.push_screen(
             TransferScreen(
                 f"Exporting '{self._name}'…",
                 make_call,
-                f"Exported → {path}",
+                full_path,
             ),
             self._on_export_done,
         )
 
     def _on_export_done(self, result: tuple[bool, str]) -> None:
-        ok, msg = result
-        self._msg(msg, error=not ok)
+        ok, payload = result
+        if ok:
+            # payload is the resolved absolute filesystem path — toast it
+            # so the user can find / copy the archive location.
+            self.app.notify(f"Exported to {payload}", timeout=10)
+        else:
+            # payload is the error text; show it inline on the detail screen.
+            self._msg(payload, error=True)
