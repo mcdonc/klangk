@@ -4042,7 +4042,11 @@ class TestNotifyUserTerminalsChanged:
             sockets.connections.pop(sock_a, None)
             sockets.connections.pop(sock_other, None)
         sock_a.send_json.assert_called_once_with(
-            {"type": "terminals_changed", "workspace_id": "ws-9"}
+            {
+                "type": "terminals_changed",
+                "workspace_id": "ws-9",
+                "windows": None,
+            }
         )
         sock_other.send_json.assert_not_called()
 
@@ -5159,8 +5163,8 @@ class TestTerminalWindowHandlers:
         assert len(sent["windows"]) == 2
 
     async def test_new_window_nudges_status_connections(self):
-        # #1885: creating a window pings the user's /ws status connections
-        # (e.g. the TUI) so they re-fetch terminals. Guarded on workspace_id.
+        # #1885/#1894: creating a window pushes the window list to the
+        # user's /ws status connections (e.g. the TUI). Guarded on workspace_id.
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
@@ -5180,7 +5184,11 @@ class TestTerminalWindowHandlers:
             ) as mock_nudge,
         ):
             await conn.handle_terminal_new_window({})
-        mock_nudge.assert_called_once_with(conn.user["id"], "ws-1")
+        mock_nudge.assert_called_once_with(
+            conn.user["id"],
+            "ws-1",
+            [{"id": "@0", "index": 0, "name": "bash", "active": True}],
+        )
 
     async def test_new_window_with_name(self):
         sock = _mock_sock()
