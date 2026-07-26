@@ -210,17 +210,25 @@ def main(  # pragma: no cover
     # proxy (same-uid socket access). Set here, from the bind decision —
     # not via a config field (#1422 retired KLANGKD_UDS_MODE).
     asgi_app.state.util.set_uds_mode(True)
-    uvicorn.run(
-        asgi_app,
-        uds=uds_path,
-        # proxy_headers=False: over a UDS request.client is None; our
-        # trust helpers handle header trust via _UDS_MODE. Letting uvicorn
-        # also rewrite client would double-resolve.
-        proxy_headers=False,
-        ws_max_size=ws_max_size,
-        ws_ping_interval=20,
-        ws_ping_timeout=20,
-    )
+    try:
+        uvicorn.run(
+            asgi_app,
+            uds=uds_path,
+            # proxy_headers=False: over a UDS request.client is None; our
+            # trust helpers handle header trust via _UDS_MODE. Letting uvicorn
+            # also rewrite client would double-resolve.
+            proxy_headers=False,
+            ws_max_size=ws_max_size,
+            ws_ping_interval=20,
+            ws_ping_timeout=20,
+        )
+    except OSError as exc:
+        from klangk.logger import logger  # noqa: allow-deferred-import
+
+        logger.error(
+            "uvicorn failed to bind UDS at %s: %s — exiting", uds_path, exc
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":  # pragma: no cover
