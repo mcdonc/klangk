@@ -448,6 +448,13 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **TUI login: the server-list delete key is hinted inline (#1890).**
+  The `d` (delete server) key no longer appears in the bottom Footer — its
+  hint now renders on the server picker header (`[d] delete`), next to the
+  list it acts on. Mirrors the switch-server (#1872) and workspace-detail
+  (#1863) screens, so all three server/workspace lists now group their
+  per-row actions the same way.
+
 - **TUI switch-server: server-scoped keybindings moved inline (#1872).**
   The `e` (edit) and `d` (delete) keys no longer appear in the bottom Footer —
   their hints now render on the servers list header (`[e] edit  [d] delete`),

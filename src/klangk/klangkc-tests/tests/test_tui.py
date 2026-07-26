@@ -5639,6 +5639,46 @@ async def test_login_server_line_hugs_list_and_headers_styled(monkeypatch):
         assert notice.styles.color != message.styles.color
 
 
+async def test_login_server_hints_inline_not_in_footer(monkeypatch):
+    """#1890: the server-list delete key is hinted inline on the server
+    header and hidden from the Footer (matching the workspace-detail and
+    switch-server screens)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    st = _st(
+        current_url=lambda: "http://localhost:8997",
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo("prod", "http://localhost:8997"),
+        ],
+        default_uds=lambda: None,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        login = app.screen
+
+        # (a) The delete hint renders on the server header, with the [d]
+        # keycap intact (not eaten as Rich markup).
+        hints = str(login.query_one("#server_hints").render())
+        assert "[d]" in hints
+        assert "delete" in hints
+
+        bindings = {b.key: b for b in login.BINDINGS}
+
+        # (b) The server key still exists (so it works) but is hidden
+        # from the Footer.
+        assert bindings["d"].show is False
+
+
 async def test_login_server_list_empty_no_crash(monkeypatch):
     """#1826: no servers → no crash, focus degrades gracefully."""
 
