@@ -11,6 +11,7 @@ import httpx
 from rich.text import Text
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.dom import NoMatches
 from textual.screen import Screen
@@ -22,12 +23,13 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    Static,
     TabbedContent,
     TabPane,
     Tabs,
 )
 
-from ...client import AuthError
+from ...client import AuthError, WorkspaceNotFoundError
 from ..widgets import StatusBar
 from ..ws import listen_for_status
 from ._base import ConfirmScreen, WorkspaceListView
@@ -50,6 +52,11 @@ class MainScreen(Screen):
         width: auto;
         text-align: right;
         color: $text-muted;
+    }
+    .ws_hints {
+        height: 1;
+        color: $text-muted;
+        padding: 0 1;
     }
     #filter_bar {
         dock: bottom;
@@ -74,19 +81,32 @@ class MainScreen(Screen):
     """
 
     BINDINGS = [
-        ("s", "switch_server", "Switch server"),
+        ("c", "switch_server", "Switch server"),
         ("n", "create", "New"),
         ("a", "account", "Account"),
         ("l", "logout", "Logout"),
         ("slash", "focus_filter", "Filter"),
         ("o", "cycle_sort", "Sort"),
+        # Per-workspace actions act on the highlighted row of the active
+        # list. Hidden from the Footer; their hints render inline above the
+        # list (#1878), mirroring the terminal-action pattern on the detail
+        # screen (#1860). `s` matches the detail screen's Stop/Start.
+        Binding("r", "restart", "Restart", show=False),
+        Binding("s", "stop", "Stop/Start", show=False),
+        Binding("d", "duplicate", "Duplicate", show=False),
+        Binding("x", "delete", "Delete", show=False),
+        Binding("e", "edit", "Edit", show=False),
     ]
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with TabbedContent(id="ws_tabs"):
-            yield TabPane("Owned by me", WorkspaceListView(id="owned_list"))
-            yield TabPane("Shared to me", WorkspaceListView(id="shared_list"))
+            with TabPane("Owned by me", id="owned_pane"):
+                yield Static("", classes="ws_hints")
+                yield WorkspaceListView(id="owned_list")
+            with TabPane("Shared to me", id="shared_pane"):
+                yield Static("", classes="ws_hints")
+                yield WorkspaceListView(id="shared_list")
         yield StatusBar(id="status")
         yield Footer()
         # Filter bar is yielded LAST so that — since docked-bottom widgets
@@ -111,6 +131,7 @@ class MainScreen(Screen):
         self._shared_all: list = []
         self._filter_text = ""
         self.query_one("#filter_bar").display = False
+        self._refresh_action_hints()
         self.refresh_lists()
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(self._status_loop, name="status-ws")
@@ -118,6 +139,9 @@ class MainScreen(Screen):
     def on_tabbed_content_tab_activated(self, event) -> None:
         """Focus the first workspace row when switching tabs (#1792)."""
         self._focus_visible_list()
+        # The highlighted row (and thus the Stop/Start label) changes with
+        # the tab — re-render even if the new pane has no rows to highlight.
+        self._refresh_action_hints()
 
     # --- filter / sort ---
 
@@ -200,15 +224,15 @@ class MainScreen(Screen):
         empty = "(no matches)" if q else "(no workspaces)"
         self._populate("#owned_list", owned, empty_label=empty)
         self._populate("#shared_list", shared, empty_label=empty)
+        self._refresh_action_hints()
 
     def _focus_visible_list(self) -> None:
         """Focus the first item in the visible workspace list (#1792)."""
-        for lv in self.query(WorkspaceListView):
-            if lv.display and lv.query(ListItem):
-                lv.focus()
-                if lv.index is None:
-                    lv.index = 0
-                return
+        lv = self._active_list()
+        if lv is not None and lv.query(ListItem):
+            lv.focus()
+            if lv.index is None:
+                lv.index = 0
 
     def on_key(self, event) -> None:
         # Escape in the filter input: clear text or hide bar and return.
@@ -223,13 +247,12 @@ class MainScreen(Screen):
             return
         # Down from the tab strip drops into the active workspace list (#1781).
         if event.key == "down" and isinstance(self.focused, Tabs):
-            for lv in self.query(WorkspaceListView):
-                if lv.display:
-                    event.stop()
-                    lv.focus()
-                    if lv.index is None:
-                        lv.index = 0
-                    break
+            lv = self._active_list()
+            if lv is not None:
+                event.stop()
+                lv.focus()
+                if lv.index is None:
+                    lv.index = 0
 
     def action_switch_server(self) -> None:
         from .server import ServerSwitchScreen  # noqa: allow-deferred-import
@@ -240,6 +263,246 @@ class MainScreen(Screen):
         from .account import AccountScreen  # noqa: allow-deferred-import
 
         self.app.push_screen(AccountScreen())
+
+    # --- per-workspace actions (act on the highlighted row, #1878) ---
+
+    def _active_list(self):
+        """The WorkspaceListView in the currently active tab pane, or None.
+
+        ``TabbedContent`` toggles ``display`` on the ``TabPane`` (the list's
+        *parent*), not on the list itself — ``lv.display`` is True for every
+        list regardless of tab — so the active list is the one whose parent
+        pane is displayed. Keying off ``lv.display`` silently targets the
+        Owned list even on the Shared tab (#1879 review).
+        """
+        for lv in self.query(WorkspaceListView):
+            if lv.parent is not None and lv.parent.display:
+                return lv
+        return None
+
+    def _highlighted_item(self):
+        lv = self._active_list()
+        return lv.highlighted_child if lv is not None else None
+
+    def _highlighted_ws(self):
+        """The workspace object for the highlighted row, or None."""
+        item = self._highlighted_item()
+        if item is None:
+            return None
+        wid = str(getattr(item, "workspace_id", "") or "")
+        by_id = getattr(self, "_ws_by_id", {}) or {}
+        if wid and wid in by_id:
+            return by_id[wid]
+        name = getattr(item, "name", "") or ""
+        for ws in list(self._owned_all) + list(self._shared_all):
+            if getattr(ws, "name", "") == name:
+                return ws
+        return None
+
+    def _require_highlighted(self) -> str | None:
+        """Return the highlighted workspace name, or flash a hint + None."""
+        item = self._highlighted_item()
+        name = getattr(item, "name", "") or "" if item is not None else ""
+        if not name:
+            self._flash("Select a workspace first.")
+            return None
+        return name
+
+    def _refresh_action_hints(self) -> None:
+        """Re-render the inline per-workspace hint bar.
+
+        The Stop/Start label tracks the highlighted workspace's running
+        state so it never offers the wrong action (#1878).
+        """
+        ws = self._highlighted_ws()
+        toggle = "stop" if (ws is not None and ws.running) else "start"
+        text = (
+            f"[\u21b5 open]  [r restart]  [s {toggle}]"
+            "  [d duplicate]  [x delete]  [e edit]"
+        )
+        for hints in self.query(".ws_hints"):
+            hints.update(Text(text))
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        self._refresh_action_hints()
+
+    def _flash(self, message: str) -> None:
+        """Show a transient message in the status bar's 'extra' slot.
+
+        The next status event overwrites it. There's no dedicated message
+        line on this screen (unlike the detail screen's #detail_msg), so we
+        borrow the status 'extra' channel that already shows transient flags.
+        """
+        self.app.live_extra = message
+        self._refresh_status()
+
+    def action_restart(self) -> None:
+        name = self._require_highlighted()
+        if not name:
+            return
+
+        def _on_confirm(confirmed: bool) -> None:
+            if not confirmed:
+                return
+            self.run_worker(self._do_restart(name), exit_on_error=False)
+
+        self.app.push_screen(
+            ConfirmScreen(
+                f"Restart '{name}'? This ends active terminal sessions"
+                " and recreates the container.",
+                yes_label="Restart",
+                yes_variant="warning",
+            ),
+            _on_confirm,
+        )
+
+    async def _do_restart(self, name: str) -> None:
+        try:
+            await asyncio.to_thread(self.app.tui_state.restart_workspace, name)
+        except Exception as exc:
+            self._flash(f"Restart failed: {exc}")
+            return
+        self._flash(f"Restart requested for '{name}'.")
+        self.app.refresh_workspaces()
+
+    def action_stop(self) -> None:
+        name = self._require_highlighted()
+        if not name:
+            return
+        ws = self._highlighted_ws()
+        if ws is not None and ws.running:
+
+            def _on_confirm(confirmed: bool) -> None:
+                if not confirmed:
+                    return
+                self.run_worker(self._do_stop(name), exit_on_error=False)
+
+            self.app.push_screen(
+                ConfirmScreen(
+                    f"Stop '{name}'? This ends active terminal sessions.",
+                    yes_label="Stop",
+                    yes_variant="warning",
+                ),
+                _on_confirm,
+            )
+        else:
+            self.run_worker(self._do_start(name), exit_on_error=False)
+
+    async def _do_stop(self, name: str) -> None:
+        try:
+            await asyncio.to_thread(self.app.tui_state.stop_workspace, name)
+        except Exception as exc:
+            self._flash(f"Stop failed: {exc}")
+            return
+        self._flash(f"Stop requested for '{name}'.")
+        self.app.refresh_workspaces()
+        self._refresh_action_hints()
+
+    async def _do_start(self, name: str) -> None:
+        try:
+            await asyncio.to_thread(self.app.tui_state.start_workspace, name)
+        except Exception as exc:
+            self._flash(f"Start failed: {exc}")
+            return
+        self._flash(f"Start requested for '{name}'.")
+        self.app.refresh_workspaces()
+        self._refresh_action_hints()
+
+    def action_duplicate(self) -> None:
+        from ._base import DuplicateScreen  # noqa: allow-deferred-import
+
+        name = self._require_highlighted()
+        if not name:
+            return
+
+        def _on_dup(new_name: str | None) -> None:
+            if not new_name:
+                return
+            self.run_worker(
+                self._do_duplicate(name, new_name), exit_on_error=False
+            )
+
+        self.app.push_screen(DuplicateScreen(name), _on_dup)
+
+    async def _do_duplicate(self, src: str, new_name: str) -> None:
+        try:
+            await asyncio.to_thread(
+                self.app.tui_state.duplicate_workspace, src, new_name
+            )
+        except Exception as exc:
+            self._flash(f"Duplicate failed: {exc}")
+            return
+        self._flash(f"Duplicated '{src}' -> '{new_name}'.")
+        self.app.refresh_workspaces()
+
+    def action_delete(self) -> None:
+        name = self._require_highlighted()
+        if not name:
+            return
+
+        def _on_confirm(confirmed: bool) -> None:
+            if not confirmed:
+                return
+            self.run_worker(self._do_delete(name), exit_on_error=False)
+
+        self.app.push_screen(
+            ConfirmScreen(
+                f"Delete '{name}'? This permanently deletes the workspace"
+                " and its container.",
+            ),
+            _on_confirm,
+        )
+
+    async def _do_delete(self, name: str) -> None:
+        try:
+            await asyncio.to_thread(self.app.tui_state.delete_workspace, name)
+        except Exception as exc:
+            self._flash(f"Delete failed: {exc}")
+            return
+        self._flash(f"Deleted '{name}'.")
+        self.app.refresh_workspaces()
+
+    def action_edit(self) -> None:
+        name = self._require_highlighted()
+        if not name:
+            return
+        self.run_worker(self._do_edit(name), exit_on_error=False)
+
+    async def _do_edit(self, name: str) -> None:
+        from .workspace_form import EditWorkspaceScreen  # noqa: allow-deferred-import
+
+        state = self.app.tui_state
+        try:
+            ws = await asyncio.to_thread(state.find_workspace, name)
+        except WorkspaceNotFoundError:
+            self._flash(f"Workspace '{name}' not found.")
+            return
+        except Exception as exc:
+            self._flash(f"Could not load workspace: {exc}")
+            return
+        try:
+            data = await asyncio.to_thread(state.list_images)
+            default = data.get("default", "") or ""
+            allowed = list(data.get("allowed") or [])
+        except Exception:
+            default, allowed = "", []
+        try:
+            allow_autostart = await asyncio.to_thread(state.allow_autostart)
+        except Exception:
+            allow_autostart = False
+        self.app.push_screen(
+            EditWorkspaceScreen(
+                workspace=ws,
+                allowed=allowed,
+                default=default,
+                allow_autostart=allow_autostart,
+            ),
+            self._on_edited,
+        )
+
+    def _on_edited(self, result) -> None:
+        if result:
+            self.refresh_lists()
 
     def action_logout(self) -> None:
         self.app.do_logout()
@@ -459,7 +722,10 @@ class MainScreen(Screen):
                         item.query_one(".ws-name").update(self._fmt_name(ws))
                     except NoMatches:
                         pass
-                    return
+                    break
+        # The highlighted row's running state may have changed — refresh
+        # the Stop/Start hint label so it never offers the wrong action.
+        self._refresh_action_hints()
 
     def _forward_status_to_detail(self, event: dict) -> None:
         """Mirror a live status broadcast onto an open detail screen."""

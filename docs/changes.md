@@ -32,6 +32,14 @@ operators or integrators to act when upgrading.
   current terminal name (right). The workspace name is set as a tmux user
   option (`@workspace_name`) when the base session is created.
 
+- **Per-workspace quick actions on the TUI workspaces list (#1878).** The
+  workspaces page now acts on the highlighted row: `r` restart, `s` stop /
+  start, `d` duplicate, `x` delete, `e` edit (Enter still opens the detail
+  screen). The keys mirror the detail screen, with an inline hint bar above
+  the list whose Stop/Start label tracks the highlighted workspace's state.
+  **`s` is now Stop/Start** (it was Switch server) — Switch server moved to
+  `c`.
+
 - **Account self-service from the CLI and TUI (#1753).** A new
   `klangk account` group (`show`, `passwd`, `handle`, `email`) changes your
   password, handle, or email from the command line, and a new TUI **Account**
