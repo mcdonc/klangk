@@ -83,18 +83,17 @@ STANDARD_HOOK_DIRS = (
     "/etc/containers/oci/hooks.d",
 )
 
-# A hostname or IP (v4/v6), optionally bracketed for v6, with an optional
-# trailing ``:port``. Deliberately permissive on the host grammar — the
-# hook does the real DNS resolution; this just rejects gross mistakes
-# (empty specs, whitespace, non-numeric ports, stray slashes) so a typo in
-# the API is rejected at the boundary rather than failing silently inside
-# the container netns.
+# A hostname or IPv4 address with an optional trailing ``:port``.
+# Deliberately permissive on the host grammar — the hook does the real DNS
+# resolution; this just rejects gross mistakes (empty specs, whitespace,
+# non-numeric ports, stray slashes) so a typo in the API is rejected at the
+# boundary rather than failing silently inside the container netns. IPv6
+# literals are **not** accepted: IPv6 is disabled inside filtered containers
+# (#1936), so a v6 destination is neither reachable nor enforceable, and
+# the bracket grammar (``[::1]:443``) has been removed.
 _DOMAIN_RE = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?"  # hostname / IPv4
     r"(?::[0-9]{1,5})?$"  # optional :port
-)
-_DOMAIN_BRACKET_RE = re.compile(
-    r"^\[[0-9A-Fa-f:.]+\](?::[0-9]{1,5})?$"  # [ipv6](:port)?
 )
 
 
@@ -103,19 +102,11 @@ def _valid_domain_spec(spec: str) -> bool:
         return False
     if "/" in spec:
         return False
-    if not (_DOMAIN_RE.match(spec) or _DOMAIN_BRACKET_RE.match(spec)):
+    if not _DOMAIN_RE.match(spec):
         return False
     # The regex accepts up to 5 digits; additionally reject ports > 65535.
     if ":" in spec:
-        # For bracketed IPv6 ([::1]:port), the port follows ']:'.
-        # For host:port, the port follows the last ':'.
-        if spec.startswith("["):
-            idx = spec.rfind("]:")
-            port_str = (
-                spec[idx + 2 :] if idx >= 0 and idx + 2 < len(spec) else None
-            )
-        else:
-            port_str = spec.rsplit(":", 1)[1]
+        port_str = spec.rsplit(":", 1)[1]
         if port_str and port_str.isdigit() and int(port_str) > 65535:
             return False
     return True
@@ -208,46 +199,41 @@ pid=$(printf '%s' "$state" \
 [ -n "$pid" ] || exit 0
 [ -e "/proc/$pid/ns/net" ] || exit 0
 
-# iptables inside the container's network namespace. Failures are logged
-# to stderr (captured by the OCI runtime) but do not abort the hook — the
-# default-DROP policy below is the fail-closed posture for a misconfigured
-# deploy, and a partial ruleset is still better than none.
+# iptables / ip6tables inside the container's network namespace. Failures
+# are logged to stderr (captured by the OCI runtime) but do not abort the
+# hook — the default-DROP policy below is the fail-closed posture for a
+# misconfigured deploy, and a partial ruleset is still better than none.
 ipt() {
     nsenter --net="/proc/$pid/ns/net" iptables "$@" || \
         echo "klangk-netfilter: iptables $* failed" >&2
 }
-
-# Resolve a hostname to unique A/AAAA IPs, one per line.
-resolve() {
-    getent ahosts "$1" 2>/dev/null | awk '{print $1}' | sort -u
+ipt6() {
+    nsenter --net="/proc/$pid/ns/net" ip6tables "$@" || \
+        echo "klangk-netfilter: ip6tables $* failed" >&2
 }
 
-# Print one ACCEPT rule per resolved IP for a host[:port] spec. Handles
-# bracketed IPv6 literals ([::1], [2001:db8::1]:443) — the brackets are
-# stripped and the optional ]:port suffix parsed — as well as plain
-# hostnames/IPv4 with an optional :port. A non-numeric port is skipped
-# defensively (the API validator rejects these, but the hook never trusts
-# the annotation blindly).
+# Resolve a hostname to unique IPv4 A records, one per line. AAAA (IPv6)
+# records are filtered out: IPv6 is disabled in the container netns (#1936),
+# so a v6 address is neither reachable nor installable in iptables (which
+# is v4-only and would reject `-d <v6>`, logging noise to stderr).
+resolve() {
+    getent ahosts "$1" 2>/dev/null \
+        | awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print $1}' \
+        | sort -u
+}
+
+# Print one ACCEPT rule per resolved IPv4 for a host[:port] spec. A
+# non-numeric port is skipped defensively (the API validator rejects
+# these, but the hook never trusts the annotation blindly). Bracketed
+# IPv6 literals are no longer accepted — IPv6 is disabled in the
+# container netns, so the v6 grammar has been removed (#1936).
 accept_rules() {
     _spec=$1
-    _host=
+    # hostname / IPv4, optional :port.
+    _host=${_spec%%:*}
     _port=
     case "$_spec" in
-        "["*"]"*)
-            # [ipv6] or [ipv6]:port — drop the brackets + parse the port.
-            _host=${_spec%%]*}        # "[ipv6"  (strip ](:port) suffix)
-            _host=${_host#?}          # "ipv6"   (strip leading [)
-            case "$_spec" in
-                *"]:"*) _port=${_spec##*:} ;;
-            esac
-            ;;
-        *)
-            # hostname / IPv4, optional :port.
-            _host=${_spec%%:*}
-            case "$_spec" in
-                *:*) _port=${_spec##*:} ;;
-            esac
-            ;;
+        *:*) _port=${_spec##*:} ;;
     esac
     [ -n "$_host" ] || return 0
     # Defensive: skip a non-numeric port rather than emit a bad rule.
@@ -269,6 +255,23 @@ accept_rules() {
 ipt -P OUTPUT DROP
 ipt -A OUTPUT -o lo -j ACCEPT
 ipt -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# Disable IPv6 egress entirely (#1936). The v4 ruleset above is the real
+# filter, but ip6tables' OUTPUT policy defaults to ACCEPT — without this,
+# any IPv6 egress bypasses the allow-list whenever the container has IPv6
+# connectivity (and nearly every common host publishes a AAAA record).
+# Two mechanisms, defense-in-depth:
+#   1. sysctl net.ipv6.conf.{all,default}.disable_ipv6=1 turns IPv6 OFF in
+#      this netns (removes v6 addresses; the container cannot speak v6).
+#   2. ip6tables -P OUTPUT DROP is a routing-level default-deny that holds
+#      even if the sysctl write fails (ip6tables missing, or the knob not
+#      writable). Each failure is logged, not fatal — together they close
+#      the v6 bypass; neither alone is fully trustworthy on every deploy.
+nsenter --net="/proc/$pid/ns/net" sysctl -qw \
+    net.ipv6.conf.all.disable_ipv6=1 \
+    net.ipv6.conf.default.disable_ipv6=1 2>/dev/null || \
+    echo "klangk-netfilter: sysctl ipv6 disable failed (relying on ip6tables DROP)" >&2
+ipt6 -P OUTPUT DROP
 
 # DNS: allow :53 ONLY to the container's configured resolvers (read from
 # its /etc/resolv.conf via /proc/$pid/root — the OCI runtime has set up the

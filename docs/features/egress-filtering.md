@@ -30,6 +30,13 @@ starts.
    the backend gateway (`host.containers.internal`, resolved from the
    container's `/etc/hosts`), and the resolved allowed destinations are
    `ACCEPT`ed. Everything else is dropped.
+5. **IPv6 is disabled** in the container's network namespace — the hook
+   sets `net.ipv6.conf.all.disable_ipv6=1` (turns the protocol off) and
+   `ip6tables -P OUTPUT DROP` (a routing-level default-deny that holds
+   even if the sysctl write fails). Only IPv4 egress is possible, so the
+   allow-list cannot be bypassed over IPv6 (#1936). `allowed_domains`
+   therefore accepts only hostnames and IPv4 addresses (no `[ipv6]`
+   literals), and AAAA records returned by DNS are ignored.
 
 The hook runs **before** the container process starts, so the ruleset is in
 place and immutable before any user code runs — `CAP_NET_ADMIN` is dropped
@@ -42,11 +49,14 @@ script (`klangk-netfilter.sh`) and its config (`klangk-netfilter.json`)
 into a hooks directory and registers the OCI `createContainer` hook — no
 configuration is required for the common case.
 
-1. Ensure `iptables`, `getent`, and `nsenter` are available where the OCI
-   runtime executes (the host, or the Docker-in-Docker outer container —
-   _not_ the workspace image). The documented DinD deployment already has
-   `CAP_SYS_ADMIN` + `seccomp=unconfined`, which provides the necessary
-   privileges.
+1. Ensure `iptables`, `ip6tables`, `sysctl`, `getent`, and `nsenter` are
+   available where the OCI runtime executes (the host, or the
+   Docker-in-Docker outer container — _not_ the workspace image). The
+   documented DinD deployment already has `CAP_SYS_ADMIN` +
+   `seccomp=unconfined`, which provides the necessary privileges.
+   (`ip6tables` + `sysctl` disable IPv6 in the container netns, #1936;
+   if either is absent the hook logs a warning and falls back to the
+   other mechanism, but both should be present for defense-in-depth.)
 2. The hooks dir defaults to `<state_dir>/oci-hooks`
    (`KLANGKD_STATE_DIR`/`oci-hooks`). Override
    `KLANGKD_NETFILTER_HOOKS_DIR` only when the OCI runtime can't see
@@ -139,6 +149,9 @@ curl -X PUT https://klangkd/api/v1/workspaces/<id> \
 
 - `host` allows all ports to that host.
 - `host:port` allows a single TCP port (port must be 1–65535).
+- IPv6 literals (e.g. `[::1]`, `[2001:db8::1]:443`) are **not** accepted
+  — IPv6 is disabled inside filtered containers, so a v6 destination is
+  neither reachable nor enforceable (#1936).
 - Each entry is validated server-side; malformed entries are rejected with
   HTTP 400.
 - An empty list (or `null`) **inherits the deploy-wide default**
@@ -491,6 +504,14 @@ netfilter_default_domains:
 
 ## Caveats
 
+- **IPv6 is disabled — IPv4 egress only.** The hook turns IPv6 off in the
+  container's network namespace (`net.ipv6.conf.all.disable_ipv6=1`) and
+  default-denies IPv6 `OUTPUT` via `ip6tables`, so the allow-list can't
+  be bypassed over v6 (#1936). Hostnames resolve to IPv4 only (AAAA
+  records are ignored), and `[ipv6]:port` literals are rejected by the
+  validator. Trade-off: a workspace that genuinely needs IPv6 egress
+  cannot use the filter — clear `allowed_domains` (and the deploy-wide
+  default) to run it unrestricted.
 - **DNS resolution at creation time — restart on IP change.** iptables
   matches IPs, so hostnames are resolved once when the container is
   created. If a service rotates IPs (common with CDNs like Fastly,

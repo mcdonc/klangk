@@ -49,27 +49,27 @@ def validate_mount_spec(spec: str) -> str | None:
 
 
 # An egress allowed-domain entry: ``host`` or ``host:port`` (DNS name or
-# IPv4), or a bracketed IPv6 literal (``[::1]`` / ``[2001:db8::1]:443``).
+# IPv4). IPv6 literals are rejected — IPv6 is disabled inside filtered
+# containers (#1936), so a v6 destination is neither reachable nor
+# enforceable, and the bracket grammar (``[::1]:443``) has been removed.
 # This catches gross typos client-side; the server
 # (:func:`klangk.netfilter.parse_allowed_domains`) does the authoritative
 # check (#1365, #1745).
 _ALLOWED_DOMAIN_RE = re.compile(
-    r"^(?:"
-    r"\[[0-9a-fA-F:.]+\](?::\d{1,5})?"  # [ipv6] or [ipv6]:port
-    r"|"
-    r"[^\[\]/\s:]+(?::\d{1,5})?"  # host or host:port
-    r")$"
+    r"^[^\[\]/\s:]+(?::\d{1,5})?$"  # host or host:port (IPv4 / DNS)
 )
 
 
 def validate_allowed_domain_spec(spec: str) -> str | None:
     """Validate an egress allowed-domain entry (``host`` or ``host:port``).
 
-    Returns None if valid, or an error message. Accepts a DNS name or IP
-    (IPv4, or a bracketed IPv6 literal like ``[::1]`` / ``[::1]:443``),
-    optionally followed by ``:port``. Empty / whitespace / stray slashes
-    are rejected. Mirrors the Flutter ``validateAllowedDomainSpec`` and the
-    TUI editor; the server does the authoritative validation (#1365, #1745).
+    Returns None if valid, or an error message. Accepts a DNS name or IPv4
+    address, optionally followed by ``:port``. Empty / whitespace / stray
+    slashes / IPv6 literals (``[::1]``) are rejected — IPv6 is disabled
+    inside filtered containers (#1936), so a v6 destination is neither
+    reachable nor enforceable. Mirrors the Flutter
+    ``validateAllowedDomainSpec`` and the TUI editor; the server does the
+    authoritative validation (#1365, #1745).
     """
     s = spec.strip()
     if not s:
@@ -77,6 +77,6 @@ def validate_allowed_domain_spec(spec: str) -> str | None:
     if not _ALLOWED_DOMAIN_RE.match(s):
         return (
             f"Invalid allowed-domain {spec!r}: "
-            "expected host or host:port (IPv6 in brackets)"
+            "expected host or host:port (IPv4 only)"
         )
     return None

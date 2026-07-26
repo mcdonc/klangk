@@ -49,8 +49,6 @@ class TestParseAllowedDomains:
             "10.0.0.1:53",
             "sub.domain.example.com:8080",
             "a.com:65535",  # max valid port
-            "[::1]",
-            "[2001:db8::1]:443",
         ],
     )
     def test_valid_specs(self, spec):
@@ -63,6 +61,8 @@ class TestParseAllowedDomains:
             "a.com:abc",  # non-numeric port
             "a.com:123456",  # port too long (>5 digits)
             "a.com:99999",  # port > 65535
+            "[::1]",  # IPv6 literal — IPv6 disabled in containers (#1936)
+            "[2001:db8::1]:443",  # bracketed IPv6 — no longer accepted
             "[::1]:70000",  # bracketed IPv6, port > 65535
             "/etc/passwd",  # slash
             "-leading",  # leading hyphen rejected by host grammar
@@ -358,7 +358,9 @@ def _state(rules, *, with_pid=True):
     return json.dumps(s)
 
 
-def _run_hook(tmp_path, state, getent_map=None, resolv=None, hosts=None):
+def _run_hook(
+    tmp_path, state, getent_map=None, resolv=None, hosts=None, sysctl_rc=0
+):
     """Execute ``nf.HOOK_SCRIPT`` against ``state``; return recorded iptables
     invocations (each a ``list[str]`` of argv).
 
@@ -385,7 +387,10 @@ def _run_hook(tmp_path, state, getent_map=None, resolv=None, hosts=None):
     )
     resolv_file.write_text(resolv or "")
     hosts_file.write_text(hosts or "")
-    # getent ahosts <host> shim: resolve from the | map, else echo the host.
+    # getent ahosts <host> shim: emit realistic `IP STREAM host` rows (real
+    # getent prints "<ip> STREAM <host>" / DGRAM / RAW, NOT a bare IP), so a
+    # resolve()-regex anchored to end-of-line gets caught here instead of in
+    # production (#1937 review). Resolve from the | map, else echo the host.
     (bin_dir / "getent").write_text(
         "#!/bin/sh\n"
         f'map="{map_file}"\n'
@@ -393,22 +398,30 @@ def _run_hook(tmp_path, state, getent_map=None, resolv=None, hosts=None):
         'if [ -f "$map" ]; then\n'
         '  while IFS="|" read -r h ips; do\n'
         '    if [ "$h" = "$host" ]; then\n'
-        '      printf "%s\\n" "$ips" | tr "," "\\n"\n'
+        '      printf "%s\\n" "$ips" | tr "," "\\n" \\\n'
+        '        | while IFS= read -r ip; do printf "%s STREAM %s\\n" "$ip" "$host"; done\n'
         "      exit 0\n"
         "    fi\n"
         '  done < "$map"\n'
         "fi\n"
-        'printf "%s\\n" "$host"\n'
+        'printf "%s STREAM %s\\n" "$host" "$host"\n'
     )
     (bin_dir / "getent").chmod(0o755)
-    # nsenter shim: drop the --net flag + the "iptables" token, then re-exec
-    # the iptables shim with the remaining args (the real netns is irrelevant
-    # to what we're asserting, which is the argv the hook builds).
+    # nsenter shim: drop --net, then dispatch on the command token. The
+    # hook drives three commands through nsenter — iptables (v4 rules),
+    # ip6tables, and sysctl (#1936 disables IPv6 in the container netns) —
+    # so a blind "shift twice, exec iptables" would force ip6tables/sysctl
+    # argv through the iptables recorder and corrupt the v4 assertions.
     (bin_dir / "nsenter").write_text(
         "#!/bin/sh\n"
         "shift  # --net=/proc/.../ns/net\n"
-        'shift  # "iptables"\n'
-        'exec iptables "$@"\n'
+        'cmd="$1"; shift\n'
+        'case "$cmd" in\n'
+        '  iptables) exec iptables "$@" ;;\n'
+        '  ip6tables) exec ip6tables "$@" ;;\n'
+        '  sysctl) exec sysctl "$@" ;;\n'
+        '  *) echo "nsenter shim: unknown command $cmd" >&2; exit 1 ;;\n'
+        "esac\n"
     )
     (bin_dir / "nsenter").chmod(0o755)
     # iptables shim: record argv, one arg per line, blank line between calls.
@@ -422,6 +435,33 @@ def _run_hook(tmp_path, state, getent_map=None, resolv=None, hosts=None):
         "exit 0\n"
     )
     (bin_dir / "iptables").chmod(0o755)
+    # ip6tables shim (#1936): records to its own log so v6 calls don't
+    # pollute the v4 iptables assertions.
+    ip6_record = tmp_path / "ip6tables.log"
+    (bin_dir / "ip6tables").write_text(
+        "#!/bin/sh\n"
+        f'rec="{ip6_record}"\n'
+        'for a in "$@"; do\n'
+        '  printf "%s\\n" "$a" >>"$rec"\n'
+        "done\n"
+        'printf "\\n" >>"$rec"\n'
+        "exit 0\n"
+    )
+    (bin_dir / "ip6tables").chmod(0o755)
+    # sysctl shim (#1936): records the disable_ipv6 argv, exits sysctl_rc
+    # (default 0; tests pass sysctl_rc=1 to exercise the hook's fallback to
+    # ip6tables DROP when the sysctl write fails — #1937 review).
+    sysctl_record = tmp_path / "sysctl.log"
+    (bin_dir / "sysctl").write_text(
+        "#!/bin/sh\n"
+        f'rec="{sysctl_record}"\n'
+        'for a in "$@"; do\n'
+        '  printf "%s\\n" "$a" >>"$rec"\n'
+        "done\n"
+        'printf "\\n" >>"$rec"\n'
+        f"exit {sysctl_rc}\n"
+    )
+    (bin_dir / "sysctl").chmod(0o755)
 
     hook = bin_dir / "klangk-netfilter.sh"
     hook.write_text(nf.HOOK_SCRIPT)
@@ -443,6 +483,9 @@ def _run_hook(tmp_path, state, getent_map=None, resolv=None, hosts=None):
     assert proc.returncode == 0, (
         f"hook exited {proc.returncode}\nstderr:\n{proc.stderr}"
     )
+    # Capture stderr so tests can assert the hook's warning echoes (e.g. the
+    # sysctl-failed fallback message) — #1937 review.
+    (tmp_path / "hook.stderr").write_text(proc.stderr)
     if not record.exists():
         return []
     calls = []
@@ -457,6 +500,19 @@ def _run_hook(tmp_path, state, getent_map=None, resolv=None, hosts=None):
 def _accept_rules(calls):
     """The per-destination ACCEPT invocations: [-A, OUTPUT, -d, <ip>, ...]."""
     return [c for c in calls if c[:3] == ["-A", "OUTPUT", "-d"]]
+
+
+def _calls_from(log_path):
+    """Parse a shim's blank-line-separated argv log into a list of calls."""
+    if not log_path.exists():
+        return []
+    calls = []
+    for block in log_path.read_text().split("\n\n"):
+        args = block.split("\n")
+        if args == [""]:
+            continue
+        calls.append(args)
+    return calls
 
 
 class TestHookScriptExecutable:
@@ -530,53 +586,18 @@ class TestHookScriptExecutable:
             ],
         ]
 
-    def test_bracketed_ipv6_with_port(self, tmp_path):
-        # B2 regression: [2001:db8::1]:443 is blessed by the API validator
-        # but the hook's ':' suffix-splitting mangled it (_host="[2001").
-        # Brackets must be stripped and the port parsed.
-        calls = _run_hook(
-            tmp_path,
-            _state("[2001:db8::1]:443"),
-            getent_map={"2001:db8::1": ["2001:db8::1"]},
-        )
-        assert _accept_rules(calls) == [
-            [
-                "-A",
-                "OUTPUT",
-                "-d",
-                "2001:db8::1",
-                "-p",
-                "tcp",
-                "--dport",
-                "443",
-                "-j",
-                "ACCEPT",
-            ],
-        ]
-
-    def test_bracketed_ipv6_without_port(self, tmp_path):
-        # B2: [::1] (no port) — brackets stripped, no --dport emitted.
-        calls = _run_hook(
-            tmp_path,
-            _state("[::1]"),
-            getent_map={"::1": ["::1"]},
-        )
-        assert _accept_rules(calls) == [
-            ["-A", "OUTPUT", "-d", "::1", "-j", "ACCEPT"],
-        ]
-
     def test_multiple_specs_all_applied_in_order(self, tmp_path):
         # The whole CSV is split and each spec yields its rules.
         calls = _run_hook(
             tmp_path,
-            _state("github.com:443,pypi.org,[::1]"),
+            _state("github.com:443,pypi.org,10.0.0.1"),
             getent_map={
                 "github.com": ["140.82.112.4"],
                 "pypi.org": ["151.101.0.0"],
             },
         )
         dests = [c[3] for c in _accept_rules(calls)]
-        assert dests == ["140.82.112.4", "151.101.0.0", "::1"]
+        assert dests == ["140.82.112.4", "151.101.0.0", "10.0.0.1"]
 
     def test_host_without_port_allows_all_ports(self, tmp_path):
         calls = _run_hook(
@@ -664,3 +685,80 @@ class TestHookScriptExecutable:
             hosts="127.0.0.1 localhost\n",
         )
         assert not any("-d" in c and "10.0.2.2" in c for c in calls)
+
+    # --- #1936: IPv6 disabled in the container netns (v4-only egress) ---
+
+    def test_ipv6_disabled_via_sysctl(self, tmp_path):
+        # sysctl net.ipv6.conf.{all,default}.disable_ipv6=1 turns IPv6 OFF
+        # in the container netns so the v4-only allow-list can't be
+        # bypassed over v6 (ip6tables OUTPUT otherwise defaults to ACCEPT).
+        _run_hook(
+            tmp_path,
+            _state("github.com:443"),
+            getent_map={"github.com": ["140.82.112.4"]},
+        )
+        sysctl = _calls_from(tmp_path / "sysctl.log")
+        # One call carrying both knobs (the hook batches them).
+        assert len(sysctl) == 1
+        argv = sysctl[0]
+        assert "net.ipv6.conf.all.disable_ipv6=1" in argv
+        assert "net.ipv6.conf.default.disable_ipv6=1" in argv
+
+    def test_ipv6_output_default_dropped(self, tmp_path):
+        # Belt-and-suspenders: ip6tables OUTPUT policy is DROP regardless of
+        # whether the sysctl write took, so v6 egress is default-denied even
+        # on a deploy where the sysctl knob can't be written.
+        _run_hook(
+            tmp_path,
+            _state("github.com:443"),
+            getent_map={"github.com": ["140.82.112.4"]},
+        )
+        assert ["-P", "OUTPUT", "DROP"] in _calls_from(
+            tmp_path / "ip6tables.log"
+        )
+
+    def test_ipv6_drop_holds_when_sysctl_fails(self, tmp_path):
+        # The actual security property the changelog leans on: even if the
+        # sysctl write fails (sysctl absent, or the knob not writable),
+        # ip6tables -P OUTPUT DROP still fires so v6 egress is default-denied
+        # regardless. The hook logs the fallback and continues (non-fatal).
+        _run_hook(
+            tmp_path,
+            _state("github.com:443"),
+            getent_map={"github.com": ["140.82.112.4"]},
+            sysctl_rc=1,
+        )
+        assert ["-P", "OUTPUT", "DROP"] in _calls_from(
+            tmp_path / "ip6tables.log"
+        )
+        assert (
+            "sysctl ipv6 disable failed"
+            in (tmp_path / "hook.stderr").read_text()
+        )
+
+    def test_aaaa_records_filtered_from_resolution(self, tmp_path):
+        # A dual-stack host yields both A and AAAA records from getent; the
+        # hook emits an ACCEPT rule ONLY for the v4 address. v6 is disabled
+        # in the container (#1936) AND iptables is v4-only (it would reject
+        # `-d <v6>` and log noise), so AAAA records are filtered out.
+        calls = _run_hook(
+            tmp_path,
+            _state("dual.example:443"),
+            getent_map={"dual.example": ["140.82.112.4", "2001:db8::1"]},
+        )
+        assert _accept_rules(calls) == [
+            [
+                "-A",
+                "OUTPUT",
+                "-d",
+                "140.82.112.4",
+                "-p",
+                "tcp",
+                "--dport",
+                "443",
+                "-j",
+                "ACCEPT",
+            ],
+        ]
+        # No v6 ACCEPT attempt reached iptables (no noise, no leak).
+        assert not any("2001:db8::1" in c for c in calls)
