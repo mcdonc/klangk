@@ -22,6 +22,7 @@ from klangk.caddy import (
     CaddyRenderer,
     CaddyWatchdog,
     _classify_caddy_line,
+    _is_bind_error,
 )
 from klangk.caddy import (
     CADDYFILE_CONTENT_TYPE,
@@ -1594,3 +1595,66 @@ class TestLogListeners:
             wd._log_listeners()
         assert "browser" not in caplog.text
         assert "caddy egress listening on 0.0.0.0:8995" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# _is_bind_error (#1917)
+# ---------------------------------------------------------------------------
+
+
+class TestIsBindError:
+    """Detect Caddy bind failures from structured JSON stderr lines."""
+
+    def test_admin_bind_address_in_use(self):
+        line = (
+            '{"level":"error","logger":"admin",'
+            '"msg":"listen unix //tmp/caddy.sock: bind: address already in use"}'
+        )
+        assert _is_bind_error(line) is True
+
+    def test_http_bind_address_in_use(self):
+        line = (
+            '{"level":"error","logger":"http",'
+            '"msg":"listen tcp :8443: bind: address already in use"}'
+        )
+        assert _is_bind_error(line) is True
+
+    def test_bind_permission_denied(self):
+        line = (
+            '{"level":"error","logger":"admin",'
+            '"msg":"listen unix //run/caddy.sock: bind: permission denied"}'
+        )
+        assert _is_bind_error(line) is True
+
+    def test_non_bind_error_is_false(self):
+        line = '{"level":"error","logger":"admin","msg":"listener closed"}'
+        assert _is_bind_error(line) is False
+
+    def test_info_level_is_false(self):
+        line = (
+            '{"level":"info","logger":"admin",'
+            '"msg":"admin endpoint started, bind to unix socket"}'
+        )
+        assert _is_bind_error(line) is False
+
+    def test_non_json_is_false(self):
+        assert _is_bind_error("panic: something broke") is False
+
+    def test_no_msg_field_is_false(self):
+        line = '{"level":"error","logger":"admin"}'
+        assert _is_bind_error(line) is False
+
+
+# ---------------------------------------------------------------------------
+# CaddyWatchdog._bind_fatal flag (#1917)
+# ---------------------------------------------------------------------------
+
+
+class TestWatchdogBindFatal:
+    """The watchdog aborts instead of respawning on bind errors."""
+
+    def test_init_flag_is_false(self):
+        app = Mock()
+        app.state.settings.state_dir = "/tmp"
+        wd = CaddyWatchdog(app)
+        assert wd._bind_fatal is False

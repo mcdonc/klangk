@@ -96,6 +96,25 @@ def _classify_caddy_line(line: str) -> tuple[int, str]:
     return logging.DEBUG, msg
 
 
+def _is_bind_error(line: str) -> bool:
+    """Return True if *line* is a Caddy bind failure (admin, ingress, or egress).
+
+    Caddy emits structured JSON to stderr when it can't bind a listener.
+    Admin socket failures come from ``"logger":"admin"``; HTTP listener
+    failures (ingress/egress ports) come from other loggers but contain
+    the same bind-related keywords in the message. Detecting any of these
+    lets the watchdog abort instead of respawning in a tight loop (#1917).
+    """
+    try:
+        obj = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    msg = (obj.get("msg") or "").lower()
+    # Go's net package formats socket bind errors as
+    # "bind: address already in use" or "bind: permission denied".
+    return "address already in use" in msg or "bind: permission denied" in msg
+
+
 # ---------------------------------------------------------------------------
 # Upstream constructors (pure — no settings)
 # ---------------------------------------------------------------------------
@@ -775,6 +794,10 @@ class CaddyWatchdog:
         # sync reconfigure loop). #1559 Phase 1: a settings change is a
         # fresh POST /load, not stale-until-restart.
         self._pending_reload = False
+        # Set by _relay_stderr when Caddy emits a bind error (admin socket,
+        # ingress, or egress port). The _watch loop checks this after the
+        # process exits and aborts instead of respawning (#1917).
+        self._bind_fatal = False
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -900,8 +923,8 @@ class CaddyWatchdog:
                 await asyncio.sleep(0.2)
         return False
 
-    @staticmethod
     async def _relay_stderr(
+        self,
         stream: asyncio.StreamReader,
     ) -> None:  # pragma: no cover  – covered by the e2e suite
         """Read Caddy's stderr line-by-line and relay through Python logging.
@@ -909,6 +932,10 @@ class CaddyWatchdog:
         Errors are logged at ERROR; routine info/warn messages are logged at
         DEBUG so they're hidden by default but accessible via
         ``KLANGKD_LOG_LEVEL=DEBUG``.
+
+        When a bind failure is detected (admin socket, ingress, or egress
+        listener), sets ``_bind_fatal`` so the supervision loop exits
+        instead of respawning (#1917).
         """
         while True:
             raw = await stream.readline()
@@ -919,6 +946,8 @@ class CaddyWatchdog:
                 continue
             level, msg = _classify_caddy_line(line)
             logger.log(level, "caddy: %s", msg)
+            if level >= logging.ERROR and _is_bind_error(line):
+                self._bind_fatal = True
 
     def _log_listeners(self) -> None:
         """Log which addresses Caddy is serving after a successful config load."""
@@ -960,6 +989,7 @@ class CaddyWatchdog:
             self._renderer._bootstrap_block(self.admin_socket)
         )
         while not self._stopping:
+            self._bind_fatal = False
             # A stale socket from a prior run blocks the bind.
             try:
                 os.unlink(self.admin_socket)
@@ -1015,6 +1045,15 @@ class CaddyWatchdog:
                 await stderr_task
             self._proc = None
             if self._stopping:
+                return
+            if self._bind_fatal:
+                logger.error(
+                    "caddy failed to bind a listener (rc=%d) — not "
+                    "restarting. Check the admin socket (%s), ingress "
+                    "port, and egress port, then restart klangkd.",
+                    rc,
+                    self.admin_socket,
+                )
                 return
             logger.warning(
                 "caddy exited (rc=%d); restarting in %.1fs", rc, backoff
