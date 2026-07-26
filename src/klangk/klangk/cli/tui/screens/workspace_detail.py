@@ -118,7 +118,6 @@ class WorkspaceDetailScreen(Screen):
             self._ws = None
             self._missing = False
             self._load_error = "Session expired — please log in again."
-            self.app.session_expired()
         except Exception as exc:
             self._ws = None
             self._missing = False

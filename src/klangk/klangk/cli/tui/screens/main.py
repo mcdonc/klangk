@@ -624,7 +624,6 @@ class MainScreen(Screen):
                     sel, [], empty_label="(session expired — re-login)"
                 )
             self._refresh_status()
-            self.app.session_expired()
             return
         self._owned_all = owned
         self._shared_all = shared

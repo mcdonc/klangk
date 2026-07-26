@@ -166,6 +166,29 @@ async def _async_empty(*a, **k):
     return []
 
 
+# Capture the real refresh loop before any test stubs it, so direct-call
+# coverage tests can still exercise it despite the autouse stub below.
+_real_run_token_refresh_loop = scr_main.run_token_refresh_loop
+
+
+@pytest.fixture(autouse=True)
+def _stub_tui_bg_workers(monkeypatch):
+    """Stub MainScreen's on-mount bg workers for every TUI test.
+
+    #1882's on_mount spawns a status-WS worker and a proactive token-refresh
+    worker (a 60s-sleep loop). The refresh loop never completes during a
+    test, wedging ``wait_for_complete()`` for any test that mounts a
+    MainScreen without stubbing it. Tests that need the real refresh loop
+    call ``_real_run_token_refresh_loop`` directly.
+    """
+
+    async def _noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", _noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", _noop)
+
+
 # ---------------------------------------------------------------------------
 # config.add_server_to_config
 # ---------------------------------------------------------------------------
@@ -7311,30 +7334,6 @@ async def test_session_expired_noop_on_login_screen(monkeypatch):
         assert isinstance(app.screen, LoginScreen)
 
 
-async def test_workspace_load_auth_error_triggers_session_expired(monkeypatch):
-    """WorkspaceDetailScreen._load() calls session_expired on AuthError."""
-
-    async def noop(*a, **k):
-        return None
-
-    monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
-    st = _ws()
-
-    def _raise_auth(*a, **k):
-        raise AuthError("expired")
-
-    st.find_workspace = _raise_auth
-    expired_calls = []
-    app = KlangkApp(st)
-    async with app.run_test() as pilot:
-        app.session_expired = lambda: expired_calls.append(True)
-        app.push_screen(WorkspaceDetailScreen("ws"))
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert expired_calls == [True]
-
-
 async def test_workspace_load_generic_error_surfaces_message(monkeypatch):
     """WorkspaceDetailScreen._load() shows the error for non-auth failures."""
 
@@ -7387,7 +7386,7 @@ async def test_run_token_refresh_loop_returns_expired_on_failure(monkeypatch):
             return fake_jwt
 
     monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: None)
-    result = await scr_main.run_token_refresh_loop(FakeState())
+    result = await _real_run_token_refresh_loop(FakeState())
     assert result == "expired"
 
 
@@ -7402,7 +7401,7 @@ async def test_run_token_refresh_loop_returns_no_token(monkeypatch):
         def token(self):
             return None
 
-    result = await scr_main.run_token_refresh_loop(FakeState())
+    result = await _real_run_token_refresh_loop(FakeState())
     assert result == "no_token"
 
 
@@ -7429,7 +7428,7 @@ async def test_run_token_refresh_loop_skips_when_exp_missing(monkeypatch):
         def token(self):
             return next(tokens)
 
-    result = await scr_main.run_token_refresh_loop(FakeState())
+    result = await _real_run_token_refresh_loop(FakeState())
     assert result == "no_token"
 
 
@@ -7447,7 +7446,7 @@ async def test_run_token_refresh_loop_skips_when_far_from_expiry(monkeypatch):
         def token(self):
             return next(tokens)
 
-    result = await scr_main.run_token_refresh_loop(FakeState())
+    result = await _real_run_token_refresh_loop(FakeState())
     assert result == "no_token"
 
 
@@ -7466,7 +7465,7 @@ async def test_run_token_refresh_loop_refreshes_near_expiry(monkeypatch):
             return next(tokens)
 
     monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: "newtok")
-    result = await scr_main.run_token_refresh_loop(FakeState())
+    result = await _real_run_token_refresh_loop(FakeState())
     assert result == "no_token"
 
 
@@ -7571,5 +7570,5 @@ async def test_run_token_refresh_loop_concurrent_rotation(monkeypatch):
             return next(tokens)
 
     monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: None)
-    result = await scr_main.run_token_refresh_loop(FakeState())
+    result = await _real_run_token_refresh_loop(FakeState())
     assert result == "no_token"
