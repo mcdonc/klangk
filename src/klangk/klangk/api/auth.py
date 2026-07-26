@@ -376,6 +376,12 @@ async def refresh_token(request: Request):
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
     token = authorization[7:]
+    logger.info(
+        "REFRESH CALL ua=%s origin=%s referer=%s",
+        request.headers.get("user-agent", "?"),
+        request.headers.get("origin", "?"),
+        request.headers.get("referer", "?"),
+    )
     return await request.app.state.auth.refresh_token(token)
 
 
@@ -523,8 +529,26 @@ async def logout(
     # the ``terminal`` permission). Stopping on logout was a holdover from
     # the per-user-container era and destroyed service sessions that should
     # outlive any single user's login.
-    # Blocklist the token so it can't be reused after logout
+    # --- instrumentation: identify who is calling logout (#1877 follow-up) ---
     authorization = request.headers.get("authorization", "")
+    _h = request.headers
+    _ip = (
+        _h.get("x-forwarded-for")
+        or _h.get("x-real-ip")
+        or getattr(request.client, "host", "?")
+    )
+    logger.info(
+        "LOGOUT CALL x_forwarded_for=%r ip=%s ua=%s origin=%s referer=%s "
+        "scope_client=%s scope_server=%s",
+        _h.get("x-forwarded-for"),
+        _ip,
+        _h.get("user-agent", "?"),
+        _h.get("origin", "?"),
+        _h.get("referer", "?"),
+        request.scope.get("client"),
+        request.scope.get("server"),
+    )
+    # Blocklist the token so it can't be reused after logout
     if authorization.startswith("Bearer "):
         await request.app.state.auth.logout(authorization[7:])
 
