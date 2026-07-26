@@ -440,6 +440,24 @@ class TestCLIState:
         state = CLIState()
         state.clear_credentials("http://nope:8995")  # should not raise
 
+    def test_rename_user_moves_token_and_active(self):
+        state = CLIState()
+        state.set_credentials("http://s:8995", "old@t.com", "tok")
+        state.rename_user("http://s:8995", "old@t.com", "new@t.com")
+        ss = state.servers["http://s:8995"]
+        assert "old@t.com" not in ss.users
+        assert ss.users["new@t.com"].token == "tok"  # token preserved
+        assert ss.active_user == "new@t.com"
+        assert state.get_token("http://s:8995") == "tok"
+
+    def test_rename_user_unknown_is_noop(self):
+        state = CLIState()
+        state.set_credentials("http://s:8995", "old@t.com", "tok")
+        state.rename_user("http://s:8995", "ghost@t.com", "new@t.com")
+        # unchanged
+        assert state.get_email("http://s:8995") == "old@t.com"
+        assert state.get_token("http://s:8995") == "tok"
+
 
 # --- Auth tests ---
 

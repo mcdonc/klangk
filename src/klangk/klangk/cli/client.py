@@ -331,6 +331,58 @@ class KlangkClient:
         self._raise_for_status(resp)
         return resp.json()["handle"]
 
+    def get_me(self) -> dict:
+        """Return the current user's profile via ``GET /auth/me``.
+
+        A dict with ``id``, ``email`` and ``handle``. Unlike the
+        ``change_*`` methods, a 401 here genuinely means the session has
+        expired, so ``check_auth`` maps it to the friendly
+        "Session expired" error (mirroring ``get_handle``).
+        """
+        resp = self.get("/api/v1/auth/me")
+        self.check_auth(resp)
+        self._raise_for_status(resp)
+        return resp.json()
+
+    def change_password(
+        self, current_password: str, new_password: str
+    ) -> None:
+        """Change the current user's password via ``POST /auth/change-password``.
+
+        Note: ``check_auth`` is intentionally skipped — this endpoint returns
+        401 for a wrong current password, and we want the server's ``detail``
+        ("Current password is incorrect") to surface rather than the generic
+        session-expired message.
+        """
+        resp = self.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": current_password,
+                "new_password": new_password,
+            },
+        )
+        self._raise_for_status(resp)
+
+    def change_email(self, email: str, password: str) -> None:
+        """Change the current user's email via ``POST /auth/change-email``."""
+        resp = self.post(
+            "/api/v1/auth/change-email",
+            json={"email": email, "password": password},
+        )
+        self._raise_for_status(resp)
+
+    def change_handle(self, handle: str, password: str) -> str:
+        """Change the current user's handle via ``POST /auth/change-handle``.
+
+        Returns the handle the server accepted.
+        """
+        resp = self.post(
+            "/api/v1/auth/change-handle",
+            json={"handle": handle, "password": password},
+        )
+        self._raise_for_status(resp)
+        return resp.json().get("handle", handle)
+
     def list_workspaces(
         self,
         limit: int = 10,

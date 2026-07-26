@@ -39,6 +39,7 @@ from klangk.cli.config import (
     update_server_in_config,
 )
 from klangk.cli.tui.screens import (
+    AccountScreen,
     AddServerScreen,
     ConfirmScreen,
     CreateWorkspaceScreen,
@@ -5924,3 +5925,585 @@ async def test_tab_skip_cycles_fields(monkeypatch):
         await pilot.press("tab")
         await pilot.pause()
         assert app.focused.id != "name"
+
+
+# ---------------------------------------------------------------------------
+# TuiState account wrappers (#1753) — real methods, not stubbed
+# ---------------------------------------------------------------------------
+
+
+def _tuistate_with_client(
+    client, *, url="https://x.example", email="me@x.example"
+):
+    from klangk.cli.config import CLIState
+
+    st = TuiState()
+    st.current_url = lambda: url
+    st.client = lambda: client
+    cli_state = CLIState()
+    if url is not None and email is not None:
+        cli_state.set_credentials(url, email, "tok")
+    cli_state.save = lambda: None
+    st.state = lambda: cli_state
+    return st
+
+
+def _status_err(msg, status=400):
+    req = httpx.Request("POST", "https://x")
+    return httpx.HTTPStatusError(
+        msg, request=req, response=httpx.Response(status, request=req)
+    )
+
+
+_ACCOUNT_METHODS = [
+    ("get_me", ()),
+    ("change_password", ("old", "new")),
+    ("change_handle", ("h", "pw")),
+    ("change_email", ("e@x.example", "pw")),
+]
+
+
+@pytest.mark.parametrize("method,args", _ACCOUNT_METHODS)
+def test_tuistate_account_no_server(method, args):
+    from unittest.mock import MagicMock
+
+    st = TuiState()
+    st.current_url = lambda: None
+    st.client = lambda: MagicMock()
+    with pytest.raises(LoginError, match="No server"):
+        getattr(st, method)(*args)
+
+
+@pytest.mark.parametrize("method,args", _ACCOUNT_METHODS)
+def test_tuistate_account_http_status_error(method, args):
+    from unittest.mock import MagicMock
+
+    client = MagicMock()
+    getattr(client, method).side_effect = _status_err("409: conflict")
+    st = _tuistate_with_client(client)
+    with pytest.raises(LoginError, match="409"):
+        getattr(st, method)(*args)
+
+
+@pytest.mark.parametrize("method,args", _ACCOUNT_METHODS)
+def test_tuistate_account_http_error(method, args):
+    from unittest.mock import MagicMock
+
+    client = MagicMock()
+    getattr(client, method).side_effect = httpx.ConnectError("down")
+    st = _tuistate_with_client(client)
+    with pytest.raises(LoginError, match="could not reach"):
+        getattr(st, method)(*args)
+
+
+def test_tuistate_get_me_success():
+    from unittest.mock import MagicMock
+
+    client = MagicMock()
+    client.get_me.return_value = {"id": "u1", "email": "e", "handle": "h"}
+    st = _tuistate_with_client(client)
+    assert st.get_me() == {"id": "u1", "email": "e", "handle": "h"}
+
+
+def test_tuistate_get_me_session_expired():
+    # get_me uses check_auth, so a 401 surfaces as AuthError — the wrapper
+    # converts it to a friendly LoginError (not a raw traceback).
+    from unittest.mock import MagicMock
+
+    from klangk.cli.client import AuthError
+
+    client = MagicMock()
+    client.get_me.side_effect = AuthError(
+        "Session expired — run `klangk login`"
+    )
+    st = _tuistate_with_client(client)
+    with pytest.raises(LoginError, match="Session expired"):
+        st.get_me()
+
+
+def test_tuistate_change_password_success():
+    from unittest.mock import MagicMock
+
+    client = MagicMock()
+    st = _tuistate_with_client(client)
+    st.change_password("old", "new")
+    client.change_password.assert_called_once_with("old", "new")
+
+
+def test_tuistate_change_handle_success():
+    from unittest.mock import MagicMock
+
+    client = MagicMock()
+    client.change_handle.return_value = "newh"
+    st = _tuistate_with_client(client)
+    assert st.change_handle("newh", "pw") == "newh"
+
+
+def test_tuistate_change_email_rekeys_state():
+    from unittest.mock import MagicMock
+
+    client = MagicMock()
+    st = _tuistate_with_client(client, email="old@x.example")
+    st.change_email("new@x.example", "pw")
+    client.change_email.assert_called_once_with("new@x.example", "pw")
+    # Token preserved, active user re-keyed to the new address.
+    assert st.state().get_email("https://x.example") == "new@x.example"
+    assert st.state().get_token("https://x.example") == "tok"
+
+
+def test_tuistate_change_email_same_address_no_rekey():
+    from unittest.mock import MagicMock
+
+    client = MagicMock()
+    st = _tuistate_with_client(client, email="same@x.example")
+    st.change_email("same@x.example", "pw")
+    client.change_email.assert_called_once_with("same@x.example", "pw")
+
+
+# ---------------------------------------------------------------------------
+# Account self-service screen (#1753)
+# ---------------------------------------------------------------------------
+
+
+def _account_state(**extra):
+    """Authed TuiState with account methods stubbed for AccountScreen tests."""
+    base = dict(
+        is_authenticated=lambda: True,
+        current_url=lambda: "https://x.example",
+        email=lambda: "me@x.example",
+        token=lambda: "tok",
+        known_servers=lambda: [],
+        list_owned_workspaces=lambda: [],
+        list_shared_workspaces=lambda: [],
+        get_me=lambda: {
+            "id": "u1",
+            "email": "me@x.example",
+            "handle": "me",
+        },
+        change_password=lambda current, new: None,
+        change_handle=lambda handle, pw: handle,
+        change_email=lambda email, pw: None,
+    )
+    base.update(extra)
+    return _st(**base)
+
+
+async def test_account_screen_loads_profile(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_account_state())
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        profile = str(app.screen.query_one("#profile").render())
+        assert "me@x.example" in profile
+        assert "@me" in profile
+
+
+async def test_account_screen_change_password_success(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    calls = {}
+    st = _account_state(
+        change_password=lambda current, new: calls.__setitem__(
+            "pw", (current, new)
+        )
+    )
+    monkeypatch.setattr(scr.account, "password_min_length", lambda url: 4)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#pw_current", Input).value = "oldpw"
+        s.query_one("#pw_new", Input).value = "newpw12"
+        s.query_one("#pw_confirm", Input).value = "newpw12"
+        s.on_button_pressed(FakeBtnPress("pw_submit"))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert calls.get("pw") == ("oldpw", "newpw12")
+        assert "Password updated" in str(s.query_one("#pw_msg").render())
+        # Fields cleared on success.
+        assert s.query_one("#pw_current", Input).value == ""
+
+
+async def test_account_screen_password_mismatch(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _account_state(change_password=lambda c, n: None)
+    monkeypatch.setattr(scr.account, "password_min_length", lambda url: 4)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#pw_current", Input).value = "oldpw"
+        s.query_one("#pw_new", Input).value = "newpw12"
+        s.query_one("#pw_confirm", Input).value = "different"
+        s.on_button_pressed(FakeBtnPress("pw_submit"))
+        await pilot.pause()
+        assert "do not match" in str(s.query_one("#pw_msg").render())
+
+
+async def test_account_screen_password_too_short(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr.account, "password_min_length", lambda url: 12)
+    app = KlangkApp(_account_state(change_password=lambda c, n: None))
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#pw_current", Input).value = "oldpw"
+        s.query_one("#pw_new", Input).value = "short"
+        s.query_one("#pw_confirm", Input).value = "short"
+        s.on_button_pressed(FakeBtnPress("pw_submit"))
+        # min-length is now checked in the worker (off the event loop).
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "at least 12" in str(s.query_one("#pw_msg").render())
+
+
+async def test_account_screen_password_backend_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    def boom(current, new):
+        raise LoginError("401: Current password is incorrect")
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr.account, "password_min_length", lambda url: 4)
+    app = KlangkApp(_account_state(change_password=boom))
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#pw_current", Input).value = "oldpw"
+        s.query_one("#pw_new", Input).value = "newpw12"
+        s.query_one("#pw_confirm", Input).value = "newpw12"
+        s.on_button_pressed(FakeBtnPress("pw_submit"))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "Current password is incorrect" in str(
+            s.query_one("#pw_msg").render()
+        )
+
+
+async def test_account_screen_change_handle_success(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    calls = {}
+    st = _account_state(
+        change_handle=lambda handle, pw: (
+            calls.__setitem__("h", (handle, pw)) or "newhandle"
+        )
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#handle_new", Input).value = "newhandle"
+        s.query_one("#handle_pw", Input).value = "pw"
+        s.on_button_pressed(FakeBtnPress("handle_submit"))
+        await pilot.pause()
+        # Confirm dialog pushed.
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(True)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert calls.get("h") == ("newhandle", "pw")
+        assert "Handle updated to @newhandle" in str(
+            s.query_one("#handle_msg").render()
+        )
+
+
+async def test_account_screen_handle_uses_server_accepted(monkeypatch):
+    """#1869 review: the TUI must adopt the server's accepted handle, not
+    the user's input, when they differ (e.g. uniqueness suffixing)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _account_state(change_handle=lambda handle, pw: "accepted")
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#handle_new", Input).value = "newhandle"
+        s.query_one("#handle_pw", Input).value = "pw"
+        s.on_button_pressed(FakeBtnPress("handle_submit"))
+        await pilot.pause()
+        app.screen.dismiss(True)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # Server returned "accepted", not the requested "newhandle".
+        assert "@accepted" in str(s.query_one("#handle_msg").render())
+        assert "@accepted" in str(s.query_one("#profile").render())
+
+
+async def test_account_screen_handle_invalid(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_account_state(change_handle=lambda h, pw: h))
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#handle_new", Input).value = "Bad Handle!"
+        s.query_one("#handle_pw", Input).value = "pw"
+        s.on_button_pressed(FakeBtnPress("handle_submit"))
+        await pilot.pause()
+        assert "lowercase" in str(s.query_one("#handle_msg").render())
+
+
+async def test_account_screen_handle_cancelled(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    called = {}
+    st = _account_state(change_handle=lambda h, pw: called.__setitem__("h", h))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#handle_new", Input).value = "newhandle"
+        s.query_one("#handle_pw", Input).value = "pw"
+        s.on_button_pressed(FakeBtnPress("handle_submit"))
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.dismiss(False)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "h" not in called  # not invoked
+
+
+async def test_account_screen_change_email_success(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    calls = {}
+    st = _account_state(
+        change_email=lambda email, pw: calls.__setitem__("e", (email, pw))
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#email_new", Input).value = "new@x.example"
+        s.query_one("#email_pw", Input).value = "pw"
+        s.on_button_pressed(FakeBtnPress("email_submit"))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert calls.get("e") == ("new@x.example", "pw")
+        assert "Email updated" in str(s.query_one("#email_msg").render())
+        assert "new@x.example" in str(s.query_one("#profile").render())
+
+
+async def test_account_screen_email_invalid(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_account_state(change_email=lambda e, pw: None))
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#email_new", Input).value = "not-an-email"
+        s.query_one("#email_pw", Input).value = "pw"
+        s.on_button_pressed(FakeBtnPress("email_submit"))
+        await pilot.pause()
+        assert "valid email" in str(s.query_one("#email_msg").render())
+
+
+async def test_account_screen_password_required_fields(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr.account, "password_min_length", lambda url: 4)
+    app = KlangkApp(_account_state(change_password=lambda c, n: None))
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        # Empty current/new -> rejected before any request.
+        s.query_one("#pw_current", Input).value = ""
+        s.query_one("#pw_new", Input).value = ""
+        s.query_one("#pw_confirm", Input).value = ""
+        s.on_button_pressed(FakeBtnPress("pw_submit"))
+        await pilot.pause()
+        assert "required" in str(s.query_one("#pw_msg").render())
+
+
+async def test_account_screen_handle_requires_password(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_account_state(change_handle=lambda h, pw: h))
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#handle_new", Input).value = "newhandle"
+        s.query_one("#handle_pw", Input).value = ""
+        s.on_button_pressed(FakeBtnPress("handle_submit"))
+        await pilot.pause()
+        assert "Password is required" in str(
+            s.query_one("#handle_msg").render()
+        )
+
+
+async def test_account_screen_handle_backend_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    def boom(handle, pw):
+        raise LoginError("400: Handle taken")
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_account_state(change_handle=boom))
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#handle_new", Input).value = "newhandle"
+        s.query_one("#handle_pw", Input).value = "pw"
+        s.on_button_pressed(FakeBtnPress("handle_submit"))
+        await pilot.pause()
+        app.screen.dismiss(True)  # confirm
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "Handle taken" in str(s.query_one("#handle_msg").render())
+
+
+async def test_account_screen_email_requires_password(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_account_state(change_email=lambda e, pw: None))
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#email_new", Input).value = "new@x.example"
+        s.query_one("#email_pw", Input).value = ""
+        s.on_button_pressed(FakeBtnPress("email_submit"))
+        await pilot.pause()
+        assert "Password is required" in str(
+            s.query_one("#email_msg").render()
+        )
+
+
+async def test_account_screen_email_backend_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    def boom(email, pw):
+        raise LoginError("400: Email already in use")
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    app = KlangkApp(_account_state(change_email=boom))
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#email_new", Input).value = "new@x.example"
+        s.query_one("#email_pw", Input).value = "pw"
+        s.on_button_pressed(FakeBtnPress("email_submit"))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "already in use" in str(s.query_one("#email_msg").render())
+
+
+async def test_account_screen_enter_submits_section(monkeypatch):
+    """Enter in a section's last field submits that section."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    called = {}
+    st = _account_state(change_email=lambda e, pw: called.__setitem__("e", e))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#email_new", Input).value = "new@x.example"
+        email_pw = s.query_one("#email_pw", Input)
+        email_pw.value = "pw"
+        s.on_input_submitted(Input.Submitted(email_pw, email_pw.value))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert called.get("e") == "new@x.example"
+
+
+async def test_account_screen_load_profile_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _account_state(
+        get_me=lambda: (_ for _ in ()).throw(LoginError("nope"))
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(AccountScreen())
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "nope" in str(app.screen.query_one("#profile").render())
+
+
+async def test_main_screen_action_account_opens_screen(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr.account, "password_min_length", lambda url: 4)
+    app = KlangkApp(_account_state())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        app.screen.action_account()
+        await pilot.pause()
+        assert isinstance(app.screen, AccountScreen)

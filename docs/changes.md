@@ -27,6 +27,19 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Account self-service from the CLI and TUI (#1753).** A new
+  `klangk account` group (`show`, `passwd`, `handle`, `email`) changes your
+  password, handle, or email from the command line, and a new TUI **Account**
+  screen (press `a` from the workspace list) offers the same operations with
+  inline validation. Both surfaces mirror the Flutter `SettingsPage`: current
+  `@handle` + email from `GET /api/v1/auth/me`, the same client-side checks
+  (handle lowercase `[a-z0-9._-]+` charset, email format, password minimum
+  read from `/api/v1/config`), and password confirmation for handle/email
+  changes (plus a confirm dialog for the handle, which affects your terminal
+  home directory). The CLI re-keys your cached token under the new email
+  after a change — the JWT subject is your user id, so the token stays valid;
+  only the key it's filed under changes.
+
 - **`klangk stop` and `klangk start` commands** stop and (re)start a
   workspace container (#1750), closing the CLI parity gap with the TUI and
   Flutter app (which already reach shutdown via `POST /api/v1/workspaces/{id}/stop`).

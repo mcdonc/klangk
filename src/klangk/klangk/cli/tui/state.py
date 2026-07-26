@@ -22,7 +22,7 @@ from ..auth import (
     fetch_config,
     local_login,
 )
-from ..client import KlangkClient, Workspace
+from ..client import AuthError, KlangkClient, Workspace
 from ..config import (
     CLIConfig,
     CLIState,
@@ -276,6 +276,70 @@ class TuiState:
             _oidc_browser_login(url, provider_id, self.state())
         except SystemExit as exc:
             raise LoginError("OIDC login failed") from exc
+
+    # --- account self-service (#1753) ---
+
+    def get_me(self) -> dict:
+        """Return the current user's profile ({id, email, handle})."""
+        url = self.current_url()
+        if url is None:
+            raise LoginError("No server configured")
+        try:
+            return self.client().get_me()
+        except AuthError as exc:
+            # /auth/me 401 means the session has expired (client.get_me uses
+            # check_auth, unlike the change_* methods where 401 = wrong pw).
+            raise LoginError(str(exc)) from None
+        except httpx.HTTPStatusError as exc:
+            raise LoginError(str(exc)) from None
+        except httpx.HTTPError as exc:
+            raise LoginError(f"could not reach server: {exc}") from None
+
+    def change_password(
+        self, current_password: str, new_password: str
+    ) -> None:
+        """Change the current user's password."""
+        if self.current_url() is None:
+            raise LoginError("No server configured")
+        try:
+            self.client().change_password(current_password, new_password)
+        except httpx.HTTPStatusError as exc:
+            raise LoginError(str(exc)) from None
+        except httpx.HTTPError as exc:
+            raise LoginError(f"could not reach server: {exc}") from None
+
+    def change_handle(self, handle: str, password: str) -> str:
+        """Change the current user's handle; returns the accepted handle."""
+        if self.current_url() is None:
+            raise LoginError("No server configured")
+        try:
+            accepted = self.client().change_handle(handle, password)
+        except httpx.HTTPStatusError as exc:
+            raise LoginError(str(exc)) from None
+        except httpx.HTTPError as exc:
+            raise LoginError(f"could not reach server: {exc}") from None
+        return accepted
+
+    def change_email(self, email: str, password: str) -> None:
+        """Change the current user's email and re-key cached credentials.
+
+        The JWT subject is the user id, so the stored token stays valid;
+        only the key it's filed under in klangk-state.yaml changes.
+        """
+        url = self.current_url()
+        if url is None:
+            raise LoginError("No server configured")
+        try:
+            self.client().change_email(email, password)
+        except httpx.HTTPStatusError as exc:
+            raise LoginError(str(exc)) from None
+        except httpx.HTTPError as exc:
+            raise LoginError(f"could not reach server: {exc}") from None
+        old = self.state().get_email(url)
+        if old is not None and old != email:
+            state = self.state()
+            state.rename_user(url, old, email)
+            state.save()
 
     def logout(self) -> None:
         url = self.current_url()
