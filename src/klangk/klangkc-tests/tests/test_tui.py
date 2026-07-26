@@ -19,6 +19,7 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    OptionList,
     Select,
     Static,
     TabbedContent,
@@ -540,6 +541,28 @@ def test_allow_autostart(monkeypatch, redirect_xdg):
     monkeypatch.setattr(tui_state_mod, "fetch_config", lambda url: None)
     assert TuiState("https://x.example").allow_autostart() is False
     assert TuiState().allow_autostart() is False
+
+
+def test_default_allowed_domains(monkeypatch, redirect_xdg):
+    # netfilter_default_domains is auth-gated on /api/v1/config (absent from
+    # the pre-auth payload), so default_allowed_domains() reads it via the
+    # authed client, not fetch_config. Seed list verbatim; non-list / absent
+    # -> [] (no regression) (#1931).
+    from unittest.mock import MagicMock
+
+    t = TuiState("https://x.example")
+    fake = MagicMock()
+    monkeypatch.setattr(t, "client", lambda: fake)
+    fake.config.return_value = {
+        "netfilter_default_domains": ["github.com:443", "pypi.org:443"]
+    }
+    assert t.default_allowed_domains() == ["github.com:443", "pypi.org:443"]
+    # absent key -> None -> not a list -> []
+    fake.config.return_value = {}
+    assert t.default_allowed_domains() == []
+    # wrong shape -> []
+    fake.config.return_value = {"netfilter_default_domains": "github.com"}
+    assert t.default_allowed_domains() == []
 
 
 async def test_create_terminal_delegates(monkeypatch, redirect_xdg):
@@ -5130,6 +5153,7 @@ def _create_state(create=None, **extra):
             "allowed": ["base", "py:3"],
         },
         allow_autostart=lambda: True,
+        default_allowed_domains=lambda: [],
         create_workspace=create or (lambda *a, **k: _wsobj("zzz")),
     )
     base.update(extra)
@@ -5196,6 +5220,68 @@ async def test_create_screen_mount_editor(monkeypatch):
         cs.query_one("#mount_list").highlighted = 0
         cs._remove_mount()
         assert cs._mounts == []
+
+
+async def test_create_screen_seeds_default_allowed_domains(monkeypatch):
+    """#1931: the Netfilter tab is pre-filled with the deploy default
+    (KLANGKD_NETFILTER_DEFAULT_DOMAINS) as a starting set the user can
+    edit/remove — parity with the Flutter create dialog."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(
+        _create_state(
+            default_allowed_domains=lambda: [
+                "github.com:443",
+                "pypi.org:443",
+            ]
+        )
+    )
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        # Seeded verbatim from the deploy default, and rendered into the
+        # Netfilter tab's list (option ids a0 / a1, not the placeholder).
+        assert cs._allowed_domains == ["github.com:443", "pypi.org:443"]
+        ol = cs.query_one("#allow_list", OptionList)
+        assert ol.get_option_at_index(0).id == "a0"
+        assert ol.get_option_at_index(1).id == "a1"
+        # Editable: remove the first seeded entry (a starting set, not a floor).
+        ol.highlighted = 0
+        cs._remove_allowed_domain()
+        assert cs._allowed_domains == ["pypi.org:443"]
+        # Editable: add a new entry on top of the seed.
+        cs.query_one("#allow_input").value = "registry.npmjs.org:443"
+        cs._add_allowed_domain()
+        assert cs._allowed_domains == [
+            "pypi.org:443",
+            "registry.npmjs.org:443",
+        ]
+
+
+async def test_create_screen_allowed_domains_empty_when_no_default(
+    monkeypatch,
+):
+    """#1931: with no deploy default the Netfilter tab still starts empty
+    (no regression) — the list shows the inert (unrestricted) placeholder."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_create_state())  # default_allowed_domains -> []
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        assert cs._allowed_domains == []
+        ol = cs.query_one("#allow_list", OptionList)
+        assert ol.get_option_at_index(0).id == ""  # (unrestricted) placeholder
 
 
 async def test_create_screen_env_editor(monkeypatch):
@@ -5380,7 +5466,12 @@ async def test_create_screen_images_unavailable(monkeypatch):
         raise OSError("images endpoint down")
 
     app = KlangkApp(
-        _create_state(create=create, list_images=boom, allow_autostart=boom)
+        _create_state(
+            create=create,
+            list_images=boom,
+            allow_autostart=boom,
+            default_allowed_domains=boom,
+        )
     )
     async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
@@ -5388,6 +5479,7 @@ async def test_create_screen_images_unavailable(monkeypatch):
         await pilot.pause()
         cs = app.screen
         assert cs._allowed == []
+        assert cs._allowed_domains == []  # fetch failed -> empty seed
         assert cs.query_one("#auto_start", Checkbox).display is False
         cs.query_one("#name").value = "ws"
         cs._create()

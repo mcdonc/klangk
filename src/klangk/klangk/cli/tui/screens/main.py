@@ -621,11 +621,19 @@ class MainScreen(Screen):
         except (httpx.HTTPError, OSError, ValueError) as exc:
             logger.debug("Could not fetch autostart config: %s", exc)
             allow_autostart = False
+        try:
+            default_domains = await asyncio.to_thread(
+                state.default_allowed_domains
+            )
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            logger.debug("Could not fetch default allowed domains: %s", exc)
+            default_domains = []
         self.app.push_screen(
             CreateWorkspaceScreen(
                 allowed=allowed,
                 default=default,
                 allow_autostart=allow_autostart,
+                default_allowed_domains=default_domains,
             ),
             self._on_created,
         )

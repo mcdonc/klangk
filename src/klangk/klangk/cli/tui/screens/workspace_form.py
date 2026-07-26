@@ -91,6 +91,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         allowed: list[str],
         default: str,
         allow_autostart: bool,
+        default_allowed_domains: list[str] | None = None,
     ) -> None:
         super().__init__()
         self._allowed = list(allowed)
@@ -98,7 +99,10 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         self._allow_autostart = bool(allow_autostart)
         self._mounts: list[str] = []
         self._env: dict[str, str] = {}
-        self._allowed_domains: list[str] = []
+        # Seed the Netfilter list with the deploy default
+        # (KLANGKD_NETFILTER_DEFAULT_DOMAINS) so the TUI create form matches
+        # the Flutter dialog — a starting set the user can edit/remove (#1931).
+        self._allowed_domains: list[str] = list(default_allowed_domains or [])
         if self._allowed:
             # Select tuples are (prompt, value). Prompts are rich Text so an
             # image name containing brackets can't trigger markup parsing.
