@@ -26,6 +26,9 @@ from klangk.cli import config as cfgmod
 from klangk.cli import tui as tui_pkg
 from klangk.cli.client import AuthError, Workspace, WorkspaceNotFoundError
 from klangk.cli.tui import screens as scr
+from klangk.cli.tui.screens import main as scr_main
+from klangk.cli.tui.screens import workspace_detail as scr_detail
+from klangk.cli.tui.screens import account as scr_account
 from klangk.cli.tui import state as tui_state_mod
 from klangk.cli.tui import ws as ws_mod
 from klangk.cli.tui.app import KlangkApp, run_tui
@@ -785,7 +788,7 @@ async def test_main_screen_renders_status(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_authed_state())
     async with app.run_test():
         screen = app.screen
@@ -799,7 +802,7 @@ async def test_main_screen_status_event_updates_live_extra(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_authed_state())
     async with app.run_test() as pilot:
         screen = app.screen
@@ -817,7 +820,7 @@ async def test_refresh_status_no_widget(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_authed_state())
     async with app.run_test():
         screen = app.screen
@@ -840,7 +843,7 @@ async def test_status_loop_no_token_returns_early(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_authed_state(token=lambda: None))
     async with app.run_test():
         await app.screen._status_loop()  # no token -> early return
@@ -850,7 +853,7 @@ async def test_status_loop_handles_disconnect(monkeypatch):
     async def boom(*a, **k):
         raise RuntimeError("ws died")
 
-    monkeypatch.setattr(scr, "listen_for_status", boom)
+    monkeypatch.setattr(scr_main, "listen_for_status", boom)
     app = KlangkApp(_authed_state())
     async with app.run_test() as pilot:
         await app.screen._status_loop()
@@ -862,7 +865,7 @@ async def test_login_password_flow_success(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     def fake_login(identifier, password):
         st.is_authenticated = lambda: True
@@ -920,7 +923,7 @@ async def test_login_input_submitted_triggers_password(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     def fake_login(identifier, password):
         st.is_authenticated = lambda: True
@@ -953,7 +956,7 @@ async def test_login_oidc_flow(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     # success
     def fake_oidc(provider_id):
@@ -1032,7 +1035,7 @@ async def test_login_oidc_button_visibility_by_auth_mode(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     async def oidc_display(mode, **extra):
         st = _st(
@@ -1081,7 +1084,7 @@ async def test_logout_returns_to_login(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     called = {"out": False}
 
     def fake_logout():
@@ -1103,7 +1106,7 @@ async def test_server_switch_and_add(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     # switch screen with servers -> selecting one switches + returns to main
     st = _authed_state(
@@ -1206,7 +1209,7 @@ async def test_server_switch_unreachable(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     st = _authed_state(
         known_servers=lambda: [
@@ -1236,7 +1239,7 @@ async def test_server_switch_auth_required(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     st = _authed_state(
         known_servers=lambda: [
@@ -1268,7 +1271,7 @@ async def test_edit_server_saves(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _authed_state(
         known_servers=lambda: [
             tui_state_mod.ServerInfo("prod", "https://prod.example"),
@@ -1308,7 +1311,7 @@ async def test_edit_server_empty_fields(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_authed_state())
     async with app.run_test() as pilot:
         app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
@@ -1325,7 +1328,7 @@ async def test_edit_server_invalid_url(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_authed_state())
     async with app.run_test() as pilot:
         app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
@@ -1342,7 +1345,7 @@ async def test_edit_server_cancel(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _authed_state(
         known_servers=lambda: [
             tui_state_mod.ServerInfo("a", "https://a.example"),
@@ -1363,7 +1366,7 @@ async def test_edit_server_not_found(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _authed_state()
     st.update_server = lambda *a, **k: False
     app = KlangkApp(st)
@@ -1387,7 +1390,7 @@ async def test_edit_server_alias_conflict(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _authed_state()
 
     def conflict(*a, **k):
@@ -1416,7 +1419,7 @@ async def test_edit_server_url_change_triggers_server_changed(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _authed_state(
         known_servers=lambda: [
             tui_state_mod.ServerInfo("a", "https://a.example"),
@@ -1449,7 +1452,7 @@ async def test_edit_server_no_highlight(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_authed_state(known_servers=lambda: []))
     async with app.run_test() as pilot:
         app.push_screen(ServerSwitchScreen())
@@ -1464,7 +1467,7 @@ async def test_edit_server_via_input_submit(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _authed_state()
     updated = {}
     st.update_server = lambda old, new, url, user=None: (
@@ -1488,7 +1491,7 @@ async def test_edit_server_cancel_button(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _authed_state(
         known_servers=lambda: [
             tui_state_mod.ServerInfo("a", "https://a.example"),
@@ -1512,7 +1515,7 @@ async def test_edit_server_no_alias_on_item(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _authed_state(
         known_servers=lambda: [
             tui_state_mod.ServerInfo("a", "https://a.example"),
@@ -1538,7 +1541,7 @@ async def test_edit_server_via_button(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _authed_state()
     updated = {}
     st.update_server = lambda old, new, url, user=None: (
@@ -1627,7 +1630,7 @@ async def test_main_screen_lists_and_status(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(
         _ws(
             owned=[
@@ -1650,7 +1653,7 @@ async def test_main_screen_shows_created_date(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     ws = Workspace(
         id="id-alpha",
         name="alpha",
@@ -1671,7 +1674,7 @@ async def test_update_running_unknown_workspace(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha", running=True)]))
     async with app.run_test():
         m = app.screen
@@ -1689,7 +1692,7 @@ async def test_update_running_no_label(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=True)
     app = KlangkApp(_ws(owned=[a]))
     async with app.run_test():
@@ -1712,7 +1715,7 @@ async def test_main_screen_list_error_shows_placeholder(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     def boom():
         raise RuntimeError("net")
@@ -1732,7 +1735,7 @@ async def test_focus_visible_list_on_mount(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha"), _wsobj("beta")]))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1747,7 +1750,7 @@ async def test_focus_visible_list_empty(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws(owned=[], shared=[]))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1760,7 +1763,7 @@ async def test_shared_tab_stays_when_empty(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha")], shared=[]))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1791,7 +1794,7 @@ async def test_filter_narrows_workspace_list(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(
         _ws(owned=[_wsobj("alpha"), _wsobj("beta"), _wsobj("alphabet")])
     )
@@ -1819,7 +1822,7 @@ async def test_filter_no_matches_shows_placeholder(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1840,7 +1843,7 @@ async def test_filter_escape_clears_then_returns(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha"), _wsobj("beta")]))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1871,7 +1874,7 @@ async def test_cycle_sort(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = Workspace(id="id-a", name="alpha", created_at="2025-01-01T00:00:00")
     b = Workspace(id="id-b", name="beta", created_at="2025-06-01T00:00:00")
     app = KlangkApp(_ws(owned=[a, b]))
@@ -1920,7 +1923,7 @@ async def test_filter_preserved_on_refresh(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha"), _wsobj("beta")]))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1948,7 +1951,7 @@ async def test_focus_filter_action(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1978,7 +1981,7 @@ async def test_filter_bar_renders_input_without_impacting_list(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha"), _wsobj("beta")]))
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -2018,7 +2021,7 @@ async def test_sort_button_click_cycles(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = Workspace(id="id-a", name="alpha", created_at="2025-01-01T00:00:00")
     b = Workspace(id="id-b", name="beta", created_at="2025-06-01T00:00:00")
     app = KlangkApp(_ws(owned=[a, b]))
@@ -2046,7 +2049,7 @@ async def test_filter_submitted_returns_to_list(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -2067,7 +2070,7 @@ async def test_down_from_tabs_enters_workspace_list(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     b = _wsobj("beta")
     app = KlangkApp(_ws(owned=[a, b]))
@@ -2089,7 +2092,7 @@ async def test_up_from_list_returns_to_tabs(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     app = KlangkApp(_ws(owned=[a]))
     async with app.run_test() as pilot:
@@ -2108,7 +2111,7 @@ async def test_main_screen_select_opens_detail(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws(owned=[a])
     st.find_workspace = lambda n: a
@@ -2123,7 +2126,7 @@ async def test_main_screen_select_empty_no_push(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws())  # empty lists -> placeholder rows
     async with app.run_test() as pilot:
         app.screen.on_list_view_selected(FakeSelected(""))
@@ -2135,7 +2138,7 @@ async def test_status_event_refreshes_on_change(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     calls = {"n": 0}
 
@@ -2160,7 +2163,7 @@ async def test_detail_loads_and_renders(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj(
         "alpha",
         running=True,
@@ -2203,7 +2206,7 @@ async def test_detail_renders_allowed_domains(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", allowed_domains=["github.com:443", "pypi.org"])
     st = _ws()
     st.find_workspace = lambda n: a
@@ -2224,7 +2227,7 @@ async def test_detail_shows_uptime(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     # service_started_at 1 day 2 hours 30 minutes ago
     started = _time.time() - (86400 + 7200 + 1800)
     a = _wsobj("alpha", running=True, service_started_at=started)
@@ -2244,7 +2247,7 @@ async def test_detail_no_uptime_when_stopped(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=False)
     st = _ws()
     st.find_workspace = lambda n: a
@@ -2262,7 +2265,7 @@ async def test_detail_action_edit_opens_form_and_refreshes(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", image="base")
     finds = []
     st = _ws(
@@ -2292,7 +2295,7 @@ async def test_detail_and_edit_set_window_title(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", image="base")
     st = _ws(
         list_images=lambda: {"default": "base", "allowed": ["base", "py:3"]},
@@ -2321,7 +2324,7 @@ async def test_detail_load_failure(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _ws()
     st.find_workspace = lambda n: (_ for _ in ()).throw(RuntimeError("x"))
     app = KlangkApp(st)
@@ -2337,7 +2340,7 @@ async def test_detail_restart_confirm_cancel_error(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=True)
     restarted = {}
     st = _ws()
@@ -2384,7 +2387,7 @@ async def test_detail_auto_starts_stopped_workspace(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=False)
     started = []
     st = _ws()
@@ -2404,7 +2407,7 @@ async def test_detail_auto_start_skipped_when_running(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=True)
     started = []
     st = _ws()
@@ -2421,7 +2424,7 @@ async def test_detail_auto_start_error(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=False)
     st = _ws()
     st.find_workspace = lambda n: a
@@ -2443,7 +2446,7 @@ async def test_detail_stop_when_running(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=True, service_started_at=1000.0)
     stopped = {}
     st = _ws()
@@ -2477,7 +2480,7 @@ async def test_detail_start_when_stopped(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=False)
     started = {}
     st = _ws()
@@ -2509,7 +2512,7 @@ async def test_detail_terminal_actions_inline_not_in_footer(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _ws()
     st.find_workspace = lambda n: _wsobj("alpha", running=True)
     app = KlangkApp(st)
@@ -2549,7 +2552,7 @@ async def test_detail_uptime_ticks(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     started = _time.time() - 60
     a = _wsobj("alpha", running=True, service_started_at=started)
     st = _ws()
@@ -2573,7 +2576,7 @@ async def test_detail_uptime_tick_noop_when_stopped(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=False)
     st = _ws()
     st.find_workspace = lambda n: a
@@ -2594,7 +2597,7 @@ async def test_detail_stop_ws_none(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _ws()
     st.find_workspace = lambda n: None
     app = KlangkApp(st)
@@ -2614,7 +2617,7 @@ async def test_detail_stop_cancel(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=True)
     stopped = {}
     st = _ws()
@@ -2639,7 +2642,7 @@ async def test_detail_stop_error(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=True)
     st = _ws()
     st.find_workspace = lambda n: a
@@ -2669,7 +2672,7 @@ async def test_detail_start_error(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=False)
     st = _ws()
     st.find_workspace = lambda n: a
@@ -2693,7 +2696,7 @@ async def test_detail_delete_confirm_cancel_error(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     deleted = {}
     st = _ws()
@@ -2725,7 +2728,7 @@ async def test_detail_delete_error(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws()
     st.find_workspace = lambda n: a
@@ -2749,7 +2752,7 @@ async def test_detail_duplicate_ok_cancel_input_error(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     duped = {}
     st = _ws()
@@ -2810,7 +2813,7 @@ async def test_refresh_workspaces_refreshes_main(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     calls = {"n": 0}
 
@@ -2832,7 +2835,7 @@ async def test_main_screen_markup_name_safe(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("x[red]y")
     app = KlangkApp(_ws(owned=[a]))
     async with app.run_test():
@@ -2847,7 +2850,7 @@ async def test_detail_markup_name_safe(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("x[red]y", image="[img]", health_message="[bad]")
     st = _ws()
     st.find_workspace = lambda n: a
@@ -2864,7 +2867,7 @@ async def test_detail_apply_status_event(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj(
         "alpha", running=False, health="unhealthy", health_message="down"
     )
@@ -2923,7 +2926,7 @@ async def test_detail_apply_status_event_reload(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=False)
     st = _ws()
     st.find_workspace = lambda n: a
@@ -2942,7 +2945,7 @@ async def test_detail_apply_status_event_ws_none(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _ws()
     st.find_workspace = lambda n: (_ for _ in ()).throw(RuntimeError("x"))
     app = KlangkApp(st)
@@ -2963,7 +2966,7 @@ async def test_status_event_routed_to_detail(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=False)
     st = _ws(owned=[a])
     st.find_workspace = lambda n: a
@@ -2998,7 +3001,7 @@ async def test_detail_terminals_listed(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws(list_terminals=_async_terms)
     st.find_workspace = lambda n: a
@@ -3018,7 +3021,7 @@ async def test_detail_terminals_empty_placeholder(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws()  # list_terminals -> _async_empty -> []
     st.find_workspace = lambda n: a
@@ -3039,7 +3042,7 @@ async def test_detail_terminal_load_failure(monkeypatch):
     async def boom(*a, **k):
         raise RuntimeError("ws down")
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws(list_terminals=boom)
     st.find_workspace = lambda n: a
@@ -3062,7 +3065,7 @@ async def test_detail_delete_terminal_guard_last(monkeypatch):
     async def one(*a, **k):
         return [{"index": 0, "name": "only", "id": "@0"}]
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws(list_terminals=one, close_terminal=_async_empty)
     st.find_workspace = lambda n: a
@@ -3085,7 +3088,7 @@ async def test_detail_delete_terminal_no_selection(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws(list_terminals=_async_terms, close_terminal=_async_empty)
     st.find_workspace = lambda n: a
@@ -3109,7 +3112,7 @@ async def test_detail_delete_terminal_placeholder(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws()  # no terminals -> (no terminals) placeholder
     st.find_workspace = lambda n: a
@@ -3138,7 +3141,7 @@ async def test_detail_delete_terminal(monkeypatch):
         closed["i"] = index
         return [{"index": 0, "name": "main", "id": "@0"}]
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws(list_terminals=_async_terms, close_terminal=_close)
     st.find_workspace = lambda n: a
@@ -3173,7 +3176,7 @@ async def test_detail_delete_terminal_shows_inflight_msg(monkeypatch):
         await gate.wait()
         return [{"index": 0, "name": "main", "id": "@0"}]
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws(list_terminals=_async_terms, close_terminal=_close)
     st.find_workspace = lambda n: a
@@ -3207,7 +3210,7 @@ async def test_detail_delete_terminal_failure(monkeypatch):
     async def _close(name, index):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws(list_terminals=_async_terms, close_terminal=_close)
     st.find_workspace = lambda n: a
@@ -3227,14 +3230,14 @@ async def test_detail_terminal_select_spawns_shell(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=True)
     st = _ws(list_terminals=_async_terms)
     st.find_workspace = lambda n: a
     st.current_url = lambda: "https://x.example"
     spawned = []
     monkeypatch.setattr(
-        scr.subprocess, "run", lambda cmd, **k: spawned.append(cmd)
+        scr_detail.subprocess, "run", lambda cmd, **k: spawned.append(cmd)
     )
 
     from contextlib import contextmanager
@@ -3253,7 +3256,7 @@ async def test_detail_terminal_select_spawns_shell(monkeypatch):
         app.screen.on_list_view_selected(FakeSelected("0"))
         assert len(spawned) == 1
         assert spawned[0] == [
-            scr.sys.executable,
+            scr_detail.sys.executable,
             "-m",
             "klangk.cli.main",
             "--server",
@@ -3268,13 +3271,13 @@ async def test_detail_terminal_select_empty_name_ignored(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=True)
     st = _ws(list_terminals=_async_terms)
     st.find_workspace = lambda n: a
     spawned = []
     monkeypatch.setattr(
-        scr.subprocess, "run", lambda cmd, **k: spawned.append(cmd)
+        scr_detail.subprocess, "run", lambda cmd, **k: spawned.append(cmd)
     )
     app = KlangkApp(st)
     async with app.run_test() as pilot:
@@ -3288,7 +3291,7 @@ async def test_main_screen_title(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws())
     async with app.run_test():
         assert app.title == "Klangk: Workspaces"
@@ -3301,7 +3304,7 @@ async def test_confirm_screen_markup_safe(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws())
     async with app.run_test() as pilot:
         app.push_screen(ConfirmScreen("Delete 'wip[/]' and its data?"))
@@ -3315,7 +3318,7 @@ async def test_duplicate_screen_markup_safe(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws())
     async with app.run_test() as pilot:
         app.push_screen(DuplicateScreen("wip[/]"))
@@ -3328,7 +3331,7 @@ async def test_status_bar_markup_safe(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws())
     async with app.run_test() as pilot:
         app.live_extra = "live: foo[/]bar"
@@ -3341,7 +3344,7 @@ async def test_main_screen_auth_expired_placeholder(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     def boom():
         raise AuthError("expired")
@@ -3359,7 +3362,7 @@ async def test_detail_auth_expired_message(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _ws()
     st.find_workspace = lambda n: (_ for _ in ()).throw(AuthError("expired"))
     app = KlangkApp(st)
@@ -3375,7 +3378,7 @@ async def test_detail_pops_when_workspace_deleted(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=True)
     st = _ws(owned=[a])
     calls = {"n": 0}
@@ -3404,7 +3407,7 @@ async def test_detail_delete_terminal_empty_result(monkeypatch):
     async def _close(name, index):
         return []  # close / refresh failed
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws(list_terminals=_async_terms, close_terminal=_close)
     st.find_workspace = lambda n: a
@@ -3437,7 +3440,7 @@ async def test_detail_new_terminal(monkeypatch):
             {"index": 2, "name": window_name, "id": "@2"},
         ]
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws(
         list_terminals=_async_terms,
@@ -3468,7 +3471,7 @@ async def test_detail_new_terminal_failure(monkeypatch):
     async def _create(name, window_name):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws(
         list_terminals=_async_terms,
@@ -3495,7 +3498,7 @@ async def test_detail_new_terminal_empty_result(monkeypatch):
     async def _create(name, window_name):
         return []
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws(
         list_terminals=_async_terms,
@@ -3522,7 +3525,7 @@ async def test_detail_new_terminal_no_workspace(monkeypatch):
     def _raise(n):
         raise RuntimeError("gone")
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _ws(list_terminals=_async_terms, close_terminal=_async_empty)
     st.find_workspace = _raise
     app = KlangkApp(st)
@@ -3557,7 +3560,7 @@ async def test_create_screen_renders_defaults(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.screen.action_create()
@@ -3575,7 +3578,7 @@ async def test_create_screen_autostart_hidden_when_not_allowed(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state(allow_autostart=lambda: False))
     async with app.run_test() as pilot:
         app.screen.action_create()
@@ -3590,7 +3593,7 @@ async def test_create_screen_mount_editor(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.screen.action_create()
@@ -3619,7 +3622,7 @@ async def test_create_screen_env_editor(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.screen.action_create()
@@ -3648,7 +3651,7 @@ async def test_create_screen_name_required(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     called = []
     app = KlangkApp(
         _create_state(create=lambda *a, **k: called.append(k) or _wsobj("z"))
@@ -3669,7 +3672,7 @@ async def test_create_screen_submit_omits_default_image(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     captured = {}
 
     def create(name, **k):
@@ -3699,7 +3702,7 @@ async def test_create_screen_submit_custom_fields(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     captured = {}
 
     def create(name, **k):
@@ -3736,7 +3739,7 @@ async def test_create_screen_http_error_shows_detail(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     resp = httpx.Response(
         400,
         json={"detail": "name taken"},
@@ -3765,7 +3768,7 @@ async def test_create_screen_auth_error(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     def create(name, **k):
         raise AuthError("expired")
@@ -3786,7 +3789,7 @@ async def test_create_screen_images_unavailable(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     captured = {}
 
     def create(name, **k):
@@ -3816,7 +3819,7 @@ async def test_create_screen_cancel_button(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.screen.action_create()
@@ -3831,7 +3834,7 @@ async def test_create_screen_input_submit_routing(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.screen.action_create()
@@ -3863,7 +3866,7 @@ async def test_create_flow_offer_opens_detail(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("new")))
     async with app.run_test() as pilot:
         app.screen.action_create()
@@ -3885,7 +3888,7 @@ async def test_create_flow_offer_declined(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("new")))
     async with app.run_test() as pilot:
         app.screen.action_create()
@@ -3907,7 +3910,7 @@ async def test_create_editor_guards(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.screen.action_create()
@@ -3932,7 +3935,7 @@ async def test_create_screen_generic_error(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     def create(name, **k):
         raise RuntimeError("boom")
@@ -3957,7 +3960,7 @@ async def test_create_button_routing(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("ws")))
     async with app.run_test() as pilot:
         app.screen.action_create()
@@ -4002,7 +4005,7 @@ async def test_create_screen_image_names_markup_safe(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     evil = "py[/]3"
     app = KlangkApp(
         _ws(
@@ -4036,7 +4039,7 @@ async def test_create_screen_http_error_non_json(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     resp = httpx.Response(
         502,
         text="<html>Bad Gateway</html>",
@@ -4069,7 +4072,7 @@ async def test_create_screen_default_not_in_allowed(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     captured = {}
 
     def create(name, **k):
@@ -4131,7 +4134,7 @@ async def test_create_screen_allowed_domains_editor(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.screen.action_create()
@@ -4167,7 +4170,7 @@ async def test_edit_screen_pre_populates(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     ws = _wsobj(
         "alpha",
         image="py:3",
@@ -4197,7 +4200,7 @@ async def test_edit_screen_allowed_domains_editor(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     ws = _wsobj("alpha", allowed_domains=["github.com:443"])
     app = KlangkApp(_edit_state(ws))
     async with app.run_test() as pilot:
@@ -4227,7 +4230,7 @@ async def test_edit_screen_save_calls_update(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     captured = {}
 
     def update(wid, **f):
@@ -4259,7 +4262,7 @@ async def test_edit_screen_restart_needed_when_running_and_changed(
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     restarted = []
     ws = _wsobj("alpha", image="base", running=True)
     app = KlangkApp(
@@ -4285,7 +4288,7 @@ async def test_edit_screen_no_restart_when_create_field_unchanged(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     ws = _wsobj("alpha", image="base", running=True)
     app = KlangkApp(_edit_state(ws))
     async with app.run_test() as pilot:
@@ -4304,7 +4307,7 @@ async def test_edit_screen_name_required(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     updated = []
     ws = _wsobj("alpha")
     app = KlangkApp(_edit_state(ws, update=lambda *a, **k: updated.append(k)))
@@ -4322,7 +4325,7 @@ async def test_edit_screen_save_http_error_shows_detail(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     resp = httpx.Response(
         400,
         json={"detail": "name taken"},
@@ -4350,7 +4353,7 @@ async def test_edit_screen_cancel_dismisses(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     updated = []
     ws = _wsobj("alpha")
     app = KlangkApp(_edit_state(ws, update=lambda *a, **k: updated.append(k)))
@@ -4368,7 +4371,7 @@ async def test_edit_screen_current_image_not_in_allowed(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     # The workspace's image isn't in the server's allowed list — the picker
     # still shows + pre-selects it (untouched = no change).
     ws = _wsobj("alpha", image="custom:latest")
@@ -4384,7 +4387,7 @@ async def test_edit_screen_mount_editor(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     ws = _wsobj("alpha")
     app = KlangkApp(_edit_state(ws))
     async with app.run_test() as pilot:
@@ -4403,7 +4406,7 @@ async def test_edit_screen_editors_edge_cases(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     ws = _wsobj("alpha")  # no mounts/env/allowed_domains
     app = KlangkApp(_edit_state(ws))
     async with app.run_test() as pilot:
@@ -4438,7 +4441,7 @@ async def test_edit_button_and_input_routing(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     ws = _wsobj("alpha", running=False)
     app = KlangkApp(_edit_state(ws))
     async with app.run_test() as pilot:
@@ -4484,7 +4487,7 @@ async def test_edit_screen_save_auth_error(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     ws = _wsobj("alpha")
     app = KlangkApp(
         _edit_state(
@@ -4505,7 +4508,7 @@ async def test_edit_screen_save_generic_error(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     def update(wid, **f):
         raise RuntimeError("boom")
@@ -4527,7 +4530,7 @@ async def test_edit_screen_save_http_error_non_json(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     resp = httpx.Response(
         502,
         text="<html>proxy</html>",
@@ -4554,7 +4557,7 @@ async def test_edit_screen_field_submit_saves(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     updated = []
     ws = _wsobj("alpha", running=False)
     app = KlangkApp(_edit_state(ws, update=lambda *a, **k: updated.append(k)))
@@ -4573,7 +4576,7 @@ async def test_edit_screen_restart_declined(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     restarted = []
     ws = _wsobj("alpha", image="base", running=True)
     app = KlangkApp(
@@ -4597,7 +4600,7 @@ async def test_edit_screen_restart_failure(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     def boom(*a, **k):
         raise RuntimeError("restart down")
@@ -4622,7 +4625,7 @@ async def test_detail_action_edit_no_workspace(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
     st = _ws(
         list_images=lambda: {"default": "base", "allowed": ["base"]},
@@ -4645,7 +4648,7 @@ async def test_detail_action_edit_fetch_failure(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
 
     def boom():
@@ -4669,7 +4672,7 @@ async def test_edit_screen_keyboard_remove(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     ws = _wsobj(
         "alpha",
         mounts=["/h:/c"],
@@ -4703,7 +4706,7 @@ async def test_edit_screen_edit_in_place(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     ws = _wsobj(
         "alpha",
         mounts=["/h:/c"],
@@ -4762,7 +4765,7 @@ async def test_edit_rename_propagates_to_detail_and_list(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     original = _wsobj("alpha", image="base", running=False)
     renamed = _wsobj("renamed", image="base")
     returns = [original, renamed]
@@ -4797,7 +4800,7 @@ async def test_create_screen_no_server_does_not_crash(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     def boom():
         raise ValueError("no server configured")
@@ -4819,7 +4822,7 @@ async def test_confirm_screen_button_labels(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws())
     async with app.run_test() as pilot:
         # default (delete actions) -> 'Delete'
@@ -4881,7 +4884,7 @@ async def test_login_server_picker(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     cfg = CLIConfig()
     cfg.servers = {"prod": ServerEntry(url="https://prod.example")}
@@ -4957,7 +4960,7 @@ async def test_populate_servers_dedups_default_udsk(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     uds = "/tmp/klangk.sock"
     st = _st(
         current_url=lambda: None,
@@ -4981,7 +4984,7 @@ async def test_login_server_list_autofocused(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _st(
         current_url=lambda: None,
         known_servers=lambda: [
@@ -5007,7 +5010,7 @@ async def test_login_server_line_hugs_list_and_headers_styled(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _st(
         current_url=lambda: "http://localhost:8997",
         known_servers=lambda: [],
@@ -5046,7 +5049,7 @@ async def test_login_server_list_empty_no_crash(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _st(
         current_url=lambda: None,
         known_servers=lambda: [],
@@ -5066,7 +5069,7 @@ async def test_login_choose_server_duplicate_alias(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     def _raise_conflict(alias, url, user=None):
         raise AliasConflictError(f"Alias '{alias}' already exists.")
@@ -5097,7 +5100,7 @@ async def test_login_url_switches_to_existing_alias(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     cfg = CLIConfig()
     cfg.servers = {"prod.example": ServerEntry(url="https://prod.example")}
@@ -5133,7 +5136,7 @@ async def test_login_choose_invalid_server(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     added = {}
     st = _st(
         current_url=lambda: None,
@@ -5162,7 +5165,7 @@ async def test_add_server_rejects_invalid_url(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     added = {}
     st = _authed_state(
         add_server=lambda alias, url, user=None: added.__setitem__(
@@ -5186,7 +5189,7 @@ async def test_add_server_rejects_duplicate_alias_screen(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     def _raise_conflict(alias, url, user=None):
         raise AliasConflictError(f"Alias '{alias}' already exists.")
@@ -5209,7 +5212,7 @@ async def test_confirm_screen(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     captured = {}
     app = KlangkApp(_authed_state())
     async with app.run_test() as pilot:
@@ -5238,7 +5241,7 @@ async def test_login_delete_server(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     cfg = CLIConfig()
     cfg.servers = {"prod": ServerEntry(url="https://prod.example")}
     deleted = {}
@@ -5301,7 +5304,7 @@ async def test_login_delete_clears_to_no_server(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _st(
         current_url=lambda: "https://prod.example",
         known_servers=lambda: [
@@ -5341,7 +5344,7 @@ async def test_login_down_from_last_server_to_input(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     cfg = CLIConfig()
     cfg.servers = {
         "prod": ServerEntry(url="https://prod.example"),
@@ -5378,7 +5381,7 @@ async def test_login_up_from_input_to_server_list(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     cfg = CLIConfig()
     cfg.servers = {"prod": ServerEntry(url="https://prod.example")}
     st = _st(
@@ -5410,7 +5413,7 @@ async def test_login_spatial_nav_full_chain(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     cfg = CLIConfig()
     cfg.servers = {"prod": ServerEntry(url="https://prod.example")}
     st = _st(
@@ -5460,7 +5463,7 @@ async def test_workspace_list_up_from_nonzero_stays(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha"), _wsobj("beta")]))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -5479,7 +5482,7 @@ async def test_login_server_down_from_nonlast_stays(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     cfg = CLIConfig()
     cfg.servers = {
         "prod": ServerEntry(url="https://prod.example"),
@@ -5515,7 +5518,7 @@ async def test_switch_screen_delete_server(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     deleted = {}
     st = _authed_state(
         known_servers=lambda: [
@@ -5563,7 +5566,7 @@ async def test_login_button_dispatch_and_oidc_incomplete(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
 
     # password success routed through on_button_pressed (#login)
     def fake_login(identifier, password):
@@ -5614,7 +5617,7 @@ async def test_main_screen_actions(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     out = {"o": False}
 
     def fake_logout():
@@ -5641,7 +5644,7 @@ async def test_add_server_event_handlers(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _authed_state()
     added = {}
     st.add_server = lambda alias, url, user=None: added.setdefault(
@@ -5784,7 +5787,7 @@ async def test_spatial_up_early_return_no_chain_match(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     cfg = CLIConfig()
     cfg.servers = {"prod": ServerEntry(url="https://prod.example")}
     st = _st(
@@ -5819,7 +5822,7 @@ async def test_spatial_down_early_return_no_chain_match(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     cfg = CLIConfig()
     cfg.servers = {"prod": ServerEntry(url="https://prod.example")}
     st = _st(
@@ -5858,7 +5861,7 @@ async def test_tab_skip_non_tab_key_returns(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.push_screen(
@@ -5883,7 +5886,7 @@ async def test_tab_skip_not_in_order(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.push_screen(
@@ -5909,7 +5912,7 @@ async def test_tab_skip_cycles_fields(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
     async with app.run_test() as pilot:
         app.push_screen(
@@ -6092,7 +6095,7 @@ async def test_account_screen_loads_profile(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_account_state())
     async with app.run_test() as pilot:
         app.push_screen(AccountScreen())
@@ -6107,14 +6110,16 @@ async def test_account_screen_change_password_success(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     calls = {}
     st = _account_state(
         change_password=lambda current, new: calls.__setitem__(
             "pw", (current, new)
         )
     )
-    monkeypatch.setattr(scr.account, "password_min_length", lambda url: 4)
+    monkeypatch.setattr(
+        scr_account._account_mod, "password_min_length", lambda url: 4
+    )
     app = KlangkApp(st)
     async with app.run_test() as pilot:
         app.push_screen(AccountScreen())
@@ -6137,9 +6142,11 @@ async def test_account_screen_password_mismatch(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _account_state(change_password=lambda c, n: None)
-    monkeypatch.setattr(scr.account, "password_min_length", lambda url: 4)
+    monkeypatch.setattr(
+        scr_account._account_mod, "password_min_length", lambda url: 4
+    )
     app = KlangkApp(st)
     async with app.run_test() as pilot:
         app.push_screen(AccountScreen())
@@ -6158,8 +6165,10 @@ async def test_account_screen_password_too_short(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
-    monkeypatch.setattr(scr.account, "password_min_length", lambda url: 12)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(
+        scr_account._account_mod, "password_min_length", lambda url: 12
+    )
     app = KlangkApp(_account_state(change_password=lambda c, n: None))
     async with app.run_test() as pilot:
         app.push_screen(AccountScreen())
@@ -6183,8 +6192,10 @@ async def test_account_screen_password_backend_error(monkeypatch):
     def boom(current, new):
         raise LoginError("401: Current password is incorrect")
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
-    monkeypatch.setattr(scr.account, "password_min_length", lambda url: 4)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(
+        scr_account._account_mod, "password_min_length", lambda url: 4
+    )
     app = KlangkApp(_account_state(change_password=boom))
     async with app.run_test() as pilot:
         app.push_screen(AccountScreen())
@@ -6206,7 +6217,7 @@ async def test_account_screen_change_handle_success(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     calls = {}
     st = _account_state(
         change_handle=lambda handle, pw: (
@@ -6241,7 +6252,7 @@ async def test_account_screen_handle_uses_server_accepted(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _account_state(change_handle=lambda handle, pw: "accepted")
     app = KlangkApp(st)
     async with app.run_test() as pilot:
@@ -6265,7 +6276,7 @@ async def test_account_screen_handle_invalid(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_account_state(change_handle=lambda h, pw: h))
     async with app.run_test() as pilot:
         app.push_screen(AccountScreen())
@@ -6283,7 +6294,7 @@ async def test_account_screen_handle_cancelled(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     called = {}
     st = _account_state(change_handle=lambda h, pw: called.__setitem__("h", h))
     app = KlangkApp(st)
@@ -6307,7 +6318,7 @@ async def test_account_screen_change_email_success(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     calls = {}
     st = _account_state(
         change_email=lambda email, pw: calls.__setitem__("e", (email, pw))
@@ -6332,7 +6343,7 @@ async def test_account_screen_email_invalid(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_account_state(change_email=lambda e, pw: None))
     async with app.run_test() as pilot:
         app.push_screen(AccountScreen())
@@ -6350,8 +6361,10 @@ async def test_account_screen_password_required_fields(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
-    monkeypatch.setattr(scr.account, "password_min_length", lambda url: 4)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(
+        scr_account._account_mod, "password_min_length", lambda url: 4
+    )
     app = KlangkApp(_account_state(change_password=lambda c, n: None))
     async with app.run_test() as pilot:
         app.push_screen(AccountScreen())
@@ -6371,7 +6384,7 @@ async def test_account_screen_handle_requires_password(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_account_state(change_handle=lambda h, pw: h))
     async with app.run_test() as pilot:
         app.push_screen(AccountScreen())
@@ -6394,7 +6407,7 @@ async def test_account_screen_handle_backend_error(monkeypatch):
     def boom(handle, pw):
         raise LoginError("400: Handle taken")
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_account_state(change_handle=boom))
     async with app.run_test() as pilot:
         app.push_screen(AccountScreen())
@@ -6415,7 +6428,7 @@ async def test_account_screen_email_requires_password(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_account_state(change_email=lambda e, pw: None))
     async with app.run_test() as pilot:
         app.push_screen(AccountScreen())
@@ -6438,7 +6451,7 @@ async def test_account_screen_email_backend_error(monkeypatch):
     def boom(email, pw):
         raise LoginError("400: Email already in use")
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_account_state(change_email=boom))
     async with app.run_test() as pilot:
         app.push_screen(AccountScreen())
@@ -6459,7 +6472,7 @@ async def test_account_screen_enter_submits_section(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     called = {}
     st = _account_state(change_email=lambda e, pw: called.__setitem__("e", e))
     app = KlangkApp(st)
@@ -6481,7 +6494,7 @@ async def test_account_screen_load_profile_error(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     st = _account_state(
         get_me=lambda: (_ for _ in ()).throw(LoginError("nope"))
     )
@@ -6497,8 +6510,10 @@ async def test_main_screen_action_account_opens_screen(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr, "listen_for_status", noop)
-    monkeypatch.setattr(scr.account, "password_min_length", lambda url: 4)
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(
+        scr_account._account_mod, "password_min_length", lambda url: 4
+    )
     app = KlangkApp(_account_state())
     async with app.run_test() as pilot:
         await pilot.pause()
