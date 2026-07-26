@@ -173,9 +173,23 @@ def seed_config(server_url: str, user: str | None = None) -> None:
     entry: dict = {"url": server_url}
     if user:
         entry["user"] = user
-    data = {"servers": {alias: entry}}
+    # forward-agent is included as a commented-out opt-in line: it stays off
+    # by default because a forwarded SSH agent can be driven by anyone with
+    # access to the socket on the remote host for the session (#1923).
+    servers_yaml = yaml.dump(
+        {"servers": {alias: entry}}, default_flow_style=False
+    )
+    header = (
+        "# SSH agent forwarding is OFF by default. Uncomment the line below to\n"
+        "# enable it for all servers. Only enable forwarding on hosts you\n"
+        "# trust: while forwarded, anyone who can reach the agent socket on\n"
+        "# the remote host can authenticate as you with your loaded SSH keys\n"
+        "# for the duration of the session.\n"
+        "# See docs/features/ssh-agent-forwarding.md.\n"
+        "# forward-agent: true\n\n"
+    )
     _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    _CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
+    _CONFIG_PATH.write_text(header + servers_yaml)
 
 
 def add_server_to_config(
