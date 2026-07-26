@@ -15,13 +15,15 @@ from textual.widgets import (
     Header,
     Input,
     Static,
+    TabbedContent,
+    TabPane,
+    Tabs,
 )
 
 from ... import account as _account_mod
 from ..state import LoginError
 from ._base import (
     ConfirmScreen,
-    NonFocusableVerticalScroll,
     SpatialNavScreen,
 )
 
@@ -29,11 +31,19 @@ from ._base import (
 class AccountScreen(SpatialNavScreen):
     """Account self-service: change password / handle / email (#1753).
 
-    Mirrors the Flutter ``SettingsPage`` — current @handle + email from
-    ``GET /auth/me``, the same client-side validation (handle charset, email
-    format, password minimum from ``/api/v1/config``), and a confirm dialog
-    for the handle change (it affects the terminal home directory and how
-    others see you in chat).
+    The three credential forms live in a :class:`TabbedContent` — one tab
+    per concern (Password / Handle / Email) — with the ``#profile`` header
+    pinned above the tabs so the current ``@handle`` / email stays visible
+    regardless of which tab is active (#1898). Mirrors the Flutter
+    ``SettingsPage`` semantics: same client-side validation (handle charset,
+    email format, password minimum from ``/api/v1/config``) and a confirm
+    dialog for the handle change (it affects the terminal home directory and
+    how others see you in chat).
+
+    Spatial navigation (#1781): Up/Down walks the active tab's field chain;
+    Up from the first field returns focus to the tab strip, Left/Right on
+    the strip switches tabs (native :class:`Tabs` binding), and Down from
+    the strip enters the active tab — no focus traps.
     """
 
     BINDINGS = [
@@ -42,19 +52,14 @@ class AccountScreen(SpatialNavScreen):
         Binding("escape", "app.pop_screen", "Back", show=True),
     ]
 
-    # Focus chain for spatial Up/Down (reading order).
-    SPATIAL_CHAIN = [
-        "pw_current",
-        "pw_new",
-        "pw_confirm",
-        "pw_submit",
-        "handle_new",
-        "handle_pw",
-        "handle_submit",
-        "email_new",
-        "email_pw",
-        "email_submit",
-    ]
+    # Per-tab focus chains (reading order), keyed by TabPane id. The active
+    # tab's chain is exposed via the :attr:`SPATIAL_CHAIN` property so the
+    # inherited spatial Up/Down handler walks only the visible tab (#1898).
+    _TAB_CHAINS: dict[str, list[str]] = {
+        "pw_pane": ["pw_current", "pw_new", "pw_confirm", "pw_submit"],
+        "handle_pane": ["handle_new", "handle_pw", "handle_submit"],
+        "email_pane": ["email_new", "email_pw", "email_submit"],
+    }
 
     DEFAULT_CSS = """
     AccountScreen { align: center top; }
@@ -64,13 +69,10 @@ class AccountScreen(SpatialNavScreen):
         height: auto;
         padding: 0 2;
     }
-    #account_scroll { padding: 0 0 1 0; }
     #profile { padding: 1 0; text-style: bold; color: $text-secondary; }
-    .acct-section {
-        height: auto;
-        padding: 1 0;
-        border-top: solid $border-blurred;
-    }
+    #acct_tabs { height: auto; }
+    AccountScreen TabPane { padding: 1 0; height: auto; }
+    .acct-section { height: auto; }
     .acct-title {
         text-style: bold;
         color: $primary;
@@ -84,71 +86,123 @@ class AccountScreen(SpatialNavScreen):
     .acct-actions { align-horizontal: right; height: auto; }
     """
 
+    @property
+    def SPATIAL_CHAIN(self) -> list[str]:
+        """Fields of the active tab, in reading order (#1898)."""
+        return self._TAB_CHAINS.get(self._active_tab_id(), [])
+
+    def _active_tab_id(self) -> str:
+        return self.query_one("#acct_tabs", TabbedContent).active or ""
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
-        with NonFocusableVerticalScroll(id="account_scroll"):
-            yield Vertical(
-                Static("", id="profile"),
-                # --- Change password ---
-                Vertical(
-                    Static("Change password", classes="acct-title"),
-                    Input(
-                        placeholder="Current password",
-                        id="pw_current",
-                        password=True,
-                    ),
-                    Input(
-                        placeholder="New password",
-                        id="pw_new",
-                        password=True,
-                    ),
-                    Input(
-                        placeholder="Confirm new password",
-                        id="pw_confirm",
-                        password=True,
-                    ),
-                    Static("", id="pw_msg", classes="acct-msg"),
-                    Horizontal(
-                        Button("Update password", id="pw_submit"),
-                        classes="acct-actions",
-                    ),
-                    classes="acct-section",
-                ),
-                # --- Change handle ---
-                Vertical(
-                    Static("Change handle", classes="acct-title"),
-                    Input(placeholder="New handle", id="handle_new"),
-                    Input(
-                        placeholder="Password (to confirm)",
-                        id="handle_pw",
-                        password=True,
-                    ),
-                    Static("", id="handle_msg", classes="acct-msg"),
-                    Horizontal(
-                        Button("Update handle", id="handle_submit"),
-                        classes="acct-actions",
-                    ),
-                    classes="acct-section",
-                ),
-                # --- Change email ---
-                Vertical(
-                    Static("Change email", classes="acct-title"),
-                    Input(placeholder="New email", id="email_new"),
-                    Input(
-                        placeholder="Password (to confirm)",
-                        id="email_pw",
-                        password=True,
-                    ),
-                    Static("", id="email_msg", classes="acct-msg"),
-                    Horizontal(
-                        Button("Update email", id="email_submit"),
-                        classes="acct-actions",
-                    ),
-                    classes="acct-section",
-                ),
-                id="account_box",
-            )
+        # #account_box is a direct child of the screen (no
+        # VerticalScroll wrapper): a VerticalScroll's own up/down scroll
+        # bindings would sit between the focused Input and the screen's
+        # spatial_up/spatial_down and silently swallow arrow keys
+        # (#1898). The tabbed layout is short enough to need no scroll.
+        with Vertical(id="account_box"):
+            # Profile header is pinned ABOVE the tabs so the current
+            # @handle / email stays visible regardless of the active
+            # tab (#1898).
+            yield Static("", id="profile")
+            with TabbedContent(id="acct_tabs"):
+                with TabPane("Password", id="pw_pane"):
+                    yield Vertical(
+                        Static("Change password", classes="acct-title"),
+                        Input(
+                            placeholder="Current password",
+                            id="pw_current",
+                            password=True,
+                        ),
+                        Input(
+                            placeholder="New password",
+                            id="pw_new",
+                            password=True,
+                        ),
+                        Input(
+                            placeholder="Confirm new password",
+                            id="pw_confirm",
+                            password=True,
+                        ),
+                        Static("", id="pw_msg", classes="acct-msg"),
+                        Horizontal(
+                            Button("Update password", id="pw_submit"),
+                            classes="acct-actions",
+                        ),
+                        classes="acct-section",
+                    )
+                with TabPane("Handle", id="handle_pane"):
+                    yield Vertical(
+                        Static("Change handle", classes="acct-title"),
+                        Input(placeholder="New handle", id="handle_new"),
+                        Input(
+                            placeholder="Password (to confirm)",
+                            id="handle_pw",
+                            password=True,
+                        ),
+                        Static("", id="handle_msg", classes="acct-msg"),
+                        Horizontal(
+                            Button("Update handle", id="handle_submit"),
+                            classes="acct-actions",
+                        ),
+                        classes="acct-section",
+                    )
+                with TabPane("Email", id="email_pane"):
+                    yield Vertical(
+                        Static("Change email", classes="acct-title"),
+                        Input(placeholder="New email", id="email_new"),
+                        Input(
+                            placeholder="Password (to confirm)",
+                            id="email_pw",
+                            password=True,
+                        ),
+                        Static("", id="email_msg", classes="acct-msg"),
+                        Horizontal(
+                            Button("Update email", id="email_submit"),
+                            classes="acct-actions",
+                        ),
+                        classes="acct-section",
+                    )
         yield Footer()
+
+    # --- spatial navigation across tabs (#1898) ---
+
+    def action_spatial_up(self) -> None:
+        """Up within a tab walks its chain; from the first field, Up
+        returns focus to the tab strip so Left/Right can switch tabs
+        (#1781, #1898).
+        """
+        chain = self.SPATIAL_CHAIN
+        fid = getattr(self.focused, "id", None) if self.focused else None
+        if not fid or fid not in chain:
+            return
+        pos = chain.index(fid)
+        if pos > 0:
+            self.query_one(f"#{chain[pos - 1]}").focus()
+        else:
+            # Top of a tab → return focus to the tab strip.
+            self.query_one(Tabs).focus()
+
+    def on_key(self, event) -> None:
+        """Down from the tab strip enters the first field of the active
+        tab. Left/Right on the strip switch tabs natively (handled by
+        :class:`Tabs`' own bindings)."""
+        if event.key == "down" and isinstance(self.focused, Tabs):
+            chain = self.SPATIAL_CHAIN
+            if chain:
+                event.stop()
+                self.query_one(f"#{chain[0]}").focus()
+
+    def on_tabbed_content_tab_activated(self, event) -> None:
+        """Focus the first field of the newly-active tab (#1792, #1898).
+
+        Mirrors the workspace-list screen: switching tabs drops you into
+        the pane's content rather than stranding focus on the strip.
+        """
+        chain = self.SPATIAL_CHAIN
+        if chain:
+            self.query_one(f"#{chain[0]}").focus()
 
     def on_mount(self) -> None:
         self.app.title = "Klangk: Account"
