@@ -2303,6 +2303,27 @@ class TestWorkspaceRoutes:
         match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["allowed_domains"] == ["github.com:443"]
 
+    async def test_update_workspace_env(self, client, user):
+        # Regression: a partial PUT of env (e.g. adding a new var from the
+        # TUI/Flutter edit form) must persist and round-trip through GET.
+        # This was the only creatable field with no PUT coverage (#1891).
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "env-ws"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"env": {"a": "1"}},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["env"] == {"a": "1"}
+
     async def test_update_workspace_propagates_to_live_state(
         self, client, app, user, registry
     ):

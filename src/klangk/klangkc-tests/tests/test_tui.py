@@ -8030,3 +8030,43 @@ async def test_edit_screen_editor_add_buttons_clickable(monkeypatch):
         assert captured["k"]["mounts"] == ["/host:/c"]
         assert captured["k"]["env"] == {"A": "1"}
         assert captured["k"]["allowed_domains"] == ["github.com:443"]
+
+
+async def test_edit_running_env_saved_before_restart_prompt(monkeypatch):
+    """Editing a RUNNING workspace's env persists the change *before* the
+    restart-needed prompt appears; dismissing the prompt (Skip) must not
+    drop it (#1891). The update PUT fires unconditionally in _do_save,
+    ahead of the ConfirmScreen."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha", running=True, env={"OLD": "x"})
+    captured = {}
+
+    def fake_update(*a, **k):
+        captured["k"] = k
+
+    app = KlangkApp(_edit_state(ws, update=fake_update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        tabs.active = "env_pane"
+        await pilot.pause()
+        es.query_one("#env_input", Input).value = "a=1"
+        await pilot.pause()
+        assert await pilot.click("#add_env")  # Add button reachable
+        await pilot.pause()
+        assert es._env == {"OLD": "x", "a": "1"}
+        assert await pilot.click("#save")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # The PUT fired with the merged env before any prompt.
+        assert captured["k"]["env"] == {"OLD": "x", "a": "1"}
+        # Restart-needed prompt is on top — Skip it.
+        assert await pilot.click("#no")
+        await pilot.pause()
+        assert captured["k"]["env"] == {"OLD": "x", "a": "1"}  # unchanged
