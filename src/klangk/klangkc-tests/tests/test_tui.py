@@ -4274,7 +4274,7 @@ async def test_create_screen_renders_defaults(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4292,7 +4292,7 @@ async def test_create_screen_autostart_hidden_when_not_allowed(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state(allow_autostart=lambda: False))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4307,7 +4307,7 @@ async def test_create_screen_mount_editor(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4336,7 +4336,7 @@ async def test_create_screen_env_editor(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4368,7 +4368,7 @@ async def test_create_screen_name_required(monkeypatch):
     app = KlangkApp(
         _create_state(create=lambda *a, **k: called.append(k) or _wsobj("z"))
     )
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4395,7 +4395,7 @@ async def test_create_screen_submit_omits_default_image(monkeypatch):
     app = KlangkApp(
         _create_state(create=create, allow_autostart=lambda: False)
     )
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4423,7 +4423,7 @@ async def test_create_screen_submit_custom_fields(monkeypatch):
         return _wsobj(name)
 
     app = KlangkApp(_create_state(create=create))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4464,7 +4464,7 @@ async def test_create_screen_http_error_shows_detail(monkeypatch):
         )
 
     app = KlangkApp(_create_state(create=create))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4486,7 +4486,7 @@ async def test_create_screen_auth_error(monkeypatch):
         raise AuthError("expired")
 
     app = KlangkApp(_create_state(create=create))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4514,7 +4514,7 @@ async def test_create_screen_images_unavailable(monkeypatch):
     app = KlangkApp(
         _create_state(create=create, list_images=boom, allow_autostart=boom)
     )
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4533,7 +4533,7 @@ async def test_create_screen_cancel_button(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4548,7 +4548,7 @@ async def test_create_screen_input_submit_routing(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4580,7 +4580,7 @@ async def test_create_flow_offer_opens_detail(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("new")))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4602,7 +4602,7 @@ async def test_create_flow_offer_declined(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("new")))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4624,7 +4624,7 @@ async def test_create_editor_guards(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4653,7 +4653,7 @@ async def test_create_screen_generic_error(monkeypatch):
         raise RuntimeError("boom")
 
     app = KlangkApp(_create_state(create=create))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4674,7 +4674,7 @@ async def test_create_button_routing(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state(create=lambda *a, **k: _wsobj("ws")))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4729,7 +4729,7 @@ async def test_create_screen_image_names_markup_safe(monkeypatch):
             create_workspace=lambda *a, **k: _wsobj("z"),
         )
     )
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4764,7 +4764,7 @@ async def test_create_screen_http_error_non_json(monkeypatch):
         )
 
     app = KlangkApp(_create_state(create=create))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4801,7 +4801,7 @@ async def test_create_screen_default_not_in_allowed(monkeypatch):
             create_workspace=create,
         )
     )
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4848,7 +4848,7 @@ async def test_create_screen_allowed_domains_editor(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -5603,7 +5603,7 @@ async def test_create_screen_tabbed_layout(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -5646,7 +5646,7 @@ async def test_create_screen_tab_spatial_nav(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -5686,7 +5686,7 @@ async def test_create_screen_tab_left_right_switches(monkeypatch):
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_create_state())
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -5750,7 +5750,7 @@ async def test_create_screen_no_server_does_not_crash(monkeypatch):
         raise ValueError("no server configured")
 
     app = KlangkApp(_create_state(list_images=boom, allow_autostart=boom))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()  # must not raise
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -7917,3 +7917,116 @@ async def test_run_token_refresh_loop_concurrent_rotation(monkeypatch):
     monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: None)
     result = await _real_run_token_refresh_loop(FakeState())
     assert result == "no_token"
+
+
+async def test_create_screen_editor_add_buttons_clickable(monkeypatch):
+    """Regression (#1891): the Add buttons inside each editor tab must be
+    reachable by mouse. A greedy default-width Input used to push Add/Remove
+    past the tab pane's clip region, so clicks silently missed — typing a
+    mount/env/domain and clicking Add then Create saved nothing. Also covers
+    the Advanced-tab text inputs (command/health)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def fake_create(*a, **k):
+        captured["k"] = k
+        return _wsobj("zzz")
+
+    app = KlangkApp(_create_state(create=fake_create))
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        tabs = cs.query_one("#form_tabs", TabbedContent)
+        # General tab is active on entry — set the required name first.
+        cs.query_one("#name", Input).value = "myws"
+        await pilot.pause()
+        # Mounts tab: input + Add button must both be inside the pane.
+        tabs.active = "mounts_pane"
+        await pilot.pause()
+        cs.query_one("#mount_input", Input).value = "/host:/c"
+        await pilot.pause()
+        assert await pilot.click("#add_mount")  # True == landed on the button
+        await pilot.pause()
+        # Environment tab
+        tabs.active = "env_pane"
+        await pilot.pause()
+        cs.query_one("#env_input", Input).value = "A=1"
+        await pilot.pause()
+        assert await pilot.click("#add_env")
+        await pilot.pause()
+        # Netfilter tab
+        tabs.active = "netfilter_pane"
+        await pilot.pause()
+        cs.query_one("#allow_input", Input).value = "github.com:443"
+        await pilot.pause()
+        assert await pilot.click("#add_allow")
+        await pilot.pause()
+        # Advanced tab text inputs (field-row; never had the overflow, but
+        # confirm they're reachable and flow through to Create).
+        tabs.active = "advanced_pane"
+        await pilot.pause()
+        cs.query_one("#command", Input).value = "./run"
+        cs.query_one("#health_check", Input).value = "curl localhost"
+        await pilot.pause()
+        # Create — every field must be persisted.
+        assert await pilot.click("#create")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert captured["k"]["mounts"] == ["/host:/c"]
+        assert captured["k"]["env"] == {"A": "1"}
+        assert captured["k"]["allowed_domains"] == ["github.com:443"]
+        assert captured["k"]["service_command"] == "./run"
+        assert captured["k"]["health_check"] == "curl localhost"
+
+
+async def test_edit_screen_editor_add_buttons_clickable(monkeypatch):
+    """Regression (#1891): same as the create-screen case but for the edit
+    form — Add buttons inside each editor tab must be clickable and the
+    entries must reach the PUT on Save."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha", running=False)  # not running -> no restart prompt
+    captured = {}
+
+    def fake_update(*a, **k):
+        captured["k"] = k
+
+    app = KlangkApp(_edit_state(ws, update=fake_update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        tabs.active = "mounts_pane"
+        await pilot.pause()
+        es.query_one("#mount_input", Input).value = "/host:/c"
+        await pilot.pause()
+        assert await pilot.click("#add_mount")
+        await pilot.pause()
+        tabs.active = "env_pane"
+        await pilot.pause()
+        es.query_one("#env_input", Input).value = "A=1"
+        await pilot.pause()
+        assert await pilot.click("#add_env")
+        await pilot.pause()
+        tabs.active = "netfilter_pane"
+        await pilot.pause()
+        es.query_one("#allow_input", Input).value = "github.com:443"
+        await pilot.pause()
+        assert await pilot.click("#add_allow")
+        await pilot.pause()
+        assert await pilot.click("#save")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert captured["k"]["mounts"] == ["/host:/c"]
+        assert captured["k"]["env"] == {"A": "1"}
+        assert captured["k"]["allowed_domains"] == ["github.com:443"]

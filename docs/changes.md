@@ -1011,6 +1011,15 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **TUI workspace form: Add/Remove buttons in the mounts / environment /
+  netfilter editors are now clickable (#1891).** The editor `Input`'s greedy
+  default width consumed the whole row, pushing the Add/Remove buttons past
+  the editor row's clip region (and, under the new tabbed layout, past the
+  tab pane's narrower clip) — so a mouse click on Add silently missed and
+  the entry was never added; typing a mount/env/domain and clicking Add then
+  Create/Save persisted nothing (Enter still worked). The Input is now
+  fractional width, leaving room for the buttons on every tab.
+
 - **TUI workspace detail now reflects terminal add/remove from other
   surfaces in realtime (#1885).** The detail screen's terminal list now
   updates when terminals are added, closed, or renamed from the Flutter web
