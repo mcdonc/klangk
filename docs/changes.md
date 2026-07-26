@@ -407,6 +407,13 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **TUI workspace detail: terminal-scoped keybindings moved inline (#1860).**
+  The `n` (new terminal) and `delete` (delete terminal) keys no longer appear
+  in the bottom Footer — their hints now render on the Terminals list header
+  (`[n] new  [⌫] delete`), next to the list they act on. The Footer is now
+  workspace-scoped only. The workspace-delete key `x` is relabeled `Delete` →
+  `Del ws` to disambiguate it from deleting a terminal.
+
 - **Environment variables are now split into four prefixed families
   (#1653).** The single `KLANGK_` prefix is repointed at the component each
   var targets:
@@ -917,6 +924,12 @@ set-password <email>` (set a known password for the default user — whose
   over TCP directly but are unused under `klangkd`.
 
 ### Fixed
+
+- **TUI workspace detail: terminal delete now shows in-flight feedback (#1863).**
+  Pressing `delete` on a selected terminal now shows a `Deleting terminal …`
+  status message while the close request is in flight (mirroring the existing
+  "Creating terminal …" feedback), instead of the screen appearing hung
+  until the list updates.
 
 - **The nginx proxy engine stays up under a plain `systemctl start` with no
   operator log workaround (#1550).** nginx's `access_log` directive has no
