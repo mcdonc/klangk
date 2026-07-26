@@ -27,6 +27,16 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **TUI workspace import/export with progress (#1758).** The workspace
+  detail screen gains `x` → Export (downloads a `.tar.gz` via
+  `GET /api/v1/workspaces/{id}/export`, admin-only) and the workspaces
+  list gains `i` → Import (uploads a `.tar.gz` via
+  `POST /api/v1/workspaces/import`). Both show a live progress bar with a
+  byte counter during the transfer, reusing the existing CLI transport
+  (`KlangkClient.export_workspace` / `import_workspace`). Import prompts
+  for the archive path; export prompts for an output path (default
+  `<name>.tar.gz`).
+
 - **TUI shows workspace id on the detail screen and a short id on each
   workspaces-list row (#1899).** The full server-assigned `id` is now
   shown on the workspace detail screen (top line, `id: <id>`), and the

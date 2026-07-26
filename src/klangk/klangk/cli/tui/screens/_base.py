@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from rich.text import Text
 
 from textual.app import ComposeResult
@@ -13,6 +15,7 @@ from textual.widgets import (
     Input,
     ListItem,
     ListView,
+    ProgressBar,
     Static,
     Tabs,
 )
@@ -227,3 +230,140 @@ class DuplicateScreen(ModalScreen):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "dup_name":
             self._commit()
+
+
+def _human_bytes(n: float) -> str:
+    """Format a byte count as e.g. ``"12.3 MB"``."""
+    value = float(n)
+    for unit in ("B", "KB", "MB"):
+        if value < 1024:
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} GB"
+
+
+def _fmt_transfer(done: float, total: float | None) -> str:
+    """Render a progress counter, tolerating an unknown total."""
+    d = _human_bytes(done)
+    return f"{d} / {_human_bytes(total)}" if total else f"{d} (size unknown)"
+
+
+class InputScreen(ModalScreen):
+    """Generic single-line input prompt (title + default + OK/Cancel).
+
+    Dismisses with the trimmed value on OK, or ``None`` on cancel (#1758).
+    """
+
+    DEFAULT_CSS = """
+    InputScreen { align: center middle; }
+    InputScreen > Vertical {
+        width: 64; max-width: 90%; padding: 0 2;
+        border: round $primary; background: $panel;
+    }
+    InputScreen Horizontal {
+        align-horizontal: right; height: auto; padding-top: 1;
+    }
+    """
+
+    def __init__(
+        self, title: str, default: str = "", ok_label: str = "OK"
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._default = default
+        self._ok_label = ok_label
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(Text(self._title)),
+            Input(value=self._default, id="inp_value"),
+            Horizontal(
+                Button("Cancel", id="cancel"),
+                Button(self._ok_label, id="ok", variant="primary"),
+            ),
+            id="inp_box",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#inp_value", Input).focus()
+
+    def _commit(self) -> None:
+        val = self.query_one("#inp_value", Input).value.strip()
+        self.dismiss(val or None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "ok":
+            self._commit()
+        elif event.button.id == "cancel":
+            self.dismiss(None)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "inp_value":
+            self._commit()
+
+
+class TransferScreen(ModalScreen):
+    """Runs a blocking transfer (export/import) in a worker thread while
+    showing a live progress bar (#1758).
+
+    ``make_call`` is invoked once as ``make_call(on_progress)`` inside
+    ``asyncio.to_thread``; ``on_progress`` is ``on_progress(done_bytes,
+    total_bytes_or_None)``. The screen dismisses with ``(True, success_msg)``
+    on completion or ``(False, error_text)`` on failure.
+    """
+
+    DEFAULT_CSS = """
+    TransferScreen { align: center middle; }
+    TransferScreen > Vertical {
+        width: 64; max-width: 90%; padding: 1 2;
+        border: round $primary; background: $panel;
+    }
+    TransferScreen #xfer_title { text-style: bold; margin-bottom: 1; }
+    TransferScreen #xfer_status { color: $text-muted; margin-top: 1; }
+    """
+
+    def __init__(
+        self,
+        title: str,
+        make_call,
+        success_msg: str,
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._make_call = make_call
+        self._success_msg = success_msg
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(Text(self._title), id="xfer_title"),
+            ProgressBar(id="xfer_bar"),
+            Static(Text("Starting…"), id="xfer_status"),
+            id="xfer_box",
+        )
+
+    def on_mount(self) -> None:
+        self.run_worker(self._run, exit_on_error=False)
+
+    async def _run(self) -> None:
+        def on_progress(done, total):
+            # Fires inside the worker thread — hop back to the UI thread.
+            self.app.call_from_thread(self._update, done, total)
+
+        try:
+            await asyncio.to_thread(self._make_call, on_progress)
+        except Exception as exc:  # noqa: BLE001 — surface any failure
+            self.dismiss((False, str(exc)))
+            return
+        self.dismiss((True, self._success_msg))
+
+    def _update(self, done: float, total: float | None) -> None:
+        bar = self.query_one("#xfer_bar", ProgressBar)
+        if total:
+            bar.update(total=total, progress=done)
+        else:
+            # Unknown length — keep the bar full and let the byte counter
+            # carry the real progress, mirroring the CLI's estimate trick.
+            bar.update(total=max(done, 1), progress=done)
+        self.query_one("#xfer_status", Static).update(
+            Text(_fmt_transfer(done, total))
+        )

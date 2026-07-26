@@ -7,6 +7,7 @@ import logging
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from rich.text import Text
 
@@ -25,7 +26,13 @@ from textual.widgets import (
 )
 
 from ...client import AuthError, WorkspaceNotFoundError
-from ._base import ConfirmScreen, DuplicateScreen, SpatialListView
+from ._base import (
+    ConfirmScreen,
+    DuplicateScreen,
+    InputScreen,
+    SpatialListView,
+    TransferScreen,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +47,7 @@ class WorkspaceDetailScreen(Screen):
         Binding("s", "stop", "Stop"),
         Binding("u", "duplicate", "Dup"),
         Binding("d", "delete", "Del ws"),
+        Binding("x", "export", "Export"),
         # Terminal-scoped keys are hidden from the Footer — their hints
         # are shown inline on the Terminals list header instead (#1860).
         Binding("n", "new_terminal", "New term", show=False),
@@ -556,3 +564,35 @@ class WorkspaceDetailScreen(Screen):
             return
         self._msg(f"Duplicated as '{new_name}'.")
         self.app.refresh_workspaces()
+
+    def action_export(self) -> None:
+        """Export this workspace to a .tar.gz (admin only) with progress (#1758)."""
+        self.app.push_screen(
+            InputScreen(
+                f"Export '{self._name}' to:",
+                default=f"{self._name}.tar.gz",
+                ok_label="Export",
+            ),
+            self._on_export,
+        )
+
+    def _on_export(self, path: str | None) -> None:
+        if not path:
+            return
+        state = self.app.tui_state
+
+        def make_call(on_progress):
+            state.export_workspace(self._name, Path(path), on_progress)
+
+        self.app.push_screen(
+            TransferScreen(
+                f"Exporting '{self._name}'…",
+                make_call,
+                f"Exported → {path}",
+            ),
+            self._on_export_done,
+        )
+
+    def _on_export_done(self, result: tuple[bool, str]) -> None:
+        ok, msg = result
+        self._msg(msg, error=not ok)

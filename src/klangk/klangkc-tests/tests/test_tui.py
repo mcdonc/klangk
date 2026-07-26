@@ -7,6 +7,8 @@ and the ``add_server_to_config`` helper — under the 100% coverage gate.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest
 from rich.text import Text
@@ -34,6 +36,7 @@ from klangk.cli.tui.screens import account as scr_account
 from klangk.cli.tui import state as tui_state_mod
 from klangk.cli.tui import ws as ws_mod
 from klangk.cli.tui.app import KlangkApp, run_tui
+from klangk.cli.tui.widgets import StatusBar
 from klangk.cli.config import (
     AliasConflictError,
     CLIConfig,
@@ -51,9 +54,11 @@ from klangk.cli.tui.screens import (
     DuplicateScreen,
     EditServerScreen,
     EditWorkspaceScreen,
+    InputScreen,
     LoginScreen,
     MainScreen,
     ServerSwitchScreen,
+    TransferScreen,
     WorkspaceDetailScreen,
 )
 from klangk.cli.tui.state import LoginError, TuiState
@@ -1891,6 +1896,290 @@ async def test_main_screen_action_duplicate_cancel(monkeypatch):
         app.screen.on_button_pressed(FakeBtnPress("cancel"))  # cancel
         await pilot.pause()
         assert "d" not in duped
+
+
+# --- import / export with progress (#1758) ---
+
+
+def test_tui_state_export_import(monkeypatch, redirect_xdg):
+    """TuiState.export/import forward to the client, resolving name->id."""
+    from unittest.mock import MagicMock
+
+    fake = MagicMock()
+    fake.resolve_workspace.return_value = _wsobj("a")
+    fake.import_workspace.return_value = _wsobj("imp")
+    st = TuiState("https://x.example")
+    monkeypatch.setattr(st, "client", lambda: fake)
+
+    # export resolves the name to an id, then downloads to the path.
+    st.export_workspace("a", Path("a.tar.gz"))
+    fake.resolve_workspace.assert_called_once_with("a")
+    fake.export_workspace.assert_called_once_with(
+        "id-a", Path("a.tar.gz"), on_progress=None
+    )
+
+    # import forwards the archive + optional name + progress callback.
+    assert st.import_workspace(Path("imp.tar.gz")).name == "imp"
+    fake.import_workspace.assert_called_once_with(
+        Path("imp.tar.gz"), name=None, on_progress=None
+    )
+
+    # on_progress is threaded straight through to the client.
+    def cb(d, t):
+        return None
+
+    st.export_workspace("a", Path("a.tar.gz"), on_progress=cb)
+    fake.export_workspace.assert_called_with(
+        "id-a", Path("a.tar.gz"), on_progress=cb
+    )
+
+
+def test_fmt_transfer_known_unknown_and_units():
+    """Byte formatter covers B/KB/MB/GB and the unknown-total branch."""
+    from klangk.cli.tui.screens._base import _fmt_transfer, _human_bytes
+
+    assert _human_bytes(0) == "0.0 B"
+    assert _human_bytes(512).endswith("B")
+    assert _human_bytes(1536) == "1.5 KB"
+    assert _human_bytes(2 * 1024 * 1024) == "2.0 MB"
+    assert _human_bytes(3 * 1024**3) == "3.0 GB"
+    assert _fmt_transfer(1536, 4096) == "1.5 KB / 4.0 KB"
+    assert _fmt_transfer(9999, None) == "9.8 KB (size unknown)"
+
+
+async def test_input_screen_ok_cancel_and_enter(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+    async with app.run_test() as pilot:
+        cap = {}
+        app.push_screen(
+            InputScreen("Path:", default="x.tar.gz", ok_label="Go"),
+            lambda r: cap.__setitem__("r", r),
+        )
+        await pilot.pause()
+        assert isinstance(app.screen, InputScreen)
+        # OK with the default value commits it.
+        app.screen.on_button_pressed(FakeBtnPress("ok"))
+        await pilot.pause()
+        assert cap["r"] == "x.tar.gz"
+
+        # Cancel dismisses with None.
+        app.push_screen(
+            InputScreen("Path:"), lambda r: cap.__setitem__("c", r)
+        )
+        await pilot.pause()
+        app.screen.on_button_pressed(FakeBtnPress("cancel"))
+        await pilot.pause()
+        assert cap["c"] is None
+
+        # Empty value on OK -> None.
+        app.push_screen(
+            InputScreen("Path:"), lambda r: cap.__setitem__("e", r)
+        )
+        await pilot.pause()
+        app.screen.query_one("#inp_value", Input).value = "   "
+        app.screen.on_button_pressed(FakeBtnPress("ok"))
+        await pilot.pause()
+        assert cap["e"] is None
+
+        # Enter submits the focused input.
+        app.push_screen(
+            InputScreen("Path:", default="z"),
+            lambda r: cap.__setitem__("s", r),
+        )
+        await pilot.pause()
+        inp = app.screen.query_one("#inp_value", Input)
+        app.screen.on_input_submitted(Input.Submitted(input=inp, value="z"))
+        await pilot.pause()
+        assert cap["s"] == "z"
+
+
+async def test_transfer_screen_success_error_and_progress(monkeypatch):
+    """TransferScreen drives the bar from the worker thread and reports
+    success/failure via its dismiss value (#1758)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+
+    async with app.run_test() as pilot:
+        cap = {}
+
+        # Success: on_progress fires from the thread with both a known and
+        # an unknown total (covers both _update branches), then dismisses.
+        def ok_call(on_progress):
+            on_progress(50, 200)
+            on_progress(80, None)
+            return None
+
+        app.push_screen(
+            TransferScreen("Working", ok_call, "done!"),
+            lambda r: cap.__setitem__("ok", r),
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert cap["ok"] == (True, "done!")
+
+        # Failure: make_call raises -> dismisses with (False, str(exc)).
+        def bad_call(on_progress):
+            raise RuntimeError("boom")
+
+        app.push_screen(
+            TransferScreen("Working", bad_call, "done!"),
+            lambda r: cap.__setitem__("bad", r),
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert cap["bad"] == (False, "boom")
+
+
+async def test_detail_export_flow_with_progress(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    a = _wsobj("alpha", running=True)
+    exported = {}
+
+    def fake_export(name, out, on_progress=None):
+        if on_progress:
+            on_progress(10, 100)
+            on_progress(100, 100)
+        exported["args"] = (name, str(out))
+        return None
+
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    st.export_workspace = fake_export
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        d = app.screen
+        # 'x' opens the export prompt prefilled with <name>.tar.gz.
+        d.action_export()
+        await pilot.pause()
+        assert isinstance(app.screen, InputScreen)
+        app.screen.on_button_pressed(FakeBtnPress("ok"))  # accept default
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.pause()
+        # Transfer ran (mock completes instantly) -> back on detail, msg set.
+        assert exported["args"] == ("alpha", str(Path("alpha.tar.gz")))
+        assert "Exported" in str(d.query_one("#detail_msg", Static).render())
+
+
+async def test_detail_export_cancel_aborts(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        d = app.screen
+        d.action_export()
+        await pilot.pause()
+        app.screen.on_button_pressed(FakeBtnPress("cancel"))
+        await pilot.pause()
+        # No transfer pushed; still on the detail screen.
+        assert not isinstance(app.screen, TransferScreen)
+
+
+async def test_main_import_missing_file_flashes(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    st = _ws(owned=[_wsobj("alpha")])
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_import()
+        await pilot.pause()
+        assert isinstance(app.screen, InputScreen)
+        app.screen.query_one(
+            "#inp_value", Input
+        ).value = "/no/such/nope.tar.gz"
+        app.screen.on_button_pressed(FakeBtnPress("ok"))
+        await pilot.pause()
+        # Missing file -> no transfer, error flashed on the status bar.
+        assert not isinstance(app.screen, TransferScreen)
+        status = m.query_one("#status", StatusBar)
+        assert "not found" in str(status.render())
+
+
+async def test_main_import_flow_with_progress(monkeypatch, tmp_path):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    archive = tmp_path / "imp.tar.gz"
+    archive.write_bytes(b"PK\x03\x04payload")
+    imported = {}
+
+    def fake_import(path, name=None, on_progress=None):
+        if on_progress:
+            on_progress(8, 16)
+            on_progress(16, 16)
+        imported["path"] = str(path)
+        return _wsobj("imp")
+
+    st = _ws(owned=[_wsobj("alpha")])
+    st.import_workspace = fake_import
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        refreshed = {}
+        m.refresh_lists = lambda: refreshed.__setitem__("r", True)
+        m.action_import()
+        await pilot.pause()
+        assert isinstance(app.screen, InputScreen)
+        app.screen.query_one("#inp_value", Input).value = str(archive)
+        app.screen.on_button_pressed(FakeBtnPress("ok"))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.pause()
+        assert imported["path"] == str(archive)
+        assert refreshed.get("r") is True  # list refreshed on success
+        status = m.query_one("#status", StatusBar)
+        assert "Imported" in str(status.render())
+
+
+async def test_main_import_cancel_aborts(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    st = _ws(owned=[_wsobj("alpha")])
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_import()
+        await pilot.pause()
+        app.screen.on_button_pressed(FakeBtnPress("cancel"))
+        await pilot.pause()
+        assert not isinstance(app.screen, TransferScreen)
 
 
 async def test_main_screen_action_edit_load_fallbacks(monkeypatch):
