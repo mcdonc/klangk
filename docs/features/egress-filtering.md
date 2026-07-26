@@ -163,14 +163,342 @@ logs. This is deliberate: a misconfigured deploy degrades to the
 unrestricted baseline rather than making workspaces unusable, but the
 warning makes the gap visible.
 
+## Common service domain lists
+
+When building an `allowed_domains` list, you need to know which hosts and
+ports a service requires. The tables below cover the most-requested
+services; the same research pattern (check the provider's firewall /
+proxy docs, then test) works for any service.
+
+> **Note:** Hostnames are resolved to IPs at container-create time. If a
+> service's IPs change (common with CDN-fronted domains), the container
+> must be **restarted** to pick up the new addresses. See the
+> [Caveats](#caveats) section.
+
+### GitHub (SSH git operations)
+
+For `git clone git@github.com:…` / `git push` over SSH:
+
+| Entry           | Purpose                |
+| --------------- | ---------------------- |
+| `github.com:22` | Standard SSH transport |
+
+If upstream firewalls block port 22, GitHub offers an SSH-over-HTTPS
+fallback on `ssh.github.com:443` (requires `~/.ssh/config` stanza —
+see [Using SSH over the HTTPS port][gh-ssh-443]).
+
+### GitHub (HTTPS git + API)
+
+For `git clone https://github.com/…` and the `gh` CLI:
+
+| Entry                | Purpose                                           |
+| -------------------- | ------------------------------------------------- |
+| `github.com:443`     | HTTPS clone / push / pull, web UI                 |
+| `api.github.com:443` | REST & GraphQL API (`gh` CLI, credential helpers) |
+
+If you also need raw file views, release-asset downloads, or Git LFS:
+
+| Entry                                       | Purpose                     |
+| ------------------------------------------- | --------------------------- |
+| `raw.githubusercontent.com:443`             | Raw file content            |
+| `objects.githubusercontent.com:443`         | Git LFS objects             |
+| `github-releases.githubusercontent.com:443` | Release-asset downloads     |
+| `codeload.github.com:443`                   | Archive / tarball downloads |
+
+### GitHub (full development)
+
+A workspace that uses the web UI, GitHub Packages, or Copilot in
+addition to git typically needs a broader set. Because klangk's
+netfilter resolves at container-create time and doesn't support
+wildcards, list the specific subdomains you use:
+
+| Entry                                       | Purpose                 |
+| ------------------------------------------- | ----------------------- |
+| `github.com:22`                             | SSH git                 |
+| `github.com:443`                            | HTTPS git, web UI       |
+| `api.github.com:443`                        | API                     |
+| `ssh.github.com:443`                        | SSH-over-HTTPS fallback |
+| `raw.githubusercontent.com:443`             | Raw file views          |
+| `objects.githubusercontent.com:443`         | LFS objects             |
+| `github-releases.githubusercontent.com:443` | Release assets          |
+| `codeload.github.com:443`                   | Archives                |
+| `ghcr.io:443`                               | Container registry      |
+| `npm.pkg.github.com:443`                    | npm packages            |
+| `pypi.pkg.github.com:443`                   | PyPI packages           |
+
+GitHub warns that their domain list is not comprehensive and IP ranges
+change over time — see [Allowing access to GitHub's services from a
+restricted network][gh-firewall] and the live
+[`/meta` API endpoint][gh-meta].
+
+### Debian / Ubuntu (apt)
+
+The default klangk workspace image is Debian Trixie. For `apt update`
+and `apt install`:
+
+| Entry                           | Purpose                           |
+| ------------------------------- | --------------------------------- |
+| `deb.debian.org:80`             | Main Debian archive (Fastly CDN)  |
+| `deb.debian.org:443`            | Main archive over HTTPS           |
+| `security.debian.org:80`        | Security updates                  |
+| `security.debian.org:443`       | Security updates over HTTPS       |
+| `cdn-fastly.deb.debian.org:80`  | Fastly CDN backend (CNAME target) |
+| `cdn-fastly.deb.debian.org:443` | Fastly CDN backend over HTTPS     |
+| `cdn-aws.deb.debian.org:443`    | CloudFront CDN backend            |
+
+For GPG key operations (`apt-key`, `gpg --recv-keys`):
+
+| Entry                        | Purpose                       |
+| ---------------------------- | ----------------------------- |
+| `keyserver.ubuntu.com:80`    | Primary keyserver (HTTP)      |
+| `keyserver.ubuntu.com:443`   | Primary keyserver (HTTPS)     |
+| `keyserver.ubuntu.com:11371` | HKP (HTTP Keyserver Protocol) |
+
+**Ubuntu** workspaces replace the Debian entries with:
+
+| Entry                          | Purpose                       |
+| ------------------------------ | ----------------------------- |
+| `archive.ubuntu.com:80`        | Main Ubuntu archive           |
+| `archive.ubuntu.com:443`       | Main archive over HTTPS       |
+| `security.ubuntu.com:80`       | Security updates              |
+| `security.ubuntu.com:443`      | Security updates over HTTPS   |
+| `ppa.launchpadcontent.net:443` | PPA downloads (if using PPAs) |
+
+Port 80 is important — apt's default Debian/Ubuntu configuration
+uses HTTP. The packages themselves are GPG-verified regardless of
+transport.
+
+### PyPI
+
+| Entry                        | Purpose           |
+| ---------------------------- | ----------------- |
+| `pypi.org:443`               | Package index     |
+| `files.pythonhosted.org:443` | Package downloads |
+
+### npm
+
+| Entry                    | Purpose                  |
+| ------------------------ | ------------------------ |
+| `registry.npmjs.org:443` | Package index + tarballs |
+
+### Nix
+
+For `nix build`, `nix develop`, `nix-shell`, and `nix-env -i` (the
+binary cache, channels, and source tarballs):
+
+| Entry                    | Purpose                                 |
+| ------------------------ | --------------------------------------- |
+| `cache.nixos.org:443`    | Default binary cache (Fastly CDN → S3)  |
+| `channels.nixos.org:443` | Channel metadata, flake registry        |
+| `releases.nixos.org:443` | Nix release tarballs, installer scripts |
+| `tarballs.nixos.org:443` | Source tarballs for packages (fetchurl) |
+
+Nix flakes typically pull inputs from GitHub, so the GitHub HTTPS
+entries above are needed too (`github.com:443`, `api.github.com:443`,
+`codeload.github.com:443`, `raw.githubusercontent.com:443`).
+
+The CDN backends behind `*.nixos.org` are Fastly and S3. If your
+firewall resolves CNAMEs or inspects SNI you may also need:
+
+| Entry                            | Purpose                       |
+| -------------------------------- | ----------------------------- |
+| `nix-cache.s3.amazonaws.com:443` | S3 origin for cache.nixos.org |
+
+If using [Cachix](https://cachix.org) binary caches, add each cache
+you use (klangk's netfilter doesn't support wildcards):
+
+| Entry                          | Purpose                       |
+| ------------------------------ | ----------------------------- |
+| `cachix.org:443`               | Main service                  |
+| `devenv.cachix.org:443`        | devenv cache (example)        |
+| `nix-community.cachix.org:443` | nix-community cache (example) |
+
+All Nix traffic is HTTPS (port 443). No HTTP or non-standard ports
+are required.
+
+### GitLab
+
+| Entry                     | Purpose            |
+| ------------------------- | ------------------ |
+| `gitlab.com:22`           | SSH git            |
+| `gitlab.com:443`          | HTTPS git, web UI  |
+| `registry.gitlab.com:443` | Container registry |
+
+Self-managed GitLab instances use their own hostname instead of
+`gitlab.com`.
+
+### Bitbucket
+
+| Entry                   | Purpose           |
+| ----------------------- | ----------------- |
+| `bitbucket.org:22`      | SSH git           |
+| `bitbucket.org:443`     | HTTPS git, web UI |
+| `api.bitbucket.org:443` | REST API          |
+
+### Codeberg
+
+| Entry              | Purpose           |
+| ------------------ | ----------------- |
+| `codeberg.org:22`  | SSH git           |
+| `codeberg.org:443` | HTTPS git, web UI |
+
+### Canonical Launchpad
+
+| Entry                          | Purpose               |
+| ------------------------------ | --------------------- |
+| `launchpad.net:443`            | Web UI, API           |
+| `git.launchpad.net:22`         | Git over SSH          |
+| `git.launchpad.net:443`        | Git over HTTPS        |
+| `ppa.launchpadcontent.net:443` | PPA package downloads |
+
+### Anthropic API (Claude Code)
+
+| Entry                       | Purpose                        |
+| --------------------------- | ------------------------------ |
+| `api.anthropic.com:443`     | Claude API (chat, completions) |
+| `statsig.anthropic.com:443` | Feature flags / telemetry      |
+| `sentry.io:443`             | Error reporting                |
+
+### OpenAI API (Codex, ChatGPT)
+
+| Entry                              | Purpose                      |
+| ---------------------------------- | ---------------------------- |
+| `api.openai.com:443`               | Chat, completions, Codex API |
+| `cdn.openai.com:443`               | Static assets                |
+| `openaiapi-site.azureedge.net:443` | CDN edge (Azure)             |
+
+### Zencoder (z.ai)
+
+| Entry                  | Purpose                                   |
+| ---------------------- | ----------------------------------------- |
+| `api.z.ai:443`         | LLM API (`/api/coding/paas/v4` base path) |
+| `auth.zencoder.ai:443` | Authentication                            |
+
+### OpenRouter
+
+| Entry               | Purpose                               |
+| ------------------- | ------------------------------------- |
+| `openrouter.ai:443` | LLM API (`/api/v1` base path), web UI |
+
+### Ollama
+
+| Entry                  | Purpose                                  |
+| ---------------------- | ---------------------------------------- |
+| `cloud.ollama.com:443` | Ollama cloud API (direct from container) |
+
+A self-hosted Ollama configured as `KLANGKD_LLM_BASE_URL` is proxied
+through the backend's `/llm-proxy/` endpoint and needs no netfilter
+entry. `cloud.ollama.com` is for workspaces that contact the Ollama
+cloud service directly (e.g. from user code or an agent).
+
+### Bare-domain shortcut
+
+A domain without a port (e.g. `github.com`) allows **all** ports to
+that host. This is convenient for quick iteration but less restrictive
+than pinning individual ports.
+
+[gh-ssh-443]: https://docs.github.com/en/authentication/troubleshooting-ssh/using-ssh-over-the-https-port
+[gh-firewall]: https://docs.github.com/en/get-started/using-github/allowing-access-to-githubs-services-from-a-restricted-network
+[gh-meta]: https://api.github.com/meta
+
+### Deploy-wide default: all common services
+
+The following `klangkd.yaml` snippet applies the union of every service
+listed above as the deploy-wide default. Paste it into your
+`klangkd.yaml` and every workspace that doesn't declare its own
+`allowed_domains` inherits this list. A workspace that sets its own
+list **overrides** (replaces) the default entirely.
+
+Remove services you don't need — the tighter the list, the smaller the
+attack surface.
+
+```yaml
+# Deploy-wide egress allow-list (union of all common services).
+# Each workspace that does NOT set its own allowed_domains inherits this.
+# A workspace with its own list overrides it completely.
+netfilter_default_domains:
+  # --- GitHub (SSH + HTTPS + API + assets) ---
+  - github.com:22
+  - github.com:443
+  - api.github.com:443
+  - ssh.github.com:443
+  - codeload.github.com:443
+  - raw.githubusercontent.com:443
+  - objects.githubusercontent.com:443
+  - github-releases.githubusercontent.com:443
+  - ghcr.io:443
+  - npm.pkg.github.com:443
+  - pypi.pkg.github.com:443
+  # --- GitLab ---
+  - gitlab.com:22
+  - gitlab.com:443
+  - registry.gitlab.com:443
+  # --- Bitbucket ---
+  - bitbucket.org:22
+  - bitbucket.org:443
+  - api.bitbucket.org:443
+  # --- Codeberg ---
+  - codeberg.org:22
+  - codeberg.org:443
+  # --- Canonical Launchpad ---
+  - launchpad.net:443
+  - git.launchpad.net:22
+  - git.launchpad.net:443
+  - ppa.launchpadcontent.net:443
+  # --- Debian apt ---
+  - deb.debian.org:80
+  - deb.debian.org:443
+  - security.debian.org:80
+  - security.debian.org:443
+  - cdn-fastly.deb.debian.org:80
+  - cdn-fastly.deb.debian.org:443
+  - cdn-aws.deb.debian.org:443
+  # --- Ubuntu apt ---
+  - archive.ubuntu.com:80
+  - archive.ubuntu.com:443
+  - security.ubuntu.com:80
+  - security.ubuntu.com:443
+  # --- GPG keyservers ---
+  - keyserver.ubuntu.com:80
+  - keyserver.ubuntu.com:443
+  - keyserver.ubuntu.com:11371
+  # --- PyPI ---
+  - pypi.org:443
+  - files.pythonhosted.org:443
+  # --- npm ---
+  - registry.npmjs.org:443
+  # --- Nix ---
+  - cache.nixos.org:443
+  - channels.nixos.org:443
+  - releases.nixos.org:443
+  - tarballs.nixos.org:443
+  - nix-cache.s3.amazonaws.com:443
+  - cachix.org:443
+  - devenv.cachix.org:443
+  - nix-community.cachix.org:443
+  # --- LLM providers ---
+  - api.anthropic.com:443
+  - statsig.anthropic.com:443
+  - sentry.io:443
+  - api.openai.com:443
+  - cdn.openai.com:443
+  - openaiapi-site.azureedge.net:443
+  - api.z.ai:443
+  - auth.zencoder.ai:443
+  - openrouter.ai:443
+  - cloud.ollama.com:443
+```
+
 ## Caveats
 
-- **DNS resolution at creation time.** iptables matches IPs, so hostnames
-  are resolved when the container is created. If a service rotates IPs
-  (common with CDNs), access may break until the workspace is restarted.
-  Mitigation: allow a port without pinning a host, or allow a CIDR
-  range (a possible future enhancement; the initial implementation is
-  `host`/`host:port` only).
+- **DNS resolution at creation time — restart on IP change.** iptables
+  matches IPs, so hostnames are resolved once when the container is
+  created. If a service rotates IPs (common with CDNs like Fastly,
+  CloudFront, and Cloudflare), access may break without warning.
+  **Restart the workspace container** to re-resolve hostnames and
+  update the iptables rules. Mitigation: allow a port without pinning a
+  host, or allow a CIDR range (a possible future enhancement; the
+  initial implementation is `host`/`host:port` only).
 - **DNS is pinned to resolvers, not blocked entirely.** Outbound `:53` is
   accepted only to the nameservers in the container's `/etc/resolv.conf`,
   so a workspace cannot talk to an arbitrary host on port 53. This does
