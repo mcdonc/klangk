@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from rich.text import Text
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import (
     Button,
@@ -37,8 +38,11 @@ class LoginScreen(SpatialNavScreen):
     password form; ``unreachable`` → diagnostic.
     """
 
+    # Server-scoped keys are hidden from the Footer — their hints render
+    # inline on the server list header instead (#1890), matching the
+    # workspace-detail / switch-server screens.
     BINDINGS = [
-        ("d", "delete_server", "Delete server")
+        Binding("d", "delete_server", "Delete server", show=False),
     ]  # spatial nav via SpatialNavScreen mixin
     SPATIAL_CHAIN = [
         "server_input",
@@ -49,10 +53,30 @@ class LoginScreen(SpatialNavScreen):
     ]
     SPATIAL_UP_EXIT = "server_options"
 
+    DEFAULT_CSS = """
+    LoginScreen #server_header {
+        height: auto;
+        padding: 0;
+        margin: 0;
+    }
+    LoginScreen #server_line {
+        width: 1fr;
+    }
+    LoginScreen #server_hints {
+        width: auto;
+        text-align: right;
+        color: $text-muted;
+    }
+    """
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield Vertical(
-            Static("", id="server_line"),
+            Horizontal(
+                Static("", id="server_line"),
+                Static("[d] delete", id="server_hints", markup=False),
+                id="server_header",
+            ),
             ServerListView(id="server_options"),
             Input(
                 placeholder=("Server URL or alias (e.g. https://host, prod)"),
