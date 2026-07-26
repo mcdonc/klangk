@@ -33,18 +33,6 @@ operators or integrators to act when upgrading.
   on its row (#1899). Name matching is unchanged; the empty filter still
   shows all workspaces.
 
-- **TUI account screen is now tabbed (Password / Handle / Email)
-  (#1898).** The three self-service forms — change password, change
-  handle, change email — now live in a `TabbedContent` with one tab per
-  credential concern, mirroring the workspace editor's tabbed layout
-  (#1891) so the two editor screens share one interaction model. The
-  current `@handle` / email profile header is pinned above the tabs and
-  stays visible on every tab. Keyboard nav: Left/Right switch tabs on the
-  strip, Down enters the active tab, Up returns to the strip, and Up/Down
-  walks the active tab's fields — no focus traps. Per-field validation
-  (handle charset, email format, password minimum) and the handle-change
-  confirm dialog are unchanged.
-
 - **TUI workspace import/export with progress (#1758).** The workspace
   detail screen gains `x` → Export (downloads a `.tar.gz` via
   `GET /api/v1/workspaces/{id}/export`, admin-only) and the workspaces
@@ -84,18 +72,16 @@ operators or integrators to act when upgrading.
   **`s` is now Stop/Start** (it was Switch server) — Switch server moved to
   `c`.
 
-- **Account self-service from the CLI and TUI (#1753).** A new
+- **Account self-service from the CLI (#1753).** A new
   `klangk account` group (`show`, `passwd`, `handle`, `email`) changes your
-  password, handle, or email from the command line, and a new TUI **Account**
-  screen (press `a` from the workspace list) offers the same operations with
-  inline validation. Both surfaces mirror the Flutter `SettingsPage`: current
-  `@handle` + email from `GET /api/v1/auth/me`, the same client-side checks
-  (handle lowercase `[a-z0-9._-]+` charset, email format, password minimum
-  read from `/api/v1/config`), and password confirmation for handle/email
-  changes (plus a confirm dialog for the handle, which affects your terminal
-  home directory). The CLI re-keys your cached token under the new email
-  after a change — the JWT subject is your user id, so the token stays valid;
-  only the key it's filed under changes.
+  password, handle, or email from the command line. It mirrors the Flutter
+  `SettingsPage`: current `@handle` + email from `GET /api/v1/auth/me`,
+  client-side checks (handle lowercase `[a-z0-9._-]+` charset, email
+  format, password minimum read from `/api/v1/config`), and password
+  confirmation for handle/email changes (plus a confirm dialog for the
+  handle, which affects your terminal home directory). The CLI re-keys your
+  cached token under the new email after a change — the JWT subject is your
+  user id, so the token stays valid; only the key it's filed under changes.
 
 - **Flutter workspace settings: the restart-needed notice offers a
   "Restart now" button (#1780).** Editing a create-time field (image,
@@ -500,14 +486,6 @@ invitations send` stay email-only (a deliverable address is required);
   terminal. The `klangk` theme is still registered and remains selectable
   for users who want the original GitHub-dark-inspired palette.
 
-- **TUI: tabbed account screen (#1898).** The account screen now groups
-  its three self-service forms under tabs — Password / Handle / Email —
-  instead of one long scroll, mirroring the tabbed workspace forms (#1891).
-  The `@handle` / email profile header stays pinned above the tabs so it is
-  visible on every tab. Left/Right switch tabs, Up/Down move between the
-  tab strip and a pane's fields, and Up from the first field returns to the
-  strip — no focus traps.
-
 - **TUI: tabbed workspace create/edit forms (#1891).** The workspace
   create and edit screens now group their fields under five tabs — General
   (name / image / auto-start), Mounts, Environment, Netfilter (allowed
@@ -754,6 +732,10 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
   recognized.
 
 ### Removed
+
+- **TUI account screen (#1919).** The `a` → Account keybinding and
+  `AccountScreen` (password, handle, email self-service) have been removed
+  from the TUI. Use `klangk account` (CLI) or the web UI instead.
 
 - **The `customize/build/` directory is gone — fork the repo to add custom
   plugins (#1663).** With the plugin declaration list now checked in as
