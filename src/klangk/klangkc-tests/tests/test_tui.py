@@ -4945,6 +4945,47 @@ async def test_login_server_list_autofocused(monkeypatch):
         assert lv.index == 0
 
 
+async def test_login_server_line_hugs_list_and_headers_styled(monkeypatch):
+    """#1865: no blank row between the 'Server:' status line and the server
+    picker, and the 'Server:' / notice headers are emphasized (accent color +
+    bold) so they read as headers."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr, "listen_for_status", noop)
+    st = _st(
+        current_url=lambda: "http://localhost:8997",
+        known_servers=lambda: [],
+        default_uds=lambda: None,
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+    )
+    app = KlangkApp(st)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        login = app.screen
+        line = login.query_one("#server_line")
+        notice = login.query_one("#notice")
+        opts = login.query_one("#server_options", ListView)
+        message = login.query_one("#message")
+
+        # No blank row: the picker's top edge meets the status line's bottom.
+        assert opts.region.y == line.region.y + line.region.height
+
+        # Both headers are emphasized as headers (bold + a non-default,
+        # accent-derived color; exact rgb is fragile because Textual rounds
+        # the resolved design token, so compare against the unstyled line).
+        assert line.styles.text_style.bold
+        assert notice.styles.text_style.bold
+        assert line.styles.color != message.styles.color
+        assert notice.styles.color != message.styles.color
+
+
 async def test_login_server_list_empty_no_crash(monkeypatch):
     """#1826: no servers → no crash, focus degrades gracefully."""
 

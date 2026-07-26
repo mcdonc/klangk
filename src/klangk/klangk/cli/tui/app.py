@@ -74,9 +74,15 @@ class KlangkApp(App):
         padding: 0 1;
         overflow-y: auto;
     }
-    /* A little air under the server status line, before the picker. */
-    #server_line {
-        margin-bottom: 1;
+    /* Login-screen headers: the server status line and the notice line
+    below it. Formerly #server_line had a 1-row bottom margin that left a
+    blank row between it and the server picker — dropped so the list hugs
+    the status line (#1865). Emphasized with the theme accent + bold so
+    they read as headers. CSS (not markup) is used because "Server: {url}"
+    carries a dynamic URL that must not be markup-parsed. */
+    #server_line, #notice {
+        color: $accent;
+        text-style: bold;
     }
     /* Right-align button rows; don't let them expand vertically (avoids a
     large gap below the button before the next field). */

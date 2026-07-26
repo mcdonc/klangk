@@ -407,6 +407,11 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **TUI login headers recolored as accent + bold (#1865).** The
+  "Server: …" status line and the notice line beneath it (e.g.
+  "Cannot reach the server…") now render in the theme accent color, bold,
+  so they read as headers rather than body text.
+
 - **TUI workspace detail: terminal-scoped keybindings moved inline (#1860).**
   The `n` (new terminal) and `delete` (delete terminal) keys no longer appear
   in the bottom Footer — their hints now render on the Terminals list header
@@ -924,6 +929,10 @@ set-password <email>` (set a known password for the default user — whose
   over TCP directly but are unused under `klangkd`.
 
 ### Fixed
+
+- **TUI login: no blank row between the server status line and the server
+  list (#1865).** Dropped a 1-row bottom margin on the "Server: …"
+  status line so the server picker renders directly beneath it.
 
 - **TUI workspace detail: terminal delete now shows in-flight feedback (#1863).**
   Pressing `delete` on a selected terminal now shows a `Deleting terminal …`
