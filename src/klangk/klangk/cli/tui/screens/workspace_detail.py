@@ -92,6 +92,7 @@ class WorkspaceDetailScreen(Screen):
     def on_mount(self) -> None:
         self.run_worker(self._mount_async, exit_on_error=False)
         self._uptime_timer = self.set_interval(5, self._tick_uptime)
+        self._terminal_poll_timer = self.set_interval(10, self._poll_terminals)
 
     async def _mount_async(self) -> None:
         await self._load()
@@ -302,6 +303,29 @@ class WorkspaceDetailScreen(Screen):
             self.app.pop_screen()
 
     # --- terminals (own) ---
+
+    def _poll_terminals(self) -> None:
+        """Periodically re-fetch the terminal list so changes made in
+        other clients (Flutter, CLI) appear without manual refresh."""
+        if self._ws is None or not self._ws.running:
+            return
+        self.run_worker(
+            self._refresh_terminals, exit_on_error=False, exclusive=True
+        )
+
+    async def _refresh_terminals(self) -> None:
+        """Re-fetch terminals and update only if the list changed."""
+        try:
+            windows = await self.app.tui_state.list_terminals(self._name)
+        except Exception:
+            return  # transient failure — keep the current list
+        windows = windows or []
+        old_keys = [(w.get("index"), w.get("name")) for w in self._terminals]
+        new_keys = [(w.get("index"), w.get("name")) for w in windows]
+        if old_keys == new_keys:
+            return
+        self._terminals = windows
+        self._render_terminals()
 
     async def _load_terminals(self) -> None:
         try:
