@@ -27,6 +27,12 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **TUI keybinding change: Duplicate is now `u`, Delete is now `d` (#1888).**
+  On both the workspaces list and the workspace detail screen, Duplicate
+  moved from `d` to `u` and Delete moved from `x` to `d` (the two screens
+  stay consistent). The inline hint bar on the workspaces list reflects
+  the new keys.
+
 - **Tmux status bar in workspace shells (#1880).** Shells now display a
   subtle status bar at the bottom showing the workspace name (left) and
   current terminal name (right). The workspace name is set as a tmux
