@@ -33,3 +33,21 @@ def _isolate_cli_state(tmp_path, monkeypatch):
     monkeypatch.setattr(_cfg, "_STATE_PATH", tmp_path / "klangk-state.yaml")
     monkeypatch.setattr(_main, "_cfg_cache", None)
     monkeypatch.setattr(_main, "_state_cache", None)
+
+
+@pytest.fixture(autouse=True)
+def _stub_tui_background_loops(monkeypatch):
+    """Patch the long-running TUI background workers so tests never wait.
+
+    ``listen_for_status`` and ``run_token_refresh_loop`` are async
+    coroutines that run indefinitely in the real app. Tests that need
+    custom behaviour can override these via their own ``monkeypatch``
+    calls (later patches win).
+    """
+    from klangk.cli.tui.screens import main as _scr_main
+
+    async def _noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(_scr_main, "listen_for_status", _noop)
+    monkeypatch.setattr(_scr_main, "run_token_refresh_loop", _noop)

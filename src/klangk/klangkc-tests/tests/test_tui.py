@@ -1160,13 +1160,7 @@ async def test_logout_returns_to_login(monkeypatch):
     assert called["out"] is True
 
 
-async def test_server_switch_and_add(monkeypatch):
-    async def noop(*a, **k):
-        return None
-
-    monkeypatch.setattr(scr_main, "listen_for_status", noop)
-
-    # switch screen with servers -> selecting one switches + returns to main
+async def test_server_switch_selects_and_returns():
     st = _authed_state(
         known_servers=lambda: [
             tui_state_mod.ServerInfo("a", "https://a.example"),
@@ -1187,77 +1181,82 @@ async def test_server_switch_and_add(monkeypatch):
         assert switched["url"] == "https://b.example"
         assert isinstance(app.screen, MainScreen)
 
-    # selecting an item with empty name is a no-op (no switch_server call)
-    st1b = _authed_state(
+
+async def test_server_switch_empty_name_noop():
+    st = _authed_state(
         known_servers=lambda: [
             tui_state_mod.ServerInfo("a", "https://a.example"),
         ],
     )
-    switched1b = {}
-    st1b.switch_server = lambda url: switched1b.setdefault("url", url)
-    app1b = KlangkApp(st1b)
-    async with app1b.run_test() as pilot:
-        app1b.push_screen(ServerSwitchScreen())
+    switched = {}
+    st.switch_server = lambda url: switched.setdefault("url", url)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(ServerSwitchScreen())
         await pilot.pause()
-        app1b.screen.on_list_view_selected(FakeSelected(""))
-        await app1b.workers.wait_for_complete()
-        assert switched1b == {}
+        app.screen.on_list_view_selected(FakeSelected(""))
+        await app.workers.wait_for_complete()
+        assert switched == {}
 
-    # switch screen with no servers -> hint message
-    app2 = KlangkApp(_authed_state(known_servers=lambda: []))
-    async with app2.run_test() as pilot:
-        app2.push_screen(ServerSwitchScreen())
+
+async def test_server_switch_no_servers_hint():
+    app = KlangkApp(_authed_state(known_servers=lambda: []))
+    async with app.run_test() as pilot:
+        app.push_screen(ServerSwitchScreen())
         await pilot.pause()
         assert "No servers" in str(
-            app2.screen.query_one("#switch_msg").render()
+            app.screen.query_one("#switch_msg").render()
         )
 
-    # add server screen -> add succeeds, returns to main
-    st3 = _authed_state()
+
+async def test_add_server_succeeds_returns_to_main():
+    st = _authed_state()
     added = {}
-    st3.add_server = lambda alias, url, user=None: added.setdefault(
+    st.add_server = lambda alias, url, user=None: added.setdefault(
         "a", (alias, url)
     )
-    app3 = KlangkApp(st3)
-    async with app3.run_test() as pilot:
-        app3.push_screen(AddServerScreen())
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(AddServerScreen())
         await pilot.pause()
-        add_screen = app3.screen
+        add_screen = app.screen
         add_screen.query_one("#alias", Input).value = "prod"
         add_screen.query_one("#url", Input).value = "https://p.example"
         add_screen._add()
-        await app3.workers.wait_for_complete()
+        await app.workers.wait_for_complete()
         assert added["a"] == ("prod", "https://p.example")
-        assert isinstance(app3.screen, MainScreen)
+        assert isinstance(app.screen, MainScreen)
 
-    # add server with empty fields -> error message
-    app4 = KlangkApp(_authed_state())
-    async with app4.run_test() as pilot:
-        app4.push_screen(AddServerScreen())
+
+async def test_add_server_empty_fields_error():
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        app.push_screen(AddServerScreen())
         await pilot.pause()
-        app4.screen._add()
-        await app4.workers.wait_for_complete()
-        assert "required" in str(app4.screen.query_one("#add_msg").render())
+        app.screen._add()
+        await app.workers.wait_for_complete()
+        assert "required" in str(app.screen.query_one("#add_msg").render())
 
-    # add server via input submit (Enter key in either field)
-    st5 = _authed_state()
-    added5 = {}
-    st5.add_server = lambda alias, url, user=None: added5.setdefault(
+
+async def test_add_server_input_submit():
+    st = _authed_state()
+    added = {}
+    st.add_server = lambda alias, url, user=None: added.setdefault(
         "a", (alias, url)
     )
-    app5 = KlangkApp(st5)
-    async with app5.run_test() as pilot:
-        app5.push_screen(AddServerScreen())
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(AddServerScreen())
         await pilot.pause()
-        s = app5.screen
+        s = app.screen
         alias_input = s.query_one("#alias", Input)
         alias_input.value = "staging"
         url_input = s.query_one("#url", Input)
         url_input.value = "https://s.example"
         s.on_input_submitted(Input.Submitted(url_input, url_input.value))
-        await app5.workers.wait_for_complete()
+        await app.workers.wait_for_complete()
         await pilot.pause()
-        assert added5["a"] == ("staging", "https://s.example")
+        assert added["a"] == ("staging", "https://s.example")
 
 
 # --- server switch validation (#1842) ---
