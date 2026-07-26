@@ -407,6 +407,19 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **Workspace shutdown is now uniformly REST-backed across Flutter, TUI,
+  and CLI (#1858).** The redundant WebSocket `shutdown_container` handler
+  is retired; the Flutter settings panel's "Shut Down" button now calls
+  the existing `POST /api/v1/workspaces/{id}/stop` endpoint, matching the
+  TUI and CLI. **Permission change:** the Flutter button previously
+  required the workspace `admin` role (via the WS handler); it now requires
+  only `terminal` (matching the TUI/CLI REST path). Non-admin members with
+  `terminal` access can now shut down from the Flutter UI — they already
+  could from the TUI and CLI. Deployments that relied on the Flutter-only
+  `admin` gate as a safety net should take note. The REST endpoint also
+  broadcasts `container_stopped` to live viewers so the "stopped" overlay
+  still appears.
+
 - **TUI login headers recolored as accent + bold (#1865).** The
   "Server: …" status line and the notice line beneath it (e.g.
   "Cannot reach the server…") now render in the theme accent color, bold,

@@ -653,8 +653,11 @@ test.describe("shared terminal visibility", () => {
           ),
       );
 
-      // Shut down the container
-      client1.send({ cmd: "shutdown_container" });
+      // Shut down the container (REST /stop; the WS shutdown_container
+      // handler was retired — see #1858).
+      await request.post(`${API_BASE}/api/v1/workspaces/${workspaceId}/stop`, {
+        headers: owner.headers,
+      });
       await client1.recvUntil(
         (m) =>
           m.type === "event" &&

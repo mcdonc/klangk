@@ -578,60 +578,6 @@ class Connection:
             workspace_id,
         )
 
-    async def handle_shutdown_container(self) -> None:
-        """Explicitly shut down the workspace container."""
-        if not self.workspace_id:
-            send_error(self.sock, "Not connected to a workspace")
-            return
-        # Shutting down affects everyone in the workspace; require admin.
-        if not await self._has_perm("admin"):
-            send_error(self.sock, "Permission denied")
-            return
-        if not self.container_id:
-            send_error(self.sock, "No container running")
-            return
-
-        workspace_id = self.workspace_id
-        container_id = self.container_id
-        session = self.app.state.sockets.get_session(workspace_id)
-
-        # Clear container_id on ALL connections to prevent stale exec attempts.
-        for sock, conn_obj in list(self.app.state.sockets.connections.items()):
-            if conn_obj.workspace_id == workspace_id:
-                conn_obj.container_id = None
-
-        await self.app.state.container_registry.notify_workspace_killed(
-            workspace_id
-        )
-
-        try:
-            await self.app.state.container_registry.stop_and_remove_container(
-                container_id
-            )
-        except Exception as e:
-            logger.warning("Error stopping container: %s", e)
-
-        # Stop the Pi RPC subprocess now that its container is gone.
-        await self.app.state.agents.stop_session(workspace_id)
-
-        # Notify subscribers AFTER the container is fully stopped, so
-        # reconnecting clients don't find a half-dead container.
-        if session:
-            session.broadcast(
-                {
-                    "type": "event",
-                    "event": {
-                        "type": "CUSTOM",
-                        "name": "container_stopped",
-                        "value": {"reason": "shut down by user"},
-                    },
-                }
-            )
-
-        logger.info(
-            "Container shut down by user for workspace %s", workspace_id
-        )
-
     async def _has_perm(self, perm: str) -> bool:
         """Check if the connected user has a workspace permission."""
         if not self.workspace_id:

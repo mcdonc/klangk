@@ -209,7 +209,6 @@ void main() {
       client.disconnectWorkspace();
       client.sendUiReady();
       client.sendRestartContainer();
-      client.sendShutdownContainer();
       client.sendTerminalStart();
       client.sendBrowserReattach();
       client.sendTerminalInput('ls\n');
@@ -1049,7 +1048,6 @@ void main() {
 
     test('send methods produce correct JSON', () {
       client.sendRestartContainer();
-      client.sendShutdownContainer();
       client.sendTerminalStart(cols: 100, rows: 30);
       client.sendBrowserReattach();
       client.sendTerminalInput('ls\n');
@@ -1073,33 +1071,32 @@ void main() {
           .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
           .toList();
       expect(msgs[0], {'cmd': 'restart_container'});
-      expect(msgs[1], {'cmd': 'shutdown_container'});
-      expect(msgs[2], {'cmd': 'terminal_start', 'cols': 100, 'rows': 30});
-      expect(msgs[3], {'cmd': 'terminal_input', 'data': 'ls\n'});
-      expect(msgs[4], {'cmd': 'terminal_resize', 'cols': 120, 'rows': 40});
-      expect(msgs[5], {'cmd': 'terminal_new_window', 'name': 'build'});
-      expect(msgs[6], {'cmd': 'terminal_select_window', 'window_id': '@2'});
-      expect(msgs[7], {'cmd': 'terminal_close_window', 'index': 1});
-      expect(msgs[8],
+      expect(msgs[1], {'cmd': 'terminal_start', 'cols': 100, 'rows': 30});
+      expect(msgs[2], {'cmd': 'terminal_input', 'data': 'ls\n'});
+      expect(msgs[3], {'cmd': 'terminal_resize', 'cols': 120, 'rows': 40});
+      expect(msgs[4], {'cmd': 'terminal_new_window', 'name': 'build'});
+      expect(msgs[5], {'cmd': 'terminal_select_window', 'window_id': '@2'});
+      expect(msgs[6], {'cmd': 'terminal_close_window', 'index': 1});
+      expect(msgs[7],
           {'cmd': 'terminal_rename_window', 'index': 0, 'name': 'main'});
-      expect(msgs[9], {'cmd': 'terminal_list_windows'});
-      expect(msgs[10], {'cmd': 'share_window', 'window_id': '@0'});
-      expect(msgs[11], {'cmd': 'unshare_window', 'window_id': '@0'});
-      expect(msgs[12], {
+      expect(msgs[8], {'cmd': 'terminal_list_windows'});
+      expect(msgs[9], {'cmd': 'share_window', 'window_id': '@0'});
+      expect(msgs[10], {'cmd': 'unshare_window', 'window_id': '@0'});
+      expect(msgs[11], {
         'cmd': 'join_shared_terminal',
         'user_id': 'uid',
         'window_id': '@0',
       });
-      expect(msgs[13], {
+      expect(msgs[12], {
         'cmd': 'delete_shared_terminal',
         'user_id': 'uid',
         'window_id': '@0',
       });
-      expect(msgs[14], {'cmd': 'list_shared_terminals'});
-      expect(msgs[15], {'cmd': 'terminal_stop'});
-      expect(msgs[16], {'cmd': 'ui_ready'});
-      expect(msgs[17], {'cmd': 'workspace_connect', 'workspaceId': 'ws-1'});
-      expect(msgs[18], {'cmd': 'workspace_disconnect'});
+      expect(msgs[13], {'cmd': 'list_shared_terminals'});
+      expect(msgs[14], {'cmd': 'terminal_stop'});
+      expect(msgs[15], {'cmd': 'ui_ready'});
+      expect(msgs[16], {'cmd': 'workspace_connect', 'workspaceId': 'ws-1'});
+      expect(msgs[17], {'cmd': 'workspace_disconnect'});
     });
 
     test('sendTerminalNewWindow without name omits name field', () {
