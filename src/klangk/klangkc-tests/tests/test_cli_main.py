@@ -4771,3 +4771,230 @@ class TestAdminUsersCLI:
             ],
         )
         assert result.exit_code == 1
+
+
+class TestAccountCommands:
+    """klangk account {show,passwd,handle,email} — self-service (#1753)."""
+
+    def test_account_show(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        client.get_me.return_value = {
+            "id": "u1",
+            "email": "me@x.example",
+            "handle": "me",
+        }
+        monkeypatch.setattr(main, "_client", lambda: client)
+        result = CliRunner().invoke(main.app, ["account", "show"])
+        assert result.exit_code == 0
+        out = result.output
+        assert "me@x.example" in out
+        assert "@me" in out
+
+    def test_account_passwd_success(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(main.account, "password_min_length", lambda url: 4)
+        answers = iter(["oldpw", "newpw12", "newpw12"])
+        monkeypatch.setattr(
+            "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
+        )
+        result = CliRunner().invoke(main.app, ["account", "passwd"])
+        assert result.exit_code == 0
+        client.change_password.assert_called_once_with("oldpw", "newpw12")
+
+    def test_account_passwd_mismatch(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        monkeypatch.setattr(main, "_client", lambda: client)
+        answers = iter(["oldpw", "newpw12", "different"])
+        monkeypatch.setattr(
+            "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
+        )
+        result = CliRunner().invoke(main.app, ["account", "passwd"])
+        assert result.exit_code == 1
+        client.change_password.assert_not_called()
+
+    def test_account_passwd_too_short(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(
+            main.account, "password_min_length", lambda url: 12
+        )
+        answers = iter(["oldpw", "short", "short"])
+        monkeypatch.setattr(
+            "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
+        )
+        result = CliRunner().invoke(main.app, ["account", "passwd"])
+        assert result.exit_code == 1
+        client.change_password.assert_not_called()
+
+    def test_account_passwd_backend_error(self, logged_in_cfg, monkeypatch):
+        import httpx
+
+        from klangk.cli import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        req = httpx.Request("POST", "https://x")
+        bad = httpx.Response(401, text="bad", request=req)
+        client.change_password.side_effect = httpx.HTTPStatusError(
+            "401: Current password is incorrect", request=req, response=bad
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(main.account, "password_min_length", lambda url: 4)
+        answers = iter(["oldpw", "newpw12", "newpw12"])
+        monkeypatch.setattr(
+            "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
+        )
+        result = CliRunner().invoke(main.app, ["account", "passwd"])
+        assert result.exit_code == 1
+
+    def test_account_handle_backend_error(self, logged_in_cfg, monkeypatch):
+        import httpx
+
+        from klangk.cli import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        client.get_me.return_value = {
+            "id": "u1",
+            "email": "me@x.example",
+            "handle": "old",
+        }
+        req = httpx.Request("POST", "https://x")
+        bad = httpx.Response(400, text="bad", request=req)
+        client.change_handle.side_effect = httpx.HTTPStatusError(
+            "400: Handle taken", request=req, response=bad
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+        answers = iter(["newhandle", "pw"])
+        monkeypatch.setattr(
+            "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
+        )
+        monkeypatch.setattr(
+            "klangk.cli.main.Confirm.ask", lambda *a, **k: True
+        )
+        result = CliRunner().invoke(main.app, ["account", "handle"])
+        assert result.exit_code == 1
+
+    def test_account_email_backend_error(self, logged_in_cfg, monkeypatch):
+        import httpx
+
+        from klangk.cli import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        req = httpx.Request("POST", "https://x")
+        bad = httpx.Response(400, text="bad", request=req)
+        client.change_email.side_effect = httpx.HTTPStatusError(
+            "400: Email already in use", request=req, response=bad
+        )
+        monkeypatch.setattr(main, "_client", lambda: client)
+        answers = iter(["new@x.example", "pw"])
+        monkeypatch.setattr(
+            "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
+        )
+        result = CliRunner().invoke(main.app, ["account", "email"])
+        assert result.exit_code == 1
+
+    def test_account_handle_success(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        client.get_me.return_value = {
+            "id": "u1",
+            "email": "me@x.example",
+            "handle": "old",
+        }
+        client.change_handle.return_value = "newhandle"
+        monkeypatch.setattr(main, "_client", lambda: client)
+        answers = iter(["newhandle", "pw"])
+        monkeypatch.setattr(
+            "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
+        )
+        monkeypatch.setattr(
+            "klangk.cli.main.Confirm.ask", lambda *a, **k: True
+        )
+        result = CliRunner().invoke(main.app, ["account", "handle"])
+        assert result.exit_code == 0
+        client.change_handle.assert_called_once_with("newhandle", "pw")
+
+    def test_account_handle_invalid(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(
+            "klangk.cli.main.Prompt.ask", lambda *a, **k: "Bad Handle!"
+        )
+        result = CliRunner().invoke(main.app, ["account", "handle"])
+        assert result.exit_code == 1
+        client.change_handle.assert_not_called()
+
+    def test_account_handle_cancelled(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        client.get_me.return_value = {
+            "id": "u1",
+            "email": "me@x.example",
+            "handle": "old",
+        }
+        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(
+            "klangk.cli.main.Prompt.ask", lambda *a, **k: "newhandle"
+        )
+        monkeypatch.setattr(
+            "klangk.cli.main.Confirm.ask", lambda *a, **k: False
+        )
+        result = CliRunner().invoke(main.app, ["account", "handle"])
+        assert result.exit_code == 0
+        client.change_handle.assert_not_called()
+
+    def test_account_email_success_rekeys_state(
+        self, logged_in_cfg, monkeypatch
+    ):
+        from klangk.cli.config import CLIState
+        from klangk.cli import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        monkeypatch.setattr(main, "_client", lambda: client)
+        answers = iter(["new@x.example", "pw"])
+        monkeypatch.setattr(
+            "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
+        )
+        result = CliRunner().invoke(main.app, ["account", "email"])
+        assert result.exit_code == 0
+        client.change_email.assert_called_once_with("new@x.example", "pw")
+        # Cached credentials re-keyed: token preserved, active user updated.
+        state = CLIState.load()
+        assert state.get_email("http://localhost:8995") == "new@x.example"
+        assert state.get_token("http://localhost:8995") == "test-token"
+
+    def test_account_email_invalid(self, logged_in_cfg, monkeypatch):
+        from klangk.cli import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(
+            "klangk.cli.main.Prompt.ask", lambda *a, **k: "not-an-email"
+        )
+        result = CliRunner().invoke(main.app, ["account", "email"])
+        assert result.exit_code == 1
+        client.change_email.assert_not_called()

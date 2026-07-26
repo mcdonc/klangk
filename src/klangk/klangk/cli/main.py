@@ -18,7 +18,7 @@ import typer
 import websockets
 from rich.console import Console
 from rich.live import Live
-from rich.prompt import Prompt
+from rich.prompt import Confirm, Prompt
 from rich.progress import (
     BarColumn,
     DownloadColumn,
@@ -37,6 +37,7 @@ from .auth import (
     refresh_token,
     _UNREACHABLE,
 )
+from . import account
 from .client import (
     AuthError,
     KlangkClient,
@@ -335,6 +336,109 @@ def status(
     else:
         table.add_row("Status", "[yellow]not logged in[/yellow]")
     console.print(table)
+
+
+# ---------------------------------------------------------------------
+# Account self-service (change password / handle / email)
+# ---------------------------------------------------------------------
+
+account_app = typer.Typer(
+    help="Account self-service: change your password, handle, or email."
+)
+app.add_typer(account_app, name="account")
+
+
+@account_app.command("show")
+def account_show() -> None:
+    """Show your current handle and email."""
+    require_auth()
+    me = _client().get_me()
+    handle = me.get("handle") or "(none)"
+    email = me.get("email") or "(unknown)"
+    Console().print(
+        f"Email:  [bold]{email}[/bold]\nHandle: [bold]@{handle}[/bold]"
+    )
+
+
+@account_app.command("passwd")
+def account_passwd() -> None:
+    """Change your password."""
+    require_auth()
+    url = server_url()
+    client = _client()
+    current = Prompt.ask("[bold]Current password[/bold]", password=True)
+    new = Prompt.ask("[bold]New password[/bold]", password=True)
+    confirm = Prompt.ask("[bold]Confirm new password[/bold]", password=True)
+    if new != confirm:
+        _err.print("[red]Passwords do not match[/red]")
+        raise typer.Exit(code=1)
+    min_len = account.password_min_length(url)
+    if len(new) < min_len:
+        _err.print(
+            f"[red]Password must be at least {min_len} characters[/red]"
+        )
+        raise typer.Exit(code=1)
+    try:
+        client.change_password(current, new)
+    except httpx.HTTPStatusError as exc:
+        _err.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    Console().print("[green]Password updated.[/green]")
+
+
+@account_app.command("handle")
+def account_handle() -> None:
+    """Change your handle (requires password confirmation)."""
+    require_auth()
+    client = _client()
+    current = client.get_me().get("handle") or ""
+    new = Prompt.ask("[bold]New handle[/bold]").strip()
+    err = account.validate_handle(new)
+    if err:
+        _err.print(f"[red]{err}[/red]")
+        raise typer.Exit(code=1)
+    if not Confirm.ask(
+        f"Change your handle from @{current} to @{new}?", default=False
+    ):
+        _err.print("[yellow]Cancelled.[/yellow]")
+        raise typer.Exit(code=0)
+    password = Prompt.ask("[bold]Password (to confirm)[/bold]", password=True)
+    try:
+        client.change_handle(new, password)
+    except httpx.HTTPStatusError as exc:
+        _err.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    Console().print(f"[green]Handle updated to @{new}.[/green]")
+
+
+@account_app.command("email")
+def account_email() -> None:
+    """Change your email (requires password confirmation)."""
+    require_auth()
+    url = server_url()
+    client = _client()
+    new = Prompt.ask("[bold]New email[/bold]").strip()
+    err = account.validate_email(new)
+    if err:
+        _err.print(f"[red]{err}[/red]")
+        raise typer.Exit(code=1)
+    password = Prompt.ask("[bold]Password (to confirm)[/bold]", password=True)
+    try:
+        client.change_email(new, password)
+    except httpx.HTTPStatusError as exc:
+        _err.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    # The JWT subject is the user id, so the cached token stays valid; only
+    # the key it's filed under changes. Re-key it rather than dropping it.
+    state = _state()
+    old = state.get_email(url)
+    if old is not None and old != new:
+        state.rename_user(url, old, new)
+        state.save()
+    Console().print(
+        "[green]Email updated.[/green] Check your inbox to verify the new"
+        " address."
+    )
 
 
 def workspace_status(ws) -> tuple[str, str]:

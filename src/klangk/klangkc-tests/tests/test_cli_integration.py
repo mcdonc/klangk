@@ -1193,6 +1193,62 @@ class TestClientLines:
         assert params["order"] == "asc"
         assert params["q"] == "gamma"
 
+    def test_get_me_returns_profile(self):
+        from klangk.cli.client import KlangkClient
+
+        client = KlangkClient("http://test:8995", "tok")
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "id": "u1",
+            "email": "me@x.example",
+            "handle": "me",
+        }
+        with patch.object(client, "get", return_value=resp):
+            me = client.get_me()
+        assert me == {"id": "u1", "email": "me@x.example", "handle": "me"}
+
+    def test_change_password_posts_payload(self):
+        from klangk.cli.client import KlangkClient
+
+        client = KlangkClient("http://test:8995", "tok")
+        resp = MagicMock()
+        resp.status_code = 200
+        with patch.object(client, "post", return_value=resp) as mock_post:
+            client.change_password("old", "new")
+        mock_post.assert_called_once_with(
+            "/api/v1/auth/change-password",
+            json={"current_password": "old", "new_password": "new"},
+        )
+
+    def test_change_email_posts_payload(self):
+        from klangk.cli.client import KlangkClient
+
+        client = KlangkClient("http://test:8995", "tok")
+        resp = MagicMock()
+        resp.status_code = 200
+        with patch.object(client, "post", return_value=resp) as mock_post:
+            client.change_email("new@x.example", "pw")
+        mock_post.assert_called_once_with(
+            "/api/v1/auth/change-email",
+            json={"email": "new@x.example", "password": "pw"},
+        )
+
+    def test_change_handle_returns_accepted_handle(self):
+        from klangk.cli.client import KlangkClient
+
+        client = KlangkClient("http://test:8995", "tok")
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"status": "updated", "handle": "newhandle"}
+        with patch.object(client, "post", return_value=resp) as mock_post:
+            accepted = client.change_handle("newhandle", "pw")
+        mock_post.assert_called_once_with(
+            "/api/v1/auth/change-handle",
+            json={"handle": "newhandle", "password": "pw"},
+        )
+        assert accepted == "newhandle"
+
 
 class TestImagesCommand:
     def test_images_lists_allowed(self, monkeypatch):

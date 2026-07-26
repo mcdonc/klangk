@@ -356,6 +356,22 @@ class CLIState:
         ss.active_user = user
         self.active_server = server_url
 
+    def rename_user(
+        self, server_url: str, old_user: str, new_user: str
+    ) -> None:
+        """Re-key cached credentials after a self-service email change.
+
+        The JWT's subject is the user id (not the email), so the stored
+        token stays valid across an email change — only the key it's filed
+        under changes. No parallel store: the entry moves in place (#1753).
+        """
+        ss = self.servers.get(server_url)
+        if not ss or old_user not in ss.users:
+            return
+        ss.users[new_user] = ss.users.pop(old_user)
+        if ss.active_user == old_user:
+            ss.active_user = new_user
+
     def clear_credentials(self, server_url: str) -> None:
         """Clear all credentials for a server."""
         if server_url in self.servers:

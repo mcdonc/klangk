@@ -149,6 +149,12 @@ klangk logout                               # logout from active server
 klangk logout prod                          # logout from a specific server
 klangk status                               # show active server and user
 
+# Account self-service (change password / handle / email)
+klangk account show                         # show your current handle and email
+klangk account passwd                       # change your password (prompts for current + new)
+klangk account handle                       # change your handle (prompts for new handle + password)
+klangk account email                        # change your email (prompts for new email + password)
+
 # Non-interactive login (for scripts)
 klangk login prod admin --password-file /path/to/pwfile
 echo "secret" | klangk login prod admin --password-file -
