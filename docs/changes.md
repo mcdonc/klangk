@@ -479,6 +479,16 @@ invitations send` stay email-only (a deliverable address is required);
   written under the TUI's CWD — is no longer ambiguous. Export failures
   still report the error inline on the detail screen.
 
+- **TUI: workspace detail info now renders as a two-column table (#1910).**
+  Fields were previously a single left-aligned `"key: value"` text block, so
+  values started in different columns depending on label length (`id:` vs
+  `service command:`) and the multi-valued sections (mounts / environment /
+  allowed domains) were hand-indented. The detail body is now a Rich table
+  with an auto-sized label column and a value column, so every value lines
+  up vertically regardless of label length; long values fold to fit the pane
+  instead of running off the right edge. The live uptime counter keeps
+  refreshing in place.
+
 - **TUI now defaults to Textual's built-in `ansi-light` theme (#1904).**
   The app default switched from the custom hard-coded `klangk` palette
   (fixed RGB background `#0D1117`, `dark=True`) to Textual's built-in

@@ -347,7 +347,7 @@ class TestTuiE2E:
                 body = str(
                     app.screen.query_one("#detail_body", Static).render()
                 )
-                assert "running:" in body.lower()
+                assert "running" in body.lower()
         finally:
             _api_delete_workspace(base_url, token, ws_id)
 

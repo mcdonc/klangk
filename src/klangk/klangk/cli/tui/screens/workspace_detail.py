@@ -7,8 +7,11 @@ import logging
 import subprocess
 import sys
 import time
+from io import StringIO
 from pathlib import Path
 
+from rich.console import Console
+from rich.table import Table
 from rich.text import Text
 
 from textual.app import ComposeResult
@@ -178,10 +181,20 @@ class WorkspaceDetailScreen(Screen):
         # Toggle the 's' binding label between Stop / Start.
         self.BINDINGS = self._bindings_list("Stop" if ws.running else "Start")
         self.refresh_bindings()
-        lines = [
-            f"id: {ws.id}",
-            f"running: {'yes' if ws.running else 'no'}",
-            f"health: {ws.health or '-'}",
+        # Render the detail as a two-column table so every value lines up in
+        # the same column regardless of label length (#1910). Wrapped in Text()
+        # so values that look like markup (e.g. an image named "[img]") render
+        # literally instead of being parsed as Textual markup.
+        width = self.size.width or 80
+        body.update(Text(self._render_detail(self._detail_rows(ws), width)))
+
+    @staticmethod
+    def _detail_rows(ws) -> list[tuple[str, str]]:
+        """Build the (label, value) rows shown in the workspace detail table."""
+        rows: list[tuple[str, str]] = [
+            ("id", str(ws.id)),
+            ("running", "yes" if ws.running else "no"),
+            ("health", ws.health or "-"),
         ]
         if ws.running and ws.service_started_at:
             elapsed = int(time.time() - ws.service_started_at)
@@ -195,28 +208,64 @@ class WorkspaceDetailScreen(Screen):
                 if hours:
                     parts.append(f"{hours}h")
                 parts.append(f"{minutes}m")
-                lines.append(f"uptime: {' '.join(parts)}")
+                rows.append(("uptime", " ".join(parts)))
         if ws.health_message:
-            lines.append(f"health note: {ws.health_message}")
+            rows.append(("health note", ws.health_message))
         if ws.image:
-            lines.append(f"image: {ws.image}")
+            rows.append(("image", ws.image))
         if ws.service_command:
-            lines.append(f"service command: {ws.service_command}")
+            rows.append(("service command", ws.service_command))
         if ws.health_check:
-            lines.append(f"health check: {ws.health_check}")
-        lines.append(f"auto-start: {'on' if ws.auto_start else 'off'}")
+            rows.append(("health check", ws.health_check))
+        rows.append(("auto-start", "on" if ws.auto_start else "off"))
         if ws.mounts:
-            lines.append("mounts:")
-            lines.extend(f"  {m}" for m in ws.mounts)
+            rows.append(("mounts", "\n".join(str(m) for m in ws.mounts)))
         if ws.env:
-            lines.append("environment:")
-            lines.extend(f"  {k}={v}" for k, v in ws.env.items())
+            rows.append(
+                (
+                    "environment",
+                    "\n".join(f"{k}={v}" for k, v in ws.env.items()),
+                )
+            )
         if ws.allowed_domains:
-            lines.append("allowed domains:")
-            lines.extend(f"  {d}" for d in ws.allowed_domains)
+            rows.append(
+                (
+                    "allowed domains",
+                    "\n".join(str(d) for d in ws.allowed_domains),
+                )
+            )
         if ws.owner_email:
-            lines.append(f"owner: {ws.owner_email}")
-        body.update(Text("\n".join(lines)))
+            rows.append(("owner", ws.owner_email))
+        return rows
+
+    @staticmethod
+    def _render_detail(rows: list[tuple[str, str]], width: int) -> str:
+        """Render (label, value) rows as an aligned two-column table string.
+
+        The label column auto-sizes to the longest label, so every value
+        starts at the same column; the value column folds long values to fit
+        ``width`` instead of running off the right edge."""
+        table = Table(
+            show_header=False,
+            box=None,
+            pad_edge=False,
+            padding=(0, 1),
+            expand=True,
+        )
+        table.add_column("label", no_wrap=True)
+        table.add_column("value", overflow="fold", ratio=1)
+        for label, value in rows:
+            table.add_row(label, value)
+        buf = StringIO()
+        Console(
+            file=buf,
+            width=width,
+            force_terminal=False,
+            no_color=True,
+            highlight=False,
+            markup=False,
+        ).print(table, end="")
+        return buf.getvalue()
 
     def _tick_uptime(self) -> None:
         """Refresh the display periodically to update the uptime counter."""

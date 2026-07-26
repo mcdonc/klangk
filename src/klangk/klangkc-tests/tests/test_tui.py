@@ -168,6 +168,35 @@ def _wsobj(name, **k):
     return Workspace(id="id-" + name, name=name, created_at="x", **k)
 
 
+def _detail_value(body: str, label: str) -> str | None:
+    """Return the value-column text for ``label``'s row in the workspace
+    detail table, or None if no such row.
+
+    The detail body renders as a two-column table (#1910): a label at the
+    start of a line, then a column of padding (>=2 spaces), then the value.
+    A label is matched only when it's followed by that padding gap, so
+    ``health`` doesn't match the ``health note`` / ``health check`` rows.
+    Multi-line value cells (mounts / environment / allowed domains) are
+    rejoined with newlines."""
+    lines = body.splitlines()
+    for i, line in enumerate(lines):
+        if not line.startswith(label):
+            continue
+        rest = line[len(label) :]
+        # "health" must not match "health note" (rest starts with a word,
+        # not the column gap). The gap is always >=2 spaces.
+        if rest.strip() and not rest[:2].isspace():
+            continue
+        parts = [rest.strip()] if rest.strip() else []
+        for cont in lines[i + 1 :]:
+            if not cont[:1].isspace():
+                break
+            if cont.strip():
+                parts.append(cont.strip())
+        return "\n".join(parts)
+    return None
+
+
 async def _async_empty(*a, **k):
     """Async stub for TuiState terminal methods (returns no terminals)."""
     return []
@@ -3340,21 +3369,19 @@ async def test_detail_loads_and_renders(monkeypatch):
         await pilot.pause()
         d = app.screen
         body = str(d.query_one("#detail_body").render())
-        for s in [
-            "running: yes",
-            "health: healthy",
-            "health note: ok",
-            "image: img",
-            "service command: cmd",
-            "health check: hc",
-            "auto-start: off",
-            "mounts:",
-            "/h:/c",
-            "environment:",
-            "K=v",
-            "owner: o@x",
-        ]:
-            assert s in body, s
+        # #1910: detail renders as a two-column table — labels and values
+        # are separate columns, so assert each row's label + value.
+        assert _detail_value(body, "id") == "id-alpha"
+        assert _detail_value(body, "running") == "yes"
+        assert _detail_value(body, "health") == "healthy"
+        assert _detail_value(body, "health note") == "ok"
+        assert _detail_value(body, "image") == "img"
+        assert _detail_value(body, "service command") == "cmd"
+        assert _detail_value(body, "health check") == "hc"
+        assert _detail_value(body, "auto-start") == "off"
+        assert _detail_value(body, "mounts") == "/h:/c"
+        assert _detail_value(body, "environment") == "K=v"
+        assert _detail_value(body, "owner") == "o@x"
 
 
 async def test_detail_shows_full_id(monkeypatch):
@@ -3379,9 +3406,9 @@ async def test_detail_shows_full_id(monkeypatch):
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
         body = str(app.screen.query_one("#detail_body").render())
-        assert f"id: {full_id}" in body
-        # The id line appears before the running/health lines (near the top).
-        assert body.index(f"id: {full_id}") < body.index("running:")
+        assert _detail_value(body, "id") == full_id
+        # The id row appears before the running row (near the top).
+        assert body.index(full_id) < body.index("running")
 
 
 async def test_detail_renders_allowed_domains(monkeypatch):
@@ -3398,9 +3425,50 @@ async def test_detail_renders_allowed_domains(monkeypatch):
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
         body = str(app.screen.query_one("#detail_body").render())
-        assert "allowed domains:" in body
+        assert _detail_value(body, "allowed domains") is not None
         assert "github.com:443" in body
         assert "pypi.org" in body
+
+
+async def test_detail_renders_aligned_two_column_table(monkeypatch):
+    """#1910: the detail body renders as a two-column table — every value
+    starts at the same column regardless of label length, so labels and
+    values line up vertically."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj(
+        "alpha",
+        running=True,
+        health="healthy",
+        image="img",
+        service_command="cmd",
+        owner_email="o@x",
+    )
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        body = str(app.screen.query_one("#detail_body").render())
+        # Every value starts at the same column: the label column is a fixed
+        # width, so the longest label ("service command") and the shortest
+        # ("id") align their values.
+        starts = set()
+        for label in ("id", "running", "image", "service command", "owner"):
+            assert _detail_value(body, label) is not None, label
+            line = next(
+                ln
+                for ln in body.splitlines()
+                if ln.startswith(label)
+                and ln[len(label) : len(label) + 2].isspace()
+            )
+            rest = line[len(label) :]
+            starts.add(len(label) + len(rest) - len(rest.lstrip()))
+        assert len(starts) == 1, f"detail values don't align: {starts}"
 
 
 async def test_detail_shows_uptime(monkeypatch):
@@ -3421,7 +3489,7 @@ async def test_detail_shows_uptime(monkeypatch):
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
         body = str(app.screen.query_one("#detail_body").render())
-        assert "uptime: 1d 2h 30m" in body
+        assert _detail_value(body, "uptime") == "1d 2h 30m"
 
 
 async def test_detail_no_uptime_when_stopped(monkeypatch):
@@ -3685,7 +3753,7 @@ async def test_detail_start_when_stopped(monkeypatch):
         assert labels == ["Stop"]
         # service_started_at reset on start (#1814).
         assert a.service_started_at is not None
-        assert "uptime:" in str(app.screen.query_one("#detail_body").render())
+        assert "uptime" in str(app.screen.query_one("#detail_body").render())
 
 
 async def test_detail_terminal_actions_inline_not_in_footer(monkeypatch):
@@ -3745,12 +3813,12 @@ async def test_detail_uptime_ticks(monkeypatch):
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
         body1 = str(app.screen.query_one("#detail_body").render())
-        assert "uptime:" in body1
+        assert "uptime" in body1
         # Simulate time passing and trigger the tick.
         a.service_started_at = _time.time() - 180
         app.screen._tick_uptime()
         body2 = str(app.screen.query_one("#detail_body").render())
-        assert "uptime: 3m" in body2
+        assert _detail_value(body2, "uptime") == "3m"
 
 
 async def test_detail_uptime_tick_noop_when_stopped(monkeypatch):
@@ -4075,7 +4143,10 @@ async def test_detail_apply_status_event(monkeypatch):
         )
         assert a.running is True
         assert a.service_started_at == started
-        assert "running: yes" in str(d.query_one("#detail_body").render())
+        assert (
+            _detail_value(str(d.query_one("#detail_body").render()), "running")
+            == "yes"
+        )
         # service_health updates health + message
         d.apply_status_event(
             {
@@ -4087,8 +4158,8 @@ async def test_detail_apply_status_event(monkeypatch):
             }
         )
         body = str(d.query_one("#detail_body").render())
-        assert "health: unhealthy" in body
-        assert "health note: curl fail" in body
+        assert _detail_value(body, "health") == "unhealthy"
+        assert _detail_value(body, "health note") == "curl fail"
         # non-matching workspace id is ignored
         d.apply_status_event(
             {
@@ -4121,7 +4192,10 @@ async def test_detail_apply_status_event_reload(monkeypatch):
         a.running = True  # mutated after load
         d.apply_status_event({"type": "workspaces_changed"})
         await pilot.pause()
-        assert "running: yes" in str(d.query_one("#detail_body").render())
+        assert (
+            _detail_value(str(d.query_one("#detail_body").render()), "running")
+            == "yes"
+        )
 
 
 async def test_detail_apply_status_event_terminals_changed(monkeypatch):
@@ -4331,8 +4405,11 @@ async def test_status_event_routed_to_detail(monkeypatch):
         )
         await pilot.pause()
         assert a.running is True
-        assert "running: yes" in str(
-            app.screen.query_one("#detail_body").render()
+        assert (
+            _detail_value(
+                str(app.screen.query_one("#detail_body").render()), "running"
+            )
+            == "yes"
         )
 
 
