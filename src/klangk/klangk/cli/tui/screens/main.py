@@ -172,7 +172,7 @@ class MainScreen(Screen):
             yield Button("sort: created ▼", id="sort_btn", variant="default")
 
     # Sort keys matching Flutter defaults: created desc.
-    SORT_KEYS = ("created", "name")
+    SORT_KEYS = ("created", "name", "running")
 
     def on_mount(self) -> None:
         self.app.title = "Klangk: Workspaces"
@@ -203,16 +203,15 @@ class MainScreen(Screen):
         self.query_one("#filter_input", Input).focus()
 
     def action_cycle_sort(self) -> None:
-        """Cycle through sort modes: created↓ → created↑ → name↑ → name↓."""
-        if self._sort_key == "created" and not self._sort_asc:
+        """Cycle through sort modes: key↓ → key↑ → next-key↓ → …"""
+        keys = self.SORT_KEYS
+        idx = keys.index(self._sort_key) if self._sort_key in keys else 0
+        if not self._sort_asc:
+            # currently descending → flip to ascending (same key)
             self._sort_asc = True
-        elif self._sort_key == "created" and self._sort_asc:
-            self._sort_key = "name"
-            self._sort_asc = True
-        elif self._sort_key == "name" and self._sort_asc:
-            self._sort_asc = False
         else:
-            self._sort_key = "created"
+            # currently ascending → advance to next key, descending
+            self._sort_key = keys[(idx + 1) % len(keys)]
             self._sort_asc = False
         self._update_sort_label()
         self._apply_filter()
@@ -247,13 +246,20 @@ class MainScreen(Screen):
     def _sort_key_created(ws) -> str:
         return getattr(ws, "created_at", "") or ""
 
+    @staticmethod
+    def _sort_key_running(ws) -> int:
+        # 0 for running (sorts first when ascending), 1 for stopped.
+        return 0 if getattr(ws, "running", False) else 1
+
+    _SORT_KEY_FUNCS: dict = {
+        "name": _sort_key_name,
+        "created": _sort_key_created,
+        "running": _sort_key_running,
+    }
+
     def _sort_workspaces(self, workspaces: list) -> list:
         """Sort workspace list according to current sort state."""
-        key = (
-            self._sort_key_name
-            if self._sort_key == "name"
-            else self._sort_key_created
-        )
+        key = self._SORT_KEY_FUNCS.get(self._sort_key, self._sort_key_created)
         return sorted(workspaces, key=key, reverse=not self._sort_asc)
 
     @staticmethod

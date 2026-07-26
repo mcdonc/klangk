@@ -3051,14 +3051,18 @@ async def test_filter_escape_clears_then_returns(monkeypatch):
 
 
 async def test_cycle_sort(monkeypatch):
-    """Pressing 'o' cycles sort: created↓ → created↑ → name↑ → name↓ (#1764)."""
+    """Pressing 'o' cycles sort through created/name/running (#1764, #1912)."""
 
     async def noop(*a, **k):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    a = Workspace(id="id-a", name="alpha", created_at="2025-01-01T00:00:00")
-    b = Workspace(id="id-b", name="beta", created_at="2025-06-01T00:00:00")
+    a = Workspace(
+        id="id-a", name="alpha", created_at="2025-01-01T00:00:00", running=True
+    )
+    b = Workspace(
+        id="id-b", name="beta", created_at="2025-06-01T00:00:00", running=False
+    )
     app = KlangkApp(_ws(owned=[a, b]))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -3080,18 +3084,42 @@ async def test_cycle_sort(monkeypatch):
         assert "created" in str(m.query_one("#sort_btn", Button).label)
         assert "▲" in str(m.query_one("#sort_btn", Button).label)
 
-        # 2nd press: name asc.
-        m.action_cycle_sort()
-        await pilot.pause()
-        assert names() == ["alpha", "beta"]
-        assert "name" in str(m.query_one("#sort_btn", Button).label)
-
-        # 3rd press: name desc.
+        # 2nd press: name desc.
         m.action_cycle_sort()
         await pilot.pause()
         assert names() == ["beta", "alpha"]
+        assert "name" in str(m.query_one("#sort_btn", Button).label)
+        assert "▼" in str(m.query_one("#sort_btn", Button).label)
 
-        # 4th press: back to created desc.
+        # 3rd press: name asc.
+        m.action_cycle_sort()
+        await pilot.pause()
+        assert names() == ["alpha", "beta"]
+        assert "▲" in str(m.query_one("#sort_btn", Button).label)
+
+        # 4th press: running desc (running-first = stopped first when
+        # reverse=True, i.e. higher sort key first → stopped=1 before
+        # running=0).
+        m.action_cycle_sort()
+        await pilot.pause()
+        assert "running" in str(m.query_one("#sort_btn", Button).label)
+        assert "▼" in str(m.query_one("#sort_btn", Button).label)
+        assert names() == [
+            "beta",
+            "alpha",
+        ]  # beta stopped(1), alpha running(0)
+
+        # 5th press: running asc (running-first: running=0 before stopped=1).
+        m.action_cycle_sort()
+        await pilot.pause()
+        assert "running" in str(m.query_one("#sort_btn", Button).label)
+        assert "▲" in str(m.query_one("#sort_btn", Button).label)
+        assert names() == [
+            "alpha",
+            "beta",
+        ]  # alpha running(0), beta stopped(1)
+
+        # 6th press: back to created desc.
         m.action_cycle_sort()
         await pilot.pause()
         assert names() == ["beta", "alpha"]
