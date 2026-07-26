@@ -320,6 +320,53 @@ class TestStart:
         )
         await s.stop()
 
+    async def test_start_sets_workspace_name(self):
+        """start() calls set_workspace_name when workspace_name is set."""
+        fake = FakeShell(block_after_chunks=True)
+        with (
+            patch(SHELL_FACTORY, return_value=fake),
+            patch.object(
+                _terminal,
+                "ensure_base_session",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                _terminal,
+                "set_workspace_name",
+                new_callable=AsyncMock,
+            ) as mock_set_ws,
+        ):
+            s = TerminalSession(
+                "cid",
+                session_name="uid",
+                terminal=_terminal,
+                workspace_name="my-workspace",
+            )
+            await s.start()
+        mock_set_ws.assert_awaited_once_with("cid", "my-workspace")
+        await s.stop()
+
+    async def test_start_skips_workspace_name_when_none(self):
+        """start() does not call set_workspace_name when workspace_name is None."""
+        fake = FakeShell(block_after_chunks=True)
+        with (
+            patch(SHELL_FACTORY, return_value=fake),
+            patch.object(
+                _terminal,
+                "ensure_base_session",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                _terminal,
+                "set_workspace_name",
+                new_callable=AsyncMock,
+            ) as mock_set_ws,
+        ):
+            s = TerminalSession("cid", session_name="uid", terminal=_terminal)
+            await s.start()
+        mock_set_ws.assert_not_awaited()
+        await s.stop()
+
 
 class TestAttachBrowser:
     async def test_runs_klangk_attach_browser(self):
@@ -1213,58 +1260,36 @@ class TestEnsureBaseSession:
         assert "HOME=/home/u" in new_cmd
         assert "SSH_AUTH_SOCK=/tmp/agent.sock" in new_cmd
 
-    async def test_workspace_name_set_on_session(self):
-        """workspace_name is set as a tmux user option on the session."""
+
+class TestSetWorkspaceName:
+    async def test_sets_global_workspace_name(self):
+        """set_workspace_name runs tmux set -g @workspace_name."""
 
         with patch.object(
             _mock_pod,
             "exec_container",
             new_callable=AsyncMock,
-            # has-session fail, new-session ok, set @workspace_name ok
-            side_effect=[(1, "", ""), (0, "", ""), (0, "", "")],
+            return_value=(0, "", ""),
         ) as mock_exec:
-            await _terminal.ensure_base_session(
-                "cid",
-                "my-session",
-                workspace_name="my-workspace",
-            )
-        assert mock_exec.await_count == 3
-        set_cmd = mock_exec.call_args_list[2].args[1]
-        assert "set" in set_cmd
-        assert "@workspace_name" in set_cmd
-        assert "my-workspace" in set_cmd
+            await _terminal.set_workspace_name("cid", "my-workspace")
+        mock_exec.assert_awaited_once()
+        cmd = mock_exec.call_args.args[1]
+        assert cmd == ["tmux", "set", "-g", "@workspace_name", "my-workspace"]
 
-    async def test_workspace_name_none_skips_set(self):
-        """No tmux set call when workspace_name is None."""
+    async def test_failure_is_non_fatal(self):
+        """Failure to set @workspace_name does not raise."""
 
         with patch.object(
             _mock_pod,
             "exec_container",
             new_callable=AsyncMock,
-            side_effect=[(1, "", ""), (0, "", "")],
-        ) as mock_exec:
-            await _terminal.ensure_base_session(
-                "cid", "my-session", workspace_name=None
-            )
-        assert mock_exec.await_count == 2
+            side_effect=OSError("set failed"),
+        ):
+            # Should not raise.
+            await _terminal.set_workspace_name("cid", "my-workspace")
 
-    async def test_workspace_name_set_failure_non_fatal(self):
-        """Failure to set @workspace_name does not prevent session creation."""
 
-        with patch.object(
-            _mock_pod,
-            "exec_container",
-            new_callable=AsyncMock,
-            side_effect=[(1, "", ""), (0, "", ""), OSError("set failed")],
-        ) as mock_exec:
-            created = await _terminal.ensure_base_session(
-                "cid",
-                "my-session",
-                workspace_name="my-workspace",
-            )
-        assert created is True
-        assert mock_exec.await_count == 3
-
+class TestServiceCmdWindowExists:
     async def test_service_cmd_window_exists_exception_returns_false(self):
         """service_cmd_window_exists returns False if list-windows raises."""
 
