@@ -257,7 +257,7 @@ class LoginScreen(SpatialNavScreen):
                 id="server_input",
             ),
             Horizontal(
-                Button("Use server", id="use_server"),
+                Button("Add server", id="use_server"),
                 classes="actions",
             ),
             Static("", id="notice"),

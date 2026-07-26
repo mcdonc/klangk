@@ -420,6 +420,10 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **TUI login: the server-input button is relabeled "Use server" →
+  "Add server" (#1871)** — clearer that typing a new server URL/alias and
+  pressing it adds the server (rather than just selecting an existing one).
+
 - **Workspace shutdown is now uniformly REST-backed across Flutter, TUI,
   and CLI (#1858).** The redundant WebSocket `shutdown_container` handler
   is retired; the Flutter settings panel's "Shut Down" button now calls
