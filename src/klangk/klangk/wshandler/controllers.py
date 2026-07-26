@@ -587,6 +587,11 @@ class TerminalController:
         await self.stop()
         cols = msg.get("cols", self.cols)
         rows = msg.get("rows", self.rows)
+        logger.info(
+            "terminal_start: cols=%s rows=%s (0 may make tmux/podman attach fail)",
+            cols,
+            rows,
+        )
         self.cols = cols
         self.rows = rows
 

@@ -6,6 +6,8 @@ import base64
 import html
 import http.server
 import json
+import logging
+import os
 import socket
 import threading
 import webbrowser
@@ -341,8 +343,44 @@ def refresh_token(server_url: str, token: str) -> str | None:
         return None
 
 
+def _log_logout_caller() -> None:  # pragma: no cover
+    """Diagnostic: log the parent-process chain that invoked logout.
+
+    Walks /proc upward so the next spurious logout reveals its spawner
+    (shell, script, cron, the TUI, ...). Best-effort; never raises.
+    """
+    chain: list[str] = []
+    cur = os.getppid()
+    for _ in range(8):
+        try:
+            cmd = (
+                open(f"/proc/{cur}/cmdline", "rb")
+                .read()
+                .replace(b"\0", b" ")
+                .decode("utf-8", "replace")
+                .strip()
+            )
+        except OSError:
+            break
+        chain.append(f"{cur}=[{cmd}]")
+        try:
+            ppid = int(
+                open(f"/proc/{cur}/stat", "rb").read().decode().split()[3]
+            )
+        except (OSError, ValueError):
+            break
+        if ppid <= 1 or ppid == cur:
+            break
+        cur = ppid
+    msg = "auth.logout() invoked; process chain: " + (
+        " <- ".join(chain) or "(unknown)"
+    )
+    logging.getLogger(__name__).warning(msg)
+
+
 def logout(server_url: str) -> None:
     """Clear stored credentials for a server."""
+    _log_logout_caller()
     state = CLIState.load()
     token = state.get_token(server_url)
 

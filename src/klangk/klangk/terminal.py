@@ -998,6 +998,17 @@ class TerminalSession:
                 data = await self._shell.read()
                 if not data:
                     logger.info("Terminal read loop: EOF from PTY")
+                    _p = getattr(self._shell, "_proc", None)
+                    if _p is not None:  # pragma: no cover
+                        try:
+                            _rc = await asyncio.wait_for(_p.wait(), timeout=2)
+                            logger.info(
+                                "Terminal exec exited rc=%s "
+                                "(nonzero = tmux/podman error; 0 = clean detach)",
+                                _rc,
+                            )
+                        except Exception:
+                            pass
                     break
                 text = decoder.decode(data)
                 if text:

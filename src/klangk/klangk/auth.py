@@ -532,6 +532,10 @@ class Auth:
             expires_at = datetime.fromtimestamp(
                 exp, tz=timezone.utc
             ).isoformat()
+            logger.info(
+                "REFRESH: blocklisting old access token; any WS still using "
+                "it will be rejected as 4001 on its next connect"
+            )
             await self.app.state.model.tokens.blocklist_token(
                 jti, expires_at, new_token=new_token
             )
@@ -566,9 +570,16 @@ class Auth:
             if user_id is None or jti is None:
                 return None
             if await self.app.state.model.tokens.is_token_blocklisted(jti):
+                logger.info(
+                    "token reject: BLOCKLISTED (revoked by a refresh or "
+                    "logout -> WS will close 4001 -> client logout)"
+                )
                 return None
             return await self.app.state.model.users.get_user_by_id(user_id)
         except ExpiredSignatureError:
+            logger.info(
+                "token reject: EXPIRED -> WS will close 4002 -> client logout"
+            )
             return self.TOKEN_EXPIRED
         except JWTError:
             return None
