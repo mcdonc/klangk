@@ -40,6 +40,13 @@ operators or integrators to act when upgrading.
   after a change — the JWT subject is your user id, so the token stays valid;
   only the key it's filed under changes.
 
+- **Flutter workspace settings: the restart-needed notice offers a
+  "Restart now" button (#1780).** Editing a create-time field (image,
+  service command, mounts, env, or allowed domains) on a _running_ workspace
+  shows a "restart to apply" notice; it now includes a Restart now action
+  that triggers the restart immediately (routed through the workspace page,
+  which owns the in-flight indicator), rather than being informational only.
+
 - **`klangk stop` and `klangk start` commands** stop and (re)start a
   workspace container (#1750), closing the CLI parity gap with the TUI and
   Flutter app (which already reach shutdown via `POST /api/v1/workspaces/{id}/stop`).
