@@ -27,6 +27,12 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Nix flake for bare-metal installation (#1948).** `nix run
+github:mcdonc/klangk` installs and runs klangkd with all runtime
+  dependencies (podman, caddy, tmux, git, GNU tar, etc.) provided by
+  Nix. The klangk wheel is pip-installed into a persistent venv on
+  first launch. Works on Linux and macOS (x86_64 + aarch64). See
+  [Getting Started](getting-started.md#run-using-nix).
 - **`allowed_domains` now accepts IPv4 CIDR ranges (#1935).** A workspace
   (or the deploy-wide `KLANGKD_NETFILTER_DEFAULT_DOMAINS`) may list an IP
   subnet like `10.0.0.0/8`, optionally scoped to a port as

@@ -37,6 +37,45 @@ you set above.
 > meant for local dev on your own machine — a published port is not that.
 > See [Auth Modes](features/auth-modes.md).
 
+## Run Using Nix
+
+Install and run Klangk on bare metal (no Docker) with all runtime
+dependencies provided by Nix. Works on Linux and macOS.
+
+You need [Nix](https://nixos.org/download/) (with flakes enabled) and
+an OpenAI-compatible LLM API key.
+
+```bash
+# First run: creates a venv and pip-installs klangk from PyPI.
+# Subsequent runs reuse the existing venv (no network needed).
+nix run github:mcdonc/klangk
+```
+
+On first launch the wrapper creates a Python venv at
+`~/.local/share/klangk/venv` and installs the klangk wheel from PyPI.
+Nix provides every system-level dependency (podman, caddy, tmux, git,
+GNU tar, etc.) — no manual package installation required.
+
+To upgrade klangk to the latest PyPI release:
+
+```bash
+nix run github:mcdonc/klangk -- --upgrade
+```
+
+To drop into a shell with all deps on `PATH` (useful for manual
+`pip install` or running `klangkd doctor`):
+
+```bash
+nix develop github:mcdonc/klangk
+```
+
+!!! note "Podman setup"
+On **macOS**, podman runs inside a VM. You need to run
+`podman machine init && podman machine start` once before starting
+klangkd. On **Linux**, rootless podman requires subuid/subgid
+mappings for your user — see [Podman](reference/podman.md) for
+details.
+
 ## Run Using devenv
 
 For developing or modifying Klangk itself.
