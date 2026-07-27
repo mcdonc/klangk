@@ -87,6 +87,30 @@ def _drain_stdout(proc: Popen, log_path: str | None = None) -> str:
     return ""
 
 
+def _terminate(proc: Popen) -> None:
+    """Terminate a server so its captured stdout pipe EOFs and can be drained.
+
+    Used by the readiness-timeout path in :func:`_wait_ready` before reading
+    the child's captured output: a server that is still alive but not
+    answering ``/health`` keeps its stdout pipe open, so a blocking
+    ``proc.stdout.read()`` hangs until pytest-timeout fires (300s for the
+    e2e suite) — masking the real 60s readiness failure *and* its
+    diagnostics. Killing the child closes the write end of the pipe, so the
+    drain returns the buffered startup output immediately.
+    """
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        pass
+    if proc.poll() is None:  # SIGTERM ignored / not delivered
+        try:
+            proc.kill()
+            proc.wait(timeout=5)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            pass
+
+
 def _wait_ready(
     proc: Popen,
     *,
@@ -116,6 +140,12 @@ def _wait_ready(
             except Exception as exc:  # not up yet
                 last_exc = exc
             time.sleep(0.5)
+        # Reaching here means the process is alive but never answered
+        # /health — it has hung during startup (a crashed process would have
+        # hit the ``proc.poll()`` branch above and already EOF'd its pipe).
+        # Kill it before draining so the blocking read() returns the buffered
+        # startup output instead of hanging until pytest-timeout fires.
+        _terminate(proc)
         raise RuntimeError(
             f"klangkd did not become healthy within {_READINESS_TIMEOUT}s "
             f"(last error: {last_exc!r}):\n{_drain_stdout(proc, log_path)}"
