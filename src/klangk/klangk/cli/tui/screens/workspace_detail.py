@@ -443,13 +443,33 @@ class WorkspaceDetailScreen(Screen):
         terminal = getattr(event.item, "name", "") or ""
         if not terminal or self._ws is None:
             return
+        # The list item is keyed by the window INDEX, but the shell must
+        # target the window by its stable id (@N) so the backend selects
+        # the existing window instead of creating a duplicate named after
+        # the index (#1954).
+        target = self._window_id_for(terminal)
         cmd = [sys.executable, "-m", "klangk.cli.main"]
         server = self.app.tui_state.current_url()
         if server:
             cmd += ["--server", server]
-        cmd += ["shell", self._name, terminal]
+        cmd += ["shell", self._name, target]
         with self.app.suspend():
             subprocess.run(cmd)
+
+    def _window_id_for(self, key: str) -> str:
+        """Resolve a list-item key (window index) to the window's id (@N).
+
+        Falls back to the raw key when it is not an index or the window
+        can't be found, so a non-numeric selector keeps prior behaviour.
+        """
+        try:
+            idx = int(key)
+        except (TypeError, ValueError):
+            return key
+        for w in self._terminals:
+            if w.get("index") == idx and w.get("id"):
+                return str(w["id"])
+        return key
 
     def action_delete_terminal(self) -> None:
         lv = self.query_one("#term_list", ListView)

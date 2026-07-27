@@ -4930,6 +4930,21 @@ async def test_detail_delete_terminal_failure(monkeypatch):
         assert "Delete failed" in str(d.query_one("#detail_msg").render())
 
 
+def test_detail_window_id_for_resolves_index_and_falls_back():
+    """Select target resolves a window index to its stable @N id (#1954)."""
+    d = WorkspaceDetailScreen("alpha")
+    d._terminals = [
+        {"index": 0, "name": "main", "id": "@0"},
+        {"index": 1, "name": "build", "id": "@1"},
+    ]
+    assert d._window_id_for("0") == "@0"
+    assert d._window_id_for("1") == "@1"
+    # Unknown index falls back to the raw key.
+    assert d._window_id_for("9") == "9"
+    # Non-numeric selector is returned unchanged.
+    assert d._window_id_for("build") == "build"
+
+
 async def test_detail_terminal_select_spawns_shell(monkeypatch):
     async def noop(*a, **k):
         return None
@@ -4967,7 +4982,7 @@ async def test_detail_terminal_select_spawns_shell(monkeypatch):
             "https://x.example",
             "shell",
             "alpha",
-            "0",
+            "@0",
         ]
 
 
