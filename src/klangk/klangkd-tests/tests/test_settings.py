@@ -194,33 +194,54 @@ class TestConfigFile:
             is None
         )
 
-    def test_netfilter_default_domains_invalid_warns_and_empties(self, caplog):
-        """#1772: a bad spec no longer aborts boot — it warns and falls back
-        to None (no deploy default), so a typo can't take the server down."""
-        with caplog.at_level("WARNING"):
-            s = make_settings(
+    def test_netfilter_default_domains_invalid_spec_rejected(self):
+        """#1939: a bad spec aborts construction (reverses the #1772
+        warn-and-fallback). A misconfigured deploy-wide egress allow-list
+        must fail loudly rather than silently leaving workspaces
+        unrestricted."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            make_settings(
                 {"KLANGKD_NETFILTER_DEFAULT_DOMAINS": "good.com,bad spec"}
             )
-        assert s.netfilter_default_domains is None
-        assert any("invalid spec" in r.message for r in caplog.records)
+        msg = str(exc_info.value)
+        assert "invalid spec" in msg
+        assert "KLANGKD_NETFILTER_DEFAULT_DOMAINS" in msg
 
-    def test_netfilter_default_domains_wrong_type_warns_and_empties(
-        self, tmp_path, caplog
-    ):
-        """#1772: a non-list/non-string value (e.g. a bare int from a
-        malformed YAML block) warns and falls back to None rather than
-        aborting construction."""
+    def test_netfilter_default_domains_wrong_type_rejected(self, tmp_path):
+        """#1939: a non-list/non-string value (e.g. a bare int from a
+        malformed YAML block) aborts construction instead of falling back
+        to None."""
+        from pydantic import ValidationError
+
         # YAML delivering a scalar int directly (a typo'd block like
         # `netfilter_default_domains: 42` instead of a list).
         cfg = tmp_path / "config.yaml"
         cfg.write_text("netfilter_default_domains: 42\n")
-        with caplog.at_level("WARNING"):
-            s = make_settings({}, config_file=str(cfg))
-        assert s.netfilter_default_domains is None
-        assert any(
-            "must be a list or a comma-separated string" in r.message
-            for r in caplog.records
+        with pytest.raises(ValidationError) as exc_info:
+            make_settings({}, config_file=str(cfg))
+        msg = str(exc_info.value)
+        assert "must be a list or a comma-separated string" in msg
+        assert "KLANGKD_NETFILTER_DEFAULT_DOMAINS" in msg
+
+    def test_netfilter_default_domains_malformed_aborts_reload(self):
+        """#1939: a malformed value introduced after startup (operator edits
+        KLANGKD_NETFILTER_DEFAULT_DOMAINS, then SIGHUPs) makes reload()
+        raise. ``_reload_settings`` (main.py) catches that (``except
+        Exception``) and denies the restart, keeping the runtime on the old
+        config — so a typo in a reload no longer silently drops the default."""
+        from pydantic import ValidationError
+
+        s = make_settings({})
+        # Simulate an operator edit + SIGHUP that introduces a bad value
+        # into the env mapping reload() re-reads.
+        s._reload_env["KLANGKD_NETFILTER_DEFAULT_DOMAINS"] = (
+            "good.com,bad spec"
         )
+        with pytest.raises(ValidationError) as exc_info:
+            s.reload()
+        assert "invalid spec" in str(exc_info.value)
 
     def test_netfilter_enabled_defaults_true(self):
         # #1774: netfilter is armed out of the box.

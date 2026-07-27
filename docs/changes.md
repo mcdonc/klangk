@@ -489,6 +489,16 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **A malformed `KLANGKD_NETFILTER_DEFAULT_DOMAINS` now refuses to start
+  (#1939).** A bad `host[:port]` spec or a non-list/non-string value used
+  to be logged at WARNING and silently ignored — the field fell back to
+  `None` and workspaces ran **unrestricted** with no operator-visible
+  failure (the warn-and-fallback posture from #1772). It now aborts
+  construction: the deploy refuses to boot until the value is fixed. A
+  SIGHUP reload with a bad value is denied and keeps the prior config
+  (the old config stays running; the operator sees the deny reason in the
+  log). `None` / empty and valid values are unchanged.
+
 - **Generated `klangk.yaml` now includes `forward-agent` as a commented-out
   opt-in line (#1923).** A freshly created config (written on first `klangk
 login`) ships a `# forward-agent: true` line at the top, commented out, so

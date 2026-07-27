@@ -652,8 +652,10 @@ class KlangkSettings(BaseSettings):
     #
     # Accepts either a comma-separated string (env var) or a real list
     # (YAML config file), normalized + validated at construction by
-    # _coerce_netfilter_default_domains. A malformed value warns and falls
-    # back to None (no default) rather than aborting the server (#1772).
+    # _coerce_netfilter_default_domains. A malformed value aborts startup
+    # (raises) rather than silently falling back to None — a SIGHUP reload
+    # with a bad value is denied and keeps the old config (#1939, reversing
+    # #1772).
     netfilter_default_domains: list[str] | None = None
     test_mode: str | None = None
     version_file: str | None = None
@@ -1029,14 +1031,18 @@ class KlangkSettings(BaseSettings):
         (no deploy default; workspaces unrestricted unless they declare their
         own).
 
-        A malformed value (a bad ``host[:port]`` spec, or a non-list/
-        non-string type) does NOT abort the server — it logs a loud warning
-        and falls back to ``None`` (no deploy default applied), so a typo in
-        the deploy-wide default can't take down a running server or kill a
-        SIGHUP reload (#1772). This matches the warn+fallback posture of
-        peer settings (e.g. ``image_pull_policy``) and netfilter's
-        fail-open-with-visibility design — a misconfigured deploy degrades
-        to unrestricted + a visible warning rather than refusing to run.
+        A malformed value — a wrong type (non-list / non-string) or a bad
+        ``host[:port]`` spec — **aborts startup** by raising ``ValueError``
+        (pydantic surfaces it as a ``ValidationError`` out of
+        ``KlangkSettings(...)``). This is a safety control: a deploy-wide
+        egress allow-list that silently disables itself on a typo leaves
+        workspaces running unrestricted while the operator believes egress
+        is filtered, so a misconfigured value must fail loudly. A SIGHUP
+        reload with a bad value is denied by ``_reload_settings``
+        (main.py), which catches the construction error and keeps the
+        runtime on the prior config. Reverses the warn-and-fallback posture
+        of #1772; matches the malformed→abort rule decided for the
+        container resource limits (#34).
         """
         if v is None:
             return None
@@ -1046,27 +1052,19 @@ class KlangkSettings(BaseSettings):
         elif isinstance(v, list):
             items = [str(s).strip() for s in v if str(s).strip()]
         else:
-            logger.warning(
-                "KLANGKD_NETFILTER_DEFAULT_DOMAINS=%r must be a list or a "
-                "comma-separated string (got %s); ignoring the deploy-wide "
-                "default (no default applied).",
-                v,
-                type(v).__name__,
+            raise ValueError(
+                f"KLANGKD_NETFILTER_DEFAULT_DOMAINS={v!r} must be a list or "
+                f"a comma-separated string (got {type(v).__name__})."
             )
-            return None
         if not items:
             return None
         try:
             return parse_allowed_domains(items)
         except ValueError as exc:
-            logger.warning(
-                "KLANGKD_NETFILTER_DEFAULT_DOMAINS=%r has an invalid spec "
-                "(%s); ignoring the deploy-wide default (no default "
-                "applied). Fix the value and reload to restore it.",
-                v,
-                exc,
-            )
-            return None
+            raise ValueError(
+                f"KLANGKD_NETFILTER_DEFAULT_DOMAINS={v!r} has an invalid "
+                f"spec: {exc}"
+            ) from exc
 
     @model_validator(mode="after")
     def _warn_on_deprecated_proxy_engine(self) -> "KlangkSettings":
