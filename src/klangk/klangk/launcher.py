@@ -51,6 +51,7 @@ from klangk.settings import KlangkSettings
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=False,
+    invoke_without_command=True,
     help="Start the klangk server (config + uvicorn + proxy).",
 )
 
@@ -136,8 +137,9 @@ def _check_pid_preflight(settings: KlangkSettings) -> int | None:
     return pid
 
 
-@app.command()
+@app.callback()
 def main(  # pragma: no cover
+    ctx: typer.Context,
     config: str | None = typer.Option(
         None,
         "--config",
@@ -151,7 +153,9 @@ def main(  # pragma: no cover
         ),
     ),
 ) -> None:
-    """Start the klangk server (uvicorn + proxy child)."""
+    """Start the klangk server (config + uvicorn + proxy)."""
+    if ctx.invoked_subcommand is not None:
+        return  # defer to the subcommand (e.g. ``doctor``)
     resolved = _resolve_config_path(config)
 
     # Everything below reads through the typed config (config file > env >
@@ -229,6 +233,18 @@ def main(  # pragma: no cover
             "uvicorn failed to bind UDS at %s: %s — exiting", uds_path, exc
         )
         sys.exit(1)
+
+
+@app.command()
+def doctor(  # pragma: no cover
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show extra detail for each check."
+    ),
+) -> None:
+    """Check for missing dependencies and common misconfigurations."""
+    from klangk.doctor import doctor_main  # noqa: allow-deferred-import
+
+    raise SystemExit(doctor_main(verbose=verbose))
 
 
 if __name__ == "__main__":  # pragma: no cover
