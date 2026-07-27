@@ -187,13 +187,170 @@ fi
 #    @playwright/test 1.59.1 in package.json). KLANGKBUILD_TEST_URL makes
 #    global-setup short-circuit its own server startup (it just polls
 #    /health on this URL and returns).
-echo "=== installing playwright deps + chromium ==="
-cd "$REPO_ROOT/src/frontend/e2e-tests"
-npm install --silent
-npx playwright install --with-deps chromium
+#
+#    SKIP_PLAYWRIGHT=1 skips the browser test (useful on distros Playwright
+#    doesn't support yet, e.g. Ubuntu 26.04, or in container-only runs).
+if [ -n "${SKIP_PLAYWRIGHT:-}" ]; then
+  echo "=== playwright smoke skipped (SKIP_PLAYWRIGHT set) ==="
+else
+  echo "=== installing playwright deps + chromium ==="
+  cd "$REPO_ROOT/src/frontend/e2e-tests"
+  npm install --silent
+  npx playwright install --with-deps chromium
 
-echo "=== running dist-smoke spec ==="
-KLANGKBUILD_TEST_URL="http://127.0.0.1:$PORT" \
-  npx playwright test --project=dist-smoke --reporter=list
+  echo "=== running dist-smoke spec ==="
+  KLANGKBUILD_TEST_URL="http://127.0.0.1:$PORT" \
+    npx playwright test --project=dist-smoke --reporter=list
+fi
+
+# 5. Workspace lifecycle smoke test (optional — requires podman + a
+#    workspace image). Exercises the full create → start → exec → stop
+#    path using the klangk CLI from the installed wheel. Skipped when
+#    podman is absent (e.g. lightweight CI runners that only test the
+#    frontend).
+#
+#    The CLI auto-discovers the co-located klangkd via the UDS socket
+#    when KLANGKD_STATE_DIR is set, and auto-logs in when the server is
+#    in "none" auth mode. But the running server uses "password" mode
+#    (for the Playwright login test above), so we restart with "none"
+#    mode for the CLI phase.
+KLANGK="$VENV_DIR/bin/klangk"
+SKIP_CONTAINER_SMOKE="${SKIP_CONTAINER_SMOKE:-}"
+if [ -n "$SKIP_CONTAINER_SMOKE" ]; then
+  echo "=== container smoke skipped (SKIP_CONTAINER_SMOKE set) ==="
+elif ! command -v podman >/dev/null 2>&1; then
+  echo "=== container smoke skipped (podman not on PATH) ==="
+else
+  WS_IMAGE="${KLANGKD_IMAGE_NAME:-klangk-workspace}"
+  if ! podman image exists "localhost/$WS_IMAGE:latest" 2>/dev/null; then
+    # Build a minimal workspace image for the smoke test: the real
+    # klangk-workspace is heavy (custom Dockerfile + features); the smoke
+    # only needs node + a klangk user so `podman exec -u klangk` works.
+    echo "=== building minimal smoke workspace image ==="
+    SMOKE_DF="$(mktemp)"
+    cat >"$SMOKE_DF" <<'DOCKERFILE'
+FROM docker.io/library/node:22-slim
+RUN useradd -o -u 1000 -m -d /home/klangk -s /bin/bash klangk && \
+    apt-get update -qq && apt-get install -y --no-install-recommends \
+      bash tmux && rm -rf /var/lib/apt/lists/*
+USER klangk
+WORKDIR /home/klangk
+DOCKERFILE
+    if ! podman build -t "localhost/$WS_IMAGE:latest" -f "$SMOKE_DF" .; then
+      echo "=== container smoke skipped (failed to build smoke image) ==="
+      rm -f "$SMOKE_DF"
+      SKIP_CONTAINER_SMOKE=1
+    fi
+    rm -f "$SMOKE_DF"
+  fi
+  if [ -n "${SKIP_CONTAINER_SMOKE:-}" ]; then
+    true # skip — message already printed above
+  else
+    echo "=== restarting klangkd in none-auth mode for CLI smoke ==="
+    # Stop the password-mode server
+    kill "$KLANGKD_PID" 2>/dev/null || true
+    wait "$KLANGKD_PID" 2>/dev/null || true
+    KLANGKD_PID=""
+
+    # Clear state for a fresh start
+    rm -rf "${STATE_DIR:?}"/* "${DATA_DIR:?}"/*
+
+    env -u KLANGKD_FRONTEND_DIR \
+      KLANGKD_PORT="$PORT" \
+      KLANGKD_EGRESS_PORT="$EGRESS_PORT" \
+      KLANGKD_DATA_DIR="$DATA_DIR" \
+      KLANGKD_STATE_DIR="$STATE_DIR" \
+      KLANGKD_AUTH_MODES=none \
+      KLANGKD_DEFAULT_USER=admin@example.com \
+      KLANGKD_JWT_SECRET=smoke-test-secret \
+      KLANGKD_LLM_BASE_URL=http://localhost:11434/v1 \
+      KLANGKD_LLM_API_KEY=test \
+      KLANGKD_LLM_MODEL=test \
+      LOGFIRE_TOKEN='' \
+      "$VENV_DIR/bin/klangkd" --config=none >"$LOG_PATH" 2>&1 &
+    KLANGKD_PID=$!
+    echo "klangkd restarted pid=$KLANGKD_PID (none-auth + podman)"
+
+    READY=0
+    for i in $(seq 1 120); do
+      if ! kill -0 "$KLANGKD_PID" 2>/dev/null; then
+        echo "error: klangkd exited during startup (after ${i}s)" >&2
+        tail -n 50 "$LOG_PATH" >&2 2>/dev/null || true
+        exit 1
+      fi
+      if curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+        echo "klangkd ready after ${i}s"
+        READY=1
+        break
+      fi
+      sleep 1
+    done
+    if [ "$READY" -ne 1 ]; then
+      echo "error: klangkd not ready after 120s" >&2
+      tail -n 50 "$LOG_PATH" >&2 2>/dev/null || true
+      exit 1
+    fi
+
+    # The CLI discovers the server via the UDS socket at
+    # $KLANGK_STATE_DIR/klangk.sock (co-located auto-discovery, #1676).
+    # Note: the CLI env var is KLANGK_STATE_DIR (no D), while the server
+    # uses KLANGKD_STATE_DIR. Both must point to the same directory.
+    export KLANGK_STATE_DIR="$STATE_DIR"
+
+    echo "=== CLI: create workspace ==="
+    "$KLANGK" create smoke-ws
+    echo "=== CLI: list workspaces ==="
+    "$KLANGK" ls
+
+    echo "=== CLI: start workspace ==="
+    "$KLANGK" start smoke-ws
+
+    # Wait for the container to be running
+    echo "=== waiting for container ==="
+    CONTAINER_READY=0
+    for i in $(seq 1 60); do
+      if podman ps --format '{{.Names}}' 2>/dev/null | grep -q klangk; then
+        echo "container running after ${i}s"
+        CONTAINER_READY=1
+        break
+      fi
+      sleep 1
+    done
+    if [ "$CONTAINER_READY" -ne 1 ]; then
+      echo "error: workspace container not running after 60s" >&2
+      podman ps -a >&2 2>/dev/null || true
+      tail -n 50 "$LOG_PATH" >&2 2>/dev/null || true
+      exit 1
+    fi
+
+    echo "=== exec command in workspace container ==="
+    # Use podman exec directly rather than `klangk exec` — the CLI exec
+    # path involves a WebSocket connection with auth token negotiation
+    # that is exercised by the Playwright e2e suite. Here we just verify
+    # the container is functional and can run commands.
+    CONTAINER_NAME=$(podman ps --format '{{.Names}}' 2>/dev/null | grep klangk | head -1)
+    EXEC_OUTPUT=$(podman exec "$CONTAINER_NAME" echo "hello from workspace")
+    echo "  exec output: $EXEC_OUTPUT"
+    if echo "$EXEC_OUTPUT" | grep -q "hello from workspace"; then
+      echo "  exec: PASS"
+    else
+      echo "error: exec did not return expected output" >&2
+      exit 1
+    fi
+
+    echo "=== CLI: stop workspace ==="
+    "$KLANGK" stop smoke-ws
+
+    # Verify container stopped
+    sleep 2
+    if podman ps --format '{{.Names}}' 2>/dev/null | grep -q klangk; then
+      echo "error: container still running after stop" >&2
+      exit 1
+    fi
+    echo "  container stopped: PASS"
+
+    echo "=== container smoke: ALL PASSED ==="
+  fi # SKIP_CONTAINER_SMOKE
+fi   # podman / SKIP_CONTAINER_SMOKE
 
 # trap handles klangkd teardown.
