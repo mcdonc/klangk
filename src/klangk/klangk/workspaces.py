@@ -203,6 +203,7 @@ class Workspaces:
             "env": ws.get("env"),
             "health_check": ws.get("health_check"),
             "allowed_domains": ws.get("allowed_domains"),
+            "settings": ws.get("settings"),
             "num_ports": ws.get("num_ports", 5),
         }
 
@@ -369,6 +370,7 @@ class Workspaces:
         setup_state: str | None = None,
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
+        settings: dict | None = None,
     ) -> dict:
         workspace = (
             await self.app.state.model.workspaces.create_workspace_with_acl(
@@ -382,6 +384,7 @@ class Workspaces:
                 setup_state=setup_state or model.SETUP_STATE_COMPLETE,
                 health_check=health_check,
                 allowed_domains=allowed_domains,
+                settings=settings,
             )
         )
         home = self.home_path(workspace["id"])
@@ -514,7 +517,22 @@ class Workspaces:
             setup_state=ws.get("setup_state"),
             service_command=ws.get("service_command"),
             allowed_domains=ws.get("allowed_domains"),
+            workspace_settings=ws.get("settings"),
         )
+        # Apply the per-workspace idle-timeout override from the settings
+        # bag (#864), *only* when the workspace actually declares one.
+        # When no override is present we leave the container state's
+        # idle_timeout at None so ``get_idle_timeout()`` lazily falls back
+        # to the live deploy default — that keeps a SIGHUP settings reload
+        # effective for running containers (a materialized value would
+        # freeze it). The auto_start boot path pins the container alive
+        # (0) after this call returns, so a service workspace never idles
+        # out regardless of its settings bag.
+        bag = ws.get("settings") or {}
+        if "idle_timeout" in bag:
+            self.app.state.container_registry.set_workspace_idle_timeout(
+                workspace_id, bag["idle_timeout"]
+            )
         return cid, status
 
     async def auto_start_workspaces(self) -> int:

@@ -259,6 +259,78 @@ class TestMigration:
             assert mounts is None
             assert env is None
 
+    async def test_migrate_workspaces_adds_settings(
+        self, temp_data_dir, app_state
+    ):
+        """init_db adds the ``settings`` column to tables that predate #864.
+
+        The JSON ``settings`` bag ships in CREATE TABLE for fresh installs
+        but also has an ADD COLUMN migration so DBs created before it
+        shipped gain the column (NULL by default = no overrides, inheriting
+        every deploy-wide default). Existing rows must survive untouched.
+        """
+        db_path = get_test_db().db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = await aiosqlite.connect(str(db_path))
+        try:
+            await db.execute("""
+                CREATE TABLE users (
+                    id TEXT PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT,
+                    verified INTEGER NOT NULL DEFAULT 0,
+                    provider TEXT NOT NULL DEFAULT 'local',
+                    external_id TEXT,
+                    handle TEXT UNIQUE,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            await db.execute(
+                "INSERT INTO users (id, email, password_hash, verified)"
+                " VALUES ('u1', 'owner@example.com', 'hash', 1)"
+            )
+            # Pre-settings workspaces table — has every column that existed
+            # *before* settings shipped, but NOT settings itself.
+            await db.execute("""
+                CREATE TABLE workspaces (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL REFERENCES users(id),
+                    name TEXT NOT NULL,
+                    container_id TEXT,
+                    num_ports INTEGER NOT NULL DEFAULT 5,
+                    image TEXT,
+                    service_command TEXT,
+                    auto_start INTEGER NOT NULL DEFAULT 0,
+                    setup_state TEXT NOT NULL DEFAULT 'complete',
+                    health_check TEXT,
+                    mounts TEXT,
+                    env TEXT,
+                    allowed_domains TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(user_id, name)
+                )
+            """)
+            await db.execute(
+                "INSERT INTO workspaces (id, user_id, name)"
+                " VALUES ('ws1', 'u1', 'old-ws')"
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        await app_state.state.model.init_db()
+
+        async with app_state.state.db.transaction() as conn:
+            cursor = await conn.execute("PRAGMA table_info(workspaces)")
+            cols = {row[1] for row in await cursor.fetchall()}
+            assert "settings" in cols
+
+            cursor = await conn.execute(
+                "SELECT settings FROM workspaces WHERE id = 'ws1'"
+            )
+            (settings,) = await cursor.fetchone()
+            assert settings is None
+
 
 class TestUsers:
     async def test_create_user(self, db, app_state):

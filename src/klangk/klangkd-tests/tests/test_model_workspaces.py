@@ -8,8 +8,11 @@ the agent-principal / setup-state guards. Mirrors the #1573
 ContextVar DB) with the schema initialized.
 """
 
+import asyncio
+
 import pytest
 
+from klangk.model.acl import ACTION_ALLOW, PRINCIPAL_USER
 from klangk.model.workspaces import (
     SETUP_STATE_COMPLETE,
     SETUP_STATE_PENDING,
@@ -275,3 +278,185 @@ async def test_list_auto_start_workspaces(ws, user):
     started = await ws.list_auto_start_workspaces()
     assert [w["name"] for w in started] == ["auto"]
     assert started[0]["auto_start"] is True
+
+
+# --- per-workspace settings bag (#864) ---
+
+
+SETTINGS_BAG = {
+    "idle_timeout": 300,
+    "bridge_timeout": 60,
+    "cpu_limit": 1.5,
+    "memory_limit": "2g",
+    "pids_limit": 512,
+}
+
+
+async def test_settings_roundtrip(ws, user):
+    # Create persists the bag; get/get_by_id/list all surface it.
+    ws_row = await ws.create_workspace_with_acl(
+        user["id"], "tuned", settings=SETTINGS_BAG
+    )
+    assert ws_row["settings"] == SETTINGS_BAG
+    got = await ws.get_workspace(ws_row["id"], user["id"])
+    assert got["settings"] == SETTINGS_BAG
+    by_id = await ws.get_workspace_by_id(ws_row["id"])
+    assert by_id["settings"] == SETTINGS_BAG
+    listing = await ws.list_workspaces(user["id"])
+    assert listing["items"][0]["settings"] == SETTINGS_BAG
+
+
+async def test_settings_default_none(ws, user):
+    # No settings -> NULL -> surfaces as None (no overrides).
+    ws_row = await ws.create_workspace(user["id"], "plain")
+    assert ws_row["settings"] is None
+    got = await ws.get_workspace(ws_row["id"], user["id"])
+    assert got["settings"] is None
+    by_id = await ws.get_workspace_by_id(ws_row["id"])
+    assert by_id["settings"] is None
+    listing = await ws.list_workspaces(user["id"])
+    assert listing["items"][0]["settings"] is None
+
+
+async def test_settings_in_shared_listing(ws, app_state, user):
+    # list_shared_workspaces surfaces the bag too.
+    ws_row = await ws.create_workspace_with_acl(
+        user["id"], "shared-tuned", settings={"idle_timeout": 120}
+    )
+    other = await app_state.state.model.users.create_user("other@x.com", "pw")
+    resource = f"/workspaces/{ws_row['id']}"
+    await app_state.state.model.acl.add_acl_entry(
+        resource,
+        100,
+        ACTION_ALLOW,
+        "terminal",
+        PRINCIPAL_USER,
+        user_id=other["id"],
+    )
+    shared = await ws.list_shared_workspaces(other["id"])
+    assert shared["items"][0]["settings"] == {"idle_timeout": 120}
+
+
+async def test_settings_updateable_via_full_replace(ws, user):
+    ws_row = await ws.create_workspace(user["id"], "editable")
+    assert (
+        await ws.update_workspace(
+            ws_row["id"],
+            user["id"],
+            settings={"idle_timeout": 300, "cpu_limit": 2},
+        )
+        is True
+    )
+    got = await ws.get_workspace(ws_row["id"], user["id"])
+    assert got["settings"] == {"idle_timeout": 300, "cpu_limit": 2}
+    # Full-replace: setting settings=None clears the whole bag.
+    assert (
+        await ws.update_workspace(ws_row["id"], user["id"], settings=None)
+        is True
+    )
+    got = await ws.get_workspace(ws_row["id"], user["id"])
+    assert got["settings"] is None
+
+
+async def test_update_workspace_settings_merge(ws, user):
+    # PATCH-style read-modify-write merge.
+    ws_row = await ws.create_workspace(
+        user["id"], "mergeable", settings={"idle_timeout": 300}
+    )
+    # Add a key + replace an existing one.
+    merged = await ws.update_workspace_settings(
+        ws_row["id"],
+        user["id"],
+        {"idle_timeout": 600, "cpu_limit": 1.5},
+    )
+    assert merged == {"idle_timeout": 600, "cpu_limit": 1.5}
+    got = await ws.get_workspace(ws_row["id"], user["id"])
+    assert got["settings"] == {"idle_timeout": 600, "cpu_limit": 1.5}
+
+
+async def test_update_workspace_settings_delete_key(ws, user):
+    ws_row = await ws.create_workspace(
+        user["id"],
+        "deletable",
+        settings={"idle_timeout": 300, "cpu_limit": 1.5},
+    )
+    # None value deletes just that key (reverts to deploy default).
+    merged = await ws.update_workspace_settings(
+        ws_row["id"],
+        user["id"],
+        {"idle_timeout": None},
+    )
+    assert merged == {"cpu_limit": 1.5}
+
+
+async def test_update_workspace_settings_delete_last_key_nulls_column(
+    ws, user
+):
+    ws_row = await ws.create_workspace(
+        user["id"], "last-key", settings={"idle_timeout": 300}
+    )
+    merged = await ws.update_workspace_settings(
+        ws_row["id"],
+        user["id"],
+        {"idle_timeout": None},
+    )
+    # Bag is now empty -> column NULL -> None.
+    assert merged is None
+    got = await ws.get_workspace(ws_row["id"], user["id"])
+    assert got["settings"] is None
+
+
+async def test_update_workspace_settings_missing_workspace(ws, user):
+    # Nonexistent workspace / wrong owner -> None.
+    assert (
+        await ws.update_workspace_settings(
+            "missing", user["id"], {"idle_timeout": 300}
+        )
+        is None
+    )
+
+
+async def test_update_workspace_settings_concurrent_no_lost_update(ws, user):
+    # Regression for the read-modify-write lost-update on the settings bag
+    # (#1951 review, I1): concurrent PATCHes to *different* keys must all
+    # land, not last-writer-wins on the whole blob. The merge uses
+    # compare-and-swap (UPDATE ... WHERE settings IS <old_blob>), so a
+    # concurrent writer that changed the blob between our SELECT and UPDATE
+    # is detected via rowcount=0 and the patch is re-read + re-merged on the
+    # latest base. NullPool gives each transaction a fresh connection to the
+    # same on-disk SQLite file, so the SELECT/UPDATE interleaving is real.
+    ws_row = await ws.create_workspace(
+        user["id"], "concurrent", settings={"idle_timeout": 300}
+    )
+    ws_id = ws_row["id"]
+    uid = user["id"]
+    # Five patches to five distinct keys, fired concurrently.
+    await asyncio.gather(
+        ws.update_workspace_settings(ws_id, uid, {"cpu_limit": 1.5}),
+        ws.update_workspace_settings(ws_id, uid, {"pids_limit": 256}),
+        ws.update_workspace_settings(ws_id, uid, {"memory_limit": "512m"}),
+        ws.update_workspace_settings(ws_id, uid, {"bridge_timeout": 60}),
+        ws.update_workspace_settings(ws_id, uid, {"idle_timeout": 0}),
+    )
+    got = await ws.get_workspace(ws_id, uid)
+    # Every override survived — no key was dropped by a concurrent writer.
+    # (Without CAS, the last writer's stale-base blob would clobber the
+    # others and only its own key + the original idle_timeout would remain.)
+    assert got["settings"] == {
+        "idle_timeout": 0,
+        "cpu_limit": 1.5,
+        "pids_limit": 256,
+        "memory_limit": "512m",
+        "bridge_timeout": 60,
+    }
+
+
+async def test_settings_in_auto_start_listing(ws, user):
+    await ws.create_workspace(
+        user["id"],
+        "auto-tuned",
+        auto_start=True,
+        settings={"idle_timeout": 120},
+    )
+    started = await ws.list_auto_start_workspaces()
+    assert started[0]["settings"] == {"idle_timeout": 120}

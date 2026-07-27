@@ -39,6 +39,13 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
     ],
 }
 
+# Upper bound on compare-and-swap retries for the settings-bag merge
+# (:meth:`WorkspacesModel.update_workspace_settings`). Under normal load the
+# first attempt wins; under contention we loop, re-merging on the latest blob
+# each time. SQLite serializes writers, so this only loops when two PATCHes
+# genuinely race — 8 is far beyond anything realistic.
+_SETTINGS_CAS_RETRIES = 8
+
 # setup_state lifecycle values (#1033). A workspace always holds
 # exactly one. Descriptive, not proscriptive: created in whichever
 # state matches reality.
@@ -101,6 +108,7 @@ class WorkspacesModel:
         setup_state: str,
         health_check: str | None,
         allowed_domains: list[str] | None = None,
+        settings: dict | None = None,
     ) -> dict:
         """INSERT a workspace row on ``db`` and return the new workspace dict.
 
@@ -114,12 +122,13 @@ class WorkspacesModel:
         allowed_domains_json = (
             json.dumps(allowed_domains) if allowed_domains else None
         )
+        settings_json = json.dumps(settings) if settings else None
         await db.execute(
             "INSERT INTO workspaces"
             " (id, user_id, name, image, service_command, auto_start,"
             " setup_state, health_check, mounts, env, allowed_domains,"
-            " created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " settings, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 workspace_id,
                 user_id,
@@ -132,6 +141,7 @@ class WorkspacesModel:
                 mounts_json,
                 env_json,
                 allowed_domains_json,
+                settings_json,
                 created_at,
             ),
         )
@@ -147,6 +157,7 @@ class WorkspacesModel:
             "mounts": mounts,
             "env": env,
             "allowed_domains": allowed_domains,
+            "settings": settings,
             "num_ports": DEFAULT_PORTS_PER_WORKSPACE,
             "created_at": created_at,
         }
@@ -227,6 +238,7 @@ class WorkspacesModel:
         setup_state: str = SETUP_STATE_COMPLETE,
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
+        settings: dict | None = None,
     ) -> dict:
         """Create a workspace row AND seed its owner ACE + role groups.
 
@@ -259,6 +271,7 @@ class WorkspacesModel:
                 setup_state=setup_state,
                 health_check=health_check,
                 allowed_domains=allowed_domains,
+                settings=settings,
             )
             await self._seed_workspace_acl(db, ws, user_id)
             return ws
@@ -275,6 +288,7 @@ class WorkspacesModel:
         setup_state: str = SETUP_STATE_COMPLETE,
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
+        settings: dict | None = None,
     ) -> dict:
         """Insert a workspace row only (no ACL seeding).
 
@@ -298,6 +312,7 @@ class WorkspacesModel:
                 setup_state=setup_state,
                 health_check=health_check,
                 allowed_domains=allowed_domains,
+                settings=settings,
             )
 
     async def list_workspaces(
@@ -328,7 +343,7 @@ class WorkspacesModel:
             cursor = await db.execute(
                 "SELECT id, name, container_id, image, service_command,"
                 " auto_start, setup_state, health_check, mounts, env,"
-                " allowed_domains, created_at"
+                " allowed_domains, settings, created_at"
                 " FROM workspaces"
                 f" {where} {order_by} LIMIT ? OFFSET ?",
                 tuple(params),
@@ -350,6 +365,9 @@ class WorkspacesModel:
                     "env": json.loads(row["env"]) if row["env"] else None,
                     "allowed_domains": json.loads(row["allowed_domains"])
                     if row["allowed_domains"]
+                    else None,
+                    "settings": json.loads(row["settings"])
+                    if row["settings"]
                     else None,
                     "created_at": row["created_at"],
                 }
@@ -396,7 +414,7 @@ class WorkspacesModel:
                 "SELECT DISTINCT w.id, w.name, w.container_id, w.image,"
                 " w.service_command, w.auto_start, w.setup_state,"
                 " w.health_check, w.mounts, w.env, w.allowed_domains,"
-                " w.created_at,"
+                " w.settings, w.created_at,"
                 " u.email AS owner_email"
                 " FROM workspaces w"
                 " JOIN acl_entries ae ON ae.resource = '/workspaces/' || w.id"
@@ -436,6 +454,9 @@ class WorkspacesModel:
                     "allowed_domains": json.loads(row["allowed_domains"])
                     if row["allowed_domains"]
                     else None,
+                    "settings": json.loads(row["settings"])
+                    if row["settings"]
+                    else None,
                     "created_at": row["created_at"],
                     "owner_email": row["owner_email"],
                 }
@@ -462,7 +483,7 @@ class WorkspacesModel:
                 cursor = await db.execute(
                     "SELECT id, user_id, name, container_id, num_ports, image,"
                     " service_command, auto_start, setup_state, health_check,"
-                    " mounts, env, allowed_domains"
+                    " mounts, env, allowed_domains, settings"
                     " FROM workspaces WHERE id = ? AND user_id = ?",
                     (workspace_id, user_id),
                 )
@@ -470,7 +491,7 @@ class WorkspacesModel:
                 cursor = await db.execute(
                     "SELECT id, user_id, name, container_id, num_ports, image,"
                     " service_command, auto_start, setup_state, health_check,"
-                    " mounts, env, allowed_domains"
+                    " mounts, env, allowed_domains, settings"
                     " FROM workspaces WHERE id = ?",
                     (workspace_id,),
                 )
@@ -493,6 +514,9 @@ class WorkspacesModel:
                 "allowed_domains": json.loads(row["allowed_domains"])
                 if row["allowed_domains"]
                 else None,
+                "settings": json.loads(row["settings"])
+                if row["settings"]
+                else None,
             }
 
     async def get_workspace_by_id(self, workspace_id: str) -> dict | None:
@@ -500,7 +524,7 @@ class WorkspacesModel:
         row = await self.app.state.db.fetchone(
             "SELECT id, user_id, name, container_id, num_ports, image,"
             " service_command, setup_state, health_check, mounts, env,"
-            " allowed_domains"
+            " allowed_domains, settings"
             " FROM workspaces WHERE id = ?",
             (workspace_id,),
         )
@@ -520,6 +544,9 @@ class WorkspacesModel:
             "env": json.loads(row["env"]) if row["env"] else None,
             "allowed_domains": json.loads(row["allowed_domains"])
             if row["allowed_domains"]
+            else None,
+            "settings": json.loads(row["settings"])
+            if row["settings"]
             else None,
         }
 
@@ -608,6 +635,64 @@ class WorkspacesModel:
                 (container_id, workspace_id),
             )
 
+    async def update_workspace_settings(
+        self,
+        workspace_id: str,
+        user_id: str,
+        patch: dict,
+    ) -> dict | None:
+        """Partial-merge update of the ``settings`` bag (#864).
+
+        Compare-and-swap on the raw settings blob: load it, merge *patch* in
+        Python (each key set/replace, ``None`` value deletes that key), and
+        UPDATE only if the blob is unchanged since the read
+        (``settings IS ?`` is NULL-safe, unlike ``=``). If another writer
+        committed in between, ``rowcount`` is 0 and the loop re-reads the
+        latest blob and re-applies the patch on that base — so two
+        concurrent PATCHes to *different* keys can't clobber each other (the
+        classic read-modify-write lost-update).
+
+        Returns the post-merge settings dict (or ``None`` if the bag is now
+        empty), or ``None`` if the workspace wasn't found / isn't owned by
+        *user_id*.
+
+        *patch* must already be validated + normalized by
+        :func:`klangk.workspace_settings.validate_settings_patch` — this
+        method trusts the keys are known and the non-null values are
+        coerced. It owns only the merge + persistence + the empty-bag →
+        NULL mapping.
+        """
+        for _ in range(_SETTINGS_CAS_RETRIES):
+            async with self.app.state.db.transaction() as db:
+                cursor = await db.execute(
+                    "SELECT settings FROM workspaces"
+                    " WHERE id = ? AND user_id = ?",
+                    (workspace_id, user_id),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    return None
+                old_blob = row["settings"]
+                current = json.loads(old_blob) if old_blob else {}
+                for key, value in patch.items():
+                    if value is None:
+                        current.pop(key, None)
+                    else:
+                        current[key] = value
+                new_blob = json.dumps(current) if current else None
+                cursor = await db.execute(
+                    "UPDATE workspaces SET settings = ?"
+                    " WHERE id = ? AND user_id = ? AND settings IS ?",
+                    (new_blob, workspace_id, user_id, old_blob),
+                )
+                if cursor.rowcount == 1:
+                    return current if current else None
+                # rowcount 0 — settings changed under us (or the row went
+                # away); loop re-reads the latest blob and re-applies.
+        raise RuntimeError(  # pragma: no cover - only under extreme contention
+            f"settings CAS retry exhausted for workspace {workspace_id}"
+        )
+
     async def update_workspace(
         self,
         workspace_id: str,
@@ -625,6 +710,7 @@ class WorkspacesModel:
             "mounts",
             "env",
             "allowed_domains",
+            "settings",
         }
         to_set = {}
         for k, v in fields.items():
@@ -634,7 +720,7 @@ class WorkspacesModel:
                 if v not in SETUP_STATES:
                     raise ValueError(f"Invalid setup_state: {v!r}")
                 to_set[k] = v
-            elif k in ("mounts", "env", "allowed_domains"):
+            elif k in ("mounts", "env", "allowed_domains", "settings"):
                 to_set[k] = json.dumps(v) if v is not None else None
             elif k == "auto_start":
                 to_set[k] = 1 if v else 0
@@ -754,7 +840,7 @@ class WorkspacesModel:
             cursor = await db.execute(
                 "SELECT id, user_id, name, container_id, num_ports, image,"
                 " service_command, auto_start, setup_state, health_check,"
-                " mounts, env, allowed_domains"
+                " mounts, env, allowed_domains, settings"
                 " FROM workspaces WHERE auto_start = 1",
             )
             rows = await cursor.fetchall()
@@ -776,6 +862,9 @@ class WorkspacesModel:
                     "env": json.loads(row["env"]) if row["env"] else None,
                     "allowed_domains": json.loads(row["allowed_domains"])
                     if row["allowed_domains"]
+                    else None,
+                    "settings": json.loads(row["settings"])
+                    if row["settings"]
                     else None,
                 }
                 for row in rows

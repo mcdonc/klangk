@@ -579,3 +579,96 @@ class TestStartWorkspace:
             assert registry.states[ws["id"]].idle_timeout == default_timeout
         finally:
             registry.states.pop(ws["id"], None)
+
+    async def test_idle_timeout_override_is_applied(self, user, app_state):
+        """A settings.idle_timeout override pins the container state (#864).
+
+        Only an explicit override is materialized onto the container state;
+        when no override is present the state stays None so
+        ``get_idle_timeout()`` lazily reads the live deploy default
+        (reload-safe). See ``test_does_not_pin_idle_timeout`` for that path.
+        """
+        registry = app_state.state.container_registry
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"],
+            "start-ws-idle-override",
+            settings={"idle_timeout": 600},
+        )
+        from klangk.container import ContainerState
+
+        registry.states[ws["id"]] = ContainerState(ws["id"], "cid-z", registry)
+        try:
+            with patch.object(
+                registry,
+                "start_container",
+                new_callable=AsyncMock,
+                return_value=("cid-z", "created"),
+            ) as mock_start:
+                await app_state.state.workspaces.start_workspace(ws)
+            # The override is materialized onto the live state.
+            assert registry.states[ws["id"]].idle_timeout == 600
+            # The settings bag is threaded through to start_container so
+            # resource limits resolve per-workspace too.
+            assert mock_start.call_args.kwargs["workspace_settings"] == {
+                "idle_timeout": 600
+            }
+        finally:
+            registry.states.pop(ws["id"], None)
+
+    async def test_no_idle_override_stays_lazy(self, user, app_state):
+        """No idle_timeout in the bag -> state stays None (lazy fallback)."""
+        registry = app_state.state.container_registry
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"],
+            "start-ws-no-override",
+            settings={"cpu_limit": 2.0},  # other key set, not idle
+        )
+        from klangk.container import ContainerState
+
+        registry.states[ws["id"]] = ContainerState(ws["id"], "cid-w", registry)
+        try:
+            with patch.object(
+                registry,
+                "start_container",
+                new_callable=AsyncMock,
+                return_value=("cid-w", "created"),
+            ):
+                await app_state.state.workspaces.start_workspace(ws)
+            assert registry.states[ws["id"]].idle_timeout is None
+        finally:
+            registry.states.pop(ws["id"], None)
+
+
+async def test_idle_timeout_zero_pins_alive(user, app_state):
+    """``settings.idle_timeout: 0`` means "never idle out" (#864).
+
+    The schema accepts 0 for idle_timeout specifically (pids / bridge stay
+    strictly positive); the apply path is membership-based
+    (``"idle_timeout" in bag``), so 0 is materialized onto the container
+    state — and the idle reaper's ``timeout > 0`` guard then skips it,
+    pinning the workspace alive forever.
+    """
+    registry = app_state.state.container_registry
+    ws = await app_state.state.workspaces.create_workspace(
+        user["id"],
+        "start-ws-idle-zero",
+        settings={"idle_timeout": 0},
+    )
+    from klangk.container import ContainerState
+
+    registry.states[ws["id"]] = ContainerState(ws["id"], "cid-0", registry)
+    try:
+        with patch.object(
+            registry,
+            "start_container",
+            new_callable=AsyncMock,
+            return_value=("cid-0", "created"),
+        ) as mock_start:
+            await app_state.state.workspaces.start_workspace(ws)
+        # 0 is materialized (not treated as "absent" by a truthiness check).
+        assert registry.states[ws["id"]].idle_timeout == 0
+        assert mock_start.call_args.kwargs["workspace_settings"] == {
+            "idle_timeout": 0
+        }
+    finally:
+        registry.states.pop(ws["id"], None)
