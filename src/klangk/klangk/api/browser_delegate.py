@@ -99,14 +99,24 @@ async def browser_delegate_stream(
     For long-running actions (RAG + LLM), the browser pushes incremental
     browser_chunk messages and a terminal browser_response.  Each is streamed
     to the caller immediately, so there is no single bounded round-trip — the
-    only limit is the per-chunk idle timeout.
+    only limit is the per-chunk idle timeout, which resolves per-workspace
+    (#864): the workspace's ``settings.bridge_timeout`` override > the
+    ``KLANGKD_BRIDGE_TIMEOUT_SECONDS`` deploy default > 30s.
     """
     session, target_sock, payload = _resolve_bridge_target(
         body, app.state.container_registry, app.state.sockets
     )
+    # Fetch the workspace so its settings.bridge_timeout override can apply.
+    # One DB lookup per stream request — these are not high-frequency
+    # (one per browser-delegated long-running action from the container).
+    workspace = await app.state.model.workspaces.get_workspace_by_id(
+        workspace_id
+    )
     return StreamingResponse(
         session.dispatch_browser_request_stream_to(
-            target_sock, payload, app.state.util.bridge_idle_timeout()
+            target_sock,
+            payload,
+            app.state.util.bridge_idle_timeout_for(workspace),
         ),
         media_type="application/x-ndjson",
     )

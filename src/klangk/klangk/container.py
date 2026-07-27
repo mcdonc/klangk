@@ -6,6 +6,7 @@ import os
 import time
 
 from . import podman
+from . import workspace_settings as ws_settings
 from .podman import PodmanError
 
 logger = logging.getLogger(__name__)
@@ -1040,6 +1041,39 @@ class ContainerRegistry:
             setup_state=setup_state,
         )
 
+    def _resolve_cpu_limit(
+        self, workspace_settings: dict | None
+    ) -> float | None:
+        """Per-workspace CPU limit (``--cpus``), #864 / #34.
+
+        Workspace override > deploy default > None (no flag, unbounded).
+        Override semantics (#34): a deploy-wide value is a plain default,
+        not a cap or floor — a creator may go larger *or* smaller, applied
+        as-is with no clamping.
+        """
+        return ws_settings.resolve_cpu_limit(
+            {"settings": workspace_settings},
+            self.app.state.settings.container_cpu_limit,
+        )
+
+    def _resolve_memory_limit(
+        self, workspace_settings: dict | None
+    ) -> str | None:
+        """Per-workspace memory limit (``--memory``), #864 / #34."""
+        return ws_settings.resolve_memory_limit(
+            {"settings": workspace_settings},
+            self.app.state.settings.container_memory_limit,
+        )
+
+    def _resolve_pids_limit(
+        self, workspace_settings: dict | None
+    ) -> int | None:
+        """Per-workspace PIDs limit (``--pids-limit``), #864 / #34."""
+        return ws_settings.resolve_pids_limit(
+            {"settings": workspace_settings},
+            self.app.state.settings.container_pids_limit,
+        )
+
     def _egress_filter(
         self, allowed_domains: list[str] | None
     ) -> tuple[dict[str, str] | None, list[str] | None, list[str] | None]:
@@ -1073,6 +1107,7 @@ class ContainerRegistry:
         setup_state: str | None = None,
         service_command: str | None = None,
         allowed_domains: list[str] | None = None,
+        workspace_settings: dict | None = None,
     ) -> tuple[str, str]:
         """Start (or restart) a Pi container for a workspace.
 
@@ -1101,6 +1136,7 @@ class ContainerRegistry:
                 setup_state=setup_state,
                 service_command=service_command,
                 allowed_domains=allowed_domains,
+                workspace_settings=workspace_settings,
             )
 
     async def _handle_existing_container(
@@ -1505,6 +1541,7 @@ class ContainerRegistry:
         setup_state: str | None = None,
         service_command: str | None = None,
         allowed_domains: list[str] | None = None,
+        workspace_settings: dict | None = None,
     ) -> tuple[str, str]:
         """Inner implementation of start_container (called under lock)."""
         t_start = time.monotonic()
@@ -1596,9 +1633,9 @@ class ContainerRegistry:
             init=True,
             interactive=True,
             userns=self.app.state.settings.userns,
-            cpus=self.app.state.settings.container_cpu_limit,
-            memory=self.app.state.settings.container_memory_limit,
-            pids_limit=self.app.state.settings.container_pids_limit,
+            cpus=self._resolve_cpu_limit(workspace_settings),
+            memory=self._resolve_memory_limit(workspace_settings),
+            pids_limit=self._resolve_pids_limit(workspace_settings),
             pull=self.image_pull_policy(),
         )
 

@@ -667,6 +667,106 @@ class TestStartContainer:
         assert kwargs["memory"] == "2g"
         assert kwargs["pids_limit"] == 512
 
+    async def test_workspace_settings_override_resource_limits(
+        self, workspace, monkeypatch
+    ):
+        # #864: a workspace's settings.cpu_limit / memory_limit /
+        # pids_limit override the deploy-wide defaults (override >
+        # default > none), applied as-is with no clamping (#34).
+        settings = self.registry.app.state.settings
+        monkeypatch.setattr(settings, "container_cpu_limit", 1.5)
+        monkeypatch.setattr(settings, "container_memory_limit", "2g")
+        monkeypatch.setattr(settings, "container_pids_limit", 512)
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                workspace_settings={
+                    "cpu_limit": 4.0,
+                    "memory_limit": "8g",
+                    "pids_limit": 2048,
+                },
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["cpus"] == 4.0
+        assert kwargs["memory"] == "8g"
+        assert kwargs["pids_limit"] == 2048
+
+    async def test_workspace_settings_override_can_go_smaller(
+        self, workspace, monkeypatch
+    ):
+        # #34: a deploy default is a plain default, not a cap or floor —
+        # a creator may go larger OR smaller. A smaller override is
+        # applied as-is (no clamping up to the deploy value).
+        settings = self.registry.app.state.settings
+        monkeypatch.setattr(settings, "container_cpu_limit", 4.0)
+        monkeypatch.setattr(settings, "container_pids_limit", 2048)
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                workspace_settings={"cpu_limit": 0.5, "pids_limit": 100},
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["cpus"] == 0.5
+        assert kwargs["pids_limit"] == 100
+
+    async def test_workspace_settings_partial_override_falls_back(
+        self, workspace, monkeypatch
+    ):
+        # Override applies per-key: a bag that sets only cpu_limit leaves
+        # memory + pids at the deploy default.
+        settings = self.registry.app.state.settings
+        monkeypatch.setattr(settings, "container_cpu_limit", 1.5)
+        monkeypatch.setattr(settings, "container_memory_limit", "2g")
+        monkeypatch.setattr(settings, "container_pids_limit", 512)
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                workspace_settings={"cpu_limit": 3.0},
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["cpus"] == 3.0
+        assert kwargs["memory"] == "2g"
+        assert kwargs["pids_limit"] == 512
+
+    async def test_workspace_settings_override_when_no_deploy_default(
+        self, workspace
+    ):
+        # No deploy default + an override -> the override applies; the
+        # other two limits stay None (no flag).
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                workspace_settings={"cpu_limit": 2.0},
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["cpus"] == 2.0
+        assert kwargs["memory"] is None
+        assert kwargs["pids_limit"] is None
+
+    async def test_workspace_settings_empty_bag_uses_deploy_default(
+        self, workspace, monkeypatch
+    ):
+        # An empty/None bag is a no-op: deploy defaults apply unchanged.
+        settings = self.registry.app.state.settings
+        monkeypatch.setattr(settings, "container_cpu_limit", 1.5)
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                workspace_settings={},
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["cpus"] == 1.5
+
     async def test_sudo_disabled_by_default(self, workspace):
         with patch_podman(self.registry) as p:
             await self.registry.start_container(

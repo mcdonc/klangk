@@ -31,6 +31,10 @@ from .. import (
     netfilter as netfilter_mod,
     wshandler,
 )
+from ..workspace_settings import (
+    validate_settings,
+    validate_settings_patch,
+)
 from ._common import get_app_dep
 from ..model import (
     ACTION_ALLOW,
@@ -195,6 +199,7 @@ class CreateWorkspaceRequest(BaseModel):
     setup_state: Literal["pending", "complete", "failed"] | None = None
     health_check: str | None = None
     allowed_domains: list[str] | None = None
+    settings: dict | None = None
 
 
 @router.post("/workspaces")
@@ -224,6 +229,10 @@ async def create_workspace(
             raise HTTPException(status_code=400, detail=mount_err)
     allowed_domains = _validate_allowed_domains(body.allowed_domains, app)
     try:
+        settings = validate_settings(body.settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
         ws = await app.state.workspaces.create_workspace(
             user["id"],
             body.name,
@@ -235,6 +244,7 @@ async def create_workspace(
             setup_state=body.setup_state or "complete",
             health_check=body.health_check,
             allowed_domains=allowed_domains,
+            settings=settings,
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -274,6 +284,7 @@ class UpdateWorkspaceRequest(BaseModel):
     setup_state: Literal["pending", "complete", "failed"] | None = None
     health_check: str | None = None
     allowed_domains: list[str] | None = None
+    settings: dict | None = None
 
 
 @router.put("/workspaces/{workspace_id}")
@@ -307,6 +318,14 @@ async def update_workspace(
         fields["allowed_domains"] = _validate_allowed_domains(
             fields["allowed_domains"], app
         )
+    # settings is a full-replace on PUT (None = clear the whole bag).
+    # ``exclude_unset=True`` means the key is present only when the client
+    # sent it; a missing ``settings`` key leaves the bag untouched.
+    if "settings" in fields:
+        try:
+            fields["settings"] = validate_settings(fields["settings"])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
     workspace = await app.state.model.workspaces.get_workspace(workspace_id)
@@ -343,6 +362,46 @@ async def update_workspace(
     return {"status": "updated"}
 
 
+class UpdateWorkspaceSettingsRequest(BaseModel):
+    """Body for ``PATCH /workspaces/{id}/settings`` (#864).
+
+    A flat map of setting key → value. A ``null`` value deletes that key
+    (reverts it to the deploy-wide default); any other value sets/replaces
+    the override. Keys not present in the patch are left untouched. This is
+    a partial-merge (read-modify-write), not a full replace — use
+    ``PUT /workspaces/{id}`` with a full ``settings`` dict for that.
+    """
+
+    model_config = {"extra": "allow"}
+
+
+@router.patch("/workspaces/{workspace_id}/settings")
+async def update_workspace_settings(
+    workspace_id: str,
+    body: UpdateWorkspaceSettingsRequest,
+    user: dict = Depends(acl.has_permission("edit", workspace_resource)),
+    app=Depends(get_app_dep),
+):
+    """Partial-merge update of the per-workspace ``settings`` bag (#864).
+
+    Each key in the body sets/replaces that override; a ``null`` value
+    deletes the key (reverting to the deploy default). Returns the
+    post-merge settings dict (or ``None`` if the bag is now empty).
+    """
+    try:
+        patch = validate_settings_patch(body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # The ``edit`` ACL dependency has already established the caller may
+    # modify this workspace (and rejected nonexistent workspaces as 403),
+    # so a ``None`` return here means only that the patch emptied the bag
+    # — not that the workspace is missing.
+    merged = await app.state.model.workspaces.update_workspace_settings(
+        workspace_id, user["id"], patch
+    )
+    return {"settings": merged}
+
+
 class DuplicateWorkspaceRequest(BaseModel):
     name: str
 
@@ -368,6 +427,7 @@ async def duplicate_workspace(
             env=source.get("env"),
             health_check=source.get("health_check"),
             allowed_domains=source.get("allowed_domains"),
+            settings=source.get("settings"),
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -793,6 +853,7 @@ async def _extract_archive_metadata(
         "env": env,
         "health_check": metadata.get("health_check"),
         "allowed_domains": metadata.get("allowed_domains"),
+        "settings": metadata.get("settings"),
     }
 
 
@@ -854,6 +915,16 @@ async def import_workspace(
         allowed_domains = _validate_allowed_domains(
             meta.get("allowed_domains"), app
         )
+        # Re-validate imported settings — an archive from this instance is
+        # trusted, but the bag may predate a schema change or carry a value
+        # the current deploy rejects. Validate rather than persist blindly.
+        try:
+            settings = validate_settings(meta.get("settings"))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Archive settings are invalid: {exc}",
+            ) from exc
 
         try:
             ws = await app.state.workspaces.create_workspace(
@@ -866,6 +937,7 @@ async def import_workspace(
                 env=meta["env"],
                 health_check=meta["health_check"],
                 allowed_domains=allowed_domains,
+                settings=settings,
             )
         except SAIntegrityError:
             raise HTTPException(

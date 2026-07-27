@@ -148,6 +148,14 @@ async def init_db(db) -> None:
                 -- comma-joined host[:port] specs; NULL = unrestricted
                 -- egress (see KLANGKD_NETFILTER_HOOKS_DIR, #1365)
                 allowed_domains TEXT,
+                -- JSON dict of per-workspace behavioral overrides
+                -- (idle_timeout, bridge_timeout, cpu_limit,
+                -- memory_limit, pids_limit, ...). NULL = no overrides;
+                -- missing keys fall back to the deploy-wide default
+                -- (#864). Structural fields (image/mounts/env/...
+                -- and the behavioral allowed_domains) stay as their own
+                -- columns.
+                settings TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 UNIQUE(user_id, name),
                 -- (C) the system agent must never own a workspace.
@@ -201,6 +209,14 @@ async def init_db(db) -> None:
             await db.execute(
                 "ALTER TABLE workspaces ADD COLUMN allowed_domains TEXT"
             )
+        # Migration: add settings column (#864). NULL by default so
+        # existing workspaces keep inheriting every deploy-wide default
+        # (no per-workspace overrides). One JSON bag holds every
+        # behavioral override (idle_timeout, bridge_timeout, cpu_limit,
+        # memory_limit, pids_limit, ...) so future settings need no new
+        # column/migration. Structural fields stay as dedicated columns.
+        if "settings" not in ws_cols:
+            await db.execute("ALTER TABLE workspaces ADD COLUMN settings TEXT")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS port_allocations (
                 port INTEGER PRIMARY KEY,

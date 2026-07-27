@@ -819,3 +819,46 @@ class TestPortDiscovery:
             assert b != a, "free_port reused a port that is currently bound"
         finally:
             held.close()
+
+
+class TestBridgeIdleTimeout:
+    """Per-workspace bridge idle timeout resolution (#864)."""
+
+    def test_default_is_30s(self):
+        u = _util()
+        assert u.bridge_idle_timeout() == 30.0
+
+    def test_deploy_default_from_env(self):
+        u = _util({"KLANGKD_BRIDGE_TIMEOUT_SECONDS": "60"})
+        assert u.bridge_idle_timeout() == 60.0
+
+    def test_garbage_deploy_value_falls_back_to_30s(self):
+        u = _util({"KLANGKD_BRIDGE_TIMEOUT_SECONDS": "soon"})
+        assert u.bridge_idle_timeout() == 30.0
+
+    def test_workspace_override_wins(self):
+        u = _util({"KLANGKD_BRIDGE_TIMEOUT_SECONDS": "60"})
+        ws = {"settings": {"bridge_timeout": 120}}
+        assert u.bridge_idle_timeout_for(ws) == 120.0
+
+    def test_workspace_override_with_no_deploy_default(self):
+        u = _util()
+        ws = {"settings": {"bridge_timeout": 90}}
+        assert u.bridge_idle_timeout_for(ws) == 90.0
+
+    def test_no_override_falls_back_to_deploy_default(self):
+        u = _util({"KLANGKD_BRIDGE_TIMEOUT_SECONDS": "45"})
+        assert u.bridge_idle_timeout_for({"settings": None}) == 45.0
+        assert u.bridge_idle_timeout_for({}) == 45.0
+        assert u.bridge_idle_timeout_for(None) == 45.0
+
+    def test_no_override_no_deploy_default_is_30s(self):
+        u = _util()
+        assert u.bridge_idle_timeout_for({"settings": None}) == 30.0
+        assert u.bridge_idle_timeout_for(None) == 30.0
+
+    def test_other_settings_key_does_not_affect_bridge(self):
+        # An override for a different key must not leak into bridge resolution.
+        u = _util({"KLANGKD_BRIDGE_TIMEOUT_SECONDS": "60"})
+        ws = {"settings": {"idle_timeout": 300}}
+        assert u.bridge_idle_timeout_for(ws) == 60.0

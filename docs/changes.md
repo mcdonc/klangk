@@ -27,6 +27,21 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Per-workspace behavioral settings via a JSON `settings` bag (#864).**
+  A workspace may now override several deploy-wide tuning knobs on a
+  per-workspace basis, with the precedence **workspace override > deploy
+  default > none**. The overrides live in a single JSON `settings` column
+  on the workspace (one column, one migration, one resolution path) rather
+  than one column per setting. This release wires up:
+  `idle_timeout`, `bridge_timeout`, `cpu_limit`, `memory_limit`, and
+  `pids_limit`. Resource-limit overrides are applied as-is with no
+  clamping (#34) — a creator may go larger _or_ smaller than the deploy
+  default. Set them at create time (`POST /workspaces`), via full replace
+  (`PUT /workspaces/{id}` with a `settings` field), or via partial merge
+  (`PATCH /workspaces/{id}/settings`, where a `null` value deletes a key
+  and reverts it to the deploy default). Unknown setting names and
+  malformed values are rejected at the API boundary (HTTP 400).
+
 - **`allowed_domains` now accepts IPv4 CIDR ranges (#1935).** A workspace
   (or the deploy-wide `KLANGKD_NETFILTER_DEFAULT_DOMAINS`) may list an IP
   subnet like `10.0.0.0/8`, optionally scoped to a port as

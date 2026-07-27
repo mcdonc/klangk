@@ -17,6 +17,8 @@ import uuid
 from pathlib import Path
 from typing import TypeVar
 
+from . import workspace_settings as bridge_ws_settings
+
 T = TypeVar("T")
 
 # Versioned API prefix — used by api.py (router mount) and acl.py
@@ -567,11 +569,26 @@ class Util:
         long-but-progressing stream never times out. Override with
         KLANGKD_BRIDGE_TIMEOUT_SECONDS (the settings field is parsed here).
         """
+        return self.bridge_idle_timeout_for(None)
+
+    def bridge_idle_timeout_for(self, workspace: dict | None) -> float:
+        """Resolve the bridge idle timeout for a specific workspace (#864).
+
+        Precedence: workspace ``settings.bridge_timeout`` override >
+        ``KLANGKD_BRIDGE_TIMEOUT_SECONDS`` deploy default > 30.0s. Returns
+        the resolved value as a float (always non-None — a stream always
+        has some bound). A garbage deploy value is swallowed to the 30.0s
+        default, matching the historical behavior.
+        """
         raw = self.app.state.settings.bridge_timeout_seconds
         try:
-            return float(raw) if raw else 30.0
+            deploy_default = float(raw) if raw else None
         except (TypeError, ValueError):
-            return 30.0
+            deploy_default = None
+        resolved = bridge_ws_settings.resolve_bridge_timeout(
+            workspace, deploy_default
+        )
+        return float(resolved) if resolved is not None else 30.0
 
 
 class BoundedOutputQueue(asyncio.Queue[T | None]):
