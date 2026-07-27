@@ -1252,6 +1252,14 @@ extra 'all'`** (#1679). The declaration was `typer[all]>=0.12.0`, but the
   `allowed_domains` / `KLANGKD_NETFILTER_DEFAULT_DOMAINS` (an IPv6
   destination is no longer reachable from a filtered container anyway).
 
+- **`git-credential-klangk`: redact secrets from debug output (#1938).**
+  When `GIT_CREDENTIAL_KLANGK_DEBUG` is set, the helper previously logged
+  the bridge response and the git credential input verbatim to stderr,
+  either of which can carry the user's password/PAT. Debug logs now mask
+  values for sensitive keys (`password`, `token`, `access_token`,
+  `secret`). The credential is still delivered to git over stdout as
+  before — only the stderr debug trace is redacted.
+
 - **Read-only ("spectate") terminal input is now a strict whitelist of
   the protocol responses tmux needs to initialize, instead of "any ESC
   byte" (#1716).** The old gate let a read-only joiner pass any string
