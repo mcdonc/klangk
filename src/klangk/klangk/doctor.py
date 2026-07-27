@@ -149,14 +149,6 @@ _PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "dnf": "shadow-utils",
         "apt": "uidmap",
     },
-    "fuse-overlayfs": {
-        "dnf": "fuse-overlayfs",
-        "apt": "fuse-overlayfs",
-    },
-    "slirp4netns": {
-        "dnf": "slirp4netns",
-        "apt": "slirp4netns",
-    },
 }
 
 
@@ -450,23 +442,15 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
 
     # 2. Rootless podman prereqs
     if platform.system() != "Darwin":
-        # Linux: check newuidmap, fuse-overlayfs, slirp4netns
-        for name, check_cmd in [
-            # newuidmap is a suid helper that only works when called by
-            # unshare/podman — it always exits non-zero when invoked
-            # directly. Just verify it's on PATH; the end-to-end rootless
-            # podman check below validates it actually works.
-            ("newuidmap", []),
-            ("fuse-overlayfs", ["fuse-overlayfs", "--version"]),
-            ("slirp4netns", ["slirp4netns", "--version"]),
-        ]:
-            # These are warnings if podman itself works — podman may use
-            # alternatives (pasta instead of slirp4netns, native overlay
-            # instead of fuse-overlayfs).
-            result = check_binary(name, check_cmd, manager)
-            if not result.ok:
-                result.is_warning = True
-            report.add(result)
+        # Linux: check newuidmap (suid helper for rootless user
+        # namespaces). fuse-overlayfs and slirp4netns are no longer
+        # checked — modern podman (4.x+) uses native kernel overlayfs
+        # and pasta respectively; the end-to-end rootless check below
+        # validates that storage and networking actually work (#1950).
+        result = check_binary("newuidmap", [], manager)
+        if not result.ok:
+            result.is_warning = True
+        report.add(result)
 
         report.add(check_subuid(user))
     else:  # pragma: no cover
