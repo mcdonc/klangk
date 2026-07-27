@@ -1,0 +1,532 @@
+"""``klangkd doctor`` — pre-flight dependency and configuration checker (#1612).
+
+Checks required external binaries, rootless podman, and common
+misconfigurations. Reports what's missing or broken with actionable
+install hints per detected package manager.
+
+Design: capabilities first, never platform predictions. Every check runs
+on every host; only the package-hint table varies by detected manager.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import platform
+import shutil
+import subprocess
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Result types
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CheckResult:
+    name: str
+    ok: bool
+    message: str
+    is_warning: bool = False  # False = error (must fix), True = warning
+    hint: str = ""
+
+
+@dataclass
+class DoctorReport:
+    results: list[CheckResult] = field(default_factory=list)
+
+    def add(self, result: CheckResult) -> None:
+        self.results.append(result)
+
+    @property
+    def passed(self) -> bool:
+        return all(r.ok or r.is_warning for r in self.results)
+
+    @property
+    def errors(self) -> list[CheckResult]:
+        return [r for r in self.results if not r.ok and not r.is_warning]
+
+    @property
+    def warnings(self) -> list[CheckResult]:
+        return [r for r in self.results if not r.ok and r.is_warning]
+
+
+# ---------------------------------------------------------------------------
+# Package manager detection (by binary presence, not /etc/os-release)
+# ---------------------------------------------------------------------------
+
+# Ordered by specificity: dnf before yum (Fedora ships both), apt-get
+# before apt (scripts prefer apt-get for non-interactive use).
+_MANAGER_PROBE_ORDER = [
+    ("dnf", "dnf"),
+    ("yum", "yum"),
+    ("apt-get", "apt"),
+    ("zypper", "zypper"),
+    ("apk", "apk"),
+    ("pacman", "pacman"),
+    ("brew", "brew"),
+]
+
+
+def detect_package_manager() -> str | None:
+    """Return the package manager command name, or None."""
+    for binary, name in _MANAGER_PROBE_ORDER:
+        if shutil.which(binary):
+            return name
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Package hint tables (binary → package name per manager)
+# ---------------------------------------------------------------------------
+
+# Each entry: binary_name → {manager → package_name}
+_PACKAGE_HINTS: dict[str, dict[str, str]] = {
+    "podman": {
+        "dnf": "podman",
+        "yum": "podman",
+        "apt": "podman",
+        "brew": "podman",
+        "pacman": "podman",
+        "zypper": "podman",
+        "apk": "podman",
+    },
+    "caddy": {
+        "dnf": "caddy",
+        "yum": "caddy",
+        "apt": "caddy",
+        "brew": "caddy",
+        "pacman": "caddy",
+    },
+    "sqlite3": {
+        "dnf": "sqlite",
+        "yum": "sqlite",
+        "apt": "sqlite3",
+        "brew": "sqlite3",
+        "pacman": "sqlite",
+    },
+    "rsync": {
+        "dnf": "rsync",
+        "apt": "rsync",
+        "brew": "rsync",
+    },
+    "git": {
+        "dnf": "git",
+        "apt": "git",
+        "brew": "git",
+        "pacman": "git",
+    },
+    "tmux": {
+        "dnf": "tmux",
+        "apt": "tmux",
+        "brew": "tmux",
+        "pacman": "tmux",
+    },
+    "gzip": {
+        "dnf": "gzip",
+        "apt": "gzip",
+        "brew": "gzip",
+    },
+    "tar": {
+        "dnf": "tar",
+        "apt": "tar",
+        "brew": "gnu-tar",
+    },
+    "openssl": {
+        "dnf": "openssl",
+        "apt": "openssl",
+        "brew": "openssl",
+    },
+    "du": {
+        "dnf": "coreutils",
+        "apt": "coreutils",
+        "brew": "coreutils",
+    },
+    # Rootless podman prereqs
+    "newuidmap": {
+        "dnf": "shadow-utils",
+        "apt": "uidmap",
+    },
+    "fuse-overlayfs": {
+        "dnf": "fuse-overlayfs",
+        "apt": "fuse-overlayfs",
+    },
+    "slirp4netns": {
+        "dnf": "slirp4netns",
+        "apt": "slirp4netns",
+    },
+}
+
+
+def install_hint(binary: str, manager: str | None) -> str:
+    """Return an install command string for a missing binary."""
+    if manager is None:
+        return f"install {binary}"
+    hints = _PACKAGE_HINTS.get(binary, {})
+    pkg = hints.get(manager, binary)
+    if manager == "brew":
+        return f"brew install {pkg}"
+    if manager == "apt":
+        return f"sudo apt install {pkg}"
+    return f"sudo {manager} install {pkg}"
+
+
+# ---------------------------------------------------------------------------
+# Individual checks
+# ---------------------------------------------------------------------------
+
+
+def _run(cmd: list[str], timeout: float = 10.0) -> tuple[int, str, str]:
+    """Run a command, return (returncode, stdout, stderr)."""
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    except FileNotFoundError:  # pragma: no cover
+        return -1, "", f"{cmd[0]}: not found"
+    except subprocess.TimeoutExpired:  # pragma: no cover
+        return -1, "", f"{cmd[0]}: timed out"
+
+
+def check_binary(
+    name: str, check_cmd: list[str], manager: str | None
+) -> CheckResult:
+    """Check a binary is on PATH and functional.
+
+    If *check_cmd* is empty, only verify the binary is on PATH (useful
+    for suid helpers like ``newuidmap`` that can't be invoked directly).
+    """
+    path = shutil.which(name)
+    if not path:
+        return CheckResult(
+            name=name,
+            ok=False,
+            message=f"{name} not found on PATH",
+            hint=install_hint(name, manager),
+        )
+    if not check_cmd:
+        return CheckResult(name=name, ok=True, message=f"{name} ok ({path})")
+    rc, _out, err = _run(check_cmd)
+    if rc != 0:
+        return CheckResult(
+            name=name,
+            ok=False,
+            message=f"{name} found at {path} but check failed: {err.strip()[:200]}",
+            hint=install_hint(name, manager),
+        )
+    return CheckResult(name=name, ok=True, message=f"{name} ok ({path})")
+
+
+def check_gnu_tar(manager: str | None) -> CheckResult:
+    """Check that tar is GNU tar (not BSD)."""
+    path = shutil.which("tar")
+    if not path:
+        return CheckResult(
+            name="tar (GNU)",
+            ok=False,
+            message="tar not found on PATH",
+            hint=install_hint("tar", manager),
+        )
+    rc, out, _err = _run(["tar", "--version"])
+    if rc != 0 or "GNU" not in out:
+        hint = install_hint("tar", manager)
+        if manager == "brew":
+            hint = (
+                "brew install gnu-tar, then add "
+                "$(brew --prefix)/opt/gnu-tar/libexec/gnubin to PATH"
+            )
+        return CheckResult(
+            name="tar (GNU)",
+            ok=False,
+            message="tar is not GNU tar (workspace archives need --transform)",
+            hint=hint,
+        )
+    return CheckResult(
+        name="tar (GNU)", ok=True, message=f"GNU tar ok ({path})"
+    )
+
+
+def check_gnu_du(manager: str | None) -> CheckResult:
+    """Check that du supports -b (GNU coreutils)."""
+    path = shutil.which("du")
+    if not path:  # pragma: no cover
+        return CheckResult(
+            name="du (GNU)",
+            ok=False,
+            message="du not found on PATH",
+            hint=install_hint("du", manager),
+        )
+    rc, _out, _err = _run(["du", "-b", "/dev/null"])
+    if rc != 0:
+        hint = install_hint("du", manager)
+        if manager == "brew":
+            hint = (
+                "brew install coreutils, then add "
+                "$(brew --prefix)/opt/coreutils/libexec/gnubin to PATH"
+            )
+        return CheckResult(
+            name="du (GNU)",
+            ok=False,
+            message="du does not support -b (need GNU coreutils)",
+            hint=hint,
+        )
+    return CheckResult(name="du (GNU)", ok=True, message=f"GNU du ok ({path})")
+
+
+def check_subuid(user: str) -> CheckResult:
+    """Check /etc/subuid has a range for the given user."""
+    if platform.system() == "Darwin":
+        return CheckResult(
+            name="subuid/subgid",
+            ok=True,
+            message="skipped on macOS (podman machine handles mapping)",
+        )
+    for path_name, label in [
+        ("/etc/subuid", "subuid"),
+        ("/etc/subgid", "subgid"),
+    ]:
+        p = Path(path_name)
+        if not p.exists():  # pragma: no cover
+            return CheckResult(
+                name="subuid/subgid",
+                ok=False,
+                message=f"{path_name} does not exist",
+                hint=(
+                    f"sudo usermod --add-subuids 100000-165535 "
+                    f"--add-subgids 100000-165535 {user}"
+                ),
+            )
+        content = p.read_text()
+        if not any(
+            line.startswith(f"{user}:") for line in content.splitlines()
+        ):
+            return CheckResult(
+                name="subuid/subgid",
+                ok=False,
+                message=f"no {label} range for user '{user}' in {path_name}",
+                hint=(
+                    f"sudo usermod --add-subuids 100000-165535 "
+                    f"--add-subgids 100000-165535 {user}"
+                ),
+            )
+    return CheckResult(
+        name="subuid/subgid",
+        ok=True,
+        message=f"subuid/subgid ranges found for {user}",
+    )
+
+
+def check_podman_policy(
+    candidates: list[Path] | None = None,
+) -> CheckResult:
+    """Check that a container policy file exists."""
+    if candidates is None:
+        candidates = [
+            Path.home() / ".config" / "containers" / "policy.json",
+            Path("/etc/containers/policy.json"),
+        ]
+    for p in candidates:
+        if p.exists():
+            try:
+                json.loads(p.read_text())
+                return CheckResult(
+                    name="podman policy",
+                    ok=True,
+                    message=f"policy file ok ({p})",
+                )
+            except (json.JSONDecodeError, OSError) as exc:
+                return CheckResult(
+                    name="podman policy",
+                    ok=False,
+                    is_warning=True,
+                    message=f"policy file at {p} is invalid: {exc}",
+                )
+    user_policy = Path.home() / ".config" / "containers" / "policy.json"
+    return CheckResult(
+        name="podman policy",
+        ok=False,
+        is_warning=True,
+        message="no container policy file found",
+        hint=f'mkdir -p {user_policy.parent} && echo \'{{"default":[{{"type":"insecureAcceptAnything"}}]}}\' > {user_policy}',
+    )
+
+
+def check_podman_machine() -> CheckResult:  # pragma: no cover
+    """macOS: check podman machine is running."""
+    if platform.system() != "Darwin":
+        return CheckResult(
+            name="podman machine",
+            ok=True,
+            message="skipped on Linux (rootless podman, no VM needed)",
+        )
+    rc, out, err = _run(["podman", "machine", "info"])
+    if rc != 0:
+        return CheckResult(
+            name="podman machine",
+            ok=False,
+            message="podman machine not available",
+            hint="podman machine init && podman machine start",
+        )
+    # Check if a machine is running
+    rc2, out2, _err2 = _run(
+        ["podman", "machine", "list", "--format", "{{.Running}}"]
+    )
+    if rc2 == 0 and "true" in out2.lower():
+        return CheckResult(
+            name="podman machine",
+            ok=True,
+            message="podman machine is running",
+        )
+    return CheckResult(
+        name="podman machine",
+        ok=False,
+        message="no podman machine is running",
+        hint="podman machine start",
+    )
+
+
+def check_rootless_podman() -> CheckResult:  # pragma: no cover
+    """Verify rootless podman can actually run a container."""
+    if not shutil.which("podman"):
+        return CheckResult(
+            name="rootless podman",
+            ok=False,
+            message="podman not found (skipping rootless check)",
+        )
+    rc, _out, err = _run(
+        ["podman", "run", "--rm", "docker.io/library/busybox:latest", "true"],
+        timeout=120.0,
+    )
+    if rc == 0:
+        return CheckResult(
+            name="rootless podman",
+            ok=True,
+            message="rootless podman can run containers",
+        )
+    return CheckResult(
+        name="rootless podman",
+        ok=False,
+        message=f"rootless podman failed: {err.strip()[:300]}",
+        hint="check subuid/subgid, fuse-overlayfs, and podman policy",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Main doctor logic
+# ---------------------------------------------------------------------------
+
+# Required binaries and their capability checks.
+_REQUIRED_BINARIES: list[tuple[str, list[str]]] = [
+    ("podman", ["podman", "info"]),
+    ("caddy", ["caddy", "version"]),
+    ("sqlite3", ["sqlite3", ":memory:", "SELECT 1;"]),
+    ("rsync", ["rsync", "--version"]),
+    ("git", ["git", "--version"]),
+    ("tmux", ["tmux", "-V"]),
+    ("gzip", ["gzip", "--version"]),
+    ("openssl", ["openssl", "version"]),
+]
+
+
+def run_doctor(*, verbose: bool = False) -> DoctorReport:
+    """Run all doctor checks and return the report."""
+    report = DoctorReport()
+    manager = detect_package_manager()
+    user = os.environ.get("USER", os.environ.get("LOGNAME", "unknown"))
+
+    # 1. Required binaries
+    for name, check_cmd in _REQUIRED_BINARIES:
+        report.add(check_binary(name, check_cmd, manager))
+
+    # GNU tar and GNU du (special: must verify GNU, not just present)
+    report.add(check_gnu_tar(manager))
+    report.add(check_gnu_du(manager))
+
+    # 2. Rootless podman prereqs
+    if platform.system() != "Darwin":
+        # Linux: check newuidmap, fuse-overlayfs, slirp4netns
+        for name, check_cmd in [
+            # newuidmap is a suid helper that only works when called by
+            # unshare/podman — it always exits non-zero when invoked
+            # directly. Just verify it's on PATH; the end-to-end rootless
+            # podman check below validates it actually works.
+            ("newuidmap", []),
+            ("fuse-overlayfs", ["fuse-overlayfs", "--version"]),
+            ("slirp4netns", ["slirp4netns", "--version"]),
+        ]:
+            # These are warnings if podman itself works — podman may use
+            # alternatives (pasta instead of slirp4netns, native overlay
+            # instead of fuse-overlayfs).
+            result = check_binary(name, check_cmd, manager)
+            if not result.ok:
+                result.is_warning = True
+            report.add(result)
+
+        report.add(check_subuid(user))
+    else:  # pragma: no cover
+        report.add(check_podman_machine())
+
+    # 3. Configuration checks
+    report.add(check_podman_policy())
+
+    # 4. End-to-end rootless podman (the definitive check)
+    report.add(check_rootless_podman())
+
+    return report
+
+
+def format_report(report: DoctorReport) -> str:
+    """Format a doctor report for terminal output."""
+    lines: list[str] = []
+    manager = detect_package_manager()
+
+    lines.append("klangkd doctor")
+    lines.append("=" * 40)
+    if manager:
+        lines.append(f"Package manager: {manager}")
+    else:
+        lines.append("Package manager: (none detected)")
+    lines.append("")
+
+    for r in report.results:
+        if r.ok:
+            lines.append(f"  ✓ {r.name}: {r.message}")
+        elif r.is_warning:
+            lines.append(f"  ⚠ {r.name}: {r.message}")
+        else:
+            lines.append(f"  ✗ {r.name}: {r.message}")
+        if r.hint:
+            lines.append(f"    → {r.hint}")
+
+    lines.append("")
+    errors = report.errors
+    warnings = report.warnings
+    ok_count = sum(1 for r in report.results if r.ok)
+
+    if errors:
+        lines.append(
+            f"{ok_count} passed, {len(errors)} errors, {len(warnings)} warnings"
+        )
+        lines.append("")
+        lines.append("Fix the errors above before starting klangkd.")
+    elif warnings:
+        lines.append(f"{ok_count} passed, {len(warnings)} warnings")
+        lines.append("")
+        lines.append("All required checks passed (warnings are optional).")
+    else:
+        lines.append(f"All {ok_count} checks passed.")
+
+    return "\n".join(lines)
+
+
+def doctor_main(verbose: bool = False) -> int:  # pragma: no cover
+    """Run doctor and print results. Returns exit code."""
+    report = run_doctor(verbose=verbose)
+    print(format_report(report))
+    return 0 if report.passed else 1
