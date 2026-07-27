@@ -271,6 +271,9 @@ class Podman:
         replace: bool = True,
         userns: str | None = None,
         cap_drop: list[str] | None = None,
+        cpus: float | None = None,
+        memory: str | None = None,
+        pids_limit: int | None = None,
     ) -> str:
         """Create a container and return its id.
 
@@ -285,7 +288,10 @@ class Podman:
         createContainer hooks running (#1770); unrestricted workspaces omit
         the flag entirely (no behavior change). ``cap_drop`` becomes one
         ``--cap-drop`` flag each (used to drop ``NET_ADMIN`` on filtered
-        workspaces, #1773).
+        workspaces, #1773). ``cpus``/``memory``/``pids_limit`` are the
+        deploy-wide resource caps (#34): each emits its flag **only when
+        non-None**, so an unset limit = no flag = no behavior change — the
+        same omit-when-unset posture as ``cap_drop``/``userns``.
         """
         args = ["create", f"--pull={pull}", "--name", name]
         if replace:
@@ -300,6 +306,12 @@ class Podman:
             args += ["--userns", userns]
         for cap in cap_drop or []:
             args += ["--cap-drop", cap]
+        if cpus is not None:
+            args += ["--cpus", str(cpus)]
+        if memory is not None:
+            args += ["--memory", memory]
+        if pids_limit is not None:
+            args += ["--pids-limit", str(pids_limit)]
         for key, value in (labels or {}).items():
             args += ["--label", f"{key}={value}"]
         for key, value in (annotations or {}).items():

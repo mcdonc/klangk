@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, ClassVar, Mapping
@@ -60,6 +61,12 @@ logger = logging.getLogger(__name__)
 # boot instead of silently downgrading to the no-auth ``none`` mode (which
 # freely issues an admin token). See the ``auth_modes`` field validator below.
 _VALID_AUTH_MODES = frozenset({"password", "oidc", "both", "none"})
+
+# Container memory-limit syntax (KLANGKD_CONTAINER_MEMORY_LIMIT, #34): a
+# positive number with an optional unit suffix b/k/m/g (case-insensitive),
+# matching what podman's --memory (docker/go-units ParseSize) accepts. Syntax
+# guard only — podman is the authority on what the runtime can apply.
+_CONTAINER_MEM_LIMIT_RE = re.compile(r"^\d+(\.\d+)?[bBkKmMgG]?$")
 
 # The XDG "klangkd" subdir used by the default-roots (state + config). The
 # server's tree is ``klangkd`` (the binary name) — distinct from the CLI's
@@ -655,6 +662,23 @@ class KlangkSettings(BaseSettings):
     # _coerce_netfilter_default_domains. A malformed value warns and falls
     # back to None (no default) rather than aborting the server (#1772).
     netfilter_default_domains: list[str] | None = None
+    # Container resource limits (#34): deploy-wide CPU / memory / PIDs caps
+    # passed to every workspace container as podman --cpus / --memory /
+    # --pids-limit. Unset (default) = no flag = today's unbounded behavior
+    # (no regression); a workspace exceeding a set limit is throttled /
+    # OOM-killed / fork-bomb-contained rather than taking down the host or
+    # neighbouring workspaces. Read at boot and on SIGHUP (reloadable) and
+    # passed through container.create_kwargs at every workspace start, so a
+    # reload applies to containers started after the reload (existing
+    # containers keep their original cgroup limits for the rest of their
+    # life — cgroup limits can't be retroactively re-applied). A malformed
+    # value aborts startup (and is denied on SIGHUP) rather than silently
+    # disabling the safety control — see each field's validator. Per-
+    # workspace overrides (creator may go larger *or* smaller than the
+    # deploy default, no clamping) are a follow-up (Phase 2).
+    container_cpu_limit: float | None = None
+    container_memory_limit: str | None = None
+    container_pids_limit: int | None = None
     test_mode: str | None = None
     version_file: str | None = None
 
@@ -1067,6 +1091,89 @@ class KlangkSettings(BaseSettings):
                 exc,
             )
             return None
+
+    @field_validator("container_cpu_limit", mode="before")
+    @classmethod
+    def _coerce_container_cpu_limit(cls, v):
+        """Coerce + validate ``KLANGKD_CONTAINER_CPU_LIMIT`` (#34).
+
+        Accepts a numeric string (env var) or a real ``float``/``int`` (YAML
+        config file); ``None`` / empty → ``None`` (no cap). A non-numeric or
+        ``<= 0`` value **raises** — so ``KlangkSettings(...)`` construction
+        fails and the server refuses to boot. A safety control that silently
+        disables itself on a typo (warn-and-fall-back) is worse than none: you
+        think the host is protected and it isn't (#34). SIGHUP reload is still
+        safe — ``_reload_settings`` (``main.py``) catches the construction
+        error, logs "SIGHUP: denying restart — invalid configuration", and
+        keeps the runtime on the old (valid) config.
+        """
+        if v is None or v == "":
+            return None
+        try:
+            value = float(v)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"KLANGKD_CONTAINER_CPU_LIMIT={v!r} must be a positive "
+                "number of CPUs (e.g. 1.5), or unset."
+            ) from exc
+        if value <= 0:
+            raise ValueError(
+                f"KLANGKD_CONTAINER_CPU_LIMIT={v!r} must be > 0 "
+                "(use 1 for one full CPU, 0.5 for half)."
+            )
+        return value
+
+    @field_validator("container_memory_limit", mode="before")
+    @classmethod
+    def _coerce_container_memory_limit(cls, v):
+        """Coerce + validate ``KLANGKD_CONTAINER_MEMORY_LIMIT`` (#34).
+
+        Accepts a podman ``--memory`` size string — a positive number with an
+        optional unit suffix ``b``/``k``/``m``/``g`` (case-insensitive), e.g.
+        ``2g``, ``512m``, ``1024`` (bytes). ``None`` / empty → ``None`` (no
+        cap). A malformed value **raises** and aborts startup — same posture
+        as ``container_cpu_limit`` (#34). The format check is a syntax guard
+        only; podman remains the authority on what the runtime can actually
+        apply (cgroups v2 availability, delegation, etc.) and will fail
+        loudly at ``podman create`` if it can't honour the value.
+        """
+        if v is None or v == "":
+            return None
+        s = str(v).strip()
+        if not _CONTAINER_MEM_LIMIT_RE.match(s):
+            raise ValueError(
+                f"KLANGKD_CONTAINER_MEMORY_LIMIT={v!r} is invalid. Expected "
+                "a positive size with an optional unit suffix "
+                "b/k/m/g (e.g. 2g, 512m, 1024)."
+            )
+        return s
+
+    @field_validator("container_pids_limit", mode="before")
+    @classmethod
+    def _coerce_container_pids_limit(cls, v):
+        """Coerce + validate ``KLANGKD_CONTAINER_PIDS_LIMIT`` (#34).
+
+        Accepts an integer string (env var) or a real ``int`` (YAML config
+        file); ``None`` / empty → ``None`` (no cap). A non-integer or ``<= 0``
+        value **raises** and aborts startup — same posture as the other two
+        limits (#34). (Podman treats ``--pids-limit=0`` as unlimited, but a
+        safety cap of "unlimited" is just an unset var, so 0 is rejected to
+        keep the semantics unambiguous.)
+        """
+        if v is None or v == "":
+            return None
+        try:
+            value = int(v)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"KLANGKD_CONTAINER_PIDS_LIMIT={v!r} must be a positive "
+                "integer (e.g. 512), or unset."
+            ) from exc
+        if value <= 0:
+            raise ValueError(
+                f"KLANGKD_CONTAINER_PIDS_LIMIT={v!r} must be > 0."
+            )
+        return value
 
     @model_validator(mode="after")
     def _warn_on_deprecated_proxy_engine(self) -> "KlangkSettings":

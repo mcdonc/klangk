@@ -323,6 +323,37 @@ class TestCreateContainer:
             args.index("--cap-drop") : args.index("--cap-drop") + 2
         ]
 
+    async def test_resource_limits_emitted(self):
+        # #34: cpus / memory / pids_limit each emit their flag in order.
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n",
+                "img",
+                cpus=1.5,
+                memory="2g",
+                pids_limit=512,
+                replace=False,
+            )
+        args = _args(m)
+        assert ["--cpus", "1.5"] == args[
+            args.index("--cpus") : args.index("--cpus") + 2
+        ]
+        assert ["--memory", "2g"] == args[
+            args.index("--memory") : args.index("--memory") + 2
+        ]
+        assert ["--pids-limit", "512"] == args[
+            args.index("--pids-limit") : args.index("--pids-limit") + 2
+        ]
+
+    async def test_resource_limits_unset_emit_no_flags(self):
+        # #34: unset (None) = no flag = today's unbounded behavior.
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container("n", "img", replace=False)
+        args = _args(m)
+        assert "--cpus" not in args
+        assert "--memory" not in args
+        assert "--pids-limit" not in args
+
 
 class TestStartContainer:
     async def test_start(self):

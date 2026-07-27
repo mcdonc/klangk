@@ -1596,6 +1596,9 @@ class ContainerRegistry:
             init=True,
             interactive=True,
             userns=self.app.state.settings.userns,
+            cpus=self.app.state.settings.container_cpu_limit,
+            memory=self.app.state.settings.container_memory_limit,
+            pids_limit=self.app.state.settings.container_pids_limit,
             pull=self.image_pull_policy(),
         )
 

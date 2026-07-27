@@ -635,6 +635,38 @@ class TestStartContainer:
         reg = container.ContainerRegistry(app_state)
         assert reg._egress_filter(["github.com"]) == (None, None, None)
 
+    async def test_resource_limits_unset_emit_no_flags(self, workspace):
+        # #34: with no deploy limits set, create_container gets None for
+        # all three (podman.create omits the flags entirely).
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["cpus"] is None
+        assert kwargs["memory"] is None
+        assert kwargs["pids_limit"] is None
+
+    async def test_resource_limits_passed_through(
+        self, workspace, monkeypatch
+    ):
+        # #34: deploy-wide limits read live off app.state.settings are
+        # forwarded to podman.create as the cpus / memory / pids_limit
+        # kwargs (which podman.create turns into --cpus / --memory /
+        # --pids-limit flags).
+        settings = self.registry.app.state.settings
+        monkeypatch.setattr(settings, "container_cpu_limit", 1.5)
+        monkeypatch.setattr(settings, "container_memory_limit", "2g")
+        monkeypatch.setattr(settings, "container_pids_limit", 512)
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["cpus"] == 1.5
+        assert kwargs["memory"] == "2g"
+        assert kwargs["pids_limit"] == 512
+
     async def test_sudo_disabled_by_default(self, workspace):
         with patch_podman(self.registry) as p:
             await self.registry.start_container(

@@ -230,6 +230,92 @@ class TestConfigFile:
         s = make_settings({"KLANGKD_NETFILTER_ENABLED": "false"})
         assert s.netfilter_enabled is False
 
+    # --- Container resource limits (#34) ---
+
+    def test_container_limits_default_none(self):
+        # #34: unset = no cap = today's unbounded behavior.
+        s = make_settings({})
+        assert s.container_cpu_limit is None
+        assert s.container_memory_limit is None
+        assert s.container_pids_limit is None
+
+    def test_container_cpu_limit_from_env(self):
+        s = make_settings({"KLANGKD_CONTAINER_CPU_LIMIT": "1.5"})
+        assert s.container_cpu_limit == 1.5
+
+    def test_container_cpu_limit_from_yaml(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("container_cpu_limit: 0.75\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.container_cpu_limit == 0.75
+
+    def test_container_cpu_limit_empty_string_is_none(self):
+        s = make_settings({"KLANGKD_CONTAINER_CPU_LIMIT": ""})
+        assert s.container_cpu_limit is None
+
+    def test_container_cpu_limit_non_numeric_aborts(self):
+        # #34: a malformed value raises (construction fails → boot aborts).
+        with pytest.raises(Exception, match="positive number"):
+            make_settings({"KLANGKD_CONTAINER_CPU_LIMIT": "lots"})
+
+    def test_container_cpu_limit_zero_aborts(self):
+        with pytest.raises(Exception, match="must be > 0"):
+            make_settings({"KLANGKD_CONTAINER_CPU_LIMIT": "0"})
+
+    def test_container_cpu_limit_negative_aborts(self):
+        with pytest.raises(Exception, match="must be > 0"):
+            make_settings({"KLANGKD_CONTAINER_CPU_LIMIT": "-1"})
+
+    def test_container_memory_limit_from_env(self):
+        s = make_settings({"KLANGKD_CONTAINER_MEMORY_LIMIT": "2g"})
+        assert s.container_memory_limit == "2g"
+
+    def test_container_memory_limit_accepts_units_and_bare_bytes(self):
+        for raw, expected in [
+            ("512m", "512m"),
+            ("1024", "1024"),
+            ("1.5g", "1.5g"),
+            (" 8G ", "8G"),  # stripped, case-insensitive unit
+        ]:
+            assert (
+                make_settings(
+                    {"KLANGKD_CONTAINER_MEMORY_LIMIT": raw}
+                ).container_memory_limit
+                == expected
+            )
+
+    def test_container_memory_limit_empty_string_is_none(self):
+        s = make_settings({"KLANGKD_CONTAINER_MEMORY_LIMIT": ""})
+        assert s.container_memory_limit is None
+
+    def test_container_memory_limit_malformed_aborts(self):
+        with pytest.raises(Exception, match="Expected a positive size"):
+            make_settings({"KLANGKD_CONTAINER_MEMORY_LIMIT": "2gigabytes"})
+
+    def test_container_pids_limit_from_env(self):
+        s = make_settings({"KLANGKD_CONTAINER_PIDS_LIMIT": "512"})
+        assert s.container_pids_limit == 512
+
+    def test_container_pids_limit_from_yaml(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("container_pids_limit: 1024\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.container_pids_limit == 1024
+
+    def test_container_pids_limit_empty_string_is_none(self):
+        s = make_settings({"KLANGKD_CONTAINER_PIDS_LIMIT": ""})
+        assert s.container_pids_limit is None
+
+    def test_container_pids_limit_non_integer_aborts(self):
+        with pytest.raises(Exception, match="positive integer"):
+            make_settings({"KLANGKD_CONTAINER_PIDS_LIMIT": "many"})
+
+    def test_container_pids_limit_zero_aborts(self):
+        # 0 means unlimited in podman, but a safety cap of "unlimited" is
+        # just an unset var; reject to keep the semantics unambiguous (#34).
+        with pytest.raises(Exception, match="must be > 0"):
+            make_settings({"KLANGKD_CONTAINER_PIDS_LIMIT": "0"})
+
     def test_file_cmd_resolution_from_yaml(self, tmp_path):
         """file:/cmd: values in YAML resolve at construction (#1461)."""
         secret = tmp_path / "jwt.txt"
