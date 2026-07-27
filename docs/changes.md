@@ -1117,6 +1117,13 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **TUI: the workspace detail screen's Terminals list is now reachable via
+  the keyboard on entry (#1956).** The screen relied on an implicit focus
+  transfer that left the list mouse-only — Down/Tab could not reach it.
+  The list is now auto-focused on entry (with its first row highlighted
+  even when empty), and a background terminals refresh no longer yanks
+  focus out of an open confirm dialog onto the list.
+
 - **TUI: workspace id and date are now separate, fixed-width columns with
   clear spacing between them in the workspaces list (#1907).** Both were
   `width: auto` and the date had no left padding, so a row's short id and

@@ -106,6 +106,11 @@ class WorkspaceDetailScreen(Screen):
     def on_mount(self) -> None:
         self.run_worker(self._mount_async, exit_on_error=False)
         self._uptime_timer = self.set_interval(5, self._tick_uptime)
+        # Autofocus the Terminals list so the keyboard path reaches it on
+        # entry (spatial-nav rule, AGENTS.md). The list is the only focusable
+        # widget; without an explicit grab focus can stay on the underlying
+        # screen after push_screen, leaving the list mouse-only (#1956).
+        self.query_one("#term_list").focus()
 
     async def _mount_async(self) -> None:
         await self._load()
@@ -417,13 +422,19 @@ class WorkspaceDetailScreen(Screen):
         lv.clear()
         if not self._terminals:
             lv.append(ListItem(Label(Text("(no terminals)")), name=""))
-            return
-        for w in self._terminals:
-            idx = w.get("index", "")
-            name = w.get("name") or idx
-            lv.append(ListItem(Label(Text(f"{idx}  {name}")), name=str(idx)))
-        # Autofocus the first terminal (#1808).
-        lv.focus()
+        else:
+            for w in self._terminals:
+                idx = w.get("index", "")
+                name = w.get("name") or idx
+                lv.append(
+                    ListItem(Label(Text(f"{idx}  {name}")), name=str(idx))
+                )
+        # Keep focus on the list and highlight its first row (#1808, #1956).
+        # The focus grab is skipped when a modal (e.g. a confirm dialog) is
+        # open over this screen, so a background terminals_changed reload
+        # never yanks focus out of the foreground dialog.
+        if self.app.screen is self:
+            lv.focus()
         if lv.index is None:
             lv.index = 0
 
