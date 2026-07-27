@@ -8,6 +8,8 @@ the agent-principal / setup-state guards. Mirrors the #1573
 ContextVar DB) with the schema initialized.
 """
 
+import asyncio
+
 import pytest
 
 from klangk.model.acl import ACTION_ALLOW, PRINCIPAL_USER
@@ -412,6 +414,41 @@ async def test_update_workspace_settings_missing_workspace(ws, user):
         )
         is None
     )
+
+
+async def test_update_workspace_settings_concurrent_no_lost_update(ws, user):
+    # Regression for the read-modify-write lost-update on the settings bag
+    # (#1951 review, I1): concurrent PATCHes to *different* keys must all
+    # land, not last-writer-wins on the whole blob. The merge uses
+    # compare-and-swap (UPDATE ... WHERE settings IS <old_blob>), so a
+    # concurrent writer that changed the blob between our SELECT and UPDATE
+    # is detected via rowcount=0 and the patch is re-read + re-merged on the
+    # latest base. NullPool gives each transaction a fresh connection to the
+    # same on-disk SQLite file, so the SELECT/UPDATE interleaving is real.
+    ws_row = await ws.create_workspace(
+        user["id"], "concurrent", settings={"idle_timeout": 300}
+    )
+    ws_id = ws_row["id"]
+    uid = user["id"]
+    # Five patches to five distinct keys, fired concurrently.
+    await asyncio.gather(
+        ws.update_workspace_settings(ws_id, uid, {"cpu_limit": 1.5}),
+        ws.update_workspace_settings(ws_id, uid, {"pids_limit": 256}),
+        ws.update_workspace_settings(ws_id, uid, {"memory_limit": "512m"}),
+        ws.update_workspace_settings(ws_id, uid, {"bridge_timeout": 60}),
+        ws.update_workspace_settings(ws_id, uid, {"idle_timeout": 0}),
+    )
+    got = await ws.get_workspace(ws_id, uid)
+    # Every override survived — no key was dropped by a concurrent writer.
+    # (Without CAS, the last writer's stale-base blob would clobber the
+    # others and only its own key + the original idle_timeout would remain.)
+    assert got["settings"] == {
+        "idle_timeout": 0,
+        "cpu_limit": 1.5,
+        "pids_limit": 256,
+        "memory_limit": "512m",
+        "bridge_timeout": 60,
+    }
 
 
 async def test_settings_in_auto_start_listing(ws, user):

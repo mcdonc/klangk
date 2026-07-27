@@ -39,6 +39,13 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
     ],
 }
 
+# Upper bound on compare-and-swap retries for the settings-bag merge
+# (:meth:`WorkspacesModel.update_workspace_settings`). Under normal load the
+# first attempt wins; under contention we loop, re-merging on the latest blob
+# each time. SQLite serializes writers, so this only loops when two PATCHes
+# genuinely race — 8 is far beyond anything realistic.
+_SETTINGS_CAS_RETRIES = 8
+
 # setup_state lifecycle values (#1033). A workspace always holds
 # exactly one. Descriptive, not proscriptive: created in whichever
 # state matches reality.
@@ -636,11 +643,18 @@ class WorkspacesModel:
     ) -> dict | None:
         """Partial-merge update of the ``settings`` bag (#864).
 
-        Read-modify-write: loads the current settings, applies *patch*
-        (each key set/replace, ``None`` value deletes that key), and writes
-        the merged result back. Returns the post-merge settings dict (or
-        ``None`` if the bag is now empty), or ``None`` if the workspace
-        wasn't found / isn't owned by *user_id*.
+        Compare-and-swap on the raw settings blob: load it, merge *patch* in
+        Python (each key set/replace, ``None`` value deletes that key), and
+        UPDATE only if the blob is unchanged since the read
+        (``settings IS ?`` is NULL-safe, unlike ``=``). If another writer
+        committed in between, ``rowcount`` is 0 and the loop re-reads the
+        latest blob and re-applies the patch on that base — so two
+        concurrent PATCHes to *different* keys can't clobber each other (the
+        classic read-modify-write lost-update).
+
+        Returns the post-merge settings dict (or ``None`` if the bag is now
+        empty), or ``None`` if the workspace wasn't found / isn't owned by
+        *user_id*.
 
         *patch* must already be validated + normalized by
         :func:`klangk.workspace_settings.validate_settings_patch` — this
@@ -648,27 +662,36 @@ class WorkspacesModel:
         coerced. It owns only the merge + persistence + the empty-bag →
         NULL mapping.
         """
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT settings FROM workspaces WHERE id = ? AND user_id = ?",
-                (workspace_id, user_id),
-            )
-            row = await cursor.fetchone()
-            if row is None:
-                return None
-            current = json.loads(row["settings"]) if row["settings"] else {}
-            for key, value in patch.items():
-                if value is None:
-                    current.pop(key, None)
-                else:
-                    current[key] = value
-            settings_json = json.dumps(current) if current else None
-            await db.execute(
-                "UPDATE workspaces SET settings = ?"
-                " WHERE id = ? AND user_id = ?",
-                (settings_json, workspace_id, user_id),
-            )
-            return current if current else None
+        for _ in range(_SETTINGS_CAS_RETRIES):
+            async with self.app.state.db.transaction() as db:
+                cursor = await db.execute(
+                    "SELECT settings FROM workspaces"
+                    " WHERE id = ? AND user_id = ?",
+                    (workspace_id, user_id),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    return None
+                old_blob = row["settings"]
+                current = json.loads(old_blob) if old_blob else {}
+                for key, value in patch.items():
+                    if value is None:
+                        current.pop(key, None)
+                    else:
+                        current[key] = value
+                new_blob = json.dumps(current) if current else None
+                cursor = await db.execute(
+                    "UPDATE workspaces SET settings = ?"
+                    " WHERE id = ? AND user_id = ? AND settings IS ?",
+                    (new_blob, workspace_id, user_id, old_blob),
+                )
+                if cursor.rowcount == 1:
+                    return current if current else None
+                # rowcount 0 — settings changed under us (or the row went
+                # away); loop re-reads the latest blob and re-applies.
+        raise RuntimeError(  # pragma: no cover - only under extreme contention
+            f"settings CAS retry exhausted for workspace {workspace_id}"
+        )
 
     async def update_workspace(
         self,

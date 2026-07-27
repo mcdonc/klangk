@@ -2350,7 +2350,7 @@ class TestWorkspaceRoutes:
             headers=headers,
         )
         assert resp.status_code == 400
-        assert "positive" in resp.json()["detail"]
+        assert "non-negative" in resp.json()["detail"]
 
     async def test_update_workspace_settings_full_replace(self, client, user):
         headers = await _auth_headers(client)
@@ -2411,6 +2411,68 @@ class TestWorkspaceRoutes:
         assert match[0]["settings"] == {
             "idle_timeout": 600,
             "pids_limit": 512,
+        }
+
+    async def test_patch_workspace_settings_by_shared_editor(
+        self, client, user, app_state
+    ):
+        """A shared non-owner with the ``edit`` ACE can PATCH settings (#864).
+
+        Regression for the original PATCH handler, which passed the
+        *caller's* id into the owner-scoped model merge and silently
+        no-op'd (200 with ``settings: null``) for any non-owner — while
+        the sibling PUT update path worked fine for the same editor. The
+        handler now resolves the owner (like PUT) before calling the model.
+        """
+        headers = await _auth_headers(client)
+        # Create a second, non-owner user and log in as them.
+        other = await app_state.state.model.users.create_user(
+            "other@example.com",
+            auth_mod.hash_password("otherpass"),
+            verified=True,
+        )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={"identifier": "other@example.com", "password": "otherpass"},
+        )
+        other_headers = {
+            "Authorization": f"Bearer {login.json()['access_token']}"
+        }
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "shared-edit", "settings": {"idle_timeout": 300}},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        # Grant the other user the `edit` permission explicitly (no default
+        # role group ships `edit` — only owners get `*`).
+        await app_state.state.model.acl.add_acl_entry(
+            f"/workspaces/{ws_id}",
+            other["id"],
+            model.ACTION_ALLOW,
+            "edit",
+            model.PRINCIPAL_USER,
+            user_id=other["id"],
+        )
+        # As the shared editor, PATCH a setting.
+        resp = await client.patch(
+            f"/api/v1/workspaces/{ws_id}/settings",
+            json={"idle_timeout": 600, "cpu_limit": 2.0},
+            headers=other_headers,
+        )
+        assert resp.status_code == 200
+        # The pre-fix bug returned ``settings: null`` here (the merge
+        # no-op'd). It must return the merged bag.
+        assert resp.json()["settings"] == {
+            "idle_timeout": 600,
+            "cpu_limit": 2.0,
+        }
+        # And the row must actually have changed — confirm via the owner.
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["settings"] == {
+            "idle_timeout": 600,
+            "cpu_limit": 2.0,
         }
 
     async def test_patch_workspace_settings_delete_key(self, client, user):
@@ -2519,7 +2581,7 @@ class TestWorkspaceRoutes:
             headers=headers,
         )
         assert resp.status_code == 400
-        assert "positive" in resp.json()["detail"]
+        assert "non-negative" in resp.json()["detail"]
 
     async def test_patch_workspace_settings_missing_workspace(
         self, client, user
@@ -2534,6 +2596,33 @@ class TestWorkspaceRoutes:
         # workspace is rejected as 403 (no edit permission) — existence is
         # not leaked. Same posture as the PUT update endpoint.
         assert resp.status_code == 403
+
+    async def test_patch_workspace_settings_not_found(
+        self, client, user, app_state
+    ):
+        """ACL grants edit but the workspace doesn't exist -> 404 (#864).
+
+        Mirrors ``test_delete_not_found``: the ``edit`` ACE on a nonexistent
+        resource lets the caller past the ACL guard, then the handler's
+        owner resolution finds no row and returns 404 (a race / stale id,
+        not a normal path).
+        """
+        headers = await _auth_headers(client)
+        fake_id = "fake-patch-id"
+        await app_state.state.model.acl.add_acl_entry(
+            f"/workspaces/{fake_id}",
+            0,
+            model.ACTION_ALLOW,
+            "edit",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        resp = await client.patch(
+            f"/api/v1/workspaces/{fake_id}/settings",
+            json={"idle_timeout": 300},
+            headers=headers,
+        )
+        assert resp.status_code == 404
 
     async def test_update_workspace_env(self, client, user):
         # Regression: a partial PUT of env (e.g. adding a new var from the

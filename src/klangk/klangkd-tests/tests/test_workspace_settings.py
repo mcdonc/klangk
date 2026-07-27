@@ -71,15 +71,34 @@ def test_validate_settings_rejects_non_string_key():
 @pytest.mark.parametrize(
     "key,value",
     [
-        ("idle_timeout", 0),
-        ("idle_timeout", -10),
         ("pids_limit", 0),
+        ("pids_limit", -5),
         ("bridge_timeout", -1),
+        ("bridge_timeout", 0),
     ],
 )
-def test_validate_settings_rejects_non_positive_timeout(key, value):
+def test_validate_settings_rejects_non_positive(key, value):
+    # pids_limit and bridge_timeout require a strictly positive int — 0 is
+    # not meaningful for either (a 0 pids limit would fork-bomb the workspace
+    # instantly; a 0 bridge timeout is nonsense), unlike idle_timeout.
     with pytest.raises(ValueError, match="must be a positive"):
         ws.validate_settings({key: value})
+
+
+def test_validate_settings_rejects_negative_idle_timeout():
+    # idle_timeout: 0 means "never idle out" (the idle reaper guards with
+    # `timeout > 0`), so only negatives are rejected — as a non-negative,
+    # not a positive, int.
+    with pytest.raises(ValueError, match="must be a non-negative"):
+        ws.validate_settings({"idle_timeout": -10})
+
+
+def test_validate_settings_accepts_zero_idle_timeout():
+    # 0 = pin the workspace alive forever (never idle out), the per-workspace
+    # equivalent of the auto_start boot path pinning a service alive.
+    assert ws.validate_settings({"idle_timeout": 0}) == {"idle_timeout": 0}
+    # Also coerced from a numeric string.
+    assert ws.validate_settings({"idle_timeout": "0"}) == {"idle_timeout": 0}
 
 
 def test_validate_settings_rejects_non_integer_timeout():
@@ -161,7 +180,7 @@ def test_patch_rejects_unknown_key():
 
 
 def test_patch_rejects_bad_value():
-    with pytest.raises(ValueError, match="must be a positive"):
+    with pytest.raises(ValueError, match="must be a non-negative"):
         ws.validate_settings_patch({"idle_timeout": -1})
 
 

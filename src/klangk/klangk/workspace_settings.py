@@ -51,13 +51,14 @@ _MEMORY_LIMIT_RE = re.compile(r"^(?P<num>\d+(\.\d+)?)[kKmMgGtTpP]?[bB]?$")
 
 
 def _coerce_int(key: str, value: Any) -> int:
-    """Coerce a settings value to a positive ``int``.
+    """Coerce a settings value to an ``int`` (no sign gating).
 
     Accepts an actual int or a numeric string (``"512"``); rejects floats,
-    booleans, non-numeric strings, and non-positive values. A PIDs limit /
-    idle / bridge timeout of 0 is meaningful only for idle_timeout (0 =
-    never idle out), so the "positive" gate is *not* applied here — callers
-    that need ``> 0`` enforce it at the deploy default instead.
+    booleans, and non-numeric strings. Does **not** reject 0 or negatives —
+    callers compose this with the sign check they need:
+    :func:`_coerce_positive_int` (``> 0``) for pids / bridge timeout, or
+    :func:`_coerce_nonnegative_int` (``>= 0``) for idle_timeout, where ``0``
+    means "never idle out" (the idle reaper guards with ``timeout > 0``).
     """
     if isinstance(
         value, bool
@@ -94,6 +95,21 @@ def _coerce_positive_int(key: str, value: Any) -> int:
     if n <= 0:
         raise ValueError(
             f"settings.{key} must be a positive integer, got {n!r}"
+        )
+    return n
+
+
+def _coerce_nonnegative_int(key: str, value: Any) -> int:
+    """Coerce a settings value to a non-negative ``int`` (``>= 0``).
+
+    For ``idle_timeout``: ``0`` is meaningful (never idle out — the idle
+    reaper's ``timeout > 0`` guard skips reaping when the timeout is 0),
+    but a negative timeout is nonsense.
+    """
+    n = _coerce_int(key, value)
+    if n < 0:
+        raise ValueError(
+            f"settings.{key} must be a non-negative integer, got {n!r}"
         )
     return n
 
@@ -160,7 +176,7 @@ def _coerce_memory(key: str, value: Any) -> str:
 # normalized form to store. Keys not in this dict are rejected by
 # :func:`validate_settings`. Add a setting here to make it settable.
 SCHEMA: dict[str, Callable[[str, Any], Any]] = {
-    "idle_timeout": _coerce_positive_int,
+    "idle_timeout": _coerce_nonnegative_int,
     "bridge_timeout": _coerce_positive_int,
     "cpu_limit": _coerce_float,
     "memory_limit": _coerce_memory,

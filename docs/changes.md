@@ -36,7 +36,11 @@ operators or integrators to act when upgrading.
   `idle_timeout`, `bridge_timeout`, `cpu_limit`, `memory_limit`, and
   `pids_limit`. Resource-limit overrides are applied as-is with no
   clamping (#34) — a creator may go larger _or_ smaller than the deploy
-  default. Set them at create time (`POST /workspaces`), via full replace
+  default, and are **not bounded by `KLANGKD_CONTAINER_*`** (an owner who
+  sets an override escapes the deploy-wide budget). An `idle_timeout` of
+  `0` means "never idle out" (pin the workspace alive), matching the
+  auto_start boot pin; the other limits must be strictly positive.
+  Set them at create time (`POST /workspaces`), via full replace
   (`PUT /workspaces/{id}` with a `settings` field), or via partial merge
   (`PATCH /workspaces/{id}/settings`, where a `null` value deletes a key
   and reverts it to the deploy default). Unknown setting names and

@@ -392,12 +392,17 @@ async def update_workspace_settings(
         patch = validate_settings_patch(body.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    # The ``edit`` ACL dependency has already established the caller may
-    # modify this workspace (and rejected nonexistent workspaces as 403),
-    # so a ``None`` return here means only that the patch emptied the bag
-    # — not that the workspace is missing.
+    # Resolve the *owner* (not the caller) — the model's settings merge is
+    # owner-scoped (``WHERE id = ? AND user_id = ?``), and a shared non-owner
+    # with the ``edit`` ACE must be able to patch settings just as they can
+    # PUT other fields. The ``edit`` ACL dependency has already gated access
+    # (and rejected nonexistent workspaces as 403), so a missing row here is
+    # a race, not a normal path.
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
     merged = await app.state.model.workspaces.update_workspace_settings(
-        workspace_id, user["id"], patch
+        workspace_id, workspace["user_id"], patch
     )
     return {"settings": merged}
 
