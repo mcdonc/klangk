@@ -446,30 +446,59 @@ class WorkspaceDetailScreen(Screen):
         # The list item is keyed by the window INDEX, but the shell must
         # target the window by its stable id (@N) so the backend selects
         # the existing window instead of creating a duplicate named after
-        # the index (#1954).
+        # the index (#1954). If no id can be resolved — stale list, or a
+        # server contract violation (terminal.list_windows always sets
+        # id) — refuse to spawn and refresh instead: falling back to the
+        # raw index would reproduce the duplicate-window bug.
         target = self._window_id_for(terminal)
+        if target is None:
+            self._msg(
+                "Terminal no longer exists — refreshing list.", error=True
+            )
+            self.run_worker(self._load_terminals, exit_on_error=False)
+            return
         cmd = [sys.executable, "-m", "klangk.cli.main"]
         server = self.app.tui_state.current_url()
         if server:
             cmd += ["--server", server]
         cmd += ["shell", self._name, target]
         with self.app.suspend():
-            subprocess.run(cmd)
+            completed = subprocess.run(cmd)
+        if completed.returncode != 0:
+            # The shell exited non-zero — most likely the window was
+            # deleted server-side between list refresh and selection.
+            # Refresh so the dead row self-heals instead of failing
+            # identically on every re-select (#1955 review).
+            self.run_worker(self._load_terminals, exit_on_error=False)
 
-    def _window_id_for(self, key: str) -> str:
+    def _window_id_for(self, key: str) -> str | None:
         """Resolve a list-item key (window index) to the window's id (@N).
 
-        Falls back to the raw key when it is not an index or the window
-        can't be found, so a non-numeric selector keeps prior behaviour.
+        Returns the id when the key is an index present in the current
+        window list. Returns None otherwise — callers must NOT spawn a
+        shell with None, since falling back to the raw index would
+        reproduce the #1954 duplicate-window bug.
         """
         try:
             idx = int(key)
         except (TypeError, ValueError):
-            return key
+            return None
         for w in self._terminals:
-            if w.get("index") == idx and w.get("id"):
-                return str(w["id"])
-        return key
+            if w.get("index") == idx:
+                wid = w.get("id")
+                if wid:
+                    return str(wid)
+                # Matched by index but the server omitted the window id —
+                # a contract violation (terminal.list_windows always sets
+                # id from tmux's #{window_id}). Log loudly rather than
+                # silently degrade to the index (#1955 review).
+                logger.warning(
+                    "Terminal index %s has no window id; refusing to "
+                    "select by index (would create a duplicate, #1954).",
+                    idx,
+                )
+                return None
+        return None
 
     def action_delete_terminal(self) -> None:
         lv = self.query_one("#term_list", ListView)

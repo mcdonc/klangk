@@ -1131,7 +1131,12 @@ set-password <email>` (set a known password for the default user — whose
   backend created a new tmux window named `0` and the status bar showed
   both `0:bash` and `1:0`. Selecting now passes the window's stable id
   (`@N`), which attaches to the existing window without creating a
-  duplicate.
+  duplicate. Selecting a row whose window can no longer be resolved by
+  id (stale list, or the window was deleted server-side between refresh
+  and selection) now refuses to spawn and refreshes the list, and a
+  shell that exits non-zero likewise triggers a refresh — so a dead row
+  self-heals instead of silently creating a duplicate or failing on
+  every re-select (#1955 review).
 
 - **TUI: workspace id and date are now separate, fixed-width columns with
   clear spacing between them in the workspaces list (#1907).** Both were

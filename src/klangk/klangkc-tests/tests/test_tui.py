@@ -4931,7 +4931,12 @@ async def test_detail_delete_terminal_failure(monkeypatch):
 
 
 def test_detail_window_id_for_resolves_index_and_falls_back():
-    """Select target resolves a window index to its stable @N id (#1954)."""
+    """Select target resolves a window index to its stable @N id (#1954).
+
+    Non-resolvable keys return None so the caller refuses to spawn —
+    falling back to the raw index would reproduce the duplicate-window
+    bug (#1955 review).
+    """
     d = WorkspaceDetailScreen("alpha")
     d._terminals = [
         {"index": 0, "name": "main", "id": "@0"},
@@ -4939,10 +4944,23 @@ def test_detail_window_id_for_resolves_index_and_falls_back():
     ]
     assert d._window_id_for("0") == "@0"
     assert d._window_id_for("1") == "@1"
-    # Unknown index falls back to the raw key.
-    assert d._window_id_for("9") == "9"
-    # Non-numeric selector is returned unchanged.
-    assert d._window_id_for("build") == "build"
+    # Unknown index → None (don't risk selecting by index).
+    assert d._window_id_for("9") is None
+    # Non-numeric selector → None.
+    assert d._window_id_for("build") is None
+
+
+def test_detail_window_id_for_warns_when_id_missing(caplog):
+    """A window matching the index but lacking an id is a server-contract
+    violation — refuse to select and log loudly (#1955 review)."""
+    d = WorkspaceDetailScreen("alpha")
+    d._terminals = [{"index": 0, "name": "main"}]  # no "id"
+    with caplog.at_level(
+        "WARNING",
+        logger="klangk.cli.tui.screens.workspace_detail",
+    ):
+        assert d._window_id_for("0") is None
+    assert "no window id" in caplog.text
 
 
 async def test_detail_terminal_select_spawns_shell(monkeypatch):
@@ -4956,7 +4974,12 @@ async def test_detail_terminal_select_spawns_shell(monkeypatch):
     st.current_url = lambda: "https://x.example"
     spawned = []
     monkeypatch.setattr(
-        scr_detail.subprocess, "run", lambda cmd, **k: spawned.append(cmd)
+        scr_detail.subprocess,
+        "run",
+        lambda cmd, **k: (
+            spawned.append(cmd)
+            or scr_detail.subprocess.CompletedProcess(cmd, 0)
+        ),
     )
 
     from contextlib import contextmanager
@@ -4984,6 +5007,99 @@ async def test_detail_terminal_select_spawns_shell(monkeypatch):
             "alpha",
             "@0",
         ]
+
+
+async def test_detail_terminal_select_refuses_when_id_unresolvable(
+    monkeypatch,
+):
+    """A row whose index has no resolvable id refuses to spawn and
+    refreshes the list, rather than risking a duplicate (#1955 review)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(list_terminals=_async_terms)
+    st.find_workspace = lambda n: a
+    st.current_url = lambda: "https://x.example"
+    spawned = []
+    monkeypatch.setattr(
+        scr_detail.subprocess,
+        "run",
+        lambda cmd, **k: spawned.append(cmd),
+    )
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake_suspend():
+        yield
+
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        monkeypatch.setattr(app, "suspend", fake_suspend)
+        refreshed = []
+
+        async def fake_load():
+            refreshed.append(True)
+
+        monkeypatch.setattr(app.screen, "_load_terminals", fake_load)
+        # Index 9 isn't in the list → no resolvable id → refuse + refresh.
+        app.screen.on_list_view_selected(FakeSelected("9"))
+        await pilot.pause()
+        await pilot.pause()
+        assert spawned == []
+        assert refreshed == [True]
+
+
+async def test_detail_terminal_select_failed_spawn_refreshes_list(
+    monkeypatch,
+):
+    """A non-zero shell exit (e.g. window vanished server-side mid-spawn)
+    triggers a list refresh so the dead row self-heals (#1955 review)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(list_terminals=_async_terms)
+    st.find_workspace = lambda n: a
+    st.current_url = lambda: "https://x.example"
+    monkeypatch.setattr(
+        scr_detail.subprocess,
+        "run",
+        lambda cmd, **k: scr_detail.subprocess.CompletedProcess(cmd, 1),
+    )
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake_suspend():
+        yield
+
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        monkeypatch.setattr(app, "suspend", fake_suspend)
+        refreshed = []
+
+        async def fake_load():
+            refreshed.append(True)
+
+        monkeypatch.setattr(app.screen, "_load_terminals", fake_load)
+        app.screen.on_list_view_selected(FakeSelected("0"))
+        await pilot.pause()
+        await pilot.pause()
+        assert refreshed == [True]
 
 
 async def test_detail_terminal_select_empty_name_ignored(monkeypatch):
