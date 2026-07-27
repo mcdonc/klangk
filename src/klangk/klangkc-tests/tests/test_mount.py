@@ -78,9 +78,12 @@ class TestValidateAllowedDomainSpec:
         assert validate_allowed_domain_spec("10.0.0.1") is None
         assert validate_allowed_domain_spec("10.0.0.1:53") is None
 
-    def test_valid_bracketed_ipv6(self):
-        assert validate_allowed_domain_spec("[::1]") is None
-        assert validate_allowed_domain_spec("[2001:db8::1]:443") is None
+    def test_rejects_ipv6_bracket_literals(self):
+        # IPv6 is disabled inside filtered containers (#1936), so bracketed
+        # v6 literals are no longer accepted.
+        assert validate_allowed_domain_spec("[::1]") is not None
+        assert validate_allowed_domain_spec("[2001:db8::1]:443") is not None
+        assert validate_allowed_domain_spec("[::1]:443") is not None
 
     def test_rejects_empty(self):
         assert validate_allowed_domain_spec("") is not None

@@ -1235,6 +1235,23 @@ extra 'all'`** (#1679). The declaration was `typer[all]>=0.12.0`, but the
 
 ### Security
 
+- **Filtered workspace containers now have IPv6 disabled, closing an
+  egress-filter bypass (#1936).** The netfilter hook previously installed
+  only `iptables` (IPv4) rules; `ip6tables`'s `OUTPUT` policy stayed at
+  its default `ACCEPT`, so any IPv6 egress bypassed the allow-list
+  whenever a container had IPv6 connectivity (and nearly every common
+  host publishes a AAAA record). The hook now sets
+  `net.ipv6.conf.all.disable_ipv6=1` (turns IPv6 off in the container
+  network namespace) **and** `ip6tables -P OUTPUT DROP` (a routing-level
+  default-deny that holds even if the sysctl write fails), and resolves
+  `allowed_domains` to IPv4 only (AAAA records returned by DNS are
+  ignored). **Breaking:** the `[ipv6]:port` literal grammar (e.g.
+  `[::1]`, `[2001:db8::1]:443`) is removed from both the server
+  (`parse_allowed_domains`) and the CLI/TUI (`validate_allowed_domain_spec`)
+  validators — such entries are now rejected; remove them from
+  `allowed_domains` / `KLANGKD_NETFILTER_DEFAULT_DOMAINS` (an IPv6
+  destination is no longer reachable from a filtered container anyway).
+
 - **Read-only ("spectate") terminal input is now a strict whitelist of
   the protocol responses tmux needs to initialize, instead of "any ESC
   byte" (#1716).** The old gate let a read-only joiner pass any string

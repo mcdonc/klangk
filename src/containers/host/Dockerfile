@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       nginx \
       passt \
       podman \
+      procps \
       rsync \
       sqlite3 \
       supervisor \
