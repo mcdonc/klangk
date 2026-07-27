@@ -333,6 +333,12 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
         {"name": "string", "image": "string"},
         None,
     ),
+    (
+        "PATCH",
+        f"{P}/workspaces/{{workspace_id}}/settings",
+        {"idle_timeout": "int", "cpu_limit": "float"},
+        None,
+    ),
     ("DELETE", f"{P}/workspaces/{{workspace_id}}", None, None),
     (
         "POST",
