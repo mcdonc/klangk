@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from unittest.mock import patch
-
 
 from klangk.doctor import (
     CheckResult,
@@ -296,6 +296,13 @@ class TestFormatReport:
             output = format_report(report)
         assert "Package manager: apt" in output
 
+    def test_shows_no_manager(self):
+        report = DoctorReport()
+        report.add(CheckResult(name="a", ok=True, message="ok"))
+        with patch("klangk.doctor.detect_package_manager", return_value=None):
+            output = format_report(report)
+        assert "Package manager: (none detected)" in output
+
     def test_errors(self):
         report = DoctorReport()
         report.add(
@@ -332,3 +339,27 @@ class TestRunDoctor:
         report = run_doctor()
         assert isinstance(report, DoctorReport)
         assert len(report.results) > 0
+
+    def test_missing_rootless_prereq_is_warning(self):
+        """A missing rootless prereq (e.g. fuse-overlayfs) is a warning, not
+        an error — modern podman may not need it."""
+        original_which = shutil.which
+
+        def which_hiding_fuse(name):
+            if name == "fuse-overlayfs":
+                return None
+            return original_which(name)
+
+        with (
+            patch("platform.system", return_value="Linux"),
+            patch("klangk.doctor.shutil.which", side_effect=which_hiding_fuse),
+        ):
+            report = run_doctor()
+
+        fuse_results = [
+            r for r in report.results if r.name == "fuse-overlayfs"
+        ]
+        assert len(fuse_results) == 1
+        r = fuse_results[0]
+        assert not r.ok
+        assert r.is_warning
