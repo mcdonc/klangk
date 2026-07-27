@@ -339,6 +339,139 @@ class TestWsShell:
         assert "terminal_select_window" in cmds
 
     @pytest.mark.asyncio
+    async def test_ws_shell_select_own_window_by_id(self):
+        """window=@N selects the exact window; never creates (#1954)."""
+        from klangk.cli.client import ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "container_ready"}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                            {
+                                "id": "@1",
+                                "index": 1,
+                                "name": "build",
+                                "active": False,
+                            },
+                        ],
+                    }
+                ),
+                json.dumps({"type": "terminal_output", "data": "$ "}),
+                Exception("stop"),
+            ]
+        )
+
+        with (
+            patch(
+                "klangk.cli.transport.websockets.connect",
+                return_value=ws_mock,
+            ),
+            patch("termios.tcgetattr", return_value=None),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+        ):
+            try:
+                await ws_shell(
+                    "http://localhost",
+                    "token",
+                    "ws1",
+                    window="@0",
+                )
+            except Exception:
+                pass
+
+        sent = [json.loads(c[0][0]) for c in ws_mock.send.call_args_list]
+        cmds = [m.get("cmd") for m in sent]
+        # Selects the existing @0 window ...
+        select_msgs = [
+            s for s in sent if s.get("cmd") == "terminal_select_window"
+        ]
+        assert len(select_msgs) == 1
+        assert select_msgs[0]["window_id"] == "@0"
+        # ... and must NOT create a new window (the index-as-name bug).
+        assert "terminal_new_window" not in cmds
+
+    @pytest.mark.asyncio
+    async def test_ws_shell_select_own_window_missing_id_raises(self):
+        """window=@N for a vanished window raises, never creates (#1954)."""
+        from klangk.cli.client import ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "container_ready"}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            },
+                        ],
+                    }
+                ),
+                Exception("stop"),
+            ]
+        )
+
+        with (
+            patch(
+                "klangk.cli.transport.websockets.connect",
+                return_value=ws_mock,
+            ),
+            patch("termios.tcgetattr", return_value=None),
+            patch("termios.tcsetattr"),
+            patch("tty.setraw"),
+            patch("klangk.cli.client.reset_terminal"),
+            patch("klangk.cli.client.drain_stdin"),
+        ):
+            with pytest.raises(ConnectionError, match="no longer exists"):
+                await ws_shell(
+                    "http://localhost",
+                    "token",
+                    "ws1",
+                    window="@9",
+                )
+
+        sent = [json.loads(c[0][0]) for c in ws_mock.send.call_args_list]
+        cmds = [m.get("cmd") for m in sent]
+        assert "terminal_new_window" not in cmds
+        assert "terminal_select_window" not in cmds
+
+    @pytest.mark.asyncio
     async def test_ws_shell_join_shared_terminal(self):
         """window=handle:name joins a shared terminal."""
         from klangk.cli.client import ws_shell

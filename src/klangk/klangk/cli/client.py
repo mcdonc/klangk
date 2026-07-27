@@ -1119,13 +1119,26 @@ async def ws_shell(
                             f"Failed to join: {msg.get('message')}"
                         )
             else:
-                # Own window by name
-                match = next(
-                    (w for w in own_windows if w.get("name") == window),
-                    None,
-                )
+                # Own window: by id (@N) or by name. An id targets the
+                # exact tmux window and must never create a new one
+                # (#1954); a name selects an existing window or creates
+                # one with that name.
+                if window.startswith("@"):
+                    match = next(
+                        (w for w in own_windows if w.get("id") == window),
+                        None,
+                    )
+                    if match is None:
+                        raise ConnectionError(
+                            f"Window '{window}' no longer exists"
+                        )
+                else:
+                    match = next(
+                        (w for w in own_windows if w.get("name") == window),
+                        None,
+                    )
                 if match is None:
-                    # Create the window if it doesn't exist.
+                    # Name with no match — create the window.
                     await ws.send(
                         json.dumps(
                             {

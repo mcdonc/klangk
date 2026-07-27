@@ -1143,6 +1143,20 @@ set-password <email>` (set a known password for the default user — whose
   even when empty), and a background terminals refresh no longer yanks
   focus out of an open confirm dialog onto the list.
 
+- **TUI: selecting a terminal in the workspace detail screen no
+  longer creates a phantom second window (#1954).** The detail list keyed
+  each row by the window's _index_, which `klangk shell` then matched as
+  a window _name_; the index (`0`) matched no window named `0`, so the
+  backend created a new tmux window named `0` and the status bar showed
+  both `0:bash` and `1:0`. Selecting now passes the window's stable id
+  (`@N`), which attaches to the existing window without creating a
+  duplicate. Selecting a row whose window can no longer be resolved by
+  id (stale list, or the window was deleted server-side between refresh
+  and selection) now refuses to spawn and refreshes the list, and a
+  shell that exits non-zero likewise triggers a refresh — so a dead row
+  self-heals instead of silently creating a duplicate or failing on
+  every re-select (#1955 review).
+
 - **TUI: workspace id and date are now separate, fixed-width columns with
   clear spacing between them in the workspaces list (#1907).** Both were
   `width: auto` and the date had no left padding, so a row's short id and
