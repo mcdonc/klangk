@@ -78,6 +78,15 @@ class TestValidateAllowedDomainSpec:
         assert validate_allowed_domain_spec("10.0.0.1") is None
         assert validate_allowed_domain_spec("10.0.0.1:53") is None
 
+    def test_valid_cidr(self):
+        # #1935: IPv4 CIDR ranges (with and without a port scope) are
+        # accepted client-side, mirroring the server.
+        assert validate_allowed_domain_spec("10.0.0.0/8") is None
+        assert validate_allowed_domain_spec("10.0.0.0/8:443") is None
+        assert validate_allowed_domain_spec("192.168.0.0/16") is None
+        assert validate_allowed_domain_spec("172.16.0.0/12:80") is None
+        assert validate_allowed_domain_spec("203.0.113.5/32") is None
+
     def test_rejects_ipv6_bracket_literals(self):
         # IPv6 is disabled inside filtered containers (#1936), so bracketed
         # v6 literals are no longer accepted.
@@ -93,12 +102,24 @@ class TestValidateAllowedDomainSpec:
     def test_rejects_whitespace(self):
         assert validate_allowed_domain_spec("bad spec") is not None
 
-    def test_rejects_slash(self):
-        # no CIDR yet (#1365)
-        assert validate_allowed_domain_spec("10.0.0.0/24") is not None
+    def test_rejects_bad_cidr(self):
+        # #1935: a slash routes to the CIDR check; a malformed CIDR is
+        # rejected with a precise message.
+        assert validate_allowed_domain_spec("10.0.0.0/33") is not None
+        assert validate_allowed_domain_spec("10.0.0.0/") is not None
+        assert validate_allowed_domain_spec("10.0.0.0/abc") is not None
+        assert validate_allowed_domain_spec("a.com/path") is not None
+        # IPv6 CIDRs are rejected (v6 disabled in containers, #1936).
+        assert validate_allowed_domain_spec("2001:db8::/32") is not None
+
+    def test_rejects_cidr_bad_port(self):
+        # #1935: a CIDR scoped to an invalid port is rejected.
+        assert validate_allowed_domain_spec("10.0.0.0/8:abc") is not None
+        assert validate_allowed_domain_spec("10.0.0.0/8:99999") is not None
 
     def test_rejects_non_numeric_port(self):
         assert validate_allowed_domain_spec("a.com:abc") is not None
 
     def test_strips_whitespace(self):
         assert validate_allowed_domain_spec("  github.com:443  ") is None
+        assert validate_allowed_domain_spec("  10.0.0.0/8  ") is None

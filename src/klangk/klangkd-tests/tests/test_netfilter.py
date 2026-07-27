@@ -39,6 +39,13 @@ class TestParseAllowedDomains:
     def test_drops_empties(self):
         assert nf.parse_allowed_domains(["", "  ", "a.com"]) == ["a.com"]
 
+    def test_cidr_dedupes_and_coexists_with_hosts(self):
+        # #1935: CIDR specs dedup on the literal string (a CIDR kept as-typed
+        # — no normalization), and a CIDR + host list parses in order.
+        assert nf.parse_allowed_domains(
+            ["10.0.0.0/8", "github.com:443", "10.0.0.0/8", "pypi.org"]
+        ) == ["10.0.0.0/8", "github.com:443", "pypi.org"]
+
     @pytest.mark.parametrize(
         "spec",
         [
@@ -49,6 +56,14 @@ class TestParseAllowedDomains:
             "10.0.0.1:53",
             "sub.domain.example.com:8080",
             "a.com:65535",  # max valid port
+            # #1935: IPv4 CIDR ranges (with and without a port scope).
+            "10.0.0.0/8",
+            "10.0.0.0/8:443",
+            "192.168.0.0/16",
+            "172.16.0.0/12:80",
+            "10.20.30.0/24:65535",  # CIDR scoped to max port
+            "203.0.113.5/32",  # single-host CIDR (/32)
+            "10.5.0.0/8",  # host bits set — accepted (iptables masks them)
         ],
     )
     def test_valid_specs(self, spec):
@@ -64,9 +79,19 @@ class TestParseAllowedDomains:
             "[::1]",  # IPv6 literal — IPv6 disabled in containers (#1936)
             "[2001:db8::1]:443",  # bracketed IPv6 — no longer accepted
             "[::1]:70000",  # bracketed IPv6, port > 65535
-            "/etc/passwd",  # slash
+            "/etc/passwd",  # slash but not a valid CIDR
             "-leading",  # leading hyphen rejected by host grammar
-            "a.com/path",
+            "a.com/path",  # slash but not a valid CIDR
+            # #1935: malformed CIDR specs.
+            "10.0.0.0/33",  # prefix length > 32
+            "10.0.0.0/",  # missing prefix length
+            "10.0.0.0/abc",  # non-numeric prefix
+            "10.0.0.0/-1",  # negative prefix
+            "10.0.0.0/8:abc",  # CIDR with non-numeric port
+            "10.0.0.0/8:99999",  # CIDR with port > 65535
+            "10.0.0.0/8:70000",  # CIDR with port > 65535
+            "2001:db8::/32",  # IPv6 CIDR — v6 disabled in containers (#1936)
+            "not.a.cidr/24",  # slash but the IP literal is garbage
         ],
     )
     def test_invalid_specs_rejected(self, spec):
@@ -80,6 +105,50 @@ class TestParseAllowedDomains:
         assert "bad spec" in msg
         assert "also bad" in msg
         assert "good.com" not in msg.split("Invalid")[1]
+
+    # #1935 review: leading-zero handling must match Python's ipaddress
+    # (which rejects leading-zero OCTETS to avoid octal ambiguity but
+    # accepts leading-zero PREFIX lengths). These are the cases that
+    # distinguish a faithful mirror from a hand-rolled regex.
+    @pytest.mark.parametrize(
+        "spec,valid",
+        [
+            ("010.0.0.0/8", False),  # leading-zero octet -> reject
+            ("00.0.0.0/8", False),  # leading-zero octet -> reject
+            ("10.0.0.0/08", True),  # leading-zero prefix -> accept (8)
+            ("10.0.0.0/00", True),  # leading-zero prefix -> accept (0)
+            ("0.0.0.0/0", True),  # allow-all is valid (warned, not rejected)
+            ("0.0.0.0", True),  # bare zero octets are fine (no leading zero)
+        ],
+    )
+    def test_leading_zero_handling_matches_ipaddress(self, spec, valid):
+        if valid:
+            assert nf.parse_allowed_domains([spec]) == [spec]
+        else:
+            with pytest.raises(ValueError):
+                nf.parse_allowed_domains([spec])
+
+    def test_allow_all_cidr_warns_but_accepted(self, caplog):
+        # #1935 review: a /0 CIDR matches all IPv4 (effectively disabling
+        # the filter). It is valid (not rejected) but earns a loud warning
+        # so an operator can't stumble into it silently.
+        with caplog.at_level("WARNING"):
+            result = nf.parse_allowed_domains(["0.0.0.0/0", "github.com:443"])
+        assert result == ["0.0.0.0/0", "github.com:443"]
+        assert any("/0 CIDR" in r.message for r in caplog.records)
+
+    def test_allow_all_cidr_warning_covers_host_bits(self, caplog):
+        # 10.5.0.0/0 normalizes to 0.0.0.0/0 (prefixlen 0) — the warning
+        # must fire for any /0 form, not just the canonical 0.0.0.0/0.
+        with caplog.at_level("WARNING"):
+            nf.parse_allowed_domains(["10.5.0.0/0:443"])
+        assert any("/0 CIDR" in r.message for r in caplog.records)
+
+    def test_non_allow_all_cidr_does_not_warn(self, caplog):
+        # A normal CIDR (and a host spec) emits no /0 warning.
+        with caplog.at_level("WARNING"):
+            nf.parse_allowed_domains(["10.0.0.0/8", "github.com:443"])
+        assert not any("/0 CIDR" in r.message for r in caplog.records)
 
 
 class TestRenderRulesAnnotation:
@@ -762,3 +831,90 @@ class TestHookScriptExecutable:
         ]
         # No v6 ACCEPT attempt reached iptables (no noise, no leak).
         assert not any("2001:db8::1" in c for c in calls)
+
+    # --- #1935: CIDR ranges emitted directly, never resolved ---
+
+    def test_cidr_spec_emits_range_rule_unresolved(self, tmp_path):
+        # A CIDR is emitted directly as -d <ip>/<plen> with NO DNS/getent
+        # resolution (a CIDR isn't a hostname; `getent ahosts "10.0.0.0/8"`
+        # returns nothing, so routing it through resolve() would silently
+        # drop the rule). The getent map deliberately maps the CIDR string
+        # to a bogus IP — if the hook resolved it, the rule would target
+        # 9.9.9.9 instead of the range.
+        calls = _run_hook(
+            tmp_path,
+            _state("10.0.0.0/8"),
+            getent_map={"10.0.0.0/8": ["9.9.9.9"]},
+        )
+        assert _accept_rules(calls) == [
+            ["-A", "OUTPUT", "-d", "10.0.0.0/8", "-j", "ACCEPT"],
+        ]
+        # The bogus mapped IP never reached iptables — confirms resolve()
+        # was not called for the CIDR.
+        assert not any("9.9.9.9" in c for c in calls)
+
+    def test_cidr_spec_with_port_scopes_dport(self, tmp_path):
+        # 10.0.0.0/8:443 restricts the range to tcp/443 only. Same
+        # no-resolution contract: the getent map maps the full spec string
+        # to a bogus IP that must NOT appear in the emitted rule.
+        calls = _run_hook(
+            tmp_path,
+            _state("10.0.0.0/8:443"),
+            getent_map={"10.0.0.0/8:443": ["9.9.9.9"]},
+        )
+        assert _accept_rules(calls) == [
+            [
+                "-A",
+                "OUTPUT",
+                "-d",
+                "10.0.0.0/8",
+                "-p",
+                "tcp",
+                "--dport",
+                "443",
+                "-j",
+                "ACCEPT",
+            ],
+        ]
+        assert not any("9.9.9.9" in c for c in calls)
+
+    def test_cidr_and_host_specs_coexist_in_order(self, tmp_path):
+        # A mixed allow-list applies the CIDR (no resolution) and the host
+        # (resolved) in spec order, each as its own ACCEPT rule.
+        calls = _run_hook(
+            tmp_path,
+            _state("10.0.0.0/8,github.com:443"),
+            getent_map={
+                "10.0.0.0/8": ["9.9.9.9"],  # must be ignored
+                "github.com": ["140.82.112.4"],
+            },
+        )
+        assert _accept_rules(calls) == [
+            ["-A", "OUTPUT", "-d", "10.0.0.0/8", "-j", "ACCEPT"],
+            [
+                "-A",
+                "OUTPUT",
+                "-d",
+                "140.82.112.4",
+                "-p",
+                "tcp",
+                "--dport",
+                "443",
+                "-j",
+                "ACCEPT",
+            ],
+        ]
+
+    def test_cidr_host_bits_emitted_as_typed(self, tmp_path):
+        # The validator accepts host bits set (10.5.0.0/8, strict=False) and
+        # keeps the spec as-typed — the hook emits exactly that string
+        # (iptables masks host bits correctly either way, so no
+        # normalization is needed).
+        calls = _run_hook(
+            tmp_path,
+            _state("10.5.0.0/8"),
+            getent_map={"10.5.0.0/8": ["9.9.9.9"]},
+        )
+        assert _accept_rules(calls) == [
+            ["-A", "OUTPUT", "-d", "10.5.0.0/8", "-j", "ACCEPT"],
+        ]

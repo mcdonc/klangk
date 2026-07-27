@@ -1,7 +1,8 @@
 """Per-workspace network egress filtering via OCI ``createContainer`` hooks.
 
-A workspace may declare ``allowed_domains`` (a list of ``host`` or
-``host:port`` specs). When the deployer has enabled netfilter
+A workspace may declare ``allowed_domains`` (a list of ``host``,
+``host:port``, or IPv4 CIDR specs — ``10.0.0.0/8`` / ``10.0.0.0/8:443``).
+When the deployer has enabled netfilter
 (``KLANGKD_NETFILTER_HOOKS_DIR``), a workspace with allowed_domains has:
 
 * the OCI annotation ``klangk.netfilter.rules`` set to the resolved spec
@@ -38,6 +39,7 @@ is constructed once in :func:`build_app` and stored on
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
@@ -86,11 +88,13 @@ STANDARD_HOOK_DIRS = (
 # A hostname or IPv4 address with an optional trailing ``:port``.
 # Deliberately permissive on the host grammar — the hook does the real DNS
 # resolution; this just rejects gross mistakes (empty specs, whitespace,
-# non-numeric ports, stray slashes) so a typo in the API is rejected at the
-# boundary rather than failing silently inside the container netns. IPv6
-# literals are **not** accepted: IPv6 is disabled inside filtered containers
-# (#1936), so a v6 destination is neither reachable nor enforceable, and
-# the bracket grammar (``[::1]:443``) has been removed.
+# non-numeric ports) so a typo in the API is rejected at the boundary rather
+# than failing silently inside the container netns. IPv6 literals are **not**
+# accepted: IPv6 is disabled inside filtered containers (#1936), so a v6
+# destination is neither reachable nor enforceable, and the bracket grammar
+# (``[::1]:443``) has been removed. CIDR ranges (``10.0.0.0/8``) are handled
+# before this regex runs — the ``/`` routes them to :func:`_valid_cidr_spec`
+# — so this grammar stays host/IPv4-only (#1935).
 _DOMAIN_RE = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?"  # hostname / IPv4
     r"(?::[0-9]{1,5})?$"  # optional :port
@@ -100,8 +104,12 @@ _DOMAIN_RE = re.compile(
 def _valid_domain_spec(spec: str) -> bool:
     if not spec or any(ch.isspace() for ch in spec):
         return False
+    # A "/" denotes an IPv4 CIDR range (e.g. ``10.0.0.0/8``, optionally
+    # scoped to a port as ``10.0.0.0/8:443``). The slash cleanly
+    # distinguishes a CIDR from a ``host:port`` spec, so the host grammar
+    # below is unchanged (#1935).
     if "/" in spec:
-        return False
+        return _valid_cidr_spec(spec)
     if not _DOMAIN_RE.match(spec):
         return False
     # The regex accepts up to 5 digits; additionally reject ports > 65535.
@@ -112,12 +120,46 @@ def _valid_domain_spec(spec: str) -> bool:
     return True
 
 
+def _valid_cidr_spec(spec: str) -> bool:
+    """Validate an IPv4 CIDR spec, optionally scoped to a TCP port.
+
+    Forms: ``<ip>/<plen>`` (e.g. ``10.0.0.0/8``) or ``<ip>/<plen>:<port>``
+    (e.g. ``10.0.0.0/8:443``). IPv6 CIDRs are rejected — IPv6 is disabled
+    inside filtered containers (#1936), so a v6 range is neither reachable
+    nor enforceable, and ``IPv4Network`` raises on a v6 string anyway.
+    Host bits set on the network address (e.g. ``10.5.0.0/8``) are accepted
+    (``strict=False``); iptables masks them correctly regardless, so the
+    spec is kept as-typed for the round-trip (no normalization) — consistent
+    with how host specs are treated. Bad prefix lengths (``/33``), missing
+    prefixes (``10.0.0.0/``), and non-numeric prefixes are rejected via the
+    ``IPv4Network`` ``ValueError`` (#1935).
+    """
+    # Split off an optional :port suffix first; the port grammar matches
+    # the host spec (1–65535, digits only).
+    cidr = spec
+    port: str | None = None
+    if ":" in spec:
+        cidr, port = spec.rsplit(":", 1)
+        if not port or not port.isdigit() or int(port) > 65535:
+            return False
+    try:
+        ipaddress.IPv4Network(cidr, strict=False)
+    except ValueError:
+        return False
+    return True
+
+
 def parse_allowed_domains(values: list[str]) -> list[str]:
-    """Validate + normalize a list of ``host[:port]`` specs.
+    """Validate + normalize a list of ``host[:port]`` or IPv4 CIDR specs.
 
     Strips whitespace, drops empties, and de-duplicates while preserving
     first-seen order. Raises :class:`ValueError` listing every invalid
     spec so the API surfaces a precise error instead of a silent skip.
+    A ``/0`` CIDR (e.g. ``0.0.0.0/0``) is *valid* but matches all of
+    IPv4 — effectively disabling the filter — so it earns a loud warning
+    (not a rejection) so an operator who stumbles into it can't do so
+    silently. "No allowed_domains" is the documented way to run
+    unrestricted (#1935).
     """
     out: list[str] = []
     seen: set[str] = set()
@@ -137,7 +179,40 @@ def parse_allowed_domains(values: list[str]) -> list[str]:
             "Invalid allowed_domains entry/entries: "
             + ", ".join(repr(s) for s in invalid)
         )
+    _warn_allow_all_cidrs(out)
     return out
+
+
+def _warn_allow_all_cidrs(specs: list[str]) -> None:
+    """Log a loud warning for any accepted ``/0`` CIDR (#1935).
+
+    A prefix length of 0 (``0.0.0.0/0``, or any spec normalizing to it
+    like ``10.5.0.0/0`` — ``IPv4Network`` masks the host bits away)
+    matches the entire IPv4 space, so the ACCEPT rule the hook emits is
+    effectively "allow all IPv4 egress". For an anti-exfiltration control
+    that is a stealthy disable-the-filter primitive: it looks like a real
+    rule, draws no warning elsewhere, and an operator can reach it by
+    default-route mental model. The validator accepts it (rejecting would
+    surprise an operator with a legitimate, if unusual, reason); this just
+    makes it visible in the logs at the API boundary and at boot/SIGHUP
+    (via the settings coercion path).
+    """
+    for spec in specs:
+        if "/" not in spec:
+            continue
+        # The CIDR is everything before an optional :port suffix. This
+        # parse cannot raise: the spec already passed _valid_cidr_spec,
+        # which ran the same IPv4Network(...) and rejected on ValueError.
+        cidr = spec.rsplit(":", 1)[0] if ":" in spec else spec
+        if ipaddress.IPv4Network(cidr, strict=False).prefixlen == 0:
+            logger.warning(
+                "allowed_domains entry %r is a /0 CIDR — it matches "
+                "ALL IPv4 egress, effectively disabling the filter for "
+                "IPv4. If unrestricted egress is intended, an empty "
+                "allowed_domains list (or KLANGKD_NETFILTER_ENABLED=false) "
+                "is the documented way to run unrestricted (#1935).",
+                spec,
+            )
 
 
 def render_rules_annotation(domains: list[str]) -> str:
@@ -222,13 +297,40 @@ resolve() {
         | sort -u
 }
 
-# Print one ACCEPT rule per resolved IPv4 for a host[:port] spec. A
-# non-numeric port is skipped defensively (the API validator rejects
-# these, but the hook never trusts the annotation blindly). Bracketed
-# IPv6 literals are no longer accepted — IPv6 is disabled in the
-# container netns, so the v6 grammar has been removed (#1936).
+# Print one ACCEPT rule per resolved IPv4 for a host[:port] spec, or a
+# single -d <cidr> rule for a CIDR spec. A non-numeric port is skipped
+# defensively — the API validator rejects these, and the hook re-checks
+# the port (not the host/CIDR shape, which the validator already guards)
+# as a cheap guard against a corrupted annotation. Bracketed IPv6
+# literals are no longer accepted — IPv6 is disabled in the container
+# netns, so the v6 grammar has been removed (#1936).
 accept_rules() {
     _spec=$1
+    # CIDR range (e.g. 10.0.0.0/8 or 10.0.0.0/8:443): emit -d <ip>/<plen>
+    # directly with NO DNS/getent resolution. A CIDR isn't a hostname —
+    # `getent ahosts "10.0.0.0/8"` returns nothing, so routing it through
+    # resolve() would silently drop the rule (the workspace would appear
+    # filtered while the whole subnet was blocked) (#1935). The API
+    # validator guarantees a valid IPv4 CIDR + optional port; the hook
+    # still guards against a non-numeric port defensively.
+    case "$_spec" in
+        */*)
+            _cidr=${_spec%%:*}
+            _port=
+            case "$_spec" in
+                *:*) _port=${_spec##*:} ;;
+            esac
+            if [ -n "$_port" ]; then
+                case "$_port" in
+                    *[!0-9]*) return 0 ;;
+                esac
+                printf '%s\n' "-d $_cidr -p tcp --dport $_port -j ACCEPT"
+            else
+                printf '%s\n' "-d $_cidr -j ACCEPT"
+            fi
+            return
+            ;;
+    esac
     # hostname / IPv4, optional :port.
     _host=${_spec%%:*}
     _port=
