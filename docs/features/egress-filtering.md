@@ -13,8 +13,8 @@ starts.
 
 ## How it works
 
-1. A workspace carries an `allowed_domains` list (`host` or `host:port`
-   specs).
+1. A workspace carries an `allowed_domains` list (`host`, `host:port`,
+   or IPv4 CIDR specs — see the [API](#api) section for the full grammar).
 2. On container start, if the deploy has enabled netfilter, the backend
    passes `--annotation klangk.netfilter.rules=<host:port,...>` and
    `--hooks-dir <dir>` to `podman create` (see the caveat below on
@@ -98,11 +98,13 @@ netfilter_default_domains:
   - registry.npmjs.org
 ```
 
-Entries use the same `host` / `host:port` spec as a workspace allow-list
-(`host` allows all ports; `host:port` allows a single TCP port,
-1–65535) and are validated server-side at startup. A malformed value
-logs a warning and falls back to "no default" rather than aborting the
-server (#1772). Read at boot and on SIGHUP (reloadable).
+Entries use the same `host` / `host:port` / IPv4 CIDR spec as a
+workspace allow-list (`host` allows all ports; `host:port` allows a
+single TCP port, 1–65535; `10.0.0.0/8` allows a whole subnet, optional
+`:port` to scope it — #1935) and are validated server-side at startup.
+A malformed value logs a warning and falls back to "no default" rather
+than aborting the server (#1772). Read at boot and on SIGHUP
+(reloadable).
 
 **Override semantics.** A workspace with a non-empty `allowed_domains`
 **replaces** the default (it does _not_ merge); a workspace with an empty
@@ -149,9 +151,15 @@ curl -X PUT https://klangkd/api/v1/workspaces/<id> \
 
 - `host` allows all ports to that host.
 - `host:port` allows a single TCP port (port must be 1–65535).
-- IPv6 literals (e.g. `[::1]`, `[2001:db8::1]:443`) are **not** accepted
-  — IPv6 is disabled inside filtered containers, so a v6 destination is
-  neither reachable nor enforceable (#1936).
+- `10.0.0.0/8` allows an entire IPv4 subnet (CIDR notation); append a
+  port to scope it, e.g. `10.0.0.0/8:443`. A CIDR is installed as a
+  single iptables `-d <ip>/<plen>` rule and is **not** DNS-resolved, so
+  it is the stable choice for a private range whose individual hosts you
+  don't want to enumerate (#1935).
+- IPv6 literals and IPv6 CIDRs (e.g. `[::1]`, `[2001:db8::1]:443`,
+  `2001:db8::/32`) are **not** accepted — IPv6 is disabled inside
+  filtered containers, so a v6 destination is neither reachable nor
+  enforceable (#1936).
 - Each entry is validated server-side; malformed entries are rejected with
   HTTP 400.
 - An empty list (or `null`) **inherits the deploy-wide default**
@@ -512,14 +520,23 @@ netfilter_default_domains:
   validator. Trade-off: a workspace that genuinely needs IPv6 egress
   cannot use the filter — clear `allowed_domains` (and the deploy-wide
   default) to run it unrestricted.
+- **`0.0.0.0/0` matches all IPv4 — don't use it to "disable" the
+  filter.** A `/0` CIDR (e.g. `0.0.0.0/0`) is a valid spec but the
+  ACCEPT rule it emits matches the entire IPv4 space, so it effectively
+  runs the workspace unrestricted while looking like a real rule. The
+  server logs a loud warning whenever a `/0` CIDR appears in an allow-list
+  (workspace or deploy default). If you genuinely want unrestricted
+  egress, leave `allowed_domains` empty (or set
+  `KLANGKD_NETFILTER_ENABLED=false`) — those are the documented,
+  obvious ways to opt out (#1935).
 - **DNS resolution at creation time — restart on IP change.** iptables
   matches IPs, so hostnames are resolved once when the container is
   created. If a service rotates IPs (common with CDNs like Fastly,
   CloudFront, and Cloudflare), access may break without warning.
   **Restart the workspace container** to re-resolve hostnames and
-  update the iptables rules. Mitigation: allow a port without pinning a
-  host, or allow a CIDR range (a possible future enhancement; the
-  initial implementation is `host`/`host:port` only).
+  update the iptables rules. Mitigation: allow a CIDR range
+  (`10.0.0.0/8`), which is installed as a single stable `-d <ip>/<plen>`
+  rule with no DNS resolution (#1935).
 - **DNS is pinned to resolvers, not blocked entirely.** Outbound `:53` is
   accepted only to the nameservers in the container's `/etc/resolv.conf`,
   so a workspace cannot talk to an arbitrary host on port 53. This does
@@ -550,8 +567,10 @@ netfilter_default_domains:
   configured only via `containers.conf` is still clobbered by an explicit
   `--hooks-dir`; unrestricted workspaces are unaffected (the flag isn't
   passed). See #1770.
-- **Port granularity.** The initial implementation supports `host` and
-  `host:port`. CIDR ranges and port-only rules may follow.
+- **Port granularity.** A spec allows either all ports (`host`, or a
+  CIDR like `10.0.0.0/8`) or a single TCP port (`host:port`, CIDR with
+  `:port`). Port-only rules (allow a port to any host) are not
+  supported — that would be an exfiltration channel.
 - **`macOS` hosts.** The `createContainer` hook runs inside the
   container's Linux network namespace, never the macOS (XNU) kernel, so
   `iptables` availability is not host-dependent. For the DinD deployment

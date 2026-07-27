@@ -44,20 +44,79 @@ String? validateMountSpec(String spec) {
   return null;
 }
 
-/// Client-side validation for a ``host`` or ``host:port`` allowed-domain
-/// spec. Returns an error string on failure, ``null`` on success. The server
-/// validates definitively; this catches typos at the boundary.
+/// Client-side validation for a ``host``, ``host:port``, or IPv4 CIDR
+/// allowed-domain spec. Returns an error string on failure, ``null`` on
+/// success. The server validates definitively; this catches typos at the
+/// boundary (#1935 added CIDR support).
 String? validateAllowedDomainSpec(String spec) {
-  if (spec.contains(' ') || spec.contains('/')) {
+  if (spec.contains(' ')) {
     return 'Expected host or host:port';
   }
-  final re = RegExp(
-      r'^\[[0-9A-Fa-f:.]+\](:[0-9]{1,5})?$|^[A-Za-z0-9][A-Za-z0-9.\-]*(:[0-9]{1,5})?$');
+  // A "/" denotes an IPv4 CIDR range (e.g. 10.0.0.0/8, optionally
+  // 10.0.0.0/8:443). Validate it separately — the host regex below
+  // excludes "/", and a CIDR isn't a hostname (#1935).
+  if (spec.contains('/')) {
+    return _validateCidrDomainSpec(spec);
+  }
+  final re = RegExp(r'^[A-Za-z0-9][A-Za-z0-9.\-]*(:[0-9]{1,5})?$');
   if (!re.hasMatch(spec)) return 'Expected host or host:port';
   // Reject ports > 65535 (the regex allows up to 5 digits).
   final portMatch = RegExp(r':(\d{1,5})$').firstMatch(spec);
   if (portMatch != null && int.parse(portMatch.group(1)!) > 65535) {
     return 'Port must be 1–65535';
+  }
+  return null;
+}
+
+/// IPv4 CIDR pre-check mirroring the server's _valid_cidr_spec (#1935).
+/// Accepts `<ip>/<plen>` or `<ip>/<plen>:<port>` (port 1–65535); rejects
+/// IPv6 CIDRs and malformed prefixes. Octet/prefix ranges are validated
+/// so a bad spec (`10.0.0.0/33`) is caught client-side, not only
+/// server-side.
+///
+/// The IP and prefix-length are validated separately (not one regex) so
+/// the rules match Python's `ipaddress.IPv4Network` exactly: octets
+/// reject leading zeros (`010`/`00` -> reject, the octal-ambiguity guard
+/// Python enforces), while the prefix length ACCEPTS leading zeros
+/// (`08` -> 8, `00` -> 0) since `int.parse` handles those. A single
+/// regex can't express both, so the prefix is range-checked in code
+/// (#1935 review: the prior hand-rolled regex disagreed with the server
+/// on four inputs).
+String? _validateCidrDomainSpec(String spec) {
+  var cidr = spec;
+  String? port;
+  final colon = spec.indexOf(':');
+  if (colon >= 0) {
+    cidr = spec.substring(0, colon);
+    port = spec.substring(colon + 1);
+    final portRe = RegExp(r'^\d{1,5}$');
+    if (!portRe.hasMatch(port) || int.parse(port) > 65535) {
+      return 'Port must be 1–65535';
+    }
+  }
+  final slash = cidr.indexOf('/');
+  if (slash < 0) {
+    return 'Expected IPv4 CIDR (e.g. 10.0.0.0/8)';
+  }
+  final ip = cidr.substring(0, slash);
+  final plen = cidr.substring(slash + 1);
+  // Octet 0-255 with NO leading zeros — matches ipaddress: `0` is ok,
+  // `00`/`010` are not (octal-ambiguity guard). Octet is inlined 4x so
+  // the whole regex is one raw string; `\.` is a literal dot, `$` the
+  // end anchor.
+  final ipRe = RegExp(r'^(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.'
+      r'(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.'
+      r'(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.'
+      r'(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$');
+  if (!ipRe.hasMatch(ip)) {
+    return 'Expected IPv4 CIDR (e.g. 10.0.0.0/8)';
+  }
+  // Prefix length 0-32; leading zeros accepted (08 -> 8) to match the
+  // server. Range-checked in code so `33`/`99` reject while `08`/`00`
+  // accept.
+  final plenRe = RegExp(r'^[0-9]{1,2}$');
+  if (!plenRe.hasMatch(plen) || int.parse(plen) > 32) {
+    return 'Expected IPv4 CIDR (e.g. 10.0.0.0/8)';
   }
   return null;
 }

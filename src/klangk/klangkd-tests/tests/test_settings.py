@@ -168,6 +168,22 @@ class TestConfigFile:
         s = make_settings({}, config_file=str(cfg))
         assert s.netfilter_default_domains == ["github.com:443", "pypi.org"]
 
+    def test_netfilter_default_domains_accepts_cidr(self):
+        """#1935: the deploy default accepts IPv4 CIDR specs (with and
+        without a port scope), same grammar as a workspace allow-list."""
+        s = make_settings(
+            {
+                "KLANGKD_NETFILTER_DEFAULT_DOMAINS": (
+                    "10.0.0.0/8, 192.168.0.0/16:443, github.com:443"
+                )
+            }
+        )
+        assert s.netfilter_default_domains == [
+            "10.0.0.0/8",
+            "192.168.0.0/16:443",
+            "github.com:443",
+        ]
+
     def test_netfilter_default_domains_empty_is_none(self):
         """Empty / unset → None (no deploy default; workspaces unrestricted)."""
         assert make_settings({}).netfilter_default_domains is None

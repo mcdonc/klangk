@@ -27,6 +27,16 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`allowed_domains` now accepts IPv4 CIDR ranges (#1935).** A workspace
+  (or the deploy-wide `KLANGKD_NETFILTER_DEFAULT_DOMAINS`) may list an IP
+  subnet like `10.0.0.0/8`, optionally scoped to a port as
+  `10.0.0.0/8:443`, alongside the existing `host` / `host:port` specs.
+  A CIDR is installed as a single iptables `-d <ip>/<plen>` ACCEPT rule
+  with no DNS resolution, so it is the stable way to allow egress to an
+  entire private range (on-prem mirrors, VPC CIDRs, internal services
+  addressed by IP) without enumerating each host. IPv6 CIDRs remain
+  rejected (IPv6 is disabled inside filtered containers, #1936).
+
 - **TUI create form pre-fills the Netfilter list with the deploy default
   (#1931).** When `KLANGKD_NETFILTER_DEFAULT_DOMAINS` is set, opening the
   TUI create-workspace dialog now seeds its Netfilter (allowed-domains)
