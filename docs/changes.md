@@ -37,6 +37,22 @@ operators or integrators to act when upgrading.
   addressed by IP) without enumerating each host. IPv6 CIDRs remain
   rejected (IPv6 is disabled inside filtered containers, #1936).
 
+- **Container resource limits (CPU / memory / PIDs) via deploy-wide
+  env vars (#34).** Three new env vars cap every workspace container at
+  `podman create` time, so a runaway workspace (fork bomb, memory leak,
+  tight CPU loop) can't starve or OOM the host or neighbouring
+  workspaces: `KLANGKD_CONTAINER_CPU_LIMIT` (float, → `--cpus`, e.g.
+  `1.5`), `KLANGKD_CONTAINER_MEMORY_LIMIT` (size string, → `--memory`,
+  e.g. `2g`/`512m`), and `KLANGKD_CONTAINER_PIDS_LIMIT` (int, →
+  `--pids-limit`, e.g. `512`). All three default to unset = no flag =
+  today's unbounded behavior (no regression). A malformed value
+  **aborts startup** rather than silently disabling the safety control,
+  and a malformed SIGHUP reload is denied (the runtime keeps running on
+  the last-good config). The change applies to containers started after
+  the change; an existing container keeps its original cgroup limits for
+  the rest of its life. Per-workspace overrides (creator may go larger
+  _or_ smaller than the deploy default, no clamping) are tracked as a
+  follow-up Phase 2.
 - **TUI create form pre-fills the Netfilter list with the deploy default
   (#1931).** When `KLANGKD_NETFILTER_DEFAULT_DOMAINS` is set, opening the
   TUI create-workspace dialog now seeds its Netfilter (allowed-domains)

@@ -1596,6 +1596,9 @@ class ContainerRegistry:
             init=True,
             interactive=True,
             userns=self.app.state.settings.userns,
+            cpus=self.app.state.settings.container_cpu_limit,
+            memory=self.app.state.settings.container_memory_limit,
+            pids_limit=self.app.state.settings.container_pids_limit,
             pull=self.image_pull_policy(),
         )
 
@@ -1754,6 +1757,11 @@ class ContainerRegistry:
         """
         t0 = time.monotonic()
         try:
+            # Resource limits (container_{cpu,memory,pids}_limit) are
+            # deliberately NOT applied here: this is a throwaway create+rm
+            # to warm podman caches, removed immediately, so capping its
+            # CPU/memory/PIDs serves no purpose. The limits are applied to
+            # real workspaces in start_container's create_kwargs (#34).
             cid = await self.app.state.podman.create_container(
                 "klangk-prewarm",
                 self.image_name,
