@@ -259,30 +259,74 @@ class TestConfigFile:
             make_settings({"KLANGKD_CONTAINER_CPU_LIMIT": "lots"})
 
     def test_container_cpu_limit_zero_aborts(self):
-        with pytest.raises(Exception, match="must be > 0"):
+        with pytest.raises(Exception, match="finite, positive"):
             make_settings({"KLANGKD_CONTAINER_CPU_LIMIT": "0"})
 
     def test_container_cpu_limit_negative_aborts(self):
-        with pytest.raises(Exception, match="must be > 0"):
+        with pytest.raises(Exception, match="finite, positive"):
             make_settings({"KLANGKD_CONTAINER_CPU_LIMIT": "-1"})
+
+    def test_container_cpu_limit_nan_aborts(self):
+        # float("nan") parses fine but nan <= 0 is False, so without an
+        # explicit isfinite check it slips through to podman create
+        # (#1941 review).
+        for raw in ("nan", "NaN", "NAN"):
+            with pytest.raises(Exception, match="finite, positive"):
+                make_settings({"KLANGKD_CONTAINER_CPU_LIMIT": raw})
+
+    def test_container_cpu_limit_inf_aborts(self):
+        # float("inf") parses fine and inf > 0, so the <= 0 guard alone
+        # wouldn't catch it; isfinite does (#1941 review).
+        for raw in ("inf", "Infinity", "-inf"):
+            with pytest.raises(Exception, match="finite, positive"):
+                make_settings({"KLANGKD_CONTAINER_CPU_LIMIT": raw})
 
     def test_container_memory_limit_from_env(self):
         s = make_settings({"KLANGKD_CONTAINER_MEMORY_LIMIT": "2g"})
         assert s.container_memory_limit == "2g"
 
-    def test_container_memory_limit_accepts_units_and_bare_bytes(self):
+    def test_container_memory_limit_accepts_go_units_grammar(self):
+        # Matches docker/go-units ParseSize (podman --memory) exactly: a
+        # positive number + optional base unit (b/k/m/g/t/p, case-
+        # insensitive) + optional trailing b. Decimals ok (ParseFloat).
         for raw, expected in [
             ("512m", "512m"),
-            ("1024", "1024"),
-            ("1.5g", "1.5g"),
-            (" 8G ", "8G"),  # stripped, case-insensitive unit
+            ("1024", "1024"),  # bare bytes
+            ("1024b", "1024b"),  # explicit bytes
+            ("1.5g", "1.5g"),  # decimal
+            ("2gb", "2gb"),  # two-letter suffix
+            ("512mb", "512mb"),
+            ("2gB", "2gB"),  # case-insensitive suffix
+            (" 8G ", "8G"),  # stripped, upper-case unit
+            ("2GB", "2GB"),
+            ("2t", "2t"),  # tera
+            ("2tb", "2tb"),
+            ("2p", "2p"),  # peta
         ]:
             assert (
                 make_settings(
                     {"KLANGKD_CONTAINER_MEMORY_LIMIT": raw}
                 ).container_memory_limit
                 == expected
-            )
+            ), raw
+
+    def test_container_memory_limit_rejects_iec_iform(self):
+        # go-units does NOT accept kib/mib/gib/... (only the single-letter
+        # base + optional b), so neither do we — keeps the guard honest
+        # about what podman will actually honour (#1941 review).
+        for raw in ("2gib", "2Gib", "2kib", "2mib"):
+            with pytest.raises(Exception, match="Expected a positive size"):
+                make_settings({"KLANGKD_CONTAINER_MEMORY_LIMIT": raw})
+
+    def test_container_memory_limit_from_yaml(self, tmp_path):
+        # YAML delivers native types — an int (1024) and a str ("2g") —
+        # both must round-trip through the str(v).strip() coercion in the
+        # validator (#1941 review). Uses a fresh cfg per value.
+        for value, expected in [(1024, "1024"), ("2g", "2g")]:
+            cfg = tmp_path / f"cfg-{value}.yaml"
+            cfg.write_text(f"container_memory_limit: {value}\n")
+            s = make_settings({}, config_file=str(cfg))
+            assert s.container_memory_limit == expected, value
 
     def test_container_memory_limit_empty_string_is_none(self):
         s = make_settings({"KLANGKD_CONTAINER_MEMORY_LIMIT": ""})
@@ -291,6 +335,14 @@ class TestConfigFile:
     def test_container_memory_limit_malformed_aborts(self):
         with pytest.raises(Exception, match="Expected a positive size"):
             make_settings({"KLANGKD_CONTAINER_MEMORY_LIMIT": "2gigabytes"})
+
+    def test_container_memory_limit_zero_aborts(self):
+        # podman treats --memory=0 as "no limit", the same ambiguity the
+        # PIDs validator rejects — keep zero-handling consistent (#1941
+        # review). Covers 0, 0b, 0g.
+        for raw in ("0", "0b", "0g"):
+            with pytest.raises(Exception, match="must be > 0"):
+                make_settings({"KLANGKD_CONTAINER_MEMORY_LIMIT": raw})
 
     def test_container_pids_limit_from_env(self):
         s = make_settings({"KLANGKD_CONTAINER_PIDS_LIMIT": "512"})
@@ -309,6 +361,15 @@ class TestConfigFile:
     def test_container_pids_limit_non_integer_aborts(self):
         with pytest.raises(Exception, match="positive integer"):
             make_settings({"KLANGKD_CONTAINER_PIDS_LIMIT": "many"})
+
+    def test_container_pids_limit_float_from_yaml_aborts(self, tmp_path):
+        # int(1.5) silently truncates to 1; a YAML float must be rejected
+        # explicitly rather than silently truncated (#1941 review). The
+        # env path is already covered — int("1.5") raises on its own.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("container_pids_limit: 1.5\n")
+        with pytest.raises(Exception, match="got a float"):
+            make_settings({}, config_file=str(cfg))
 
     def test_container_pids_limit_zero_aborts(self):
         # 0 means unlimited in podman, but a safety cap of "unlimited" is
