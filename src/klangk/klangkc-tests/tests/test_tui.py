@@ -4541,6 +4541,107 @@ async def test_detail_terminal_push_falls_back_on_malformed_windows(
         assert any("fetched" in str(it.render()) for it in lv.query(Label))
 
 
+async def test_detail_focuses_term_list_on_mount(monkeypatch):
+    """#1956: the Terminals list gets focus on entry and is navigable via
+    arrow keys (spatial-nav rule, AGENTS.md) — not mouse-only."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+
+    async def terms(_name):
+        return [{"index": 0, "name": "main"}, {"index": 1, "name": "build"}]
+
+    st = _ws(list_terminals=terms)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        d = app.screen
+        lv = d.query_one("#term_list", ListView)
+        # Focus landed on the list with the first row highlighted.
+        assert app.focused is lv
+        assert lv.index == 0
+        # Arrow keys navigate within the list (reachable via keyboard).
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is lv
+        assert lv.index == 1
+
+
+async def test_detail_focuses_term_list_when_empty(monkeypatch):
+    """#1956: focus reaches the Terminals list on entry even when the
+    workspace has no terminals — the empty-render path keeps focus on the
+    list and highlights the placeholder row instead of stranding it."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws()  # list_terminals defaults to _async_empty -> no terminals
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        d = app.screen
+        lv = d.query_one("#term_list", ListView)
+        assert app.focused is lv
+        assert lv.index == 0  # placeholder row highlighted, not None
+
+
+async def test_detail_terminals_reload_under_modal_keeps_focus(monkeypatch):
+    """#1956: a terminals_changed reload arriving while a modal (e.g. a
+    confirm dialog) is open over the detail screen must not yank focus
+    out of the modal onto the Terminals list."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(list_terminals=_async_empty)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        d = app.screen
+        # Open a confirm dialog over the detail screen.
+        app.push_screen(ConfirmScreen("sure?"))
+        await pilot.pause()
+        assert app.screen is not d  # modal on top
+        modal_focused = app.focused
+        # A terminals_changed push arrives while the modal is open.
+        d.apply_status_event(
+            {
+                "type": "terminals_changed",
+                "workspace_id": "id-alpha",
+                "windows": [
+                    {"index": 0, "name": "main"},
+                    {"index": 1, "name": "build"},
+                ],
+            }
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        lv = d.query_one("#term_list", ListView)
+        assert app.focused is not lv  # focus stayed in the modal
+        assert app.focused is modal_focused
+        # The list still updated underneath.
+        assert any("build" in str(it.render()) for it in lv.query(Label))
+
+
 async def test_detail_apply_status_event_ws_none(monkeypatch):
     async def noop(*a, **k):
         return None
