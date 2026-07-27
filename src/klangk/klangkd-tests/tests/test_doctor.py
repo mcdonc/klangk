@@ -340,26 +340,38 @@ class TestRunDoctor:
         assert isinstance(report, DoctorReport)
         assert len(report.results) > 0
 
-    def test_missing_rootless_prereq_is_warning(self):
-        """A missing rootless prereq (e.g. fuse-overlayfs) is a warning, not
-        an error — modern podman may not need it."""
+    def test_no_fuse_overlayfs_or_slirp4netns_checks(self):
+        """fuse-overlayfs and slirp4netns are not checked — modern podman
+        uses native overlay and pasta; the end-to-end rootless check is
+        sufficient (#1950)."""
+        with patch("platform.system", return_value="Linux"):
+            report = run_doctor()
+
+        names = [r.name for r in report.results]
+        assert "fuse-overlayfs" not in names
+        assert "slirp4netns" not in names
+
+    def test_missing_newuidmap_is_warning(self):
+        """A missing newuidmap is a warning, not an error — the end-to-end
+        rootless podman check is the definitive gate."""
         original_which = shutil.which
 
-        def which_hiding_fuse(name):
-            if name == "fuse-overlayfs":
+        def which_hiding_newuidmap(name):
+            if name == "newuidmap":
                 return None
             return original_which(name)
 
         with (
             patch("platform.system", return_value="Linux"),
-            patch("klangk.doctor.shutil.which", side_effect=which_hiding_fuse),
+            patch(
+                "klangk.doctor.shutil.which",
+                side_effect=which_hiding_newuidmap,
+            ),
         ):
             report = run_doctor()
 
-        fuse_results = [
-            r for r in report.results if r.name == "fuse-overlayfs"
-        ]
-        assert len(fuse_results) == 1
-        r = fuse_results[0]
+        results = [r for r in report.results if r.name == "newuidmap"]
+        assert len(results) == 1
+        r = results[0]
         assert not r.ok
         assert r.is_warning
