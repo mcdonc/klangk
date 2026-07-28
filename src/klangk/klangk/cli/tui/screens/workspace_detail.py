@@ -510,17 +510,36 @@ class WorkspaceDetailScreen(Screen):
         if len(self._terminals) <= 1:
             self._msg("Can't delete the last terminal.", error=True)
             return
-        index = int(child.name)
-        self.run_worker(self._do_delete_terminal(index), exit_on_error=False)
+        # Target the window by its stable id (@N), not the row index —
+        # a stale list could otherwise close the wrong window (#1965).
+        window_id = self._window_id_for(child.name)
+        if window_id is None:
+            self._msg(
+                "Terminal no longer exists — refreshing list.", error=True
+            )
+            self.run_worker(self._load_terminals, exit_on_error=False)
+            return
+        label = self._terminal_label_for(child.name)
+        self.run_worker(
+            self._do_delete_terminal(window_id, label), exit_on_error=False
+        )
 
-    async def _do_delete_terminal(self, index: int) -> None:
-        self._msg(f"Deleting terminal {index}…")
+    async def _do_delete_terminal(
+        self, window_id: str, label: str | None = None
+    ) -> None:
+        # label is a friendly name for messages; falls back to the id
+        # when not supplied (e.g. direct test calls).
+        display = label if label is not None else window_id
+        self._msg(f"Deleting terminal {display}…")
         try:
             windows = await self.app.tui_state.close_terminal(
-                self._name, index
+                self._name, window_id
             )
         except Exception as exc:
             self._msg(f"Delete failed: {exc}", error=True)
+            # The id may no longer exist server-side — refresh so the
+            # dead row self-heals instead of failing on every retry (#1965).
+            await self._load_terminals()
             return
         if not windows:
             # The last terminal is protected client-side, so an empty result
@@ -528,10 +547,22 @@ class WorkspaceDetailScreen(Screen):
             self._msg(
                 "Delete failed — could not refresh terminals.", error=True
             )
+            await self._load_terminals()
             return
         self._terminals = windows
         self._render_terminals()
-        self._msg(f"Deleted terminal {index}.")
+        self._msg(f"Deleted terminal {display}.")
+
+    def _terminal_label_for(self, key: str) -> str:
+        """Friendly label for a list row: the window name, or the key."""
+        try:
+            idx = int(key)
+        except (TypeError, ValueError):
+            return key
+        for w in self._terminals:
+            if w.get("index") == idx:
+                return str(w.get("name") or idx)
+        return key
 
     def action_new_terminal(self) -> None:
         if self._ws is None:

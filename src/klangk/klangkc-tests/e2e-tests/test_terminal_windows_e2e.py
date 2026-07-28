@@ -288,12 +288,12 @@ class _WebSession:
         self.selected_window_id = window_id
         await asyncio.sleep(0.5)
 
-    async def close_window(self, index):
+    async def close_window(self, window_id):
         await self.ws.send(
             json.dumps(
                 {
                     "cmd": "terminal_close_window",
-                    "index": index,
+                    "window_id": window_id,
                 }
             )
         )
@@ -491,7 +491,7 @@ puts "AFTER=$a1"
                 None,
             )
             if extra:
-                await web.close_window(extra["index"])
+                await web.close_window(extra["id"])
             await asyncio.sleep(2)
             await web.disconnect()
 

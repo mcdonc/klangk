@@ -905,7 +905,8 @@ class TerminalController:
             return
 
         session_name = self.tmux_session_name()
-        index = msg.get("index", 0)
+        # Prefer @N window_id (stable); fall back to index for compat (#1965).
+        target: int | str = msg.get("window_id") or msg.get("index", 0)
         try:
             terminal = self._conn.app.state.terminal
             windows = await terminal.list_windows(
@@ -920,7 +921,7 @@ class TerminalController:
             windows = await terminal.close_window(
                 self._conn.container_id,
                 session_name,
-                index,
+                target,
             )
             self.sync_terminal_windows(windows)
             self.notify_user_terminal_windows(windows)

@@ -1136,6 +1136,21 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **TUI: closing/deleting a terminal in the workspace detail screen
+  now targets the window by its stable id (`@N`) instead of the row
+  index (#1965).** The close path sent `terminal_close_window` with the
+  list row's _index_, which is the same stale-selector class that #1954
+  fixed for selection: with tmux `renumber-windows` off, another surface
+  closing then creating a window reuses the freed index, so a stale TUI
+  list could send `kill-window` against the _wrong_ window. Closing now
+  resolves the row to its `@N` id (the way selection does) and never
+  closes by index; a row whose id can't be resolved, or a close that
+  fails server-side, refuses to close and refreshes the list instead.
+  The terminal client now surfaces server `error` frames promptly
+  (previously a failed close hung ~30s waiting for a window list that
+  never came), and the deleting/deleted status messages show the
+  window's name rather than its raw `@N` id.
+
 - **TUI: the workspace detail screen's Terminals list is now reachable via
   the keyboard on entry (#1956).** The screen relied on an implicit focus
   transfer that left the list mouse-only — Down/Tab could not reach it.

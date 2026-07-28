@@ -219,8 +219,8 @@ class TuiState:
     async def list_terminals(self, name: str) -> list[dict]:
         return await self.client().list_terminals(name)
 
-    async def close_terminal(self, name: str, index: int) -> list[dict]:
-        return await self.client().close_terminal(name, index)
+    async def close_terminal(self, name: str, window_id: str) -> list[dict]:
+        return await self.client().close_terminal(name, window_id)
 
     async def create_terminal(self, name: str, window_name: str) -> list[dict]:
         return await self.client().create_terminal(name, window_name)
