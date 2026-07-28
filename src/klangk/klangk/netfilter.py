@@ -43,7 +43,9 @@ import ipaddress
 import json
 import logging
 import os
+import platform
 import re
+import subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +86,14 @@ STANDARD_HOOK_DIRS = (
     "/usr/share/containers/oci/hooks.d",
     "/etc/containers/oci/hooks.d",
 )
+
+# VM-internal paths for macOS (podman machine).  The hook JSON goes in a
+# standard OCI hooks dir so podman discovers it automatically (no
+# ``--hooks-dir`` needed — that flag is silently ignored in remote mode).
+# The script goes alongside it.  Both directories live under ``/etc/``
+# which is writable and persistent across reboots on Fedora CoreOS.
+VM_HOOKS_JSON_DIR = "/etc/containers/oci/hooks.d"
+VM_HOOKS_SCRIPT_DIR = "/etc/containers/hooks"
 
 # A hostname or IPv4 address with an optional trailing ``:port``.
 # Deliberately permissive on the host grammar — the hook does the real DNS
@@ -549,6 +559,11 @@ class NetFilter:
         upgrade ships the new script). Returns the dir, or ``None`` when
         netfilter is disabled. Failures are logged and the feature is left
         disabled rather than crashing startup.
+
+        On macOS the local copy is still written (so :meth:`enabled` /
+        :meth:`_hook_files_current` can validate without SSH), and the
+        hooks are additionally copied into the podman machine VM where
+        the OCI runtime can actually find them.
         """
         path = self.hooks_dir()
         if path is None:
@@ -569,11 +584,80 @@ class NetFilter:
                 exc,
             )
             return None
+        if platform.system() == "Darwin":
+            if not self._install_hooks_in_vm():
+                return None
         logger.info(
             "Netfilter egress filtering enabled: OCI hooks installed in %s",
             path,
         )
         return path
+
+    def _install_hooks_in_vm(self) -> bool:
+        """Copy hook files into the podman machine VM (macOS only).
+
+        On macOS, podman runs in remote mode — the OCI runtime is inside
+        a CoreOS VM and cannot see host filesystem paths.  Additionally,
+        ``--hooks-dir`` is silently ignored by the remote client, so the
+        hook JSON must be placed in a standard hooks dir that podman
+        discovers automatically.  The hook script is placed alongside it
+        under ``/etc/`` which is writable and persistent on Fedora CoreOS.
+
+        A single ``podman machine ssh`` call runs a shell script that
+        creates directories and writes both files, avoiding multiple
+        round-trips.
+        """
+        vm_script = f"{VM_HOOKS_SCRIPT_DIR}/{HOOK_SCRIPT_NAME}"
+        vm_json = f"{VM_HOOKS_JSON_DIR}/{HOOK_JSON_NAME}"
+        vm_hook_json = render_hook_json(vm_script)
+
+        # Build an installer script piped through stdin to a single SSH
+        # call.  The heredoc delimiters are quoted (no shell expansion)
+        # and unique enough to avoid collisions with file contents.
+        installer = (
+            "set -e\n"
+            f"mkdir -p {VM_HOOKS_SCRIPT_DIR} {VM_HOOKS_JSON_DIR}\n"
+            f"cat > {vm_script} << 'KLANGK_SCRIPT_EOF'\n"
+            f"{HOOK_SCRIPT}"  # ends with \n
+            "KLANGK_SCRIPT_EOF\n"
+            f"chmod 755 {vm_script}\n"
+            f"cat > {vm_json} << 'KLANGK_JSON_EOF'\n"
+            f"{vm_hook_json}\n"
+            "KLANGK_JSON_EOF\n"
+        )
+
+        podman = self.app.state.settings.podman_bin or "podman"
+        try:
+            result = subprocess.run(
+                [podman, "machine", "ssh", "sudo", "sh", "-s"],
+                input=installer,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.error(
+                    "Could not install netfilter hooks into podman machine "
+                    "VM (exit %d): %s "
+                    "(per-workspace egress filtering is disabled on macOS)",
+                    result.returncode,
+                    result.stderr.strip(),
+                )
+                return False
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.error(
+                "Could not install netfilter hooks into podman machine "
+                "VM: %s (per-workspace egress filtering is disabled on "
+                "macOS)",
+                exc,
+            )
+            return False
+        logger.info(
+            "Netfilter hooks installed in podman machine VM: %s and %s",
+            vm_script,
+            vm_json,
+        )
+        return True
 
     def create_kwargs(
         self, allowed_domains: list[str] | None
@@ -635,8 +719,12 @@ class NetFilter:
             )
             return None, None, None
         annotation = {ANNOTATION_KEY: render_rules_annotation(domains)}
-        return (
-            annotation,
-            [path, *STANDARD_HOOK_DIRS],
-            list(DROPPED_CAPABILITIES),
+        # macOS: ``--hooks-dir`` is silently ignored in remote mode.
+        # Hooks are in the standard dir inside the VM (installed by
+        # ``_install_hooks_in_vm``), discovered automatically by podman.
+        hooks_dirs = (
+            None
+            if platform.system() == "Darwin"
+            else [path, *STANDARD_HOOK_DIRS]
         )
+        return (annotation, hooks_dirs, list(DROPPED_CAPABILITIES))

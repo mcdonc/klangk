@@ -6,6 +6,7 @@ import shutil
 import stat
 import subprocess
 import types
+from unittest import mock
 
 import pytest
 
@@ -269,10 +270,14 @@ class TestNetFilterCreateKwargs:
         assert any("UNRESTRICTED" in r.message for r in caplog.records)
 
     def test_domains_with_hooks_dir_returns_annotation_path_and_cap_drop(
-        self, tmp_path
+        self, tmp_path, monkeypatch
     ):
         path = str(tmp_path / "hooks")
         nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        # Patch to Linux so install_hooks() doesn't try SSH and
+        # create_kwargs() returns hooks_dirs (the Linux behavior this test
+        # was written for; macOS-specific behavior is tested separately).
+        monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
         nf_obj.install_hooks()  # arm the hook so create_kwargs trusts the dir
         ann, hooks, cap_drop = nf_obj.create_kwargs(
             ["github.com:443", "pypi.org"]
@@ -297,11 +302,14 @@ class TestNetFilterCreateKwargs:
         assert ann == {nf.ANNOTATION_KEY: "ws.com:443"}
         assert cap_drop == ["NET_ADMIN"]
 
-    def test_empty_workspace_inherits_deploy_default(self, tmp_path):
+    def test_empty_workspace_inherits_deploy_default(
+        self, tmp_path, monkeypatch
+    ):
         path = str(tmp_path / "hooks")
         nf_obj = nf.NetFilter(
             _app(hooks_dir=path, default_domains=["default.com", "a.io"])
         )
+        monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
         nf_obj.install_hooks()
         ann, hooks, _ = nf_obj.create_kwargs(None)
         assert ann == {nf.ANNOTATION_KEY: "default.com,a.io"}
@@ -918,3 +926,146 @@ class TestHookScriptExecutable:
         assert _accept_rules(calls) == [
             ["-A", "OUTPUT", "-d", "10.5.0.0/8", "-j", "ACCEPT"],
         ]
+
+
+# --- macOS / podman machine support (#1959) ---
+
+
+class TestInstallHooksInVM:
+    """Tests for _install_hooks_in_vm (macOS podman machine hook install)."""
+
+    def test_install_hooks_calls_vm_installer_on_darwin(self, tmp_path):
+        # On macOS, install_hooks() copies hooks into the VM after the
+        # local write.
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        with mock.patch(
+            "klangk.netfilter.platform.system", return_value="Darwin"
+        ):
+            with mock.patch.object(
+                nf_obj, "_install_hooks_in_vm", return_value=True
+            ) as m:
+                result = nf_obj.install_hooks()
+        assert result == os.path.realpath(path)
+        m.assert_called_once()
+
+    def test_install_hooks_returns_none_when_vm_install_fails(self, tmp_path):
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        with mock.patch(
+            "klangk.netfilter.platform.system", return_value="Darwin"
+        ):
+            with mock.patch.object(
+                nf_obj, "_install_hooks_in_vm", return_value=False
+            ):
+                result = nf_obj.install_hooks()
+        assert result is None
+
+    def test_install_hooks_skips_vm_on_linux(self, tmp_path):
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        with mock.patch(
+            "klangk.netfilter.platform.system", return_value="Linux"
+        ):
+            with mock.patch.object(nf_obj, "_install_hooks_in_vm") as m:
+                result = nf_obj.install_hooks()
+        assert result == os.path.realpath(path)
+        m.assert_not_called()
+
+    def test_vm_installer_runs_podman_machine_ssh(self, tmp_path):
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        completed = subprocess.CompletedProcess(args=[], returncode=0)
+        with mock.patch(
+            "klangk.netfilter.subprocess.run", return_value=completed
+        ) as m:
+            assert nf_obj._install_hooks_in_vm() is True
+        m.assert_called_once()
+        args = m.call_args
+        cmd = args[0][0]
+        assert cmd[0] == "podman"
+        assert cmd[1] == "machine"
+        assert cmd[2] == "ssh"
+        # The installer script is piped via stdin
+        installer = args[1].get("input") or args.kwargs.get("input")
+        assert "klangk-netfilter.sh" in installer
+        assert "klangk-netfilter.json" in installer
+        # VM paths, not host paths
+        assert nf.VM_HOOKS_SCRIPT_DIR in installer
+        assert nf.VM_HOOKS_JSON_DIR in installer
+
+    def test_vm_installer_logs_error_on_ssh_failure(self, tmp_path, caplog):
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=1, stderr="connection refused"
+        )
+        with mock.patch(
+            "klangk.netfilter.subprocess.run", return_value=completed
+        ):
+            with caplog.at_level("ERROR"):
+                assert nf_obj._install_hooks_in_vm() is False
+        assert any("podman machine" in r.message for r in caplog.records)
+
+    def test_vm_installer_handles_timeout(self, tmp_path, caplog):
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        with mock.patch(
+            "klangk.netfilter.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="podman", timeout=30),
+        ):
+            with caplog.at_level("ERROR"):
+                assert nf_obj._install_hooks_in_vm() is False
+        assert any("podman machine" in r.message for r in caplog.records)
+
+    def test_vm_hook_json_points_to_vm_script_path(self, tmp_path):
+        # The hook JSON written into the VM must reference the VM-internal
+        # script path, not the macOS host path.
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        completed = subprocess.CompletedProcess(args=[], returncode=0)
+        with mock.patch(
+            "klangk.netfilter.subprocess.run", return_value=completed
+        ) as m:
+            nf_obj._install_hooks_in_vm()
+        installer = m.call_args[1].get("input") or m.call_args.kwargs.get(
+            "input"
+        )
+        vm_script_path = f"{nf.VM_HOOKS_SCRIPT_DIR}/{nf.HOOK_SCRIPT_NAME}"
+        expected_json = nf.render_hook_json(vm_script_path)
+        assert expected_json in installer
+
+
+class TestCreateKwargsMacOS:
+    """Tests for create_kwargs macOS behavior (#1959)."""
+
+    def test_macos_omits_hooks_dirs(self, tmp_path):
+        # On macOS, --hooks-dir is silently ignored in remote mode.
+        # create_kwargs must return None for hooks_dirs.
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        nf_obj.install_hooks()
+        with mock.patch(
+            "klangk.netfilter.platform.system", return_value="Darwin"
+        ):
+            ann, hooks_dirs, cap_drop = nf_obj.create_kwargs(
+                ["github.com:443"]
+            )
+        assert ann is not None
+        assert hooks_dirs is None
+        assert cap_drop == ["NET_ADMIN"]
+
+    def test_linux_includes_hooks_dirs(self, tmp_path):
+        # On Linux, hooks_dirs includes the klangk dir + standard dirs.
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        nf_obj.install_hooks()
+        with mock.patch(
+            "klangk.netfilter.platform.system", return_value="Linux"
+        ):
+            ann, hooks_dirs, cap_drop = nf_obj.create_kwargs(
+                ["github.com:443"]
+            )
+        assert ann is not None
+        assert hooks_dirs == [os.path.realpath(path), *nf.STANDARD_HOOK_DIRS]
+        assert cap_drop == ["NET_ADMIN"]
