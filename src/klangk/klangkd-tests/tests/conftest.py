@@ -1,6 +1,7 @@
 """Shared fixtures for backend unit tests."""
 
 import os
+import tempfile
 
 # Must be set before coverage.py initialises in each xdist worker so that
 # code executed inside SQLAlchemy's greenlet context is tracked.
@@ -51,6 +52,16 @@ def temp_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("KLANGKD_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("KLANGKD_CUSTOMIZE_DIR", str(tmp_path / "customize"))
     monkeypatch.delenv("KLANGKD_IMAGE_PULL_POLICY", raising=False)
+    # On macOS the default socket paths derived from tmp_path
+    # (<tmp_path>/state/klangk.sock, <tmp_path>/state/caddy-admin.sock)
+    # may exceed the 104-char AF_UNIX sun_path limit because pytest tmp
+    # paths resolve through /private/var/folders/... Set short socket
+    # paths so the settings validator passes (#1983).
+    _sock_dir = tempfile.mkdtemp(prefix="ks-")
+    monkeypatch.setenv("KLANGKD_SOCKET", os.path.join(_sock_dir, "k.sock"))
+    monkeypatch.setenv(
+        "KLANGKD_CADDY_ADMIN_SOCKET", os.path.join(_sock_dir, "caddy.sock")
+    )
     # Build the per-test DB from the new env so the engine cache and db_path
     # point at the per-test temp dir (#1452: no import-time globals). Stash it
     # in the per-test holder so the ``app_state`` fixture (and any
