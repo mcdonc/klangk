@@ -1,0 +1,58 @@
+name: "macOS: Backend Tests"
+
+# Runs the backend unit test suite on macOS — the one platform the rest
+# of CI (all ubuntu-latest) can't see.  Catches macOS-only breakage in
+# platform-gated code (netfilter VM hooks, gnubin PATH, podman machine
+# checks) that the Linux suite misses.
+#
+# Uses devenv (not bare pip) so the test runs with the same GNU coreutils,
+# GNU tar, and podman the dev/production environment provides.
+#
+# Reuses .github/actions/devenv-setup, whose two Linux-only steps (the
+# Determinate-substituter override via systemctl, and the Ubuntu disk
+# cleanup) are gated on runner.os == 'Linux' and so are skipped here.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [release/**]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test-backend-macos:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'devenv.nix'
+              - 'devenv.yaml'
+              - 'devenv.lock'
+              - 'bootstrap'
+              - '.github/actions/devenv-setup/**'
+              - 'src/klangk/**'
+              - 'scripts/**'
+              - '.github/workflows/macos-smoke.yml'
+
+      - uses: ./.github/actions/devenv-setup
+        if: steps.filter.outputs.backend == 'true'
+
+      - name: Run backend tests
+        if: steps.filter.outputs.backend == 'true'
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests -v -n auto
+
+      - name: Skip notice
+        if: steps.filter.outputs.backend != 'true'
+        run: echo "No backend/devenv changes — skipping macOS backend tests"
