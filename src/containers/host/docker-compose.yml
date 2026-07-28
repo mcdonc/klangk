@@ -1,0 +1,86 @@
+# Sample deployment for the klangk host container.
+#
+# Build the image first (produces klangk-host:latest):
+#   devenv shell -- build-host-image
+#
+# Start:
+#   docker compose -f src/containers/host/docker-compose.yml up
+#
+# Browser UI + API:  http://localhost:8997
+#
+# The container runs rootless podman to start workspace containers — a nested
+# container runtime. A plain `docker run` is not enough: podman needs the
+# devices, the SYS_ADMIN capability, and the relaxed security options below.
+#
+# ---------------------------------------------------------------------------
+# Serving behind a frontend proxy (production)
+# ---------------------------------------------------------------------------
+# This sample uses network_mode: host + no-auth for a local single-user test.
+# To serve behind a reverse proxy (Caddy/Traefik/nginx that terminates TLS and
+# publishes :443), change these values:
+#
+#   1. network_mode: host  ->  networks: [<the proxy's network>]
+#      klangkd need not be on the host network; the proxy reaches it on the
+#      shared bridge by service name. Do not publish ports here — the proxy
+#      publishes, not klangkd.
+#
+#   2. KLANGKD_TRUST_OUTER_PROXY: "<proxy subnet or CIDR>"
+#      The proxy's address on the shared network. caddy honors X-Forwarded-For
+#      only from a trusted peer; without this, the proxy's requests 403.
+#
+#   3. Configure authentication and remove KLANGKD_ALLOW_INSECURE_NO_AUTH.
+#      The image ships auth_modes=none. For a public deployment set, via env
+#      or a mounted klangkd.yaml:
+#        KLANGKD_AUTH_MODES: password
+#        KLANGKD_DEFAULT_PASSWORD: <secret>     # or auth_modes: oidc
+#
+#   4. The proxy forwards to http://klangkd:8997 and sets X-Forwarded-For and
+#      X-Forwarded-Proto. The browser port (8997) is baked in the image.
+
+services:
+  klangkd:
+    image: klangk-host:latest
+    container_name: klangkd
+
+    # network_mode: host puts klangkd on the host loopback, so the browser
+    # UI/API on :8997 is reachable and caddy treats the client as trusted.
+    # For an isolated bridge network instead, switch to `networks:` + `ports:`
+    # and put a trusted reverse proxy in front (set KLANGKD_TRUST_OUTER_PROXY
+    # to the proxy's subnet): caddy rejects non-loopback clients it does not
+    # trust.
+    network_mode: host
+
+    # Rootless podman prerequisites: /dev/net/tun (slirp/passt networking)
+    # and /dev/fuse (fuse-overlayfs storage).
+    devices:
+      - /dev/net/tun
+      - /dev/fuse
+
+    # Nested podman needs SYS_ADMIN and these relaxations.
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+      - label=disable
+      - systempaths=unconfined
+
+    # Persistent klangkd state: the database, workspaces, and Pi sessions.
+    # (Workspace containers themselves live in podman's storage inside this
+    # container; volume that separately if you need them to survive a
+    # recreation of the host container.)
+    volumes:
+      - klangk-data:/home/klangk/data
+
+    environment:
+      # LOCAL TESTING ONLY. The image ships auth_modes=none (no login) and
+      # binds 0.0.0.0; klangkd refuses to boot that pair unless you opt in
+      # (#1374) — anyone who can reach :8997 is the admin. For a real
+      # deployment, mount a klangkd.yaml that sets auth_modes + a default
+      # password (or OIDC), then remove this variable.
+      KLANGKD_ALLOW_INSECURE_NO_AUTH: "1"
+
+    restart: unless-stopped
+
+volumes:
+  klangk-data:

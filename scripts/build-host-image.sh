@@ -12,6 +12,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 
 bash "$SCRIPT_DIR/flutterbuildweb.sh"
+
+# Build the klangk wheel locally (#1603). flutterbuildweb.sh populated
+# src/frontend/build/web, which the hatch build hook bundles into the wheel
+# at klangk/frontend (#1600). Clean dist/ first so the Dockerfile's wheel
+# glob matches exactly one file. Run in the devenv shell (build_wheel.sh
+# transiently installs the PEP 517 `build` frontend).
+rm -rf src/klangk/dist
+bash "$SCRIPT_DIR/build_wheel.sh"
+
 bash "$SCRIPT_DIR/build-workspace-image.sh"
 
 VERSION="$(jq -r .version "$KLANGKD_VERSION_FILE")"
@@ -37,7 +46,6 @@ echo "Building $IMAGE $VERSION ..."
 docker build \
   --platform "${KLANGKBUILD_PLATFORM:-linux/amd64}" \
   -f src/containers/host/Dockerfile \
-  --build-context "hostvenv=$DEVENV_STATE/venv" \
   --build-context "workspace-image=$WORKSPACE_DIR" \
   -t "$IMAGE:latest" \
   -t "$IMAGE:$VERSION" \
