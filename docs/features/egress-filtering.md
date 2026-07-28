@@ -6,22 +6,23 @@ exfiltration vector. The filter is **opt-in** per workspace _and_ per
 deploy: a workspace with no `allowed_domains` keeps unrestricted outbound
 networking exactly as before.
 
-The mechanism uses OCI `createContainer` hooks — there is no proxy, no TLS
-interception, and no microVM. Each workspace that declares an allow-list
-gets iptables rules injected into its network namespace before its process
-starts.
+The mechanism uses OCI hooks — there is no proxy, no TLS interception, and
+no microVM. Each workspace that declares an allow-list gets iptables rules
+injected into its network namespace before its process starts.
 
 ## How it works
 
 1. A workspace carries an `allowed_domains` list (`host`, `host:port`,
    or IPv4 CIDR specs — see the [API](#api) section for the full grammar).
 2. On container start, if the deploy has enabled netfilter, the backend
-   passes `--annotation klangk.netfilter.rules=<host:port,...>` and
-   `--hooks-dir <dir>` to `podman create` (see the caveat below on
-   `--hooks-dir` overriding default hook dirs).
+   passes `--annotation klangk.netfilter.rules=<host:port,...>` to
+   `podman create`. On Linux it also passes `--hooks-dir <dir>` (see the
+   caveat below on `--hooks-dir` overriding default hook dirs); on macOS
+   the hook is installed inside the podman machine VM and discovered
+   automatically.
 3. The OCI hook (`klangk-netfilter.sh`, materialized by the backend into the
-   hooks dir) fires at `createContainer` time, reads the annotation from the
-   container state, resolves each host to IPs, and installs an iptables
+   hooks dir) fires at container-creation time, reads the annotation from
+   the container state, resolves each host to IPs, and installs an iptables
    ruleset in the container's network namespace (via `nsenter` on the init
    pid).
 4. The default `OUTPUT` policy is `DROP`; loopback, established
@@ -58,12 +59,11 @@ configuration is required for the common case.
    if either is absent the hook logs a warning and falls back to the
    other mechanism, but both should be present for defense-in-depth.)
 2. The hooks dir defaults to `<state_dir>/oci-hooks`
-   (`KLANGKD_STATE_DIR`/`oci-hooks`). Override
-   `KLANGKD_NETFILTER_HOOKS_DIR` only when the OCI runtime can't see
-   `state_dir` — a split runtime, a DinD outer container, or a
-   `podman machine` CoreOS VM (where it must be inside the VM, since
-   `podman machine` does not bind-mount arbitrary host paths the way
-   Docker Desktop does):
+   (`KLANGKD_STATE_DIR`/`oci-hooks`). On macOS the backend automatically
+   copies the hooks into the podman machine VM at startup — no manual
+   configuration is needed. Override `KLANGKD_NETFILTER_HOOKS_DIR` only
+   when the OCI runtime can't see `state_dir` on Linux — a split
+   runtime or a DinD outer container:
 
    ```bash
    export KLANGKD_NETFILTER_HOOKS_DIR=/var/lib/klangk/netfilter-hooks
@@ -554,29 +554,37 @@ netfilter_default_domains:
   permissive seccomp profile hands the entrypoint `iptables -F OUTPUT`,
   which flushes the ruleset and lets it exfiltrate freely. Do not run
   filtered workspaces privileged or grant `NET_ADMIN`.
-- **`--hooks-dir` overrides podman's default hook dirs.** Podman's
-  `--hooks-dir` flag _replaces_ (does not append to) the default OCI hook
-  search paths, so passing only klangk's hooks dir for a filtered
-  workspace would silently disable every _other_ `createContainer` hook
-  an operator relies on (monitoring, secrets injection, GPU, corporate
-  integrations). To avoid that, a filtered container passes klangk's hooks
-  dir **and** the two standard default dirs
-  (`/usr/share/containers/oci/hooks.d`, `/etc/containers/oci/hooks.d`),
-  preserving operator hooks. Podman tolerates a dir that doesn't exist (it
-  simply finds no hooks there). Limitation: a _non-standard_ hooks dir
-  configured only via `containers.conf` is still clobbered by an explicit
-  `--hooks-dir`; unrestricted workspaces are unaffected (the flag isn't
-  passed). See #1770.
+- **`--hooks-dir` overrides podman's default hook dirs (Linux only).**
+  On Linux, podman's `--hooks-dir` flag _replaces_ (does not append to)
+  the default OCI hook search paths, so passing only klangk's hooks dir
+  for a filtered workspace would silently disable every other
+  `createContainer` hook an operator relies on (monitoring, secrets
+  injection, GPU, corporate integrations). To avoid that, a filtered
+  container passes klangk's hooks dir **and** the two standard default
+  dirs (`/usr/share/containers/oci/hooks.d`,
+  `/etc/containers/oci/hooks.d`), preserving operator hooks. Podman
+  tolerates a dir that doesn't exist (it simply finds no hooks there).
+  Limitation: a _non-standard_ hooks dir configured only via
+  `containers.conf` is still clobbered by an explicit `--hooks-dir`;
+  unrestricted workspaces are unaffected (the flag isn't passed). On
+  macOS, `--hooks-dir` is not used (it is silently ignored by the remote
+  client); hooks are installed in the VM's standard hooks dir and
+  discovered automatically. See #1770.
 - **Port granularity.** A spec allows either all ports (`host`, or a
   CIDR like `10.0.0.0/8`) or a single TCP port (`host:port`, CIDR with
   `:port`). Port-only rules (allow a port to any host) are not
   supported — that would be an exfiltration channel.
-- **`macOS` hosts.** The `createContainer` hook runs inside the
-  container's Linux network namespace, never the macOS (XNU) kernel, so
-  `iptables` availability is not host-dependent. For the DinD deployment
-  there is no macOS-specific concern. For a native-on-mac deployment
-  driving `podman machine`, ensure the `--hooks-dir` path and
-  `klangk-netfilter.sh` are resolvable from inside the CoreOS VM.
+- **macOS hosts.** On macOS, podman runs inside a CoreOS VM via
+  `podman machine`. klangkd automatically copies the OCI hook script
+  and JSON into the VM at startup (via `podman machine ssh`), writes a
+  `containers.conf` drop-in so rootless podman discovers the hooks dir,
+  and uses `sudo` inside the hook for the `nsenter` calls that require
+  root (the Fedora CoreOS `core` user has passwordless `sudo`). No
+  manual configuration is needed — egress filtering works out of the
+  box on macOS. The hook runs inside the container's Linux network
+  namespace in the VM, never the macOS (XNU) kernel, so `iptables`
+  availability is not host-dependent. Run `klangkd doctor` to verify
+  that `iptables`, `nsenter`, and `getent` are available inside the VM.
 
 ## References
 
