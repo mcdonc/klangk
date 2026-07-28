@@ -168,7 +168,7 @@ class TestRenderHookJson:
         script = str(tmp_path / "klangk-netfilter.sh")
         data = json.loads(nf.render_hook_json(script))
         assert data["hook"]["path"] == os.path.abspath(script)
-        assert data["stages"] == ["createRuntime"]
+        assert data["stages"] == ["createContainer"]
         # The annotations gate makes the hook fire ONLY for containers
         # that carry the annotation — an unrestricted workspace is never
         # filtered.
@@ -1032,7 +1032,9 @@ class TestInstallHooksInVM:
             "input"
         )
         vm_script_path = f"{nf.VM_HOOKS_SCRIPT_DIR}/{nf.HOOK_SCRIPT_NAME}"
-        expected_json = nf.render_hook_json(vm_script_path)
+        expected_json = nf.render_hook_json(
+            vm_script_path, stage="createRuntime"
+        )
         assert expected_json in installer
 
 

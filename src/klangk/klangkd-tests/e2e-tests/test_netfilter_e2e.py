@@ -139,42 +139,44 @@ def _wait_for_container(workspace_id, instance_id, timeout=60):
 def _get_iptables(cid, *, v6=False, verbose=False):
     """Get iptables OUTPUT chain listing for a container.
 
-    Runs nsenter from the host (Linux) or via podman machine ssh (macOS)
-    to check iptables in the container's network namespace.  The workspace
-    image may not have iptables installed, so we never exec inside the
-    container itself.
+    On macOS, the workspace image may lack iptables, so we check from
+    outside via ``podman machine ssh`` + ``nsenter``.  On Linux,
+    ``podman exec`` is the most reliable way to inspect the container's
+    netns (rootless PID namespaces make host-side ``nsenter`` fragile).
 
     Returns (ok, output) where ok=False means iptables is unavailable.
     """
     cmd_name = "ip6tables" if v6 else "iptables"
-    pid_result = subprocess.run(
-        ["podman", "inspect", cid, "--format", "{{.State.Pid}}"],
-        capture_output=True,
-        text=True,
-    )
-    pid = pid_result.stdout.strip()
-    if not pid or pid == "0":
-        return False, "container PID not available"
 
-    v_flag = " -v" if verbose else ""
-    nsenter_cmd = (
-        f"nsenter --net=/proc/{pid}/ns/net {cmd_name} -L OUTPUT -n{v_flag}"
-    )
     if platform.system() == "Darwin":
+        # macOS: nsenter from inside the VM (the container image may
+        # lack iptables, but the VM has it).
+        pid_result = subprocess.run(
+            ["podman", "inspect", cid, "--format", "{{.State.Pid}}"],
+            capture_output=True,
+            text=True,
+        )
+        pid = pid_result.stdout.strip()
+        if not pid or pid == "0":
+            return False, "container PID not available"
+        v_flag = " -v" if verbose else ""
+        nsenter_cmd = (
+            f"nsenter --net=/proc/{pid}/ns/net {cmd_name} -L OUTPUT -n{v_flag}"
+        )
         cmd = ["podman", "machine", "ssh", f"sudo {nsenter_cmd}"]
     else:
-        parts = [
-            "sudo",
-            "nsenter",
-            f"--net=/proc/{pid}/ns/net",
+        # Linux: podman exec is reliable on rootless podman.
+        v_flag = ["-v"] if verbose else []
+        cmd = [
+            "podman",
+            "exec",
+            cid,
             cmd_name,
             "-L",
             "OUTPUT",
             "-n",
+            *v_flag,
         ]
-        if verbose:
-            parts.append("-v")
-        cmd = parts
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:

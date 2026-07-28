@@ -230,19 +230,26 @@ def render_rules_annotation(domains: list[str]) -> str:
     return ",".join(domains)
 
 
-def render_hook_json(script_path: str) -> str:
+def render_hook_json(
+    script_path: str, *, stage: str = "createContainer"
+) -> str:
     """Render the OCI hook JSON pointing at the absolute ``script_path``.
 
     The ``annotations`` map gates the hook to fire **only** for containers
     that carry :data:`ANNOTATION_KEY` — a workspace without the annotation
     (no allowed_domains) never triggers the hook, so it stays unrestricted.
+
+    ``stage`` is ``createContainer`` on Linux (the historical default —
+    rootful hooks receive a valid PID) and ``createRuntime`` on macOS
+    (podman machine's rootless API delivers ``pid: 0`` at
+    ``createContainer`` time, but a real PID at ``createRuntime``).
     """
     return json.dumps(
         {
             "version": "1.0.0",
             "hook": {"path": os.path.abspath(script_path)},
             "when": {"always": True},
-            "stages": ["createRuntime"],
+            "stages": [stage],
             "annotations": {ANNOTATION_KEY: ".*"},
         },
         indent=2,
@@ -622,7 +629,7 @@ class NetFilter:
         """
         vm_script = f"{VM_HOOKS_SCRIPT_DIR}/{HOOK_SCRIPT_NAME}"
         vm_json = f"{VM_HOOKS_JSON_DIR}/{HOOK_JSON_NAME}"
-        vm_hook_json = render_hook_json(vm_script)
+        vm_hook_json = render_hook_json(vm_script, stage="createRuntime")
 
         # Build an installer script piped through stdin to a single SSH
         # call.  The heredoc delimiters are quoted (no shell expansion)
