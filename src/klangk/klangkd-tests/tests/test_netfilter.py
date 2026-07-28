@@ -539,6 +539,14 @@ def _run_hook(
         f"exit {sysctl_rc}\n"
     )
     (bin_dir / "sysctl").chmod(0o755)
+    # sudo shim (#1959): the macOS/rootless hook prefixes iptables/nsenter/
+    # sysctl with ``$SUDO`` ("sudo" when non-root). Real ``sudo`` resolves
+    # commands via its own secure_path and bypasses the shims above — so
+    # the real nsenter/iptables would run (touching the host netns, and on
+    # some runners hanging on a password prompt). A passthrough sudo keeps
+    # the shims on the prepended PATH in play.
+    (bin_dir / "sudo").write_text('#!/bin/sh\nexec "$@"\n')
+    (bin_dir / "sudo").chmod(0o755)
 
     hook = bin_dir / "klangk-netfilter.sh"
     hook.write_text(nf.HOOK_SCRIPT)
