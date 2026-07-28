@@ -22,6 +22,8 @@ src/frontend/build/
 # Feature build artifacts
 features/**/klangk/.dart_tool/
 features/**/klangk/build/
+# Wheel build output (scripts/build_wheel.sh -> src/klangk/dist/).
+src/klangk/dist/
 src/frontend/.flutter-plugins
 src/frontend/.flutter-plugins-dependencies
 src/frontend/pubspec_overrides.yaml

@@ -1,13 +1,19 @@
 FROM python:3.13-slim AS base
 
-# Rebuild to pick up latest security patches (CVE-2026-45447 openssl)
+# Rebuild to pick up latest security patches (CVE-2026-45447 openssl).
+# The reverse proxy is Caddy (klangkd's default engine since #1559), installed
+# from the official Caddy apt repo (not in Debian's default repos). nginx is
+# gone — klangkd renders a Caddyfile and drives Caddy over its admin API.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+      apt-transport-https \
       bash \
+      ca-certificates \
       catatonit \
       coreutils \
+      curl \
       fuse-overlayfs \
+      gnupg \
       gzip \
-      nginx \
       passt \
       podman \
       procps \
@@ -16,6 +22,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       supervisor \
       tar \
       uidmap \
+    && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+        | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
+    && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+        > /etc/apt/sources.list.d/caddy-stable.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends caddy \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user matching devenv convention (uid 1000)
@@ -35,15 +47,18 @@ COPY src/klangk/dist/klangk-*.whl /tmp/
 RUN pip install /tmp/klangk-*.whl && rm /tmp/klangk-*.whl
 
 # Startup scripts and config
-# (scripts/nginx.sh is retired in #1396 — klangkd renders nginx.conf itself.)
 COPY --chown=klangk:klangk src/containers/host/entrypoint.sh /home/klangk/bin/entrypoint
 COPY --chown=klangk:klangk src/containers/host/supervisord.conf /home/klangk/etc/supervisord.conf
 # klangkd runtime config — generated at build time (klangkd.yaml is gitignored
 # by convention, so no tracked source). Passed via `klangkd --config` in
 # supervisord.conf; no KLANGKD_* env vars in the image. frontend_dir is
 # intentionally unset — the installed wheel serves the UI from klangk/frontend.
+# listen=0.0.0.0 so the published browser port (EXPOSE 8997) is reachable via
+# `docker -p`; the no-auth/loopback safety check (#1374) then requires auth to
+# be configured (or KLANGKD_ALLOW_INSECURE_NO_AUTH) — an operator concern at run.
 RUN mkdir -p /home/klangk/etc && printf '%s\n' \
       'port: "8997"' \
+      'listen: "0.0.0.0"' \
       'egress_port: "8995"' \
       'data_dir: "/home/klangk/data"' \
       'customize_dir: "/home/klangk/custom"' \
@@ -65,13 +80,6 @@ COPY --chown=klangk:klangk src/containers/host/storage.conf /home/klangk/.config
 # Embedded workspace image — loaded into podman on first startup
 COPY --from=workspace-image --chown=klangk:klangk workspace.tar /home/klangk/workspace.tar
 
-# Nginx needs writable temp dirs
-RUN mkdir -p /tmp/nginx_client_body /tmp/nginx_proxy \
-             /tmp/nginx_fastcgi /tmp/nginx_uwsgi /tmp/nginx_scgi && \
-    chown -R klangk:klangk /tmp/nginx_*
-# Nginx on Debian needs /var/log/nginx writable
-RUN mkdir -p /var/log/nginx /var/lib/nginx && \
-    chown -R klangk:klangk /var/log/nginx /var/lib/nginx
 
 ENV HOME=/home/klangk
 # klangk + its deps are in the base python's site-packages (pip install of
