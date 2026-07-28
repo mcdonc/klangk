@@ -311,7 +311,21 @@ class TestFormatReport:
         output = format_report(report)
         assert "✗" in output
         assert "1 errors" in output
-        assert "fix it" in output
+        # Hint prefixed with "Run:" (#1968)
+        assert "Run:  fix it" in output
+
+    def test_error_hint_repeated_in_summary(self):
+        """Errors are repeated at the bottom with their hints so the
+        user doesn't have to scroll back up (#1968)."""
+        report = DoctorReport()
+        report.add(CheckResult(name="a", ok=True, message="ok"))
+        report.add(
+            CheckResult(name="b", ok=False, message="broken", hint="fix it")
+        )
+        output = format_report(report)
+        assert "Errors (must fix before starting klangkd):" in output
+        # The hint appears at least twice: inline and in the summary
+        assert output.count("Run:  fix it") >= 2
 
     def test_warnings(self):
         report = DoctorReport()
@@ -328,7 +342,24 @@ class TestFormatReport:
         output = format_report(report)
         assert "⚠" in output
         assert "1 warnings" in output
-        assert "All required checks passed" in output
+        assert "Warnings (recommended but not required):" in output
+        assert "Run:  optional" in output
+
+    def test_warning_hint_repeated_in_summary(self):
+        """Warnings are repeated at the bottom with their hints (#1968)."""
+        report = DoctorReport()
+        report.add(CheckResult(name="a", ok=True, message="ok"))
+        report.add(
+            CheckResult(
+                name="b",
+                ok=False,
+                message="meh",
+                is_warning=True,
+                hint="optional cmd",
+            )
+        )
+        output = format_report(report)
+        assert output.count("Run:  optional cmd") >= 2
 
 
 class TestRunDoctor:
