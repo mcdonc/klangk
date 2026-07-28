@@ -1,14 +1,12 @@
-name: macOS Smoke
+name: "macOS: Backend Tests"
 
-# Verifies the bootstrap + devenv.nix produce a working devenv shell on
-# macOS — the one platform the rest of CI (all ubuntu-latest) can't see.
-# Catches macOS-only breakage in devenv.nix / bootstrap / nix packaging
-# early (e.g. the gnubin / netfilter-macos work) instead of at release.
+# Runs the backend unit test suite on macOS — the one platform the rest
+# of CI (all ubuntu-latest) can't see.  Catches macOS-only breakage in
+# platform-gated code (netfilter VM hooks, gnubin PATH, podman machine
+# checks) that the Linux suite misses.
 #
-# Scope is intentionally a SMOKE test (does the shell build + the package
-# import?), not the full suite: macOS runners are slower and most tests
-# aren't platform-sensitive. Platform-specific behaviour belongs in the
-# dedicated e2e suites (run where the platform actually matters).
+# Uses devenv (not bare pip) so the test runs with the same GNU coreutils,
+# GNU tar, and podman the dev/production environment provides.
 #
 # Reuses .github/actions/devenv-setup, whose two Linux-only steps (the
 # Determinate-substituter override via systemctl, and the Ubuntu disk
@@ -26,7 +24,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  macos-devenv-smoke:
+  test-backend-macos:
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
@@ -36,7 +34,7 @@ jobs:
         id: filter
         with:
           filters: |
-            smoke:
+            backend:
               - 'devenv.nix'
               - 'devenv.yaml'
               - 'devenv.lock'
@@ -46,17 +44,15 @@ jobs:
               - 'scripts/**'
               - '.github/workflows/macos-smoke.yml'
 
-      # Installs Nix (Determinate), runs the macOS-aware ./bootstrap, and
-      # proves the shell builds via `devenv shell -- true`.
       - uses: ./.github/actions/devenv-setup
-        if: steps.filter.outputs.smoke == 'true'
+        if: steps.filter.outputs.backend == 'true'
 
-      - name: Smoke — klangk imports under devenv on macOS
-        if: steps.filter.outputs.smoke == 'true'
+      - name: Run backend tests
+        if: steps.filter.outputs.backend == 'true'
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- python -c "import klangk; print('klangk import ok on', '$(uname -s)')"
+          devenv shell -- python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests -v -n auto
 
       - name: Skip notice
-        if: steps.filter.outputs.smoke != 'true'
-        run: echo "No devenv/src changes — skipping macOS smoke"
+        if: steps.filter.outputs.backend != 'true'
+        run: echo "No backend/devenv changes — skipping macOS backend tests"
