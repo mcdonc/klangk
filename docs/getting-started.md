@@ -39,31 +39,39 @@ you set above.
 
 ## Run Using Nix
 
-Install and run Klangk on bare metal (no Docker) with all runtime
-dependencies provided by Nix. Works on Linux and macOS.
+Install and run Klangk on bare metal (no Docker) with **every**
+dependency — the klangk Python package itself, its Python deps,
+and the system binaries it shells out to — provided by Nix. Works
+on Linux and macOS.
 
 You need [Nix](https://nixos.org/download/) (with flakes enabled) and
 an OpenAI-compatible LLM API key.
 
 ```bash
-# First run: creates a venv and pip-installs klangk from PyPI.
-# Subsequent runs reuse the existing venv (no network needed).
 nix run github:mcdonc/klangk
 ```
 
-On first launch the wrapper creates a Python venv at
-`~/.local/share/klangk/venv` and installs the klangk wheel from PyPI.
-Nix provides every system-level dependency (podman, caddy, tmux, git,
-GNU tar, etc.) — no manual package installation required.
+The flake builds klangk from source via Nix's Python tooling and
+resolves all Python dependencies (fastapi, sqlalchemy, textual, …)
+from nixpkgs — there is no virtualenv and no `pip install`. Nix also
+provides every system-level dependency (podman, caddy, tmux, git,
+GNU tar, etc.). Once built, `nix run` needs no network access.
 
-To upgrade klangk to the latest PyPI release:
+!!! note "No bundled UI"
+The flake build skips the compiled Flutter web UI (the release
+PyPI wheel ships it; the flake source doesn't carry the gitignored
+build artifact). To serve the UI, build the frontend separately and
+point `KLANGKD_FRONTEND_DIR` at it, or `pip install klangk` from
+PyPI for the all-in-one wheel.
+
+To run the client:
 
 ```bash
-nix run github:mcdonc/klangk -- --upgrade
+nix run github:mcdonc/klangk#klangk
 ```
 
-To drop into a shell with all deps on `PATH` (useful for manual
-`pip install` or running `klangkd doctor`):
+To drop into a shell with all deps on `PATH` (useful for an editable
+`pip install -e src/klangk` or running `klangkd` directly):
 
 ```bash
 nix develop github:mcdonc/klangk
