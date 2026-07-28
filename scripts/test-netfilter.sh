@@ -128,8 +128,9 @@ EXPECT_SCRIPT
 }
 
 # Extract the __RESULT= value from shell_exec output.
+# Uses sed instead of grep -oP for macOS (BSD grep) portability.
 extract_result() {
-  grep -oP '__RESULT=\K\S+' <<<"$1" | tail -1
+  sed -n 's/.*__RESULT=\([^[:space:]]*\).*/\1/p' <<<"$1" | tail -1
 }
 
 record() {

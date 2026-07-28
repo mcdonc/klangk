@@ -383,6 +383,49 @@ def check_podman_machine() -> CheckResult:  # pragma: no cover
     )
 
 
+def check_netfilter_vm() -> CheckResult:  # pragma: no cover
+    """macOS: verify netfilter prerequisites inside the podman machine VM.
+
+    On macOS, podman runs in remote mode — the OCI runtime is inside
+    a CoreOS VM.  The netfilter hook needs iptables, nsenter, and getent
+    to be available inside the VM.  This check verifies they are present.
+    """
+    if platform.system() != "Darwin":
+        return CheckResult(
+            name="netfilter (VM)",
+            ok=True,
+            message="skipped on Linux (hooks run locally)",
+        )
+    rc, _out, _err = _run(
+        [
+            "podman",
+            "machine",
+            "ssh",
+            "command -v iptables && command -v nsenter && command -v getent",
+        ]
+    )
+    if rc != 0:
+        return CheckResult(
+            name="netfilter (VM)",
+            ok=False,
+            is_warning=True,
+            message=(
+                "iptables/nsenter/getent not all available in podman "
+                "machine VM"
+            ),
+            hint=(
+                "Egress filtering requires iptables, nsenter, and getent "
+                "inside the VM; install them via rpm-ostree or check your "
+                "podman machine image"
+            ),
+        )
+    return CheckResult(
+        name="netfilter (VM)",
+        ok=True,
+        message="netfilter dependencies available in podman machine VM",
+    )
+
+
 def check_rootless_podman() -> CheckResult:  # pragma: no cover
     """Verify rootless podman can actually run a container."""
     if not shutil.which("podman"):
@@ -455,6 +498,7 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
         report.add(check_subuid(user))
     else:  # pragma: no cover
         report.add(check_podman_machine())
+        report.add(check_netfilter_vm())
 
     # 3. Configuration checks
     report.add(check_podman_policy())

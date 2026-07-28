@@ -43,7 +43,9 @@ import ipaddress
 import json
 import logging
 import os
+import platform
 import re
+import subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +86,14 @@ STANDARD_HOOK_DIRS = (
     "/usr/share/containers/oci/hooks.d",
     "/etc/containers/oci/hooks.d",
 )
+
+# VM-internal paths for macOS (podman machine).  The hook JSON goes in a
+# standard OCI hooks dir so podman discovers it automatically (no
+# ``--hooks-dir`` needed — that flag is silently ignored in remote mode).
+# The script goes alongside it.  Both directories live under ``/etc/``
+# which is writable and persistent across reboots on Fedora CoreOS.
+VM_HOOKS_JSON_DIR = "/etc/containers/oci/hooks.d"
+VM_HOOKS_SCRIPT_DIR = "/etc/containers/hooks"
 
 # A hostname or IPv4 address with an optional trailing ``:port``.
 # Deliberately permissive on the host grammar — the hook does the real DNS
@@ -220,19 +230,26 @@ def render_rules_annotation(domains: list[str]) -> str:
     return ",".join(domains)
 
 
-def render_hook_json(script_path: str) -> str:
+def render_hook_json(
+    script_path: str, *, stage: str = "createContainer"
+) -> str:
     """Render the OCI hook JSON pointing at the absolute ``script_path``.
 
     The ``annotations`` map gates the hook to fire **only** for containers
     that carry :data:`ANNOTATION_KEY` — a workspace without the annotation
     (no allowed_domains) never triggers the hook, so it stays unrestricted.
+
+    ``stage`` is ``createContainer`` on Linux (the historical default —
+    rootful hooks receive a valid PID) and ``createRuntime`` on macOS
+    (podman machine's rootless API delivers ``pid: 0`` at
+    ``createContainer`` time, but a real PID at ``createRuntime``).
     """
     return json.dumps(
         {
             "version": "1.0.0",
             "hook": {"path": os.path.abspath(script_path)},
-            "when": {"always": 1},
-            "stages": ["createContainer"],
+            "when": {"always": True},
+            "stages": [stage],
             "annotations": {ANNOTATION_KEY: ".*"},
         },
         indent=2,
@@ -274,16 +291,25 @@ pid=$(printf '%s' "$state" \
 [ -n "$pid" ] || exit 0
 [ -e "/proc/$pid/ns/net" ] || exit 0
 
+# Rootless podman (macOS podman machine): nsenter into another user's
+# network namespace requires root.  The core user on Fedora CoreOS has
+# passwordless sudo; on a rootful deploy (Linux host) we're already root
+# and SUDO is empty — no behavioral change.
+SUDO=
+if [ "$(id -u)" != "0" ]; then
+    SUDO="sudo"
+fi
+
 # iptables / ip6tables inside the container's network namespace. Failures
 # are logged to stderr (captured by the OCI runtime) but do not abort the
 # hook — the default-DROP policy below is the fail-closed posture for a
 # misconfigured deploy, and a partial ruleset is still better than none.
 ipt() {
-    nsenter --net="/proc/$pid/ns/net" iptables "$@" || \
+    $SUDO nsenter --net="/proc/$pid/ns/net" iptables "$@" || \
         echo "klangk-netfilter: iptables $* failed" >&2
 }
 ipt6() {
-    nsenter --net="/proc/$pid/ns/net" ip6tables "$@" || \
+    $SUDO nsenter --net="/proc/$pid/ns/net" ip6tables "$@" || \
         echo "klangk-netfilter: ip6tables $* failed" >&2
 }
 
@@ -369,7 +395,7 @@ ipt -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 #      even if the sysctl write fails (ip6tables missing, or the knob not
 #      writable). Each failure is logged, not fatal — together they close
 #      the v6 bypass; neither alone is fully trustworthy on every deploy.
-nsenter --net="/proc/$pid/ns/net" sysctl -qw \
+$SUDO nsenter --net="/proc/$pid/ns/net" sysctl -qw \
     net.ipv6.conf.all.disable_ipv6=1 \
     net.ipv6.conf.default.disable_ipv6=1 2>/dev/null || \
     echo "klangk-netfilter: sysctl ipv6 disable failed (relying on ip6tables DROP)" >&2
@@ -549,6 +575,11 @@ class NetFilter:
         upgrade ships the new script). Returns the dir, or ``None`` when
         netfilter is disabled. Failures are logged and the feature is left
         disabled rather than crashing startup.
+
+        On macOS the local copy is still written (so :meth:`enabled` /
+        :meth:`_hook_files_current` can validate without SSH), and the
+        hooks are additionally copied into the podman machine VM where
+        the OCI runtime can actually find them.
         """
         path = self.hooks_dir()
         if path is None:
@@ -569,11 +600,95 @@ class NetFilter:
                 exc,
             )
             return None
+        if platform.system() == "Darwin":
+            if not self._install_hooks_in_vm():
+                return None
         logger.info(
             "Netfilter egress filtering enabled: OCI hooks installed in %s",
             path,
         )
         return path
+
+    def _install_hooks_in_vm(self) -> bool:
+        """Copy hook files into the podman machine VM (macOS only).
+
+        On macOS, podman runs in remote mode — the OCI runtime is inside
+        a CoreOS VM and cannot see host filesystem paths.  Additionally,
+        ``--hooks-dir`` is silently ignored by the remote client, so the
+        hook JSON must be placed in a hooks dir that podman discovers.
+
+        Rootless podman does **not** check any hooks directory by default
+        (``oci-hooks(5)``), so the installer also writes a
+        ``containers.conf`` drop-in that adds the hooks dir to the
+        rootless user's config.  Both hooks and config live under
+        ``/etc/`` which is writable and persistent on Fedora CoreOS.
+
+        A single ``podman machine ssh`` call runs a shell script that
+        creates directories and writes all files, avoiding multiple
+        round-trips.
+        """
+        vm_script = f"{VM_HOOKS_SCRIPT_DIR}/{HOOK_SCRIPT_NAME}"
+        vm_json = f"{VM_HOOKS_JSON_DIR}/{HOOK_JSON_NAME}"
+        vm_hook_json = render_hook_json(vm_script, stage="createRuntime")
+
+        # Build an installer script piped through stdin to a single SSH
+        # call.  The heredoc delimiters are quoted (no shell expansion)
+        # and unique enough to avoid collisions with file contents.
+        installer = (
+            "set -e\n"
+            f"mkdir -p {VM_HOOKS_SCRIPT_DIR} {VM_HOOKS_JSON_DIR}\n"
+            f"cat > {vm_script} << 'KLANGK_SCRIPT_EOF'\n"
+            f"{HOOK_SCRIPT}"  # ends with \n
+            "KLANGK_SCRIPT_EOF\n"
+            f"chmod 755 {vm_script}\n"
+            f"cat > {vm_json} << 'KLANGK_JSON_EOF'\n"
+            f"{vm_hook_json}\n"
+            "KLANGK_JSON_EOF\n"
+            # Rootless podman has NO default hooks dir (oci-hooks(5)):
+            # without a containers.conf entry the hook is never found.
+            # Write a system-wide drop-in so every user (including the
+            # rootless ``core`` user that podman machine runs as) picks
+            # it up.
+            "mkdir -p /etc/containers/containers.conf.d\n"
+            "cat > /etc/containers/containers.conf.d/klangk-hooks.conf"
+            " << 'KLANGK_CONF_EOF'\n"
+            "[engine]\n"
+            f'hooks_dir = ["{VM_HOOKS_JSON_DIR}"]\n'
+            "KLANGK_CONF_EOF\n"
+        )
+
+        podman = self.app.state.settings.podman_bin or "podman"
+        try:
+            result = subprocess.run(
+                [podman, "machine", "ssh", "sudo", "sh", "-s"],
+                input=installer,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.error(
+                    "Could not install netfilter hooks into podman machine "
+                    "VM (exit %d): %s "
+                    "(per-workspace egress filtering is disabled on macOS)",
+                    result.returncode,
+                    result.stderr.strip(),
+                )
+                return False
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.error(
+                "Could not install netfilter hooks into podman machine "
+                "VM: %s (per-workspace egress filtering is disabled on "
+                "macOS)",
+                exc,
+            )
+            return False
+        logger.info(
+            "Netfilter hooks installed in podman machine VM: %s and %s",
+            vm_script,
+            vm_json,
+        )
+        return True
 
     def create_kwargs(
         self, allowed_domains: list[str] | None
@@ -635,8 +750,12 @@ class NetFilter:
             )
             return None, None, None
         annotation = {ANNOTATION_KEY: render_rules_annotation(domains)}
-        return (
-            annotation,
-            [path, *STANDARD_HOOK_DIRS],
-            list(DROPPED_CAPABILITIES),
+        # macOS: ``--hooks-dir`` is silently ignored in remote mode.
+        # Hooks are in the standard dir inside the VM (installed by
+        # ``_install_hooks_in_vm``), discovered automatically by podman.
+        hooks_dirs = (
+            None
+            if platform.system() == "Darwin"
+            else [path, *STANDARD_HOOK_DIRS]
         )
+        return (annotation, hooks_dirs, list(DROPPED_CAPABILITIES))
