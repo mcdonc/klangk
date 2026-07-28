@@ -8,7 +8,7 @@ let
   # klangkd binds a UDS and owns the proxy (nginx) as a child (#1396); the old
   # two-process layout (uvicorn + scripts/nginx.sh) is collapsed into this
   # single entry. Dev config lives in klangkd.yaml (gitignored);
-  # copy from klangkd.yaml.example if missing.
+  # seeded from klangkd.yaml.devenv on first shell entry if missing.
   backendCmd = ''
     python3 -m klangk.launcher --config="$DEVENV_ROOT/klangkd.yaml"
   '';
@@ -202,7 +202,7 @@ in
   );
   env.KLANGKD_VERSION_FILE = versionFile;
   # state_dir / frontend_dir live in klangkd.yaml (cmd:-indirected to
-  # $DEVENV_STATE / $DEVENV_ROOT) — see klangkd.yaml.example. IMAGE_NAME and
+  # $DEVENV_STATE / $DEVENV_ROOT) — see klangkd.yaml.devenv. IMAGE_NAME and
   # VERSION_FILE stay as env because the build scripts
   # (build-workspace-image.sh, build-host-image.sh) read them and don't parse
   # the YAML (#1788).
@@ -503,8 +503,8 @@ in
 
   enterShell = ''
     if [ ! -f "$DEVENV_ROOT/klangkd.yaml" ]; then
-      cp "$DEVENV_ROOT/klangkd.yaml.example" "$DEVENV_ROOT/klangkd.yaml"
-      echo "Created klangkd.yaml from klangkd.yaml.example — edit it to taste."
+      cp "$DEVENV_ROOT/klangkd.yaml.devenv" "$DEVENV_ROOT/klangkd.yaml"
+      echo "Created klangkd.yaml from klangkd.yaml.devenv — edit it to taste."
     fi
     # Ensure the frontend_dir key exists in an existing klangkd.yaml. devenv
     # used to export KLANGKD_FRONTEND_DIR; it now lives in klangkd.yaml (#1788),
