@@ -11,6 +11,31 @@
 # The container runs rootless podman to start workspace containers — a nested
 # container runtime. A plain `docker run` is not enough: podman needs the
 # devices, the SYS_ADMIN capability, and the relaxed security options below.
+#
+# ---------------------------------------------------------------------------
+# Serving behind a frontend proxy (production)
+# ---------------------------------------------------------------------------
+# This sample uses network_mode: host + no-auth for a local single-user test.
+# To serve behind a reverse proxy (Caddy/Traefik/nginx that terminates TLS and
+# publishes :443), change these values:
+#
+#   1. network_mode: host  ->  networks: [<the proxy's network>]
+#      klangkd need not be on the host network; the proxy reaches it on the
+#      shared bridge by service name. Do not publish ports here — the proxy
+#      publishes, not klangkd.
+#
+#   2. KLANGKD_TRUST_OUTER_PROXY: "<proxy subnet or CIDR>"
+#      The proxy's address on the shared network. caddy honors X-Forwarded-For
+#      only from a trusted peer; without this, the proxy's requests 403.
+#
+#   3. Configure authentication and remove KLANGKD_ALLOW_INSECURE_NO_AUTH.
+#      The image ships auth_modes=none. For a public deployment set, via env
+#      or a mounted klangkd.yaml:
+#        KLANGKD_AUTH_MODES: password
+#        KLANGKD_DEFAULT_PASSWORD: <secret>     # or auth_modes: oidc
+#
+#   4. The proxy forwards to http://klangkd:8997 and sets X-Forwarded-For and
+#      X-Forwarded-Proto. The browser port (8997) is baked in the image.
 
 services:
   klangkd:
