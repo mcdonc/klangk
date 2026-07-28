@@ -1270,6 +1270,76 @@ class TestKlangkClient:
         ):
             assert asyncio.run(client.close_terminal("alpha", "@0")) == []
 
+    def test_recv_windows_raises_on_error_frame(self):
+        """_recv_windows surfaces a server error frame immediately instead
+        of looping to its 30s timeout (#1966 review)."""
+        from klangk.cli.client import KlangkClient
+
+        mock_conn = MagicMock()
+        mock_conn.recv = AsyncMock(
+            side_effect=[json.dumps({"type": "error", "message": "boom"})]
+        )
+        with pytest.raises(ConnectionError, match="boom"):
+            asyncio.run(KlangkClient._recv_windows(mock_conn))
+
+    def test_recv_windows_error_default_message(self):
+        """An error frame with no message uses a default (#1966 review)."""
+        from klangk.cli.client import KlangkClient
+
+        mock_conn = MagicMock()
+        mock_conn.recv = AsyncMock(side_effect=[json.dumps({"type": "error"})])
+        with pytest.raises(ConnectionError, match="terminal error"):
+            asyncio.run(KlangkClient._recv_windows(mock_conn))
+
+    def test_close_terminal_server_error_returns_empty(self):
+        """A server error on close returns [] promptly (no 30s hang) and
+        still sends the close cmd by window_id (#1966 review)."""
+        client = KlangkClient("http://test:8995", "token")
+        ws = Workspace(id="ws" + "0" * 60, name="alpha", created_at="x")
+        client.resolve_workspace = MagicMock(return_value=ws)
+        messages = [
+            json.dumps({"type": "container_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"index": 0, "name": "main", "id": "@0"},
+                        {"index": 1, "name": "build", "id": "@1"},
+                    ],
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": "Failed to close window: no such window",
+                }
+            ),
+        ]
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "klangk.cli.transport.websockets.connect",
+            return_value=mock_ws,
+        ):
+            result = asyncio.run(client.close_terminal("alpha", "@1"))
+        # Error surfaced as [] (via _terminals' except), not a hang.
+        assert result == []
+        # _recv_windows stopped at the error frame — it did not loop past
+        # the provided frames looking for another terminal_windows.
+        assert mock_ws.recv.await_count == len(messages)
+        sent = [json.loads(c[0][0]) for c in mock_ws.send.call_args_list]
+        close_msgs = [
+            s for s in sent if s.get("cmd") == "terminal_close_window"
+        ]
+        assert len(close_msgs) == 1
+        assert close_msgs[0]["window_id"] == "@1"
+
     def test_create_terminal(self):
         client = KlangkClient("http://test:8995", "token")
         ws = Workspace(id="ws" + "0" * 60, name="alpha", created_at="x")

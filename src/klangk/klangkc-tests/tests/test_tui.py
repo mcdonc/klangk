@@ -4861,7 +4861,7 @@ async def test_detail_delete_terminal(monkeypatch):
         for _ in range(3):
             await pilot.pause()
         assert closed.get("i") == "@1"
-        assert "Deleted terminal @1" in str(
+        assert "Deleted terminal build" in str(
             d.query_one("#detail_msg").render()
         )
         assert len(d.query_one("#term_list", ListView).query(ListItem)) == 1
@@ -4979,14 +4979,14 @@ async def test_detail_delete_terminal_shows_inflight_msg(monkeypatch):
         # message must already be visible.
         for _ in range(3):
             await pilot.pause()
-        assert "Deleting terminal @1" in str(
+        assert "Deleting terminal build" in str(
             d.query_one("#detail_msg").render()
         )
         # Releasing the close call replaces it with the success message.
         gate.set()
         for _ in range(3):
             await pilot.pause()
-        assert "Deleted terminal @1" in str(
+        assert "Deleted terminal build" in str(
             d.query_one("#detail_msg").render()
         )
 
@@ -5045,6 +5045,20 @@ def test_detail_window_id_for_warns_when_id_missing(caplog):
     ):
         assert d._window_id_for("0") is None
     assert "no window id" in caplog.text
+
+
+def test_detail_terminal_label_for():
+    """Delete-message label prefers the window name, falling back to the
+    index/key (#1966 review UX nit)."""
+    d = WorkspaceDetailScreen("alpha")
+    d._terminals = [
+        {"index": 0, "name": "main", "id": "@0"},
+        {"index": 1, "name": "", "id": "@1"},  # empty name → index
+    ]
+    assert d._terminal_label_for("0") == "main"
+    assert d._terminal_label_for("1") == "1"  # empty name falls back
+    assert d._terminal_label_for("9") == "9"  # unknown index
+    assert d._terminal_label_for("build") == "build"  # non-numeric
 
 
 async def test_detail_terminal_select_spawns_shell(monkeypatch):
@@ -5326,9 +5340,15 @@ async def test_detail_delete_terminal_empty_result(monkeypatch):
     async def _close(name, window_id):
         return []  # close / refresh failed
 
+    calls = {"list": 0}
+
+    async def _tracked_terms(*a, **k):
+        calls["list"] += 1
+        return await _async_terms(*a, **k)
+
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha")
-    st = _ws(list_terminals=_async_terms, close_terminal=_close)
+    st = _ws(list_terminals=_tracked_terms, close_terminal=_close)
     st.find_workspace = lambda n: a
     app = KlangkApp(st)
     async with app.run_test() as pilot:
@@ -5337,12 +5357,15 @@ async def test_detail_delete_terminal_empty_result(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        before = calls["list"]
         await d._do_delete_terminal("@1")
         await app.workers.wait_for_complete()
         assert "Delete failed" in str(d.query_one("#detail_msg").render())
         assert (
             len(d.query_one("#term_list", ListView).query(ListItem)) == 2
         )  # unchanged
+        # The empty-result failure triggered a list refresh (#1966 review).
+        assert calls["list"] > before
 
 
 async def test_detail_new_terminal(monkeypatch):

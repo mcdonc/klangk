@@ -750,6 +750,10 @@ class KlangkClient:
             msg = json.loads(raw)
             if msg.get("type") == "terminal_windows":
                 return msg.get("windows") or []
+            if msg.get("type") == "error":
+                # Surface server errors immediately instead of looping
+                # until the 30s timeout (#1966 review).
+                raise ConnectionError(msg.get("message", "terminal error"))
 
     def export_workspace(
         self,

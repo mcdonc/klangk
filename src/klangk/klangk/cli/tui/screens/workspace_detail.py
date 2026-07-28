@@ -519,12 +519,18 @@ class WorkspaceDetailScreen(Screen):
             )
             self.run_worker(self._load_terminals, exit_on_error=False)
             return
+        label = self._terminal_label_for(child.name)
         self.run_worker(
-            self._do_delete_terminal(window_id), exit_on_error=False
+            self._do_delete_terminal(window_id, label), exit_on_error=False
         )
 
-    async def _do_delete_terminal(self, window_id: str) -> None:
-        self._msg(f"Deleting terminal {window_id}…")
+    async def _do_delete_terminal(
+        self, window_id: str, label: str | None = None
+    ) -> None:
+        # label is a friendly name for messages; falls back to the id
+        # when not supplied (e.g. direct test calls).
+        display = label if label is not None else window_id
+        self._msg(f"Deleting terminal {display}…")
         try:
             windows = await self.app.tui_state.close_terminal(
                 self._name, window_id
@@ -545,7 +551,18 @@ class WorkspaceDetailScreen(Screen):
             return
         self._terminals = windows
         self._render_terminals()
-        self._msg(f"Deleted terminal {window_id}.")
+        self._msg(f"Deleted terminal {display}.")
+
+    def _terminal_label_for(self, key: str) -> str:
+        """Friendly label for a list row: the window name, or the key."""
+        try:
+            idx = int(key)
+        except (TypeError, ValueError):
+            return key
+        for w in self._terminals:
+            if w.get("index") == idx:
+                return str(w.get("name") or idx)
+        return key
 
     def action_new_terminal(self) -> None:
         if self._ws is None:
