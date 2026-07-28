@@ -486,25 +486,45 @@ def format_report(report: DoctorReport) -> str:
         else:
             lines.append(f"  ✗ {r.name}: {r.message}")
         if r.hint:
-            lines.append(f"    → {r.hint}")
+            lines.append("")
+            lines.append(f"    Run:  {r.hint}")
+            lines.append("")
 
     lines.append("")
     errors = report.errors
     warnings = report.warnings
     ok_count = sum(1 for r in report.results if r.ok)
-
     if errors:
         lines.append(
-            f"{ok_count} passed, {len(errors)} errors, {len(warnings)} warnings"
+            f"{ok_count} passed, {len(errors)} errors,"
+            f" {len(warnings)} warnings"
         )
-        lines.append("")
-        lines.append("Fix the errors above before starting klangkd.")
     elif warnings:
         lines.append(f"{ok_count} passed, {len(warnings)} warnings")
-        lines.append("")
-        lines.append("All required checks passed (warnings are optional).")
     else:
         lines.append(f"All {ok_count} checks passed.")
+        return "\n".join(lines)
+
+    # Repeat each failure with its fix so the user doesn't have to
+    # scroll back up through a long check list (#1968).
+    lines.append("")
+    if errors:
+        lines.append("Errors (must fix before starting klangkd):")
+        lines.append("")
+        for r in errors:
+            lines.append(f"  ✗ {r.name}: {r.message}")
+            if r.hint:
+                lines.append(f"    Run:  {r.hint}")
+            lines.append("")
+
+    if warnings:
+        lines.append("Warnings (recommended but not required):")
+        lines.append("")
+        for r in warnings:
+            lines.append(f"  ⚠ {r.name}: {r.message}")
+            if r.hint:
+                lines.append(f"    Run:  {r.hint}")
+            lines.append("")
 
     return "\n".join(lines)
 
