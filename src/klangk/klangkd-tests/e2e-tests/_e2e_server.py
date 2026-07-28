@@ -197,9 +197,11 @@ def start_server(
     :func:`ws_connect`. Pass the handle to :func:`stop_server` for teardown.
     """
     if data_dir is None:
-        data_dir = tempfile.mkdtemp(prefix="klangk-e2e-")
+        data_dir = os.path.realpath(tempfile.mkdtemp(prefix="klangk-e2e-"))
     if state_dir is None:
-        state_dir = tempfile.mkdtemp(prefix="klangk-e2e-state-")
+        state_dir = os.path.realpath(
+            tempfile.mkdtemp(prefix="klangk-e2e-state-")
+        )
 
     overrides = dict(env_overrides)
     overrides.setdefault("KLANGKD_DATA_DIR", data_dir)

@@ -7,17 +7,22 @@ installs iptables rules in the container's network namespace.  On macOS
 filesystem.  Either way, the observable behavior is the same: a filtered
 container has an OUTPUT DROP policy + per-destination ACCEPT rules.
 
+The iptables check runs via ``nsenter`` from the host (Linux) or from
+inside the VM (macOS via ``podman machine ssh``) because the workspace
+container image may not have ``iptables`` installed.
+
 These tests do NOT verify *enforcement* (actually blocking traffic) —
 that requires real DNS and remote hosts.  They verify the *mechanism*:
 the hook fires, iptables rules are present, and the OUTPUT policy is
 DROP.  ``scripts/test-netfilter.sh`` is the manual enforcement test.
 
 Requires: podman available (rootless on Linux, podman machine on macOS),
-klangk workspace image built, iptables available inside the container.
+klangk workspace image built.
 
 Run with: devenv shell -- test-backend-e2e test_netfilter_e2e.py
 """
 
+import platform
 import subprocess
 import time
 
@@ -131,23 +136,58 @@ def _wait_for_container(workspace_id, instance_id, timeout=60):
     )
 
 
-def _container_exec(cid, command, timeout=30):
-    """Run a command in a container; return (returncode, stdout)."""
-    result = subprocess.run(
-        ["podman", "exec", cid, "bash", "-c", command],
+def _get_iptables(cid, *, v6=False, verbose=False):
+    """Get iptables OUTPUT chain listing for a container.
+
+    Runs nsenter from the host (Linux) or via podman machine ssh (macOS)
+    to check iptables in the container's network namespace.  The workspace
+    image may not have iptables installed, so we never exec inside the
+    container itself.
+
+    Returns (ok, output) where ok=False means iptables is unavailable.
+    """
+    cmd_name = "ip6tables" if v6 else "iptables"
+    pid_result = subprocess.run(
+        ["podman", "inspect", cid, "--format", "{{.State.Pid}}"],
         capture_output=True,
         text=True,
-        timeout=timeout,
     )
-    return result.returncode, result.stdout
+    pid = pid_result.stdout.strip()
+    if not pid or pid == "0":
+        return False, "container PID not available"
+
+    v_flag = " -v" if verbose else ""
+    nsenter_cmd = (
+        f"nsenter --net=/proc/{pid}/ns/net {cmd_name} -L OUTPUT -n{v_flag}"
+    )
+    if platform.system() == "Darwin":
+        cmd = ["podman", "machine", "ssh", f"sudo {nsenter_cmd}"]
+    else:
+        parts = [
+            "sudo",
+            "nsenter",
+            f"--net=/proc/{pid}/ns/net",
+            cmd_name,
+            "-L",
+            "OUTPUT",
+            "-n",
+        ]
+        if verbose:
+            parts.append("-v")
+        cmd = parts
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        return False, result.stderr
+    return True, result.stdout
 
 
 class TestNetfilterE2E:
     """Verify the netfilter OCI hook fires and installs iptables rules.
 
-    Uses auto_start=True + ``podman exec`` (rather than the WS exec
-    path) so the test exercises the OCI hook → container lifecycle
-    end-to-end without needing a WebSocket chat session.
+    Uses auto_start=True and checks iptables from outside the container
+    via nsenter (not from inside, since the workspace image may lack
+    iptables).
     """
 
     def test_filtered_container_has_drop_policy(self, server, auth):
@@ -163,11 +203,9 @@ class TestNetfilterE2E:
         )
         try:
             cid = _wait_for_container(workspace_id, server["instance_id"])
-            rc, output = _container_exec(
-                cid, "iptables -L OUTPUT -n 2>/dev/null || echo UNAVAILABLE"
-            )
-            if "UNAVAILABLE" in output:
-                pytest.skip("iptables not available inside the container")
+            ok, output = _get_iptables(cid)
+            if not ok:
+                pytest.skip(f"iptables not available: {output}")
             first_line = output.strip().split("\n")[0]
             assert "DROP" in first_line, (
                 f"OUTPUT policy is not DROP — the netfilter hook did not "
@@ -188,11 +226,9 @@ class TestNetfilterE2E:
         )
         try:
             cid = _wait_for_container(workspace_id, server["instance_id"])
-            rc, output = _container_exec(
-                cid, "iptables -L OUTPUT -n 2>/dev/null || echo UNAVAILABLE"
-            )
-            if "UNAVAILABLE" in output:
-                pytest.skip("iptables not available inside the container")
+            ok, output = _get_iptables(cid)
+            if not ok:
+                pytest.skip(f"iptables not available: {output}")
             lines = output.strip().split("\n")
             accept_443 = [
                 ln for ln in lines if "ACCEPT" in ln and "dpt:443" in ln
@@ -206,17 +242,22 @@ class TestNetfilterE2E:
             cleanup()
 
     def test_filtered_container_allows_loopback(self, server, auth):
-        """Loopback traffic is always allowed in a filtered container."""
+        """Loopback traffic is always allowed in a filtered container.
+
+        The hook's ``-A OUTPUT -o lo -j ACCEPT`` rule shows up in
+        ``iptables -L -n -v`` with interface ``lo``, but in the compact
+        ``-L -n`` output it appears as an ACCEPT with 0.0.0.0/0 → 0.0.0.0/0
+        and no further match criteria (the first rule after the policy).
+        Use ``-L -n -v`` to see the interface column.
+        """
         workspace_id, cleanup = _create_workspace(
             server, auth, allowed_domains=["github.com:443"]
         )
         try:
             cid = _wait_for_container(workspace_id, server["instance_id"])
-            rc, output = _container_exec(
-                cid, "iptables -L OUTPUT -n 2>/dev/null || echo UNAVAILABLE"
-            )
-            if "UNAVAILABLE" in output:
-                pytest.skip("iptables not available inside the container")
+            ok, output = _get_iptables(cid, verbose=True)
+            if not ok:
+                pytest.skip(f"iptables not available: {output}")
             assert any(
                 "ACCEPT" in ln and "lo" in ln
                 for ln in output.strip().split("\n")
@@ -233,11 +274,9 @@ class TestNetfilterE2E:
         workspace_id, cleanup = _create_workspace(server, auth)
         try:
             cid = _wait_for_container(workspace_id, server["instance_id"])
-            rc, output = _container_exec(
-                cid, "iptables -L OUTPUT -n 2>/dev/null || echo UNAVAILABLE"
-            )
-            if "UNAVAILABLE" in output:
-                pytest.skip("iptables not available inside the container")
+            ok, output = _get_iptables(cid)
+            if not ok:
+                pytest.skip(f"iptables not available: {output}")
             first_line = output.strip().split("\n")[0]
             assert "ACCEPT" in first_line, (
                 f"Unfiltered workspace should have OUTPUT ACCEPT policy, "
@@ -253,12 +292,9 @@ class TestNetfilterE2E:
         )
         try:
             cid = _wait_for_container(workspace_id, server["instance_id"])
-            rc, output = _container_exec(
-                cid,
-                "ip6tables -L OUTPUT -n 2>/dev/null || echo UNAVAILABLE",
-            )
-            if "UNAVAILABLE" in output:
-                pytest.skip("ip6tables not available inside the container")
+            ok, output = _get_iptables(cid, v6=True)
+            if not ok:
+                pytest.skip(f"ip6tables not available: {output}")
             first_line = output.strip().split("\n")[0]
             assert "DROP" in first_line, (
                 f"IPv6 OUTPUT policy should be DROP, got: {first_line}"
@@ -273,11 +309,9 @@ class TestNetfilterE2E:
         )
         try:
             cid = _wait_for_container(workspace_id, server["instance_id"])
-            rc, output = _container_exec(
-                cid, "iptables -L OUTPUT -n 2>/dev/null || echo UNAVAILABLE"
-            )
-            if "UNAVAILABLE" in output:
-                pytest.skip("iptables not available inside the container")
+            ok, output = _get_iptables(cid)
+            if not ok:
+                pytest.skip(f"iptables not available: {output}")
             assert any(
                 "ACCEPT" in ln and "10.0.0.0/8" in ln
                 for ln in output.strip().split("\n")

@@ -241,8 +241,8 @@ def render_hook_json(script_path: str) -> str:
         {
             "version": "1.0.0",
             "hook": {"path": os.path.abspath(script_path)},
-            "when": {"always": 1},
-            "stages": ["createContainer"],
+            "when": {"always": True},
+            "stages": ["createRuntime"],
             "annotations": {ANNOTATION_KEY: ".*"},
         },
         indent=2,
@@ -284,16 +284,25 @@ pid=$(printf '%s' "$state" \
 [ -n "$pid" ] || exit 0
 [ -e "/proc/$pid/ns/net" ] || exit 0
 
+# Rootless podman (macOS podman machine): nsenter into another user's
+# network namespace requires root.  The core user on Fedora CoreOS has
+# passwordless sudo; on a rootful deploy (Linux host) we're already root
+# and SUDO is empty — no behavioral change.
+SUDO=
+if [ "$(id -u)" != "0" ]; then
+    SUDO="sudo"
+fi
+
 # iptables / ip6tables inside the container's network namespace. Failures
 # are logged to stderr (captured by the OCI runtime) but do not abort the
 # hook — the default-DROP policy below is the fail-closed posture for a
 # misconfigured deploy, and a partial ruleset is still better than none.
 ipt() {
-    nsenter --net="/proc/$pid/ns/net" iptables "$@" || \
+    $SUDO nsenter --net="/proc/$pid/ns/net" iptables "$@" || \
         echo "klangk-netfilter: iptables $* failed" >&2
 }
 ipt6() {
-    nsenter --net="/proc/$pid/ns/net" ip6tables "$@" || \
+    $SUDO nsenter --net="/proc/$pid/ns/net" ip6tables "$@" || \
         echo "klangk-netfilter: ip6tables $* failed" >&2
 }
 
@@ -379,7 +388,7 @@ ipt -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 #      even if the sysctl write fails (ip6tables missing, or the knob not
 #      writable). Each failure is logged, not fatal — together they close
 #      the v6 bypass; neither alone is fully trustworthy on every deploy.
-nsenter --net="/proc/$pid/ns/net" sysctl -qw \
+$SUDO nsenter --net="/proc/$pid/ns/net" sysctl -qw \
     net.ipv6.conf.all.disable_ipv6=1 \
     net.ipv6.conf.default.disable_ipv6=1 2>/dev/null || \
     echo "klangk-netfilter: sysctl ipv6 disable failed (relying on ip6tables DROP)" >&2
@@ -599,12 +608,16 @@ class NetFilter:
         On macOS, podman runs in remote mode — the OCI runtime is inside
         a CoreOS VM and cannot see host filesystem paths.  Additionally,
         ``--hooks-dir`` is silently ignored by the remote client, so the
-        hook JSON must be placed in a standard hooks dir that podman
-        discovers automatically.  The hook script is placed alongside it
-        under ``/etc/`` which is writable and persistent on Fedora CoreOS.
+        hook JSON must be placed in a hooks dir that podman discovers.
+
+        Rootless podman does **not** check any hooks directory by default
+        (``oci-hooks(5)``), so the installer also writes a
+        ``containers.conf`` drop-in that adds the hooks dir to the
+        rootless user's config.  Both hooks and config live under
+        ``/etc/`` which is writable and persistent on Fedora CoreOS.
 
         A single ``podman machine ssh`` call runs a shell script that
-        creates directories and writes both files, avoiding multiple
+        creates directories and writes all files, avoiding multiple
         round-trips.
         """
         vm_script = f"{VM_HOOKS_SCRIPT_DIR}/{HOOK_SCRIPT_NAME}"
@@ -624,6 +637,17 @@ class NetFilter:
             f"cat > {vm_json} << 'KLANGK_JSON_EOF'\n"
             f"{vm_hook_json}\n"
             "KLANGK_JSON_EOF\n"
+            # Rootless podman has NO default hooks dir (oci-hooks(5)):
+            # without a containers.conf entry the hook is never found.
+            # Write a system-wide drop-in so every user (including the
+            # rootless ``core`` user that podman machine runs as) picks
+            # it up.
+            "mkdir -p /etc/containers/containers.conf.d\n"
+            "cat > /etc/containers/containers.conf.d/klangk-hooks.conf"
+            " << 'KLANGK_CONF_EOF'\n"
+            "[engine]\n"
+            f'hooks_dir = ["{VM_HOOKS_JSON_DIR}"]\n'
+            "KLANGK_CONF_EOF\n"
         )
 
         podman = self.app.state.settings.podman_bin or "podman"
