@@ -12,6 +12,7 @@ runs:
     - uses: DeterminateSystems/determinate-nix-action@v3
 
     - name: Disable Determinate binary-cache substituter
+      if: runner.os == 'Linux'
       shell: bash
       run: |
         # The Determinate Nix installer configures install.determinate.systems
@@ -30,6 +31,7 @@ runs:
         sudo systemctl restart nix-daemon
 
     - name: Free disk space
+      if: runner.os == 'Linux'
       shell: bash
       run: |
         set -x

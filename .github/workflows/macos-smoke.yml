@@ -1,0 +1,62 @@
+name: macOS Smoke
+
+# Verifies the bootstrap + devenv.nix produce a working devenv shell on
+# macOS — the one platform the rest of CI (all ubuntu-latest) can't see.
+# Catches macOS-only breakage in devenv.nix / bootstrap / nix packaging
+# early (e.g. the gnubin / netfilter-macos work) instead of at release.
+#
+# Scope is intentionally a SMOKE test (does the shell build + the package
+# import?), not the full suite: macOS runners are slower and most tests
+# aren't platform-sensitive. Platform-specific behaviour belongs in the
+# dedicated e2e suites (run where the platform actually matters).
+#
+# Reuses .github/actions/devenv-setup, whose two Linux-only steps (the
+# Determinate-substituter override via systemctl, and the Ubuntu disk
+# cleanup) are gated on runner.os == 'Linux' and so are skipped here.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [release/**]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  macos-devenv-smoke:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            smoke:
+              - 'devenv.nix'
+              - 'devenv.yaml'
+              - 'devenv.lock'
+              - 'bootstrap'
+              - '.github/actions/devenv-setup/**'
+              - 'src/klangk/**'
+              - 'scripts/**'
+              - '.github/workflows/macos-smoke.yml'
+
+      # Installs Nix (Determinate), runs the macOS-aware ./bootstrap, and
+      # proves the shell builds via `devenv shell -- true`.
+      - uses: ./.github/actions/devenv-setup
+        if: steps.filter.outputs.smoke == 'true'
+
+      - name: Smoke — klangk imports under devenv on macOS
+        if: steps.filter.outputs.smoke == 'true'
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- python -c "import klangk; print('klangk import ok on', '$(uname -s)')"
+
+      - name: Skip notice
+        if: steps.filter.outputs.smoke != 'true'
+        run: echo "No devenv/src changes — skipping macOS smoke"
