@@ -8,6 +8,7 @@ yet available.
 
 from __future__ import annotations
 
+import os
 import tempfile
 
 from klangk.settings import KlangkSettings
@@ -56,6 +57,16 @@ def make_settings(
         "KLANGKD_STATE_DIR", tempfile.mkdtemp(prefix="klangk-state-")
     )
     env.setdefault("KLANGKD_DATA_DIR", tempfile.mkdtemp(prefix="klangk-data-"))
+    # On macOS the default socket paths derived from state_dir
+    # (<state_dir>/klangk.sock, <state_dir>/caddy-admin.sock) may exceed the
+    # 104-char AF_UNIX sun_path limit because tempfile paths resolve through
+    # /private/var/folders/... Set short socket paths so the settings
+    # validator passes (#1983).
+    _sock_dir = tempfile.mkdtemp(prefix="ks-")
+    env.setdefault("KLANGKD_SOCKET", os.path.join(_sock_dir, "k.sock"))
+    env.setdefault(
+        "KLANGKD_CADDY_ADMIN_SOCKET", os.path.join(_sock_dir, "caddy.sock")
+    )
     return KlangkSettings(env=env, config_file=config_file)
 
 

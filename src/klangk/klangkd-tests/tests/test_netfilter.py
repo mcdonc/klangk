@@ -5,6 +5,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import types
 
 import pytest
@@ -584,6 +585,10 @@ def _calls_from(log_path):
     return calls
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="Hook script requires /proc and iptables/nsenter (Linux-only)",
+)
 class TestHookScriptExecutable:
     def test_host_port_emits_split_argv(self, tmp_path):
         # B1 regression: the ACCEPT rule must reach iptables as separate
