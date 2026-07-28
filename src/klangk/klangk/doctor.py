@@ -230,8 +230,8 @@ def check_gnu_tar(manager: str | None) -> CheckResult:
         hint = install_hint("tar", manager)
         if manager == "brew":
             hint = (
-                "brew install gnu-tar, then add "
-                "$(brew --prefix)/opt/gnu-tar/libexec/gnubin to PATH"
+                "brew install gnu-tar (klangkd auto-discovers the "
+                "gnubin path at startup)"
             )
         return CheckResult(
             name="tar (GNU)",
@@ -259,8 +259,8 @@ def check_gnu_du(manager: str | None) -> CheckResult:
         hint = install_hint("du", manager)
         if manager == "brew":
             hint = (
-                "brew install coreutils, then add "
-                "$(brew --prefix)/opt/coreutils/libexec/gnubin to PATH"
+                "brew install coreutils (klangkd auto-discovers the "
+                "gnubin path at startup)"
             )
         return CheckResult(
             name="du (GNU)",

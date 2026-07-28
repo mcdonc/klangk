@@ -33,6 +33,9 @@ proxy ownership), and #1645 (first-run generation) for the full rationale.
 from __future__ import annotations
 
 import os
+import platform
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -137,6 +140,48 @@ def _check_pid_preflight(settings: KlangkSettings) -> int | None:
     return pid
 
 
+def _prepend_gnubin_paths() -> None:  # pragma: no cover
+    """On macOS, prepend Homebrew gnubin dirs to ``PATH`` (#1947).
+
+    macOS ships BSD ``du`` and ``tar`` whose flags are incompatible with
+    klangkd's usage (``du -b``, ``tar --transform``).  Homebrew's
+    ``coreutils`` and ``gnu-tar`` install GNU binaries under g-prefixed
+    names (``gdu``, ``gtar``) and provide ``libexec/gnubin`` directories
+    that shadow the BSD originals.
+
+    This runs once at startup — before any subprocess is spawned — so
+    every callsite (including bare ``subprocess.run(["du", ...])`` and
+    the ``subprocess_env()``-based podman calls) inherits the fixed PATH.
+    No-op on Linux or when ``brew`` is absent.
+    """
+    if platform.system() != "Darwin":
+        return
+    brew = shutil.which("brew")
+    if not brew:
+        return
+    try:
+        result = subprocess.run(
+            [brew, "--prefix"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        prefix = result.stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
+        return
+    if not prefix:
+        return
+    gnubin_dirs = [
+        os.path.join(prefix, "opt", "coreutils", "libexec", "gnubin"),
+        os.path.join(prefix, "opt", "gnu-tar", "libexec", "gnubin"),
+    ]
+    existing = [d for d in gnubin_dirs if os.path.isdir(d)]
+    if existing:
+        os.environ["PATH"] = (
+            os.pathsep.join(existing) + os.pathsep + os.environ.get("PATH", "")
+        )
+
+
 @app.callback()
 def main(  # pragma: no cover
     ctx: typer.Context,
@@ -154,6 +199,7 @@ def main(  # pragma: no cover
     ),
 ) -> None:
     """Start the klangk server (config + uvicorn + proxy)."""
+    _prepend_gnubin_paths()
     if ctx.invoked_subcommand is not None:
         return  # defer to the subcommand (e.g. ``doctor``)
     resolved = _resolve_config_path(config)
