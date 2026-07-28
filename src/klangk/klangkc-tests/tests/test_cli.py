@@ -1236,8 +1236,16 @@ class TestKlangkClient:
             "klangk.cli.transport.websockets.connect",
             return_value=mock_ws,
         ):
-            windows = asyncio.run(client.close_terminal("alpha", 1))
+            windows = asyncio.run(client.close_terminal("alpha", "@1"))
         assert len(windows) == 1  # one closed
+        # Close targets the window by its stable @N id, never the index (#1965).
+        sent = [json.loads(c[0][0]) for c in mock_ws.send.call_args_list]
+        close_msgs = [
+            s for s in sent if s.get("cmd") == "terminal_close_window"
+        ]
+        assert len(close_msgs) == 1
+        assert close_msgs[0]["window_id"] == "@1"
+        assert "index" not in close_msgs[0]
 
     def test_close_terminal_no_windows(self):
         # close on a workspace reporting no windows -> no close sent, []
@@ -1260,7 +1268,7 @@ class TestKlangkClient:
             "klangk.cli.transport.websockets.connect",
             return_value=mock_ws,
         ):
-            assert asyncio.run(client.close_terminal("alpha", 0)) == []
+            assert asyncio.run(client.close_terminal("alpha", "@0")) == []
 
     def test_create_terminal(self):
         client = KlangkClient("http://test:8995", "token")

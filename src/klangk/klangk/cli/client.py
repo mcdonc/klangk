@@ -658,9 +658,9 @@ class KlangkClient:
         """
         return await self._terminals(name)
 
-    async def close_terminal(self, name: str, index: int) -> list[dict]:
-        """Close terminal window *index* in *name*; return the updated list."""
-        return await self._terminals(name, close_index=index)
+    async def close_terminal(self, name: str, window_id: str) -> list[dict]:
+        """Close terminal window *window_id* (@N) in *name*; return list."""
+        return await self._terminals(name, close_window_id=window_id)
 
     async def create_terminal(self, name: str, window_name: str) -> list[dict]:
         """Create a new terminal window in workspace *name*; return updated list."""
@@ -670,7 +670,7 @@ class KlangkClient:
         self,
         name: str,
         *,
-        close_index: int | None = None,
+        close_window_id: str | None = None,
         new_window: str | None = None,
     ) -> list[dict]:
         try:
@@ -692,12 +692,12 @@ class KlangkClient:
                     )
                 )
                 windows = await self._recv_windows(conn)
-                if close_index is not None and windows:
+                if close_window_id is not None and windows:
                     await conn.send(
                         json.dumps(
                             {
                                 "cmd": "terminal_close_window",
-                                "index": close_index,
+                                "window_id": close_window_id,
                             }
                         )
                     )

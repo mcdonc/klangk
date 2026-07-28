@@ -5368,6 +5368,56 @@ class TestTerminalWindowHandlers:
         sent = sock.send_json.call_args[0][0]
         assert sent["type"] == "error"
 
+    async def test_close_window_by_id(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        two_windows = [
+            {"id": "@0", "index": 0, "name": "bash", "active": True},
+            {"id": "@1", "index": 1, "name": "aux", "active": False},
+        ]
+        with (
+            patch.object(_mock_term, "list_windows", return_value=two_windows),
+            patch.object(
+                _mock_term,
+                "close_window",
+                return_value=[
+                    {"id": "@0", "index": 0, "name": "bash", "active": True}
+                ],
+            ),
+        ):
+            await conn.handle_terminal_close_window({"window_id": "@1"})
+            # Targeted the window by its stable id, not an index (#1965).
+            assert _mock_term.close_window.call_args[0][2] == "@1"
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "terminal_windows"
+
+    async def test_close_window_prefers_window_id(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        two_windows = [
+            {"id": "@0", "index": 0, "name": "bash", "active": True},
+            {"id": "@1", "index": 1, "name": "aux", "active": False},
+        ]
+        with (
+            patch.object(_mock_term, "list_windows", return_value=two_windows),
+            patch.object(
+                _mock_term,
+                "close_window",
+                return_value=[
+                    {"id": "@0", "index": 0, "name": "bash", "active": True}
+                ],
+            ),
+        ):
+            # Both present → window_id wins over index (#1965).
+            await conn.handle_terminal_close_window(
+                {"window_id": "@1", "index": 0}
+            )
+            assert _mock_term.close_window.call_args[0][2] == "@1"
+
     async def test_rename_window(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock)

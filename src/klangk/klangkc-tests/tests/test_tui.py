@@ -1765,9 +1765,9 @@ def test_tui_state_terminal_methods(monkeypatch, redirect_xdg):
     st = TuiState("https://x.example")
     monkeypatch.setattr(st, "client", lambda: fake)
     assert asyncio.run(st.list_terminals("a")) == [{"index": 0, "name": "m"}]
-    assert asyncio.run(st.close_terminal("a", 0)) == []
+    assert asyncio.run(st.close_terminal("a", "@0")) == []
     fake.list_terminals.assert_called_once_with("a")
-    fake.close_terminal.assert_called_once_with("a", 0)
+    fake.close_terminal.assert_called_once_with("a", "@0")
 
 
 async def test_main_screen_lists_and_status(monkeypatch):
@@ -4841,8 +4841,8 @@ async def test_detail_delete_terminal(monkeypatch):
 
     closed = {}
 
-    async def _close(name, index):
-        closed["i"] = index
+    async def _close(name, window_id):
+        closed["i"] = window_id
         return [{"index": 0, "name": "main", "id": "@0"}]
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
@@ -4860,9 +4860,91 @@ async def test_detail_delete_terminal(monkeypatch):
         d.action_delete_terminal()
         for _ in range(3):
             await pilot.pause()
-        assert closed.get("i") == 1
-        assert "Deleted terminal 1" in str(d.query_one("#detail_msg").render())
+        assert closed.get("i") == "@1"
+        assert "Deleted terminal @1" in str(
+            d.query_one("#detail_msg").render()
+        )
         assert len(d.query_one("#term_list", ListView).query(ListItem)) == 1
+
+
+async def test_detail_delete_terminal_refuses_when_id_unresolvable(
+    monkeypatch,
+):
+    """A row whose window has no resolvable id refuses to close and
+    refreshes the list, rather than risking the wrong window (#1965)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    calls = {"close": 0, "list": 0}
+
+    async def _terms_no_id(*a, **k):
+        calls["list"] += 1
+        return [
+            {"index": 0, "name": "main", "id": "@0"},
+            {"index": 1, "name": "build"},  # no id — contract violation
+        ]
+
+    async def _close(name, window_id):
+        calls["close"] += 1
+        return []
+
+    st = _ws(list_terminals=_terms_no_id, close_terminal=_close)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        d.query_one("#term_list").index = 1
+        before = calls["list"]
+        d.action_delete_terminal()
+        for _ in range(4):
+            await pilot.pause()
+        # No close sent, and the list was refreshed.
+        assert calls["close"] == 0
+        assert calls["list"] > before
+        assert "no longer exists" in str(d.query_one("#detail_msg").render())
+
+
+async def test_detail_delete_terminal_refreshes_on_server_failure(
+    monkeypatch,
+):
+    """A close that fails server-side (id gone) refreshes the list so the
+    dead row self-heals (#1965)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    calls = {"list": 0}
+
+    async def _tracked_terms(*a, **k):
+        calls["list"] += 1
+        return await _async_terms(*a, **k)
+
+    async def _close(name, window_id):
+        raise RuntimeError("no such window")
+
+    st = _ws(list_terminals=_tracked_terms, close_terminal=_close)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        before = calls["list"]
+        await d._do_delete_terminal("@1")
+        assert "Delete failed" in str(d.query_one("#detail_msg").render())
+        # Failure triggered a refresh.
+        assert calls["list"] > before
 
 
 async def test_detail_delete_terminal_shows_inflight_msg(monkeypatch):
@@ -4876,7 +4958,7 @@ async def test_detail_delete_terminal_shows_inflight_msg(monkeypatch):
 
     gate = asyncio.Event()
 
-    async def _close(name, index):
+    async def _close(name, window_id):
         await gate.wait()
         return [{"index": 0, "name": "main", "id": "@0"}]
 
@@ -4897,21 +4979,23 @@ async def test_detail_delete_terminal_shows_inflight_msg(monkeypatch):
         # message must already be visible.
         for _ in range(3):
             await pilot.pause()
-        assert "Deleting terminal 1" in str(
+        assert "Deleting terminal @1" in str(
             d.query_one("#detail_msg").render()
         )
         # Releasing the close call replaces it with the success message.
         gate.set()
         for _ in range(3):
             await pilot.pause()
-        assert "Deleted terminal 1" in str(d.query_one("#detail_msg").render())
+        assert "Deleted terminal @1" in str(
+            d.query_one("#detail_msg").render()
+        )
 
 
 async def test_detail_delete_terminal_failure(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    async def _close(name, index):
+    async def _close(name, window_id):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
@@ -4925,7 +5009,7 @@ async def test_detail_delete_terminal_failure(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
-        await d._do_delete_terminal(1)  # close raises
+        await d._do_delete_terminal("@1")  # close raises
         await app.workers.wait_for_complete()
         assert "Delete failed" in str(d.query_one("#detail_msg").render())
 
@@ -5239,7 +5323,7 @@ async def test_detail_delete_terminal_empty_result(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    async def _close(name, index):
+    async def _close(name, window_id):
         return []  # close / refresh failed
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
@@ -5253,7 +5337,7 @@ async def test_detail_delete_terminal_empty_result(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
-        await d._do_delete_terminal(1)
+        await d._do_delete_terminal("@1")
         await app.workers.wait_for_complete()
         assert "Delete failed" in str(d.query_one("#detail_msg").render())
         assert (
