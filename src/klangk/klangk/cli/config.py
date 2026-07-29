@@ -164,6 +164,27 @@ class CLIConfig:
         return self.ws_max_size or _DEFAULT_WS_MAX_SIZE
 
 
+def ensure_config() -> None:
+    """Create a default klangk.yaml if one doesn't already exist.
+
+    Called early on every CLI invocation so the config file is always
+    present, even before the user logs in.
+    """
+    if _CONFIG_PATH.exists():
+        return
+    header = (
+        "# SSH agent forwarding is OFF by default. Uncomment the line below to\n"
+        "# enable it for all servers. Only enable forwarding on hosts you\n"
+        "# trust: while forwarded, anyone who can reach the agent socket on\n"
+        "# the remote host can authenticate as you with your loaded SSH keys\n"
+        "# for the duration of the session.\n"
+        "# See docs/features/ssh-agent-forwarding.md.\n"
+        "# forward-agent: true\n\n"
+    )
+    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _CONFIG_PATH.write_text(header + "servers: {}\n")
+
+
 def seed_config(server_url: str, user: str | None = None) -> None:
     """Create klangk.yaml with an initial server entry if it doesn't exist."""
     if _CONFIG_PATH.exists():

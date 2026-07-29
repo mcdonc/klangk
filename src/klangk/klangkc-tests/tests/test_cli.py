@@ -21,6 +21,7 @@ from klangk.cli.config import (
     ServerState,
     UserEntry,
     _DEFAULT_WS_MAX_SIZE,
+    ensure_config,
     seed_config,
 )
 from klangk.cli.client import (
@@ -275,6 +276,36 @@ class TestSeedConfig:
         cfg = CLIConfig.load()
         assert cfg.forward_agent is None
         assert "localhost" in cfg.servers
+
+
+# --- ensure_config tests ---
+
+
+class TestEnsureConfig:
+    def test_creates_config_if_missing(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "sub" / "klangk.yaml"
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        ensure_config()
+        assert config_path.exists()
+        text = config_path.read_text()
+        assert "# forward-agent: true" in text
+        assert "servers: {}" in text
+        cfg = CLIConfig.load()
+        assert cfg.servers == {}
+
+    def test_does_not_overwrite_existing(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "klangk.yaml"
+        config_path.write_text("forward-agent: true\n")
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        ensure_config()
+        assert "forward-agent: true" in config_path.read_text()
+
+    def test_parent_dir_created_with_0o700(self, tmp_path, monkeypatch):
+        config_dir = tmp_path / "newdir"
+        config_path = config_dir / "klangk.yaml"
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        ensure_config()
+        assert config_dir.stat().st_mode & 0o777 == 0o700
 
 
 # --- CLIState tests ---
