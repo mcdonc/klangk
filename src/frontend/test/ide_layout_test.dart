@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:klangk_frontend/chat/workspace_chat.dart';
 import 'package:klangk_frontend/layout/ide_layout.dart';
 import 'package:klangk_frontend/widgets/skeuo_tab.dart';
 
@@ -87,7 +86,6 @@ void main() {
   Widget buildLayout({
     Widget? fileViewer,
     Widget? terminal,
-    Widget? chat,
     Widget? settings,
     Widget? sharing,
     Widget? debug,
@@ -100,7 +98,6 @@ void main() {
           child: IdeLayout(
             fileViewer: fileViewer ?? const Text('Files'),
             terminal: terminal ?? const Text('Terminal'),
-            chat: chat ?? const Text('Chat'),
             sharing: sharing,
             settings: settings,
             debug: debug ?? const Text('Debug'),
@@ -241,25 +238,8 @@ void main() {
       expect(resizeRow.length, 0);
     });
 
-    testWidgets('has Chat tab', (tester) async {
-      await tester.pumpWidget(buildLayout());
-      expect(find.text('Chat'), findsWidgets);
-    });
-
-    testWidgets('chat tab content is visible after switch', (tester) async {
-      await tester.pumpWidget(buildLayout(
-        terminal: const Text('TERMINAL_CONTENT'),
-        fileViewer: const Text('FILES_CONTENT'),
-        chat: const Text('CHAT_CONTENT'),
-      ));
-
-      await tester.tap(find.text('Chat'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('CHAT_CONTENT'), findsOneWidget);
-    });
-
-    testWidgets('no chat tab when chat is null', (tester) async {
+    testWidgets('no Chat tab when no feature tabs are provided',
+        (tester) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -303,21 +283,6 @@ void main() {
       expect(find.text('Settings'), findsNothing);
     });
 
-    testWidgets('switching to settings tab with chat present', (tester) async {
-      await tester.pumpWidget(buildLayout(
-        chat: const Text('CHAT'),
-        settings: const Text('SETTINGS'),
-      ));
-      // Switch to Settings (tab index 3: Terminal=0, Files=1, Chat=2, Settings=3)
-      await tester.tap(find.text('Settings'));
-      await tester.pumpAndSettle();
-      expect(find.text('SETTINGS'), findsOneWidget);
-      // Switch back to Chat
-      await tester.tap(find.text('Chat'));
-      await tester.pumpAndSettle();
-      expect(find.text('CHAT'), findsOneWidget);
-    });
-
     testWidgets('has Sharing tab when sharing provided', (tester) async {
       await tester.pumpWidget(buildLayout(
         sharing: const Text('SHARING_CONTENT'),
@@ -349,39 +314,6 @@ void main() {
       );
       await tester.tap(terminalTab.first);
       await tester.pumpAndSettle();
-      expect(find.byType(IdeLayout), findsOneWidget);
-    });
-
-    testWidgets('chat tab calls setVisible on chatKey', (tester) async {
-      final chatKey = GlobalKey<WorkspaceChatState>();
-      // We need a real WorkspaceChat with a WsClient for the key to work.
-      // Instead, just verify the tab switching code path runs without error
-      // by passing a chatKey that has no current state.
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SizedBox(
-              width: 1280,
-              height: 720,
-              child: IdeLayout(
-                fileViewer: const Text('Files'),
-                terminal: const Text('Terminal'),
-                chat: const Text('Chat Content'),
-                chatKey: chatKey,
-              ),
-            ),
-          ),
-        ),
-      );
-
-      // Switch to Chat tab (index 2) — chatKey.currentState is null, no crash
-      await tester.tap(find.text('Chat'));
-      await tester.pumpAndSettle();
-
-      // Switch back to Terminal — chatKey.currentState is null, no crash
-      await tester.tap(find.text('Terminal'));
-      await tester.pumpAndSettle();
-
       expect(find.byType(IdeLayout), findsOneWidget);
     });
   });

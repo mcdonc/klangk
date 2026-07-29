@@ -375,6 +375,13 @@ class Connection:
 
     async def _send_chat_history(self, workspace_id: str) -> None:
         """Send chat history to the connecting user."""
+        # Read-path perm gate (#1976): a user without the ``chat`` perm gets no
+        # chat history on connect, mirroring the send-path gate on
+        # handle_chat_send. The frontend used to hide the chat panel for such
+        # users; now that chat is a feature tab, gate the data too so a
+        # no-perm user can't read history even with the tab visible.
+        if not await self._has_perm("chat"):
+            return
         chat_history = await self.app.state.model.chat.get_chat_messages(
             workspace_id
         )
@@ -756,6 +763,11 @@ class Connection:
     async def handle_chat_load_more(self, msg: dict) -> None:
         workspace_id = self.workspace_id
         if not workspace_id:
+            return
+        # Read-path perm gate (#1976): no chat-history pagination without
+        # the ``chat`` perm (mirrors handle_chat_send).
+        if not await self._has_perm("chat"):
+            send_error(self.sock, "chat_load_more requires chat permission")
             return
         before_id = msg.get("before_id", "")
         if not before_id:

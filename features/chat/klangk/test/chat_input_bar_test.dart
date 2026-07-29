@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:klangk_frontend/chat/chat_input_bar.dart';
+import 'package:klangk_feature_chat/chat_input_bar.dart';
 
 void main() {
   group('ChatInputBar', () {

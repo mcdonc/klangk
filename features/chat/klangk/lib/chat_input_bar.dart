@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
     show HardwareKeyboard, KeyDownEvent, KeyRepeatEvent, LogicalKeyboardKey;
-import '../theme/colors.dart';
+import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 /// Chat text input with send/abort buttons, @mention autocomplete,
 /// emacs keybindings, and sent-message history recall.

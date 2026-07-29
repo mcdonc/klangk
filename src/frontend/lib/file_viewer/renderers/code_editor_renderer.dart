@@ -2,7 +2,6 @@ import 'package:code_forge_web/code_forge_web.dart';
 import 'package:flutter/material.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
-import '../../theme/colors.dart';
 import 'code_renderer.dart' show isCodeExtension;
 
 /// Editable code view via `code_forge_web` (the web-compatible CodeForge

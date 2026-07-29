@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:klangk_frontend/chat/chat_presence_bar.dart';
+import 'package:klangk_feature_chat/chat_presence_bar.dart';
 
 void main() {
   Widget buildBar({

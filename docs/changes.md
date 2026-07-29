@@ -27,6 +27,16 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`chat` feature — workspace chat surface extracted into a compiled-in,
+  opt-in feature (#1976).** The chat tab + clanker agent UI moved out of the
+  host frontend into `features/chat/`, registered as a workspace tab via the
+  feature-tab framework (#1975). To carry the chat's rich integration
+  (unread badge, mention highlight, mark-read-on-view, focus-on-select)
+  across the package boundary, the tab framework gained a strip-badge channel
+  and a visibility hook (`klangk_plugin_api` v0.5.0:
+  `WorkspaceTabPlugin.badge` + `.setVisible`). Declares
+  `KLANGKWS_FEATURE_CHAT_AGENT_ENABLED` / `_EMAIL` / `_HANDLE` (scope `both`).
+
 - **Feature-contributed workspace tabs (#1975).** A feature can now
   contribute a workspace tab (mounted in the workspace tab strip) by
   declaring a `WorkspaceTabPlugin` (title + icon + builder), separately
@@ -533,6 +543,13 @@ invitations send` stay email-only (a deliverable address is required);
   set (#1558).
 
 ### Changed
+
+- **The workspace chat tab is now opt-in (#1976).** The chat surface moved
+  into the compiled-in `chat` feature, which is **dormant by default** — the
+  chat tab no longer appears unless the deploy sets
+  `KLANGKD_FEATURES_ENABLE=chat`. (Previously the chat tab was always present,
+  permission-gated.) `klangk_plugin_api` bumped to v0.5.0 (adds
+  `WorkspaceTabPlugin.badge` + `.setVisible`).
 
 - **`klangkd.yaml.example` renamed to `klangkd.yaml.devenv` (#1504).** The
   repo-root template is devenv-only (its `state_dir`/`data_dir` are
@@ -1154,6 +1171,15 @@ set-password <email>` (set a known password for the default user — whose
   over TCP directly but are unused under `klangkd`.
 
 ### Fixed
+
+- **Chat read paths now require the `chat` permission (#1976).** When the
+  chat surface moved into the (deploy-wide) `chat` feature tab, the
+  per-user `_hasPerm('chat')` gate that hid the panel was lost. The send
+  path was already gated, but chat history (sent on connect) and
+  `chat_load_more` were not — so a user without `chat` could read full
+  history + paginate older messages. Both read paths now check `_has_perm
+("chat")` and deny without it (the frontend tab is still visible to such
+  a user but receives no data).
 
 - **TUI: closing/deleting a terminal in the workspace detail screen
   now targets the window by its stable id (`@N`) instead of the row

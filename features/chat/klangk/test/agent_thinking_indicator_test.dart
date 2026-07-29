@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:klangk_frontend/chat/agent_thinking_indicator.dart';
+import 'package:klangk_feature_chat/agent_thinking_indicator.dart';
 
 void main() {
   group('AgentThinkingIndicator', () {

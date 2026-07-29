@@ -6,7 +6,6 @@ import 'auth/auth_service.dart';
 import 'branding.dart';
 import 'utils/web_helpers_stub.dart'
     if (dart.library.js_interop) 'utils/web_helpers_web.dart';
-import 'theme/colors.dart';
 import 'admin/admin_users_page.dart';
 import 'auth/consent_page.dart';
 import 'auth/login_page.dart';

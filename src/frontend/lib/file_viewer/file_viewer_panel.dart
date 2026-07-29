@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import '../theme/colors.dart';
 import 'package:http/http.dart' as http;
 import '../ws/ws_client.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';

@@ -2,16 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../terminal/ghostty_terminal.dart';
 import '../file_viewer/file_viewer_panel.dart';
-import '../chat/workspace_chat.dart';
-import '../theme/colors.dart';
 import '../widgets/skeuo_tab.dart';
 
-/// IDE layout: tabs (Terminal + Files + Chat) with optional
+/// IDE layout: tabs (Terminal + Files + feature-contributed tabs) with optional
 /// debug pane at the bottom separated by a draggable divider.
 class IdeLayout extends StatefulWidget {
   final Widget fileViewer;
   final Widget terminal;
-  final Widget? chat;
   final Widget? settings;
   final Widget? sharing;
   final Widget? debug;
@@ -21,11 +18,8 @@ class IdeLayout extends StatefulWidget {
   /// are passed in (the active-set filter lives in main.dart, which registers
   /// into WorkspaceTabRegistry). Defaults to none.
   final List<WorkspaceTabPlugin> featureTabs;
-  final int chatUnread;
-  final bool chatMentioned;
   final GlobalKey<GhosttyTerminalState>? terminalKey;
   final GlobalKey<FileViewerPanelState>? fileViewerKey;
-  final GlobalKey<WorkspaceChatState>? chatKey;
 
   /// Deep-linked workspace-relative file to open in the Files tab on load (and
   /// whenever it changes). Null/empty (with no [initialDir]) shows Terminal.
@@ -39,16 +33,12 @@ class IdeLayout extends StatefulWidget {
     super.key,
     required this.fileViewer,
     required this.terminal,
-    this.chat,
     this.settings,
     this.sharing,
     this.debug,
     this.featureTabs = const [],
-    this.chatUnread = 0,
-    this.chatMentioned = false,
     this.terminalKey,
     this.fileViewerKey,
-    this.chatKey,
     this.initialFile,
     this.initialDir,
   });
@@ -61,6 +51,16 @@ class IdeLayoutState extends State<IdeLayout> {
   int _selectedIndex = 0;
   double _debugHeight = 0; // collapsed by default
 
+  // Feature-tab badge subscriptions (#1976): a feature tab may expose a live
+  // badge (unread count) via WorkspaceTabPlugin.badge. We listen and rebuild
+  // the strip on change. Map key is the tab (identity-stable from the
+  // registry); value is the listener we add/remove.
+  final Map<WorkspaceTabPlugin, VoidCallback> _badgeListeners = {};
+  // Index of the first feature-contributed tab in the strip, set during
+  // _buildTabsAndContent so _selectTab can map a selected index back to a
+  // feature tab for setVisible.
+  int _featureTabStart = -1;
+
   static const _dividerHeight = 6.0;
   static const _minDebugHeight = 0.0;
   static const _maxDebugHeight = 500.0;
@@ -68,6 +68,7 @@ class IdeLayoutState extends State<IdeLayout> {
   @override
   void initState() {
     super.initState();
+    _subscribeFeatureBadges();
     // Focus the pane shown first (Terminal by default) so the user can type
     // immediately on workspace open, without an extra click into it.
     _focusPane(_selectedIndex);
@@ -80,6 +81,69 @@ class IdeLayoutState extends State<IdeLayout> {
     if (widget.initialFile != oldWidget.initialFile ||
         widget.initialDir != oldWidget.initialDir) {
       _maybeOpenInitial();
+    }
+    // Re-subscribe only when the featureTabs LIST identity changes. This
+    // holds because workspace_page captures _featureTabs once in initState
+    // (WorkspaceTabRegistry().tabs) and reuses that same list instance on
+    // every rebuild. If a future change recomputes featureTabs per build,
+    // switch to a content-based comparison — re-subscribing every frame
+    // would churn (#1976 review nit).
+    if (!identical(widget.featureTabs, oldWidget.featureTabs)) {
+      _subscribeFeatureBadges();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposeFeatureBadgeListeners();
+    super.dispose();
+  }
+
+  /// Subscribe to feature tabs' badge [ValueListenable]s so the strip
+  /// rebuilds when a badge (e.g. unread count) changes. Idempotent: tabs
+  /// already subscribed are skipped; subs for tabs no longer present are
+  /// dropped.
+  void _subscribeFeatureBadges() {
+    final present = <WorkspaceTabPlugin>{};
+    for (final tab in widget.featureTabs) {
+      present.add(tab);
+      final badge = tab.badge;
+      if (badge == null) continue;
+      if (_badgeListeners.containsKey(tab)) continue;
+      final listener = () {
+        if (mounted) setState(() {});
+      };
+      _badgeListeners[tab] = listener;
+      badge.addListener(listener);
+    }
+    for (final tab in _badgeListeners.keys.toList()) {
+      if (!present.contains(tab)) {
+        tab.badge?.removeListener(_badgeListeners.remove(tab)!);
+      }
+    }
+  }
+
+  void _disposeFeatureBadgeListeners() {
+    for (final entry in _badgeListeners.entries) {
+      entry.key.badge?.removeListener(entry.value);
+    }
+    _badgeListeners.clear();
+  }
+
+  /// Notify feature tabs of visibility on select/deselect (#1976): the tab
+  /// being left gets setVisible(false), the tab being shown gets
+  /// setVisible(true) (so e.g. the chat marks messages read + focuses input).
+  void _notifyFeatureTabVisibility(int oldIndex, int newIndex) {
+    final start = _featureTabStart;
+    if (start < 0) return;
+    final tabs = widget.featureTabs;
+    if (tabs.isEmpty) return;
+    final end = start + tabs.length;
+    if (oldIndex >= start && oldIndex < end) {
+      tabs[oldIndex - start].setVisible(false);
+    }
+    if (newIndex >= start && newIndex < end) {
+      tabs[newIndex - start].setVisible(true);
     }
   }
 
@@ -115,33 +179,28 @@ class IdeLayoutState extends State<IdeLayout> {
   }
 
   void _selectTab(int index) {
-    final changed = index != _selectedIndex;
+    final oldIndex = _selectedIndex;
+    final changed = index != oldIndex;
     if (changed) {
       setState(() => _selectedIndex = index);
       if (index == 1) {
         widget.fileViewerKey?.currentState?.refresh();
       }
-      // Notify chat widget of visibility change.
-      final chatIdx = widget.chat != null ? 2 : -1;
-      widget.chatKey?.currentState?.setVisible(index == chatIdx);
+      // Feature-tab visibility (#1976).
+      _notifyFeatureTabVisibility(oldIndex, index);
     }
     // Always (re)focus the tab's input — even when re-clicking the already
     // active tab — so clicking Terminal/Chat returns focus to its input.
     _focusPane(index);
   }
 
-  /// Focuses the input of the pane at [index] (Terminal or Chat). Deferred to
-  /// after the frame so the target's FocusNode is attached and the pane is
-  /// visible in the IndexedStack before we request focus.
+  /// Focuses the Terminal input. Feature tabs focus themselves via
+  /// [WorkspaceTabPlugin.setVisible] when selected (#1976).
   void _focusPane(int index) {
-    final chatIdx = widget.chat != null ? 2 : -1;
+    if (index != 0) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (index == 0) {
-        widget.terminalKey?.currentState?.requestFocus();
-      } else if (index == chatIdx) {
-        widget.chatKey?.currentState?.requestFocus();
-      }
+      widget.terminalKey?.currentState?.requestFocus();
     });
   }
 
@@ -191,21 +250,22 @@ class IdeLayoutState extends State<IdeLayout> {
       content.add(Container(color: KColors.bgCanvas, child: child));
     }
 
-    if (widget.chat != null) {
-      addTab(
-        'Chat',
-        Icons.chat_outlined,
-        widget.chat!,
-        badge: widget.chatUnread > 0 ? widget.chatUnread : null,
-        badgeHighlight: widget.chatMentioned,
-      );
-    }
     // Feature-contributed workspace tabs (#1975). Mounted after the built-in
-    // content tabs (Terminal/Files/Chat) so chat stays at its hardcoded index
-    // (see _selectTab), and before config tabs (Sharing/Settings). Each tab's
-    // feature is already active-filtered before it reaches here.
+    // content tabs (Terminal/Files) and before config tabs
+    // (Sharing/Settings). Each tab's feature is already active-filtered
+    // before it reaches here. A tab may expose a live badge (#1976).
+    _featureTabStart = tabs.length;
     for (final tab in widget.featureTabs) {
-      addTab(tab.title, tab.icon, tab.build(context));
+      final badgeValue = tab.badge?.value;
+      addTab(
+        tab.title,
+        tab.icon,
+        tab.build(context),
+        badge: (badgeValue != null && badgeValue.count > 0)
+            ? badgeValue.count
+            : null,
+        badgeHighlight: badgeValue?.highlight ?? false,
+      );
     }
     if (widget.sharing != null) {
       addTab('Sharing', Icons.people_outline, widget.sharing!);

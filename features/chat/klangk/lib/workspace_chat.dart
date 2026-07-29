@@ -1,17 +1,25 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../ws/ws_client.dart';
-import '../theme/colors.dart';
-import '../auth/auth_service.dart';
+import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'agent_thinking_indicator.dart';
 import 'chat_input_bar.dart';
 import 'chat_message_list.dart';
 import 'chat_presence_bar.dart';
 
 /// Per-workspace real-time chat panel.
+///
+/// Consumes the chat surface as a [ChatServices] (the host's WS client) and
+/// the current user id, both supplied by the host via [WorkspaceServices] —
+/// so this widget lives in the feature package without importing the host
+/// app (#1976). Unread/mention changes bubble to the parent (the [ChatTab])
+/// via [onUnreadChanged]/[onMentionChanged], which translates them into the
+/// tab's strip badge.
 class WorkspaceChat extends StatefulWidget {
-  final WsClient wsClient;
+  /// The chat surface (send/receive + presence), provided by the host.
+  final ChatServices chat;
+
+  /// The current user's id (for own-message + mention detection).
+  final String? currentUserId;
 
   /// Called when the unread message count changes.
   final ValueChanged<int>? onUnreadChanged;
@@ -21,7 +29,8 @@ class WorkspaceChat extends StatefulWidget {
 
   const WorkspaceChat({
     super.key,
-    required this.wsClient,
+    required this.chat,
+    required this.currentUserId,
     this.onUnreadChanged,
     this.onMentionChanged,
   });
@@ -51,13 +60,13 @@ class WorkspaceChatState extends State<WorkspaceChat> {
   @override
   void initState() {
     super.initState();
-    if (widget.wsClient.chatHistory.isNotEmpty) {
-      _messages.addAll(widget.wsClient.chatHistory);
+    if (widget.chat.chatHistory.isNotEmpty) {
+      _messages.addAll(widget.chat.chatHistory);
     }
-    _chatSub = widget.wsClient.chatMessages.listen(_onMessage);
-    _historyPageSub = widget.wsClient.chatHistoryPages.listen(_onHistoryPage);
+    _chatSub = widget.chat.chatMessages.listen(_onMessage);
+    _historyPageSub = widget.chat.chatHistoryPages.listen(_onHistoryPage);
     _scrollController.addListener(_onScroll);
-    widget.wsClient.addListener(_onPresenceChanged);
+    widget.chat.addListener(_onPresenceChanged);
     if (_messages.isNotEmpty) {
       _scrollToBottom();
     }
@@ -129,8 +138,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
 
       final mentions = msg['mentions'] as List?;
       if (mentions != null && !_hasMention) {
-        final currentUserId = context.read<AuthService>().userId;
-        if (mentions.contains(currentUserId)) {
+        if (mentions.contains(widget.currentUserId)) {
           _hasMention = true;
           widget.onMentionChanged?.call(true);
         }
@@ -162,7 +170,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
     final oldestId = _messages.first['id'] as String?;
     if (oldestId == null) return;
     setState(() => _loadingOlder = true);
-    widget.wsClient.sendChatLoadMore(oldestId);
+    widget.chat.sendChatLoadMore(oldestId);
   }
 
   void _onHistoryPage(Map<String, dynamic> page) {
@@ -205,11 +213,11 @@ class WorkspaceChatState extends State<WorkspaceChat> {
   }
 
   void _onSendText(String text) {
-    widget.wsClient.sendChatMessage(text);
+    widget.chat.sendChatMessage(text);
   }
 
   void _onDeleteMessage(String messageId) {
-    widget.wsClient.sendChatDelete(messageId);
+    widget.chat.sendChatDelete(messageId);
   }
 
   void _onToggleExpand(String messageId) {
@@ -224,7 +232,7 @@ class WorkspaceChatState extends State<WorkspaceChat> {
 
   @override
   void dispose() {
-    widget.wsClient.removeListener(_onPresenceChanged);
+    widget.chat.removeListener(_onPresenceChanged);
     _chatSub?.cancel();
     _historyPageSub?.cancel();
     _scrollController.removeListener(_onScroll);
@@ -234,15 +242,14 @@ class WorkspaceChatState extends State<WorkspaceChat> {
 
   @override
   Widget build(BuildContext context) {
-    final auth = context.read<AuthService>();
-    final currentUserId = auth.userId;
+    final currentUserId = widget.currentUserId;
 
     return Container(
       color: KColors.bgCanvas,
       child: Column(
         children: [
           ChatPresenceBar(
-            users: widget.wsClient.presenceUsers,
+            users: widget.chat.presenceUsers,
             currentUserId: currentUserId,
           ),
           ChatMessageList(
@@ -259,8 +266,8 @@ class WorkspaceChatState extends State<WorkspaceChat> {
             key: _inputBarKey,
             onSendText: _onSendText,
             agentThinking: _agentThinking,
-            onAbort: () => widget.wsClient.sendChatAgentAbort(),
-            members: widget.wsClient.mentionCandidates,
+            onAbort: () => widget.chat.sendChatAgentAbort(),
+            members: widget.chat.mentionCandidates,
           ),
         ],
       ),

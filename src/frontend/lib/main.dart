@@ -8,6 +8,7 @@ import 'package:klangk_features/klangk_features.dart';
 import 'package:provider/provider.dart';
 import 'app.dart';
 import 'auth/auth_service.dart';
+import 'workspace/host_services.dart';
 import 'workspace_tab_filter.dart';
 import 'ws/ws_client.dart';
 import 'utils/web_helpers_stub.dart'
@@ -67,6 +68,17 @@ Future<void> main() async {
         ChangeNotifierProxyProvider<AuthService, WsClient>(
           create: (_) => WsClient(),
           update: (_, auth, client) => client!..updateAuth(auth),
+        ),
+        // Built once: WsClient and AuthService are stable singletons (their
+        // providers create one instance and mutate it in place), so an adapter
+        // holding references to them is valid for the app lifetime. Provider
+        // (not ProxyProvider2) avoids reallocating it on every WsClient
+        // notifyListeners (#1976 review nit).
+        Provider<WorkspaceServices>(
+          create: (ctx) => HostWorkspaceServices(
+            ctx.read<WsClient>(),
+            ctx.read<AuthService>(),
+          ),
         ),
       ],
       child: KlangkApp(initialLocation: initialLocation),

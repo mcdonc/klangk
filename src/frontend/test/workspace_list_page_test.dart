@@ -10,7 +10,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_frontend/workspace/workspace_list_page.dart';
 import 'package:klangk_frontend/workspace/import_workspace_dialog.dart';
-import 'package:klangk_frontend/theme/colors.dart';
 import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_frontend/widgets/klangk_logo.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';

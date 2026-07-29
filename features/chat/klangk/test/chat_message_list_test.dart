@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:klangk_frontend/chat/chat_message_list.dart';
+import 'package:klangk_feature_chat/chat_message_list.dart';
 import 'package:markdown/markdown.dart' as md;
 
 String? _findMarkdownData(WidgetTester tester) {

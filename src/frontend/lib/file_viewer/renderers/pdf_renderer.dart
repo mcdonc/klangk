@@ -3,8 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
-import '../../theme/colors.dart';
-
 /// Views `.pdf` files via `pdfrx` (pdfium; wasm on web). Reads bytes lazily and
 /// offers simple prev/next page navigation.
 class PdfRenderer extends FileRenderer {
