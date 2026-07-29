@@ -67,8 +67,13 @@ class ChatTab extends WorkspaceTabPlugin {
     if (visible) state.requestFocus();
   }
 
+  /// No-op by design. [ChatTab] is a singleton — registered once into
+  /// [WorkspaceTabRegistry] in main() and reused across workspace pages — so
+  /// [_badge] is app-lifetime. `WorkspacePage.dispose()` calls `dispose()` on
+  /// every workspace close; disposing [_badge] here would break the *next*
+  /// workspace's IdeLayout badge subscription (a ValueNotifier used after
+  /// dispose). IdeLayout owns and cleans up its own per-page badge listeners
+  /// (`_disposeFeatureBadgeListeners`), so there is nothing to release here.
   @override
-  void dispose() {
-    _badge.dispose();
-  }
+  void dispose() {}
 }

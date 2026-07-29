@@ -59,6 +59,18 @@ void main() {
       expect(tab.badge!.value, isNull);
     });
 
+    test('dispose() leaves the badge usable (singleton reused per-workspace)',
+        () {
+      // WorkspacePage.dispose() calls tab.dispose() on every workspace close,
+      // but ChatTab is a singleton reused across pages — disposing _badge
+      // would break the next workspace's IdeLayout badge subscription
+      // (use-after-dispose: addListener on a disposed notifier throws).
+      final tab = ChatTab();
+      tab.dispose();
+      expect(tab.badge, isNotNull);
+      expect(() => tab.badge!.addListener(() {}), returnsNormally);
+    });
+
     testWidgets('renders WorkspaceChat when chat is available', (tester) async {
       final chat = _FakeChat();
       await tester.pumpWidget(
