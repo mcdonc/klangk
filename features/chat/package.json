@@ -11,12 +11,12 @@
       },
       "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL": {
         "description": "The email address the clanker agent acts as, when enabled.",
-        "default": "",
+        "default": "clanker@example.com",
         "scope": "both"
       },
       "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE": {
         "description": "The @-handle the clanker agent uses in chat, when enabled.",
-        "default": "",
+        "default": "clanker",
         "scope": "both"
       }
     }

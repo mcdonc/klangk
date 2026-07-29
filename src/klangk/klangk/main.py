@@ -315,9 +315,13 @@ class Lifecycle:
         letting a bare ``IntegrityError`` abort startup mid-sequence.
         See #1137.
         """
-        settings = self.app.state.settings
-        email = settings.agent_email
-        handle = settings.agent_handle
+        # Agent identity comes from the chat feature's config keys
+        # (KLANGKWS_FEATURE_CHAT_AGENT_EMAIL/HANDLE), resolved via the
+        # features resolver (env → features_config → feature default) — not
+        # server settings (#1977). Read live so a SIGHUP reload propagates.
+        agent_cfg = self.app.state.features.frontend_config()
+        email = agent_cfg.get("chat_agent_email") or "clanker@example.com"
+        handle = agent_cfg.get("chat_agent_handle") or "clanker"
         async with self.app.state.db.transaction() as db:
             # Pre-check: refuse a handle already claimed by a non-agent user.
             # Runs in the same transaction as the upsert so there is no
@@ -329,8 +333,8 @@ class Lifecycle:
             if await cursor.fetchone() is not None:
                 raise RuntimeError(
                     f"Cannot seed chat agent: handle {handle!r} is already"
-                    " used by another user. Set KLANGKD_AGENT_HANDLE to a"
-                    " unique value."
+                    " used by another user. Set "
+                    "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE to a unique value."
                 )
             await db.execute(
                 "INSERT INTO users (id, email, password_hash, verified,"

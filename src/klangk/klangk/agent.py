@@ -99,17 +99,26 @@ class Agents:
         self.app = app
 
     def is_disabled(self) -> bool:
-        """True if the chat agent has been disabled by an admin.
+        """True if the chat agent is disabled for this deploy.
 
-        When disabled, the ``pi --mode rpc`` subprocess is never spawned —
-        see ``AgentSession.ensure_started``, which consults this before
-        creating the process.
+        The agent is opt-in (#1977): the ``pi --mode rpc`` subprocess spawns
+        only when the ``chat`` feature is active **and** the operator has
+        enabled it via ``KLANGKWS_FEATURE_CHAT_AGENT_ENABLED``. Both are read
+        live off ``app.state.features`` (the resolver) — app ownership rule,
+        no cached ``settings`` snapshot. A SIGHUP reload re-resolves the
+        ``features_config:`` block of ``klangkd.yaml`` and the manifest
+        (so a handle change set there propagates after the re-seed);
+        env-sourced values are fixed at process start, so changing
+        ``KLANGKWS_FEATURE_CHAT_AGENT_*`` in the process environment needs a
+        full restart. ``AgentSession.ensure_started`` is the single
+        enforcement point that consults this.
         """
-        return self.app.state.settings.agent_disabled.strip().lower() in (
-            "1",
-            "true",
-            "yes",
-        )
+        features = self.app.state.features
+        if not features.is_enabled("chat"):
+            return True
+        return features.frontend_config().get(
+            "chat_agent_enabled", ""
+        ).strip().lower() not in ("1", "true", "yes")
 
     async def ensure_agent_home(
         self, workspace_id: str, container_id: str

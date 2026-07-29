@@ -102,3 +102,15 @@ def wire_db_and_model(app) -> None:
         state.model = Model(app)
     if getattr(state, "acl", None) is None:
         state.acl = ACL(app)
+    if getattr(state, "features", None) is None:
+        # #1977: agent.is_disabled + seed_agent_user read app.state.features
+        # (is_enabled + frontend_config). A benign default mock so test app
+        # states that don't care about features still satisfy those reads;
+        # tests that do (e.g. the agent-disabled / config suites) configure
+        # it explicitly.
+        from unittest.mock import MagicMock
+
+        features = MagicMock()
+        features.is_enabled.return_value = True
+        features.frontend_config.return_value = {}
+        state.features = features

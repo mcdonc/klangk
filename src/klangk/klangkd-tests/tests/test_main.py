@@ -103,6 +103,18 @@ def _lifecycle(settings):
     return main.Lifecycle(app)
 
 
+def _lifecycle_with_agent_handle(handle, email="clanker@example.com"):
+    """A Lifecycle whose chat feature resolves a custom agent handle/email
+    (KLANGKWS_FEATURE_CHAT_AGENT_HANDLE/EMAIL) — for seed-collision tests
+    where the agent handle must collide with a human's (#1977)."""
+    lc = _lifecycle(make_settings({}))
+    lc.app.state.features.frontend_config.return_value = {
+        "chat_agent_handle": handle,
+        "chat_agent_email": email,
+    }
+    return lc
+
+
 # --- Seed default user ---
 
 
@@ -637,15 +649,15 @@ class TestSeedAgentUser:
         assert user["email"] == "clanker@example.com"
         assert user["handle"] == "clanker"
 
-    async def test_custom_env_vars(self, db, app_state):
-        await _lifecycle(
-            make_settings(
-                {
-                    "KLANGKD_AGENT_EMAIL": "bot@test.com",
-                    "KLANGKD_AGENT_HANDLE": "TestBot",
-                }
-            )
-        ).seed_agent_user()
+    async def test_custom_identity_from_feature_config(self, db, app_state):
+        # Custom agent email/handle come from the chat feature's config keys
+        # (KLANGKWS_FEATURE_CHAT_AGENT_EMAIL/HANDLE), not server settings (#1977).
+        lc = _lifecycle(make_settings({}))
+        lc.app.state.features.frontend_config.return_value = {
+            "chat_agent_email": "bot@test.com",
+            "chat_agent_handle": "TestBot",
+        }
+        await lc.seed_agent_user()
         user = await app_state.state.model.users.get_user_by_id(
             model.AGENT_USER_ID
         )
@@ -654,15 +666,15 @@ class TestSeedAgentUser:
         assert user["handle"] == "TestBot"
 
     async def test_upserts_existing(self, db, app_state):
+        # Seed with defaults, then re-seed with a new identity (via the
+        # feature config) — the agent row is updated.
         await _lifecycle(make_settings({})).seed_agent_user()
-        await _lifecycle(
-            make_settings(
-                {
-                    "KLANGKD_AGENT_EMAIL": "new@test.com",
-                    "KLANGKD_AGENT_HANDLE": "NewBot",
-                }
-            )
-        ).seed_agent_user()
+        lc = _lifecycle(make_settings({}))
+        lc.app.state.features.frontend_config.return_value = {
+            "chat_agent_email": "new@test.com",
+            "chat_agent_handle": "NewBot",
+        }
+        await lc.seed_agent_user()
         user = await app_state.state.model.users.get_user_by_id(
             model.AGENT_USER_ID
         )
@@ -710,9 +722,7 @@ class TestSeedAgentUser:
         )
         assert human["handle"] == "alice"
         with pytest.raises(RuntimeError, match="alice"):
-            await _lifecycle(
-                make_settings({"KLANGKD_AGENT_HANDLE": "alice"})
-            ).seed_agent_user()
+            await _lifecycle_with_agent_handle("alice").seed_agent_user()
         # Human user is untouched.
         refreshed = await app_state.state.model.users.get_user_by_id(
             human["id"]
@@ -735,9 +745,7 @@ class TestSeedAgentUser:
             "alice@example.com", "hash", verified=True
         )
         with pytest.raises(RuntimeError, match="already used by another user"):
-            await _lifecycle(
-                make_settings({"KLANGKD_AGENT_HANDLE": "alice"})
-            ).seed_agent_user()
+            await _lifecycle_with_agent_handle("alice").seed_agent_user()
         # Agent keeps its original handle; human untouched.
         agent = await app_state.state.model.users.get_user_by_id(
             model.AGENT_USER_ID
@@ -771,9 +779,7 @@ class TestSeedAgentUser:
         (home / "alice").symlink_to(f".users/{human['id']}")
 
         with pytest.raises(RuntimeError):
-            await _lifecycle(
-                make_settings({"KLANGKD_AGENT_HANDLE": "alice"})
-            ).seed_agent_user()
+            await _lifecycle_with_agent_handle("alice").seed_agent_user()
 
         # Human's files are exactly where they were — nothing migrated.
         assert (human_dir / "secret.txt").read_text() == "alice's secrets"
@@ -1267,37 +1273,86 @@ class TestStartupShutdownRestart:
         # Build new settings from the same env as old so only
         # reloadable fields differ.
         env = dict(old._reload_env)
-        env["KLANGKD_AGENT_HANDLE"] = "newbot"
+        env["KLANGKD_FEATURES_ENABLE"] = "chat"  # reloadable (#1977)
         new = make_settings(env)
         with caplog.at_level("WARNING"):
             lc._warn_non_reloadable(old, new)
         assert "full process restart" not in caplog.text
 
     async def test_agent_handle_change_takes_effect_after_restart(
-        self, db, app_state
+        self, db, app_state, tmp_path
     ):
-        """Acceptance test: editing KLANGKD_AGENT_HANDLE + SIGHUP makes the
-        new handle the live agent handle without a process restart."""
-        app_state = _make_app_state()
-        lc = app_state.state.lifecycle
+        """Acceptance test: editing KLANGKWS_FEATURE_CHAT_AGENT_HANDLE in the
+        features_config: block + SIGHUP re-resolves the feature config and
+        re-seeds, so the new handle is live without a process restart (#1977).
 
-        # Seed the initial agent user using the test DB.
+        Uses a REAL Features resolver (with a chat manifest) — not a mock —
+        so it exercises the actual frontend_config() resolution from
+        settings.features_config."""
+        import json as json_mod
+
         from _helpers import get_test_db
 
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
         app_state.state.db = get_test_db()
         app_state.state.model = model.Model(app_state)
-        await lc.seed_agent_user()
-        old_handle = await app_state.state.model.users.agent_handle()
-        assert old_handle == "clanker"
 
-        # Simulate a config change: new settings with a different handle.
-        env = dict(app_state.state.settings._reload_env)
-        env["KLANGKD_AGENT_HANDLE"] = "newbot"
-        env["KLANGKD_AGENT_EMAIL"] = "newbot@example.com"
-        new_settings = make_settings(env)
-        await lc._apply_reloaded_settings(new_settings)
-        new_handle = await app_state.state.model.users.agent_handle()
-        assert new_handle == "newbot"
+        # Stand up a chat manifest so the resolver knows chat + the
+        # agent-identity keys (defaults: clanker / clanker@example.com).
+        frontend_dir = tmp_path / "frontend"
+        frontend_dir.mkdir()
+        (frontend_dir / "features.json").write_text(
+            json_mod.dumps(
+                {
+                    "features": [
+                        {
+                            "name": "chat",
+                            "version": "1.0.0",
+                            "description": "",
+                            "config": {
+                                "KLANGKWS_FEATURE_CHAT_AGENT_ENABLED": {
+                                    "description": "",
+                                    "default": "",
+                                    "scope": "both",
+                                },
+                                "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE": {
+                                    "description": "",
+                                    "default": "clanker",
+                                    "scope": "both",
+                                },
+                                "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL": {
+                                    "description": "",
+                                    "default": "clanker@example.com",
+                                    "scope": "both",
+                                },
+                            },
+                        }
+                    ],
+                    "defaults": [],
+                    "container_env_keys": [],
+                }
+            )
+        )
+        app_state.state.settings.frontend_dir = str(frontend_dir)
+        app_state.state.features = app_state.state.features.__class__(
+            app_state
+        )
+
+        await lc.seed_agent_user()
+        assert await app_state.state.model.users.agent_handle() == "clanker"
+
+        # Operator edits features_config: + SIGHUP: the reloaded settings
+        # carry the new handle, and apply_pending_reseed (the SIGHUP re-seed)
+        # picks it up via the live resolver (frontend_config re-reads
+        # settings.features_config each call).
+        app_state.state.settings.features_config = {
+            "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE": "newbot",
+            "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL": "newbot@example.com",
+        }
+        lc.reconfigure(app_state)  # SIGHUP flags the re-seed
+        await lc.apply_pending_reseed()
+        assert await app_state.state.model.users.agent_handle() == "newbot"
 
     async def test_on_sighup_schedules_restart(self, app_state):
         """on_sighup creates a task that runs restart_runtime."""

@@ -1286,22 +1286,22 @@ class TestReload:
     """KlangkSettings.reload() re-resolves from the same sources (#1587)."""
 
     def test_reload_returns_fresh_instance(self):
-        s = make_settings({"KLANGKD_AGENT_HANDLE": "bot1"})
+        s = make_settings({"KLANGKD_DEFAULT_USER": "bot@example.com"})
         s2 = s.reload()
         assert s2 is not s
-        assert s2.agent_handle == "bot1"
+        assert s2.default_user == "bot@example.com"
 
     def test_reload_picks_up_changed_env(self):
         env = {
             "KLANGKD_DATA_DIR": "/d",
             "KLANGKD_STATE_DIR": "/s",
-            "KLANGKD_AGENT_HANDLE": "old",
+            "KLANGKD_DEFAULT_USER": "old@example.com",
         }
         s = KlangkSettings(env)
-        env["KLANGKD_AGENT_HANDLE"] = "new"
+        env["KLANGKD_DEFAULT_USER"] = "new@example.com"
         s2 = s.reload()
-        assert s2.agent_handle == "new"
-        assert s.agent_handle == "old"
+        assert s2.default_user == "new@example.com"
+        assert s.default_user == "old@example.com"
 
     def test_reload_picks_up_features_config_block(self, tmp_path):
         # The changelog/user-facing docs claim features_config: is read at

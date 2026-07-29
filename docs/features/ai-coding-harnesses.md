@@ -46,14 +46,20 @@ Mention the agent handle in the [Chat](chat.md) panel:
 @clanker create a Python Flask app on port 8000
 ```
 
-The agent handle and email are set via environment variables and seeded
-into the database on startup. After initial seeding, the agent identity
-is read from the DB; changing the env vars updates the DB on next restart.
+The agent is **opt-in** (#1977): the `pi --mode rpc` subprocess spawns only
+when the `chat` feature is active **and** `KLANGKWS_FEATURE_CHAT_AGENT_ENABLED`
+is set. The agent's handle/email are chat-feature config keys, seeded into the
+database on startup (and re-seeded on SIGHUP); after seeding they're read from
+the DB.
 
-| Variable               | Default               |
-| ---------------------- | --------------------- |
-| `KLANGKD_AGENT_HANDLE` | `clanker`             |
-| `KLANGKD_AGENT_EMAIL`  | `clanker@example.com` |
+| Key                                   | Default               |
+| ------------------------------------- | --------------------- |
+| `KLANGKWS_FEATURE_CHAT_AGENT_ENABLED` | (unset = off)         |
+| `KLANGKWS_FEATURE_CHAT_AGENT_HANDLE`  | `clanker`             |
+| `KLANGKWS_FEATURE_CHAT_AGENT_EMAIL`   | `clanker@example.com` |
+
+See [Chat](chat.md) for full config resolution (env → `features_config:` →
+default).
 
 The agent user cannot have a password and cannot log in via credentials.
 

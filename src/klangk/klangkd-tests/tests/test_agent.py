@@ -71,6 +71,17 @@ def _make_app_state(cid="cid"):
     state.workspaces = MagicMock()
     state.files = files_mod.Files(app_state)
     state.sockets = MagicMock()
+    # #1977: agent.is_disabled reads app.state.features (is_enabled +
+    # frontend_config). MagicMock lets each test configure its return values.
+    # Default to the agent ENABLED so the spawn/session suites exercise the
+    # happy path; TestAgentDisabled overrides via _cfg.
+    state.features = MagicMock()
+    state.features.is_enabled.return_value = True
+    state.features.frontend_config.return_value = {
+        "chat_agent_enabled": "true",
+        "chat_agent_email": "clanker@example.com",
+        "chat_agent_handle": "clanker",
+    }
     # #1573: agent.py reaches app.state.model.users.agent_{handle,email}.
     state.model = MagicMock()
     state.model.users.agent_handle = AsyncMock(return_value="clanker")
@@ -131,33 +142,44 @@ _ACK = {"type": "response", "command": "prompt", "success": True}
 
 
 class TestAgentDisabled:
-    """The agent can be turned off entirely by an admin (#1138)."""
+    """The agent is opt-in (#1977): the ``pi --mode rpc`` subprocess spawns
+    only when the ``chat`` feature is active AND the operator enables it via
+    ``KLANGKWS_FEATURE_CHAT_AGENT_ENABLED``."""
 
-    async def test_is_disabled_defaults_false(self):
-        agents = _make_agents()
-        assert agents.is_disabled() is False
+    @staticmethod
+    def _cfg(agents, *, chat: bool, agent: str) -> None:
+        """Configure the features resolver mock for is_disabled()."""
+        agents.app.state.features.is_enabled.return_value = chat
+        agents.app.state.features.frontend_config.return_value = {
+            "chat_agent_enabled": agent
+        }
 
-    async def test_is_disabled_true_when_set(self):
+    async def test_disabled_by_default(self):
+        # chat active but agent-enabled unset → disabled (the agent is opt-in).
         agents = _make_agents()
-        agents.app.state.settings.agent_disabled = "1"
+        self._cfg(agents, chat=True, agent="")
         assert agents.is_disabled() is True
 
-    async def test_is_disabled_truthy_variants(self):
+    async def test_disabled_when_chat_feature_inactive(self):
         agents = _make_agents()
-        for val in ("1", "true", "YES", "True"):
-            agents.app.state.settings.agent_disabled = val
-            assert agents.is_disabled() is True, val
+        self._cfg(agents, chat=False, agent="true")
+        assert agents.is_disabled() is True
 
-    async def test_is_disabled_falsy_variants(self):
+    async def test_enabled_when_chat_active_and_agent_enabled(self):
         agents = _make_agents()
-        for val in ("0", "false", "no", ""):
-            agents.app.state.settings.agent_disabled = val
+        self._cfg(agents, chat=True, agent="true")
+        assert agents.is_disabled() is False
+
+    async def test_agent_enabled_truthy_variants(self):
+        for val in ("1", "true", "YES", "True"):
+            agents = _make_agents()
+            self._cfg(agents, chat=True, agent=val)
             assert agents.is_disabled() is False, val
 
     async def test_ensure_started_refuses_when_disabled(self):
-        """The subprocess is never spawned when disabled."""
+        """The subprocess is never spawned when disabled (chat feature off)."""
         session = _make_session("ws-disabled")
-        session.agents.app.state.settings.agent_disabled = "1"
+        self._cfg(session.agents, chat=False, agent="true")
         with patch("asyncio.create_subprocess_exec") as mock_spawn:
             with pytest.raises(AgentError, match="disabled"):
                 await session.ensure_started()
@@ -166,7 +188,7 @@ class TestAgentDisabled:
     async def test_send_prompt_raises_when_disabled(self):
         """send_prompt surfaces the disabled state, never spawns."""
         session = _make_session("ws-disabled")
-        session.agents.app.state.settings.agent_disabled = "1"
+        self._cfg(session.agents, chat=True, agent="")
         with patch("asyncio.create_subprocess_exec") as mock_spawn:
             with pytest.raises(AgentError, match="disabled"):
                 await session.send_prompt("hello")
@@ -1344,6 +1366,15 @@ class TestMonitorProcess:
         assert cid == "new-cid"
         assert session._gave_up is False
         assert session._restart_attempts == 0
+
+    async def test_resolve_container_id_raises_when_no_container(
+        self, app_state
+    ):
+        # No container running → AgentError (the guard before spawn/adoption).
+        session = _make_session("ws-nocontainer")
+        session.app.state.container_registry.get_state.return_value = None
+        with pytest.raises(AgentError, match="No container running"):
+            session._resolve_container_id()
 
     async def test_monitor_logs_stderr(self, caplog, app_state):
         import logging

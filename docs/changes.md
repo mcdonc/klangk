@@ -544,6 +544,14 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **The clanker agent is now opt-in (off by default) (#1977).** The
+  `pi --mode rpc` agent subprocess spawns only when the `chat` feature is
+  active (`KLANGKD_FEATURES_ENABLE`) **and** the operator enables it via
+  `KLANGKWS_FEATURE_CHAT_AGENT_ENABLED`. Previously the agent was on by
+  default, disableable via `KLANGKD_AGENT_DISABLED`. `/api/v1/config` now
+  reports `chat_agent_enabled` (bool) so the UI can hide `@clanker` and
+  the agent controls when it's off.
+
 - **The workspace chat tab is now opt-in (#1976).** The chat surface moved
   into the compiled-in `chat` feature, which is **dormant by default** — the
   chat tab no longer appears unless the deploy sets
@@ -851,6 +859,13 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
   recognized.
 
 ### Removed
+
+- **`KLANGKD_AGENT_DISABLED`, `KLANGKD_AGENT_EMAIL`, `KLANGKD_AGENT_HANDLE`
+  are removed (#1977).** The clanker agent's enable flag and identity now
+  live in the chat feature's config keys (`KLANGKWS_FEATURE_CHAT_AGENT_ENABLED`,
+  `_EMAIL`, `_HANDLE`) — set via env or the `features_config:` block of
+  `klangkd.yaml`. Operators who customized `KLANGKD_AGENT_*` should move those
+  values to the feature-config keys. See [Chat](../features/chat.md).
 
 - **TUI account screen (#1919).** The `a` → Account keybinding and
   `AccountScreen` (password, handle, email self-service) have been removed
