@@ -51,7 +51,7 @@ jobs:
         if: steps.filter.outputs.backend == 'true'
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests -v -n auto
+          devenv shell -- python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests -v -n auto --durations=20
 
       - name: Skip notice
         if: steps.filter.outputs.backend != 'true'
