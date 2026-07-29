@@ -50,11 +50,28 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-      - name: Install GNU coreutils & tar (Homebrew)
+      - name: Install podman & GNU coreutils/tar (Homebrew)
         if: steps.filter.outputs.backend == 'true'
-        # The code's gnubin discovery (#1947) prefers Homebrew's GNU
-        # coreutils/gnu-tar over the BSD defaults; ensure they're present.
-        run: brew install coreutils gnu-tar
+        # podman: the netfilter hook-install path invokes `podman` at startup
+        #   and degrades gracefully ("disabled on macOS") only once the binary
+        #   resolves -- without it, FileNotFoundError propagates. Binary-only,
+        #   no `podman machine` needed (matches what devenv provided).
+        # coreutils/gnu-tar: the code's gnubin discovery (#1947) prefers
+        #   Homebrew's GNU tools over the BSD defaults.
+        run: brew install podman coreutils gnu-tar
+
+      - name: Put GNU tools first on PATH & use a short TMPDIR
+        if: steps.filter.outputs.backend == 'true'
+        # Prepend gnubin so `tar`/coreutils resolve to GNU during pytest (the
+        # archive tests need GNU tar semantics). And shorten TMPDIR: macOS's
+        # default /private/var/folders/... overflows the 104-char AF_UNIX
+        # sun_path limit (#1531/#1636).
+        run: |
+          brew_prefix="$(brew --prefix)"
+          echo "${brew_prefix}/opt/coreutils/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "${brew_prefix}/opt/gnu-tar/libexec/gnubin" >> "$GITHUB_PATH"
+          mkdir -p /tmp/klangk-ci
+          echo "TMPDIR=/tmp/klangk-ci" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         if: steps.filter.outputs.backend == 'true'
