@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:flterm/flterm.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
@@ -8,6 +8,7 @@ import 'package:klangk_features/klangk_features.dart';
 import 'package:provider/provider.dart';
 import 'app.dart';
 import 'auth/auth_service.dart';
+import 'workspace_tab_filter.dart';
 import 'ws/ws_client.dart';
 import 'utils/web_helpers_stub.dart'
     if (dart.library.js_interop) 'utils/web_helpers_web.dart';
@@ -133,23 +134,4 @@ Future<Set<String>> _resolveActiveFeatures() async {
     ...createAllNamedFeatures().map((e) => e.name),
     ...createAllNamedWorkspaceTabs().map((e) => e.name),
   };
-}
-
-/// Registers a feature's workspace tab into the [WorkspaceTabRegistry] only
-/// when the feature is in [activeFeatureNames] — the tab analogue of the
-/// tool-plugin active-set filter in `main()` (#1975). Extracted to a
-/// top-level helper so the filter is unit-testable as a regression guard;
-/// `main()` passes the generated `createAllNamedWorkspaceTabs()` aggregator
-/// output.
-@visibleForTesting
-void registerActiveWorkspaceTabs(
-  Iterable<({String name, WorkspaceTabPlugin tab})> allTabs,
-  Set<String> activeFeatureNames,
-) {
-  final tabRegistry = WorkspaceTabRegistry();
-  for (final entry in allTabs) {
-    if (activeFeatureNames.contains(entry.name)) {
-      tabRegistry.register(entry.tab);
-    }
-  }
 }

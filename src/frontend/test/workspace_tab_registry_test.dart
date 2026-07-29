@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:klangk_frontend/main.dart';
+import 'package:klangk_frontend/workspace_tab_filter.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 /// Minimal tab plugin for filter tests — identity matters (the registry keeps
