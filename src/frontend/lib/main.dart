@@ -69,11 +69,16 @@ Future<void> main() async {
           create: (_) => WsClient(),
           update: (_, auth, client) => client!..updateAuth(auth),
         ),
-        // Host services for feature tabs (#1976): exposes the WsClient (a
-        // ChatServices) + the current user id as the plugin-API
-        // WorkspaceServices contract, read via context.read<WorkspaceServices>().
-        ProxyProvider2<AuthService, WsClient, WorkspaceServices>(
-          update: (_, auth, ws, __) => HostWorkspaceServices(ws, auth),
+        // Built once: WsClient and AuthService are stable singletons (their
+        // providers create one instance and mutate it in place), so an adapter
+        // holding references to them is valid for the app lifetime. Provider
+        // (not ProxyProvider2) avoids reallocating it on every WsClient
+        // notifyListeners (#1976 review nit).
+        Provider<WorkspaceServices>(
+          create: (ctx) => HostWorkspaceServices(
+            ctx.read<WsClient>(),
+            ctx.read<AuthService>(),
+          ),
         ),
       ],
       child: KlangkApp(initialLocation: initialLocation),

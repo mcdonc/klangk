@@ -83,6 +83,12 @@ class IdeLayoutState extends State<IdeLayout> {
         widget.initialDir != oldWidget.initialDir) {
       _maybeOpenInitial();
     }
+    // Re-subscribe only when the featureTabs LIST identity changes. This
+    // holds because workspace_page captures _featureTabs once in initState
+    // (WorkspaceTabRegistry().tabs) and reuses that same list instance on
+    // every rebuild. If a future change recomputes featureTabs per build,
+    // switch to a content-based comparison — re-subscribing every frame
+    // would churn (#1976 review nit).
     if (!identical(widget.featureTabs, oldWidget.featureTabs)) {
       _subscribeFeatureBadges();
     }

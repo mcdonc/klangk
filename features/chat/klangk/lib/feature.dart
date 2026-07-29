@@ -28,15 +28,11 @@ class ChatTab extends WorkspaceTabPlugin {
   @override
   Widget build(BuildContext context) {
     final services = context.read<WorkspaceServices>();
-    final chat = services.chat;
-    if (chat == null) {
-      return const Center(
-        child: Text('Chat is unavailable in this workspace.'),
-      );
-    }
+    // HostWorkspaceServices.chat is always the WsClient (non-null) — the only
+    // host in the tree guarantees it, so no unreachable null branch here.
     return WorkspaceChat(
       key: _chatKey,
-      chat: chat,
+      chat: services.chat!,
       currentUserId: services.currentUserId,
       onUnreadChanged: _onUnread,
       onMentionChanged: _onMention,

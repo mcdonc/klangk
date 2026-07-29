@@ -85,21 +85,5 @@ void main() {
       );
       expect(find.byType(WorkspaceChat), findsOneWidget);
     });
-
-    testWidgets('renders an unavailable message when chat is null',
-        (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: Provider<WorkspaceServices>.value(
-              value: _FakeServices(null, 'me'),
-              child: Builder(builder: ChatTab().build),
-            ),
-          ),
-        ),
-      );
-      expect(
-          find.text('Chat is unavailable in this workspace.'), findsOneWidget);
-    });
   });
 }
