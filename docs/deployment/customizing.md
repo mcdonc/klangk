@@ -331,7 +331,7 @@ Use the stock image with runtime customization (no features):
 
 ```bash
 docker run -d \
-  -p 8995:8995 \
+  -p 8997:8997 \
   -v ./data:/home/klangk/data \
   -v ./mount:/home/klangk/mount \
   --cap-add SYS_ADMIN \

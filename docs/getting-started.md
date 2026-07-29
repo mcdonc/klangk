@@ -11,7 +11,7 @@ You need Docker (or Podman) and an OpenAI-compatible LLM API key.
 ```bash
 docker run -d \
   --name klangk \
-  -p 8995:8995 \
+  -p 8997:8997 \
   -v klangk-data:/home/klangk/data \
   --cap-add SYS_ADMIN \
   --device /dev/fuse \
@@ -28,10 +28,10 @@ docker run -d \
   ghcr.io/mcdonc/klangk/klangk-host:v1.0
 ```
 
-Open <http://localhost:8995> and log in with the email and password
+Open <http://localhost:8997> and log in with the email and password
 you set above.
 
-> A Docker container publishes its port (`-p 8995:8995`), making it
+> A Docker container publishes its port (`-p 8997:8997`), making it
 > network-reachable, so these examples set `KLANGKD_AUTH_MODES=password`
 > explicitly. The default mode is `none` (no-login, loopback-only), which is
 > meant for local dev on your own machine — a published port is not that.
@@ -82,7 +82,7 @@ devenv processes up --no-tui
 This sets up the dev shell (Python, Flutter, Dart, Node, podman,
 etc.), builds the workspace image and Flutter web app on first run,
 starts the proxy and the FastAPI backend, and watches for file changes.
-Open <http://localhost:8995>.
+Open <http://localhost:8997>.
 
 To run project commands like `test-backend` or
 `build-workspace-image` in a separate terminal, use `devenv shell`
@@ -97,7 +97,7 @@ instructions.
 ## Logging in
 
 Out of the box (the default `none` auth mode) there is **nothing to log in
-with** — open <http://localhost:8995> and you're already in, as the default
+with** — open <http://localhost:8997> and you're already in, as the default
 user (`KLANGKD_DEFAULT_USER`). The CLI likewise needs no `klangk login`.
 
 If you switched to a real auth mode (`password`, `oidc`, or `both` — e.g. the

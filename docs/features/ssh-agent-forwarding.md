@@ -49,7 +49,7 @@ forward-agent: true
 # Or enable/disable per server
 servers:
   local:
-    url: http://localhost:8995
+    url: http://localhost:8997
     forward-agent: true
   prod:
     url: https://klangk.example.com

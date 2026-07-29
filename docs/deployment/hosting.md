@@ -1,6 +1,6 @@
 # Hosting & Proxy
 
-**The reverse proxy (nginx) is the primary access point** (port 8995 locally). It proxies API/WebSocket to uvicorn and proxies hosted app URLs directly to container ports (no Python in the hosted app path).
+**The reverse proxy (nginx) is the primary access point** (port 8997 locally). It proxies API/WebSocket to uvicorn and proxies hosted app URLs directly to container ports (no Python in the hosted app path).
 
 - FastAPI serves API endpoints and Flutter frontend static files on port 8997 (not accessed directly by users).
 - Hosted app URLs (`/hosted/{workspace_id}/{port}/`) are handled by a proxy regex location that extracts the port and proxies to `127.0.0.1:{port}`.
@@ -13,7 +13,7 @@
 The devenv.nix runs the proxy as the primary access point:
 
 ```text
-klangk reverse proxy (port 8995)
+klangk reverse proxy (port 8997)
     ├── /hosted/{ws_id}/{port}/ → container port (direct proxy)
     └── /                       → Klangk backend (port 8997)
 ```
@@ -23,7 +23,7 @@ In production behind a reverse proxy with subpath:
 ```text
 outer nginx (443)
     ├── /klangk/hosted/{ws_id}/{port}/ → container port (direct proxy)
-    └── /klangk/                       → klangk proxy (port 8995)
+    └── /klangk/                       → klangk proxy (port 8997)
                                          └── / → uvicorn (port 8997)
 ```
 
