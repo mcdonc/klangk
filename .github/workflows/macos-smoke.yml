@@ -70,8 +70,8 @@ jobs:
           brew_prefix="$(brew --prefix)"
           echo "${brew_prefix}/opt/coreutils/libexec/gnubin" >> "$GITHUB_PATH"
           echo "${brew_prefix}/opt/gnu-tar/libexec/gnubin" >> "$GITHUB_PATH"
-          mkdir -p /tmp/klangk-ci
-          echo "TMPDIR=/tmp/klangk-ci" >> "$GITHUB_ENV"
+          mkdir -p /tmp/kci
+          echo "TMPDIR=/tmp/kci" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         if: steps.filter.outputs.backend == 'true'
@@ -80,7 +80,7 @@ jobs:
       - name: Run tests
         if: steps.filter.outputs.backend == 'true'
         # -n auto: run tests in parallel across CPUs (pytest-xdist)
-        run: python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests -v -n auto --durations=20
+        run: python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests -v -n auto --durations=20 --basetemp=/tmp/pt
 
       - name: Run build-pipeline tests
         if: steps.filter.outputs.backend == 'true'
