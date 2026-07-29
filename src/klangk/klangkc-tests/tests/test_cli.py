@@ -2140,7 +2140,12 @@ class TestClientTryRefresh:
 
     def test_try_refresh_returns_false_on_failure(self):
         client = KlangkClient("http://test:8995", "old-token")
-        with patch("klangk.cli.client._refresh_token", return_value=None):
+        with (
+            patch("klangk.cli.client._refresh_token", return_value=None),
+            # Stub the server-mode probe so it doesn't make a real
+            # (DNS-timeout) GET to the unresolvable http://test:8995 (#1989).
+            patch("klangk.cli.client._fetch_config", return_value=None),
+        ):
             assert client._try_refresh() is False
         assert client.token == "old-token"
 
@@ -2218,6 +2223,9 @@ class TestClientRetryOn401:
                 return_value=resp_401,
             ),
             patch("klangk.cli.client._refresh_token", return_value=None),
+            # Stub the server-mode probe so _try_refresh doesn't make a real
+            # (DNS-timeout) GET to the unresolvable http://test:8995 (#1989).
+            patch("klangk.cli.client._fetch_config", return_value=None),
         ):
             result = client.get("/api/v1/workspaces")
         assert result.status_code == 401
@@ -2324,7 +2332,12 @@ class TestWs4002Refresh:
             server_url="http://test:8995",
             token="old-token",
         )
-        with patch("klangk.cli.client._refresh_token", return_value=None):
+        with (
+            patch("klangk.cli.client._refresh_token", return_value=None),
+            # Stub the server-mode probe so the refresh-failure path doesn't
+            # make a real (DNS-timeout) GET to http://test:8995 (#1989).
+            patch("klangk.cli.client._fetch_config", return_value=None),
+        ):
             await session.stdout_loop()
         output = "".join(captured)
         assert "Session expired" in output
