@@ -76,6 +76,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   List<String> _workspacePermissions = [];
   late final ToolPluginRegistry _featureRegistry;
   late final List<ToolPlugin> _features;
+  late final List<WorkspaceTabPlugin> _featureTabs;
   late final FileRendererRegistry _fileRenderers;
   WorkspaceConnector? _connector;
 
@@ -126,6 +127,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
     _featureRegistry = ToolPluginRegistry();
     // Features are registered once in main() — reuse them here.
     _features = _featureRegistry.plugins.toList();
+    // Feature-contributed workspace tabs are likewise registered once in
+    // main() (active-filtered) — reuse the singleton registry (#1975).
+    _featureTabs = WorkspaceTabRegistry().tabs;
     _fileRenderers = buildFileRendererRegistry(_features);
     _fetchWorkspaceName();
     WidgetsBinding.instance.addPostFrameCallback((_) => _connectToWorkspace());
@@ -386,6 +390,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
     for (final feature in _features) {
       feature.dispose();
     }
+    // Mirror tool plugins: release feature-tab resources on workspace close
+    // (#1975). The registry is a singleton populated once in main(), so this
+    // calls per-tab dispose() — not disposeAll() — to avoid clearing tabs
+    // that the next workspace page (same app session) will reuse. Tab plugins
+    // with real resources (e.g. the eventual chat tab's controller) must
+    // tolerate being re-registered, same as tool plugins already do.
+    for (final tab in _featureTabs) {
+      tab.dispose();
+    }
     super.dispose();
   }
 
@@ -482,6 +495,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
         userHome: wsClient.userHome,
         registry: _fileRenderers,
       ),
+      featureTabs: _featureTabs,
       terminal: TerminalTabsView(
         wsClient: wsClient,
         terminalKey: _terminalKey,

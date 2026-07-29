@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../terminal/ghostty_terminal.dart';
 import '../file_viewer/file_viewer_panel.dart';
 import '../chat/workspace_chat.dart';
@@ -14,6 +15,12 @@ class IdeLayout extends StatefulWidget {
   final Widget? settings;
   final Widget? sharing;
   final Widget? debug;
+
+  /// Feature-contributed workspace tabs (#1975). Each entry contributes a
+  /// tab (title + icon + builder) to the strip; only active features' tabs
+  /// are passed in (the active-set filter lives in main.dart, which registers
+  /// into WorkspaceTabRegistry). Defaults to none.
+  final List<WorkspaceTabPlugin> featureTabs;
   final int chatUnread;
   final bool chatMentioned;
   final GlobalKey<GhosttyTerminalState>? terminalKey;
@@ -36,6 +43,7 @@ class IdeLayout extends StatefulWidget {
     this.settings,
     this.sharing,
     this.debug,
+    this.featureTabs = const [],
     this.chatUnread = 0,
     this.chatMentioned = false,
     this.terminalKey,
@@ -191,6 +199,13 @@ class IdeLayoutState extends State<IdeLayout> {
         badge: widget.chatUnread > 0 ? widget.chatUnread : null,
         badgeHighlight: widget.chatMentioned,
       );
+    }
+    // Feature-contributed workspace tabs (#1975). Mounted after the built-in
+    // content tabs (Terminal/Files/Chat) so chat stays at its hardcoded index
+    // (see _selectTab), and before config tabs (Sharing/Settings). Each tab's
+    // feature is already active-filtered before it reaches here.
+    for (final tab in widget.featureTabs) {
+      addTab(tab.title, tab.icon, tab.build(context));
     }
     if (widget.sharing != null) {
       addTab('Sharing', Icons.people_outline, widget.sharing!);

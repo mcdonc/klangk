@@ -8,6 +8,7 @@ import 'package:klangk_features/klangk_features.dart';
 import 'package:provider/provider.dart';
 import 'app.dart';
 import 'auth/auth_service.dart';
+import 'workspace_tab_filter.dart';
 import 'ws/ws_client.dart';
 import 'utils/web_helpers_stub.dart'
     if (dart.library.js_interop) 'utils/web_helpers_web.dart';
@@ -31,6 +32,17 @@ Future<void> main() async {
       registry.register(entry.feature);
     }
   }
+
+  // Feature-contributed workspace tabs (#1975): the same active-set filter
+  // as tool plugins — a feature's tab mounts only when the feature is
+  // active. A feature may contribute a tab with no tool handlers
+  // (tab-only), or both a tab and tool handlers. The filter lives in
+  // [registerActiveWorkspaceTabs] (a top-level helper) so it is unit-testable
+  // — the tool-plugin filter is the same shape but inlined.
+  registerActiveWorkspaceTabs(
+    createAllNamedWorkspaceTabs(),
+    activeFeatureNames,
+  );
 
   if (kIsWeb) {
     // libghostty's VT runs as WebAssembly in the browser; load it once before
@@ -115,5 +127,11 @@ Future<Set<String>> _resolveActiveFeatures() async {
   }
 
   // 3. No manifest, no knob — every compiled-in feature active (back-compat).
-  return createAllNamedFeatures().map((e) => e.name).toSet();
+  // Union tools + tabs: a tab-only feature has no createAllNamedFeatures()
+  // entry, so deriving the active set from tools alone would silently drop
+  // its tab (#1975).
+  return {
+    ...createAllNamedFeatures().map((e) => e.name),
+    ...createAllNamedWorkspaceTabs().map((e) => e.name),
+  };
 }

@@ -55,14 +55,26 @@ FEATURE_API_DEP = {
     "klangk_plugin_api": {
         "git": {
             "url": "https://github.com/mcdonc/klangk-plugin-api.git",
-            "ref": "v0.2.0",
+            "ref": "v0.3.0",
         }
     }
 }
 
 
 def find_features(features_dir):
-    """Scan features/*/klangk/ for Dart packages, return metadata."""
+    """Scan features/*/klangk/ for Dart packages, return metadata.
+
+    A feature compiles in if its ``feature.dart`` declares at least one
+    component — a ``ToolPlugin`` (tool handlers / app-bar action / overlay)
+    and/or a ``WorkspaceTabPlugin`` (a workspace tab, #1975). Most features
+    declare a single ``ToolPlugin``; a feature may declare both (e.g. a
+    ``chat`` feature contributes both a chat tab and agent tool handlers), or
+    only a tab. Each entry records the tool and tab class names so
+    :func:`generate_dart` can emit separate aggregators and
+    :func:`collect_feature_metadata` can surface the feature in
+    ``features.json`` even when it declares no tool handlers (a tab-only
+    feature still appears in the compiled-in manifest).
+    """
     features = []
     if not os.path.isdir(features_dir):
         return features
@@ -84,19 +96,23 @@ def find_features(features_dir):
         with open(feature_dart) as f:
             source = f.read()
 
-        matches = re.findall(r"class\s+(\w+)\s+extends\s+ToolPlugin", source)
-        if not matches:
+        tool_classes = re.findall(r"class\s+(\w+)\s+extends\s+ToolPlugin", source)
+        tab_classes = re.findall(
+            r"class\s+(\w+)\s+extends\s+WorkspaceTabPlugin", source
+        )
+        # A feature with neither component isn't a klangk feature — skip it.
+        if not tool_classes and not tab_classes:
             continue
 
-        for class_name in matches:
-            features.append(
-                {
-                    "name": name,
-                    "package_name": package_name,
-                    "dart_dir": dart_dir,
-                    "class_name": class_name,
-                }
-            )
+        features.append(
+            {
+                "name": name,
+                "package_name": package_name,
+                "dart_dir": dart_dir,
+                "tool_classes": tool_classes,
+                "tab_classes": tab_classes,
+            }
+        )
 
     return features
 
@@ -280,7 +296,8 @@ def generate_dart(features):
     lines.append("List<ToolPlugin> createAllFeatures() {")
     lines.append("  return [")
     for p in features:
-        lines.append(f"    {p['class_name']}(),")
+        for cls in p["tool_classes"]:
+            lines.append(f"    {cls}(),")
     lines.append("  ];")
     lines.append("}")
     lines.append("")
@@ -291,7 +308,25 @@ def generate_dart(features):
     lines.append("List<({String name, ToolPlugin feature})> createAllNamedFeatures() {")
     lines.append("  return [")
     for p in features:
-        lines.append(f"    (name: {p['name']!r}, feature: {p['class_name']}()),")
+        for cls in p["tool_classes"]:
+            lines.append(f"    (name: {p['name']!r}, feature: {cls}()),")
+    lines.append("  ];")
+    lines.append("}")
+    lines.append("")
+    lines.append(
+        "// ({name, tab}) records for the workspace-tab active-set filter (#1975): "
+    )
+    lines.append(
+        "// a feature's tab mounts only when the feature is active. A feature may "
+    )
+    lines.append("// contribute a tab with no ToolPlugin (tab-only), or both.")
+    lines.append(
+        "List<({String name, WorkspaceTabPlugin tab})> createAllNamedWorkspaceTabs() {"
+    )
+    lines.append("  return [")
+    for p in features:
+        for cls in p["tab_classes"]:
+            lines.append(f"    (name: {p['name']!r}, tab: {cls}()),")
     lines.append("  ];")
     lines.append("}")
     lines.append("")
@@ -369,7 +404,7 @@ def main(argv=None):
     with open(output_path, "w") as f:
         f.write(output)
 
-    names = [p["class_name"] for p in features]
+    names = [c for p in features for c in (p["tool_classes"] + p["tab_classes"])]
     print(
         f"Generated Dart pubspec at {os.path.join(dart_pkg_dir, 'pubspec.yaml')} "
         f"with {len(features)} feature(s)"
