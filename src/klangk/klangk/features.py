@@ -158,6 +158,75 @@ class Features:
             if isinstance(f, dict)
         ]
 
+    def is_enabled(self, name: str) -> bool:
+        """True if feature *name* is active for this deploy.
+
+        Server-side activation resolver (#1974): the backend can now ask
+        "is feature X on?" the same way the frontend does — the prerequisite
+        for feature-gating server-side subsystems (e.g. the clanker agent
+        subprocess, #1685) instead of bespoke env vars like
+        ``KLANGKD_AGENT_DISABLED``.
+
+        Canonical semantics — mirrors ``_resolveActiveFeatures`` in
+        ``src/frontend/lib/main.dart`` so the server gates on the **same**
+        active set the UI resolves (drift between the two would gate the
+        agent on a different set than the UI shows):
+
+        - ``KLANGKD_FEATURES_ENABLE`` unset **or** blank/whitespace → the
+          manifest's ``defaults`` list (the stock set). A blank value is
+          treated as unset, exactly as the frontend treats a blank string
+          read from ``/api/config`` (its ``v.trim().isNotEmpty`` guard).
+        - any non-blank value → exactly that comma-separated list, split on
+          ``,``, each entry trimmed, empties dropped. No ``*`` form, and
+          **not** additive over ``defaults`` (an explicit list replaces the
+          stock set entirely).
+        - no usable deploy list and no usable ``defaults`` → every
+          compiled-in feature (the manifest's ``features`` array) is active
+          — the back-compat fallback the frontend uses for a source deploy
+          with no built manifest. The server's compiled-in inventory *is*
+          the manifest, so with no manifest at all nothing is active (a safe
+          default for the rare server-without-built-frontend case).
+
+        Reads ``self.app.state.settings.features_enable`` live at call time
+        (app ownership rule — no cached snapshot), so a SIGHUP reload of the
+        knob is picked up without a :meth:`reconfigure` call; only a manifest
+        change (``frontend_dir``) needs ``reconfigure``.
+        """
+        return name in self._active_feature_names()
+
+    def _active_feature_names(self) -> set[str]:
+        """The deploy's active-feature set, per :meth:`is_enabled`.
+
+        Computed fresh on every call (no caching) so a settings reload of
+        ``KLANGKD_FEATURES_ENABLE`` propagates immediately. The active set is
+        a handful of names, so recomputing per call is cheap.
+        """
+        raw = self.app.state.settings.features_enable
+        if raw is not None and raw.strip():
+            # Explicit deploy-chosen list: exact comma-separated membership.
+            # Trim each entry and drop empties (e.g. "a,,b", a trailing comma).
+            return {
+                part
+                for part in (entry.strip() for entry in raw.split(","))
+                if part
+            }
+        defaults = self._manifest.get("defaults", [])
+        if isinstance(defaults, list):
+            names = {d for d in defaults if isinstance(d, str)}
+            if names:
+                return names
+        # No deploy list and no usable defaults → every compiled-in feature
+        # active (back-compat, mirroring the frontend's step-3 fallback for
+        # a source deploy with no built manifest). Skip non-dict entries,
+        # missing names, and empty names.
+        return {
+            name
+            for f in self._manifest.get("features", [])
+            if isinstance(f, dict)
+            and isinstance((name := f.get("name")), str)
+            and name
+        }
+
     def container_env(self) -> dict[str, str]:
         """Return env vars to inject into workspace containers.
 

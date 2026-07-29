@@ -1027,6 +1027,239 @@ class TestFeaturesEnable:
         assert p.features_enable() == "soliplex"
 
 
+class TestIsEnabled:
+    """is_enabled(name) resolves the active-feature set server-side (#1974),
+    mirroring _resolveActiveFeatures in main.dart so the server gates on the
+    same set the UI shows. Prerequisite for feature-gating backend subsystems
+    (the clanker agent, #1685) instead of bespoke env vars."""
+
+    def test_unset_uses_defaults_membership(self, tmp_path):
+        # Unset → manifest defaults: a default feature is active; a compiled-in
+        # but non-default feature is not.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {"name": "celebrate"},
+                    {"name": "beep"},
+                ],
+                "defaults": ["celebrate"],
+                "container_env_keys": [],
+            },
+        )
+        p = _features(tmp_path)
+        assert p.is_enabled("celebrate") is True
+        assert p.is_enabled("beep") is False
+
+    def test_unset_no_defaults_uses_compiled_in(self, tmp_path):
+        # defaults empty/missing → back-compat: every compiled-in feature active.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {"name": "celebrate"},
+                    {"name": "beep"},
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        p = _features(tmp_path)
+        assert p.is_enabled("celebrate") is True
+        assert p.is_enabled("beep") is True
+        assert p.is_enabled("not-compiled-in") is False
+
+    def test_explicit_list_exact_membership_not_additive(self, tmp_path):
+        # An explicit list replaces the defaults entirely — celebrate is a
+        # default but is dropped because it's not in the explicit list.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {"name": "celebrate"},
+                    {"name": "beep"},
+                ],
+                "defaults": ["celebrate", "beep"],
+                "container_env_keys": [],
+            },
+        )
+        p = _features(tmp_path, env={"KLANGKD_FEATURES_ENABLE": "beep"})
+        assert p.is_enabled("beep") is True
+        assert p.is_enabled("celebrate") is False
+
+    def test_explicit_list_trims_and_drops_empties(self, tmp_path):
+        p = _features(
+            tmp_path,
+            env={"KLANGKD_FEATURES_ENABLE": " beep , ,celebrate "},
+        )
+        assert p.is_enabled("beep") is True
+        assert p.is_enabled("celebrate") is True
+
+    def test_blank_string_treated_as_unset(self, tmp_path):
+        # A blank KLANGKD_FEATURES_ENABLE is treated as unset (mirrors the
+        # frontend's `v.trim().isNotEmpty` guard) → defaults active. There is
+        # thus no way to express "empty active set" via the knob — by design,
+        # so server and UI agree.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [{"name": "celebrate"}],
+                "defaults": ["celebrate"],
+                "container_env_keys": [],
+            },
+        )
+        p = _features(tmp_path, env={"KLANGKD_FEATURES_ENABLE": ""})
+        assert p.is_enabled("celebrate") is True
+
+    def test_whitespace_string_treated_as_unset(self, tmp_path):
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [{"name": "celebrate"}],
+                "defaults": ["celebrate"],
+                "container_env_keys": [],
+            },
+        )
+        p = _features(tmp_path, env={"KLANGKD_FEATURES_ENABLE": "   "})
+        assert p.is_enabled("celebrate") is True
+
+    def test_star_is_literal_not_wildcard(self, tmp_path):
+        # `*` is a literal feature name, not a wildcard — it only matches a
+        # feature literally named `*`. An explicit "*" therefore deactivates
+        # every real feature.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [{"name": "celebrate"}],
+                "defaults": ["celebrate"],
+                "container_env_keys": [],
+            },
+        )
+        p = _features(tmp_path, env={"KLANGKD_FEATURES_ENABLE": "*"})
+        assert p.is_enabled("celebrate") is False
+        assert p.is_enabled("*") is True
+
+    def test_no_manifest_nothing_active(self, tmp_path):
+        # No features.json → no compiled-in inventory → nothing active. Safe
+        # default for the rare server-without-built-frontend case.
+        p = _features(tmp_path)
+        assert p.is_enabled("celebrate") is False
+
+    def test_non_list_defaults_falls_back_to_compiled_in(self, tmp_path):
+        # A malformed (non-list) defaults → fall through to the compiled-in
+        # fallback, matching the frontend's `if (defaults is List)` guard.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [{"name": "celebrate"}],
+                "defaults": "not-a-list",
+                "container_env_keys": [],
+            },
+        )
+        p = _features(tmp_path)
+        assert p.is_enabled("celebrate") is True
+
+    def test_defaults_non_string_entries_filtered(self, tmp_path):
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [{"name": "celebrate"}],
+                "defaults": ["celebrate", 42, None],
+                "container_env_keys": [],
+            },
+        )
+        p = _features(tmp_path)
+        assert p.is_enabled("celebrate") is True
+
+    def test_compiled_in_fallback_skips_bad_entries(self, tmp_path):
+        # No deploy list, no usable defaults → every compiled-in feature
+        # active; the fallback skips non-dict entries, missing names, and
+        # empty names.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    "not-a-dict",
+                    {"name": "celebrate"},
+                    {"no_name": True},
+                    {"name": ""},
+                    {"name": "beep"},
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        p = _features(tmp_path)
+        assert p.is_enabled("celebrate") is True
+        assert p.is_enabled("beep") is True
+        assert p.is_enabled("") is False
+
+    def test_settings_swap_reflected_without_reconfigure(self, tmp_path):
+        # is_enabled reads settings.features_enable live (app ownership rule)
+        # — a settings reload is picked up WITHOUT a reconfigure() call, since
+        # only the manifest (frontend_dir) needs reconfigure, not the knob.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {"name": "celebrate"},
+                    {"name": "beep"},
+                ],
+                "defaults": ["celebrate"],
+                "container_env_keys": [],
+            },
+        )
+        p = _features(tmp_path)  # unset → celebrate active, beep not
+        assert p.is_enabled("celebrate") is True
+        assert p.is_enabled("beep") is False
+        # Swap the settings object on app.state (simulating a SIGHUP reload).
+        p.app.state.settings = make_settings(
+            {
+                "KLANGKD_FRONTEND_DIR": str(tmp_path),
+                "KLANGKD_FEATURES_ENABLE": "beep",
+            }
+        )
+        assert p.is_enabled("beep") is True
+        assert p.is_enabled("celebrate") is False
+
+    def test_reconfigure_picks_up_new_defaults(self, tmp_path):
+        # reconfigure() re-reads the manifest; a changed defaults list is
+        # reflected in is_enabled.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {"name": "celebrate"},
+                    {"name": "beep"},
+                ],
+                "defaults": ["celebrate"],
+                "container_env_keys": [],
+            },
+        )
+        p = _features(tmp_path)
+        assert p.is_enabled("celebrate") is True
+        assert p.is_enabled("beep") is False
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {"name": "celebrate"},
+                    {"name": "beep"},
+                ],
+                "defaults": ["beep"],
+                "container_env_keys": [],
+            },
+        )
+        new_app_state = types.SimpleNamespace(
+            state=types.SimpleNamespace(
+                settings=make_settings({"KLANGKD_FRONTEND_DIR": str(tmp_path)})
+            )
+        )
+        p.reconfigure(new_app_state)
+        assert p.is_enabled("beep") is True
+        assert p.is_enabled("celebrate") is False
+
+
 class TestReconfigure:
     """reconfigure() re-reads the manifest on a SIGHUP settings reload
     (frontend_dir may have changed)."""
