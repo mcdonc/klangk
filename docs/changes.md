@@ -1187,6 +1187,31 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **SSH agent forwarding now works on reconnect and in the TUI (#2001).**
+  Two bugs, one symptom (`ssh-add -l` → _"Could not open a connection to
+  your authentication agent"_):
+  1. _No `SSH_AUTH_SOCK` in shells created before the relay._ It was only
+     injected when the relay was already active, so a base tmux session
+     created first — the TUI opens the session, then spawns `klangk shell
+-A` which starts the relay; likewise reconnecting to an existing
+     session — never received it. Every interactive terminal and exec
+     session now wires `SSH_AUTH_SOCK` to the deterministic per-user socket
+     path (`/tmp/klangk-ssh-agent-<user_id>.sock`) at creation time,
+     regardless of whether a relay is active yet. The var is inert until a
+     relay binds that path (only when the client opts into forwarding),
+     then goes live — so it no longer matters how or when the terminal (or
+     its agent) was created.
+
+  2. _Relay leak on reconnect._ Each `klangk shell -A` is a fresh
+     connection whose forwarder can't see a prior connection's socat; if
+     the old relay didn't fully tear down, two socats ended up listening on
+     the same socket with `unlink-early`, unlinking each other's
+     accept-time socket file and making the path flicker in and out.
+     `ssh_agent_start` now reaps any competing relay on the deterministic
+     path (`pkill -f UNIX-LISTEN:<path>`) before binding its own, so
+     reconnects own the socket cleanly instead of racing a leaked
+     predecessor.
+
 - **`klangkd` no longer crash-loops when a second instance starts against
   the same config (#1993).** The pre-flight guard that refuses a duplicate
   instance tried to log via a nonexistent `logger` symbol

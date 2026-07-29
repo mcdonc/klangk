@@ -779,7 +779,7 @@ class TestHandleTerminalStart:
             user_home="/home/testuser",
             user_id="uid",
             user_handle="testuser",
-            ssh_agent_socket=None,
+            ssh_agent_socket="/tmp/klangk-ssh-agent-uid.sock",
             terminal=_mock_term,
             workspace_name=None,
         )
@@ -1293,7 +1293,7 @@ class TestHandleTerminalStart:
             user_home="/home/testuser",
             user_id="uid",
             user_handle="testuser",
-            ssh_agent_socket=None,
+            ssh_agent_socket="/tmp/klangk-ssh-agent-uid.sock",
             terminal=_mock_term,
             workspace_name=None,
         )
@@ -2482,7 +2482,12 @@ class TestExecHandlers:
                 ):
                     await conn.handle_exec_start({"command": ["ls"]})
         call_kwargs = mock_cls.call_args[1]
-        assert "SSH_AUTH_SOCK=/tmp/agent.sock" in call_kwargs["env"]
+        # exec wires SSH_AUTH_SOCK to the deterministic per-user path on
+        # every run, regardless of relay state (#2001).
+        assert (
+            "SSH_AUTH_SOCK=/tmp/klangk-ssh-agent-uid.sock"
+            in call_kwargs["env"]
+        )
         assert "HOME=/home/admin" in call_kwargs["env"]
         assert call_kwargs["work_dir"] == "/home/admin"
         conn.exec_task.cancel()
@@ -2643,6 +2648,13 @@ class TestExecController:
             _ssh_agent_socket=ssh_agent_socket,
             _has_perm=AsyncMock(return_value=has_perm),
             app=app_state,
+            # exec start derives the SSH_AUTH_SOCK path from the user id
+            # (#2001), so the fake connection needs a user identity.
+            user={
+                "id": "uid",
+                "email": "testuser@example.com",
+                "handle": "testuser",
+            },
         )
         return ExecController(conn), sock, conn
 
@@ -2715,7 +2727,9 @@ class TestExecController:
                 pass
         kwargs = MockExec.call_args.kwargs
         assert "HOME=/home/admin" in kwargs["env"]
-        assert "SSH_AUTH_SOCK=/tmp/agent.sock" in kwargs["env"]
+        # SSH_AUTH_SOCK is always the deterministic per-user path (#2001);
+        # the relay-state socket is no longer the source.
+        assert "SSH_AUTH_SOCK=/tmp/klangk-ssh-agent-uid.sock" in kwargs["env"]
         assert kwargs["work_dir"] == "/home/admin"
 
     async def test_start_defaults_work_dir_when_no_user_home(self, app_state):
@@ -2735,7 +2749,11 @@ class TestExecController:
             except asyncio.CancelledError:
                 pass
         kwargs = MockExec.call_args.kwargs
-        assert kwargs["env"] == []
+        # No HOME (user_home is None), but SSH_AUTH_SOCK is still wired
+        # to the deterministic per-user path on every exec (#2001).
+        assert kwargs["env"] == [
+            "SSH_AUTH_SOCK=/tmp/klangk-ssh-agent-uid.sock"
+        ]
         assert kwargs["work_dir"] == "/home/work"
 
     async def test_start_default_login_false(self, app_state):
@@ -3196,6 +3214,57 @@ class TestSSHAgentHandlers:
             workspace_name=None,
         )
 
+    async def test_terminal_start_wires_agent_socket_without_relay(
+        self, app_state
+    ):
+        """terminal_start points SSH_AUTH_SOCK at the deterministic path even
+        when no agent relay is active yet (#2001).
+
+        This is the TUI / autostart case that was broken: the base tmux
+        session is created (window-0 shell spawned) BEFORE the agent relay
+        starts, so the shell never received SSH_AUTH_SOCK. The fix wires
+        every terminal to the deterministic per-user socket path at creation
+        time — inert until a relay binds it, live the moment one does — so it
+        does not matter how or when the terminal (or its agent) was created.
+        Here ``conn._ssh_agent_socket`` is left at its default (None, no
+        relay) yet the deterministic path is still passed through.
+        """
+        app_state = _make_app_state()
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, app_state=app_state)
+        conn.container_id = "cid"
+        conn._user_home = "/home/testuser"
+        assert conn._ssh_agent_socket is None  # no relay active
+        mock_session = AsyncMock()
+        mock_session.start = AsyncMock()
+        mock_session.session_name = "uid"
+        mock_session.tmux_session_name = "uid"
+
+        async def empty_output():
+            return
+            yield  # pragma: no cover
+
+        mock_session.output = empty_output
+        with (
+            patch(
+                "klangk.wshandler.controllers.TerminalSession",
+                return_value=mock_session,
+            ) as MockTS,
+            patch.object(
+                app_state.state.container_registry, "record_activity"
+            ),
+            patch.object(_mock_term, "attach_browser", new=AsyncMock()),
+            patch.object(_mock_term, "list_windows", return_value=[]),
+            patch.object(conn, "_has_perm", new=AsyncMock(return_value=True)),
+        ):
+            await conn.handle_terminal_start({"cols": 80, "rows": 24})
+            for _ in range(4):
+                await asyncio.sleep(0)
+
+        assert MockTS.call_args.kwargs["ssh_agent_socket"] == (
+            "/tmp/klangk-ssh-agent-uid.sock"
+        )
+
 
 class TestSshAgentForwarder:
     """Unit tests for the SshAgentForwarder collaborator in isolation.
@@ -3206,6 +3275,17 @@ class TestSshAgentForwarder:
     branches that were previously excluded with
     ``# pragma: no cover``.
     """
+
+    def test_socket_path_is_deterministic_per_user(self):
+        """``ssh_agent_socket_path`` is the stable per-user relay path (#2001)."""
+        assert (
+            _ws_controllers.ssh_agent_socket_path("uid")
+            == "/tmp/klangk-ssh-agent-uid.sock"
+        )
+        assert (
+            _ws_controllers.ssh_agent_socket_path("user-42")
+            == "/tmp/klangk-ssh-agent-user-42.sock"
+        )
 
     def _forwarder(self, *, container_id="cid", user=None, sock=None):
         if sock is None:
@@ -3391,14 +3471,27 @@ class TestSshAgentForwarder:
     async def test_stop_handles_socket_remove_oserror(self):
         fwd, _ = self._forwarder()
         fwd.socket = "/tmp/agent.sock"
+        # stop() reaps the in-container socat (pkill) then removes the socket
+        # file (rm). The pkill is best-effort; the rm OSError is the one we
+        # warn about.
         with patch.object(
             _mock_pod,
             "exec_container",
-            new=AsyncMock(side_effect=OSError("boom")),
+            new=AsyncMock(side_effect=[(0, "", ""), OSError("boom")]),
         ) as exec_mock:
             with patch("klangk.wshandler.controllers.logger") as lg:
                 await fwd.stop()
-        exec_mock.assert_awaited_once()
+        assert exec_mock.await_count == 2
+        assert exec_mock.await_args_list[0].args[1] == [
+            "pkill",
+            "-f",
+            "UNIX-LISTEN:/tmp/agent.sock",
+        ]
+        assert exec_mock.await_args_list[1].args[1] == [
+            "rm",
+            "-f",
+            "/tmp/agent.sock",
+        ]
         lg.warning.assert_called_once()
         assert "Failed to remove SSH agent socket" in str(lg.warning.call_args)
         assert fwd.socket is None
