@@ -79,8 +79,15 @@ jobs:
 
       - name: Run tests
         if: steps.filter.outputs.backend == 'true'
-        # -n auto: run tests in parallel across CPUs (pytest-xdist)
-        run: python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests -v -n auto --durations=20 --basetemp=/tmp/pt
+        # Drop the 100% coverage gate on macOS (--cov-fail-under=0): a few
+        # lines are Linux-only — the `ip`-command parsing in proxy.py and
+        # the nginx/caddy binary branches — and can't be exercised without
+        # those Linux binaries. Linux test-backend remains the canonical
+        # 100% gate; this job exists for macOS-platform coverage
+        # (netfilter/gnubin/podman-machine), not to redundantly re-enforce
+        # line coverage. Coverage is still collected + reported for visibility.
+        # -n auto: parallel across CPUs (pytest-xdist).
+        run: python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests -v -n auto --durations=20 --basetemp=/tmp/pt --cov-fail-under=0
 
       - name: Run build-pipeline tests
         if: steps.filter.outputs.backend == 'true'
