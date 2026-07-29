@@ -485,7 +485,7 @@ class TestMainCLI:
             main.require_auth()
         err = capsys.readouterr().err
         assert "Cannot connect to klangkd" in err
-        assert "is it running" in err
+        assert "is it running" in err.replace("\n", "")
         assert "Not logged in" not in err
         # Rich wraps the stderr line at the capture width, so normalize
         # newlines before checking the path is rendered.
