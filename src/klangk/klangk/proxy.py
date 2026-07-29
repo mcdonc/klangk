@@ -840,7 +840,7 @@ http {{
 
 _PR_SET_PDEATHSIG = 1
 _HAS_PDEATHSIG = sys.platform == "linux"
-if _HAS_PDEATHSIG:
+if _HAS_PDEATHSIG:  # pragma: no cover – linux-only
     _libc = ctypes.CDLL(
         ctypes.util.find_library("c") or "libc.so.6", use_errno=True
     )
