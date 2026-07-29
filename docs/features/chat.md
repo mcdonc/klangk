@@ -100,7 +100,14 @@ The clanker agent is **opt-in** (#1977): its `pi --mode rpc` subprocess
 spawns only when the `chat` feature is active (`KLANGKD_FEATURES_ENABLE`)
 **and** the agent is enabled. The enable flag and the agent's identity
 (handle + email) are chat-feature config keys, resolved the standard way
-(env → the `features_config:` block of `klangkd.yaml` → feature default):
+(env → the `features_config:` block of `klangkd.yaml` → feature default).
+
+These are **two independent switches**, not one. Turning the `chat` feature
+on (`KLANGKD_FEATURES_ENABLE=chat`) surfaces the chat tab; it does **not** start
+the agent. The agent starts only when `chat` is active **and**
+`KLANGKWS_FEATURE_CHAT_AGENT_ENABLED` is set — so _chat tab on, agent off_ is a
+normal state (the chat surface is visible, but `@clanker` mentions are ignored
+until the agent is enabled):
 
 | Key                                   | Default               | Effect                                                                                                   |
 | ------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------- |
