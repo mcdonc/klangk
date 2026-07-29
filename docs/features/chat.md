@@ -94,30 +94,23 @@ The agent requires an LLM backend. Set these environment variables:
 
 Without these, the agent is unavailable and @clanker mentions are ignored.
 
-### Agent Identity
+### Agent identity + enabling
 
-The agent's handle and email are configured via environment variables and
-seeded into the database on first startup:
+The clanker agent is **opt-in** (#1977): its `pi --mode rpc` subprocess
+spawns only when the `chat` feature is active (`KLANGKD_FEATURES_ENABLE`)
+**and** the agent is enabled. The enable flag and the agent's identity
+(handle + email) are chat-feature config keys, resolved the standard way
+(env → the `features_config:` block of `klangkd.yaml` → feature default):
 
-| Variable               | Default               |
-| ---------------------- | --------------------- |
-| `KLANGKD_AGENT_HANDLE` | `clanker`             |
-| `KLANGKD_AGENT_EMAIL`  | `clanker@example.com` |
+| Key                                   | Default               | Effect                                                                                                   |
+| ------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------- |
+| `KLANGKWS_FEATURE_CHAT_AGENT_ENABLED` | (unset = off)         | Set to `1`/`true`/`yes` to enable the agent. Off (or `chat` inactive) → the subprocess is never spawned. |
+| `KLANGKWS_FEATURE_CHAT_AGENT_HANDLE`  | `clanker`             | The agent's @mention handle.                                                                             |
+| `KLANGKWS_FEATURE_CHAT_AGENT_EMAIL`   | `clanker@example.com` | The agent's email.                                                                                       |
 
-After seeding, the agent identity is read from the database. Changing
-these env vars and restarting will update the agent's record in the
-database. The agent user cannot have a password and cannot log in via
-credentials.
-
-### Disabling the agent
-
-Set `KLANGKD_AGENT_DISABLED` (`1`/`true`/`yes`) to prevent the chat
-agent's `pi --mode rpc` subprocess from starting. When set, the
-subprocess is never spawned, so the agent never comes online.
-
-| Variable                 | Default | Effect                                                                                                                 |
-| ------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `KLANGKD_AGENT_DISABLED` | (unset) | Set to `1`/`true`/`yes` and the chat agent's `pi --mode rpc` subprocess is not started. Read each time it would start. |
+The identity is seeded into the database on startup and re-seeded on
+SIGHUP (so changing a key + reload updates the agent's record). The agent
+user cannot have a password and cannot log in via credentials.
 
 @mention autocomplete suggests only users who are **present** (a
 @mention is a synchronous act delivered to currently-connected sockets;

@@ -417,6 +417,9 @@ class TestConfig:
         assert "login_banner_title" in data
         assert "login_banner" in data
         assert "instance_id" in data
+        # #1977: the clanker-agent enabled flag is surfaced as a bool. Chat is
+        # dormant by default (not in DEFAULT_FEATURES), so the agent is off.
+        assert data["chat_agent_enabled"] is False
 
     async def test_get_config_omits_netfilter_fields_when_unauthenticated(
         self, client, app

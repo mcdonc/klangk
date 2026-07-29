@@ -739,11 +739,6 @@ class KlangkSettings(BaseSettings):
     login_banner_every_visit: bool = False
     terminal_banner: str = ""
 
-    # --- Agent ---
-    agent_email: str = "clanker@example.com"
-    agent_handle: str = "clanker"
-    agent_disabled: str = ""
-
     # --- SSL / certs ---
     ssl_cert_dir: str | None = None
 

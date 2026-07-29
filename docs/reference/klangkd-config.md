@@ -356,11 +356,8 @@ port: "8997"
 
 ### Agent
 
-| Key              | Default               | Env var                  |
-| ---------------- | --------------------- | ------------------------ |
-| `agent_email`    | `clanker@example.com` | `KLANGKD_AGENT_EMAIL`    |
-| `agent_handle`   | `clanker`             | `KLANGKD_AGENT_HANDLE`   |
-| `agent_disabled` |                       | `KLANGKD_AGENT_DISABLED` |
+| Key | Default | Env var |
+| --- | ------- | ------- |
 
 ### SSL / certs
 
