@@ -12,6 +12,8 @@ import asyncio
 import logging
 import os
 import signal
+import sys
+import tempfile
 import types
 from unittest.mock import AsyncMock, Mock
 
@@ -1120,9 +1122,24 @@ class TestFindProxyBin:
 
 class TestWatchdogPaths:
     def test_admin_socket_under_state_dir(self, tmp_path):
-        s = make_settings({"KLANGKD_STATE_DIR": str(tmp_path)})
+        # On macOS, pytest tmp_path resolves through /private/var/folders/...
+        # which can exceed the 104-byte AF_UNIX sun_path limit. Use a short
+        # temp dir so the socket path passes the settings validator (#1983).
+        if sys.platform == "darwin":
+            state = tempfile.mkdtemp(prefix="ks-")
+            sock = os.path.join(state, "caddy-admin.sock")
+            s = make_settings(
+                {
+                    "KLANGKD_STATE_DIR": state,
+                    "KLANGKD_CADDY_ADMIN_SOCKET": sock,
+                }
+            )
+        else:
+            state = str(tmp_path)
+            sock = str(tmp_path / "caddy-admin.sock")
+            s = make_settings({"KLANGKD_STATE_DIR": state})
         wd = _wd(s)
-        assert wd.admin_socket == str(tmp_path / "caddy-admin.sock")
+        assert wd.admin_socket == sock
 
     def test_admin_socket_override(self, tmp_path):
         """KLANGKD_CADDY_ADMIN_SOCKET overrides the default path (#1636) — read
@@ -1141,11 +1158,23 @@ class TestWatchdogPaths:
         """The Caddy bind address is the bare unix//<path> with NO |0600 mode
         suffix (that's version-fragile — #1709; mode enforced via os.chmod).
         The bare path (admin_socket) is what httpx dials."""
-        s = make_settings({"KLANGKD_STATE_DIR": str(tmp_path)})
+        if sys.platform == "darwin":
+            state = tempfile.mkdtemp(prefix="ks-")
+            sock = os.path.join(state, "caddy-admin.sock")
+            s = make_settings(
+                {
+                    "KLANGKD_STATE_DIR": state,
+                    "KLANGKD_CADDY_ADMIN_SOCKET": sock,
+                }
+            )
+        else:
+            state = str(tmp_path)
+            sock = str(tmp_path / "caddy-admin.sock")
+            s = make_settings({"KLANGKD_STATE_DIR": state})
         wd = _wd(s)
-        assert wd.admin_bind_address == f"unix//{tmp_path}/caddy-admin.sock"
+        assert wd.admin_bind_address == f"unix//{sock}"
         assert "|0600" not in wd.admin_bind_address
-        assert wd.admin_socket == str(tmp_path / "caddy-admin.sock")
+        assert wd.admin_socket == sock
 
     def test_find_proxy_bin_delegates_to_renderer(self, monkeypatch):
         s = make_settings({"KLANGKD_PROXY_BIN": "/x/caddy"})
@@ -1244,10 +1273,16 @@ class TestWatchdogStart:
     @pytest.mark.asyncio
     async def test_start_runs_prepare_and_spawns(self, monkeypatch, tmp_path):
         """When enabled, start() resolves the bin + schedules the watchdog."""
+        # On macOS, pytest tmp_path can exceed the AF_UNIX sun_path limit;
+        # use a short temp dir for the state + socket (#1983).
+        if sys.platform == "darwin":
+            state = tempfile.mkdtemp(prefix="ks-")
+        else:
+            state = str(tmp_path)
         s = make_settings(
             env={
-                "KLANGKD_STATE_DIR": str(tmp_path),
-                "KLANGKD_SOCKET": str(tmp_path / "klangk.sock"),
+                "KLANGKD_STATE_DIR": state,
+                "KLANGKD_SOCKET": os.path.join(state, "klangk.sock"),
                 "KLANGKD_EGRESS_PORT": "19999",
             }
         )
