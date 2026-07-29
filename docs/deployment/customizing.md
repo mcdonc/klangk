@@ -30,7 +30,7 @@ docker run -d \
   ...
 ```
 
-One env var and one `-v` mount replaces three. The per-feature env vars `KLANGKD_SSL_CERT_DIR` and `KLANGKD_EMAIL_TEMPLATES_DIR` still work as overrides but are **deprecated** — prefer the unified directory. `KLANGKD_BRANDING_DIR` has been removed; branding assets are resolved from `<KLANGKD_CUSTOMIZE_DIR>/branding/` or `<KLANGKD_DATA_DIR>/branding/`.
+One env var and one `-v` mount replaces three. `KLANGKD_EMAIL_TEMPLATES_DIR` still works as an override but is **deprecated** — prefer the unified directory. `KLANGKD_BRANDING_DIR` and `KLANGKD_SSL_CERT_DIR` have been removed; branding resolves from `<KLANGKD_CUSTOMIZE_DIR>/branding/` (or `<KLANGKD_DATA_DIR>/branding/`) and custom CA certs from `<KLANGKD_CUSTOMIZE_DIR>/certs/`.
 
 ### Product Name
 
@@ -167,8 +167,6 @@ docker run -d \
 
 Rotating a cert is just a file change plus a workspace/backend restart — no image rebuild.
 
-> **Deprecated:** `KLANGKD_SSL_CERT_DIR` still works as an override but prefer using `<KLANGKD_CUSTOMIZE_DIR>/certs/` instead.
->
 > **Why a merged bundle?** `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE` _replace_ the default trust store rather than add to it. Klangk therefore prepends the system CAs before your custom certs. (`NODE_EXTRA_CA_CERTS` is additive, but pointing it at the same merged bundle is harmless.)
 
 ### OIDC Login Hook

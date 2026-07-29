@@ -860,6 +860,12 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
 
 ### Removed
 
+- **`KLANGKD_SSL_CERT_DIR` is removed (#1523).** Custom CA certificates now
+  have a single canonical location: drop `.pem`/`.crt` files into
+  `<KLANGKD_CUSTOMIZE_DIR>/certs/`. Operators who set `KLANGKD_SSL_CERT_DIR`
+  should move those certs into `<customize_dir>/certs/`. The resolver already
+  fell back to that path; the env var is removed with no compat shim.
+
 - **`KLANGKD_AGENT_DISABLED`, `KLANGKD_AGENT_EMAIL`, `KLANGKD_AGENT_HANDLE`
   are removed (#1977).** The clanker agent's enable flag and identity now
   live in the chat feature's config keys (`KLANGKWS_FEATURE_CHAT_AGENT_ENABLED`,

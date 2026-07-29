@@ -666,7 +666,7 @@ async def lifespan(app: FastAPI):
 
     # Make the backend process itself trust deployer-supplied CAs (#1181)
     # before any outbound TLS happens (OIDC discovery, SMTP relay, LLM-proxy
-    # upstream). No-op when KLANGKD_SSL_CERT_DIR is unset or empty of certs.
+    # upstream). No-op when <KLANGKD_CUSTOMIZE_DIR>/certs/ is absent or empty of certs.
     app.state.ssl_trust.apply_backend_ssl_trust()
 
     # Configure Logfire *after* SSL trust is applied. logfire.configure()

@@ -33,6 +33,19 @@ def _trust(s) -> ssl_trust.SSLTrust:
     )
 
 
+def _certs_dir(tmp_path):
+    """Create ``<tmp_path>/custom/certs/`` and return ``(certs, customize_dir)``.
+
+    Custom certs now live solely under ``<customize_dir>/certs/`` (#1523), so
+    tests configure them via ``KLANGKD_CUSTOMIZE_DIR`` rather than the removed
+    ``KLANGK_SSL_CERT_DIR``.
+    """
+    customize = tmp_path / "custom"
+    certs = customize / "certs"
+    certs.mkdir(parents=True)
+    return certs, customize
+
+
 @pytest.fixture(autouse=True)
 def _restore_trust_env(monkeypatch):
     """Snapshot/restore the trust env vars around each test.
@@ -54,36 +67,24 @@ class TestSslCertDir:
     def test_unset_returns_none(self):
         assert _trust(_settings({})).ssl_cert_dir() is None
 
-    def test_missing_dir_returns_none(self, tmp_path):
-        s = _settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path / "nope")})
+    def test_missing_certs_dir_returns_none(self, tmp_path):
+        # customize_dir set, but no certs/ subdir -> None.
+        s = _settings({"KLANGKD_CUSTOMIZE_DIR": str(tmp_path)})
         assert _trust(s).ssl_cert_dir() is None
 
-    def test_empty_dir_returns_none(self, tmp_path):
-        (tmp_path / "readme.txt").write_text("no certs")
-        s = _settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path)})
-        assert _trust(s).ssl_cert_dir() is None
-
-    def test_pem_and_crt_detected(self, tmp_path):
-        (tmp_path / "a.pem").write_text("CERTA")
-        (tmp_path / "b.CRT").write_text("CERTB")
-        s = _settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path)})
-        assert _trust(s).ssl_cert_dir() == str(tmp_path.resolve())
-
-    def test_falls_back_to_customize_dir_certs(self, tmp_path):
-        # When KLANGKD_SSL_CERT_DIR is unset but <customize_dir>/certs
-        # exists with cert files, it is used.  See #1360.
+    def test_customize_dir_certs_detected(self, tmp_path):
         custom = tmp_path / "cust"
         certs = custom / "certs"
         certs.mkdir(parents=True)
-        (certs / "ca.pem").write_text("CERT")
+        (certs / "a.pem").write_text("CERTA")
+        (certs / "b.CRT").write_text("CERTB")
         s = _settings({"KLANGKD_CUSTOMIZE_DIR": str(custom)})
         assert _trust(s).ssl_cert_dir() == str(certs.resolve())
 
     def test_customize_dir_certs_ignored_when_empty(self, tmp_path):
         # An empty certs/ subdir is treated the same as missing.
         custom = tmp_path / "cust"
-        certs = custom / "certs"
-        certs.mkdir(parents=True)
+        (custom / "certs").mkdir(parents=True)
         s = _settings({"KLANGKD_CUSTOMIZE_DIR": str(custom)})
         assert _trust(s).ssl_cert_dir() is None
 
@@ -109,14 +110,14 @@ class TestApplyBackendSslTrust:
             assert k not in os.environ
 
     def test_noop_when_dir_has_no_certs(self, tmp_path):
-        s = _settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path)})
+        (tmp_path / "certs").mkdir()  # exists, but empty
+        s = _settings({"KLANGKD_CUSTOMIZE_DIR": str(tmp_path)})
         assert _trust(s).apply_backend_ssl_trust() is None
         for k in ssl_trust.SSL_TRUST_VARS:
             assert k not in os.environ
 
     def test_applies_merged_bundle_and_env_vars(self, monkeypatch, tmp_path):
-        cert_dir = tmp_path / "ssl"
-        cert_dir.mkdir()
+        cert_dir, customize = _certs_dir(tmp_path)
         (cert_dir / "corp-ca.pem").write_text("FAKE-CORP-CA\n")
         monkeypatch.setattr(
             ssl_trust,
@@ -127,7 +128,7 @@ class TestApplyBackendSslTrust:
         data_dir = tmp_path / "data"
         s = _settings(
             {
-                "KLANGKD_SSL_CERT_DIR": str(cert_dir),
+                "KLANGKD_CUSTOMIZE_DIR": str(customize),
                 "KLANGKD_DATA_DIR": str(data_dir),
             }
         )
@@ -146,8 +147,7 @@ class TestApplyBackendSslTrust:
     def test_bundle_is_merged_not_custom_only(self, monkeypatch, tmp_path):
         """The bundle must include system CAs so public-internet TLS still works
         (SSL_CERT_FILE/REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE REPLACE the store)."""
-        cert_dir = tmp_path / "ssl"
-        cert_dir.mkdir()
+        cert_dir, customize = _certs_dir(tmp_path)
         (cert_dir / "corp-ca.crt").write_text("CORP\n")
         monkeypatch.setattr(
             ssl_trust,
@@ -157,7 +157,7 @@ class TestApplyBackendSslTrust:
         (tmp_path / "sys.pem").write_text("SYSTEM-MARKER\n")
         s = _settings(
             {
-                "KLANGKD_SSL_CERT_DIR": str(cert_dir),
+                "KLANGKD_CUSTOMIZE_DIR": str(customize),
                 "KLANGKD_DATA_DIR": str(tmp_path / "data"),
             }
         )
@@ -176,8 +176,7 @@ class TestApplyBackendSslTrust:
         system-bundle lookup could read our own merged bundle and re-append
         the custom certs on each call, growing unbounded.
         """
-        cert_dir = tmp_path / "ssl"
-        cert_dir.mkdir()
+        cert_dir, customize = _certs_dir(tmp_path)
         (cert_dir / "corp-ca.pem").write_text("CORP\n")
         monkeypatch.setattr(
             ssl_trust,
@@ -187,7 +186,7 @@ class TestApplyBackendSslTrust:
         (tmp_path / "sys.pem").write_text("SYSTEM\n")
         s = _settings(
             {
-                "KLANGKD_SSL_CERT_DIR": str(cert_dir),
+                "KLANGKD_CUSTOMIZE_DIR": str(customize),
                 "KLANGKD_DATA_DIR": str(tmp_path / "data"),
             }
         )
@@ -210,13 +209,12 @@ class TestApplyBackendSslTrust:
         self, monkeypatch, tmp_path, caplog
     ):
         """When no system bundle is available we warn (public-internet risk)."""
-        cert_dir = tmp_path / "ssl"
-        cert_dir.mkdir()
+        cert_dir, customize = _certs_dir(tmp_path)
         (cert_dir / "corp-ca.pem").write_text("CORP\n")
         monkeypatch.setattr(ssl_trust, "system_ca_bundle", lambda **kw: None)
         s = _settings(
             {
-                "KLANGKD_SSL_CERT_DIR": str(cert_dir),
+                "KLANGKD_CUSTOMIZE_DIR": str(customize),
                 "KLANGKD_DATA_DIR": str(tmp_path / "data"),
             }
         )
@@ -336,8 +334,7 @@ class TestInternalsAndErrorBranches:
     def test_apply_returns_none_when_makedirs_fails(
         self, monkeypatch, tmp_path
     ):
-        cert_dir = tmp_path / "ssl"
-        cert_dir.mkdir()
+        cert_dir, customize = _certs_dir(tmp_path)
         (cert_dir / "c.pem").write_text("C")
         monkeypatch.setattr(
             ssl_trust.os,
@@ -348,7 +345,7 @@ class TestInternalsAndErrorBranches:
             _trust(
                 _settings(
                     {
-                        "KLANGKD_SSL_CERT_DIR": str(cert_dir),
+                        "KLANGKD_CUSTOMIZE_DIR": str(customize),
                         "KLANGKD_DATA_DIR": str(tmp_path / "data"),
                     }
                 )
@@ -357,8 +354,7 @@ class TestInternalsAndErrorBranches:
         )
 
     def test_apply_warns_on_empty_bundle(self, monkeypatch, tmp_path, caplog):
-        cert_dir = tmp_path / "ssl"
-        cert_dir.mkdir()
+        cert_dir, customize = _certs_dir(tmp_path)
         monkeypatch.setattr(
             ssl_trust, "system_ca_bundle", lambda self_bundle=None: None
         )
@@ -370,7 +366,7 @@ class TestInternalsAndErrorBranches:
                 _trust(
                     _settings(
                         {
-                            "KLANGKD_SSL_CERT_DIR": str(cert_dir),
+                            "KLANGKD_CUSTOMIZE_DIR": str(customize),
                             "KLANGKD_DATA_DIR": str(tmp_path / "data"),
                         }
                     )

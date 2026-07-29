@@ -1,7 +1,7 @@
 """Runtime SSL/CA certificate trust, without an image rebuild (#1181).
 
-A deployer drops ``.pem``/``.crt`` CA certificates into ``KLANGKD_SSL_CERT_DIR``
-and both trust scopes consume them at runtime:
+A deployer drops ``.pem``/``.crt`` CA certificates into
+``<KLANGKD_CUSTOMIZE_DIR>/certs`` and both trust scopes consume them at runtime:
 
 * **Workspace containers** — :mod:`container` mounts the directory read-only at
   :data:`SSL_MOUNT_DEST` and emits the :data:`SSL_TRUST_VARS` env vars pointing
@@ -158,24 +158,18 @@ class SSLTrust:
     def ssl_cert_dir(self) -> str | None:
         """Return the deployer SSL cert dir if it should be trusted, else ``None``.
 
-        Resolves ``KLANGKD_SSL_CERT_DIR`` first (deprecated, backwards-compat);
-        falls back to ``<KLANGKD_CUSTOMIZE_DIR>/certs`` (#1360).  Returns the
-        absolute path when the directory exists and contains at least one
-        ``.pem``/``.crt`` file; ``None`` otherwise (unset, missing, or empty
-        of certs).  Never raises — a misconfigured path simply disables
-        runtime trust.
+        Resolves ``<KLANGKD_CUSTOMIZE_DIR>/certs`` — the sole canonical place
+        deployers put custom CAs (#1360, #1523). Returns the absolute path
+        when the directory exists and contains at least one
+        ``.pem``/``.crt`` file; ``None`` otherwise (missing, or empty of
+        certs). Never raises — a misconfigured path simply disables runtime
+        trust.
         """
-        raw = self.app.state.settings.ssl_cert_dir
-        if not raw:
-            customize = self.app.state.settings.customize_dir
-            candidate = os.path.join(customize, "certs")
-            if os.path.isdir(candidate):
-                raw = candidate
-        if not raw:
+        customize = self.app.state.settings.customize_dir
+        candidate = os.path.join(customize, "certs")
+        if not os.path.isdir(candidate):
             return None
-        path = os.path.realpath(raw)
-        if not os.path.isdir(path):
-            return None
+        path = os.path.realpath(candidate)
         return path if any(True for _ in iter_cert_files(path)) else None
 
     def apply_backend_ssl_trust(self) -> str | None:
@@ -214,7 +208,8 @@ class SSLTrust:
             logger.warning(
                 "Applying backend SSL trust without a system bundle: the trust "
                 "vars replace the default store, so public-internet TLS endpoints "
-                "may fail. Provide a system CA bundle or unset KLANGKD_SSL_CERT_DIR."
+                "may fail. Provide a system CA bundle, or remove the custom certs "
+                "from <KLANGKD_CUSTOMIZE_DIR>/certs/ to skip backend trust."
             )
         for name in SSL_TRUST_VARS:
             os.environ[name] = bundle_path

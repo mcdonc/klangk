@@ -739,9 +739,6 @@ class KlangkSettings(BaseSettings):
     login_banner_every_visit: bool = False
     terminal_banner: str = ""
 
-    # --- SSL / certs ---
-    ssl_cert_dir: str | None = None
-
     # --- File upload ---
     file_upload_size_max: str | None = "524288000"
 
