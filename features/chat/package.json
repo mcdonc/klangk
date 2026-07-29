@@ -1,0 +1,24 @@
+{
+  "name": "@klangk/chat",
+  "version": "1.0.0",
+  "description": "Workspace chat feature — chat tab and clanker agent UI",
+  "klangk": {
+    "config": {
+      "KLANGKWS_FEATURE_CHAT_AGENT_ENABLED": {
+        "description": "Enable the clanker agent in chat. Opt-in (default off / empty).",
+        "default": "",
+        "scope": "both"
+      },
+      "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL": {
+        "description": "The email address the clanker agent acts as, when enabled.",
+        "default": "",
+        "scope": "both"
+      },
+      "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE": {
+        "description": "The @-handle the clanker agent uses in chat, when enabled.",
+        "default": "",
+        "scope": "both"
+      }
+    }
+  }
+}

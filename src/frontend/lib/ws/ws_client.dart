@@ -22,7 +22,7 @@ class WsDebugEntry {
 
 /// Manages WebSocket connection to the Klangk backend, sending commands
 /// and streaming terminal output and browser bridge requests.
-class WsClient extends ChangeNotifier {
+class WsClient extends ChangeNotifier implements ChatServices {
   // coverage:ignore-start
   static String get _wsBaseUrl {
     final loc = Uri.base;

@@ -1,5 +1,5 @@
-name: klangk_feature_boingball
-description: Boing Ball demo with bouncing checkered ball and wrapped text
+name: klangk_feature_chat
+description: Workspace chat feature (chat tab + clanker agent UI) for Klangk
 publish_to: none
 version: 0.1.0
 
@@ -14,4 +14,10 @@ dependencies:
     git:
       url: https://github.com/mcdonc/klangk-plugin-api.git
       ref: v0.5.0
-  http: ^1.2.0
+  provider: ^6.1.0
+  flutter_markdown_plus: ^1.0.7
+  markdown: ^7.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

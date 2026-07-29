@@ -55,7 +55,7 @@ FEATURE_API_DEP = {
     "klangk_plugin_api": {
         "git": {
             "url": "https://github.com/mcdonc/klangk-plugin-api.git",
-            "ref": "v0.4.1",
+            "ref": "v0.5.0",
         }
     }
 }

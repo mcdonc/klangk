@@ -51,17 +51,19 @@ EXPECTED_FEATURE_NAMES = {
     "browser-fetch",
     "boingball",
     "git-credential",
+    "chat",  # tab-only feature (#1976); dormant
     "soliplex",  # vendored local in #1686 (was a remote git: entry in #1664)
 }
 
 # Compiled-in Dart features that are NOT in DEFAULT_FEATURES — dormant unless
 # an operator opts in via KLANGKD_FEATURES_ENABLE. Soliplex (#1664, vendored
 # local in #1686) is the canonical "compiled-in ⊋ defaults" case.
-DORMANT_FEATURE_NAMES = {"soliplex"}
+DORMANT_FEATURE_NAMES = {"soliplex", "chat"}
 
-# Features with a klangk/ Dart package → class names emitted into the
-# generated aggregator. Features without klangk/ (word-count, browser-fetch)
-# are TS-only and must NOT appear in the Dart aggregator.
+# Features with a klangk/ Dart package that declare a ToolPlugin → the tool
+# class emitted into createAllFeatures/createAllNamedFeatures. Features
+# without klangk/ (word-count, browser-fetch) are TS-only and must NOT appear
+# in the Dart aggregator.
 EXPECTED_DART_FEATURES = {
     "celebrate": "CelebrateFeature",
     "beep": "BeepFeature",
@@ -71,12 +73,25 @@ EXPECTED_DART_FEATURES = {
     "soliplex": "SoliplexFeature",
 }
 
+# Dart features that declare ONLY a WorkspaceTabPlugin (no ToolPlugin) → the
+# tab class emitted into createAllNamedWorkspaceTabs (#1976). Chat is the
+# first tab-only feature.
+EXPECTED_DART_TAB_FEATURES = {
+    "chat": "ChatTab",
+}
+
+# All features with a klangk/ Dart package (tool or tab) — used to tell Dart
+# features from TS-only ones (word-count, browser-fetch have no klangk/).
+EXPECTED_DART_PACKAGE_FEATURES = set(EXPECTED_DART_FEATURES) | set(
+    EXPECTED_DART_TAB_FEATURES
+)
+
 # The subset that appears in features.json's features[] list. import_dart_features
 # only carries features with a klangk/ Dart package (the frontend-activatable
 # set). TS-only features (word-count, browser-fetch) are baked into
 # the workspace image and always-on — they never appear in features.json.
 # This is the wheel/workspace activation asymmetry from #1655.
-EXPECTED_DART_FEATURE_NAMES = set(EXPECTED_DART_FEATURES)
+EXPECTED_DART_FEATURE_NAMES = EXPECTED_DART_PACKAGE_FEATURES
 
 # Config keys declared across all feature package.json files, by scope.
 # All carry the KLANGKWS_FEATURE_ prefix (the feature-config namespace, #1662):
@@ -84,7 +99,14 @@ EXPECTED_DART_FEATURE_NAMES = set(EXPECTED_DART_FEATURES)
 # alone keeps feature keys from colliding with server secrets/paths/infra.
 # Soliplex's KLANGKWS_FEATURE_SOLIPLEX_URL was renamed from SOLIPLEX_URL when it
 # was vendored (#1686) — the build guard from #1662 requires the prefix.
-EXPECTED_CONTAINER_ENV_KEYS = ["KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID"]
+# Chat's three agent keys (scope "both") sort before git-credential's
+# (features are iterated sorted by name: chat < git-credential).
+EXPECTED_CONTAINER_ENV_KEYS = [
+    "KLANGKWS_FEATURE_CHAT_AGENT_ENABLED",
+    "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL",
+    "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE",
+    "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID",
+]
 
 
 def _run_codegen(payload_dir, tmp_path, monkeypatch):
@@ -178,19 +200,24 @@ class TestPipelineRuns:
             )
 
         # Features WITHOUT a klangk/ dir must not appear in the Dart aggregator.
-        non_dart = EXPECTED_FEATURE_NAMES - set(EXPECTED_DART_FEATURES)
+        non_dart = EXPECTED_FEATURE_NAMES - EXPECTED_DART_PACKAGE_FEATURES
         for name in non_dart:
             pkg = f"klangk_feature_{name.replace('-', '_')}"
             assert f"import 'package:{pkg}/" not in source, (
                 f"{name} has no klangk/ dir but leaked into the Dart aggregator"
             )
 
-        # The workspace-tab aggregator (#1975) is always emitted, even when
-        # no checked-in feature declares a WorkspaceTabPlugin today — its
+        # The workspace-tab aggregator (#1975) is always emitted — its
         # absence would break main.dart's active-set filter at runtime.
         assert "createAllNamedWorkspaceTabs()" in source, (
             "createAllNamedWorkspaceTabs() aggregator not emitted"
         )
+        # Chat is the first checked-in tab-only feature (#1976): its ChatTab
+        # is emitted into the tab aggregator.
+        for name, cls in EXPECTED_DART_TAB_FEATURES.items():
+            assert f"(name: '{name}', tab: {cls}())," in source, (
+                f"{cls}() not instantiated in createAllNamedWorkspaceTabs"
+            )
 
     def test_named_aggregator_names_match_feature_names(self, tmp_path, monkeypatch):
         """createAllNamedFeatures() emits records whose `name` matches the
@@ -358,9 +385,13 @@ class TestManifestContract:
                     f"{spec['scope']!r}"
                 )
                 all_keys[key] = spec["scope"]
-        # Spot-check the three keys actually declared today.
+        # Spot-check the keys declared today (chat's three agent keys are
+        # scope "both", #1976).
         assert all_keys == {
             "KLANGKWS_FEATURE_BOING_SPEED": "frontend",
+            "KLANGKWS_FEATURE_CHAT_AGENT_ENABLED": "both",
+            "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL": "both",
+            "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE": "both",
             "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "container",
             "KLANGKWS_FEATURE_SOLIPLEX_URL": "frontend",
         }

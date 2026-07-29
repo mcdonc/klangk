@@ -8,6 +8,7 @@ import 'package:klangk_features/klangk_features.dart';
 import 'package:provider/provider.dart';
 import 'app.dart';
 import 'auth/auth_service.dart';
+import 'workspace/host_services.dart';
 import 'workspace_tab_filter.dart';
 import 'ws/ws_client.dart';
 import 'utils/web_helpers_stub.dart'
@@ -67,6 +68,12 @@ Future<void> main() async {
         ChangeNotifierProxyProvider<AuthService, WsClient>(
           create: (_) => WsClient(),
           update: (_, auth, client) => client!..updateAuth(auth),
+        ),
+        // Host services for feature tabs (#1976): exposes the WsClient (a
+        // ChatServices) + the current user id as the plugin-API
+        // WorkspaceServices contract, read via context.read<WorkspaceServices>().
+        ProxyProvider2<AuthService, WsClient, WorkspaceServices>(
+          update: (_, auth, ws, __) => HostWorkspaceServices(ws, auth),
         ),
       ],
       child: KlangkApp(initialLocation: initialLocation),

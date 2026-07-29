@@ -228,6 +228,10 @@ void main() {
       client.sendHeartbeat();
       client.sendBrowserResponse('req-1', {'status': 'ok'});
       client.sendBrowserChunk('req-1', 'delta');
+      client.sendChatLoadMore('msg-1');
+
+      // Reading the chat-history-pages stream exercises the getter.
+      expect(client.chatHistoryPages, isA<Stream<Map<String, dynamic>>>());
 
       expect(client.connected, isFalse);
       client.dispose();

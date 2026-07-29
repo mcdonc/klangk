@@ -21,7 +21,6 @@ import 'workspace_overlays.dart';
 import 'package:http/http.dart' as http;
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
-import '../chat/workspace_chat.dart';
 import '../debug/debug_panel.dart';
 import 'workspace_settings_panel.dart';
 import 'workspace_sharing_panel.dart';
@@ -55,12 +54,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
   static const _defaultHome = '/';
   final _terminalKey = GlobalKey<GhosttyTerminalState>();
   final _fileViewerKey = GlobalKey<FileViewerPanelState>();
-  final _chatKey = GlobalKey<WorkspaceChatState>();
   bool _connecting = true;
   String? _error;
   String _workspaceName = '';
-  int _chatUnread = 0;
-  bool _chatMentioned = false;
   bool _containerStopped = false;
   bool _restarting = false;
   bool _disconnected = false;
@@ -506,20 +502,6 @@ class _WorkspacePageState extends State<WorkspacePage> {
         onSwitchToIsolated: _switchToIsolated,
         onJoinShared: _joinShared,
       ),
-      chat: _hasPerm('chat')
-          ? WorkspaceChat(
-              key: _chatKey,
-              wsClient: wsClient,
-              onUnreadChanged: (count) {
-                if (mounted) setState(() => _chatUnread = count);
-              },
-              onMentionChanged: (mentioned) {
-                if (mounted) setState(() => _chatMentioned = mentioned);
-              },
-            )
-          : null,
-      chatUnread: _chatUnread,
-      chatMentioned: _chatMentioned,
       settings: _hasPerm('edit')
           ? WorkspaceSettingsPanel(
               workspaceId: widget.workspaceId,
@@ -531,7 +513,6 @@ class _WorkspacePageState extends State<WorkspacePage> {
           : null,
       terminalKey: _terminalKey,
       fileViewerKey: _fileViewerKey,
-      chatKey: _chatKey,
       initialFile: widget.initialFile,
       initialDir: widget.initialDir,
       debug: DebugPanel(wsClient: wsClient),
