@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'theme/colors.dart';
+import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 /// Compact presence bar showing connected user avatars.
 class ChatPresenceBar extends StatelessWidget {

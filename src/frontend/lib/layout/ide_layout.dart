@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../terminal/ghostty_terminal.dart';
 import '../file_viewer/file_viewer_panel.dart';
-import '../theme/colors.dart';
 import '../widgets/skeuo_tab.dart';
 
 /// IDE layout: tabs (Terminal + Files + feature-contributed tabs) with optional

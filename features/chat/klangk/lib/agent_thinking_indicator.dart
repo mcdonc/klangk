@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'theme/colors.dart';
+import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 /// Animated indicator shown when the agent is processing a request.
 class AgentThinkingIndicator extends StatelessWidget {

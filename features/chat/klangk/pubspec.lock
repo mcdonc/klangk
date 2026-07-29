@@ -95,11 +95,11 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: "v0.5.0"
-      resolved-ref: eebf6d5387150df7fbc423ff9b912948f327d61e
+      ref: "v0.5.1"
+      resolved-ref: "441f9d4f75988bbb022727439b5c2939bc5ab96e"
       url: "https://github.com/mcdonc/klangk-plugin-api.git"
     source: git
-    version: "0.5.0"
+    version: "0.5.1"
   leak_tracker:
     dependency: transitive
     description:

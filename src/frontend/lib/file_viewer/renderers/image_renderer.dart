@@ -2,8 +2,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
-import '../../theme/colors.dart';
-
 /// Image extensions handled by [ImageRenderer] (decodable by `Image.memory`).
 const _imageExtensions = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'};
 

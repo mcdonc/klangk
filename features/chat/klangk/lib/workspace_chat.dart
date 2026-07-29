@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
-import 'theme/colors.dart';
 import 'agent_thinking_indicator.dart';
 import 'chat_input_bar.dart';
 import 'chat_message_list.dart';

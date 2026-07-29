@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
-import '../../theme/colors.dart';
 import '../video_object_url_stub.dart'
     if (dart.library.js_interop) '../video_object_url_web.dart';
 

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
-import 'theme/colors.dart';
+import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'utils/open_url.dart';
 
 /// Scrollable list of chat messages with load-more and collapsible long
