@@ -56,9 +56,12 @@ class TestResolveIndirection:
         result = _resolve_indirection("cmd:/nonexistent/binary/path")
         assert result is None
 
-    def test_cmd_timeout(self):
-        # A command that sleeps longer than the timeout
-        result = _resolve_indirection("cmd:sleep 100")
+    def test_cmd_timeout(self, monkeypatch):
+        # Patch the timeout short so we don't actually wait the default
+        # _CMD_TIMEOUT_SECONDS (10s); the test only asserts the timeout
+        # path fires. ``sleep 5`` outlasts the patched 0.5s timeout (#1989).
+        monkeypatch.setattr("klangk.settings._CMD_TIMEOUT_SECONDS", 0.5)
+        result = _resolve_indirection("cmd:sleep 5")
         assert result is None
 
 

@@ -121,9 +121,21 @@ class FakeBtnPress:
 
 
 def _st(**methods):
-    """A TuiState with the given methods overridden (for Pilot tests)."""
+    """A TuiState with the given methods overridden (for Pilot tests).
+
+    Defaults ``list_owned_workspaces`` / ``list_shared_workspaces`` to empty
+    so MainScreen's on-mount ``refresh_lists`` (which calls them via
+    ``_safe_list``) doesn't make a real, timing-out HTTP call to the fake
+    test URL in tests that don't otherwise stub them (#1989). Callers that
+    need real list data use ``_ws(owned=...)`` / ``_authed_state(...)``,
+    which override these.
+    """
     st = TuiState()
-    for k, v in methods.items():
+    defaults = {
+        "list_owned_workspaces": lambda: [],
+        "list_shared_workspaces": lambda: [],
+    }
+    for k, v in {**defaults, **methods}.items():
         setattr(st, k, v)
     return st
 
@@ -140,6 +152,9 @@ def _authed_state(**extra):
         list_terminals=_async_empty,
         close_terminal=_async_empty,
         restart_workspace=lambda n: None,
+        # Stubbed so MainScreen._do_create doesn't make a real (timing-out)
+        # HTTP call for the allowed-domains list (#1989).
+        default_allowed_domains=lambda: [],
     )
     base.update(extra)
     return _st(**base)
@@ -158,6 +173,9 @@ def _ws(owned=None, shared=None, **extra):
         list_terminals=_async_empty,
         close_terminal=_async_empty,
         restart_workspace=lambda n: None,
+        # Stubbed so MainScreen._do_create doesn't make a real (timing-out)
+        # HTTP call for the allowed-domains list (#1989).
+        default_allowed_domains=lambda: [],
     )
     base.update(extra)
     return _st(**base)
@@ -201,27 +219,38 @@ async def _async_empty(*a, **k):
     return []
 
 
-# Capture the real refresh loop before any test stubs it, so direct-call
-# coverage tests can still exercise it despite the autouse stub below.
+# Capture the real worker loops before any test stubs them, so direct-call
+# coverage tests can still exercise them despite the autouse class-method
+# stub below. The two method refs are unbound (saved off the class at import
+# time); direct-call tests pass the screen explicitly.
 _real_run_token_refresh_loop = scr_main.run_token_refresh_loop
+_real_status_loop = MainScreen._status_loop
+_real_token_refresh_loop = MainScreen._token_refresh_loop
 
 
 @pytest.fixture(autouse=True)
 def _stub_tui_bg_workers(monkeypatch):
-    """Stub MainScreen's on-mount bg workers for every TUI test.
+    """Stub MainScreen's on-mount bg workers (status-WS + token-refresh loops)
+    to no-ops for every TUI test.
 
-    #1882's on_mount spawns a status-WS worker and a proactive token-refresh
-    worker (a 60s-sleep loop). The refresh loop never completes during a
-    test, wedging ``wait_for_complete()`` for any test that mounts a
-    MainScreen without stubbing it. Tests that need the real refresh loop
-    call ``_real_run_token_refresh_loop`` directly.
+    on_mount spawns two workers — ``self._status_loop`` and
+    ``self._token_refresh_loop``. Left real, the status loop reconnects up to
+    4× (max_retries=3) with a 2s sleep whenever its ``listen_for_status``
+    returns cleanly, costing ~8s per mounted MainScreen — which dominated TUI
+    test runtime (#1989). The old fixture stubbed the *leaf*
+    ``listen_for_status`` function, but that still ran the loop body and its
+    real reconnect sleeps; stubbing the loop *methods* instead makes the
+    workers complete instantly. Tests exercising the real loop logic call the
+    saved ``_real_status_loop`` / ``_real_token_refresh_loop`` /
+    ``_real_run_token_refresh_loop`` directly (they stub the leaf functions
+    themselves as needed).
     """
 
     async def _noop(*a, **k):
         return None
 
-    monkeypatch.setattr(scr_main, "run_token_refresh_loop", _noop)
-    monkeypatch.setattr(scr_main, "listen_for_status", _noop)
+    monkeypatch.setattr(MainScreen, "_status_loop", _noop)
+    monkeypatch.setattr(MainScreen, "_token_refresh_loop", _noop)
 
 
 # ---------------------------------------------------------------------------
@@ -954,7 +983,7 @@ async def test_status_loop_no_token_returns_early(monkeypatch):
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_authed_state(token=lambda: None))
     async with app.run_test():
-        await app.screen._status_loop()  # no token -> early return
+        await _real_status_loop(app.screen)  # no token -> early return
 
 
 async def test_status_loop_handles_disconnect(monkeypatch):
@@ -962,11 +991,46 @@ async def test_status_loop_handles_disconnect(monkeypatch):
         raise RuntimeError("ws died")
 
     monkeypatch.setattr(scr_main, "listen_for_status", boom)
+    # The exponential backoff sleeps (2s, 4s, 8s) are incidental to the
+    # disconnect -> give-up flow under test; neutralize them so the loop
+    # exhausts its retries without burning ~14s of wall-clock (#1989).
+    import asyncio as _asyncio
+
+    _real_sleep = _asyncio.sleep
+
+    async def _no_wait(_t):
+        await _real_sleep(0)  # yield once, no real delay
+
+    monkeypatch.setattr(_asyncio, "sleep", _no_wait)
     app = KlangkApp(_authed_state())
     async with app.run_test() as pilot:
-        await app.screen._status_loop()
+        await _real_status_loop(app.screen)
         await pilot.pause()
         assert "status: disconnected" in app.live_extra
+
+
+async def test_status_loop_clean_close_reconnects(monkeypatch):
+    """A clean WS close (listen_for_status returns normally) runs the
+    reconnect branch; the loop then exits when the token drops on the next
+    check. Covers the clean-close body (previously exercised only by the
+    on-mount bg worker, which the autouse fixture now stubs, #1989)."""
+
+    async def clean_close(*a, **k):
+        return None  # server restart / idle timeout — clean close
+
+    monkeypatch.setattr(scr_main, "listen_for_status", clean_close)
+    # Token present for the pre-loop read and iteration 1 (so the loop enters
+    # and gets a clean close), then None on iteration 2 -> session_expired.
+    tokens = iter(["tok", "tok", None])
+    app = KlangkApp(_authed_state(token=lambda: next(tokens)))
+    expired = []
+    monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
+    async with app.run_test() as pilot:
+        await _real_status_loop(app.screen)
+        await pilot.pause()
+    # The clean-close reconnect branch ran before the token dropped.
+    assert "status: reconnecting" in (app.live_extra or "")
+    assert expired  # iteration 2 saw no token -> session_expired
 
 
 async def test_login_password_flow_success(monkeypatch):
@@ -5360,6 +5424,8 @@ async def test_detail_delete_terminal_empty_result(monkeypatch):
         before = calls["list"]
         await d._do_delete_terminal("@1")
         await app.workers.wait_for_complete()
+        # Let the refresh's clear/append reconcile in the DOM.
+        await pilot.pause()
         assert "Delete failed" in str(d.query_one("#detail_msg").render())
         assert (
             len(d.query_one("#term_list", ListView).query(ListItem)) == 2
@@ -5493,6 +5559,10 @@ def _create_state(create=None, **extra):
         },
         allow_autostart=lambda: True,
         default_allowed_domains=lambda: [],
+        # The create flow opens the new workspace's detail screen, whose
+        # _mount_async calls find_workspace — stub it so the flow test
+        # doesn't make a real (timing-out) HTTP call (#1989).
+        find_workspace=lambda n: _wsobj(n),
         create_workspace=create or (lambda *a, **k: _wsobj("zzz")),
     )
     base.update(extra)
@@ -8493,7 +8563,7 @@ async def test_status_loop_token_disappears_mid_retry(monkeypatch):
     expired = []
     monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
     async with app.run_test() as pilot:
-        await app.screen._status_loop()
+        await _real_status_loop(app.screen)
         await pilot.pause()
     assert expired
 
@@ -8513,7 +8583,7 @@ async def test_status_loop_auth_error_expires_session(monkeypatch):
     expired = []
     monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
     async with app.run_test() as pilot:
-        await app.screen._status_loop()
+        await _real_status_loop(app.screen)
         await pilot.pause()
     assert expired
 
@@ -8533,7 +8603,7 @@ async def test_token_refresh_loop_expires_session(monkeypatch):
     fired = []
     monkeypatch.setattr(app, "session_expired", lambda: fired.append(1))
     async with app.run_test():
-        await app.screen._token_refresh_loop()
+        await _real_token_refresh_loop(app.screen)
     assert fired
 
 

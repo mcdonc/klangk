@@ -43,7 +43,7 @@ jobs:
       - name: Run tests
         if: steps.filter.outputs.python == 'true'
         # -n auto: run tests in parallel across CPUs (pytest-xdist)
-        run: python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests -v -n auto
+        run: python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests -v -n auto --durations=20
 
       - name: Run build-pipeline tests
         if: steps.filter.outputs.python == 'true'
