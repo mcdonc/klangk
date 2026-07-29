@@ -390,6 +390,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
     for (final feature in _features) {
       feature.dispose();
     }
+    // Mirror tool plugins: release feature-tab resources on workspace close
+    // (#1975). The registry is a singleton populated once in main(), so this
+    // calls per-tab dispose() — not disposeAll() — to avoid clearing tabs
+    // that the next workspace page (same app session) will reuse. Tab plugins
+    // with real resources (e.g. the eventual chat tab's controller) must
+    // tolerate being re-registered, same as tool plugins already do.
+    for (final tab in _featureTabs) {
+      tab.dispose();
+    }
     super.dispose();
   }
 

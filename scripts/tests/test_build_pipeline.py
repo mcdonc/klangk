@@ -185,6 +185,13 @@ class TestPipelineRuns:
                 f"{name} has no klangk/ dir but leaked into the Dart aggregator"
             )
 
+        # The workspace-tab aggregator (#1975) is always emitted, even when
+        # no checked-in feature declares a WorkspaceTabPlugin today — its
+        # absence would break main.dart's active-set filter at runtime.
+        assert "createAllNamedWorkspaceTabs()" in source, (
+            "createAllNamedWorkspaceTabs() aggregator not emitted"
+        )
+
     def test_named_aggregator_names_match_feature_names(self, tmp_path, monkeypatch):
         """createAllNamedFeatures() emits records whose `name` matches the
         feature name in features.yaml — the link the runtime's active-set
@@ -208,6 +215,86 @@ class TestPipelineRuns:
         )
         for name, cls in EXPECTED_DART_FEATURES.items():
             assert named_map[name] == cls
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Test 1b: the workspace-tab aggregator (#1975). The checked-in features all
+# declare ToolPlugin only, so the real-pipeline tests above can't reach the
+# tab-bearing code paths. These exercise find_features / generate_dart /
+# collect_feature_metadata directly against synthetic feature trees covering
+# the three shapes a feature can take: tool-only, tab-only, and both.
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class TestWorkspaceTabAggregator:
+    """createAllNamedWorkspaceTabs() (#1975): a feature may contribute a
+    workspace tab with or without a ToolPlugin."""
+
+    def _write_feature(self, root, name, source):
+        """Write a minimal features/<name>/klangk/ tree with feature.dart."""
+        dart_dir = root / name / "klangk"
+        (dart_dir / "lib").mkdir(parents=True, exist_ok=True)
+        (dart_dir / "pubspec.yaml").write_text(f"name: klangk_feature_{name}\n")
+        (dart_dir / "lib" / "feature.dart").write_text(source)
+
+    def test_tab_only_feature_is_discovered_and_emitted(self, tmp_path):
+        """A feature whose only component is a WorkspaceTabPlugin is
+        discovered (tool_classes empty), surfaces in features.json metadata,
+        and emits a createAllNamedWorkspaceTabs() entry — but does NOT appear
+        in createAllFeatures / createAllNamedFeatures."""
+        src = (
+            "import 'package:klangk_plugin_api/klangk_plugin_api.dart';\n"
+            "class NotesTab extends WorkspaceTabPlugin {}\n"
+        )
+        self._write_feature(tmp_path, "notes", src)
+
+        features = import_dart_features.find_features(str(tmp_path))
+        assert len(features) == 1
+        feat = features[0]
+        assert feat["name"] == "notes"
+        assert feat["tool_classes"] == []
+        assert feat["tab_classes"] == ["NotesTab"]
+
+        # A tab-only feature still appears in the features.json manifest
+        # (collect_feature_metadata iterates features, not tool_classes).
+        meta, _keys = import_dart_features.collect_feature_metadata(
+            features, str(tmp_path)
+        )
+        assert [m["name"] for m in meta] == ["notes"]
+
+        dart = import_dart_features.generate_dart(features)
+        assert "createAllNamedWorkspaceTabs()" in dart
+        assert "(name: 'notes', tab: NotesTab())," in dart
+        # The tab class appears exactly once — only in the tab aggregator,
+        # never leaked into createAllFeatures / createAllNamedFeatures.
+        assert dart.count("NotesTab()") == 1, "tab class leaked into a tool aggregator"
+
+    def test_both_tool_and_tab_feature(self, tmp_path):
+        """A feature declaring both a ToolPlugin and a WorkspaceTabPlugin
+        surfaces in BOTH aggregators under the same feature name — the shape
+        the eventual `chat` feature will take (#1976)."""
+        src = (
+            "import 'package:klangk_plugin_api/klangk_plugin_api.dart';\n"
+            "class ChatFeature extends ToolPlugin {}\n"
+            "class ChatTab extends WorkspaceTabPlugin {}\n"
+        )
+        self._write_feature(tmp_path, "chat", src)
+
+        features = import_dart_features.find_features(str(tmp_path))
+        assert len(features) == 1
+        feat = features[0]
+        assert feat["tool_classes"] == ["ChatFeature"]
+        assert feat["tab_classes"] == ["ChatTab"]
+
+        dart = import_dart_features.generate_dart(features)
+        assert "(name: 'chat', feature: ChatFeature())," in dart
+        assert "(name: 'chat', tab: ChatTab())," in dart
+
+    def test_neither_component_is_skipped(self, tmp_path):
+        """A feature declaring neither ToolPlugin nor WorkspaceTabPlugin is
+        not a klangk feature — find_features skips it entirely."""
+        self._write_feature(tmp_path, "notafeature", "class SomeRandomClass {}\n")
+        assert import_dart_features.find_features(str(tmp_path)) == []
 
 
 # ────────────────────────────────────────────────────────────────────────────

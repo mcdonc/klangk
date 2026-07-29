@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:flterm/flterm.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
@@ -35,13 +35,13 @@ Future<void> main() async {
   // Feature-contributed workspace tabs (#1975): the same active-set filter
   // as tool plugins — a feature's tab mounts only when the feature is
   // active. A feature may contribute a tab with no tool handlers
-  // (tab-only), or both a tab and tool handlers.
-  final tabRegistry = WorkspaceTabRegistry();
-  for (final entry in createAllNamedWorkspaceTabs()) {
-    if (activeFeatureNames.contains(entry.name)) {
-      tabRegistry.register(entry.tab);
-    }
-  }
+  // (tab-only), or both a tab and tool handlers. The filter lives in
+  // [registerActiveWorkspaceTabs] (a top-level helper) so it is unit-testable
+  // — the tool-plugin filter is the same shape but inlined.
+  registerActiveWorkspaceTabs(
+    createAllNamedWorkspaceTabs(),
+    activeFeatureNames,
+  );
 
   if (kIsWeb) {
     // libghostty's VT runs as WebAssembly in the browser; load it once before
@@ -126,5 +126,30 @@ Future<Set<String>> _resolveActiveFeatures() async {
   }
 
   // 3. No manifest, no knob — every compiled-in feature active (back-compat).
-  return createAllNamedFeatures().map((e) => e.name).toSet();
+  // Union tools + tabs: a tab-only feature has no createAllNamedFeatures()
+  // entry, so deriving the active set from tools alone would silently drop
+  // its tab (#1975).
+  return {
+    ...createAllNamedFeatures().map((e) => e.name),
+    ...createAllNamedWorkspaceTabs().map((e) => e.name),
+  };
+}
+
+/// Registers a feature's workspace tab into the [WorkspaceTabRegistry] only
+/// when the feature is in [activeFeatureNames] — the tab analogue of the
+/// tool-plugin active-set filter in `main()` (#1975). Extracted to a
+/// top-level helper so the filter is unit-testable as a regression guard;
+/// `main()` passes the generated `createAllNamedWorkspaceTabs()` aggregator
+/// output.
+@visibleForTesting
+void registerActiveWorkspaceTabs(
+  Iterable<({String name, WorkspaceTabPlugin tab})> allTabs,
+  Set<String> activeFeatureNames,
+) {
+  final tabRegistry = WorkspaceTabRegistry();
+  for (final entry in allTabs) {
+    if (activeFeatureNames.contains(entry.name)) {
+      tabRegistry.register(entry.tab);
+    }
+  }
 }
