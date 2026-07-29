@@ -25,7 +25,7 @@ http://<hostname>:<KLANGKD_PORT>/hosted/<workspace_id>/<host_port>/
 For example, if your workspace ID is `abc123` and you run a server on container port 8000 (mapped to host port 9000):
 
 ```text
-http://localhost:8995/hosted/abc123/9000/
+http://localhost:8997/hosted/abc123/9000/
 ```
 
 WebSocket connections are supported — tools like Jupyter and Marimo work out of the box.
@@ -35,7 +35,7 @@ WebSocket connections are supported — tools like Jupyter and Marimo work out o
 | Variable                    | Example                   | Description                                   |
 | --------------------------- | ------------------------- | --------------------------------------------- |
 | `KLANGKWS_PORT_MAPPINGS`    | `8000:9000,8001:9001,...` | Container-to-host port mapping (CSV)          |
-| `KLANGKD_HOSTING_HOSTNAME`  | `localhost:8995`          | Hostname for constructing hosted app URLs     |
+| `KLANGKD_HOSTING_HOSTNAME`  | `localhost:8997`          | Hostname for constructing hosted app URLs     |
 | `KLANGKD_HOSTING_PROTO`     | `http`                    | Protocol for hosted app URLs                  |
 | `KLANGKD_HOSTING_BASE_PATH` | `/klangk`                 | Base path prefix (empty for root deployments) |
 
@@ -48,7 +48,7 @@ The easiest way to get a hosted app URL from the shell is the
 
 ```bash
 $ klangk-hosted-url 8000
-http://localhost:8995/hosted/abc123/9000/
+http://localhost:8997/hosted/abc123/9000/
 ```
 
 Pass the **container port** (8000-8004); it resolves the mapped host port via

@@ -49,7 +49,7 @@ ws-max-size: 33554432 # 32 MB (default 16 MB)
 # Named server aliases
 servers:
   local:
-    url: http://localhost:8995
+    url: http://localhost:8997
     user: admin@example.com # default user for login
   prod:
     url: https://klangk.example.com
@@ -63,7 +63,7 @@ server:
 ```yaml
 servers:
   myserver:
-    url: http://myhost:8995
+    url: http://myhost:8997
 ```
 
 You do not need to create `klangk.yaml` manually. On your first
@@ -71,12 +71,12 @@ You do not need to create `klangk.yaml` manually. On your first
 hostname as the alias and the login user as the default:
 
 ```bash
-klangk login http://myhost:8995 admin@example.com
+klangk login http://myhost:8997 admin@example.com
 # Creates ~/.config/klangk/klangk.yaml with:
 #   # forward-agent: true   # opt-in: uncomment to enable
 #   servers:
 #     myhost:
-#       url: http://myhost:8995
+#       url: http://myhost:8997
 #       user: admin@example.com
 ```
 
@@ -100,8 +100,8 @@ Auto-managed. Stores the active server, active user per server, and
 cached authentication tokens:
 
 ```yaml
-active-server: http://localhost:8995
-http://localhost:8995:
+active-server: http://localhost:8997
+http://localhost:8997:
   active-user: admin@example.com
   users:
     admin@example.com:
@@ -144,7 +144,7 @@ or a raw URL. It does not change `klangk-state.yaml`.
 ```bash
 # Authentication
 klangk login local                          # login to "local" alias (uses default user from config)
-klangk login http://localhost:8995          # login with a raw URL (prompts for user)
+klangk login http://localhost:8997          # login with a raw URL (prompts for user)
 klangk login prod chris@example.com         # login as a specific user
 klangk logout                               # logout from active server
 klangk logout prod                          # logout from a specific server

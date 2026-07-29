@@ -15,7 +15,7 @@ build tools required.
 ```bash
 docker run -d \
   --name klangk \
-  -p 8995:8995 \
+  -p 8997:8997 \
   -v klangk-data:/home/klangk/data \
   --cap-add SYS_ADMIN \
   --device /dev/fuse \
@@ -32,11 +32,11 @@ docker run -d \
   ghcr.io/mcdonc/klangk/klangk-host:v1.0
 ```
 
-Open <http://localhost:8995> and log in with the email and password
+Open <http://localhost:8997> and log in with the email and password
 you set above.
 
 The examples pin `KLANGKD_AUTH_MODES=password` because a Docker image
-publishes its port (`-p 8995:8995`) and is network-reachable, while the
+publishes its port (`-p 8997:8997`) and is network-reachable, while the
 default mode (`none`) is loopback-only. See [Auth Modes](../features/auth-modes.md)
 and [#1391](https://github.com/mcdonc/klangk/issues/1391) for the
 no-login Docker story.
@@ -88,7 +88,7 @@ services:
   klangk:
     image: ghcr.io/mcdonc/klangk/klangk-host:v1.0
     ports:
-      - "8995:8995"
+      - "8997:8997"
     volumes:
       - klangk-data:/home/klangk/data
     cap_add:
