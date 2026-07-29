@@ -524,6 +524,15 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **`klangkd.yaml.example` renamed to `klangkd.yaml.devenv` (#1504).** The
+  repo-root template is devenv-only (its `state_dir`/`data_dir` are
+  `cmd:`-indirected to `$DEVENV_STATE`), not a deployment template. The new
+  name states that. Docs no longer tell operators to copy it: a real
+  deployment runs `klangkd` with no `--config` and it generates the config at
+  `$KLANGKD_CONFIG_DIR/klangkd.yaml` on first run (#1645). `devenv.nix` still
+  seeds `klangkd.yaml` from `klangkd.yaml.devenv` on first shell entry.
+  Integrators that referenced `klangkd.yaml.example` by name must update.
+
 - **A malformed `KLANGKD_NETFILTER_DEFAULT_DOMAINS` now refuses to start
   (#1939).** A bad `host[:port]` spec or a non-list/non-string value used
   to be logged at WARNING and silently ignored — the field fell back to

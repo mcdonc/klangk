@@ -1,10 +1,14 @@
-# Local dev config for klangkd.
+# Devenv-only config for klangkd. This is NOT a deployment template.
 #
-# Copy to klangkd.yaml (gitignored) and edit:
-#   cp klangkd.yaml.example klangkd.yaml
+# devenv.nix copies it to klangkd.yaml (gitignored) on first shell entry, and
+# the backend runs `klangkd --config klangkd.yaml`. The values below are
+# devenv-specific (cmd:-indirected to $DEVENV_STATE / $DEVENV_ROOT) and will
+# NOT work outside the devenv shell.
 #
-# klangkd reads this via: klangkd --config klangkd.yaml
-# devenv's backend process does this automatically.
+# For a real deployment, do not copy this file: run `klangkd` with no
+# --config and it generates a deployment-suitable config at
+# $KLANGKD_CONFIG_DIR/klangkd.yaml (default ~/.config/klangkd/klangkd.yaml)
+# on first run (#1645, #1649). See docs/reference/klangkd-config.md.
 
 # port: the browser/proxy port. Set it for full/browser mode (UI at
 # http://localhost:8997). Leave unset for headless mode (no browser listener;
