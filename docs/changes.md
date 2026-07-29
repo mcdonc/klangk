@@ -1172,6 +1172,16 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **`klangkd` no longer crash-loops when a second instance starts against
+  the same config (#1993).** The pre-flight guard that refuses a duplicate
+  instance tried to log via a nonexistent `logger` symbol
+  (`from klangk.logger import logger` — `klangk.logger` exposes only
+  `configure` / `configure_defaults`), raising `ImportError` before the
+  graceful `sys.exit(1)`. The process crashed and restarted under the
+  supervisor (and the already-running instance printed the same traceback)
+  instead of exiting cleanly. The launcher now uses a per-module
+  `logging.getLogger(__name__)` and logs + exits as intended.
+
 - **Chat read paths now require the `chat` permission (#1976).** When the
   chat surface moved into the (deploy-wide) `chat` feature tab, the
   per-user `_hasPerm('chat')` gate that hid the panel was lost. The send
