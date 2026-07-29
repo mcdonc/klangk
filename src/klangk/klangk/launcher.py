@@ -32,6 +32,7 @@ proxy ownership), and #1645 (first-run generation) for the full rationale.
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import shutil
@@ -46,10 +47,17 @@ import uvicorn
 # configuration is active during ``KlangkSettings(...)`` construction
 # (validators + the file:/cmd: indirection resolver log before any app
 # exists). ``build_app``'s ``configure(settings)`` later overrides the
-# level from ``KLANGKD_LOG_LEVEL`` (#1467).
-from klangk import logger  # noqa: F401
+# level from ``KLANGKD_LOG_LEVEL`` (#1467). Imported as a statement (not
+# ``from klangk import logger``) so the name ``logger`` stays free for the
+# per-module Logger below — ``klangk.logger`` exposes no ``logger`` symbol
+# (only ``configure`` / ``configure_defaults``), so the old
+# ``from klangk.logger import logger`` in the error paths raised ImportError
+# instead of logging and exiting (#1993).
+import klangk.logger  # noqa: F401
 from klangk import first_run
 from klangk.settings import KlangkSettings
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     add_completion=False,
@@ -229,8 +237,6 @@ def main(  # pragma: no cover
     # uvicorn binds — too late to protect the socket file.
     existing = _check_pid_preflight(settings)
     if existing is not None:
-        from klangk.logger import logger  # noqa: allow-deferred-import
-
         logger.error(
             "Another klangk instance (PID %d) is already running — "
             "refusing to start",
@@ -273,8 +279,6 @@ def main(  # pragma: no cover
             ws_ping_timeout=20,
         )
     except OSError as exc:
-        from klangk.logger import logger  # noqa: allow-deferred-import
-
         logger.error(
             "uvicorn failed to bind UDS at %s: %s — exiting", uds_path, exc
         )

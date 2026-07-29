@@ -4,6 +4,8 @@ import asyncio
 import os
 import signal
 import sqlite3
+import subprocess
+import sys
 import types
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1853,6 +1855,52 @@ class TestCheckPidPreflight:
             }
         )
         assert _check_pid_preflight(settings) is None
+
+
+class TestLauncherPidPreflightGracefulExit:
+    """The launcher's ``main()`` must log and ``sys.exit(1)`` — not crash with
+    ``ImportError`` — when a second instance collides with a running one (#1993).
+
+    ``_check_pid_preflight`` is unit-tested above; this exercises the *error
+    path that consumes it* (inside ``main()``, which is otherwise
+    ``# pragma: no cover``) by launching the real launcher in a subprocess
+    against a state/data dir that already records a live foreign PID.
+    """
+
+    def test_second_instance_exits_cleanly(self, tmp_path):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "instance-id").write_text("test-id")
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        # A live foreign PID: this test process's parent is alive and is not
+        # the launcher's own PID (same trick as test_live_foreign_pid above).
+        live_pid = os.getppid()
+        (state_dir / "klangk-test-id.pid").write_text(str(live_pid))
+
+        # Strip inherited KLANGKD_* so the subprocess sees only what we set
+        # (env > file precedence; CI/dev shells carry KLANGKD_* vars that
+        # would otherwise override our planted dirs).
+        env = {
+            k: v for k, v in os.environ.items() if not k.startswith("KLANGKD_")
+        }
+        env["KLANGKD_STATE_DIR"] = str(state_dir)
+        env["KLANGKD_DATA_DIR"] = str(data_dir)
+
+        result = subprocess.run(
+            [sys.executable, "-m", "klangk.launcher", "--config=none"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        # Graceful refusal, not a Python traceback.
+        assert result.returncode == 1, result.stderr
+        assert "Another klangk instance" in result.stderr
+        # The pre-fix bug crashed with ImportError before the message could
+        # be logged (``from klangk.logger import logger`` — no such symbol).
+        assert "ImportError" not in result.stderr
 
 
 class TestBuildApp:
