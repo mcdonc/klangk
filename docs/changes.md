@@ -1172,6 +1172,15 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **Chat read paths now require the `chat` permission (#1976).** When the
+  chat surface moved into the (deploy-wide) `chat` feature tab, the
+  per-user `_hasPerm('chat')` gate that hid the panel was lost. The send
+  path was already gated, but chat history (sent on connect) and
+  `chat_load_more` were not — so a user without `chat` could read full
+  history + paginate older messages. Both read paths now check `_has_perm
+("chat")` and deny without it (the frontend tab is still visible to such
+  a user but receives no data).
+
 - **TUI: closing/deleting a terminal in the workspace detail screen
   now targets the window by its stable id (`@N`) instead of the row
   index (#1965).** The close path sent `terminal_close_window` with the

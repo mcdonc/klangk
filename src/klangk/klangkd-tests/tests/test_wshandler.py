@@ -8869,6 +8869,32 @@ class TestChatSend:
         # ...and nothing was persisted or routed.
         mock_add.assert_not_called()
 
+    async def test_chat_load_more_denied_without_chat_perm(
+        self, workspace, user
+    ):
+        """A user without the chat permission must not paginate chat history
+        (#1976 read-path gate, mirroring the send gate above)."""
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = workspace["id"]
+        with (
+            patch.object(conn, "_has_perm", new=AsyncMock(return_value=False)),
+            patch.object(
+                ChatModel,
+                "get_chat_messages_before",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
+            await conn.handle_chat_load_more({"before_id": "msg-1"})
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict)
+            and m.get("type") == "error"
+            and "chat permission" in m.get("message", "")
+            for m in sent
+        )
+        mock_get.assert_not_called()
+
     async def test_chat_send_agent_mention(
         self, workspace, user, agent_user, app_state
     ):
@@ -9173,6 +9199,42 @@ class TestChatSend:
         assert len(history) == 1
         assert len(history[0]["messages"]) == 1
         assert history[0]["messages"][0]["message"] == "old message"
+
+    async def test_chat_history_denied_without_chat_perm(
+        self, user, agent_user, app_state
+    ):
+        """A user without the chat permission receives no chat history on
+        connect (#1976 read-path gate)."""
+        app_state = _make_app_state()
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "chat-noperm"
+        )
+        await app_state.state.model.chat.add_chat_message(
+            workspace["id"], "uid-other", "someone@test.com", "should not leak"
+        )
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
+
+        async def fake_start(wid, ws_obj):
+            conn.container_id = "cid"
+
+        with (
+            patch.object(conn, "_has_perm", new=AsyncMock(return_value=False)),
+            patch.object(
+                Connection, "start_workspace_container", side_effect=fake_start
+            ),
+            patch.object(
+                app_state.state.container_registry,
+                "get_workspace_ports",
+                return_value=[],
+            ),
+        ):
+            await conn.handle_workspace_connect(
+                {"workspaceId": workspace["id"]}
+            )
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        # No chat history surfaced to a no-perm user.
+        assert not any(c.get("type") == "chat_history" for c in calls)
 
     async def test_chat_load_more(self, workspace, user, app_state):
 
