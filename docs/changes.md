@@ -27,6 +27,16 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Feature-contributed workspace tabs (#1975).** A feature can now
+  contribute a workspace tab (mounted in the workspace tab strip) by
+  declaring a `WorkspaceTabPlugin` (title + icon + builder), separately
+  from `ToolPlugin`. A feature package may declare either or both — e.g. a
+  `chat` feature contributes both a chat tab and agent tool handlers. Tabs
+  mount only when their feature is active (the existing
+  `KLANGKD_FEATURES_ENABLE` active-set filter). Bumps the
+  `klangk_plugin_api` dependency to `v0.3.0`, which adds the new
+  `WorkspaceTabPlugin` / `WorkspaceTabRegistry` API.
+
 - **Per-workspace behavioral settings via a JSON `settings` bag (#864).**
   A workspace may now override several deploy-wide tuning knobs on a
   per-workspace basis, with the precedence **workspace override > deploy

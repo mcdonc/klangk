@@ -32,6 +32,17 @@ Future<void> main() async {
     }
   }
 
+  // Feature-contributed workspace tabs (#1975): the same active-set filter
+  // as tool plugins — a feature's tab mounts only when the feature is
+  // active. A feature may contribute a tab with no tool handlers
+  // (tab-only), or both a tab and tool handlers.
+  final tabRegistry = WorkspaceTabRegistry();
+  for (final entry in createAllNamedWorkspaceTabs()) {
+    if (activeFeatureNames.contains(entry.name)) {
+      tabRegistry.register(entry.tab);
+    }
+  }
+
   if (kIsWeb) {
     // libghostty's VT runs as WebAssembly in the browser; load it once before
     // any terminal is built. The bundled binary must match the resolved

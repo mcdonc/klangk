@@ -76,6 +76,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   List<String> _workspacePermissions = [];
   late final ToolPluginRegistry _featureRegistry;
   late final List<ToolPlugin> _features;
+  late final List<WorkspaceTabPlugin> _featureTabs;
   late final FileRendererRegistry _fileRenderers;
   WorkspaceConnector? _connector;
 
@@ -126,6 +127,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
     _featureRegistry = ToolPluginRegistry();
     // Features are registered once in main() — reuse them here.
     _features = _featureRegistry.plugins.toList();
+    // Feature-contributed workspace tabs are likewise registered once in
+    // main() (active-filtered) — reuse the singleton registry (#1975).
+    _featureTabs = WorkspaceTabRegistry().tabs;
     _fileRenderers = buildFileRendererRegistry(_features);
     _fetchWorkspaceName();
     WidgetsBinding.instance.addPostFrameCallback((_) => _connectToWorkspace());
@@ -482,6 +486,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
         userHome: wsClient.userHome,
         registry: _fileRenderers,
       ),
+      featureTabs: _featureTabs,
       terminal: TerminalTabsView(
         wsClient: wsClient,
         terminalKey: _terminalKey,
