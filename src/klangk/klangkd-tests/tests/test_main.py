@@ -1278,12 +1278,16 @@ class TestStartupShutdownRestart:
         assert "full process restart" not in caplog.text
 
     async def test_agent_handle_change_takes_effect_after_restart(
-        self, db, app_state
+        self, db, app_state, tmp_path
     ):
-        """Acceptance test: changing KLANGKWS_FEATURE_CHAT_AGENT_HANDLE +
-        SIGHUP re-resolves the feature config and re-seeds, so the new
-        handle is live without a process restart (#1977)."""
-        from unittest.mock import MagicMock
+        """Acceptance test: editing KLANGKWS_FEATURE_CHAT_AGENT_HANDLE in the
+        features_config: block + SIGHUP re-resolves the feature config and
+        re-seeds, so the new handle is live without a process restart (#1977).
+
+        Uses a REAL Features resolver (with a chat manifest) — not a mock —
+        so it exercises the actual frontend_config() resolution from
+        settings.features_config."""
+        import json as json_mod
 
         from _helpers import get_test_db
 
@@ -1291,24 +1295,60 @@ class TestStartupShutdownRestart:
         lc = app_state.state.lifecycle
         app_state.state.db = get_test_db()
         app_state.state.model = model.Model(app_state)
-        # Use a controllable features mock — the real resolver reads the
-        # built manifest; here we want to simulate a config change mid-test.
-        app_state.state.features = MagicMock()
-        app_state.state.features.frontend_config.return_value = {
-            "chat_agent_handle": "clanker",
-            "chat_agent_email": "clanker@example.com",
-        }
+
+        # Stand up a chat manifest so the resolver knows chat + the
+        # agent-identity keys (defaults: clanker / clanker@example.com).
+        frontend_dir = tmp_path / "frontend"
+        frontend_dir.mkdir()
+        (frontend_dir / "features.json").write_text(
+            json_mod.dumps(
+                {
+                    "features": [
+                        {
+                            "name": "chat",
+                            "version": "1.0.0",
+                            "description": "",
+                            "config": {
+                                "KLANGKWS_FEATURE_CHAT_AGENT_ENABLED": {
+                                    "description": "",
+                                    "default": "",
+                                    "scope": "both",
+                                },
+                                "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE": {
+                                    "description": "",
+                                    "default": "clanker",
+                                    "scope": "both",
+                                },
+                                "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL": {
+                                    "description": "",
+                                    "default": "clanker@example.com",
+                                    "scope": "both",
+                                },
+                            },
+                        }
+                    ],
+                    "defaults": [],
+                    "container_env_keys": [],
+                }
+            )
+        )
+        app_state.state.settings.frontend_dir = str(frontend_dir)
+        app_state.state.features = app_state.state.features.__class__(
+            app_state
+        )
+
         await lc.seed_agent_user()
         assert await app_state.state.model.users.agent_handle() == "clanker"
 
-        # Operator changes the agent identity via the feature config + SIGHUP.
-        app_state.state.features.frontend_config.return_value = {
-            "chat_agent_handle": "newbot",
-            "chat_agent_email": "newbot@example.com",
+        # Operator edits features_config: + SIGHUP: the reloaded settings
+        # carry the new handle, and apply_pending_reseed (the SIGHUP re-seed)
+        # picks it up via the live resolver (frontend_config re-reads
+        # settings.features_config each call).
+        app_state.state.settings.features_config = {
+            "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE": "newbot",
+            "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL": "newbot@example.com",
         }
-        # reconfigure flags the re-seed; apply_pending_reseed runs it,
-        # reading the now-updated feature config.
-        lc.reconfigure(app_state)
+        lc.reconfigure(app_state)  # SIGHUP flags the re-seed
         await lc.apply_pending_reseed()
         assert await app_state.state.model.users.agent_handle() == "newbot"
 

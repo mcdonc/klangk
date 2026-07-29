@@ -333,8 +333,8 @@ class Lifecycle:
             if await cursor.fetchone() is not None:
                 raise RuntimeError(
                     f"Cannot seed chat agent: handle {handle!r} is already"
-                    " used by another user. Set KLANGKD_AGENT_HANDLE to a"
-                    " unique value."
+                    " used by another user. Set "
+                    "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE to a unique value."
                 )
             await db.execute(
                 "INSERT INTO users (id, email, password_hash, verified,"

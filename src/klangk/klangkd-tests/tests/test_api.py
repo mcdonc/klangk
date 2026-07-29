@@ -498,6 +498,65 @@ class TestConfig:
         # (#1662: strip prefix + lowercase suffix for /api/config keys).
         assert data["my_feature_var"] == "test-value"
 
+    async def test_get_config_chat_agent_enabled_when_active_and_on(
+        self, client, app, tmp_path, monkeypatch
+    ):
+        # #1977: chat_agent_enabled is True only when the chat feature is
+        # active AND KLANGKWS_FEATURE_CHAT_AGENT_ENABLED is truthy — the
+        # positive counterpart to the default-off assertion in test_get_config.
+        import json as json_mod
+        import types as types_mod
+
+        frontend_dir = tmp_path / "frontend"
+        frontend_dir.mkdir()
+        (frontend_dir / "features.json").write_text(
+            json_mod.dumps(
+                {
+                    "features": [
+                        {
+                            "name": "chat",
+                            "version": "1.0.0",
+                            "description": "",
+                            "config": {
+                                "KLANGKWS_FEATURE_CHAT_AGENT_ENABLED": {
+                                    "description": "",
+                                    "default": "",
+                                    "scope": "both",
+                                },
+                                "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE": {
+                                    "description": "",
+                                    "default": "clanker",
+                                    "scope": "both",
+                                },
+                                "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL": {
+                                    "description": "",
+                                    "default": "clanker@example.com",
+                                    "scope": "both",
+                                },
+                            },
+                        }
+                    ],
+                    "defaults": [],
+                    "container_env_keys": [],
+                }
+            )
+        )
+        app.state.features = app.state.features.__class__(
+            types_mod.SimpleNamespace(
+                state=types_mod.SimpleNamespace(
+                    settings=make_settings(
+                        env={
+                            "KLANGKD_FRONTEND_DIR": str(frontend_dir),
+                            "KLANGKD_FEATURES_ENABLE": "chat",
+                        }
+                    )
+                )
+            )
+        )
+        monkeypatch.setenv("KLANGKWS_FEATURE_CHAT_AGENT_ENABLED", "true")
+        resp = await client.get("/api/v1/config")
+        assert resp.json()["chat_agent_enabled"] is True
+
     async def test_get_config_includes_features_enable_when_set(
         self, client, app, monkeypatch
     ):

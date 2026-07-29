@@ -105,9 +105,12 @@ class Agents:
         only when the ``chat`` feature is active **and** the operator has
         enabled it via ``KLANGKWS_FEATURE_CHAT_AGENT_ENABLED``. Both are read
         live off ``app.state.features`` (the resolver) — app ownership rule,
-        no cached ``settings`` snapshot — so a SIGHUP reload of
-        ``KLANGKD_FEATURES_ENABLE`` or the agent flag propagates
-        immediately. ``AgentSession.ensure_started`` is the single
+        no cached ``settings`` snapshot. A SIGHUP reload re-resolves the
+        ``features_config:`` block of ``klangkd.yaml`` and the manifest
+        (so a handle change set there propagates after the re-seed);
+        env-sourced values are fixed at process start, so changing
+        ``KLANGKWS_FEATURE_CHAT_AGENT_*`` in the process environment needs a
+        full restart. ``AgentSession.ensure_started`` is the single
         enforcement point that consults this.
         """
         features = self.app.state.features

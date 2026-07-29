@@ -356,8 +356,8 @@ port: "8997"
 
 ### Agent
 
-| Key | Default | Env var |
-| --- | ------- | ------- |
+Agent identity + enable flag moved to the `chat` feature's config keys
+(`KLANGKWS_FEATURE_CHAT_AGENT_*`) — see [Chat](../features/chat.md).
 
 ### SSL / certs
 
