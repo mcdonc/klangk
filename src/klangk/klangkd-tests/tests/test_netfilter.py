@@ -220,7 +220,10 @@ class TestNetFilterInstallHooks:
         # #1774: netfilter_enabled=False -> install_hooks is a noop.
         assert nf.NetFilter(_app(enabled=False)).install_hooks() is None
 
-    def test_writes_script_and_json(self, tmp_path):
+    def test_writes_script_and_json(self, tmp_path, monkeypatch):
+        # On macOS, install_hooks() tries to SSH into the podman VM;
+        # force Linux so the local-only path is exercised (#1983).
+        monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
         path = str(tmp_path / "hooks")
         installed = nf.NetFilter(_app(hooks_dir=path)).install_hooks()
         assert installed == os.path.realpath(path)
@@ -236,7 +239,10 @@ class TestNetFilterInstallHooks:
             data = json.load(f)
         assert data["hook"]["path"] == os.path.abspath(script)
 
-    def test_idempotent(self, tmp_path):
+    def test_idempotent(self, tmp_path, monkeypatch):
+        # On macOS, install_hooks() tries to SSH into the podman VM;
+        # force Linux so the local-only path is exercised (#1983).
+        monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
         path = str(tmp_path / "hooks")
         nf_obj = nf.NetFilter(_app(hooks_dir=path))
         nf_obj.install_hooks()

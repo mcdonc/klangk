@@ -604,6 +604,11 @@ class TestStartContainer:
             "netfilter_hooks_dir",
             str(tmp_path / "hooks"),
         )
+        # On macOS, install_hooks() tries to SSH into the podman VM;
+        # force Linux so the local-only path is exercised (#1983).
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(_nf_mod.platform, "system", lambda: "Linux")
         # #1771: create_kwargs only trusts a dir whose hook is actually
         # installed, so arm it before starting the container.
         self.registry.app.state.netfilter.install_hooks()

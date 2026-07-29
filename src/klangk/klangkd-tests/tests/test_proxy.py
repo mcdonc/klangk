@@ -9,6 +9,8 @@ import asyncio
 import os
 import re
 import socket
+import sys
+import tempfile
 from unittest.mock import Mock
 
 import pytest
@@ -873,10 +875,16 @@ class TestWatchdogGate:
         unit-tested."""
         from klangk.proxy import ProxyWatchdog
 
-        sock = str(tmp_path / "klangk.sock")
+        # On macOS, pytest tmp_path can exceed the AF_UNIX sun_path limit;
+        # use a short temp dir for the state + socket (#1983).
+        if sys.platform == "darwin":
+            state = tempfile.mkdtemp(prefix="ks-")
+        else:
+            state = str(tmp_path)
+        sock = os.path.join(state, "klangk.sock")
         s = make_settings(
             env={
-                "KLANGKD_STATE_DIR": str(tmp_path),
+                "KLANGKD_STATE_DIR": state,
                 "KLANGKD_SOCKET": sock,
                 "KLANGKD_EGRESS_PORT": "19999",
             }
@@ -896,13 +904,16 @@ class TestWatchdogGate:
         monkeypatch.setattr(ProxyWatchdog, "_watch", _fake_watch)
         wd = _wd(s)
         await wd.start()
+        from pathlib import Path
+
+        state_p = Path(state)
         try:
             assert wd._task is not None
             assert wd._stopping is False
-            assert (tmp_path / "nginx.conf").is_file()
+            assert (state_p / "nginx.conf").is_file()
             await wd._task
             assert spawned["bin"] == "/fake/nginx"
-            assert spawned["conf"] == str(tmp_path / "nginx.conf")
+            assert spawned["conf"] == str(state_p / "nginx.conf")
         finally:
             # UDS mode is now per-Util-instance (_wd builds a fresh one each
             # call), so there's no module global to reset (#1503).
@@ -913,10 +924,22 @@ class TestPrepareProxy:
     """ProxyWatchdog._prepare() renders nginx.conf with UDS upstream (#1400)."""
 
     def test_renders_config_and_returns_paths(self, monkeypatch, tmp_path):
+        # On macOS, pytest tmp_path resolves through /private/var/folders/...
+        # which can exceed the 104-byte AF_UNIX sun_path limit. Use a short
+        # temp dir for the state + socket so the settings validator passes
+        # (#1983). nginx.conf is written into state_dir, so assertions
+        # reference the same dir.
+        if sys.platform == "darwin":
+            state = tempfile.mkdtemp(prefix="ks-")
+        else:
+            state = str(tmp_path)
+        from pathlib import Path
 
+        state_p = Path(state)
         s = make_settings(
             env={
-                "KLANGKD_STATE_DIR": str(tmp_path),
+                "KLANGKD_STATE_DIR": state,
+                "KLANGKD_SOCKET": str(state_p / "klangk.sock"),
                 "KLANGKD_EGRESS_PORT": "19999",
                 "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
             }
@@ -928,10 +951,10 @@ class TestPrepareProxy:
         wd = _wd(s)
         bin_path, conf_path = wd._prepare()
         assert bin_path == "/fake/nginx"
-        assert conf_path == str(tmp_path / "nginx.conf")
-        assert (tmp_path / "nginx.conf").is_file()
-        conf = (tmp_path / "nginx.conf").read_text()
-        uds_path = str(tmp_path / "klangk.sock")
+        assert conf_path == str(state_p / "nginx.conf")
+        assert (state_p / "nginx.conf").is_file()
+        conf = (state_p / "nginx.conf").read_text()
+        uds_path = str(state_p / "klangk.sock")
         assert f"proxy_pass http://unix:{uds_path}:" in conf
 
 
