@@ -121,9 +121,21 @@ class FakeBtnPress:
 
 
 def _st(**methods):
-    """A TuiState with the given methods overridden (for Pilot tests)."""
+    """A TuiState with the given methods overridden (for Pilot tests).
+
+    Defaults ``list_owned_workspaces`` / ``list_shared_workspaces`` to empty
+    so MainScreen's on-mount ``refresh_lists`` (which calls them via
+    ``_safe_list``) doesn't make a real, timing-out HTTP call to the fake
+    test URL in tests that don't otherwise stub them (#1989). Callers that
+    need real list data use ``_ws(owned=...)`` / ``_authed_state(...)``,
+    which override these.
+    """
     st = TuiState()
-    for k, v in methods.items():
+    defaults = {
+        "list_owned_workspaces": lambda: [],
+        "list_shared_workspaces": lambda: [],
+    }
+    for k, v in {**defaults, **methods}.items():
         setattr(st, k, v)
     return st
 

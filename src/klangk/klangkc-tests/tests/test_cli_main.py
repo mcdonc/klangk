@@ -19,6 +19,14 @@ from klangk.cli.config import (
 from klangk.cli.client import Workspace
 
 
+def _raise_no_network(*_a, **_k):
+    """Stand-in for ``main._client``: the ``status`` admin probe is a
+    best-effort network call, so tests that don't assert on admin fail it
+    fast instead of waiting on a real ~6s connection timeout. The admin
+    path itself is covered by the ``test_*_shows_admin_*`` tests (#1989)."""
+    raise RuntimeError("no network in tests")
+
+
 @pytest.fixture
 def logged_in_cfg(tmp_path, monkeypatch):
     """Config + state with a valid token and email pre-loaded."""
@@ -1076,21 +1084,26 @@ class TestMainCLI:
         assert "custom:1234" in output
         assert "not_logged_in" in output
 
-    def test_status_logged_in(self, logged_in_cfg, capsys):
+    def test_status_logged_in(self, logged_in_cfg, capsys, monkeypatch):
         from klangk.cli import main
 
+        # The admin probe is a best-effort network call; fail it fast so this
+        # test (server/user only) doesn't wait on a real ~6s timeout. The
+        # admin path is covered by the test_*_shows_admin_* tests (#1989).
+        monkeypatch.setattr(main, "_client", _raise_no_network)
         main.status(plain=True)
         output = capsys.readouterr().out
         assert "test@example.com" in output
         assert "logged_in" in output
 
-    def test_status_rich_logged_in(self, logged_in_cfg):
+    def test_status_rich_logged_in(self, logged_in_cfg, monkeypatch):
         from io import StringIO
 
         from rich.console import Console
 
         from klangk.cli import main
 
+        monkeypatch.setattr(main, "_client", _raise_no_network)
         buf = StringIO()
         with patch.object(
             main,
@@ -1127,9 +1140,10 @@ class TestMainCLI:
         output = buf.getvalue()
         assert "not logged in" in output
 
-    def test_status_plain_logged_in(self, logged_in_cfg, capsys):
+    def test_status_plain_logged_in(self, logged_in_cfg, capsys, monkeypatch):
         from klangk.cli import main
 
+        monkeypatch.setattr(main, "_client", _raise_no_network)
         main.status(plain=True)
         output = capsys.readouterr().out
         assert "server=http://localhost:8995" in output
