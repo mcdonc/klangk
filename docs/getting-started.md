@@ -32,10 +32,15 @@ Open <http://localhost:8997> and log in with the email and password
 you set above.
 
 > A Docker container publishes its port (`-p 8997:8997`), making it
-> network-reachable, so these examples set `KLANGKD_AUTH_MODES=password`
-> explicitly. The default mode is `none` (no-login, loopback-only), which is
-> meant for local dev on your own machine — a published port is not that.
-> See [Auth Modes](features/auth-modes.md).
+> network-reachable, so the published host image uses
+> `KLANGKD_AUTH_MODES=password` — that is the supported configuration for
+> the image. The default mode is `none` (no-login, loopback-only), which is
+> **unsupported with the published Docker host image**: it is meant for
+> local dev on your own machine, where the port is not published, and it
+> freely issues an admin token with no password. For the no-login
+> single-user experience, run klangk locally via devenv (below) instead.
+> See [Auth Modes](features/auth-modes.md) and
+> [#1391](https://github.com/mcdonc/klangk/issues/1391).
 
 ## Run Using devenv
 
