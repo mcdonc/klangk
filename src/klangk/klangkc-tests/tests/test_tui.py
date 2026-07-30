@@ -3247,6 +3247,7 @@ async def test_reconnect_gives_up_after_cap(monkeypatch):
         await pilot.pause()
         main = next(s for s in app.screen_stack if isinstance(s, MainScreen))
         assert main._server_unreachable is False
+        assert main._gave_up is True
         owned_lv = main.query_one("#owned_list", ListView)
         label = _lv_texts(owned_lv)[0].lower()
         assert "server down" in label
@@ -3432,10 +3433,16 @@ async def test_heartbeat_tick_skips_when_down_or_unauthenticated(monkeypatch):
         screen._heartbeat_tick()
         assert fired == []
 
-        # Authenticated and up: fires a refresh.
+        # Gave up reconnecting: skip (don't re-arm a new loop, #2036).
+        screen._gave_up = True
         monkeypatch.setattr(
             screen.app.tui_state, "is_authenticated", lambda: True
         )
+        screen._heartbeat_tick()
+        assert fired == []
+
+        # Authenticated and up (not gave_up): fires a refresh.
+        screen._gave_up = False
         screen._heartbeat_tick()
         assert fired == [1]
 
