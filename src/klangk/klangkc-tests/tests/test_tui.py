@@ -3087,6 +3087,55 @@ async def test_reconnect_gives_up_after_cap(monkeypatch):
         assert "gave up" in (app.live_extra or "").lower()
 
 
+async def test_return_to_main_revalidates_list_against_down_server(
+    monkeypatch,
+):
+    """Popping back to the workspaces page (e.g. from a detail page) re-fetches
+    the list, so a backend that dropped while another screen was open surfaces
+    "server unreachable" instead of a stale, drill-into-able list (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    # Park the list reconnect loop; we assert the return-triggered refresh.
+    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+
+    up = {"yes": True}
+    alpha = _wsobj("alpha")
+
+    def owned():
+        if up["yes"]:
+            return [alpha]
+        raise httpx.ConnectError("refused")
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=owned, list_shared_workspaces=owned)
+    )
+    async with app.run_test() as pilot:
+        screen = app.screen
+        for _ in range(6):
+            await pilot.pause()
+        assert (
+            "alpha" in _lv_texts(screen.query_one("#owned_list", ListView))[0]
+        )
+
+        # Open a workspace detail page on top, drop the server, then navigate
+        # back — pop_screen must revalidate against the live server.
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await pilot.pause()
+        up["yes"] = False
+        app.pop_screen()
+        for _ in range(8):
+            await pilot.pause()
+        assert screen._server_unreachable is True
+        assert (
+            "server unreachable"
+            in _lv_texts(screen.query_one("#owned_list", ListView))[0].lower()
+        )
+
+
 async def test_status_disconnect_triggers_unreachable_mid_session(monkeypatch):
     """A backend drop detected by the status WS *after* the page is already
     shown surfaces the "server unreachable" state — the mid-session case
