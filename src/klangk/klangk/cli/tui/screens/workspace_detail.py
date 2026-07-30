@@ -605,13 +605,15 @@ class WorkspaceDetailScreen(Screen):
         # label is a friendly name for messages; falls back to the id
         # when not supplied (e.g. direct test calls).
         display = label if label is not None else window_id
-        self._msg(f"Deleting terminal {display}…")
+        self.app.notify(f"Deleting terminal {display}…")
         try:
             windows = await self.app.tui_state.close_terminal(
                 self._name, window_id
             )
         except Exception as exc:
-            self._msg(f"Delete failed: {exc}", error=True)
+            self.app.notify(
+                f"Delete failed: {exc}", severity="error", timeout=8
+            )
             # The id may no longer exist server-side — refresh so the
             # dead row self-heals instead of failing on every retry (#1965).
             await self._load_terminals()
@@ -619,14 +621,16 @@ class WorkspaceDetailScreen(Screen):
         if not windows:
             # The last terminal is protected client-side, so an empty result
             # here means the close/refresh failed — don't claim success.
-            self._msg(
-                "Delete failed — could not refresh terminals.", error=True
+            self.app.notify(
+                "Delete failed — could not refresh terminals.",
+                severity="error",
+                timeout=8,
             )
             await self._load_terminals()
             return
         self._terminals = windows
         await self._render_terminals()
-        self._msg(f"Deleted terminal {display}.")
+        self.app.notify(f"Deleted terminal {display}.")
 
     def _terminal_label_for(self, key: str) -> str:
         """Friendly label for a list row: the window name, or the key."""
@@ -709,22 +713,26 @@ class WorkspaceDetailScreen(Screen):
         else:
             candidate = f"term-{len(self._terminals)}"  # pragma: no cover
 
-        self._msg(f"Creating terminal '{candidate}'…")
+        self.app.notify(f"Creating terminal '{candidate}'…")
         try:
             windows = await self.app.tui_state.create_terminal(
                 self._name, candidate
             )
         except Exception as exc:
-            self._msg(f"Create failed: {exc}", error=True)
+            self.app.notify(
+                f"Create failed: {exc}", severity="error", timeout=8
+            )
             return
         if not windows:
-            self._msg(
-                "Create failed — could not refresh terminals.", error=True
+            self.app.notify(
+                "Create failed — could not refresh terminals.",
+                severity="error",
+                timeout=8,
             )
             return
         self._terminals = windows
         await self._render_terminals()
-        self._msg(f"Created terminal '{candidate}'.")
+        self.app.notify(f"Created terminal '{candidate}'.")
 
     # --- actions ---
 

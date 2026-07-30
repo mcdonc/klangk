@@ -5099,14 +5099,16 @@ async def test_detail_delete_terminal(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         d.query_one("#term_list").index = 1
         d.action_delete_terminal()
         for _ in range(3):
             await pilot.pause()
         assert closed.get("i") == "@1"
-        assert "Deleted terminal build" in str(
-            d.query_one("#detail_msg").render()
-        )
+        assert any("Deleted terminal build" in m for m in notified)
         assert len(d.query_one("#term_list", ListView).query(ListItem)) == 1
 
 
@@ -5183,9 +5185,13 @@ async def test_detail_delete_terminal_refreshes_on_server_failure(
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         before = calls["list"]
         await d._do_delete_terminal("@1")
-        assert "Delete failed" in str(d.query_one("#detail_msg").render())
+        assert any("Delete failed" in m for m in notified)
         # Failure triggered a refresh.
         assert calls["list"] > before
 
@@ -5216,22 +5222,22 @@ async def test_detail_delete_terminal_shows_inflight_msg(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         d.query_one("#term_list").index = 1
         d.action_delete_terminal()
         # While close_terminal is blocked on the gate, the in-flight
-        # message must already be visible.
+        # toast must already have fired.
         for _ in range(3):
             await pilot.pause()
-        assert "Deleting terminal build" in str(
-            d.query_one("#detail_msg").render()
-        )
-        # Releasing the close call replaces it with the success message.
+        assert any("Deleting terminal build" in m for m in notified)
+        # Releasing the close call fires the success toast.
         gate.set()
         for _ in range(3):
             await pilot.pause()
-        assert "Deleted terminal build" in str(
-            d.query_one("#detail_msg").render()
-        )
+        assert any("Deleted terminal build" in m for m in notified)
 
 
 async def test_detail_delete_terminal_failure(monkeypatch):
@@ -5252,9 +5258,13 @@ async def test_detail_delete_terminal_failure(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         await d._do_delete_terminal("@1")  # close raises
         await app.workers.wait_for_complete()
-        assert "Delete failed" in str(d.query_one("#detail_msg").render())
+        assert any("Delete failed" in m for m in notified)
 
 
 def test_detail_window_id_for_resolves_index_and_falls_back():
@@ -5627,12 +5637,16 @@ async def test_detail_delete_terminal_empty_result(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         before = calls["list"]
         await d._do_delete_terminal("@1")
         await app.workers.wait_for_complete()
         # Let the refresh's clear/append reconcile in the DOM.
         await pilot.pause()
-        assert "Delete failed" in str(d.query_one("#detail_msg").render())
+        assert any("Delete failed" in m for m in notified)
         assert (
             len(d.query_one("#term_list", ListView).query(ListItem)) == 2
         )  # unchanged
@@ -5669,13 +5683,17 @@ async def test_detail_new_terminal(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         d.action_new_terminal()
         for _ in range(5):
             await pilot.pause()
         await app.workers.wait_for_complete()
         assert created["name"] == "term-2"
         assert len(d.query_one("#term_list", ListView).query(ListItem)) == 3
-        assert "Created terminal" in str(d.query_one("#detail_msg").render())
+        assert any("Created terminal" in m for m in notified)
 
 
 async def test_detail_new_terminal_failure(monkeypatch):
@@ -5700,9 +5718,13 @@ async def test_detail_new_terminal_failure(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         await d._do_new_terminal()
         await app.workers.wait_for_complete()
-        assert "Create failed" in str(d.query_one("#detail_msg").render())
+        assert any("Create failed" in m for m in notified)
 
 
 async def test_detail_new_terminal_empty_result(monkeypatch):
@@ -5727,9 +5749,13 @@ async def test_detail_new_terminal_empty_result(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         await d._do_new_terminal()
         await app.workers.wait_for_complete()
-        assert "Create failed" in str(d.query_one("#detail_msg").render())
+        assert any("Create failed" in m for m in notified)
 
 
 async def test_detail_new_terminal_no_workspace(monkeypatch):
