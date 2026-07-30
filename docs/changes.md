@@ -1214,6 +1214,22 @@ set-password <email>` (set a known password for the default user — whose
   (#2010).** `on_list_view_selected` clears the primary screen buffer
   inside the `suspend()` block before spawning `klangk shell`, so the
   stale content that briefly surfaced during the buffer swap is gone.
+- **TUI workspace-detail terminal list is now focused with the first
+  terminal highlighted from the first frame (#1956).** Four intertwined
+  bugs on the workspace-detail screen left the initial terminal
+  unreachable or mis-selected via keyboard: the list was empty and
+  unfocused for the whole container auto-start window (Tab/arrows/Enter
+  were dead); the first terminal lost focus once the auto-start event
+  storm settled; setting the default highlight before the list items had
+  mounted left no row highlighted (both terminals grey, and Down then
+  highlighted the _second_); and adding/removing a terminal fired
+  `_render_terminals` from both the action handler and the backend's
+  `terminals_changed` broadcast, whose interleaved clear/extend/mount
+  cycles duplicated every row (two copies of the list). Fixed by
+  rendering a placeholder row on mount, re-asserting focus on `on_show`
+  and in `_display`/`_render_terminals` while the screen is active,
+  awaiting the items' mount before setting the default index so the
+  highlight applies, and serializing renders with a lock.
 
 - **SSH agent forwarding now works on reconnect and in the TUI (#2001).**
   Two bugs, one symptom (`ssh-add -l` → _"Could not open a connection to

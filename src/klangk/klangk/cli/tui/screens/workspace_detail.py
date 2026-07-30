@@ -89,6 +89,12 @@ class WorkspaceDetailScreen(Screen):
         self._terminals: list[dict] = []
         self._missing = False
         self._load_error: str | None = None
+        # Serializes terminal-list renders. Adding/removing a terminal fires
+        # _render_terminals from BOTH the action handler and the backend's
+        # terminals_changed broadcast; without a lock those two concurrent
+        # clear/extend/mount cycles interleave on the same ListView and
+        # corrupt the DOM (rows un-highlighted, #1956).
+        self._render_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -108,11 +114,38 @@ class WorkspaceDetailScreen(Screen):
     def on_mount(self) -> None:
         self.run_worker(self._mount_async, exit_on_error=False)
         self._uptime_timer = self.set_interval(5, self._tick_uptime)
-        # Autofocus the Terminals list so the keyboard path reaches it on
-        # entry (spatial-nav rule, AGENTS.md). The list is the only focusable
-        # widget; without an explicit grab focus can stay on the underlying
-        # screen after push_screen, leaving the list mouse-only (#1956).
-        self.query_one("#term_list").focus()
+        # Put a placeholder row in the list immediately and focus it. The real
+        # terminal list is only rendered by _render_terminals, which runs AFTER
+        # _mount_async — i.e. after a possibly multi-second container
+        # auto-start. Without this, the list is empty and unfocused for that
+        # whole window, so the keyboard (Tab/arrows/Enter) is dead and the
+        # user cannot reach or select the initial terminal (#1956).
+        lv = self.query_one("#term_list", ListView)
+        lv.append(ListItem(Label(Text("(loading terminals…)")), name=""))
+        if lv.index is None:
+            lv.index = 0  # highlight the placeholder so the list is selected by default
+        self.call_after_refresh(self._focus_term_list)
+
+    def on_show(self) -> None:
+        # Re-assert focus on the terminals list every time this screen is
+        # shown. Focusing in on_mount alone does not survive Textual's
+        # screen-activation focus transfer (the #1956 grab was being lost on
+        # entry, leaving the list unreachable via keyboard). on_show also
+        # fires after a foreground modal (edit form, confirm dialog) is
+        # dismissed, returning focus to the list.
+        self._focus_term_list()
+
+    def _focus_term_list(self) -> None:
+        """Focus #term_list when this screen is the active one.
+
+        Skipped while a modal sits on top (app.screen is not self) so a
+        background terminals_changed reload never yanks focus out of the
+        foreground dialog. The list is the screen's primary interactive
+        widget, so always prefer it when this screen is active.
+        """
+        if self.app.screen is not self:
+            return
+        self.query_one("#term_list", ListView).focus()
 
     async def _mount_async(self) -> None:
         await self._load()
@@ -184,6 +217,12 @@ class WorkspaceDetailScreen(Screen):
         ]
 
     def _display(self) -> None:
+        # Re-assert focus on the terminals list while this screen is active.
+        # _display runs on every load and on the 5s uptime tick, so a focus
+        # steal during the first-visit auto-start event storm (which left the
+        # terminal row green-then-grey, #1956) is recovered within moments.
+        # No-op while a modal is on top (guarded in _focus_term_list).
+        self._focus_term_list()
         ws = self._ws
         body = self.query_one("#detail_body", Static)
         if ws is None:
@@ -366,7 +405,7 @@ class WorkspaceDetailScreen(Screen):
                 # the payload type check above also makes the push path
                 # resilient to a malformed payload (fall back to fetch).
                 self._terminals = windows
-                self._render_terminals()
+                self.run_worker(self._render_terminals(), exit_on_error=False)
             else:
                 # No payload (older server) or malformed -- fall back to a
                 # fetch, preserving the resilience of the old poll path.
@@ -421,28 +460,45 @@ class WorkspaceDetailScreen(Screen):
         except Exception:
             windows = []
         self._terminals = windows or []
-        self._render_terminals()
+        await self._render_terminals()
 
-    def _render_terminals(self) -> None:
-        lv = self.query_one("#term_list", ListView)
-        lv.clear()
-        if not self._terminals:
-            lv.append(ListItem(Label(Text("(no terminals)")), name=""))
-        else:
-            for w in self._terminals:
-                idx = w.get("index", "")
-                name = w.get("name") or idx
-                lv.append(
-                    ListItem(Label(Text(f"{idx}  {name}")), name=str(idx))
-                )
-        # Keep focus on the list and highlight its first row (#1808, #1956).
-        # The focus grab is skipped when a modal (e.g. a confirm dialog) is
-        # open over this screen, so a background terminals_changed reload
-        # never yanks focus out of the foreground dialog.
-        if self.app.screen is self:
-            lv.focus()
-        if lv.index is None:
-            lv.index = 0
+    async def _render_terminals(self) -> None:
+        # Serialize: adding/removing a terminal fires this from BOTH the
+        # action handler and the backend's terminals_changed broadcast;
+        # without a lock the two clear/extend/mount cycles interleave on the
+        # same ListView and corrupt the DOM (rows un-highlighted, #1956).
+        async with self._render_lock:
+            lv = self.query_one("#term_list", ListView)
+            await lv.clear()
+            if not self._terminals:
+                items = [ListItem(Label(Text("(no terminals)")), name="")]
+            else:
+                items = [
+                    ListItem(
+                        Label(
+                            Text(
+                                f"{w.get('index', '')}  "
+                                f"{w.get('name') or w.get('index', '')}"
+                            )
+                        ),
+                        name=str(w.get("index", "")),
+                    )
+                    for w in self._terminals
+                ]
+            mount = lv.extend(items)
+            # Keep focus on the list; skipped when a modal is open over this
+            # screen so a background terminals_changed reload never yanks
+            # focus out of the foreground dialog (#1956).
+            if self.app.screen is self:
+                self._focus_term_list()
+            # Await the mount BEFORE setting the default index. Setting
+            # index=0 synchronously fires the highlight watcher before the
+            # new ListItems exist, so no row would be highlighted (the #1956
+            # "both terminals grey, Down makes the second green" symptom).
+            # After mount the first row highlights correctly.
+            await mount
+            if lv.index is None:
+                lv.index = 0
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Suspend the TUI and spawn ``klangk shell`` for the selected terminal."""
@@ -563,7 +619,7 @@ class WorkspaceDetailScreen(Screen):
             await self._load_terminals()
             return
         self._terminals = windows
-        self._render_terminals()
+        await self._render_terminals()
         self._msg(f"Deleted terminal {display}.")
 
     def _terminal_label_for(self, key: str) -> str:
@@ -606,7 +662,7 @@ class WorkspaceDetailScreen(Screen):
             )
             return
         self._terminals = windows
-        self._render_terminals()
+        await self._render_terminals()
         self._msg(f"Created terminal '{candidate}'.")
 
     # --- actions ---
