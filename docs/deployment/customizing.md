@@ -208,26 +208,27 @@ See the [OIDC documentation](../reference/oidc.md) for the config file format.
 ### Deployment profiles (auth modes)
 
 `KLANGKD_AUTH_MODES` selects the deployment profile — same binary, different
-config. For a **no-login local-dev** server (single user, your own browser),
-use `none` — it auto-issues a token for the seeded default user and must bind
-loopback:
-
-```bash
-docker run -d \
-  -e KLANGKD_AUTH_MODES=none \
-  ...
-```
+config. The published host image uses **`password`** as its supported mode
+(`oidc` and `both` are also supported). The `none` (no-login local-dev)
+profile is **unsupported with the published Docker host image** — see the
+note below.
 
 See [Auth Modes](../features/auth-modes.md) for the full
 local-dev / customer-locked / team mapping.
 
-> **Note for Docker users:** `none` is loopback-only by design, and a
-> `docker run -p` published port isn't loopback — so `none` mode does not
-> yet work with the published host image (the proxy `/auth/local` ACL denies
-> the port-forwarded request). For the Docker image, set
-> `KLANGKD_AUTH_MODES=password` (or `oidc`/`both`) until #1391 lands.
-> Locally (devenv, or running the binary on your own machine) `none` works
-> out of the box.
+> **`none` mode is unsupported in the Docker host image.** `none` is
+> loopback-only by design (it freely issues an admin token with no
+> password, so its security model is "only the operator's loopback can
+> reach it"), and a `docker run -p` published port isn't loopback. The
+> bind-safety gate refuses to boot `none` on a non-loopback bind, and even
+> with `KLANGKD_ALLOW_INSECURE_NO_AUTH=1` the proxy `/auth/local` ACL still
+> denies the port-forwarded request with `403` (the request appears at the
+> container as the Docker bridge IP, not `127.0.0.1`). The image therefore
+> runs `KLANGKD_AUTH_MODES=password` (or `oidc`/`both`) — set
+> `KLANGKD_DEFAULT_PASSWORD` accordingly. For a no-login single-user
+> experience, run klangk locally (devenv, or the bare binary on your own
+> machine), where `none` works out of the box. See
+> [#1391](https://github.com/mcdonc/klangk/issues/1391).
 
 ## Building a Custom Image (Features)
 

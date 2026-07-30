@@ -93,6 +93,20 @@ after first boot is done via the in-app UI or `klangk admin users *`.
 `none` is the foundation for a no-friction single-user dev/test loop —
 without standing up the multi-user tier or logging in each session.
 
+> **Not supported with the published Docker host image.** The host image
+> publishes its browser port (`-p 8997:8997`), which is network-reachable,
+> while `none` is loopback-only by design — the freely-issued admin token
+> is safe only when solely the operator's loopback can reach
+> `/auth/local`. Two gates refuse it in Docker: the bind-safety gate won't
+> let `none` boot on a non-loopback bind, and even with
+> `KLANGKD_ALLOW_INSECURE_NO_AUTH=1` the proxy `/auth/local` ACL still
+> denies the port-forwarded request with `403` (the request appears at the
+> container as the Docker bridge IP, not `127.0.0.1`). The image therefore
+> runs `password` (or `oidc`/`both`). For a no-login single-user
+> experience, run klangk locally (devenv, or the bare binary on your own
+> machine) instead of the published image. See
+> [#1391](https://github.com/mcdonc/klangk/issues/1391).
+
 In `none` mode the server freely issues a JWT for the seeded default user
 (`KLANGKD_DEFAULT_USER`, defaulting to `admin@example.com`) with no credentials
 required from the caller:

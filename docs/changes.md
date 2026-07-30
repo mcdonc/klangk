@@ -564,6 +564,18 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **`none` auth mode is declared an unsupported configuration with the
+  published Docker host image (#1391).** `none` (no-login single-user,
+  loopback-only) is safe only when solely the operator's loopback can reach
+  `/auth/local`; a `docker run -p` published port is network-reachable, so
+  the image cannot use it — the bind-safety gate refuses a non-loopback
+  bind, and even with `KLANGKD_ALLOW_INSECURE_NO_AUTH=1` the proxy
+  `/auth/local` ACL denies the port-forwarded request with `403`. **The
+  Docker host image uses `KLANGKD_AUTH_MODES=password`** (or `oidc`/`both`)
+  by default; all Docker examples pin it. For a no-login single-user
+  experience, run klangk locally (devenv or the bare binary) instead of the
+  published image. This replaces the previous "until #1391 lands"
+  placeholder language in the Docker docs.
 - **Container resource limits now ship non-empty by default (#2030).**
   `container_cpu_limit` / `container_memory_limit` / `container_pids_limit`
   default to `2.0` / `8g` / `512` (env `KLANGKD_CONTAINER_CPU_LIMIT` /
@@ -1208,9 +1220,9 @@ set-password <email>` (set a known password for the default user — whose
   bind unless `KLANGKD_ALLOW_INSECURE_NO_AUTH=1` — but it is a behavior change
   on upgrade: **set `KLANGKD_AUTH_MODES=password` (or `oidc`/`both`) explicitly
   before redeploying if you relied on the old default.** Note: `none` mode is
-  not yet supported with the published Docker host image (a published port
-  isn't loopback) — the Docker examples set `KLANGKD_AUTH_MODES=password`; see
-  #1391.
+  an unsupported configuration with the published Docker host image (a
+  published port isn't loopback) — the Docker image uses
+  `KLANGKD_AUTH_MODES=password`; see #1391.
 - **OIDC settings no longer change the auth mode (#1419).** Previously, when
   `KLANGKD_AUTH_MODES` was unset **and** an OIDC provider was configured, the
   resolved default was silently promoted to `both` (the "OIDC turns auth on"
