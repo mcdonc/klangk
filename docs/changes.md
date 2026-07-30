@@ -1212,8 +1212,11 @@ set-password <email>` (set a known password for the default user — whose
   failure now surfaces "(server unreachable — retrying…)" with a live
   attempt counter in the status bar, and a background reconnect loop
   (bounded exponential backoff, mirroring the Flutter WS client) repopulates
-  the list automatically once the backend returns — covering both
-  first-display-down and mid-session disconnects, with no re-login required.
+  the list automatically once the backend returns. A single always-on
+  reachability heartbeat (independent of the status WS) drives one uniform
+  UI across every detection path — first display, mid-session, and after
+  navigating back from a detail page — so a drop never leaves a stale,
+  drill-into-able list, with no re-login required.
 
 - **Opening a terminal from the TUI no longer flashes the pre-TUI screen
   (#2010).** `on_list_view_selected` clears the primary screen buffer

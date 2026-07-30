@@ -196,11 +196,6 @@ class KlangkApp(App):
         self.tui_state = state
         self.live_extra = ""
         self._expiring = False
-        # True while we're programmatically unwinding the screen stack
-        # (server switch / logout / session expiry). Suppresses the
-        # pop_screen revalidation hook so those flows — which refresh/
-        # replace the screen themselves — don't double-refresh (#2012).
-        self._programmatic_unwind = False
         self.register_theme(KLANGK_THEME)
         self.theme = "klangk"
 
@@ -234,24 +229,8 @@ class KlangkApp(App):
         return result
 
     def pop_screen(self):
-        popped = self.screen_stack[-1] if self.screen_stack else None
         result = super().pop_screen()
         self.call_after_refresh(self._sync_title)
-        # Returning from a workspace *detail* page to the workspaces page
-        # revalidates the list against the live server, so a backend that
-        # dropped while the detail page was open surfaces "server unreachable"
-        # instead of a stale, drill-into-able list (#2012). Scoped to the
-        # detail screen (the path with no return-refresh of its own) so it
-        # doesn't race with the action/form flows that already refresh; and
-        # suppressed during programmatic unwinds (server switch / logout).
-        top = self.screen_stack[-1] if self.screen_stack else None
-        if (
-            isinstance(popped, WorkspaceDetailScreen)
-            and isinstance(top, MainScreen)
-            and self.tui_state.is_authenticated()
-            and not self._programmatic_unwind
-        ):
-            top.refresh_lists()
         return result
 
     # --- navigation hooks used by screens ---
@@ -263,45 +242,31 @@ class KlangkApp(App):
     def do_logout(self) -> None:
         async def _logout() -> None:
             await asyncio.to_thread(self.tui_state.logout)
-            self._programmatic_unwind = True
-            try:
-                self.pop_screen()  # MainScreen
-                self.live_extra = ""
-                self.push_screen(LoginScreen())
-            finally:
-                self._programmatic_unwind = False
+            self.pop_screen()  # MainScreen
+            self.live_extra = ""
+            self.push_screen(LoginScreen())
 
         self.run_worker(_logout, exit_on_error=False)
 
     def server_changed(self) -> None:
         """Pop back to the MainScreen and refresh it after a server change."""
-        self._programmatic_unwind = True
-        try:
-            while self.screen_stack and not isinstance(
-                self.screen_stack[-1], MainScreen
-            ):
-                self.pop_screen()
-            top = self.screen_stack[-1] if self.screen_stack else None
-            if isinstance(top, MainScreen):
-                top.refresh_lists()
-        finally:
-            self._programmatic_unwind = False
+        while self.screen_stack and not isinstance(
+            self.screen_stack[-1], MainScreen
+        ):
+            self.pop_screen()
+        top = self.screen_stack[-1] if self.screen_stack else None
+        if isinstance(top, MainScreen):
+            top.refresh_lists()
 
     def server_changed_needs_login(self) -> None:
         """Switch server then show LoginScreen (invalid/missing creds)."""
-        self._programmatic_unwind = True
-        try:
-            while self.screen_stack and not isinstance(
-                self.screen_stack[-1], MainScreen
-            ):
-                self.pop_screen()
-            if self.screen_stack and isinstance(
-                self.screen_stack[-1], MainScreen
-            ):
-                self.pop_screen()
-            self.push_screen(LoginScreen())
-        finally:
-            self._programmatic_unwind = False
+        while self.screen_stack and not isinstance(
+            self.screen_stack[-1], MainScreen
+        ):
+            self.pop_screen()
+        if self.screen_stack and isinstance(self.screen_stack[-1], MainScreen):
+            self.pop_screen()
+        self.push_screen(LoginScreen())
 
     def session_expired(self) -> None:
         """Redirect to login when the access token is irrecoverably dead.
@@ -318,14 +283,10 @@ class KlangkApp(App):
         async def _expire() -> None:
             try:
                 await asyncio.to_thread(self.tui_state.logout)
-                self._programmatic_unwind = True
-                try:
-                    while len(self.screen_stack) > 1:
-                        self.pop_screen()
-                    self.live_extra = ""
-                    self.push_screen(LoginScreen())
-                finally:
-                    self._programmatic_unwind = False
+                while len(self.screen_stack) > 1:
+                    self.pop_screen()
+                self.live_extra = ""
+                self.push_screen(LoginScreen())
                 self.notify(
                     "Session expired — please log in again.",
                     severity="warning",

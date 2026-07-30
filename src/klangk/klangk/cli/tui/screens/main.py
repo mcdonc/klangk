@@ -56,6 +56,12 @@ _TOKEN_REFRESH_POLL = 60  # check every 60 seconds
 _MAX_RECONNECT_ATTEMPTS = 25
 _MAX_BACKOFF_SECONDS = 5
 
+# How often the always-on reachability heartbeat re-fetches the workspace
+# list while the backend is up, so a drop is detected regardless of whether
+# the status WS notices (#2012). A timer (not a worker), so it doesn't keep
+# ``app.workers.wait_for_complete()`` pending in tests.
+_HEARTBEAT_SECONDS = 15
+
 # Indirection so tests can advance the reconnect loop without real delays
 # (and without patching the global ``asyncio.sleep``, which Textual's own
 # event loop depends on).
@@ -237,9 +243,32 @@ class MainScreen(Screen):
         self.query_one("#filter_bar").display = False
         self._refresh_action_hints()
         self.refresh_lists()
+        # Always-on reachability heartbeat: re-fetches the list on a timer
+        # while the backend is up so a drop is detected uniformly — at first
+        # display, mid-session, and after navigating back — without relying
+        # on the status WS (#2012). One mechanism, one UI.
+        self._heartbeat_timer = self.set_interval(
+            _HEARTBEAT_SECONDS, self._heartbeat_tick
+        )
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(self._status_loop, name="status-ws")
             self.app.run_worker(self._token_refresh_loop, name="token-refresh")
+
+    def _heartbeat_tick(self) -> None:
+        """Periodic reachability probe (#2012).
+
+        Re-fetches the list only while the backend is believed up; once a
+        fetch fails, ``_enter_unreachable`` takes over with the (faster)
+        reconnect loop. Skips when unauthenticated or once the screen has
+        left the stack (logout / server switch).
+        """
+        if (
+            self._server_unreachable
+            or self not in self.app.screen_stack
+            or not self.app.tui_state.is_authenticated()
+        ):
+            return
+        self.refresh_lists()
 
     def on_tabbed_content_tab_activated(self, event) -> None:
         """Focus the first workspace row when switching tabs (#1792)."""
@@ -782,8 +811,12 @@ class MainScreen(Screen):
 
     def _enter_unreachable(self) -> None:
         """Backend unreachable — surface it and start a reconnect loop."""
-        self._server_unreachable = True
-        self._render_unreachable("(server unreachable — retrying…)")
+        # Fresh attempt counter for this outage (so a heartbeat that re-arms
+        # the reconnect after a prior give-up gets a full retry budget again).
+        self._reconnect_attempt = 0
+        if not self._server_unreachable:
+            self._server_unreachable = True
+            self._render_unreachable("(server unreachable — retrying…)")
         if not self._reconnect_active:
             self._reconnect_active = True
             # Own group so refresh_lists (group "default", exclusive) can't
@@ -969,13 +1002,6 @@ class MainScreen(Screen):
                 retries += 1
                 self.app.live_extra = "status: reconnecting…"
                 self._refresh_status()
-                # The status WS is the first thing to notice a backend drop;
-                # re-fetch the list so a mid-session outage surfaces the
-                # "server unreachable" state instead of a stale list (#2012).
-                # The refresh self-gates: it only flips unreachable on an
-                # actual transport failure, so a benign idle-timeout close on
-                # an up server is a no-op.
-                self.refresh_lists()
                 await asyncio.sleep(2)
                 continue
             except AuthError:
@@ -993,8 +1019,6 @@ class MainScreen(Screen):
                     break
                 self.app.live_extra = "status: reconnecting…"
                 self._refresh_status()
-                # Same mid-session outage detection as the clean-close branch.
-                self.refresh_lists()
                 await asyncio.sleep(min(2 * (2 ** (retries - 1)), 30))
                 continue
         self.app.live_extra = (

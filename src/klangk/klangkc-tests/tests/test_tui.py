@@ -3087,18 +3087,17 @@ async def test_reconnect_gives_up_after_cap(monkeypatch):
         assert "gave up" in (app.live_extra or "").lower()
 
 
-async def test_return_to_main_revalidates_list_against_down_server(
-    monkeypatch,
-):
-    """Popping back to the workspaces page (e.g. from a detail page) re-fetches
-    the list, so a backend that dropped while another screen was open surfaces
-    "server unreachable" instead of a stale, drill-into-able list (#2012)."""
+async def test_heartbeat_detects_drop_after_initial_load(monkeypatch):
+    """The reachability heartbeat re-fetches the list on a timer, so a backend
+    that drops after the page is already shown (mid-session, or while a detail
+    page was open) surfaces "server unreachable" on the next tick — one
+    mechanism covering every detection path (#2012)."""
 
     async def noop(*a, **k):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    # Park the list reconnect loop; we assert the return-triggered refresh.
+    # Park the reconnect loop so the heartbeat tick is what we exercise.
     monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
 
     up = {"yes": True}
@@ -3114,67 +3113,6 @@ async def test_return_to_main_revalidates_list_against_down_server(
     )
     async with app.run_test() as pilot:
         screen = app.screen
-        for _ in range(6):
-            await pilot.pause()
-        assert (
-            "alpha" in _lv_texts(screen.query_one("#owned_list", ListView))[0]
-        )
-
-        # Open a workspace detail page on top, drop the server, then navigate
-        # back — pop_screen must revalidate against the live server.
-        app.push_screen(WorkspaceDetailScreen("alpha"))
-        await pilot.pause()
-        await pilot.pause()
-        up["yes"] = False
-        app.pop_screen()
-        for _ in range(8):
-            await pilot.pause()
-        assert screen._server_unreachable is True
-        assert (
-            "server unreachable"
-            in _lv_texts(screen.query_one("#owned_list", ListView))[0].lower()
-        )
-
-
-async def test_status_disconnect_triggers_unreachable_mid_session(monkeypatch):
-    """A backend drop detected by the status WS *after* the page is already
-    shown surfaces the "server unreachable" state — the mid-session case
-    that a mount-only check would miss (#2012)."""
-
-    async def noop(*a, **k):
-        return None
-
-    # The status WS notices the drop first (transport error).
-    async def boom_status(*a, **k):
-        raise httpx.ConnectError("ws down")
-
-    monkeypatch.setattr(scr_main, "listen_for_status", boom_status)
-    # Park the list reconnect loop so we assert the *trigger*, not its polling.
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
-    # Neutralize _status_loop's own backoff sleeps.
-    import asyncio as _asyncio
-
-    _real_sleep = _asyncio.sleep
-
-    async def _nowait(_t):
-        await _real_sleep(0)
-
-    monkeypatch.setattr(_asyncio, "sleep", _nowait)
-
-    up = {"yes": True}
-    alpha = _wsobj("alpha")
-
-    def owned():
-        if up["yes"]:
-            return [alpha]
-        raise httpx.ConnectError("refused")
-
-    app = KlangkApp(
-        _ws(list_owned_workspaces=owned, list_shared_workspaces=owned)
-    )
-    async with app.run_test() as pilot:
-        screen = app.screen
-        # Initially the server is up: the list renders normally.
         for _ in range(6):
             await pilot.pause()
         assert screen._server_unreachable is False
@@ -3182,13 +3120,9 @@ async def test_status_disconnect_triggers_unreachable_mid_session(monkeypatch):
             "alpha" in _lv_texts(screen.query_one("#owned_list", ListView))[0]
         )
 
-        # Server goes down mid-session.
+        # Backend drops; the next heartbeat tick re-fetches and detects it.
         up["yes"] = False
-        # The status loop detects the drop and triggers a list refresh. Don't
-        # wait_for_complete() afterwards — the refresh starts the reconnect
-        # loop, which is parked (real 999s backoff); pause a few times to let
-        # the refresh + _enter_unreachable render, then assert.
-        await _real_status_loop(screen)
+        screen._heartbeat_tick()
         for _ in range(8):
             await pilot.pause()
         assert screen._server_unreachable is True
@@ -3196,6 +3130,41 @@ async def test_status_disconnect_triggers_unreachable_mid_session(monkeypatch):
             "server unreachable"
             in _lv_texts(screen.query_one("#owned_list", ListView))[0].lower()
         )
+
+
+async def test_heartbeat_tick_skips_when_down_or_unauthenticated(monkeypatch):
+    """The heartbeat is a no-op once unreachable (the reconnect loop owns
+    retry) or once unauthenticated (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_authed_state())
+    async with app.run_test():
+        screen = app.screen
+        fired = []
+        monkeypatch.setattr(screen, "refresh_lists", lambda: fired.append(1))
+
+        # Already unreachable: skip (reconnect loop handles retry).
+        screen._server_unreachable = True
+        screen._heartbeat_tick()
+        assert fired == []
+
+        # Unauthenticated: skip.
+        screen._server_unreachable = False
+        monkeypatch.setattr(
+            screen.app.tui_state, "is_authenticated", lambda: False
+        )
+        screen._heartbeat_tick()
+        assert fired == []
+
+        # Authenticated and up: fires a refresh.
+        monkeypatch.setattr(
+            screen.app.tui_state, "is_authenticated", lambda: True
+        )
+        screen._heartbeat_tick()
+        assert fired == [1]
 
 
 async def test_reconnect_loop_exits_when_screen_popped(monkeypatch):
