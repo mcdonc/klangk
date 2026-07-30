@@ -5182,9 +5182,11 @@ async def test_detail_terminal_select_spawns_shell(monkeypatch):
             "alpha",
             "@0",
         ]
-        # The flash-fix clears the screen and writes a connecting line
-        # before klangk shell attaches (#2010).
-        assert "Connecting to alpha (@0)" in captured[0]
+        # The flash-fix clears the primary screen before klangk shell
+        # attaches (#2010). No "Connecting…" line of our own — klangk
+        # shell prints one on attach.
+        assert captured[0].startswith("\033[2J\033[H")
+        assert "Connecting to alpha" not in captured[0]
 
 
 async def test_detail_terminal_select_refuses_when_id_unresolvable(

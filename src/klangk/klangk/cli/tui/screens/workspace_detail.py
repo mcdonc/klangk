@@ -465,11 +465,10 @@ class WorkspaceDetailScreen(Screen):
         with self.app.suspend():
             # suspend() restored the primary screen buffer, which still
             # shows whatever was on screen before the TUI launched. Clear
-            # it (and drop a short connecting line) so that stale content
-            # never flashes before `klangk shell` attaches (#2010).
-            sys.stdout.write(
-                f"\033[2J\033[HConnecting to {self._name} ({target})\u2026\r\n"
-            )
+            # it so that stale content never flashes before `klangk shell`
+            # attaches (#2010). No connecting line — klangk shell prints
+            # its own on attach.
+            sys.stdout.write("\033[2J\033[H")
             sys.stdout.flush()
             completed = subprocess.run(cmd)
         if completed.returncode != 0:
