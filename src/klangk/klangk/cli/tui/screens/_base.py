@@ -354,17 +354,29 @@ class InputScreen(ButtonRowModalScreen):
     """
 
     def __init__(
-        self, title: str, default: str = "", ok_label: str = "OK"
+        self,
+        title: str,
+        default: str = "",
+        ok_label: str = "OK",
+        select_on_focus: bool = True,
     ) -> None:
         super().__init__()
         self._title = title
         self._default = default
         self._ok_label = ok_label
+        # When False the field doesn't select-all on focus; typing then
+        # appends to the default (what rename wants) instead of replacing
+        # it (#2020).
+        self._select_on_focus = select_on_focus
 
     def compose(self) -> ComposeResult:
         yield Vertical(
             Static(Text(self._title)),
-            Input(value=self._default, id="inp_value"),
+            Input(
+                value=self._default,
+                id="inp_value",
+                select_on_focus=self._select_on_focus,
+            ),
             Horizontal(
                 Button("Cancel", id="cancel"),
                 Button(self._ok_label, id="ok", variant="primary"),
@@ -373,7 +385,12 @@ class InputScreen(ButtonRowModalScreen):
         )
 
     def on_mount(self) -> None:
-        self.query_one("#inp_value", Input).focus()
+        inp = self.query_one("#inp_value", Input)
+        inp.focus()
+        # Without select-on-focus, park the cursor at the end so typing
+        # appends to the default (rename) rather than prepending (#2020).
+        if not self._select_on_focus:
+            inp.cursor_position = len(inp.value)
 
     def _commit(self) -> None:
         val = self.query_one("#inp_value", Input).value.strip()

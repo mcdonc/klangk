@@ -56,7 +56,7 @@ class WorkspaceDetailScreen(Screen):
         # are shown inline on the Terminals list header instead (#1860).
         Binding("n", "new_terminal", "New term", show=False),
         Binding("m", "rename_terminal", "Rename term", show=False),
-        Binding("delete", "delete_terminal", "Del term", show=False),
+        Binding("t", "delete_terminal", "Del term", show=False),
         Binding("?", "cheatsheet", "Keys", show=False),
     ]
 
@@ -103,7 +103,7 @@ class WorkspaceDetailScreen(Screen):
             Horizontal(
                 Static("Terminals", id="term_label"),
                 Static(
-                    "[n] new  [m] rename  [⌿] delete",
+                    "[n] new  [m] rename  [t] delete",
                     id="term_hints",
                     markup=False,
                 ),
@@ -215,7 +215,7 @@ class WorkspaceDetailScreen(Screen):
             Binding("d", "delete", "Del ws"),
             Binding("n", "new_terminal", "New term", show=False),
             Binding("m", "rename_terminal", "Rename term", show=False),
-            Binding("delete", "delete_terminal", "Del term", show=False),
+            Binding("t", "delete_terminal", "Del term", show=False),
             # `?` must survive the per-display BINDINGS rebuild so the
             # cheatsheet stays reachable after _display() runs on mount
             # (#1802).
@@ -665,31 +665,34 @@ class WorkspaceDetailScreen(Screen):
                 f"Rename '{current}' to:",
                 default=current,
                 ok_label="Rename",
+                select_on_focus=False,
             ),
             _on_rename,
         )
 
     async def _do_rename_terminal(self, index: int, new_name: str) -> None:
-        self._msg(f"Renaming terminal to '{new_name}'…")
         try:
             windows = await self.app.tui_state.rename_terminal(
                 self._name, index, new_name
             )
         except Exception as exc:
-            self._msg(f"Rename failed: {exc}", error=True)
+            self.app.notify(
+                f"Rename failed: {exc}", severity="error", timeout=8
+            )
             # Stale index — refresh so the row self-heals (#1965).
             await self._load_terminals()
             return
         if not windows:
-            self._msg(
+            self.app.notify(
                 "Rename failed — could not refresh terminals.",
-                error=True,
+                severity="error",
+                timeout=8,
             )
             await self._load_terminals()
             return
         self._terminals = windows
         await self._render_terminals()
-        self._msg(f"Renamed terminal to '{new_name}'.")
+        self.app.notify(f"Renamed terminal to '{new_name}'.")
 
     def action_new_terminal(self) -> None:
         if self._ws is None:
@@ -898,7 +901,7 @@ class WorkspaceDetailScreen(Screen):
                 [
                     ("n", "New terminal"),
                     ("m", "Rename terminal"),
-                    ("Del", "Delete terminal"),
+                    ("t", "Delete terminal"),
                 ],
             ),
         ]

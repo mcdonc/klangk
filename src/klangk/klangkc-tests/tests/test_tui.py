@@ -4074,9 +4074,10 @@ async def test_detail_terminal_actions_inline_not_in_footer(monkeypatch):
 
         # (b) Terminal keys still exist (so the keys work) but are hidden
         # from the Footer.
-        assert "n" in bindings and "delete" in bindings
+        assert "n" in bindings and "m" in bindings and "t" in bindings
         assert bindings["n"].show is False
-        assert bindings["delete"].show is False
+        assert bindings["m"].show is False
+        assert bindings["t"].show is False
 
         # (c) Workspace-scoped keys remain visible ...
         for key in ("e", "r", "s", "u", "d"):
@@ -5775,6 +5776,10 @@ async def test_detail_rename_terminal(monkeypatch):
         await pilot.pause()
         d = app.screen
         d.query_one("#term_list").index = 1
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         d.action_rename_terminal()
         await pilot.pause()
         # InputScreen pushed, prefilled with the current name "build".
@@ -5785,9 +5790,7 @@ async def test_detail_rename_terminal(monkeypatch):
         for _ in range(4):
             await pilot.pause()
         assert renamed == {"name": "alpha", "index": 1, "new": "ci"}
-        assert "Renamed terminal to 'ci'" in str(
-            d.query_one("#detail_msg").render()
-        )
+        assert any("Renamed terminal to 'ci'" in m for m in notified)
 
 
 async def test_detail_rename_terminal_no_selection(monkeypatch):
@@ -5864,13 +5867,17 @@ async def test_detail_rename_terminal_failure(monkeypatch):
         await pilot.pause()
         d = app.screen
         d.query_one("#term_list").index = 1
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         d.action_rename_terminal()
         await pilot.pause()
         app.screen.query_one("#inp_value", Input).value = "ci"
         app.screen.on_button_pressed(FakeBtnPress("ok"))
         for _ in range(4):
             await pilot.pause()
-        assert "Rename failed" in str(d.query_one("#detail_msg").render())
+        assert any("Rename failed" in m for m in notified)
 
 
 async def test_detail_rename_terminal_empty_result(monkeypatch):
@@ -5892,13 +5899,47 @@ async def test_detail_rename_terminal_empty_result(monkeypatch):
         await pilot.pause()
         d = app.screen
         d.query_one("#term_list").index = 1
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         d.action_rename_terminal()
         await pilot.pause()
         app.screen.query_one("#inp_value", Input).value = "ci"
         app.screen.on_button_pressed(FakeBtnPress("ok"))
         for _ in range(4):
             await pilot.pause()
-        assert "could not refresh" in str(d.query_one("#detail_msg").render())
+        assert any("could not refresh" in m for m in notified)
+
+
+async def test_detail_rename_terminal_appends_to_default(monkeypatch):
+    """The rename input appends (select_on_focus=False): typing into a
+    prefilled 'build' field yields 'build2', not a replace (#2020)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=_async_terms, rename_terminal=_async_empty)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        d.query_one("#term_list").index = 1
+        d.action_rename_terminal()
+        await pilot.pause()
+        assert isinstance(app.screen, InputScreen)
+        inp = app.screen.query_one("#inp_value", Input)
+        assert inp.value == "build"
+        await pilot.press("2")
+        await pilot.pause()
+        assert inp.value == "build2"  # appended, not replaced
+        app.screen.dismiss(None)
 
 
 # ---------------------------------------------------------------------------
@@ -9235,7 +9276,19 @@ async def test_detail_screen_cheatsheet_modal():
         await pilot.pause()
         assert isinstance(app.screen, CheatsheetScreen)
         text = _cheatsheet_text(app.screen)
-        for key in ("Esc", "Enter", "e", "r", "s", "u", "d", "x", "n", "Del"):
+        for key in (
+            "Esc",
+            "Enter",
+            "e",
+            "r",
+            "s",
+            "u",
+            "d",
+            "x",
+            "n",
+            "m",
+            "t",
+        ):
             assert key in text, f"missing {key!r} in cheatsheet"
         assert "Back to workspace list" in text
 
