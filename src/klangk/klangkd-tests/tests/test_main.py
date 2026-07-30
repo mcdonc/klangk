@@ -883,7 +883,7 @@ class TestLifespan:
                 await registry.on_workspace_killed("ws-killed")
         mock_reset.assert_awaited_once_with(app.state.sockets, "ws-killed")
 
-    async def test_lifespan_refuses_if_pid_alive(self, db, app_state):
+    async def test_lifespan_refuses_if_pid_alive(self, db, app_state, caplog):
 
         app = FastAPI()
         app_state = _make_app_state()
@@ -901,6 +901,11 @@ class TestLifespan:
         ):
             async with main.lifespan(app):
                 pass  # pragma: no cover
+        # The lifespan is a silent backstop: it refuses but must NOT log the
+        # duplicate message — only the launcher preflight logs it (#2021).
+        assert not any(
+            "Another klangk instance" in r.getMessage() for r in caplog.records
+        )
 
 
 # --- SIGHUP runtime restart (#1212) ---

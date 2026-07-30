@@ -233,8 +233,11 @@ def main(  # pragma: no cover
 
     # Pre-flight PID check: abort *before* touching the UDS so a second
     # klangkd doesn't destroy the first instance's socket (#1837).
-    # The lifespan has its own authoritative check, but that runs after
-    # uvicorn binds — too late to protect the socket file.
+    # This is the *sole* place a duplicate start is logged (#2021): the
+    # already-running instance stays silent (another process trying to start
+    # is not its problem), and this prevented process logs once then exits.
+    # The lifespan keeps a silent SystemExit backstop for the narrow race
+    # where two launchers start near-simultaneously and both miss this check.
     existing = _check_pid_preflight(settings)
     if existing is not None:
         logger.error(

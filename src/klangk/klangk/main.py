@@ -655,12 +655,12 @@ async def lifespan(app: FastAPI):
 
     existing_pid = app.state.util.check_pid_file()
     if existing_pid is not None:
-        logger.error(
-            "Another klangk instance (PID %d) is already running "
-            "for instance %s — refusing to start",
-            existing_pid,
-            app.state.util.instance_id(),
-        )
+        # Silent backstop only (#2021). A second instance that slipped past
+        # the launcher's pre-flight PID check must still refuse — it would
+        # otherwise overwrite the running instance's pidfile/state. The
+        # launcher's ``_check_pid_preflight`` is the *sole* place this is
+        # logged (and exits there for the normal path); reaching here is a
+        # narrow race, so we exit quietly rather than duplicate the message.
         raise SystemExit(1)
     app.state.util.write_pid_file()
 
