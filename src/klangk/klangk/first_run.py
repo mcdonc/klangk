@@ -72,8 +72,11 @@ def _render_config() -> str:
     Intentionally a near-empty template — the admin identity is derived at
     runtime from the Unix user (settings default), and a password is only
     required when the operator switches to password mode. The file carries
-    discoverability + commented examples for the mode transitions, nothing
-    more. Settings not listed here use the in-code defaults.
+    discoverability + commented examples for the mode transitions, plus the
+    container resource-limit defaults emitted uncommented (they match the
+    in-code defaults; shown so an operator sees the caps in effect and
+    knows where to change them, #2030). Settings not listed here use the
+    in-code defaults.
     """
     timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     return f"""# klangkd configuration — generated on first run ({timestamp}).
@@ -101,6 +104,16 @@ def _render_config() -> str:
 # default_password: "..."  # required when auth_modes is password/both
 # jwt_secret: change-me    # default is an insecure placeholder; mint a real
 #                          # secret for any non-local deployment
+#
+# --- Container resource limits (defaults shown; #34 / #2030) ---
+# Every workspace container is capped at 2 CPUs / 8g RAM / 512 PIDs so a
+# runaway workspace can't starve the host. These match the built-in
+# defaults, so editing or removing a line keeps that cap unless you set it
+# to empty (container_cpu_limit: "") to disable just that one. Podman
+# receives them as --cpus / --memory / --pids-limit.
+container_cpu_limit: 2.0
+container_memory_limit: 8g
+container_pids_limit: 512
 #
 # Full settings reference:
 #   https://mcdonc.github.io/klangk/reference/klangkd-config/

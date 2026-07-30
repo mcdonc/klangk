@@ -564,6 +564,17 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **Container resource limits now ship non-empty by default (#2030).**
+  `container_cpu_limit` / `container_memory_limit` / `container_pids_limit`
+  default to `2.0` / `8g` / `512` (env `KLANGKD_CONTAINER_CPU_LIMIT` /
+  `_MEMORY_LIMIT` / `_PIDS_LIMIT`) instead of unset, so a fresh `klangkd`
+  deployment caps every workspace container out of the box (podman
+  `--cpus` / `--memory` / `--pids-limit`) and a runaway workspace can no
+  longer starve or OOM the host. The first-run generated `klangkd.yaml`
+  emits these uncommented (matching the defaults) for discoverability. Set a
+  field to an empty value to disable that one cap and restore unbounded
+  behavior for it. Malformed values still abort startup. Operators with an
+  explicit config are unaffected.
 - **TUI: session expiry now shows a prominent app-wide overlay, not a
   small inline label + fleeting toast (#2025).** When the access token is
   irrecoverably dead (auth failure on a workspace fetch/detail load, a

@@ -125,6 +125,27 @@ class TestGenerateDefaultConfig:
         body = Path(path).read_text()
         assert "mcdonc.github.io/klangk" in body
 
+    def test_template_emits_container_resource_limits(self, tmp_path):
+        # #2030: a fresh first run must produce a config that caps workspace
+        # containers — the three resource-limit keys ship active
+        # (uncommented), matching the built-in defaults, so an operator
+        # sees the caps in effect and knows where to change them.
+        path = str(tmp_path / "klangkd.yaml")
+        first_run.generate_default_config(path)
+        body = Path(path).read_text()
+        assert "container_cpu_limit: 2.0" in body
+        assert "container_memory_limit: 8g" in body
+        assert "container_pids_limit: 512" in body
+        # They must be active config lines, not commented examples.
+        active = {
+            line.strip()
+            for line in body.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        }
+        assert "container_cpu_limit: 2.0" in active
+        assert "container_memory_limit: 8g" in active
+        assert "container_pids_limit: 512" in active
+
 
 class TestLauncherIntegration:
     """launcher._resolve_config_path(None) wires first-run generation in."""
