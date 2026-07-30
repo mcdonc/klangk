@@ -5144,11 +5144,24 @@ async def test_detail_terminal_select_spawns_shell(monkeypatch):
         ),
     )
 
+    import io
+    import sys
     from contextlib import contextmanager
+
+    captured = []
 
     @contextmanager
     def fake_suspend():
-        yield
+        # Real suspend() owns the terminal's stdout; model that here by
+        # redirecting to a buffer so the "Connecting…" line (#2010)
+        # doesn't leak past pytest's capture during run_test().
+        saved = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            yield
+        finally:
+            captured.append(sys.stdout.getvalue())
+            sys.stdout = saved
 
     app = KlangkApp(st)
     async with app.run_test() as pilot:
@@ -5169,6 +5182,11 @@ async def test_detail_terminal_select_spawns_shell(monkeypatch):
             "alpha",
             "@0",
         ]
+        # The flash-fix clears the primary screen before klangk shell
+        # attaches (#2010). No "Connecting…" line of our own — klangk
+        # shell prints one on attach.
+        assert captured[0].startswith("\033[2J\033[H")
+        assert "Connecting to alpha" not in captured[0]
 
 
 async def test_detail_terminal_select_refuses_when_id_unresolvable(
@@ -5239,11 +5257,20 @@ async def test_detail_terminal_select_failed_spawn_refreshes_list(
         lambda cmd, **k: scr_detail.subprocess.CompletedProcess(cmd, 1),
     )
 
+    import io
+    import sys
     from contextlib import contextmanager
 
     @contextmanager
     def fake_suspend():
-        yield
+        # See test_detail_terminal_select_spawns_shell: redirect stdout
+        # so the "Connecting…" line (#2010) doesn't leak during run_test().
+        saved = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            yield
+        finally:
+            sys.stdout = saved
 
     app = KlangkApp(st)
     async with app.run_test() as pilot:
