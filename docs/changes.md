@@ -1214,6 +1214,12 @@ set-password <email>` (set a known password for the default user — whose
   (#2010).** `on_list_view_selected` clears the primary screen buffer
   inside the `suspend()` block before spawning `klangk shell`, so the
   stale content that briefly surfaced during the buffer swap is gone.
+- **Arrow keys now move between buttons in TUI dialogs (#2016).**
+  Confirm / Input / Duplicate dialogs (Cancel/OK, etc.) previously
+  required Tab to switch buttons — Left/Right now moves between sibling
+  buttons, Up/Down steps between the input field and the button row
+  where present, and Escape cancels. Per the spatial-navigation rule;
+  Tab remains a fallback.
 - **TUI workspace-detail terminal list is now focused with the first
   terminal highlighted from the first frame (#1956).** Four intertwined
   bugs on the workspace-detail screen left the initial terminal
