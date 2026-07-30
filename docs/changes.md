@@ -555,6 +555,15 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **TUI: workspace detail success/in-progress messages are now toasts, not
+  persistent in-page text (#2019).** `Starting container…`, `Container
+started.`, and the other operational feedback messages (`Restart/Stop/Start
+requested.`, terminal create/delete, `Duplicated …`) now appear as
+  auto-dismissing toast notifications instead of lingering on the page. The
+  terminals list (one selected) already signals container readiness, so the
+  status line no longer needs to stay. Errors still render inline (red) so
+  the reason for a failure stays readable.
+
 - **TUI now defaults to the `klangk` theme again (#2003).** Reverts the
   #1904 default: the CLI TUI selects the custom `klangk` theme (GitHub-dark
   palette matching the web UI) out of the box instead of Textual's built-in

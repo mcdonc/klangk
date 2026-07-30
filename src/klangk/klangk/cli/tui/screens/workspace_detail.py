@@ -327,9 +327,20 @@ class WorkspaceDetailScreen(Screen):
             self._display()
 
     def _msg(self, text: str, *, error: bool = False) -> None:
-        self.query_one("#detail_msg", Static).update(
-            Text(text, style="red" if error else "")
-        )
+        """Show transient operational feedback on the detail screen (#2019).
+
+        Errors persist inline (red) so the user can read why an action failed
+        — consistent with the export-failure path (#1758). Success /
+        in-progress feedback is shown as an auto-dismissing toast instead of
+        lingering on the page: the terminals list (one selected) already
+        signals container readiness, so a persistent status line is noise.
+        """
+        if error:
+            self.query_one("#detail_msg", Static).update(
+                Text(text, style="red")
+            )
+        else:
+            self.app.notify(text)
 
     def action_edit(self) -> None:
         if self._ws is None:
