@@ -127,31 +127,39 @@ class TestSslCertDir:
     def test_unset_returns_none(self):
         assert self._trust(make_settings({})).ssl_cert_dir() is None
 
-    def test_missing_dir_returns_none(self, tmp_path):
-        gone = tmp_path / "does-not-exist"
-        s = make_settings({"KLANGKD_SSL_CERT_DIR": str(gone)})
-        assert self._trust(s).ssl_cert_dir() is None
-
-    def test_empty_dir_returns_none(self, tmp_path):
-        # Dir exists but contains no .pem/.crt.
-        (tmp_path / "readme.txt").write_text("no certs here")
-        s = make_settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path)})
+    def test_missing_certs_dir_returns_none(self, tmp_path):
+        # customize_dir set, but no certs/ subdir -> None.
+        s = make_settings({"KLANGKD_CUSTOMIZE_DIR": str(tmp_path)})
         assert self._trust(s).ssl_cert_dir() is None
 
     def test_dir_with_pem_returns_path(self, tmp_path):
-        (tmp_path / "ca.pem").write_text("-----BEGIN CERTIFICATE-----")
-        s = make_settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path)})
-        assert self._trust(s).ssl_cert_dir() == str(tmp_path.resolve())
+        certs = tmp_path / "certs"
+        certs.mkdir()
+        (certs / "ca.pem").write_text("-----BEGIN CERTIFICATE-----")
+        s = make_settings({"KLANGKD_CUSTOMIZE_DIR": str(tmp_path)})
+        assert self._trust(s).ssl_cert_dir() == str(certs.resolve())
 
     def test_dir_with_crt_returns_path(self, tmp_path):
-        (tmp_path / "my-ca.crt").write_text("-----BEGIN CERTIFICATE-----")
-        s = make_settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path)})
-        assert self._trust(s).ssl_cert_dir() == str(tmp_path.resolve())
+        certs = tmp_path / "certs"
+        certs.mkdir()
+        (certs / "my-ca.crt").write_text("-----BEGIN CERTIFICATE-----")
+        s = make_settings({"KLANGKD_CUSTOMIZE_DIR": str(tmp_path)})
+        assert self._trust(s).ssl_cert_dir() == str(certs.resolve())
 
     def test_extension_case_insensitive(self, tmp_path):
-        (tmp_path / "CA.PEM").write_text("-----BEGIN CERTIFICATE-----")
-        s = make_settings({"KLANGKD_SSL_CERT_DIR": str(tmp_path)})
-        assert self._trust(s).ssl_cert_dir() == str(tmp_path.resolve())
+        certs = tmp_path / "certs"
+        certs.mkdir()
+        (certs / "CA.PEM").write_text("-----BEGIN CERTIFICATE-----")
+        s = make_settings({"KLANGKD_CUSTOMIZE_DIR": str(tmp_path)})
+        assert self._trust(s).ssl_cert_dir() == str(certs.resolve())
+
+    def test_empty_certs_dir_returns_none(self, tmp_path):
+        # certs/ exists but contains no .pem/.crt -> None.
+        certs = tmp_path / "certs"
+        certs.mkdir()
+        (certs / "readme.txt").write_text("no certs here")
+        s = make_settings({"KLANGKD_CUSTOMIZE_DIR": str(tmp_path)})
+        assert self._trust(s).ssl_cert_dir() is None
 
     def test_ssl_env_vars_empty_without_dir(self):
         assert container.ssl_env_vars(None) == []
@@ -1144,12 +1152,13 @@ class TestStartContainer:
     async def test_ssl_trust_mounted_when_cert_dir_configured(
         self, workspace, monkeypatch, tmp_path
     ):
-        """A configured KLANGKD_SSL_CERT_DIR is bind-mounted ro and env set (#1181)."""
-        ssl_dir = tmp_path / "ssl"
-        ssl_dir.mkdir()
+        """A populated <customize_dir>/certs is bind-mounted ro and env set (#1181)."""
+        customize = tmp_path / "custom"
+        ssl_dir = customize / "certs"
+        ssl_dir.mkdir(parents=True)
         (ssl_dir / "corp-ca.pem").write_text("-----BEGIN CERTIFICATE-----")
         monkeypatch.setattr(
-            self.registry.app.state.settings, "ssl_cert_dir", str(ssl_dir)
+            self.registry.app.state.settings, "customize_dir", str(customize)
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -1166,7 +1175,7 @@ class TestStartContainer:
         assert "NODE_EXTRA_CA_CERTS=/tmp/klangk/ca-bundle.crt" in env
 
     async def test_no_ssl_trust_when_cert_dir_unset(self, workspace):
-        """Without KLANGKD_SSL_CERT_DIR there is no mount and no trust env."""
+        """Without certs in <customize_dir>/certs/ there is no mount and no trust env."""
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
@@ -1181,16 +1190,15 @@ class TestStartContainer:
     async def test_no_ssl_trust_when_dir_has_no_certs(
         self, workspace, tmp_path, monkeypatch
     ):
-        """A cert dir with no .pem/.crt is not mounted (#1181)."""
-        ssl_dir = tmp_path / "ssl"
-        ssl_dir.mkdir()
+        """A certs dir with no .pem/.crt is not mounted (#1181)."""
+        customize = tmp_path / "custom"
+        ssl_dir = customize / "certs"
+        ssl_dir.mkdir(parents=True)
         (ssl_dir / "notes.txt").write_text("not a cert")
-        # Point the registry's SSLTrust at the empty cert dir so ssl_cert_dir()
-        # actually evaluates it (previously this reassigned registry.app.state.settings,
-        # which the resolver now reaches only via app_state.state.ssl_trust; patch the
-        # settings field the SSLTrust instance reads instead).
+        # Point the registry's SSLTrust at the certs dir (via customize_dir)
+        # so ssl_cert_dir() actually evaluates it.
         monkeypatch.setattr(
-            self.registry.app.state.settings, "ssl_cert_dir", str(ssl_dir)
+            self.registry.app.state.settings, "customize_dir", str(customize)
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(

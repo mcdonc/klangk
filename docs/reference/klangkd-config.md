@@ -368,9 +368,10 @@ full note.
 
 ### SSL / certs
 
-| Key            | Default | Env var                |
-| -------------- | ------- | ---------------------- |
-| `ssl_cert_dir` |         | `KLANGKD_SSL_CERT_DIR` |
+Custom CA certificates are not a config key — drop `.pem`/`.crt` files
+into `<KLANGKD_CUSTOMIZE_DIR>/certs/` and both the backend and workspace
+containers will trust them (#1360, #1523). There is no `ssl_cert_dir`
+setting.
 
 ### File upload
 
