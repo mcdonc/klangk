@@ -5,6 +5,7 @@ continue to work unchanged.
 """
 
 from ._base import (
+    CheatsheetScreen,
     ConfirmScreen,
     DuplicateScreen,
     InputScreen,
@@ -24,6 +25,7 @@ from .workspace_form import CreateWorkspaceScreen, EditWorkspaceScreen
 
 __all__ = [
     "AddServerScreen",
+    "CheatsheetScreen",
     "ConfirmScreen",
     "CreateWorkspaceScreen",
     "DuplicateScreen",

@@ -36,6 +36,7 @@ from ...auth import refresh_token as _refresh_token
 from ..widgets import StatusBar
 from ..ws import listen_for_status
 from ._base import (
+    CheatsheetScreen,
     ConfirmScreen,
     InputScreen,
     TransferScreen,
@@ -148,6 +149,7 @@ class MainScreen(Screen):
         Binding("u", "duplicate", "Dup", show=False),
         Binding("d", "delete", "Del", show=False),
         Binding("e", "edit", "Edit", show=False),
+        Binding("?", "cheatsheet", "Keys", show=False),
     ]
 
     def compose(self) -> ComposeResult:
@@ -564,6 +566,51 @@ class MainScreen(Screen):
 
     def action_logout(self) -> None:
         self.app.do_logout()
+
+    def action_cheatsheet(self) -> None:
+        """Open the ``?`` keyboard cheatsheet modal (#1802)."""
+        self.app.push_screen(CheatsheetScreen(self._cheatsheet_sections()))
+
+    @staticmethod
+    def _cheatsheet_sections() -> list[tuple[str, list[tuple[str, str]]]]:
+        """Keybindings shown in the cheatsheet, grouped by context (#1802).
+
+        Hand-written (not derived from ``BINDINGS``) so the display labels
+        read cleanly — e.g. ``Enter`` / ``↑ ↓`` rather than the raw binding
+        key strings. Kept in sync with the bindings above by the TUI tests,
+        which assert each key appears.
+        """
+        return [
+            (
+                "Navigation",
+                [
+                    ("↑ ↓", "Move rows; cross the tab strip (Up from row 1)"),
+                    ("Tab", "Cycle focus (Shift+Tab back)"),
+                    ("Enter", "Open the highlighted workspace"),
+                ],
+            ),
+            (
+                "Workspaces",
+                [
+                    ("c", "Switch server"),
+                    ("n", "New workspace"),
+                    ("i", "Import from archive"),
+                    ("o", "Cycle sort order"),
+                    ("/", "Filter by name or id"),
+                    ("l", "Log out"),
+                ],
+            ),
+            (
+                "Highlighted row",
+                [
+                    ("e", "Edit workspace"),
+                    ("r", "Restart"),
+                    ("s", "Stop / Start"),
+                    ("u", "Duplicate"),
+                    ("d", "Delete"),
+                ],
+            ),
+        ]
 
     def action_create(self) -> None:
         self.run_worker(self._do_create, exit_on_error=False)

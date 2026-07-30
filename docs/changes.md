@@ -27,6 +27,12 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **TUI: `?` opens a keyboard cheatsheet modal (#1802).** Pressing `?`
+  on the workspace list or a workspace's detail screen opens a modal listing
+  that screen's keybindings grouped by context (navigation, workspaces /
+  terminals, highlighted-row actions). The modal is dismissed with Escape
+  or by pressing `?` again. Content adapts to the current screen.
+
 - **Workspace tmux status bar shows the disconnect hint (#2006).** The
   status bar now surfaces `Exit: Enter, then ~.` — the CLI's `~.` escape to
   close a `klangk shell` session — so the escape is discoverable without
