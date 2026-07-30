@@ -56,6 +56,7 @@ from klangk.cli.tui.screens import (
     InputScreen,
     LoginScreen,
     MainScreen,
+    ServerDownScreen,
     ServerSwitchScreen,
     TransferScreen,
     WorkspaceDetailScreen,
@@ -2975,14 +2976,17 @@ async def test_main_screen_server_down_shows_indicator(monkeypatch):
         # wait_for_complete() — the loop is intentionally parked mid-backoff.
         for _ in range(8):
             await pilot.pause()
-        screen = app.screen
-        assert screen._server_unreachable is True
-        owned_lv = screen.query_one("#owned_list", ListView)
-        shared_lv = screen.query_one("#shared_list", ListView)
+        main = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        assert main._server_unreachable is True
+        owned_lv = main.query_one("#owned_list", ListView)
+        shared_lv = main.query_one("#shared_list", ListView)
         assert "server unreachable" in _lv_texts(owned_lv)[0].lower()
         assert "server unreachable" in _lv_texts(shared_lv)[0].lower()
         assert "unreachable" in (app.live_extra or "").lower()
         assert "attempt 1" in (app.live_extra or "")
+        # App-wide overlay covers whatever page is active (#2012).
+        assert isinstance(app.screen, ServerDownScreen)
+        assert "server unreachable" in app.screen._message.lower()
 
 
 async def test_main_screen_http_error_is_not_unreachable(monkeypatch):
@@ -3078,13 +3082,119 @@ async def test_reconnect_gives_up_after_cap(monkeypatch):
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
-        screen = app.screen
-        assert screen._server_unreachable is False
-        owned_lv = screen.query_one("#owned_list", ListView)
+        main = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        assert main._server_unreachable is False
+        owned_lv = main.query_one("#owned_list", ListView)
         label = _lv_texts(owned_lv)[0].lower()
         assert "server down" in label
         assert "switch server" in label
         assert "gave up" in (app.live_extra or "").lower()
+        # The app-wide overlay carries the give-up message too (#2012).
+        assert isinstance(app.screen, ServerDownScreen)
+        assert "couldn't reach" in app.screen._message.lower()
+
+
+async def test_server_down_overlay_dismiss_then_no_repop(monkeypatch):
+    """Esc dismisses the app-wide overlay; once dismissed the reconnect loop
+    won't re-pop it for the rest of this outage (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+
+    def down():
+        raise httpx.ConnectError("refused")
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=down, list_shared_workspaces=down)
+    )
+    async with app.run_test() as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        assert isinstance(app.screen, ServerDownScreen)
+        await pilot.press("escape")
+        for _ in range(3):
+            await pilot.pause()
+        # Overlay gone; the app flagged it dismissed for this outage.
+        assert not isinstance(app.screen, ServerDownScreen)
+        assert app._server_down_dismissed is True
+        # A subsequent set_server_down call is a no-op (won't re-pop).
+        app.set_server_down("again")
+        assert not isinstance(app.screen, ServerDownScreen)
+
+
+async def test_server_down_overlay_c_opens_switch_server(monkeypatch):
+    """'c' from the overlay closes it and opens the server-switch screen (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+
+    def down():
+        raise httpx.ConnectError("refused")
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=down, list_shared_workspaces=down)
+    )
+    async with app.run_test() as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        assert isinstance(app.screen, ServerDownScreen)
+        await pilot.press("c")
+        for _ in range(4):
+            await pilot.pause()
+        assert isinstance(app.screen, ServerSwitchScreen)
+        assert app._server_down_dismissed is True
+
+
+async def test_server_down_overlay_covers_any_active_page(monkeypatch):
+    """The app-level overlay lands on top of whatever screen is active — not
+    just the workspaces page — so a drop while a detail/form page is open is
+    still signalled everywhere (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+
+    up = {"yes": True}
+    alpha = _wsobj("alpha")
+
+    def owned():
+        if up["yes"]:
+            return [alpha]
+        raise httpx.ConnectError("refused")
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=owned, list_shared_workspaces=owned)
+    )
+    async with app.run_test() as pilot:
+        for _ in range(6):
+            await pilot.pause()
+        # Navigate "away" from the workspaces page onto a detail/form page.
+        from textual.screen import Screen as _Screen
+
+        detail = _Screen()
+        app.push_screen(detail)
+        for _ in range(3):
+            await pilot.pause()
+        assert app.screen is detail
+        # Backend drops; the heartbeat (on the still-mounted MainScreen)
+        # detects it and pushes the overlay on TOP of the detail page.
+        up["yes"] = False
+        next(
+            s for s in app.screen_stack if isinstance(s, MainScreen)
+        )._heartbeat_tick()
+        for _ in range(8):
+            await pilot.pause()
+        assert isinstance(app.screen, ServerDownScreen)
+        # The detail page is still in the stack, underneath the overlay.
+        assert detail in app.screen_stack
 
 
 async def test_heartbeat_detects_drop_after_initial_load(monkeypatch):

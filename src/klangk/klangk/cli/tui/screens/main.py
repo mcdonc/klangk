@@ -817,6 +817,7 @@ class MainScreen(Screen):
         if not self._server_unreachable:
             self._server_unreachable = True
             self._render_unreachable("(server unreachable — retrying…)")
+            self.app.set_server_down(self._down_overlay_message())
         if not self._reconnect_active:
             self._reconnect_active = True
             # Own group so refresh_lists (group "default", exclusive) can't
@@ -835,6 +836,30 @@ class MainScreen(Screen):
             self._server_unreachable = False
             self.app.live_extra = ""
             self._refresh_status()
+            self.app.clear_server_down()
+
+    def _down_overlay_message(self, gave_up: bool = False) -> str:
+        """Text for the app-wide server-down overlay (#2012)."""
+        if gave_up:
+            return (
+                "⛔ Server down\n\n"
+                "Couldn't reach the backend after repeated attempts;"
+                " it will keep retrying.\n"
+                "[c] switch server   [Esc] dismiss"
+            )
+        if self._reconnect_attempt <= 0:
+            return (
+                "⏳ Server unreachable\n\nReconnecting…\n"
+                "The page will reload when the backend returns.\n"
+                "[c] switch server   [Esc] dismiss"
+            )
+        return (
+            f"⏳ Server unreachable\n\nReconnecting "
+            f"(attempt {self._reconnect_attempt}/"
+            f"{_MAX_RECONNECT_ATTEMPTS})…\n"
+            "The page will reload when the backend returns.\n"
+            "[c] switch server   [Esc] dismiss"
+        )
 
     async def _reconnect_loop(self) -> None:
         """Poll the backend with bounded backoff until it's reachable again,
@@ -858,6 +883,9 @@ class MainScreen(Screen):
                     )
                     self.app.live_extra = "server: down (gave up reconnecting)"
                     self._refresh_status()
+                    self.app.set_server_down(
+                        self._down_overlay_message(gave_up=True)
+                    )
                     return
                 delay = _reconnect_backoff(self._reconnect_attempt)
                 self.app.live_extra = (
@@ -866,6 +894,7 @@ class MainScreen(Screen):
                     f"{_MAX_RECONNECT_ATTEMPTS})…"
                 )
                 self._refresh_status()
+                self.app.set_server_down(self._down_overlay_message())
                 await _reconnect_sleep(delay)
                 if self not in self.app.screen_stack:
                     return

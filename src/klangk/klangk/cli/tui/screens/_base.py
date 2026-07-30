@@ -9,6 +9,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.dom import NoMatches
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
@@ -65,6 +66,61 @@ class ConfirmScreen(ModalScreen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "yes")
+
+
+class ServerDownScreen(ModalScreen[None]):
+    """Dimmed overlay shown app-wide when the backend is unreachable (#2012).
+
+    Mirrors the Flutter disconnected overlay (``workspace_overlays.dart``):
+    a centered panel over a dimmed background with a live reconnect status.
+    Shown by ``KlangkApp.set_server_down`` over whatever page is active, so a
+    drop is signalled uniformly on every screen, not just the workspaces
+    page. ``Esc`` dismisses it for the current outage (the underlying page
+    keeps its own inline indicator); ``c`` jumps to switch-server.
+    """
+
+    DEFAULT_CSS = """
+    ServerDownScreen { align: center middle; }
+    ServerDownScreen > Vertical {
+        width: 64;
+        max-width: 90%;
+        height: auto;
+        padding: 1 2;
+        border: round $warning;
+        background: $panel;
+    }
+    ServerDownScreen Static {
+        text-align: center;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss_overlay", "Back", show=False),
+        Binding("c", "switch_server", "Switch server", show=False),
+    ]
+
+    def __init__(self, message: str) -> None:
+        super().__init__()
+        self._message = message
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(Static(Text(self._message), id="server_down_msg"))
+
+    def set_message(self, message: str) -> None:
+        """Update the live reconnect status without re-mounting."""
+        self._message = message
+        try:
+            self.query_one("#server_down_msg", Static).update(Text(message))
+        except NoMatches:  # pragma: no cover - not yet mounted
+            pass
+
+    def action_dismiss_overlay(self) -> None:
+        # Tell the app not to re-show until recovery, then pop self.
+        self.app.dismiss_server_down()
+        self.dismiss(None)
+
+    def action_switch_server(self) -> None:
+        self.app.server_down_switch_server()
 
 
 class SpatialListView(ListView):

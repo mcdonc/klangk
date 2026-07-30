@@ -13,6 +13,7 @@ from .screens import (
     EditWorkspaceScreen,
     LoginScreen,
     MainScreen,
+    ServerDownScreen,
     ServerSwitchScreen,
     WorkspaceDetailScreen,
 )
@@ -196,6 +197,12 @@ class KlangkApp(App):
         self.tui_state = state
         self.live_extra = ""
         self._expiring = False
+        # App-wide server-down overlay (#2012). ``_server_down_screen`` is the
+        # shown modal (None when hidden); ``_server_down_dismissed`` is set when
+        # the user closes it so the reconnect loop won't re-pop it until the
+        # backend is reachable again (``clear_server_down`` resets it).
+        self._server_down_screen: ServerDownScreen | None = None
+        self._server_down_dismissed = False
         self.register_theme(KLANGK_THEME)
         self.theme = "klangk"
 
@@ -303,6 +310,46 @@ class KlangkApp(App):
             if isinstance(screen, MainScreen):
                 screen.refresh_lists()
                 return
+
+    # --- app-wide server-down overlay (#2012) ---
+
+    def set_server_down(self, message: str) -> None:
+        """Show (or update) the global server-down overlay over the active page.
+
+        Pushed at the app level, so it covers whatever screen is current —
+        workspaces list, workspace detail, create/edit form, … — giving one
+        uniform signal on every page. A no-op if the user already dismissed
+        it for this outage.
+        """
+        if self._server_down_dismissed:
+            return
+        if self._server_down_screen is None:
+            self._server_down_screen = ServerDownScreen(message)
+            self.push_screen(self._server_down_screen)
+        else:
+            self._server_down_screen.set_message(message)
+
+    def clear_server_down(self) -> None:
+        """Hide the overlay once the backend is reachable again."""
+        self._server_down_dismissed = False
+        screen = self._server_down_screen
+        self._server_down_screen = None
+        if screen is not None and screen in self.screen_stack:
+            screen.dismiss(None)
+
+    def dismiss_server_down(self) -> None:
+        """User closed the overlay — don't re-show until recovery."""
+        self._server_down_dismissed = True
+        self._server_down_screen = None
+
+    def server_down_switch_server(self) -> None:
+        """ "c" from the overlay: close it and open the server-switch screen."""
+        self._server_down_dismissed = True
+        screen = self._server_down_screen
+        self._server_down_screen = None
+        if screen is not None and screen in self.screen_stack:
+            screen.dismiss(None)
+        self.push_screen(ServerSwitchScreen())
 
 
 def run_tui(server_url: str | None = None) -> None:

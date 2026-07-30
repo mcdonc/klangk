@@ -1204,18 +1204,21 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
-- **CLI TUI now shows "server down" and auto-reconnects instead of a
-  misleading empty workspace list (#2012).** When the backend was
-  unreachable (but the CLI still held a valid JWT, e.g. `auth=none`), the
-  workspaces page rendered "(no workspaces)" like a healthy empty account,
-  and the only recovery was to log out and back in. A transport-layer fetch
-  failure now surfaces "(server unreachable — retrying…)" with a live
-  attempt counter in the status bar, and a background reconnect loop
-  (bounded exponential backoff, mirroring the Flutter WS client) repopulates
-  the list automatically once the backend returns. A single always-on
-  reachability heartbeat (independent of the status WS) drives one uniform
-  UI across every detection path — first display, mid-session, and after
-  navigating back from a detail page — so a drop never leaves a stale,
+- **CLI TUI now shows a global "server down" overlay and auto-reconnects
+  instead of a misleading empty workspace list (#2012).** When the backend
+  was unreachable (but the CLI still held a valid JWT, e.g. `auth=none`),
+  the workspaces page rendered "(no workspaces)" like a healthy empty
+  account, and the only recovery was to log out and back in. A
+  transport-layer fetch failure now surfaces an app-wide dimmed overlay —
+  centered, with a live reconnect attempt counter — on **every** page
+  (workspaces list, workspace detail, create/edit form, …), not just the
+  workspaces page. A background reconnect loop (bounded exponential
+  backoff, mirroring the Flutter WS client) repopulates the list and dismisses
+  the overlay automatically once the backend returns; from the overlay, `c`
+  jumps to switch-server and `Esc` dismisses it for the outage. A single
+  always-on reachability heartbeat (independent of the status WS) drives one
+  uniform UI across every detection path — first display, mid-session, and
+  after navigating back from a detail page — so a drop never leaves a stale,
   drill-into-able list, with no re-login required.
 
 - **Opening a terminal from the TUI no longer flashes the pre-TUI screen
