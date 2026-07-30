@@ -666,12 +666,19 @@ class KlangkClient:
         """Create a new terminal window in workspace *name*; return updated list."""
         return await self._terminals(name, new_window=window_name)
 
+    async def rename_terminal(
+        self, name: str, index: int, new_name: str
+    ) -> list[dict]:
+        """Rename terminal window at *index* in workspace *name*; return list."""
+        return await self._terminals(name, rename=(index, new_name))
+
     async def _terminals(
         self,
         name: str,
         *,
         close_window_id: str | None = None,
         new_window: str | None = None,
+        rename: tuple[int, str] | None = None,
     ) -> list[dict]:
         try:
             ws = self.resolve_workspace(name)
@@ -708,6 +715,18 @@ class KlangkClient:
                             {
                                 "cmd": "terminal_new_window",
                                 "name": new_window,
+                            }
+                        )
+                    )
+                    windows = await self._recv_windows(conn)
+                if rename is not None and windows:
+                    idx, new_name = rename
+                    await conn.send(
+                        json.dumps(
+                            {
+                                "cmd": "terminal_rename_window",
+                                "index": idx,
+                                "name": new_name,
                             }
                         )
                     )

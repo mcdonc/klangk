@@ -27,6 +27,11 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **TUI: rename a terminal from the terminals list (#2020).** Press
+  `F2` on a highlighted terminal to rename it (an input prefilled with
+  the current name; Enter renames, Escape cancels). Uses the existing
+  `terminal_rename_window` backend path (`tmux rename-window`).
+
 - **TUI: `?` opens a keyboard cheatsheet modal (#1802).** Pressing `?`
   on the workspace list or a workspace's detail screen opens a modal listing
   that screen's keybindings grouped by context (navigation, workspaces /

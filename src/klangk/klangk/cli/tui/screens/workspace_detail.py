@@ -55,6 +55,7 @@ class WorkspaceDetailScreen(Screen):
         # Terminal-scoped keys are hidden from the Footer — their hints
         # are shown inline on the Terminals list header instead (#1860).
         Binding("n", "new_terminal", "New term", show=False),
+        Binding("f2", "rename_terminal", "Rename term", show=False),
         Binding("delete", "delete_terminal", "Del term", show=False),
         Binding("?", "cheatsheet", "Keys", show=False),
     ]
@@ -101,7 +102,11 @@ class WorkspaceDetailScreen(Screen):
         yield Vertical(
             Horizontal(
                 Static("Terminals", id="term_label"),
-                Static("[n] new  [⌿] delete", id="term_hints", markup=False),
+                Static(
+                    "[n] new  [F2] rename  [⌿] delete",
+                    id="term_hints",
+                    markup=False,
+                ),
                 id="term_header",
             ),
             SpatialListView(id="term_list"),
@@ -209,6 +214,7 @@ class WorkspaceDetailScreen(Screen):
             Binding("u", "duplicate", "Dup"),
             Binding("d", "delete", "Del ws"),
             Binding("n", "new_terminal", "New term", show=False),
+            Binding("f2", "rename_terminal", "Rename term", show=False),
             Binding("delete", "delete_terminal", "Del term", show=False),
             # `?` must survive the per-display BINDINGS rebuild so the
             # cheatsheet stays reachable after _display() runs on mount
@@ -633,6 +639,58 @@ class WorkspaceDetailScreen(Screen):
                 return str(w.get("name") or idx)
         return key
 
+    def action_rename_terminal(self) -> None:
+        lv = self.query_one("#term_list", ListView)
+        child = lv.highlighted_child
+        if child is None or not child.name:
+            return
+        # The rename controller targets the window by INDEX (tmux
+        # rename-window -t session:INDEX), not the @N id used by select /
+        # delete. The list row key *is* the index (#1965).
+        index = int(child.name)
+        current = self._terminal_label_for(child.name)
+
+        def _on_rename(new_name: str | None) -> None:
+            # InputScreen dismisses None on cancel/escape (#2016); an
+            # unchanged name also skips the round-trip.
+            if not new_name or new_name == current:
+                return
+            self.run_worker(
+                self._do_rename_terminal(index, new_name),
+                exit_on_error=False,
+            )
+
+        self.app.push_screen(
+            InputScreen(
+                f"Rename '{current}' to:",
+                default=current,
+                ok_label="Rename",
+            ),
+            _on_rename,
+        )
+
+    async def _do_rename_terminal(self, index: int, new_name: str) -> None:
+        self._msg(f"Renaming terminal to '{new_name}'…")
+        try:
+            windows = await self.app.tui_state.rename_terminal(
+                self._name, index, new_name
+            )
+        except Exception as exc:
+            self._msg(f"Rename failed: {exc}", error=True)
+            # Stale index — refresh so the row self-heals (#1965).
+            await self._load_terminals()
+            return
+        if not windows:
+            self._msg(
+                "Rename failed — could not refresh terminals.",
+                error=True,
+            )
+            await self._load_terminals()
+            return
+        self._terminals = windows
+        await self._render_terminals()
+        self._msg(f"Renamed terminal to '{new_name}'.")
+
     def action_new_terminal(self) -> None:
         if self._ws is None:
             return
@@ -839,6 +897,7 @@ class WorkspaceDetailScreen(Screen):
                 "Terminals",
                 [
                     ("n", "New terminal"),
+                    ("F2", "Rename terminal"),
                     ("Del", "Delete terminal"),
                 ],
             ),
