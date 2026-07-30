@@ -3191,6 +3191,100 @@ async def test_update_running_no_label(monkeypatch):
         m._update_running(a.id, False)
 
 
+async def test_status_running_not_regressed_by_stale_refresh(monkeypatch):
+    """A container_status running update isn't clobbered by a list refresh
+    that races behind it (#2032).
+
+    The fetch always returns a stale ``running=False`` snapshot; after a
+    ``container_status(running=True)`` broadcast, every subsequent refresh
+    must keep the list's running dot (the running overlay is re-applied).
+    """
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+
+    def stale_owned():
+        # Each fetch returns a NEW snapshot that's behind the broadcast.
+        return [_wsobj("alpha", running=False)]
+
+    st = _ws(owned=[_wsobj("alpha", running=False)])
+    st.list_owned_workspaces = stale_owned
+    st.list_shared_workspaces = lambda: []
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        # Backend reports the workspace is now running.
+        m._on_status_event(
+            {
+                "type": "container_status",
+                "workspace_id": "id-alpha",
+                "running": True,
+            }
+        )
+        await pilot.pause()
+        # A refresh lands stale data (running=False) — must not regress.
+        m.refresh_lists()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        ws = m._ws_by_id.get("id-alpha")
+        assert ws is not None
+        assert ws.running is True
+        # The overlay carries the freshest state across the refresh.
+        assert m._running_overlay.get("id-alpha") is True
+
+
+async def test_status_running_overlay_applied_on_first_refresh(monkeypatch):
+    """A container_status that lands before the workspace is in the snapshot
+    is recorded and applied when the refresh brings it in (#2032)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+
+    calls = {"n": 0}
+
+    def owned():
+        calls["n"] += 1
+        # First fetch (mount): no workspaces yet.
+        if calls["n"] == 1:
+            return []
+        # Later fetches: the workspace exists but the snapshot is stale
+        # (running=False, behind the broadcast).
+        return [_wsobj("alpha", running=False)]
+
+    st = _ws(owned=[])
+    st.list_owned_workspaces = owned
+    st.list_shared_workspaces = lambda: []
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        m = app.screen
+        # Broadcast arrives before the workspace is in the snapshot.
+        m._on_status_event(
+            {
+                "type": "container_status",
+                "workspace_id": "id-alpha",
+                "running": True,
+            }
+        )
+        await pilot.pause()
+        # The refresh that brings the workspace in re-applies the overlay.
+        m.refresh_lists()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        ws = m._ws_by_id.get("id-alpha")
+        assert ws is not None
+        assert ws.running is True
+
+
 async def test_main_screen_list_error_shows_placeholder(monkeypatch):
     async def noop(*a, **k):
         return None
