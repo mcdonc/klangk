@@ -245,6 +245,21 @@ class MainScreen(Screen):
         self._reconnect_attempt = 0
         self._reconnect_active = False
         self._gave_up = False
+        # Latest ``container_status`` running state per workspace id (#2032).
+        # Recorded on every broadcast and re-applied onto each fresh fetch in
+        # ``_populate_workspaces``, so a refresh whose snapshot raced behind a
+        # start/stop broadcast can't regress the list's running dot. This is
+        # the fix for the lost-update: the fetch runs as an ``await`` (network
+        # I/O), so a broadcast landing mid-fetch mutates the *old* snapshot
+        # object and would be clobbered when the refresh installs a stale one;
+        # the overlay carries the freshest state across that boundary.
+        # Intentionally unpruned — entries are ``uuid -> bool`` and bounded by
+        # the distinct workspaces seen this session; ids are never reused, so a
+        # stale entry (a since-deleted workspace) simply never matches a fresh
+        # object and is inert. (Pruning against ``_ws_by_id`` would be wrong:
+        # it would drop a pending entry for a workspace that hasn't appeared
+        # in any fetch yet.)
+        self._running_overlay: dict[str, bool] = {}
         self.query_one("#filter_bar").display = False
         self._refresh_action_hints()
         self.refresh_lists()
@@ -815,7 +830,6 @@ class MainScreen(Screen):
         )
 
     async def _refresh_lists_async(self) -> None:
-        self._ws_by_id: dict[str, object] = {}
         try:
             owned, shared = await self._fetch_lists()
         except AuthError:
@@ -833,6 +847,8 @@ class MainScreen(Screen):
             self._enter_unreachable()
             return
         # Success — clear any prior unreachable state and render the lists.
+        # ``_populate_workspaces`` re-applies ``_running_overlay`` so a stale
+        # snapshot can't regress a just-observed start/stop (#2032).
         self._exit_unreachable()
         self._populate_workspaces(owned, shared)
 
@@ -850,6 +866,9 @@ class MainScreen(Screen):
 
     def _populate_workspaces(self, owned: list, shared: list) -> None:
         """Cache + render a freshly fetched set of workspace lists."""
+        # Re-apply the latest container_status running state so a fetch that
+        # raced behind a start/stop broadcast can't regress the list (#2032).
+        self._apply_running_overlay(owned + shared)
         self._owned_all = owned
         self._shared_all = shared
         self._ws_by_id = {}
@@ -862,6 +881,22 @@ class MainScreen(Screen):
         if not self._initial_focus_done:
             self._initial_focus_done = True
             self._focus_visible_list()
+
+    def _apply_running_overlay(self, workspaces: list) -> None:
+        """Overlay the latest ``container_status`` running state onto a fresh
+        fetch (#2032).
+
+        A ``container_status`` broadcast can land while a list refresh is in
+        flight; the fetch may return a snapshot taken before the start/stop,
+        so without this overlay the list would briefly flip back to the stale
+        state (a running dot disagreeing with the detail screen).
+        """
+        if not self._running_overlay:
+            return
+        for ws in workspaces:
+            wid = str(getattr(ws, "id", "") or "")
+            if wid and wid in self._running_overlay:
+                ws.running = self._running_overlay[wid]
 
     def _render_unreachable(self, label: str) -> None:
         """Show *label* as the only row in both workspace lists."""
@@ -1131,10 +1166,17 @@ class MainScreen(Screen):
     def _update_running(self, workspace_id: str, running: bool) -> None:
         """Update a single workspace's ● icon in-place (#1791).
 
-        ``container_status`` events fire on start/stop; we patch the
-        list item's label without re-fetching the whole list (which
-        would lose selection and scroll position).
+        ``container_status`` events fire on start/stop; we patch the list
+        item's label without re-fetching the whole list (which would lose
+        selection and scroll position). The freshest running state is also
+        recorded in ``_running_overlay`` so a list refresh whose snapshot
+        raced behind this broadcast can't regress it (#2032).
         """
+        # Record the freshest running state regardless of whether the
+        # workspace is currently in the snapshot — it may land in the next
+        # refresh, where _populate_workspaces will re-apply it.
+        if workspace_id:
+            self._running_overlay[workspace_id] = running
         ws = getattr(self, "_ws_by_id", {}).get(workspace_id)
         if ws is None:
             return

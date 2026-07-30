@@ -1271,6 +1271,15 @@ set-password <email>` (set a known password for the default user — whose
   reconnect uses (≤5s), resetting after a healthy connection, and exits
   only on auth failure (session expiry).
 
+- **CLI TUI workspace list no longer briefly disagrees with the detail
+  screen after a start/stop (#2032).** A `container_status` broadcast
+  (start/stop) from the status WebSocket and a list refresh could race: the
+  refresh's snapshot, taken before the broadcast, would momentarily
+  overwrite the list's just-updated running dot. The latest observed running
+  state per workspace is now held in an overlay that every list refresh
+  re-applies, so a fetch returning stale data can't regress a start/stop the
+  TUI already saw.
+
 - **Duplicate `klangkd` launch no longer spams the running instance's log
   with ERROR "Another klangk instance is already running" lines (#2021).**
   The _losing_ (second) process still reports why it exits, but now
