@@ -365,10 +365,16 @@ class WorkspaceDetailScreen(Screen):
             data = await asyncio.to_thread(state.list_images)
             default = data.get("default", "") or ""
             allowed = list(data.get("allowed") or [])
+        except AuthError:
+            self.app.session_expired()
+            return
         except Exception:
             default, allowed = "", []
         try:
             allow_autostart = await asyncio.to_thread(state.allow_autostart)
+        except AuthError:
+            self.app.session_expired()
+            return
         except Exception:
             allow_autostart = False
         self.app.push_screen(
@@ -478,6 +484,9 @@ class WorkspaceDetailScreen(Screen):
     async def _load_terminals(self) -> None:
         try:
             windows = await self.app.tui_state.list_terminals(self._name)
+        except AuthError:
+            self.app.session_expired()
+            return
         except Exception:
             windows = []
         self._terminals = windows or []
