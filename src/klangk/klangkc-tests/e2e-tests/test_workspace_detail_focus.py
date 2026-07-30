@@ -77,6 +77,35 @@ async def _wait_for_screen(pilot, screen_type, attr="#term_list"):
 
 
 @pytest.mark.asyncio
+async def test_concurrent_renders_do_not_duplicate_rows(tmp_path):
+    """#1956: adding/removing a terminal fires _render_terminals from BOTH the
+    action handler and the backend's terminals_changed broadcast. Without
+    serialization the two clear/extend/mount cycles interleave on the same
+    ListView and duplicate every row (the "two copies of the terminal list"
+    bug). The render lock must serialize them."""
+    gate = asyncio.Event()
+    app = KlangkApp(_make_state(gate))
+    _harness(app)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(WorkspaceDetailScreen(WS_NAME))
+        await _wait_for_screen(pilot, WorkspaceDetailScreen)
+        screen = app.screen
+        screen._terminals = list(REAL_TERMINALS)
+        # Fire two renders concurrently (as the action + broadcast would).
+        await asyncio.gather(
+            screen._render_terminals(), screen._render_terminals()
+        )
+        for _ in range(10):
+            await pilot.pause()
+        items = screen.query_one("#term_list", ListView).query("ListItem")
+        assert len(items) == len(REAL_TERMINALS), (
+            f"rows duplicated by concurrent renders: {len(items)} "
+            f"expected {len(REAL_TERMINALS)}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_placeholder_highlighted_and_focused_while_loading(tmp_path):
     """Pre-load: list shows a highlighted placeholder and has focus (#1956)."""
     gate = asyncio.Event()

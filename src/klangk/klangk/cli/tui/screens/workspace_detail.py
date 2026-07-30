@@ -89,6 +89,12 @@ class WorkspaceDetailScreen(Screen):
         self._terminals: list[dict] = []
         self._missing = False
         self._load_error: str | None = None
+        # Serializes terminal-list renders. Adding/removing a terminal fires
+        # _render_terminals from BOTH the action handler and the backend's
+        # terminals_changed broadcast; without a lock those two concurrent
+        # clear/extend/mount cycles interleave on the same ListView and
+        # corrupt the DOM (rows un-highlighted, #1956).
+        self._render_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -457,37 +463,42 @@ class WorkspaceDetailScreen(Screen):
         await self._render_terminals()
 
     async def _render_terminals(self) -> None:
-        lv = self.query_one("#term_list", ListView)
-        await lv.clear()
-        if not self._terminals:
-            items = [ListItem(Label(Text("(no terminals)")), name="")]
-        else:
-            items = [
-                ListItem(
-                    Label(
-                        Text(
-                            f"{w.get('index', '')}  "
-                            f"{w.get('name') or w.get('index', '')}"
-                        )
-                    ),
-                    name=str(w.get("index", "")),
-                )
-                for w in self._terminals
-            ]
-        mount = lv.extend(items)
-        # Keep focus on the list; skipped when a modal is open over this
-        # screen so a background terminals_changed reload never yanks focus
-        # out of the foreground dialog (#1956).
-        if self.app.screen is self:
-            self._focus_term_list()
-        # Await the mount BEFORE setting the default index. Setting index=0
-        # synchronously fires the highlight watcher before the new ListItems
-        # exist, so no row would be highlighted (the #1956 "both terminals
-        # grey, Down makes the second green" symptom). After mount the first
-        # row highlights correctly.
-        await mount
-        if lv.index is None:
-            lv.index = 0
+        # Serialize: adding/removing a terminal fires this from BOTH the
+        # action handler and the backend's terminals_changed broadcast;
+        # without a lock the two clear/extend/mount cycles interleave on the
+        # same ListView and corrupt the DOM (rows un-highlighted, #1956).
+        async with self._render_lock:
+            lv = self.query_one("#term_list", ListView)
+            await lv.clear()
+            if not self._terminals:
+                items = [ListItem(Label(Text("(no terminals)")), name="")]
+            else:
+                items = [
+                    ListItem(
+                        Label(
+                            Text(
+                                f"{w.get('index', '')}  "
+                                f"{w.get('name') or w.get('index', '')}"
+                            )
+                        ),
+                        name=str(w.get("index", "")),
+                    )
+                    for w in self._terminals
+                ]
+            mount = lv.extend(items)
+            # Keep focus on the list; skipped when a modal is open over this
+            # screen so a background terminals_changed reload never yanks
+            # focus out of the foreground dialog (#1956).
+            if self.app.screen is self:
+                self._focus_term_list()
+            # Await the mount BEFORE setting the default index. Setting
+            # index=0 synchronously fires the highlight watcher before the
+            # new ListItems exist, so no row would be highlighted (the #1956
+            # "both terminals grey, Down makes the second green" symptom).
+            # After mount the first row highlights correctly.
+            await mount
+            if lv.index is None:
+                lv.index = 0
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Suspend the TUI and spawn ``klangk shell`` for the selected terminal."""
