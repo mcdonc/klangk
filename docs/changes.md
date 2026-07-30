@@ -1219,10 +1219,13 @@ set-password <email>` (set a known password for the default user — whose
   workspace), the terminal list was empty and unfocused for the whole
   container auto-start window — focus was `None` and Tab/arrows/Enter were
   dead, so the initial terminal could not be reached or selected with the
-  keyboard (a focus trap). The list now shows a placeholder row
-  immediately, highlighted (`index == 0`) and focused on mount and on every
-  `on_show` (so focus is re-asserted after a foreground modal closes too);
-  `_render_terminals` keeps the first terminal selected once it loads.
+  keyboard (a focus trap); on first visit the terminal also lost focus
+  (turned from green to grey) once the auto-start event storm settled. The
+  list now shows a placeholder row immediately, highlighted (`index == 0`)
+  and focused on mount and on every `on_show`; `_display` (every load + the
+  uptime tick) and `_render_terminals` re-assert focus on the list while the
+  screen is active, so any focus steal during the auto-start is recovered
+  within moments.
 
 - **SSH agent forwarding now works on reconnect and in the TUI (#2001).**
   Two bugs, one symptom (`ssh-add -l` → _"Could not open a connection to

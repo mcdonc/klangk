@@ -211,6 +211,12 @@ class WorkspaceDetailScreen(Screen):
         ]
 
     def _display(self) -> None:
+        # Re-assert focus on the terminals list while this screen is active.
+        # _display runs on every load and on the 5s uptime tick, so a focus
+        # steal during the first-visit auto-start event storm (which left the
+        # terminal row green-then-grey, #1956) is recovered within moments.
+        # No-op while a modal is on top (guarded in _focus_term_list).
+        self._focus_term_list()
         ws = self._ws
         body = self.query_one("#detail_body", Static)
         if ws is None:
