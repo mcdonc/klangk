@@ -1204,6 +1204,17 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **CLI TUI now shows "server down" and auto-reconnects instead of a
+  misleading empty workspace list (#2012).** When the backend was
+  unreachable (but the CLI still held a valid JWT, e.g. `auth=none`), the
+  workspaces page rendered "(no workspaces)" like a healthy empty account,
+  and the only recovery was to log out and back in. A transport-layer fetch
+  failure now surfaces "(server unreachable — retrying…)" with a live
+  attempt counter in the status bar, and a background reconnect loop
+  (bounded exponential backoff, mirroring the Flutter WS client) repopulates
+  the list automatically once the backend returns — covering both
+  first-display-down and mid-session disconnects, with no re-login required.
+
 - **Opening a terminal from the TUI no longer flashes the pre-TUI screen
   (#2010).** `on_list_view_selected` clears the primary screen buffer
   inside the `suspend()` block before spawning `klangk shell`, so the
