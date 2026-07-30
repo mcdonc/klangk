@@ -30,6 +30,7 @@ from textual.widgets import (
 
 from ...client import AuthError, WorkspaceNotFoundError
 from ._base import (
+    CheatsheetScreen,
     ConfirmScreen,
     DuplicateScreen,
     InputScreen,
@@ -55,6 +56,7 @@ class WorkspaceDetailScreen(Screen):
         # are shown inline on the Terminals list header instead (#1860).
         Binding("n", "new_terminal", "New term", show=False),
         Binding("delete", "delete_terminal", "Del term", show=False),
+        Binding("?", "cheatsheet", "Keys", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -175,6 +177,10 @@ class WorkspaceDetailScreen(Screen):
             Binding("d", "delete", "Del ws"),
             Binding("n", "new_terminal", "New term", show=False),
             Binding("delete", "delete_terminal", "Del term", show=False),
+            # `?` must survive the per-display BINDINGS rebuild so the
+            # cheatsheet stays reachable after _display() runs on mount
+            # (#1802).
+            Binding("?", "cheatsheet", "Keys", show=False),
         ]
 
     def _display(self) -> None:
@@ -742,6 +748,45 @@ class WorkspaceDetailScreen(Screen):
             ),
             self._on_export,
         )
+
+    def action_cheatsheet(self) -> None:
+        """Open the ``?`` keyboard cheatsheet modal (#1802)."""
+        self.app.push_screen(CheatsheetScreen(self._cheatsheet_sections()))
+
+    @staticmethod
+    def _cheatsheet_sections() -> list[tuple[str, list[tuple[str, str]]]]:
+        """Keybindings shown in the cheatsheet, grouped by context (#1802).
+
+        Hand-written display labels (see MainScreen._cheatsheet_sections
+        for the rationale); the TUI tests assert each key appears.
+        """
+        return [
+            (
+                "Navigation",
+                [
+                    ("Esc", "Back to workspace list"),
+                    ("Enter", "Open a terminal shell"),
+                ],
+            ),
+            (
+                "Workspace",
+                [
+                    ("e", "Edit"),
+                    ("r", "Restart"),
+                    ("s", "Stop / Start"),
+                    ("u", "Duplicate"),
+                    ("d", "Delete workspace"),
+                    ("x", "Export archive"),
+                ],
+            ),
+            (
+                "Terminals",
+                [
+                    ("n", "New terminal"),
+                    ("Del", "Delete terminal"),
+                ],
+            ),
+        ]
 
     def _on_export(self, path: str | None) -> None:
         if not path:

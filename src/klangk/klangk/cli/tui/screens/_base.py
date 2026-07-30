@@ -302,6 +302,72 @@ class InputScreen(ModalScreen):
             self._commit()
 
 
+class CheatsheetScreen(ModalScreen):
+    """A ``?`` keyboard cheatsheet modal (#1802).
+
+    Lists the active screen's keybindings grouped by context. Dismissed
+    with Escape or ``?`` (pressed again). Construct with ``sections`` — a
+    list of ``(group_title, [(display_key, description), ...])``; each
+    screen supplies its own (see ``MainScreen._cheatsheet_sections`` /
+    ``WorkspaceDetailScreen._cheatsheet_sections``) so the content adapts
+    to the current screen.
+    """
+
+    DEFAULT_CSS = """
+    CheatsheetScreen { align: center middle; }
+    CheatsheetScreen > Vertical {
+        width: 72;
+        max-width: 92%;
+        height: auto;
+        padding: 1 2;
+        border: round $primary;
+        background: $panel;
+    }
+    CheatsheetScreen #cs_title { text-style: bold; margin-bottom: 1; }
+    CheatsheetScreen .cs_group {
+        text-style: bold;
+        color: $accent;
+        margin-top: 1;
+    }
+    CheatsheetScreen .cs_row { height: 1; }
+    CheatsheetScreen .cs_key {
+        width: 12;
+        min-width: 12;
+        color: $text-muted;
+        text-style: bold;
+    }
+    CheatsheetScreen .cs_desc { width: 1fr; }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss_modal", "Close", show=False),
+        Binding("?", "dismiss_modal", "Close", show=False),
+    ]
+
+    def __init__(
+        self, sections: list[tuple[str, list[tuple[str, str]]]]
+    ) -> None:
+        super().__init__()
+        self._sections = sections
+
+    def compose(self) -> ComposeResult:
+        children: list = [Static(Text("Keyboard shortcuts"), id="cs_title")]
+        for title, items in self._sections:
+            children.append(Static(Text(title), classes="cs_group"))
+            for key, desc in items:
+                children.append(
+                    Horizontal(
+                        Static(Text(key), classes="cs_key"),
+                        Static(Text(desc), classes="cs_desc"),
+                        classes="cs_row",
+                    )
+                )
+        yield Vertical(*children, id="cs_box")
+
+    def action_dismiss_modal(self) -> None:
+        self.dismiss(None)
+
+
 class TransferScreen(ModalScreen):
     """Runs a blocking transfer (export/import) in a worker thread while
     showing a live progress bar (#1758).

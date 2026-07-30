@@ -48,6 +48,7 @@ from klangk.cli.config import (
 )
 from klangk.cli.tui.screens import (
     AddServerScreen,
+    CheatsheetScreen,
     ConfirmScreen,
     CreateWorkspaceScreen,
     DuplicateScreen,
@@ -8828,3 +8829,88 @@ async def test_edit_running_env_saved_before_restart_prompt(monkeypatch):
         assert await pilot.click("#no")
         await pilot.pause()
         assert captured["k"]["env"] == {"OLD": "x", "a": "1"}  # unchanged
+
+
+def _cheatsheet_text(screen) -> str:
+    """Join every rendered key/desc/group cell of a CheatsheetScreen."""
+    cells = []
+    for sel in (".cs_group", ".cs_key", ".cs_desc"):
+        for w in screen.query(sel):
+            cells.append(str(w.render()))
+    return " | ".join(cells)
+
+
+async def test_main_screen_cheatsheet_modal():
+    """`?` on the workspace list opens a cheatsheet of MainScreen bindings;
+    Escape or `?` again dismisses it (#1802)."""
+    a = _wsobj("alpha", running=True, service_started_at=1.0)
+    app = KlangkApp(_ws(owned=[a]))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert isinstance(app.screen, MainScreen)
+
+        await pilot.press("?")
+        await pilot.pause()
+        assert isinstance(app.screen, CheatsheetScreen)
+        text = _cheatsheet_text(app.screen)
+        # Navigation + workspaces + highlighted-row bindings all shown.
+        for key in (
+            "↑ ↓",
+            "Tab",
+            "Enter",
+            "/",
+            "c",
+            "n",
+            "i",
+            "o",
+            "l",
+            "e",
+            "r",
+            "s",
+            "u",
+            "d",
+        ):
+            assert key in text, f"missing {key!r} in cheatsheet"
+        assert "Open the highlighted workspace" in text
+
+        # Escape dismisses.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, MainScreen)
+
+        # `?` opens again, and `?` again dismisses.
+        await pilot.press("?")
+        await pilot.pause()
+        assert isinstance(app.screen, CheatsheetScreen)
+        await pilot.press("?")
+        await pilot.pause()
+        assert isinstance(app.screen, MainScreen)
+
+
+async def test_detail_screen_cheatsheet_modal():
+    """`?` on the detail screen opens a cheatsheet of WorkspaceDetailScreen
+    bindings; Escape dismisses (#1802). Also confirms the `?` binding survives
+    the per-display BINDINGS rebuild in _display()."""
+    a = _wsobj("alpha", running=True, service_started_at=1.0)
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, WorkspaceDetailScreen)
+
+        await pilot.press("?")
+        await pilot.pause()
+        assert isinstance(app.screen, CheatsheetScreen)
+        text = _cheatsheet_text(app.screen)
+        for key in ("Esc", "Enter", "e", "r", "s", "u", "d", "x", "n", "Del"):
+            assert key in text, f"missing {key!r} in cheatsheet"
+        assert "Back to workspace list" in text
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, WorkspaceDetailScreen)
