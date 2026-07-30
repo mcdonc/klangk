@@ -463,6 +463,14 @@ class WorkspaceDetailScreen(Screen):
             cmd += ["--server", server]
         cmd += ["shell", self._name, target]
         with self.app.suspend():
+            # suspend() restored the primary screen buffer, which still
+            # shows whatever was on screen before the TUI launched. Clear
+            # it (and drop a short connecting line) so that stale content
+            # never flashes before `klangk shell` attaches (#2010).
+            sys.stdout.write(
+                f"\033[2J\033[HConnecting to {self._name} ({target})\u2026\r\n"
+            )
+            sys.stdout.flush()
             completed = subprocess.run(cmd)
         if completed.returncode != 0:
             # The shell exited non-zero — most likely the window was

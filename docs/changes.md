@@ -1204,6 +1204,12 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **Opening a terminal from the TUI no longer flashes the pre-TUI screen
+  (#2010).** `on_list_view_selected` clears the primary screen buffer
+  and writes a short `Connecting…` line inside the `suspend()` block
+  before spawning `klangk shell`, so the stale content that briefly
+  surfaced during the buffer swap is gone.
+
 - **SSH agent forwarding now works on reconnect and in the TUI (#2001).**
   Two bugs, one symptom (`ssh-add -l` → _"Could not open a connection to
   your authentication agent"_):
