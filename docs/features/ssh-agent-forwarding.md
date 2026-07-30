@@ -1,16 +1,15 @@
 # SSH Agent Forwarding
 
-When connecting via `klangk shell -A`, your local SSH agent is
-forwarded into the workspace container. This lets you use
-`git push git@github.com:...`, `ssh`, and other SSH-based tools
-inside the container using your local SSH keys — without copying any
-private keys.
+By default, `klangk shell` forwards your local SSH agent into the workspace
+container. This lets you use `git push git@github.com:...`, `ssh`, and other
+SSH-based tools inside the container using your local SSH keys — without
+copying any private keys.
 
 ## How it works
 
-When `--forward-agent` (`-A`) is enabled (via CLI flag or config
-file), `klangk shell` checks for a local `SSH_AUTH_SOCK` and sets
-up a relay over the existing WebSocket tunnel:
+When agent forwarding is enabled (it is **on by default**), `klangk shell`
+checks for a local `SSH_AUTH_SOCK` and sets up a relay over the existing
+WebSocket tunnel:
 
 1. A Unix socket is created inside the container at a well-known path
 2. The socket is bridged to the CLI via socat and the WebSocket
@@ -22,14 +21,14 @@ and the response is sent back over the existing WebSocket connection.
 
 ## Usage Inside the Klangk Container
 
-Pass `-A` (or `--forward-agent`) to enable forwarding:
+A plain `klangk shell` already forwards your agent — no flag needed:
 
 ```bash
 # Make sure your agent is running and has keys loaded
 ssh-add -l
 
-# Connect with agent forwarding
-klangk shell -A my-workspace
+# Connect (agent forwarding is on by default)
+klangk shell my-workspace
 
 # Inside the container:
 ssh-add -l                          # shows your forwarded keys
@@ -37,20 +36,17 @@ ssh -T git@github.com               # authenticates with your key
 git clone git@github.com:user/repo  # works without any credentials
 ```
 
-Agent forwarding is **on by default**. A freshly generated `klangk.yaml`
-(created eagerly on any CLI invocation, or on first `klangk login`) sets
-`forward-agent: true` globally. Set `forward-agent: false` (globally or
-per-server) to disable it for a workspace you don't trust:
+Override the default per invocation with `--forward-agent` (`-A`) or
+`--no-forward-agent`, or persistently via the `forward-agent` key in
+`klangk.yaml` (set it to `false` to disable it for a workspace you don't
+trust):
 
 ```yaml
-# Enable for all servers
-forward-agent: true
+# forward-agent is on by default. Disable it globally:
+# forward-agent: false
 
-# Or enable/disable per server
+# Or disable it for a specific untrusted server:
 servers:
-  local:
-    url: http://localhost:8997
-    forward-agent: true
   prod:
     url: https://klangk.example.com
     forward-agent: false
