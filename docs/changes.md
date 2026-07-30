@@ -584,14 +584,14 @@ invitations send` stay email-only (a deliverable address is required);
   (the old config stays running; the operator sees the deny reason in the
   log). `None` / empty and valid values are unchanged.
 
-- **Generated `klangk.yaml` now includes `forward-agent` as a commented-out
-  opt-in line (#1923).** A freshly created config (written on first `klangk
-login`) ships a `# forward-agent: true` line at the top, commented out, so
-  SSH agent forwarding can be enabled by uncommenting it instead of having to
-  discover the option. It remains **off by default**: a forwarded agent can
-  be driven by anyone with access to the socket on the remote host for the
-  session, so forwarding is opt-in and recommended only for hosts you trust.
-  Existing configs are unchanged.
+- **`forward-agent` is on by default in generated `klangk.yaml` (#1923,
+  #2000).** A freshly created config — written eagerly on any CLI invocation
+  (`ensure_config`, #2000), or on first `klangk login` — ships an active
+  `forward-agent: true` so a workspace can use the operator's loaded SSH keys
+  (e.g. `git push`) without extra setup. Set `forward-agent: false` (globally
+  or per-server) to disable it for an untrusted workspace: while forwarded,
+  anyone who can reach the agent socket on the remote host can authenticate
+  as you for the session. Existing configs are unchanged.
 
 - **TUI export completion now toasts the full filesystem path (#1758).**
   When a workspace export finishes, a toast notification shows the

@@ -57,6 +57,7 @@ from .config import (
     CLIConfig,
     CLIState,
     default_server_uds_path,
+    ensure_config,
     seed_config,
 )
 from .mount import validate_allowed_domain_spec, validate_mount_spec
@@ -107,6 +108,7 @@ def app_callback(
         None, "--server", help="Server alias or URL"
     ),
 ) -> None:
+    ensure_config()
     global _server_override
     if server is not None:
         _server_override = _cfg().resolve_server(server)
