@@ -2461,7 +2461,6 @@ class TestExecHandlers:
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
         conn._user_home = "/home/admin"
-        conn._ssh_agent_socket = "/tmp/agent.sock"
         mock_session = AsyncMock()
         mock_session.output = _empty_async_generator
         mock_session.start = AsyncMock()
@@ -3091,10 +3090,10 @@ class TestSSHAgentHandlers:
         ):
             await conn.handle_ssh_agent_start()
             # Let the relay task run and finish (stdout returns b"").
-            assert conn._ssh_agent_task is not None
-            await conn._ssh_agent_task
-        assert conn._ssh_agent_proc is mock_proc
-        assert conn._ssh_agent_socket is not None
+            assert conn.ssh_agent.task is not None
+            await conn.ssh_agent.task
+        assert conn.ssh_agent.proc is mock_proc
+        assert conn.ssh_agent.socket is not None
         sock.send_json.assert_called()
         msg = sock.send_json.call_args[0][0]
         assert msg["type"] == "ssh_agent_started"
@@ -3110,7 +3109,7 @@ class TestSSHAgentHandlers:
         mock_proc.stdin = AsyncMock()
         mock_proc.stdin.write = MagicMock()
         mock_proc.stdin.drain = AsyncMock()
-        conn._ssh_agent_proc = mock_proc
+        conn.ssh_agent.proc = mock_proc
         data = base64.b64encode(b"agent-request").decode()
         await conn.handle_ssh_agent_data({"data": data})
         mock_proc.stdin.write.assert_called_once_with(b"agent-request")
@@ -3127,17 +3126,17 @@ class TestSSHAgentHandlers:
         mock_proc = AsyncMock()
         mock_proc.kill = MagicMock()
         mock_proc.wait = AsyncMock()
-        conn._ssh_agent_proc = mock_proc
-        conn._ssh_agent_socket = "/tmp/test.sock"
-        conn._ssh_agent_task = asyncio.create_task(asyncio.sleep(999))
+        conn.ssh_agent.proc = mock_proc
+        conn.ssh_agent.socket = "/tmp/test.sock"
+        conn.ssh_agent.task = asyncio.create_task(asyncio.sleep(999))
         with patch.object(
             _mock_pod,
             "exec_container",
             new=AsyncMock(),
         ):
             await conn.handle_ssh_agent_stop()
-        assert conn._ssh_agent_proc is None
-        assert conn._ssh_agent_socket is None
+        assert conn.ssh_agent.proc is None
+        assert conn.ssh_agent.socket is None
         sock.send_json.assert_called()
         msg = sock.send_json.call_args[0][0]
         assert msg["type"] == "ssh_agent_stopped"
@@ -3149,18 +3148,18 @@ class TestSSHAgentHandlers:
         mock_proc = AsyncMock()
         mock_proc.kill = MagicMock()
         mock_proc.wait = AsyncMock()
-        conn._ssh_agent_proc = mock_proc
-        conn._ssh_agent_socket = "/tmp/test.sock"
-        conn._ssh_agent_task = asyncio.create_task(asyncio.sleep(999))
+        conn.ssh_agent.proc = mock_proc
+        conn.ssh_agent.socket = "/tmp/test.sock"
+        conn.ssh_agent.task = asyncio.create_task(asyncio.sleep(999))
         with patch.object(
             _mock_pod,
             "exec_container",
             new=AsyncMock(),
         ):
             await conn._stop_ssh_agent()
-        assert conn._ssh_agent_proc is None
-        assert conn._ssh_agent_task is None
-        assert conn._ssh_agent_socket is None
+        assert conn.ssh_agent.proc is None
+        assert conn.ssh_agent.task is None
+        assert conn.ssh_agent.socket is None
 
     async def test_forward_ssh_agent_output(self):
         import base64
@@ -3172,7 +3171,7 @@ class TestSSHAgentHandlers:
         read_data = [b"agent-response", b""]
         mock_proc.stdout = AsyncMock()
         mock_proc.stdout.read = AsyncMock(side_effect=read_data)
-        conn._ssh_agent_proc = mock_proc
+        conn.ssh_agent.proc = mock_proc
         await conn._forward_ssh_agent_output()
         calls = [
             c[0][0]
@@ -3190,7 +3189,6 @@ class TestSSHAgentHandlers:
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
         conn._user_home = "/home/testuser"
-        conn._ssh_agent_socket = "/tmp/klangk-ssh-agent-uid.sock"
         mock_session = AsyncMock()
         mock_session.output = _empty_async_generator
         mock_session.start = AsyncMock()
@@ -3253,7 +3251,7 @@ class TestSSHAgentHandlers:
         every terminal to the deterministic per-user socket path at creation
         time — inert until a relay binds it, live the moment one does — so it
         does not matter how or when the terminal (or its agent) was created.
-        Here ``conn._ssh_agent_socket`` is left at its default (None, no
+        Here ``conn.ssh_agent.socket`` is left at its default (None, no
         relay) yet the deterministic path is still passed through.
         """
         app_state = _make_app_state()
@@ -3261,7 +3259,7 @@ class TestSSHAgentHandlers:
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
         conn._user_home = "/home/testuser"
-        assert conn._ssh_agent_socket is None  # no relay active
+        assert conn.ssh_agent.socket is None  # no relay active
         mock_session = AsyncMock()
         mock_session.start = AsyncMock()
         mock_session.session_name = "uid"
@@ -3585,6 +3583,21 @@ class TestSshAgentForwarder:
         ]
         lg.warning.assert_called_once()
         assert "Failed to remove SSH agent socket" in str(lg.warning.call_args)
+        assert fwd.socket is None
+
+    async def test_stop_tolerates_pkill_failure(self):
+        """The pkill reap is best-effort: if it raises (container already
+        gone, podman launch error) stop() swallows it and still removes the
+        socket file — teardown must not break on a cleanup failure."""
+        fwd, _ = self._forwarder()
+        fwd.socket = "/tmp/agent.sock"
+        with patch.object(
+            _mock_pod,
+            "exec_container",
+            new=AsyncMock(side_effect=[OSError("boom"), (0, "", "")]),
+        ) as exec_mock:
+            await fwd.stop()
+        assert exec_mock.await_count == 2
         assert fwd.socket is None
 
     async def test_stop_cancels_task_and_kills_proc(self):

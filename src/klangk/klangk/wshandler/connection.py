@@ -85,40 +85,11 @@ class Connection:
         self.shared = SharedTerminalController(self)
         # SSH agent forwarding is owned by the SshAgentForwarder
         # collaborator; Connection delegates the ssh_agent_* commands to
-        # it.  The ``_ssh_agent_*`` properties below proxy to the
-        # forwarder for backwards compatibility with code (and tests)
-        # that read/write those fields directly.
+        # it. Relay state (proc/task/socket) lives on the forwarder
+        # (``self.ssh_agent.*``), not on Connection.
         self.ssh_agent = SshAgentForwarder(self)
 
     # --- SSH agent forwarding (delegates to SshAgentForwarder) ---
-
-    # Backwards-compatible proxies for the state formerly held on
-    # Connection itself.  Reads and writes are forwarded to the
-    # collaborator so existing callers (and the terminal/exec code
-    # that consumes ``_ssh_agent_socket``) keep working unchanged.
-    @property
-    def _ssh_agent_proc(self):
-        return self.ssh_agent.proc
-
-    @_ssh_agent_proc.setter
-    def _ssh_agent_proc(self, value):
-        self.ssh_agent.proc = value
-
-    @property
-    def _ssh_agent_task(self):
-        return self.ssh_agent.task
-
-    @_ssh_agent_task.setter
-    def _ssh_agent_task(self, value):
-        self.ssh_agent.task = value
-
-    @property
-    def _ssh_agent_socket(self):
-        return self.ssh_agent.socket
-
-    @_ssh_agent_socket.setter
-    def _ssh_agent_socket(self, value):
-        self.ssh_agent.socket = value
 
     async def handle_ssh_agent_start(self) -> None:
         await self.ssh_agent.start()

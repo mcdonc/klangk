@@ -278,19 +278,23 @@ class SshAgentForwarder:
         # (same ``pkill -f`` ``start()`` uses) guarantees the container-side
         # process is gone before we remove the socket (#2001).
         if self.socket and container_id:
+            # Best-effort teardown: a failure here (container already gone,
+            # podman subprocess can't launch) must not break disconnect.
+            # ``exec_container`` runs ``check=False`` so non-zero exits don't
+            # raise; this catches the remaining launch/IO failures.
             try:
                 await self._conn.app.state.podman.exec_container(
                     container_id,
                     ["pkill", "-f", f"UNIX-LISTEN:{self.socket}"],
                 )
-            except OSError as e:  # pragma: no cover - best-effort reap
+            except Exception as e:  # best-effort reap
                 logger.debug("Failed to reap SSH agent socat: %s", e)
             try:
                 await self._conn.app.state.podman.exec_container(
                     container_id,
                     ["rm", "-f", self.socket],
                 )
-            except OSError as e:
+            except Exception as e:
                 logger.warning(
                     "Failed to remove SSH agent socket %s: %s",
                     self.socket,
@@ -342,8 +346,9 @@ class ExecController:
         # exec, not only when a relay is already active (#2001): exec
         # sessions are short-lived one-shot commands and have no persistent
         # base session, but the same creation-path uniformity applies — the
-        # var is inert until a relay binds this path. `_ssh_agent_socket`
-        # (when the relay is up) is the same path, so this strictly generalizes it.
+        # var is inert until a relay binds this path. The forwarder's
+        # ``ssh_agent.socket`` (when the relay is up) is the same path, so
+        # this strictly generalizes the old relay-gated wiring.
         env.append(
             f"SSH_AUTH_SOCK={ssh_agent_socket_path(self._conn.user['id'])}"
         )
