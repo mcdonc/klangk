@@ -2122,8 +2122,12 @@ async def test_confirm_screen_arrow_nav(monkeypatch):
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+    cap = {}
     async with app.run_test() as pilot:
-        app.push_screen(ConfirmScreen("Delete 'alpha'?"), lambda r: None)
+        app.push_screen(
+            ConfirmScreen("Delete 'alpha'?"),
+            lambda r: cap.__setitem__("r", r),
+        )
         await pilot.pause()
         assert isinstance(app.screen, ConfirmScreen)
         app.screen.query_one("#no").focus()
@@ -2152,7 +2156,10 @@ async def test_confirm_screen_arrow_nav(monkeypatch):
         await pilot.press("down")
         await pilot.pause()
         assert app.screen.focused.id == "no"
-        app.screen.dismiss(False)
+        # Escape cancels (dismisses False) (#2016).
+        await pilot.press("escape")
+        await pilot.pause()
+        assert cap["r"] is False
 
 
 async def test_input_screen_arrow_nav(monkeypatch):
@@ -2165,8 +2172,12 @@ async def test_input_screen_arrow_nav(monkeypatch):
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+    cap = {}
     async with app.run_test() as pilot:
-        app.push_screen(InputScreen("Path:"), lambda r: None)
+        app.push_screen(
+            InputScreen("Path:"),
+            lambda r: cap.__setitem__("r", r),
+        )
         await pilot.pause()
         assert isinstance(app.screen, InputScreen)
         assert app.screen.focused.id == "inp_value"
@@ -2191,7 +2202,10 @@ async def test_input_screen_arrow_nav(monkeypatch):
         await pilot.press("up")
         await pilot.pause()
         assert app.screen.focused.id == "inp_value"
-        app.screen.dismiss(None)
+        # Escape cancels (dismisses None) (#2016).
+        await pilot.press("escape")
+        await pilot.pause()
+        assert cap["r"] is None
 
 
 async def test_duplicate_screen_arrow_nav(monkeypatch):
@@ -2204,8 +2218,12 @@ async def test_duplicate_screen_arrow_nav(monkeypatch):
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+    cap = {}
     async with app.run_test() as pilot:
-        app.push_screen(DuplicateScreen("alpha"), lambda r: None)
+        app.push_screen(
+            DuplicateScreen("alpha"),
+            lambda r: cap.__setitem__("r", r),
+        )
         await pilot.pause()
         assert isinstance(app.screen, DuplicateScreen)
         app.screen.query_one("#dup_name").focus()
@@ -2217,7 +2235,10 @@ async def test_duplicate_screen_arrow_nav(monkeypatch):
         await pilot.press("right")
         await pilot.pause()
         assert app.screen.focused.id == "ok"
-        app.screen.dismiss(None)
+        # Escape cancels (dismisses None) (#2016).
+        await pilot.press("escape")
+        await pilot.pause()
+        assert cap["r"] is None
 
 
 async def test_transfer_screen_success_error_and_progress(monkeypatch):

@@ -46,6 +46,7 @@ class ButtonRowModalScreen(ModalScreen[_ScreenResult]):
         Binding("right", "btn_right", show=False),
         Binding("up", "btn_up", show=False),
         Binding("down", "btn_down", show=False),
+        Binding("escape", "cancel", show=False),
     ]
 
     def _focus_id(self, widget_id: str) -> None:
@@ -77,15 +78,27 @@ class ButtonRowModalScreen(ModalScreen[_ScreenResult]):
         if self._focused_id() == self._INPUT and self._BUTTONS:
             self._focus_id(self._BUTTONS[0])
 
+    def action_cancel(self) -> None:
+        """Escape cancels the dialog (#2016)."""
+        self._dismiss_cancel()
+
+    def _dismiss_cancel(self) -> None:
+        """Dismiss as Cancel. Subclasses override to return their cancel
+        value (False for ConfirmScreen; None for Input/Duplicate)."""
+        self.dismiss(None)
+
 
 class ConfirmScreen(ButtonRowModalScreen[bool]):
     """A yes/no confirmation dialog. Dismisses with True on confirm.
 
     Arrows move between Cancel / confirm (Left/Right) — no Tab needed
-    (#2016).
+    (#2016). Escape dismisses as Cancel (False).
     """
 
     _BUTTONS = ["no", "yes"]
+
+    def _dismiss_cancel(self) -> None:
+        self.dismiss(False)
 
     DEFAULT_CSS = """
     ConfirmScreen { align: center middle; }
